@@ -160,6 +160,7 @@ fun StudioTheme(content: @Composable () -> Unit) {
 fun StudioTabScaffold(
     viewModel: PhotographerDashboardViewModel,
     settingsViewModel: StudioSettingsViewModel,
+    tetherViewModel: TetherViewModel,
     onLogout: () -> Unit,
     onPreviewProfile: () -> Unit,
     onSwitchToRunner: () -> Unit,
@@ -171,8 +172,8 @@ fun StudioTabScaffold(
     // photographer doesn't lose track of in-flight uploads after dismissing
     // the import sheet. The Sync queue card on the Capture tab remains the
     // detailed view; this is the persistent ambient status.
-    val queueStats by viewModel.queueStats.collectAsState()
-    val watchState by viewModel.shutterWatchState.collectAsState()
+    val queueStats by tetherViewModel.queueStats.collectAsState()
+    val watchState by tetherViewModel.shutterWatchState.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
     // Railguard gate comes from the shared VM flag (fail-open, one definition for

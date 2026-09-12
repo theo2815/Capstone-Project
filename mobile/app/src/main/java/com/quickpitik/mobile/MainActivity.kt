@@ -60,6 +60,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.app.Application
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavBackStackEntry
@@ -100,6 +103,7 @@ import com.quickpitik.mobile.ui.photographer.StudioInboxLifecycle
 import com.quickpitik.mobile.ui.photographer.StudioSettingsViewModel
 import com.quickpitik.mobile.ui.photographer.StudioTabScaffold
 import com.quickpitik.mobile.ui.photographer.StudioTheme
+import com.quickpitik.mobile.ui.photographer.TetherViewModel
 import com.quickpitik.mobile.ui.photographer.VerificationUiState
 import com.quickpitik.mobile.ui.runner.AccountSettingsScreen
 import com.quickpitik.mobile.ui.runner.CartViewModel
@@ -667,6 +671,7 @@ class MainActivity : ComponentActivity() {
                                     StudioTabScaffold(
                                         viewModel = vm,
                                         settingsViewModel = settingsVm,
+                                        tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
@@ -682,32 +687,40 @@ class MainActivity : ComponentActivity() {
                                 }
                                 composable("studio/capture") { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val tetherVm = studioTetherViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
                                         settingsViewModel = studioSettingsViewModel(navController, entry),
+                                        tetherViewModel = tetherVm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
-                                        PhotographerCaptureScreen(viewModel = vm)
+                                        PhotographerCaptureScreen(
+                                            viewModel = vm,
+                                            tetherViewModel = tetherVm,
+                                        )
                                     }
                                 }
                                 composable("studio/events") { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val tetherVm = studioTetherViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
                                         settingsViewModel = studioSettingsViewModel(navController, entry),
+                                        tetherViewModel = tetherVm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerEventsScreen(
                                             viewModel = vm,
+                                            tetherViewModel = tetherVm,
                                             onOpenShare = { event ->
                                                 navController.navigate("studio/share/${event.id}")
                                             },
                                             onSyncEvent = { ev ->
-                                                vm.selectEvent(ev)
+                                                tetherVm.selectEvent(ev)
                                                 studioNavigate("studio/capture")
                                             },
                                             onCreateEvent = {
@@ -724,6 +737,7 @@ class MainActivity : ComponentActivity() {
                                     StudioTabScaffold(
                                         viewModel = vm,
                                         settingsViewModel = studioSettingsViewModel(navController, entry),
+                                        tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
@@ -740,6 +754,7 @@ class MainActivity : ComponentActivity() {
                                     StudioTabScaffold(
                                         viewModel = vm,
                                         settingsViewModel = settingsVm,
+                                        tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
@@ -1211,6 +1226,29 @@ private fun studioEarningsViewModel(
     navController: NavHostController,
     entry: NavBackStackEntry,
 ): StudioEarningsViewModel = viewModel(studioGraphEntry(navController, entry))
+
+// The tether VM's one cross-concern read is the dashboard's event list, for
+// the after-process-death resume (see its KDoc). It is handed over here,
+// where both ViewModels already live on the same graph entry, rather than
+// being reached for from inside the tether VM. The factory only runs on the
+// first resolve; every later call returns that same instance.
+@Composable
+private fun studioTetherViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): TetherViewModel {
+    val graphEntry = studioGraphEntry(navController, entry)
+    val dashboard: PhotographerDashboardViewModel = viewModel(graphEntry)
+    val application = LocalContext.current.applicationContext as Application
+    val factory = remember(dashboard) {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                TetherViewModel(application, dashboard.eventsState) as T
+        }
+    }
+    return viewModel(graphEntry, factory = factory)
+}
 
 @Composable
 private fun runnerGraphEntry(

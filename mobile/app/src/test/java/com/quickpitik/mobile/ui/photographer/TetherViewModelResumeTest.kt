@@ -24,9 +24,16 @@ import org.robolectric.RobolectricTestRunner
  * restored into the active event only for the account that started it and
  * only when it names the event the watch was on. A bug here resumes a shoot
  * into the wrong account or the wrong event.
+ *
+ * Moved from PhotographerDashboardViewModelResumeTest with the ViewModel split
+ * (plan 2 phase G). The second resume path - looking the event up in the
+ * dashboard's list when the snapshot is unusable - is still uncovered: it only
+ * runs once the camera reports Connected, which needs the USB shadow
+ * machinery CameraConnectionManagerTest builds. The events flow is a
+ * constructor parameter now, so that test no longer needs a second ViewModel.
  */
 @RunWith(RobolectricTestRunner::class)
-class PhotographerDashboardViewModelResumeTest {
+class TetherViewModelResumeTest {
     @get:Rule val main = MainDispatcherRule()
     @get:Rule val backend = MockBackend()
 
@@ -58,7 +65,7 @@ class PhotographerDashboardViewModelResumeTest {
             .commit()
     }
 
-    private fun model() = PhotographerDashboardViewModel(application).also { viewModels.put("photographer", it) }
+    private fun model() = TetherViewModel(application).also { viewModels.put("tether", it) }
 
     @Test fun `the saved event comes back for the account that started the watch`() {
         persistWatch(eventId = "ev-1", owner = "juan@x.com", snapshotId = "ev-1")
@@ -70,6 +77,10 @@ class PhotographerDashboardViewModelResumeTest {
         assertNull(model().activeEvent.value)
 
         persistWatch(eventId = "ev-2", owner = "juan@x.com", snapshotId = "ev-1")
+        assertNull(model().activeEvent.value)
+    }
+
+    @Test fun `no persisted watch leaves the tab on its event picker`() {
         assertNull(model().activeEvent.value)
     }
 }

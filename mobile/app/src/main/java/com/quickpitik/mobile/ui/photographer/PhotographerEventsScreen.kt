@@ -82,6 +82,7 @@ private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDat
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun PhotographerEventsScreen(
     viewModel: PhotographerDashboardViewModel,
+    tetherViewModel: TetherViewModel,
     modifier: Modifier = Modifier,
     onOpenShare: (PhotographerEventSummaryDto) -> Unit = {},
     onSyncEvent: (PhotographerEventSummaryDto) -> Unit = {},
@@ -90,7 +91,7 @@ fun PhotographerEventsScreen(
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
     val publicEventsState by viewModel.publicEventsState.collectAsState()
-    val activeEvent by viewModel.activeEvent.collectAsState()
+    val activeEvent by tetherViewModel.activeEvent.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
     // Railguard gate comes from the shared VM flag (fail-open, one definition for

@@ -135,24 +135,27 @@ import java.time.LocalDate
  * per-tab refetch — adding it would double the fetch.
  */
 @Composable
-fun PhotographerCaptureScreen(viewModel: PhotographerDashboardViewModel) {
-    val activeEvent by viewModel.activeEvent.collectAsState()
+fun PhotographerCaptureScreen(
+    viewModel: PhotographerDashboardViewModel,
+    tetherViewModel: TetherViewModel,
+) {
+    val activeEvent by tetherViewModel.activeEvent.collectAsState()
     // No approval gate here: PublicEventPickerList already refuses to select an
     // event unless verification is approved, so an active event implies approval.
     if (activeEvent == null) {
         PublicEventPickerList(
             viewModel = viewModel,
-            onSelectEvent = { event -> viewModel.selectEvent(event) }
+            onSelectEvent = { event -> tetherViewModel.selectEvent(event) }
         )
     } else {
-        TetherConsoleView(viewModel = viewModel)
+        TetherConsoleView(viewModel = tetherViewModel)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TetherConsoleView(
-    viewModel: PhotographerDashboardViewModel,
+    viewModel: TetherViewModel,
     modifier: Modifier = Modifier
 ) {
     val activeEvent by viewModel.activeEvent.collectAsState()
