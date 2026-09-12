@@ -146,7 +146,7 @@ class AdminUserService(
     @Transactional(readOnly = true)
     fun photographerSettings(userId: UUID): AdminPhotographerSettingsDto {
         val (user, settings) = loadUserAndSettings(userId)
-        val s = requirePhotographerSettings(user, settings)
+        val s = requirePhotographerSettings(user, settings, persistIfMissing = false)
 
         val region = if (!s.regionCode.isNullOrBlank() && !s.provinceCode.isNullOrBlank()) {
             AdminPhotographerRegionDto(
@@ -205,7 +205,7 @@ class AdminUserService(
 
     fun approve(adminId: UUID, userId: UUID): AdminUserRowDto {
         val (user, settings) = loadUserAndSettings(userId)
-        val s = requirePhotographerSettings(user, settings)
+        val s = requirePhotographerSettings(user, settings, persistIfMissing = true)
         // Re-validate against the SAME required-field set the photographer's own
         // submit gate uses, so admin approval and self-submit can never diverge.
         // Without this an admin could approve a profile that never passed submit
@@ -238,7 +238,7 @@ class AdminUserService(
 
     fun reject(adminId: UUID, userId: UUID, reason: String): AdminUserRowDto {
         val (user, settings) = loadUserAndSettings(userId)
-        val s = requirePhotographerSettings(user, settings)
+        val s = requirePhotographerSettings(user, settings, persistIfMissing = true)
         // Mirrors the FE store: reject lands the row back at "incomplete"
         // with the rejection reason carried in the decision log.
         s.verificationStatus = VerificationStatus.INCOMPLETE
@@ -261,7 +261,7 @@ class AdminUserService(
 
     fun resetVerification(adminId: UUID, userId: UUID, reason: String): AdminUserRowDto {
         val (user, settings) = loadUserAndSettings(userId)
-        val s = requirePhotographerSettings(user, settings)
+        val s = requirePhotographerSettings(user, settings, persistIfMissing = true)
         s.verificationStatus = VerificationStatus.INCOMPLETE
         photographerSettingsRepository.save(s)
         val decision = adminDecisionLogService.logUserDecision(
@@ -445,7 +445,14 @@ class AdminUserService(
         return user to settings
     }
 
-    private fun requirePhotographerSettings(user: User, settings: PhotographerSettings?): PhotographerSettings {
+    // persistIfMissing = false on read paths: a readOnly tx sets FlushMode.MANUAL,
+    // so lazy-creating here never persists the row anyway — it only costs a SELECT.
+    // Vault backend/notes/jpa-pitfalls.md (2026-05-25) is this bug on the read side.
+    private fun requirePhotographerSettings(
+        user: User,
+        settings: PhotographerSettings?,
+        persistIfMissing: Boolean,
+    ): PhotographerSettings {
         if (user.role != Role.PHOTOGRAPHER) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
@@ -453,9 +460,9 @@ class AdminUserService(
                 field = "userId",
             )
         }
-        return settings ?: photographerSettingsRepository.save(
-            PhotographerSettings(userId = user.id, verificationStatus = VerificationStatus.INCOMPLETE),
-        )
+        if (settings != null) return settings
+        val fresh = PhotographerSettings(userId = user.id, verificationStatus = VerificationStatus.INCOMPLETE)
+        return if (persistIfMissing) photographerSettingsRepository.save(fresh) else fresh
     }
 
     internal fun hydrateRow(
