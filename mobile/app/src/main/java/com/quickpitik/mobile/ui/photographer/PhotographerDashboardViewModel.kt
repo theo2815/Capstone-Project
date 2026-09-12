@@ -9,7 +9,9 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
 import com.quickpitik.mobile.data.remote.QpWebSocket
-import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.apiCall
+import com.quickpitik.mobile.data.remote.uiMessage
 import com.quickpitik.mobile.data.remote.WsState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -248,21 +250,20 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 _eventFormState.value = EventFormState.Error("No valid session. Please log in again.")
                 return@launch
             }
-            try {
+            // buildEventParts stays inside the lambda: a cover image that
+            // cannot be read must reach the same Error copy the request does.
+            apiCall("Couldn't save the event.") {
                 val parts = buildEventParts(input)
-                val response = if (eventId == null) {
+                if (eventId == null) {
                     RetrofitClient.apiService.createPhotographerEvent("Bearer $token", parts)
                 } else {
                     RetrofitClient.apiService.updatePhotographerEvent("Bearer $token", eventId, parts)
                 }
-                if (response.success && response.data != null) {
-                    _eventFormState.value = EventFormState.Success(response.data)
-                    fetchEvents()
-                } else {
-                    _eventFormState.value = EventFormState.Error(response.error ?: "Couldn't save the event.")
-                }
-            } catch (e: Exception) {
-                _eventFormState.value = EventFormState.Error(RetrofitClient.parseError(e))
+            }.onSuccess {
+                _eventFormState.value = EventFormState.Success(it)
+                fetchEvents()
+            }.onFailure {
+                _eventFormState.value = EventFormState.Error(it.uiMessage)
             }
         }
     }
@@ -340,8 +341,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     ) {
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
-            try {
-                val response = RetrofitClient.apiService.upsertEventCoupon(
+            apiCall("Couldn't save the coupon.") {
+                RetrofitClient.apiService.upsertEventCoupon(
                     "Bearer $token",
                     eventId,
                     com.quickpitik.mobile.data.remote.UpsertCouponRequest(
@@ -352,13 +353,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                         usageLimit = usageLimit,
                     ),
                 )
-                if (response.success && response.data != null) {
-                    _couponState.value = CouponUiState.Loaded(response.data)
-                } else {
-                    _couponActionMessage.value = response.error ?: "Couldn't save the coupon."
-                }
-            } catch (e: Exception) {
-                _couponActionMessage.value = RetrofitClient.parseError(e)
+            }.onSuccess {
+                _couponState.value = CouponUiState.Loaded(it)
+            }.onFailure {
+                _couponActionMessage.value = it.uiMessage
             }
         }
     }

@@ -27,8 +27,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * What the dashboard ViewModel still owns of the photographer's money:
- * coupons and the fail-open approval railguard. Same construction as
+ * What the dashboard ViewModel still owns that a photographer can lose money
+ * or work to: authoring an event, its coupon, and the fail-open approval
+ * railguard every restricted action reads. Same construction as
  * PhotoManagementViewModelTest: the real ViewModel over a MockWebServer.
  *
  * Plan 2 phase G moved the rest out with the ViewModels that now own it -
@@ -75,6 +76,40 @@ class PhotographerDashboardViewModelMoneyTest {
         assertTrue(check())
     }
 
+    @Test fun `authoring an event reports the backend's words on a refusal and refreshes the list on a save`() {
+        // The last two envelope sites phase E left in this file. A create and
+        // an edit go to different endpoints; both fold through the same reader.
+        route("GET $EVENTS") { ok("""{"items":[],"total":0,"offset":0,"limit":100}""") }
+        route("POST $EVENTS") {
+            MockResponse().setBody(error("EVENT_DATE_PAST", "Pick a date that hasn't passed."))
+        }
+        val vm = model()
+        vm.eventsState.awaitFirst { it is EventsState.Success }
+
+        vm.submitEvent(null, OwnedEventFormInput(title = "Cebu Run", date = "2020-01-01"))
+        assertEquals(
+            EventFormState.Error("Pick a date that hasn't passed."),
+            vm.eventFormState.awaitFirst { it is EventFormState.Error },
+        )
+
+        route("POST $EVENTS") { ok(EVENT) }
+        val listedBefore = count("GET", EVENTS)
+        vm.submitEvent(null, OwnedEventFormInput(title = "Cebu Run", date = "2026-12-01"))
+        vm.eventFormState.awaitFirst { it is EventFormState.Success }
+        awaitUntil { count("GET", EVENTS) == listedBefore + 1 } // a saved event refreshes the roster
+
+        // An edit PATCHes the event's own route; a thrown refusal still reads
+        // as the backend's sentence, not "HTTP 409".
+        route("PATCH $EVENTS/ev-1") {
+            MockResponse().setResponseCode(409).setBody(error("EVENT_LOCKED", "This event is locked."))
+        }
+        vm.submitEvent("ev-1", OwnedEventFormInput(title = "Cebu Run 2"))
+        assertEquals(
+            EventFormState.Error("This event is locked."),
+            vm.eventFormState.awaitFirst { it == EventFormState.Error("This event is locked.") },
+        )
+    }
+
     @Test fun `coupons load, save, keep the loaded coupon through a refused save, and delete`() {
         route("GET $COUPON") { ok("null") }
         val vm = model()
@@ -119,6 +154,8 @@ class PhotographerDashboardViewModelMoneyTest {
 
     private companion object {
         const val COUPON = "/api/v1/me/photographer/events/ev-1/coupon"
+        const val EVENTS = "/api/v1/me/photographer/events"
+        const val EVENT = """{"id":"ev-1","slug":"cebu-run","name":"Cebu Run","date":"2026-12-01","location":"Cebu","state":"draft","visibility":"public","pricingMode":"flat","pricePerPhoto":50.0,"description":null,"organizerName":null,"watermarkPolicy":null,"photoCount":0,"bannerUrl":null}"""
         fun error(code: String, message: String) = """{"success":false,"errors":[{"code":"$code","message":"$message"}]}"""
         fun verification(status: String) = """{"status":"$status","missing":[],"missingCodes":[],"suspendedAt":null,"suspensionReason":null}"""
         fun coupon(code: String, percent: Int) =
