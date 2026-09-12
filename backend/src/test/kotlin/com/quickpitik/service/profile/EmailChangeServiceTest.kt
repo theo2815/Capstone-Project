@@ -10,8 +10,8 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EmailChangeTokenRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.OpaqueTokens
-import com.quickpitik.service.EmailService
-import com.quickpitik.service.RefreshTokenService
+import com.quickpitik.service.email.EmailService
+import com.quickpitik.service.auth.RefreshTokenService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows

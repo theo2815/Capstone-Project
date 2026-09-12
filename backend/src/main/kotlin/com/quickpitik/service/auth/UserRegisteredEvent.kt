@@ -1,4 +1,4 @@
-package com.quickpitik.service
+package com.quickpitik.service.auth
 
 import java.util.UUID
 

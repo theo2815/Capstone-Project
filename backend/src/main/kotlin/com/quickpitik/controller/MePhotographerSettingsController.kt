@@ -17,7 +17,7 @@ import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.earnings.PayoutCycleService
-import com.quickpitik.service.StepUpService
+import com.quickpitik.service.auth.StepUpService
 import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.photographer.PayoutAccountService
 import com.quickpitik.service.photographer.PhotographerSettingsService

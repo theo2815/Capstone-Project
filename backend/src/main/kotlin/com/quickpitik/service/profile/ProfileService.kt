@@ -8,8 +8,8 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.PasswordValidator
-import com.quickpitik.service.RefreshTokenService
+import com.quickpitik.service.auth.PasswordValidator
+import com.quickpitik.service.auth.RefreshTokenService
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional

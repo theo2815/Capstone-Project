@@ -1,8 +1,7 @@
-package com.quickpitik.service
+package com.quickpitik.service.email
 
 import com.quickpitik.config.ResendProperties
 import com.quickpitik.dto.email.ResendSendEmailRequest
-import com.quickpitik.service.email.ResendClient
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service

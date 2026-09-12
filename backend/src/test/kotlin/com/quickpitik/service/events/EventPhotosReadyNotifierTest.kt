@@ -13,7 +13,7 @@ import com.quickpitik.repository.EventPhotoAlertRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.repository.UserSelfieRepository
-import com.quickpitik.service.EmailService
+import com.quickpitik.service.email.EmailService
 import com.quickpitik.service.photos.PhotoSearchService
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach

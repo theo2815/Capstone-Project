@@ -1,4 +1,4 @@
-package com.quickpitik.service
+package com.quickpitik.service.auth
 
 import com.quickpitik.config.JwtProperties
 import com.quickpitik.entity.RefreshToken

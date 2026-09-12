@@ -1,4 +1,4 @@
-package com.quickpitik.service
+package com.quickpitik.service.auth
 
 import com.quickpitik.repository.PasswordResetTokenRepository
 import org.springframework.stereotype.Service

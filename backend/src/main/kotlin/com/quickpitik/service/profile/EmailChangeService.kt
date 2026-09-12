@@ -9,8 +9,8 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EmailChangeTokenRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.OpaqueTokens
-import com.quickpitik.service.EmailService
-import com.quickpitik.service.RefreshTokenService
+import com.quickpitik.service.email.EmailService
+import com.quickpitik.service.auth.RefreshTokenService
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -28,7 +28,7 @@ import java.util.UUID
  * changes nothing at all.
  *
  * All refresh tokens are revoked on confirmation. Sign-in identity has changed,
- * and the same reasoning as [com.quickpitik.service.PasswordResetService]
+ * and the same reasoning as [com.quickpitik.service.auth.PasswordResetService]
  * applies — any session that predates the change should re-authenticate.
  */
 @Service

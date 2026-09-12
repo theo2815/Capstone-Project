@@ -6,7 +6,7 @@ import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.entity.Role
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.AuthService
+import com.quickpitik.service.auth.AuthService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired

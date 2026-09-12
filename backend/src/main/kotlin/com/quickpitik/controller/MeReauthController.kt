@@ -2,7 +2,7 @@ package com.quickpitik.controller
 
 import com.quickpitik.dto.auth.ReauthRequest
 import com.quickpitik.security.AuthPrincipal
-import com.quickpitik.service.StepUpService
+import com.quickpitik.service.auth.StepUpService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow

@@ -43,8 +43,8 @@ class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var recoveryCodes: AdminMfaRecoveryCodeRepository
     @Autowired lateinit var dataSource: javax.sql.DataSource
     @Autowired lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
-    @Autowired lateinit var auth: com.quickpitik.service.AuthService
-    @Autowired lateinit var refreshTokens: com.quickpitik.service.RefreshTokenService
+    @Autowired lateinit var auth: com.quickpitik.service.auth.AuthService
+    @Autowired lateinit var refreshTokens: com.quickpitik.service.auth.RefreshTokenService
     @Autowired lateinit var passwords: org.springframework.security.crypto.password.PasswordEncoder
     @Autowired lateinit var payoutAccounts: com.quickpitik.service.photographer.PayoutAccountService
     @Autowired lateinit var storage: com.quickpitik.service.storage.StorageService
@@ -273,7 +273,7 @@ class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
         val token = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("test-only")
             .header("alg", "RS256").subject(a.googleSub).claim("email", a.email).claim("email_verified", true).build()
         org.mockito.Mockito.`when`(decoder.decode("test-only")).thenReturn(token)
-        val google = com.quickpitik.service.GoogleAuthService(users, passwords, refreshTokens, auth, decoder,
+        val google = com.quickpitik.service.auth.GoogleAuthService(users, passwords, refreshTokens, auth, decoder,
             com.quickpitik.config.GoogleAuthProperties(clientId = "review"))
         val result = google.login(com.quickpitik.dto.auth.GoogleLoginRequest("test-only"))
         assertTrue(result.mfaRequired)

@@ -9,10 +9,10 @@ import com.quickpitik.entity.Role
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.AuthService
-import com.quickpitik.service.EmailService
-import com.quickpitik.service.GoogleAuthService
-import com.quickpitik.service.PasswordResetService
+import com.quickpitik.service.auth.AuthService
+import com.quickpitik.service.email.EmailService
+import com.quickpitik.service.auth.GoogleAuthService
+import com.quickpitik.service.auth.PasswordResetService
 import com.quickpitik.service.profile.ProfileService
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor

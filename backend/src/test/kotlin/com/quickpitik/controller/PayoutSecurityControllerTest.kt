@@ -10,7 +10,7 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.security.JwtTokenProvider
-import com.quickpitik.service.StepUpService
+import com.quickpitik.service.auth.StepUpService
 import com.quickpitik.service.admin.AdminMfaService
 import com.quickpitik.service.admin.AdminPayoutService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter

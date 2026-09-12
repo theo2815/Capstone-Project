@@ -1,4 +1,4 @@
-package com.quickpitik.service
+package com.quickpitik.service.auth
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.entity.EmailVerificationToken
@@ -7,6 +7,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EmailVerificationTokenRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.OpaqueTokens
+import com.quickpitik.service.email.EmailService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime

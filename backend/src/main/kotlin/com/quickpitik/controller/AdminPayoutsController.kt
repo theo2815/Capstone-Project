@@ -13,7 +13,7 @@ import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.dto.admin.PayoutReasonRequest
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
-import com.quickpitik.service.StepUpService
+import com.quickpitik.service.auth.StepUpService
 import com.quickpitik.service.admin.AdminPayoutService
 import jakarta.validation.Valid
 import org.springframework.security.access.prepost.PreAuthorize

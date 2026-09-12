@@ -1,4 +1,4 @@
-package com.quickpitik.service
+package com.quickpitik.service.auth
 
 import com.quickpitik.config.AuthLockoutProperties
 import com.quickpitik.entity.Role

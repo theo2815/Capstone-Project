@@ -17,7 +17,7 @@ import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.RefreshTokenService
+import com.quickpitik.service.auth.RefreshTokenService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService

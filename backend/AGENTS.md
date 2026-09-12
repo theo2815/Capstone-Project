@@ -33,8 +33,8 @@ com.quickpitik
 ├── controller/          HTTP edge only: bind → @Valid → class-level @PreAuthorize → rateLimiter.acquireOrThrow → one service call.
 │                        Named by audience: Me* · Admin* · Public* · plain (guest/public routes, webhooks).
 ├── service/<domain>/    ALL business rules. One domain owns each table (see Boundaries). Subpackages:
-│                        events · photos · photographer · orders · earnings · disbursement · admin · profile · cart · runner
-│                        + adapters/helpers: ai · storage · email · image · ratelimit · reference. Auth services sit at service/ root.
+│                        auth · events · photos · photographer · orders · earnings · disbursement · admin · profile · cart · runner
+│                        + adapters/helpers: ai · storage · email · image · ratelimit · reference. Nothing sits at service/ root.
 ├── repository/          Spring Data + JPQL/native: predicates, ordering, locks, conditional bulk UPDATEs, projections. Flat.
 ├── entity/              JPA state + tiny pure helpers (e.g. Photo.isSellable). Enums beside their entity. Flat.
 ├── dto/<domain>/        Typed wire shapes + `Entity.toDto()` extension functions in the DTO file. Never Map<String, Any?>.

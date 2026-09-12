@@ -1,7 +1,7 @@
 package com.quickpitik.config
 
-import com.quickpitik.service.EmailVerificationListener
-import com.quickpitik.service.UserRegisteredEvent
+import com.quickpitik.service.auth.EmailVerificationListener
+import com.quickpitik.service.auth.UserRegisteredEvent
 import com.quickpitik.service.orders.OrderPaidEmailListener
 import com.quickpitik.service.orders.OrderPaidEvent
 import com.quickpitik.service.photographer.PayoutAccountChangedEmailListener

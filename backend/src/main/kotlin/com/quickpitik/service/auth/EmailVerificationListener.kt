@@ -1,4 +1,4 @@
-package com.quickpitik.service
+package com.quickpitik.service.auth
 
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
