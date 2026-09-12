@@ -1,6 +1,5 @@
 package com.quickpitik.service.orders
 
-import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.PaymongoRefundAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundResource
@@ -18,7 +17,6 @@ import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
-import com.quickpitik.entity.Transaction
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.DownloadGrantRepository
@@ -26,8 +24,8 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.service.admin.AdminDecisionLogService
+import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.Test
@@ -42,30 +40,27 @@ import kotlin.test.assertNotNull
 
 class PaymongoRefundServiceTest {
     // ₱150 list, PHOTO20 (20% of the photographer's ₱112.50 share = ₱22.50):
-    // the runner paid ₱127.50, the ledger holds kept 90.00 / discount 22.50.
+    // the runner paid ₱127.50. The ledger reversal itself is TransactionMintingService's
+    // ("a full refund negates the sale row exactly"); here we only prove the
+    // charged amount is what reaches both PayMongo and the ledger.
     @Test
-    fun `a full refund of a coupon item returns what the runner paid and reverses the ledger row exactly`() {
+    fun `a full refund of a coupon item returns what the runner paid and hands it to the ledger`() {
         val h = couponHarness()
 
         h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, "Duplicate charge")
 
         assertEquals(12_750L, h.sentRequest!!.data.attributes.amount)
-        val refund = h.minted.single()
-        assertEquals(BigDecimal("-90.00"), refund.amountKeptPhp)
-        assertEquals(BigDecimal("-22.50"), refund.discountPhp)
-        assertEquals(h.original.id, refund.refundOf)
+        Mockito.verify(h.minting).mintRefund(h.dispute, BigDecimal("127.50"), h.photographerId)
     }
 
     @Test
-    fun `a partial refund of a coupon item reverses kept and discount in proportion`() {
+    fun `a partial refund of a coupon item returns only the requested amount`() {
         val h = couponHarness(providerAmount = 6_375L)
 
         h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_PARTIAL, BigDecimal("63.75"), null)
 
         assertEquals(6_375L, h.sentRequest!!.data.attributes.amount)
-        val refund = h.minted.single()
-        assertEquals(BigDecimal("-45.00"), refund.amountKeptPhp)
-        assertEquals(BigDecimal("-11.25"), refund.discountPhp)
+        Mockito.verify(h.minting).mintRefund(h.dispute, BigDecimal("63.75"), h.photographerId)
     }
 
     @Test
@@ -83,9 +78,9 @@ class PaymongoRefundServiceTest {
         val service: PaymongoRefundService,
         val adminId: UUID,
         val dispute: Dispute,
-        val original: Transaction,
+        val photographerId: UUID,
         val client: PaymongoClient,
-        val minted: List<Transaction>,
+        val minting: TransactionMintingService,
         val sentRequestRef: () -> PaymongoRefundRequest?,
     ) {
         val sentRequest: PaymongoRefundRequest? get() = sentRequestRef()
@@ -113,21 +108,12 @@ class PaymongoRefundServiceTest {
             amountPhp = order.totalPhp,
             status = PaymentStatus.SUCCEEDED,
         )
-        val original = Transaction(
-            paidAt = OffsetDateTime.now(),
-            photographerId = photographerId,
-            eventId = order.eventId,
-            photoId = photo.id,
-            orderId = order.id,
-            amountKeptPhp = BigDecimal("90.00"),
-            discountPhp = BigDecimal("22.50"),
-        )
         val disputes = Mockito.mock(DisputeRepository::class.java)
         val orders = Mockito.mock(OrderRepository::class.java)
         val items = Mockito.mock(OrderItemRepository::class.java)
         val payments = Mockito.mock(PaymentRepository::class.java)
         val photos = Mockito.mock(PhotoRepository::class.java)
-        val transactions = Mockito.mock(TransactionRepository::class.java)
+        val minting = Mockito.mock(TransactionMintingService::class.java)
         val client = Mockito.mock(PaymongoClient::class.java)
         val decisions = Mockito.mock(AdminDecisionLogService::class.java)
         Mockito.`when`(disputes.findByIdForUpdate(dispute.id)).thenReturn(dispute)
@@ -137,14 +123,7 @@ class PaymongoRefundServiceTest {
         )
         Mockito.`when`(payments.findByOrderId(order.id)).thenReturn(listOf(payment))
         Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
-        Mockito.`when`(orders.findById(order.id)).thenReturn(Optional.of(order))
         Mockito.`when`(photos.findById(photo.id)).thenReturn(Optional.of(photo))
-        Mockito.`when`(transactions.findByOrderIdAndPhotoIdAndIsRefund(order.id, photo.id, false)).thenReturn(original)
-        Mockito.`when`(transactions.findByOrderIdAndPhotoIdAndIsRefund(order.id, photo.id, true)).thenReturn(null)
-        val minted = mutableListOf<Transaction>()
-        Mockito.`when`(transactions.save(anyArg())).thenAnswer { call ->
-            (call.arguments[0] as Transaction).also { minted += it }
-        }
         var sentRequest: PaymongoRefundRequest? = null
         Mockito.`when`(client.createRefund(anyArg(), anyArg())).thenAnswer { call ->
             sentRequest = call.getArgument(0)
@@ -169,14 +148,13 @@ class PaymongoRefundServiceTest {
             payments,
             Mockito.mock(DownloadGrantRepository::class.java),
             photos,
-            transactions,
-            PlatformProperties(),
+            minting,
             client,
             decisions,
             Mockito.mock(RunnerMessagesService::class.java),
             testTransactionTemplate(),
         )
-        return CouponHarness(service, adminId, dispute, original, client, minted) { sentRequest }
+        return CouponHarness(service, adminId, dispute, photographerId, client, minting) { sentRequest }
     }
     @Test
     fun `successful full refund uses PayMongo then revokes the grant`() {
@@ -212,7 +190,7 @@ class PaymongoRefundServiceTest {
         val payments = Mockito.mock(PaymentRepository::class.java)
         val grants = Mockito.mock(DownloadGrantRepository::class.java)
         val photos = Mockito.mock(PhotoRepository::class.java)
-        val transactions = Mockito.mock(TransactionRepository::class.java)
+        val minting = Mockito.mock(TransactionMintingService::class.java)
         val client = Mockito.mock(PaymongoClient::class.java)
         val decisions = Mockito.mock(AdminDecisionLogService::class.java)
         val runnerMessages = Mockito.mock(RunnerMessagesService::class.java)
@@ -249,8 +227,7 @@ class PaymongoRefundServiceTest {
             payments,
             grants,
             photos,
-            transactions,
-            PlatformProperties(),
+            minting,
             client,
             decisions,
             runnerMessages,
@@ -302,8 +279,7 @@ class PaymongoRefundServiceTest {
             payments,
             Mockito.mock(DownloadGrantRepository::class.java),
             Mockito.mock(PhotoRepository::class.java),
-            Mockito.mock(TransactionRepository::class.java),
-            PlatformProperties(),
+            Mockito.mock(TransactionMintingService::class.java),
             client,
             Mockito.mock(AdminDecisionLogService::class.java),
             Mockito.mock(RunnerMessagesService::class.java),

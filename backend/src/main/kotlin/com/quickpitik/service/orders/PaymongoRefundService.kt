@@ -2,7 +2,6 @@ package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.toCentavos
-import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundRequestAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequestEnvelope
@@ -14,7 +13,6 @@ import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.RunnerMessageKind
-import com.quickpitik.entity.Transaction
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -24,11 +22,10 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.service.admin.AdminDecisionLogService
+import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.runner.RunnerMessagesService
 import org.slf4j.LoggerFactory
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -47,8 +44,7 @@ class PaymongoRefundService(
     private val paymentRepository: PaymentRepository,
     private val downloadGrantRepository: DownloadGrantRepository,
     private val photoRepository: PhotoRepository,
-    private val transactionRepository: TransactionRepository,
-    private val platformProperties: PlatformProperties,
+    private val transactionMintingService: TransactionMintingService,
     private val paymongoClient: PaymongoClient,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val runnerMessagesService: RunnerMessagesService,
@@ -258,7 +254,7 @@ class PaymongoRefundService(
         disputeRepository.save(dispute)
 
         val photo = photoRepository.findById(dispute.photoId).orElse(null)
-        photo?.photographerId?.let { mintRefundTransaction(dispute, it, refundAmount) }
+        photo?.photographerId?.let { transactionMintingService.mintRefund(dispute, refundAmount, it) }
 
         if (resolution == DisputeResolution.REFUND_FULL) {
             downloadGrantRepository.deleteById(DownloadGrantId(dispute.orderId, dispute.photoId))
@@ -319,68 +315,6 @@ class PaymongoRefundService(
                 orderId = dispute.orderId,
             )
         }
-    }
-
-    private fun mintRefundTransaction(dispute: Dispute, photographerId: UUID, amount: BigDecimal) {
-        val existing = transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(
-            dispute.orderId,
-            dispute.photoId,
-            true,
-        )
-        if (existing != null) return
-        val original = transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(
-            dispute.orderId,
-            dispute.photoId,
-            false,
-        )
-        val order = orderRepository.findById(dispute.orderId).orElse(null) ?: return
-        val (keptReversal, discountReversal) = refundLedgerSplit(dispute, original, amount)
-        try {
-            transactionRepository.save(
-                Transaction(
-                    paidAt = order.paidAt ?: order.createdAt,
-                    photographerId = photographerId,
-                    eventId = order.eventId,
-                    photoId = dispute.photoId,
-                    orderId = order.id,
-                    buyerId = order.userId,
-                    buyerDisplayName = original?.buyerDisplayName ?: "",
-                    amountKeptPhp = keptReversal,
-                    discountPhp = discountReversal,
-                    isRefund = true,
-                    refundOf = original?.id,
-                ),
-            )
-        } catch (_: DataIntegrityViolationException) {
-            // Concurrent reconciliation already minted the unique refund row.
-        }
-    }
-
-    // What comes back off the ledger, as (kept, discount) negatives. With the
-    // original sale row in hand the reversal is exact: a full refund negates
-    // it outright, a partial refund scales both figures by the fraction of the
-    // charged price returned. Rows without a sale row (pre-V9 legacy) keep the
-    // old keepRate estimate.
-    private fun refundLedgerSplit(
-        dispute: Dispute,
-        original: Transaction?,
-        amount: BigDecimal,
-    ): Pair<BigDecimal, BigDecimal> {
-        val legacy = amount.multiply(platformProperties.photographerKeepRate)
-            .setScale(2, RoundingMode.HALF_UP)
-            .negate() to BigDecimal.ZERO
-        if (original == null) return legacy
-        if (dispute.resolution == DisputeResolution.REFUND_FULL) {
-            return original.amountKeptPhp.negate() to original.discountPhp.negate()
-        }
-        val charged = orderItemRepository.findByIdOrderId(dispute.orderId)
-            .firstOrNull { it.id.photoId == dispute.photoId }
-            ?.let { it.pricePhpAtPurchase.subtract(it.discountPhp) }
-            ?.takeIf { it.signum() > 0 }
-            ?: return legacy
-        val fraction = amount.divide(charged, 10, RoundingMode.HALF_UP)
-        return original.amountKeptPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate() to
-            original.discountPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate()
     }
 
     private fun validatePartialAmount(requested: BigDecimal?, fullPrice: BigDecimal): BigDecimal {
