@@ -90,10 +90,7 @@ class AdminFlagService(
         flagRepository.save(flag)
 
         if (flag.targetKind == FlagTargetKind.PHOTO) {
-            photoRepository.findById(flag.targetId).ifPresent { photo ->
-                photo.status = PhotoStatus.HIDDEN
-                photoRepository.save(photo)
-            }
+            photoRepository.hideForFlag(flag.targetId)
         }
 
         return hydrateOne(flag)
@@ -142,10 +139,12 @@ class AdminFlagService(
         )
         if (stillHiddenByAnother) return
         photoRepository.findById(flag.targetId).ifPresent { photo ->
-            if (photo.status == PhotoStatus.HIDDEN) {
-                photo.status = PhotoStatus.LIVE
-                photoRepository.save(photo)
-            }
+            // A photo hidden mid-pipeline never rendered a preview: LIVE would
+            // serve s3Key — the clean, unwatermarked original — as the public
+            // thumbnail. Hand it back to the watermark sweep instead. The
+            // HIDDEN guard lives in the query.
+            val target = if (photo.watermarkS3Key == null) PhotoStatus.PROCESSING else PhotoStatus.LIVE
+            photoRepository.unhideForFlag(photo.id, target)
         }
     }
 

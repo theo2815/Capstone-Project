@@ -127,6 +127,29 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query("UPDATE Photo p SET p.processingAttempts = p.processingAttempts + 1 WHERE p.id = :id")
     fun incrementProcessingAttempts(@Param("id") id: UUID): Int
 
+    // Admin flag queue. Conditional for the same reason as publishWatermarked:
+    // the watermark pipeline writes this row concurrently, so a load-modify-save
+    // from the flag queue would clobber the columns it just set. Already-HIDDEN
+    // rows are a no-op.
+    @Modifying
+    @Query(
+        "UPDATE Photo p SET p.status = com.quickpitik.entity.PhotoStatus.HIDDEN " +
+            "WHERE p.id = :id AND p.status IN (com.quickpitik.entity.PhotoStatus.LIVE, " +
+            "com.quickpitik.entity.PhotoStatus.PROCESSING)",
+    )
+    fun hideForFlag(@Param("id") id: UUID): Int
+
+    // Restore. The target is the caller's call (see AdminFlagService): LIVE only
+    // when a derived asset exists, PROCESSING otherwise. processingAttempts
+    // resets so a budget exhausted before the hide can't strand the row outside
+    // findWatermarkBacklog.
+    @Modifying
+    @Query(
+        "UPDATE Photo p SET p.status = :target, p.processingAttempts = 0 " +
+            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.HIDDEN",
+    )
+    fun unhideForFlag(@Param("id") id: UUID, @Param("target") target: PhotoStatus): Int
+
     // Fingerprint registry (V42) catch-up: LIVE previews that predate the
     // phash column. PhotoWatermarkTrigger.backfillPhash hashes them in batches.
     @Query(

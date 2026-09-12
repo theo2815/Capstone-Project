@@ -71,12 +71,21 @@ class AdminFlagServiceTest {
         AdminProperties(flagsEnabled = true),
     )
 
-    private fun photo(status: PhotoStatus = PhotoStatus.LIVE) = Photo(
+    private fun photo(status: PhotoStatus = PhotoStatus.LIVE, watermarkKey: String? = null) = Photo(
         eventId = UUID.randomUUID(),
         s3Key = "events/e/photos/p/original.jpg",
         pricePhp = BigDecimal.TEN,
         status = status,
+        watermarkS3Key = watermarkKey,
     )
+
+    private fun noOtherHiddenFlag(f: Flag, other: Boolean = false) {
+        Mockito.`when`(
+            flagRepository.existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
+                f.targetKindWire, f.targetId, FlagStatus.HIDDEN.wire, f.id,
+            ),
+        ).thenReturn(other)
+    }
 
     private fun flag(status: FlagStatus, photo: Photo? = null): Flag {
         val f = Flag(
@@ -104,13 +113,15 @@ class AdminFlagServiceTest {
     }
 
     @Test
-    fun `hide cascades HIDDEN onto the photo`() {
+    fun `hide cascades HIDDEN onto the photo through a conditional update`() {
         val p = photo()
         val f = flag(FlagStatus.OPEN, p)
         val dto = service().hide(adminId, f.id, null)
         assertEquals("hidden", dto.status)
-        assertEquals(PhotoStatus.HIDDEN, p.status)
-        Mockito.verify(photoRepository).save(p)
+        Mockito.verify(photoRepository).hideForFlag(p.id)
+        // A full-row save would clobber whatever the watermark pipeline wrote
+        // to the same row between the read and the write.
+        Mockito.verify(photoRepository, Mockito.never()).save(anyArg<Photo>())
     }
 
     @Test
@@ -123,30 +134,35 @@ class AdminFlagServiceTest {
     }
 
     @Test
-    fun `dismissing a hidden flag restores the photo when nothing else hides it`() {
-        val p = photo(PhotoStatus.HIDDEN)
+    fun `restoring a watermarked photo returns it to LIVE`() {
+        val p = photo(PhotoStatus.HIDDEN, watermarkKey = "events/e/photos/p/wm.jpg")
         val f = flag(FlagStatus.HIDDEN, p)
-        Mockito.`when`(
-            flagRepository.existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
-                f.targetKindWire, f.targetId, FlagStatus.HIDDEN.wire, f.id,
-            ),
-        ).thenReturn(false)
+        noOtherHiddenFlag(f)
         val dto = service().dismiss(adminId, f.id, "false alarm")
         assertEquals("dismissed", dto.status)
-        assertEquals(PhotoStatus.LIVE, p.status)
+        Mockito.verify(photoRepository).unhideForFlag(p.id, PhotoStatus.LIVE)
+    }
+
+    @Test
+    fun `restoring a photo without a watermark key returns it to PROCESSING`() {
+        val p = photo(PhotoStatus.HIDDEN)
+        val f = flag(FlagStatus.HIDDEN, p)
+        noOtherHiddenFlag(f)
+        service().resolve(adminId, f.id, null)
+        // LIVE would publish the clean original: with no derived asset,
+        // PhotoService.resolveThumbnailUrl falls back to s3Key. PROCESSING
+        // hands the row back to the watermark sweep instead.
+        Mockito.verify(photoRepository).unhideForFlag(p.id, PhotoStatus.PROCESSING)
+        Mockito.verify(photoRepository, Mockito.never()).unhideForFlag(p.id, PhotoStatus.LIVE)
     }
 
     @Test
     fun `dismissing a hidden flag keeps the photo hidden while another hidden flag remains`() {
         val p = photo(PhotoStatus.HIDDEN)
         val f = flag(FlagStatus.HIDDEN, p)
-        Mockito.`when`(
-            flagRepository.existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
-                f.targetKindWire, f.targetId, FlagStatus.HIDDEN.wire, f.id,
-            ),
-        ).thenReturn(true)
+        noOtherHiddenFlag(f, other = true)
         service().dismiss(adminId, f.id, null)
-        assertEquals(PhotoStatus.HIDDEN, p.status)
+        Mockito.verify(photoRepository, Mockito.never()).unhideForFlag(anyArg(), anyArg())
     }
 
     @Test

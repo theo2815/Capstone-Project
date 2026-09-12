@@ -259,4 +259,45 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         grants.saveAndFlush(grant)
         assertTrue(grants.findOwnedPhotoIdsByUserAndPhotoIds(buyer.id, listOf(photo.id)).isEmpty())
     }
+
+    // Each conditional update gets its own transaction, as AdminFlagService's
+    // does: a @Modifying query without one throws, and reading inside the
+    // writing transaction answers from the persistence context, not Postgres.
+    private fun inTx(block: () -> Int): Int = tx.execute { block() }!!
+
+    // The flag queue's two conditional updates (P1.5). Mocks never parse JPQL,
+    // and a bulk SET binding an @Enumerated(STRING) column is exactly the shape
+    // that compiles clean and writes an ordinal at runtime.
+    @Test fun `flag hide and restore move a watermarked photo between HIDDEN and LIVE`() {
+        assertEquals(1, inTx { photos.hideForFlag(photo.id) })
+        assertEquals(PhotoStatus.HIDDEN, photos.findById(photo.id).get().status)
+        assertEquals(0, inTx { photos.hideForFlag(photo.id) }, "hiding an already-hidden photo must be a no-op")
+        assertEquals(1, inTx { photos.unhideForFlag(photo.id, PhotoStatus.LIVE) })
+        assertEquals(PhotoStatus.LIVE, photos.findById(photo.id).get().status)
+        assertEquals(0, inTx { photos.unhideForFlag(photo.id, PhotoStatus.LIVE) }, "restore must require HIDDEN")
+    }
+
+    // The invariant P1.5 exists for: a photo hidden before its watermark
+    // rendered has no derived asset, so LIVE would serve the clean original as
+    // the public thumbnail. It goes back to the sweep instead.
+    @Test fun `a photo hidden mid-pipeline restores to PROCESSING and re-enters the watermark backlog`() {
+        val pending = photos.saveAndFlush(
+            Photo(
+                eventId = event.id,
+                photographerId = owner.id,
+                s3Key = "review/${UUID.randomUUID()}/original.jpg",
+                pricePhp = BigDecimal("125"),
+                status = PhotoStatus.PROCESSING,
+                uploadedAt = OffsetDateTime.now().minusMinutes(10),
+                processingAttempts = 3,
+            ),
+        )
+        assertEquals(1, inTx { photos.hideForFlag(pending.id) }, "a PROCESSING photo must still be hideable")
+        assertEquals(1, inTx { photos.unhideForFlag(pending.id, PhotoStatus.PROCESSING) })
+        val restored = photos.findById(pending.id).get()
+        assertEquals(PhotoStatus.PROCESSING, restored.status)
+        assertEquals(0, restored.processingAttempts, "an exhausted budget would strand the row outside the sweep")
+        val backlog = photos.findWatermarkBacklog(3, OffsetDateTime.now(), PageRequest.of(0, 200)).map { it.id }
+        assertTrue(pending.id in backlog, "the sweep is what re-renders the preview after a restore")
+    }
 }
