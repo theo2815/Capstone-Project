@@ -196,6 +196,33 @@ class StudioSettingsViewModelTest {
         assertEquals(1, count("PUT", "/api/v1/me/photographer/watermark/settings"))
     }
 
+    @Test fun `a step that refuses inside a 200 envelope stops the chain just like a thrown one`() {
+        // The 409 case above leaves the chain through the catch, which always
+        // stops. This is the other refusal shape - a 200 whose envelope says
+        // success=false - and only the per-step `if (!response.success)` guard
+        // stops that one.
+        route("PUT /api/v1/me/photographer/brand") { ok("{}") }
+        route("PUT /api/v1/me/photographer/handle") {
+            MockResponse().setBody("""{"success":false,"errors":[{"code":"RESERVED_HANDLE","message":"That handle is reserved."}]}""")
+        }
+        route("PUT /api/v1/me/photographer/region") { ok("{}") }
+        val vm = model()
+        vm.brandSettings.awaitFirst { it != null }
+
+        vm.saveSettings(
+            brandName = "Juan Photos", bio = "bio", gcashName = "", gcashNumber = "", handle = "juan",
+            regionCode = "07", provinceCode = "0722", socialUrl = "", avatarUri = null, coverUri = null,
+            watermarkUri = null,
+        )
+        assertEquals(
+            ActionState.Failed("That handle is reserved."),
+            vm.actionState.awaitFirst { it is ActionState.Failed },
+        )
+        assertEquals(1, count("PUT", "/api/v1/me/photographer/handle"))
+        assertEquals(0, count("PUT", "/api/v1/me/photographer/region")) // never reached
+        vm.isSavingSettings.awaitFirst { !it }
+    }
+
     private companion object {
         const val PAYOUTS = "/api/v1/me/photographer/payouts"
         const val BRAND = """{"brandName":"Juan Photos","brandColor":"amber","bio":"","handle":"juan","regionCode":"07","provinceCode":"0722","coverUrl":null,"watermarkUrl":null,"avatarUrl":null,"watermarkSettings":{"opacity":0.7,"scale":0.15,"landscapeX":1.0,"landscapeY":1.0,"portraitX":1.0,"portraitY":1.0}}"""

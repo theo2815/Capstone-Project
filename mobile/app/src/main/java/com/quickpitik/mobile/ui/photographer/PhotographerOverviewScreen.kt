@@ -100,6 +100,7 @@ internal data class SetupStep(
 fun PhotographerOverviewScreen(
     viewModel: PhotographerDashboardViewModel,
     settingsViewModel: StudioSettingsViewModel,
+    earningsViewModel: StudioEarningsViewModel,
     onNavigateToSettings: () -> Unit,
     // Studio ROUTE name (e.g. "studio/capture") — the tabs are NavHost routes
     // now, and MainActivity's studioNavigate owns the per-tab refresh.
@@ -108,7 +109,7 @@ fun PhotographerOverviewScreen(
 ) {
     val verificationState by viewModel.verificationState.collectAsState()
     val eventsState by viewModel.eventsState.collectAsState()
-    val earningsUiState by viewModel.earningsUiState.collectAsState()
+    val earningsUiState by earningsViewModel.earningsUiState.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val context = LocalContext.current
     val sessionManager = remember { SessionManager.getInstance(context) }
@@ -279,7 +280,7 @@ fun PhotographerOverviewScreen(
                 is EarningsUiState.Error -> ErrorView(
                     message = (earningsUiState as EarningsUiState.Error).message,
                     title = "Couldn't load your studio stats",
-                    onRetry = { viewModel.fetchEarningsAndTransactions() },
+                    onRetry = { earningsViewModel.fetchEarningsAndTransactions() },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 is EarningsUiState.Loading -> LoadingSkeleton(
@@ -305,7 +306,7 @@ fun PhotographerOverviewScreen(
                 onRefresh = {
                     viewModel.fetchVerificationStatus()
                     viewModel.fetchEvents()
-                    viewModel.fetchEarningsAndTransactions()
+                    earningsViewModel.fetchEarningsAndTransactions()
                     viewModel.fetchMessages()
                     settingsViewModel.fetchSettings()
                 },

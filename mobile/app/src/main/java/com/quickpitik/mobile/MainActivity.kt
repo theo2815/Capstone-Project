@@ -95,6 +95,7 @@ import com.quickpitik.mobile.ui.photographer.PhotographerPublicProfileScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerSettingsScreen
 import com.quickpitik.mobile.ui.photographer.PublicPhotographerViewModel
 import com.quickpitik.mobile.ui.photographer.STUDIO_TAB_ROUTES
+import com.quickpitik.mobile.ui.photographer.StudioEarningsViewModel
 import com.quickpitik.mobile.ui.photographer.StudioInboxLifecycle
 import com.quickpitik.mobile.ui.photographer.StudioSettingsViewModel
 import com.quickpitik.mobile.ui.photographer.StudioTabScaffold
@@ -294,11 +295,12 @@ class MainActivity : ComponentActivity() {
                         navController.getBackStackEntry("studio")
                     }.getOrNull() ?: return@navigate
                     val vm = ViewModelProvider(entry)[PhotographerDashboardViewModel::class.java]
+                    val owner = ViewModelProvider(entry)
                     when (route) {
                         "studio/home" -> {
                             vm.fetchVerificationStatus()
                             vm.fetchEvents()
-                            vm.fetchEarningsAndTransactions()
+                            owner[StudioEarningsViewModel::class.java].fetchEarningsAndTransactions()
                             // REST hydration for the inbox — the WS push in the
                             // VM only refetches once the socket actually opens,
                             // and Overview derives the rejection banner from
@@ -312,10 +314,11 @@ class MainActivity : ComponentActivity() {
                             // mount-time LaunchedEffect).
                             vm.fetchPublicEvents()
                         }
-                        "studio/earnings" -> vm.fetchEarningsAndTransactions()
+                        "studio/earnings" ->
+                            owner[StudioEarningsViewModel::class.java].fetchEarningsAndTransactions()
                         "studio/settings" -> {
                             vm.fetchVerificationStatus()
-                            ViewModelProvider(entry)[StudioSettingsViewModel::class.java].fetchSettings()
+                            owner[StudioSettingsViewModel::class.java].fetchSettings()
                         }
                     }
                 }
@@ -671,6 +674,7 @@ class MainActivity : ComponentActivity() {
                                         PhotographerOverviewScreen(
                                             viewModel = vm,
                                             settingsViewModel = settingsVm,
+                                            earningsViewModel = studioEarningsViewModel(navController, entry),
                                             onNavigateToSettings = { studioNavigate("studio/settings") },
                                             onNavigateToTab = studioNavigate,
                                         )
@@ -724,7 +728,10 @@ class MainActivity : ComponentActivity() {
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
-                                        PhotographerEarningsScreen(viewModel = vm)
+                                        PhotographerEarningsScreen(
+                                            viewModel = vm,
+                                            earningsViewModel = studioEarningsViewModel(navController, entry),
+                                        )
                                     }
                                 }
                                 composable("studio/settings") { entry ->
@@ -1198,6 +1205,12 @@ private fun studioSettingsViewModel(
     navController: NavHostController,
     entry: NavBackStackEntry,
 ): StudioSettingsViewModel = viewModel(studioGraphEntry(navController, entry))
+
+@Composable
+private fun studioEarningsViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): StudioEarningsViewModel = viewModel(studioGraphEntry(navController, entry))
 
 @Composable
 private fun runnerGraphEntry(

@@ -75,19 +75,6 @@ sealed class EventsState {
     data class Error(val message: String) : EventsState()
 }
 
-sealed class EarningsUiState {
-    object Loading : EarningsUiState()
-    data class Success(
-        val overview: EarningsOverviewDto,
-        val balance: PayoutBalanceDto,
-        val transactions: List<PhotographerTransactionDto>,
-        // Server-computed per-month totals over ALL transactions (not just the
-        // loaded page) — drives the ledger's month subtotals.
-        val monthTotals: Map<String, Double> = emptyMap(),
-    ) : EarningsUiState()
-    data class Error(val message: String) : EarningsUiState()
-}
-
 sealed class VerificationUiState {
     object Loading : VerificationUiState()
     data class Success(val verification: com.quickpitik.mobile.data.remote.VerificationSubmitResponseDto) : VerificationUiState()
@@ -342,9 +329,6 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     private val _queueStats = MutableStateFlow(QueueStats())
     val queueStats: StateFlow<QueueStats> = _queueStats
 
-    private val _earningsUiState = MutableStateFlow<EarningsUiState>(EarningsUiState.Loading)
-    val earningsUiState: StateFlow<EarningsUiState> = _earningsUiState
-
     private val _verificationState = MutableStateFlow<VerificationUiState>(VerificationUiState.Loading)
     val verificationState: StateFlow<VerificationUiState> = _verificationState
 
@@ -371,9 +355,6 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     val couponState: StateFlow<CouponUiState> = _couponState
     private val _couponActionMessage = MutableStateFlow<String?>(null)
     val couponActionMessage: StateFlow<String?> = _couponActionMessage
-
-    private val _payoutActionState = MutableStateFlow<String?>(null)
-    val payoutActionState: StateFlow<String?> = _payoutActionState
 
     // Result of Submit / Withdraw on the settings screen's verification card.
     // Its own channel, not the settings one: this ViewModel owns the status
@@ -422,7 +403,6 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     init {
         fetchEvents()
         observeQueue()
-        fetchEarningsAndTransactions()
         fetchVerificationStatus()
         observeInboxPush()
         cameraManager.start()
@@ -515,115 +495,6 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     fun refreshCameraConnection() {
         cameraManager.refresh()
-    }
-
-    fun fetchEarningsAndTransactions() {
-        viewModelScope.launch {
-            _earningsUiState.value = EarningsUiState.Loading
-            val token = sessionManager.getAccessToken()
-            if (token == null) {
-                _earningsUiState.value = EarningsUiState.Error("No valid session. Please log in again.")
-                return@launch
-            }
-
-            try {
-                // Independent endpoints — fired concurrently. Sequential
-                // awaits made the Earnings tab pay the sum of three
-                // round-trips instead of the slowest one.
-                val (overviewResponse, balanceResponse, transactionsResponse) =
-                    coroutineScope {
-                        val overview = async {
-                            RetrofitClient.apiService.getEarningsOverview("Bearer $token")
-                        }
-                        val balance = async {
-                            RetrofitClient.apiService.getPayoutBalance("Bearer $token")
-                        }
-                        val transactions = async {
-                            RetrofitClient.apiService.getTransactionsLedger("Bearer $token")
-                        }
-                        Triple(overview.await(), balance.await(), transactions.await())
-                    }
-
-                if (overviewResponse.success && overviewResponse.data != null &&
-                    balanceResponse.success && balanceResponse.data != null &&
-                    transactionsResponse.success && transactionsResponse.data != null
-                ) {
-                    _earningsUiState.value = EarningsUiState.Success(
-                        overview = overviewResponse.data,
-                        balance = balanceResponse.data,
-                        transactions = transactionsResponse.data.items,
-                        monthTotals = transactionsResponse.data.monthTotals,
-                    )
-                } else {
-                    val errMsg = overviewResponse.error 
-                        ?: balanceResponse.error 
-                        ?: transactionsResponse.error 
-                        ?: "Failed to load financial records."
-                    _earningsUiState.value = EarningsUiState.Error(errMsg)
-                }
-            } catch (e: Exception) {
-                _earningsUiState.value = EarningsUiState.Error(RetrofitClient.parseError(e))
-            }
-        }
-    }
-
-    fun submitPayoutRequest() {
-        viewModelScope.launch {
-            _payoutActionState.value = "processing"
-            val token = sessionManager.getAccessToken()
-            if (token == null) {
-                _payoutActionState.value = "Error: No active login session."
-                return@launch
-            }
-
-            try {
-                val response = RetrofitClient.apiService.requestPayout("Bearer $token")
-                if (response.success && response.data != null) {
-                    _payoutActionState.value = "Success: Payout request submitted successfully!"
-                    fetchEarningsAndTransactions()
-                } else {
-                    _payoutActionState.value = "Error: ${response.error ?: "Payout request rejected."}"
-                }
-            } catch (e: Exception) {
-                // PAYOUT_NO_ACCOUNT / PAYOUT_BELOW_MINIMUM / PAYOUT_REQUEST_OPEN
-                // arrive as non-2xx — surface the server's reason, not
-                // "HTTP 409 Conflict".
-                val err = RetrofitClient.parseHttpError(e)
-                _payoutActionState.value =
-                    "Error: ${err?.message ?: RetrofitClient.parseError(e)}"
-            }
-        }
-    }
-
-    fun clearPayoutActionState() {
-        _payoutActionState.value = null
-    }
-
-    /** Withdraws a HELD payout request (web WithdrawPayoutModal parity). */
-    fun withdrawPayoutRequest(cycleId: String) {
-        viewModelScope.launch {
-            _payoutActionState.value = "processing"
-            val token = sessionManager.getAccessToken()
-            if (token == null) {
-                _payoutActionState.value = "Error: No active login session."
-                return@launch
-            }
-            try {
-                val response = RetrofitClient.apiService.withdrawPayout("Bearer $token", cycleId)
-                if (response.success) {
-                    _payoutActionState.value =
-                        "Success: Request withdrawn — you can file a new one when ready."
-                    fetchEarningsAndTransactions()
-                } else {
-                    _payoutActionState.value =
-                        "Error: ${response.error ?: "Couldn't withdraw the request."}"
-                }
-            } catch (e: Exception) {
-                val err = RetrofitClient.parseHttpError(e)
-                _payoutActionState.value =
-                    "Error: ${err?.message ?: RetrofitClient.parseError(e)}"
-            }
-        }
     }
 
     // Returns the Job so pull-to-refresh can join() it (fire-and-forget

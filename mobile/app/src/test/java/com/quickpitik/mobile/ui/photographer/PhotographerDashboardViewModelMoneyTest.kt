@@ -27,13 +27,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * What the dashboard ViewModel still owns of the photographer's money: the
- * payout request's backend reasons, coupons, and the fail-open approval
- * railguard. Same construction as PhotoManagementViewModelTest: the real
- * ViewModel over a MockWebServer.
+ * What the dashboard ViewModel still owns of the photographer's money:
+ * coupons and the fail-open approval railguard. Same construction as
+ * PhotoManagementViewModelTest: the real ViewModel over a MockWebServer.
  *
- * The payout-account and settings-save cases moved to
- * StudioSettingsViewModelTest with plan 2 phase G.
+ * Plan 2 phase G moved the rest out with the ViewModels that now own it -
+ * payout accounts and the settings save to StudioSettingsViewModelTest, the
+ * payout request to StudioEarningsViewModelTest.
  */
 @RunWith(RobolectricTestRunner::class)
 class PhotographerDashboardViewModelMoneyTest {
@@ -73,24 +73,6 @@ class PhotographerDashboardViewModelMoneyTest {
         val deadline = System.currentTimeMillis() + 5_000
         while (!check() && System.currentTimeMillis() < deadline) Thread.sleep(5)
         assertTrue(check())
-    }
-
-    @Test fun `a payout request surfaces the backend's reason, and a success refreshes the wallet`() {
-        route("POST $PAYOUTS/request") {
-            MockResponse().setResponseCode(409).setBody(error("PAYOUT_BELOW_MINIMUM", "You need at least 500 pesos to request a payout."))
-        }
-        val vm = model()
-        vm.submitPayoutRequest()
-        assertEquals(
-            "Error: You need at least 500 pesos to request a payout.",
-            vm.payoutActionState.awaitFirst { it != null && it != "processing" },
-        )
-
-        route("POST $PAYOUTS/request") { ok(PAYOUT) }
-        val earningsBefore = count("GET", "/api/v1/me/photographer/earnings")
-        vm.submitPayoutRequest()
-        vm.payoutActionState.awaitFirst { it == "Success: Payout request submitted successfully!" }
-        awaitUntil { count("GET", "/api/v1/me/photographer/earnings") == earningsBefore + 1 }
     }
 
     @Test fun `coupons load, save, keep the loaded coupon through a refused save, and delete`() {
@@ -136,9 +118,7 @@ class PhotographerDashboardViewModelMoneyTest {
     }
 
     private companion object {
-        const val PAYOUTS = "/api/v1/me/photographer/payouts"
         const val COUPON = "/api/v1/me/photographer/events/ev-1/coupon"
-        const val PAYOUT = """{"id":"py-1","weekOf":"2026-09-07","amount":500.0,"status":"pending","settledAt":null,"method":"gcash","reference":null,"holdReason":null}"""
         fun error(code: String, message: String) = """{"success":false,"errors":[{"code":"$code","message":"$message"}]}"""
         fun verification(status: String) = """{"status":"$status","missing":[],"missingCodes":[],"suspendedAt":null,"suspensionReason":null}"""
         fun coupon(code: String, percent: Int) =

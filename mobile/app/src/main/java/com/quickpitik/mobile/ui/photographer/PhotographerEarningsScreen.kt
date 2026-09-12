@@ -82,10 +82,11 @@ import java.util.Locale
 @Composable
 fun PhotographerEarningsScreen(
     viewModel: PhotographerDashboardViewModel,
+    earningsViewModel: StudioEarningsViewModel,
     modifier: Modifier = Modifier,
 ) {
-    val earningsState by viewModel.earningsUiState.collectAsState()
-    val payoutActionState by viewModel.payoutActionState.collectAsState()
+    val earningsState by earningsViewModel.earningsUiState.collectAsState()
+    val payoutActionState by earningsViewModel.payoutActionState.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
     // null = status not loaded yet or fetch failed. Never block on unknown; the backend enforces.
@@ -114,7 +115,7 @@ fun PhotographerEarningsScreen(
             is EarningsUiState.Loading -> EarningsLoadingSkeleton()
             is EarningsUiState.Error -> ErrorView(
                 message = state.message,
-                onRetry = { viewModel.fetchEarningsAndTransactions() },
+                onRetry = { earningsViewModel.fetchEarningsAndTransactions() },
             )
             is EarningsUiState.Success -> EarningsContent(
                 overview = state.overview,
@@ -126,11 +127,11 @@ fun PhotographerEarningsScreen(
                     if (!isApproved) {
                         showSetupAlert = true
                     } else {
-                        viewModel.submitPayoutRequest()
+                        earningsViewModel.submitPayoutRequest()
                     }
                 },
-                onWithdrawPayout = { viewModel.withdrawPayoutRequest(it) },
-                onClearActionState = { viewModel.clearPayoutActionState() },
+                onWithdrawPayout = { earningsViewModel.withdrawPayoutRequest(it) },
+                onClearActionState = { earningsViewModel.clearPayoutActionState() },
             )
         }
     }
