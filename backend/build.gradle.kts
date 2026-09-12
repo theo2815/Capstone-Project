@@ -87,6 +87,12 @@ dependencies {
 	testImplementation("org.springframework.boot:spring-boot-testcontainers")
 	testImplementation("org.testcontainers:junit-jupiter")
 	testImplementation("org.testcontainers:postgresql")
+
+	// Architecture boundary rules (audit 2026-09-11, plan P2.1) in
+	// architecture/BoundariesTest. Plain `archunit`, not the -junit5 module:
+	// the rules run from ordinary @Test methods, so a second JUnit engine on
+	// the classpath would buy nothing.
+	testImplementation("com.tngtech.archunit:archunit:1.3.0")
 }
 
 kotlin {
