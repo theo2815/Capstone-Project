@@ -111,6 +111,17 @@ class AuthViewModelTest {
         vm.login("juan@x.com", "wrong")
         assertEquals("Wrong email or password.", (vm.awaitAuth() as AuthState.Error).message)
         assertNull(session.getAccessToken())
+
+        // A 200 the backend refuses inside the envelope. That is the other
+        // branch: the 401 above is thrown and read by the catch, this one is
+        // read off the envelope itself.
+        respond = { _, _ ->
+            MockResponse().setBody(
+                """{"success":false,"errors":[{"code":"ACCOUNT_LOCKED","message":"Too many tries. Try again in 15 minutes."}]}""",
+            )
+        }
+        vm.login("juan@x.com", "wrong")
+        assertEquals("Too many tries. Try again in 15 minutes.", (vm.awaitAuth() as AuthState.Error).message)
     }
 
     @Test fun `register sends the picked role and lands the session`() {

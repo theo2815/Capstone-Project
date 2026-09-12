@@ -2,6 +2,7 @@ package com.quickpitik.mobile.data.repository
 
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.ok
 import kotlinx.coroutines.runBlocking
@@ -33,6 +34,8 @@ class CartRepositoryImplTest {
 
     private val requests = CopyOnWriteArrayList<RecordedRequest>()
     @Volatile private var order: MockResponse = MockResponse().setResponseCode(500)
+    @Volatile private var addItem: MockResponse = MockResponse().setResponseCode(404)
+    @Volatile private var removeItem: MockResponse = ok("""{"removed":true}""")
     private val repo = CartRepositoryImpl()
     private val session = SessionManager.getInstance(ApplicationProvider.getApplicationContext())
 
@@ -44,7 +47,8 @@ class CartRepositoryImplTest {
                 requests += request
                 return when (request.path) {
                     "/api/v1/me/cart" -> ok(CART)
-                    "/api/v1/me/cart/items/p1" -> ok("""{"removed":true}""")
+                    "/api/v1/me/cart/items" -> addItem
+                    "/api/v1/me/cart/items/p1" -> removeItem
                     "/api/v1/orders" -> order
                     else -> MockResponse().setResponseCode(404)
                 }
@@ -97,6 +101,34 @@ class CartRepositoryImplTest {
         assertEquals("Slow down. Try again in a minute.", checkout(coupon = "SAVE10").exceptionOrNull()?.message)
         val body = requests.last { it.path == "/api/v1/orders" }.body.readUtf8()
         assertTrue(body, body.contains(""""couponCode":"SAVE10"""") && body.contains(""""clientPlatform":"android""""))
+    }
+
+    // A 200 the backend refuses inside the envelope. That is the branch the
+    // optimistic revert lives on now that both sites read the envelope through
+    // toResult; a THROWN failure takes the catch beside it, which reverts on
+    // its own and is the path the older tests exercise.
+    private fun refused(code: String, message: String) = MockResponse()
+        .setBody("""{"success":false,"errors":[{"code":"$code","message":"$message"}]}""")
+
+    private fun photo(id: String) = PhotoDto(
+        id = id, bib = null, km = null, time = "00:00", tone = 0, span = "portrait",
+        price = 100.0, imageUrl = null, alt = null,
+    )
+
+    @Test fun `a cart add or remove the envelope refuses puts the optimistic row back`() = runBlocking {
+        repo.fetchCart("t").getOrThrow()
+        val before = repo.cartItems.value.map { it.photoId }
+        assertEquals(listOf("p1", "p2"), before)
+
+        addItem = refused("PHOTO_UNAVAILABLE", "That photo is no longer for sale.")
+        val add = repo.addToCart("t", photo("p3"), "e1", "run", "Run")
+        assertEquals("That photo is no longer for sale.", add.exceptionOrNull()?.message)
+        assertEquals(before, repo.cartItems.value.map { it.photoId })
+
+        removeItem = refused("CART_ITEM_MISSING", "That item is already gone.")
+        val remove = repo.removeFromCart("t", "p1")
+        assertEquals("That item is already gone.", remove.exceptionOrNull()?.message)
+        assertEquals(before, repo.cartItems.value.map { it.photoId })
     }
 
     private companion object {
