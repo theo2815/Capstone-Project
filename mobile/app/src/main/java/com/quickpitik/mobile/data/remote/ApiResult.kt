@@ -1,5 +1,7 @@
 package com.quickpitik.mobile.data.remote
 
+import kotlinx.coroutines.CancellationException
+
 // One reading of the backend's `{success, data, errors}` envelope, for the call
 // sites that used to spell it out: `if (success && data != null) … else …` plus
 // a catch. Around thirty copies had drifted on which fallback copy they show
@@ -19,12 +21,15 @@ fun <T> ApiResponseEnvelope<T>.toResult(fallback: String): Result<T> =
  * [RetrofitClient.parseError] gives it - the backend's message for a non-2xx,
  * plain language for a dropped connection, never an exception class name.
  *
- * Catches `Exception`, so cancellation lands here too - exactly what the call
- * sites it replaces did; the one place to change it if that ever bites.
+ * Cancellation is rethrown, not folded into the [Result]: callers turn a
+ * failure into an Error state, so a cancelled reload would paint "Couldn't
+ * load…" over the surface that was already on its way out.
  */
 suspend fun <T> apiCall(fallback: String, block: suspend () -> ApiResponseEnvelope<T>): Result<T> =
     try {
         block().toResult(fallback)
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         Result.failure(Exception(RetrofitClient.parseError(e)))
     }

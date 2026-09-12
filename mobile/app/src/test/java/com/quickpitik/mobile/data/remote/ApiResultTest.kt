@@ -1,9 +1,11 @@
 package com.quickpitik.mobile.data.remote
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
@@ -60,5 +62,18 @@ class ApiResultTest {
         val result = apiCall<String>("Checkout failed") { throw SocketTimeoutException("timeout") }
         assertEquals("The connection timed out. Try again.", result.exceptionOrNull()?.message)
         assertEquals("The connection timed out. Try again.", result.exceptionOrNull()!!.uiMessage)
+    }
+
+    @Test fun `a cancelled call is rethrown, never handed back as a failed Result`() = runBlocking {
+        // Screens fold a failure into an Error state. If cancellation arrived as
+        // one, leaving a tab (or any cancelled reload) would paint "Couldn't
+        // load…" over the surface that was on its way out.
+        val outcome = runCatching {
+            apiCall<String>("Couldn't load the photo") { throw CancellationException("scope cancelled") }
+        }
+        assertTrue(
+            "expected the CancellationException to propagate, got $outcome",
+            outcome.exceptionOrNull() is CancellationException,
+        )
     }
 }
