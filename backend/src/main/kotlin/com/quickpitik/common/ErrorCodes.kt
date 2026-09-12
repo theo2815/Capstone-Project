@@ -8,7 +8,6 @@ object ErrorCodes {
     const val FORBIDDEN = "FORBIDDEN"
     const val CONFLICT = "CONFLICT"
     const val VALIDATION_ERROR = "VALIDATION_ERROR"
-    const val VALIDATION_FAILED = "VALIDATION_FAILED"
     const val INTERNAL_ERROR = "INTERNAL_ERROR"
     const val NOT_FOUND = "NOT_FOUND"
     const val METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"

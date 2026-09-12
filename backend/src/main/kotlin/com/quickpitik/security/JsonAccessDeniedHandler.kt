@@ -3,6 +3,7 @@ package com.quickpitik.security
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.common.ApiError
 import com.quickpitik.common.ApiResponse
+import com.quickpitik.common.ErrorCodes
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.MediaType
@@ -23,7 +24,7 @@ class JsonAccessDeniedHandler(
         response.status = HttpServletResponse.SC_FORBIDDEN
         objectMapper.writeValue(
             response.outputStream,
-            ApiResponse.failure(ApiError(code = "FORBIDDEN", message = "Access denied")),
+            ApiResponse.failure(ApiError(code = ErrorCodes.FORBIDDEN, message = "Access denied")),
         )
     }
 }

@@ -81,7 +81,7 @@ class GlobalExceptionHandler {
     // One code for "the request did not validate" (2026-09-12): the multipart
     // event forms moved from hand-rolled checks emitting VALIDATION_ERROR to
     // Bean Validation, which lands here. No client branches on the old
-    // VALIDATION_FAILED string; the constant survives until the P2 sweep.
+    // VALIDATION_FAILED string, so the constant went with the P2.5 sweep.
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun handleMethodArgNotValid(ex: MethodArgumentNotValidException): ResponseEntity<ApiResponse<Nothing>> {
         val errors = ex.bindingResult.fieldErrors.map {
@@ -101,14 +101,14 @@ class GlobalExceptionHandler {
     fun handleBadCredentials(ex: BadCredentialsException): ResponseEntity<ApiResponse<Nothing>> =
         ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
             ApiResponse.failure(
-                ApiError(code = "INVALID_CREDENTIALS", message = "Invalid email or password"),
+                ApiError(code = ErrorCodes.INVALID_CREDENTIALS, message = "Invalid email or password"),
             ),
         )
 
     @ExceptionHandler(AccessDeniedException::class)
     fun handleAccessDenied(ex: AccessDeniedException): ResponseEntity<ApiResponse<Nothing>> =
         ResponseEntity.status(HttpStatus.FORBIDDEN).body(
-            ApiResponse.failure(ApiError(code = "FORBIDDEN", message = "Access denied")),
+            ApiResponse.failure(ApiError(code = ErrorCodes.FORBIDDEN, message = "Access denied")),
         )
 
     @ExceptionHandler(MaxUploadSizeExceededException::class)
@@ -280,7 +280,7 @@ class GlobalExceptionHandler {
     fun handleGeneric(ex: Exception): ResponseEntity<ApiResponse<Nothing>> {
         log.error("Unhandled exception", ex)
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
-            ApiResponse.failure(ApiError(code = "INTERNAL_ERROR", message = "Internal server error")),
+            ApiResponse.failure(ApiError(code = ErrorCodes.INTERNAL_ERROR, message = "Internal server error")),
         )
     }
 

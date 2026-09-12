@@ -59,13 +59,13 @@ class PhotographerSettingsService(
         val existing = photographerSettingsRepository.findById(userId).orElse(null)
         if (existing != null) return existing
         val user = userRepository.findById(userId).orElseThrow {
-            ConflictException(code = "USER_NOT_FOUND", message = "User not found")
+            ConflictException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
         }
         if (user.role != Role.PHOTOGRAPHER) {
             // Method-level @PreAuthorize already enforces this, but defend in
             // depth — if a non-photographer somehow reaches here, refuse to
             // pollute the photographer_settings table with a row.
-            throw ConflictException(code = "FORBIDDEN", message = "User is not a photographer")
+            throw ConflictException(code = ErrorCodes.FORBIDDEN, message = "User is not a photographer")
         }
         val fresh = PhotographerSettings(
             userId = userId,
