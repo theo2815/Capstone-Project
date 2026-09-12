@@ -288,7 +288,9 @@ class SelfieService(
         else -> "bin"
     }
 
-    private companion object {
+    // internal: EventPhotoController's multipart gate reuses MAX_SELFIE_BYTES and
+    // SUPPORTED_TYPES so both routes into face search agree on an acceptable selfie.
+    internal companion object {
         const val MAX_SELFIES = 5
         const val MAX_SELFIE_BYTES = 5 * 1024 * 1024
         // Runner-facing rejection copy. Shared by the local checks and the

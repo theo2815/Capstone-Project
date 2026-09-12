@@ -5,9 +5,13 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
+import com.quickpitik.service.storage.StorageService
+import com.quickpitik.service.storage.contentTypeForKey
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -19,6 +23,8 @@ class PhotoSearchService(
     private val aiApiClient: FaceBibProvider,
     private val aiApiProperties: AiApiProperties,
     private val photoService: PhotoService,
+    private val userSelfieRepository: UserSelfieRepository,
+    private val storageService: StorageService,
     private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -173,5 +179,85 @@ class PhotoSearchService(
         if (accepted == 0 && lastRejection != null) throw lastRejection
         if (personIds.isEmpty()) return PaginatedResponse.empty(pagination)
         return photoService.findByEventAndPersonIds(eventId, personIds, pagination, requesterUserId)
+    }
+
+    /**
+     * Stored-selfie face search (moved out of EventPhotoController 2026-09-12,
+     * audit P-6). The runner's own selfies are read here so the HTTP edge
+     * injects no repository; `findByIdAndUserId` keeps the row scoped to the
+     * caller, which is what makes cross-user IDOR impossible.
+     *
+     * Deliberately NOT transactional: every branch ends in a storage read plus
+     * provider HTTP (backend/AGENTS.md rule 4).
+     */
+    fun searchWithStoredSelfie(
+        userId: UUID,
+        eventId: UUID,
+        selfieId: UUID?,
+        allSelfies: Boolean,
+        pagination: PaginationParams,
+    ): PaginatedResponse<PhotoDto> {
+        // allSelfies (2026-09-02): match against the whole library, not one
+        // pick. Every selfie the runner saved is a different angle of the same
+        // face; unioning them is what lets a side-on race photo match.
+        if (allSelfies) {
+            val library = userSelfieRepository.findByUserIdOrderByUploadedAtDesc(userId)
+            if (library.isEmpty()) {
+                throw NotFoundException(code = ErrorCodes.SELFIE_NOT_FOUND, message = "Selfie not found")
+            }
+            // Skip rows whose object is gone (storage backend changed, deleted
+            // out-of-band) rather than failing the whole search on one of them.
+            val samples = library.take(MAX_LIBRARY_SELFIES).mapNotNull { s ->
+                runCatching { storageService.getBytes(s.s3Key) }.getOrNull()?.let { bytes ->
+                    SelfieSample(
+                        bytes = bytes,
+                        contentType = contentTypeForKey(s.s3Key),
+                        filename = s.s3Key.substringAfterLast('/'),
+                    )
+                }
+            }
+            if (samples.isEmpty()) {
+                throw NotFoundException(
+                    code = ErrorCodes.SELFIE_NOT_FOUND,
+                    message = "Selfie file is no longer available",
+                )
+            }
+            return searchByFaces(
+                eventId = eventId,
+                samples = samples,
+                pagination = pagination,
+                requesterUserId = userId,
+            )
+        }
+        val id = selfieId ?: throw ValidationException(
+            code = ErrorCodes.SELFIE_REQUIRED,
+            message = "selfieId is required",
+            field = "selfieId",
+        )
+        val selfie = userSelfieRepository.findByIdAndUserId(id, userId)
+            ?: throw NotFoundException(code = ErrorCodes.SELFIE_NOT_FOUND, message = "Selfie not found")
+        // F6 (2026-05-27): StorageService.getBytes throws if the object is
+        // missing from S3 (deleted out-of-band, key never written, etc.).
+        // Without this wrap the runner gets a generic 500 INTERNAL_ERROR
+        // instead of a meaningful 404 they can react to.
+        val bytes = runCatching { storageService.getBytes(selfie.s3Key) }.getOrElse {
+            throw NotFoundException(
+                code = ErrorCodes.SELFIE_NOT_FOUND,
+                message = "Selfie file is no longer available",
+            )
+        }
+        return searchByFace(
+            eventId = eventId,
+            selfieBytes = bytes,
+            contentType = contentTypeForKey(selfie.s3Key),
+            filename = selfie.s3Key.substringAfterLast('/'),
+            pagination = pagination,
+            requesterUserId = userId,
+        )
+    }
+
+    private companion object {
+        // Mirrors the selfie-library cap (SELFIE_MAX = 5 on both clients).
+        const val MAX_LIBRARY_SELFIES = 5
     }
 }

@@ -1,11 +1,14 @@
 package com.quickpitik.service.events
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.events.EventDetailDto
 import com.quickpitik.dto.events.EventDto
+import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import org.springframework.stereotype.Service
@@ -58,6 +61,13 @@ class EventService(
         val ownerHandle = event.createdBy?.let { photographerSettingsRepository.findById(it).orElse(null)?.handle }
         return eventDtoMapper.toDetailDto(event, ownerHandle)
     }
+
+    // The public photo routes need the same "public event or 404" resolution
+    // three times over and a controller may not touch a repository
+    // (backend/AGENTS.md rule 1). Callers use the id only — open-in-view is
+    // off, so the returned entity is detached.
+    fun requirePublicBySlug(slug: String): Event = eventRepository.findPublicBySlug(slug)
+        ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
 
     private companion object {
         val LIST_DEFAULT_STATUSES = listOf(EventStatus.ACTIVE, EventStatus.COMPLETED, EventStatus.ARCHIVED)

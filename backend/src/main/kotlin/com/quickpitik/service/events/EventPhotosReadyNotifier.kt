@@ -11,8 +11,8 @@ import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.EmailService
 import com.quickpitik.service.photos.PhotoSearchService
 import com.quickpitik.service.storage.StorageService
+import com.quickpitik.service.storage.contentTypeForKey
 import org.slf4j.LoggerFactory
-import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
@@ -63,7 +63,7 @@ class EventPhotosReadyNotifier(
             photoSearchService.searchByFace(
                 eventId = event.id,
                 selfieBytes = bytes,
-                contentType = contentTypeOf(selfie.s3Key),
+                contentType = contentTypeForKey(selfie.s3Key),
                 filename = selfie.s3Key.substringAfterLast('/'),
                 pagination = PaginationParams.of(0, 1),
                 requesterUserId = alert.userId,
@@ -106,13 +106,4 @@ class EventPhotosReadyNotifier(
         alert.selfieId?.let { userSelfieRepository.findByIdAndUserId(it, alert.userId) }
             ?: userSelfieRepository.findFirstByUserIdAndIsPrimaryTrue(alert.userId)
             ?: userSelfieRepository.findFirstByUserIdOrderByUploadedAtDesc(alert.userId)
-
-    // Same mapping as EventPhotoController.contentTypeOf — two call sites is
-    // below the extract-a-shared-util threshold.
-    private fun contentTypeOf(key: String): String = when (key.substringAfterLast('.').lowercase()) {
-        "jpg", "jpeg" -> MediaType.IMAGE_JPEG_VALUE
-        "png" -> MediaType.IMAGE_PNG_VALUE
-        "webp" -> "image/webp"
-        else -> MediaType.APPLICATION_OCTET_STREAM_VALUE
-    }
 }
