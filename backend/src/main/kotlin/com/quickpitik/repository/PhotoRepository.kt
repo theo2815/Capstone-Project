@@ -152,6 +152,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     // Fingerprint registry (V42) catch-up: LIVE previews that predate the
     // phash column. PhotoWatermarkTrigger.backfillPhash hashes them in batches.
+    // `LIVE and not trashed` = Photo.isSellable — JPQL/SQL cannot call the
+    // Kotlin helper, so this copy changes with it.
     @Query(
         """
         SELECT p FROM Photo p
@@ -176,6 +178,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // Returns [photographer_id, event_id, distance] — deliberately no photo
     // id, so the answer can never become a photo URL.
     // ponytail: full scan of LIVE rows; a BK-tree or pg extension when photos > ~1M.
+    // `LIVE and not trashed` = Photo.isSellable — JPQL/SQL cannot call the
+    // Kotlin helper, so this copy changes with it.
     @Query(
         value = """
         SELECT p.photographer_id, p.event_id,
@@ -198,6 +202,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // while the visitor pages; the seeded hash only varies near-equal rows.
     // ponytail: this window ranks the event's LIVE rows; materialize only if
     // EXPLAIN shows it hurting at real event scale.
+    // `LIVE and not trashed` = Photo.isSellable — JPQL/SQL cannot call the
+    // Kotlin helper, so this copy changes with it.
     @Query(
         value = """
         WITH ranked AS (

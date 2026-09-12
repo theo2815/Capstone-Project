@@ -187,7 +187,7 @@ class PhotoService(
         val event = eventRepository.findById(eventId).orElse(null)
         if (event == null || !event.isFree) throw photoNotFound()
         val photo = photoRepository.findById(photoId).orElse(null)
-        if (photo == null || photo.eventId != eventId || photo.status != PhotoStatus.LIVE || photo.deletedAt != null) {
+        if (photo == null || photo.eventId != eventId || !photo.isSellable) {
             throw photoNotFound()
         }
         return FreeDownload(s3Key = photo.s3Key, filename = PhotoFilenames.downloadFilenameOf(photo))

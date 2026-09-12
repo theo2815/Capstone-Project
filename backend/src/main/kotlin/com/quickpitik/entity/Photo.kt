@@ -151,6 +151,14 @@ class Photo(
     )
     var facePersons: MutableSet<PhotoFacePersonEmbed> = mutableSetOf(),
 ) {
+    // "LIVE and not trashed" — the visible/sellable predicate that cart,
+    // checkout, coupons and the free-download route each gated on separately.
+    // Computed, no backing field, so Hibernate (field access here, as with
+    // `span`) never sees it. PhotoRepository's JPQL/native copies of the same
+    // predicate carry a `= Photo.isSellable` marker; change them together.
+    val isSellable: Boolean
+        get() = status == PhotoStatus.LIVE && deletedAt == null
+
     var span: PhotoSpan
         get() = PhotoSpan.fromWire(spanWire)
         set(value) {

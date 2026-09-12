@@ -46,7 +46,6 @@ import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerCoupon
-import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.UnauthorizedException
@@ -702,7 +701,7 @@ class OrderService(
                     field = "items",
                 )
             }
-            if (photo.status != PhotoStatus.LIVE || photo.deletedAt != null) {
+            if (!photo.isSellable) {
                 // A trashed photo (deleted_at set) can't be freshly purchased,
                 // even if it lingered in a cart from before it was trashed.
                 // Existing orders/grants are untouched.
