@@ -1,0 +1,3 @@
+# Kotlin sources are text: LF in the repo, working copy per core.autocrlf.
+*.kt text
+*.kts text

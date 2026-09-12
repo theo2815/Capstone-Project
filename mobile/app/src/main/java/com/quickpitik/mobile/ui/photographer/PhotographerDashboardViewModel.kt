@@ -9,8 +9,8 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
 import com.quickpitik.mobile.data.remote.QpWebSocket
-import com.quickpitik.mobile.data.remote.RetrofitClient
-import com.quickpitik.mobile.data.remote.apiCall
+import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.apiCall
 import com.quickpitik.mobile.data.remote.uiMessage
 import com.quickpitik.mobile.data.remote.WsState
 import kotlinx.coroutines.CancellationException

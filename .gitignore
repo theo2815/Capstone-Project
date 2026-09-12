@@ -47,7 +47,6 @@ ai-api/models/*
 # Training data & runs (large files — hosted on GitLab via LFS)
 ai-api/Training-Images/
 ai-api/runs/
-.gitattributes
 
 # C++ build artifacts
 ai-api/src/cpp/build/
