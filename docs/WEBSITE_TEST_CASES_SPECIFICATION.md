@@ -1,222 +1,98 @@
-# QuickPitik Website — Automated Test Cases Specification & Testing Strategy
+# QuickPitik Website - Automated Test Cases Specification & Testing Strategy
 
-> **Status:** Proposed & Approved for Implementation  
-> **Scope:** `website/` (Next.js 15, React 19, TypeScript, Zustand, TanStack Query, Tailwind CSS)  
-> **Target Tooling:** Vitest + React Testing Library + jsdom + MSW (Mock Service Worker)
+> **Status:** Implemented; architecture workstream closed with acceptance follow-ups tracked separately.
+> **Scope:** `website/` automated unit, component and mocked API-boundary regression tests.
+> **Recorded baseline:** 391 passing tests across 46 test files, measured on 2026-09-12 at application commit `ba239c7`.
 
----
+## 1. Objectives and Evidence
 
-## 1. Executive Overview & Testing Objectives
+The suite protects authentication/session isolation, server-data ownership, administrative mutations, photographer workflows, and runner checkout behavior. Phase 2 moved server records into TanStack Query; Phase 3 separated Settings queries from editable drafts and Checkout orchestration from presentation.
 
-The QuickPitik web application coordinates critical user journeys across runners, photographers, and administrators:
-- **Runners:** Photo discovery (bib search, facial recognition selfie match), shopping cart management, PayMongo hosted checkout, order receipt polling, and high-resolution photo downloads.
-- **Photographers:** Direct batch photo uploads with client-side SHA-256 deduplication and 4-slot concurrency throttling, brand profile customization, earnings breakdown, and payout requests.
-- **Administrators:** Dispute queue resolution, content flags moderation, photographer verifications, and platform analytics.
+The baseline is a historical execution result, not a fresh test run or a claim that every product journey is covered. Test files and `website/package.json` are the live source of truth; rerun the command below for current totals. No tests were rerun for this documentation-only closeout.
 
-Currently, the `website/` codebase has **0 automated unit, integration, or component tests**. To prevent regressions, ensure compliance with capstone requirements, and validate recent diagnostic findings, this document defines the testing architecture, proposed framework, and comprehensive suite of test cases to be implemented.
+| Recorded check | Result on 2026-09-12 |
+| --- | --- |
+| `npm run test` | 391 tests passed in 46 files |
+| `npx tsc --noEmit` | Passed |
+| `npm run lint` | 0 errors; 118 existing warnings |
+| `NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1 npm run build` | Passed |
 
----
+These are distinct checks: lint, typechecking, builds and manual browser checks are not included in the 391 automated tests. No code-coverage percentage is claimed.
 
-## 2. Test Architecture & Tooling Selection
+## 2. Implemented Test Architecture
 
-### 2.1 Recommended Test Runner: Vitest
-We recommend **Vitest** over Jest for the following reasons:
-1. **First-Class Next.js 15 & React 19 Compatibility:** Vitest natively supports modern ESM, React 19 JSX transforms, and TypeScript without heavy Babel or SWC transpilation shims.
-2. **Speed & Efficiency:** Instant startup via Vite's esbuild transform, blazing fast execution across hundreds of tests.
-3. **Familiar Jest-Compatible API:** Uses `describe`, `it`, `expect`, `vi.fn()`, and `vi.spyOn()`, making it seamless for developers familiar with Jest.
-4. **Clean DOM Simulation:** Integrates cleanly with `jsdom` and `@testing-library/react`.
+| Concern | Implementation / source of truth |
+| --- | --- |
+| Runner and assertions | Vitest; dependency ranges in `website/package.json` |
+| Component interaction | React Testing Library, jest-dom and user-event |
+| DOM environment | jsdom |
+| Configuration | `website/vitest.config.mts`: automatic JSX, `@` alias to `src`, jsdom environment |
+| Shared setup | `website/src/test/setup.ts` |
+| Test placement | Colocated `.test.ts` and `.test.tsx` files under `website/src/` |
+| API isolation | Mocked dependencies/API responses; does not exercise a live Spring Boot or payment service |
 
-### 2.2 Testing Stack Components
-| Tool / Package | Version Target | Purpose |
-| :--- | :--- | :--- |
-| `vitest` | `^3.x` | Test runner, test orchestration, assertions, and mock functions |
-| `@testing-library/react` | `^16.x` | Component rendering, event dispatching, and user interaction simulation |
-| `@testing-library/jest-dom` | `^6.x` | Custom matchers for DOM assertions (`toBeInTheDocument`, `toBeDisabled`) |
-| `@testing-library/user-event` | `^14.x` | Realistic browser event simulations (typing, clicking, file uploads) |
-| `jsdom` | `^26.x` | Browser environment simulation (Window, Document, localStorage, Event) |
+MSW was proposed in the original plan but is not a dependency in the current package manifest. Dedicated `test:watch` and `test:coverage` scripts are not configured; do not treat them as shipped tooling.
 
-### 2.3 Proposed Directory Structure
-All test files will live alongside their implementation or in dedicated `__tests__` directories:
-```text
-website/
-├── src/
-│   ├── lib/
-│   │   ├── __tests__/
-│   │   │   ├── auth.test.ts
-│   │   │   ├── auth-validation.test.ts
-│   │   │   ├── reserved-handles.test.ts
-│   │   │   ├── image-utils.test.ts
-│   │   │   └── api-client.test.ts
-│   ├── store/
-│   │   ├── __tests__/
-│   │   │   ├── cart-store.test.ts
-│   │   │   ├── auth-store.test.ts
-│   │   │   ├── saved-events-store.test.ts
-│   │   │   └── admin-dispute-store.test.ts
-│   ├── hooks/
-│   │   ├── __tests__/
-│   │   │   ├── use-auth.test.ts
-│   │   │   ├── use-url-state.test.ts
-│   │   │   └── use-runner-notifications-ws.test.ts
-│   ├── components/
-│   │   ├── cart/__tests__/
-│   │   │   ├── floating-cart.test.tsx
-│   │   │   └── checkout-modal.test.tsx
-│   │   ├── photos/__tests__/
-│   │   │   └── photo-preview-card.test.tsx
-│   │   └── events/__tests__/
-│   │       └── bib-search-panels.test.tsx
-│   └── app/
-│       └── orders/return/__tests__/
-│           └── return-polling.test.tsx
-├── vitest.config.mts
-└── vitest.setup.ts
+Run from the website directory:
+
+```sh
+cd website
+npm run test
 ```
 
----
+## 3. Automated Test File Inventory
 
-## 3. Elaborated Test Suites & Detailed Test Cases
+Paths below are relative to `website/src/`. This inventory identifies all 46 test files associated with the recorded baseline. Individual assertions, parameterized cases and expected outcomes remain beside the implementation rather than being duplicated as 391 independently maintained prose entries.
 
----
+| Area | Test files |
+| --- | --- |
+| Session and cart stores | `store/guest-buffer-session.test.ts`, `store/cart-store.test.ts` |
+| Authentication and session utilities | `lib/auth.test.ts`, `lib/auth-reset.test.ts`, `lib/api-session.test.ts` |
+| Photographer and catalog utilities | `lib/api-photographer.test.ts`, `lib/photographer-verification-sync.test.ts`, `lib/event-catalog.test.ts` |
+| Validation, media and browser utilities | `lib/reserved-handles.test.ts`, `lib/utils.test.ts`, `lib/watermark-placement.test.ts`, `lib/save-photo.test.ts`, `lib/in-app-browser.test.ts` |
+| Query ownership and admin hooks | `hooks/private-query-boundaries.test.tsx`, `hooks/admin-query-mutations.test.tsx`, `hooks/use-admin-events.test.tsx`, `hooks/use-admin-users.test.tsx`, `hooks/use-admin-payouts.test.tsx` |
+| Notifications and inbox hooks | `hooks/use-inbox-messages.test.tsx`, `hooks/use-inbox-notifications-ws.test.tsx`, `hooks/use-admin-notifications-ws.test.tsx` |
+| Photographer hooks | `hooks/use-can-upload.test.ts`, `hooks/use-photographer-payout-actions.test.tsx`, `hooks/use-photographer-settings-hydration.test.tsx` |
+| Checkout hooks | `hooks/use-checkout-actions.test.tsx`, `hooks/use-checkout-workflow.test.tsx` |
+| Auth, account and layout components | `components/auth/payout-security.test.tsx`, `components/auth/google-button.test.tsx`, `components/account/avatar-slab.test.tsx`, `components/layout/auth-hydrator.test.tsx`, `components/layout/notification-inboxes.test.tsx` |
+| Photographer components | `components/dashboard/watermark-placement-editor.test.tsx`, `components/dashboard/event-coupon-modal.test.tsx`, `components/dashboard/file-payout-report-modal.test.tsx` |
+| Admin components | `components/admin/admin-user-actions.test.tsx`, `components/admin/event-requests-queue.test.tsx`, `components/admin/payouts-queue.test.tsx`, `components/admin/admin-mutation-flows.test.tsx` |
+| Photo and checkout components | `components/photos/photo-preview-card.test.tsx`, `components/events/photo-mosaic-tile.test.tsx`, `components/cart/checkout-modal.test.tsx`, `components/cart/pending-payment-watcher.test.tsx` |
+| Route-level workflows | `app/admin/disputes/[id]/page.test.tsx`, `app/admin/events/page.test.tsx`, `app/dashboard/settings/page.test.tsx`, `app/dashboard/events/photo-management.test.tsx` |
 
-### Suite 1: Authentication & Token Lifecycle (`src/lib/auth.ts`, `src/lib/api.ts`, `src/hooks/use-auth.ts`)
-*Focuses on security, session resilience, single-flight token rotation, and proper JWT parsing.*
+## 4. Architecture Regression Coverage
 
-- **Case 1.1: JWT Expiration Detection (`isTokenExpired`)**
-  - **Scenario A:** Standard base64 payload returns `false` when `exp` is in the future.
-  - **Scenario B:** Expired payload returns `true` when `exp * 1000 < Date.now()`.
-  - **Scenario C (Critical Regression Test):** URL-safe Base64URL characters (`-` and `_`) in the JWT payload must NOT cause `atob()` to throw `DOMException`; must cleanly parse without premature expiration (verifying Item 26 from the Capstone Checklist).
-  - **Scenario D:** Malformed/garbage token string returns `true` gracefully instead of uncaught crash.
+| Workstream | Covered regression themes | Principal test homes |
+| --- | --- | --- |
+| Session isolation | Guest-buffer ownership, auth reset/hydration, stale asynchronous results and private query boundaries | Store/session tests, `auth-hydrator.test.tsx`, `private-query-boundaries.test.tsx` |
+| Server-data ownership | Query/mutation behavior, admin events/users/payouts, inbox data and WebSocket invalidation | Admin query and inbox hook tests; admin component/route tests |
+| Settings separation | Query hydration and editable Settings workflow | `use-photographer-settings-hydration.test.tsx`, Settings `page.test.tsx` |
+| Checkout separation | Pending-payment recovery, QR creation, paid receipt snapshots, zero-total settlement, retry/idempotency, cancellation outcomes, dead capabilities and timer cleanup | `use-checkout-workflow.test.tsx`, `use-checkout-actions.test.tsx`, Checkout component tests |
+| Checkout review fixes | Late create/status/cancel failures after a session switch do not affect the new session; QR and receipt totals use the server-confirmed order amount, including zero-total settlement | `use-checkout-workflow.test.tsx` |
 
-- **Case 1.2: Token Storage & Accessors**
-  - Verify `setTokens()`, `getAccessToken()`, `getRefreshToken()`, and `clearTokens()` interact correctly with browser `localStorage`.
-  - Verify safe fallback to `null` when executed in a non-browser environment (`typeof window === "undefined"`).
+The original six-suite proposal is superseded by this implemented inventory. Proposed standalone auth-validation, image-utils, bib-search and order-return polling test files are not listed as delivered. Existing related tests do not establish complete coverage of those earlier proposed scenarios.
 
-- **Case 1.3: Single-Flight Refresh Token Rotation (`doRefresh` in `api.ts`)**
-  - **Scenario A:** When 3 concurrent HTTP requests encounter a `401 Unauthorized`, only **one** refresh request (`POST /auth/refresh`) is dispatched to the backend.
-  - **Scenario B:** Once the single-flight refresh resolves, all 3 original requests retry with the freshly minted access token and resolve successfully.
-  - **Scenario C:** If the refresh request itself fails with `401/403`, all pending requests reject and the user session is purged via `redirectToLogin()`.
+## 5. Browser Evidence and Acceptance Limits
 
-- **Case 1.4: Session Wipe & Guest Buffer Carry-over (`useAuth.establishSession`)**
-  - Verify `establishSession()` clears previous user React Query caches and user-scoped stores, while carrying over the guest shopping cart items and saved event bookmarks (`captureGuestBuffer()`).
+Separate local Chrome checks used fictional API responses, not real provider transactions:
 
----
+| Surface | Recorded local browser evidence |
+| --- | --- |
+| Settings | Save failure retains draft, retry succeeds, refresh restores saved data; responsive checks at 375/768/1024 CSS pixels |
+| Guest Checkout | Email confirmation, failed creation/retry, QR refresh recovery, cancellation failure/retry, server-confirmed amount, simulated settlement and receipt layout |
+| Signed-in Checkout | Authenticated status polling, QR recovery, simulated settlement, Orders cache refresh, receipt persistence and cart cleanup |
 
-### Suite 2: Shopping Cart & Pricing State (`src/store/cart-store.ts`, `src/components/cart/`)
-*Validates cart mutations, maximum caps, price aggregation, and guest-to-server synchronization.*
+These manual checks are not automated end-to-end tests and are not part of the 391 count. Viewport resizing does not establish physical-device or native webview behavior.
 
-- **Case 2.1: Item Addition & Deduplication**
-  - Adding a photo item appends it to `items`.
-  - Adding an already present `photoId` is ignored (idempotent add).
-  - Verifying `addItem()` returns `true` on success and `false` when ignored.
+## 6. Closeout and Remaining Acceptance
 
-- **Case 2.2: Hard Capacity Cap (`MAX_CART_ITEMS = 100`)**
-  - When the cart reaches 100 items, `isFull()` returns `true`.
-  - Attempting to add the 101st item is rejected (`addItem()` returns `false`, `items.length` remains 100).
-  - `remainingCapacity()` accurately tracks available slots (`100 - items.length`).
+The architecture implementation and its local regression workstream are closed at the user's request. Closure does not assert production readiness, merge into the default branch, or completion of every website backlog item.
 
-- **Case 2.3: Currency Precision Total Summation**
-  - When adding multiple items with fractional cent values (e.g., ₱150.50 + ₱99.99 + ₱49.51), `total()` must equal `300.00` without IEEE-754 floating-point drift (`300.00000000000006`).
-  - Verifies resolution of Item 28 from the checklist.
+| Follow-up | Status |
+| --- | --- |
+| Real PayMongo sandbox payment and webhook confirmation | Deferred at the user's request; unverified |
+| Actual receipt email and full-resolution/signed downloads | Open; not established by fixture receipt checks |
+| Physical Android/iOS browsers and FB/Instagram/Messenger webviews | Open; Google fallback and native QR save/share require device acceptance |
+| Additional proposed test scenarios and coverage reporting | Not claimed by this baseline; assess separately when those surfaces change |
 
-- **Case 2.4: Optimistic Server Sync & Rollback**
-  - When `syncEnabled == true`, calling `addItem()` optimistically updates state and calls `postCartItem()`.
-  - If `postCartItem()` succeeds and returns a canonical server price, local row price updates to match the server.
-  - If `postCartItem()` rejects with network error, the item is rolled back from local state.
-  - Symmetrical behavior for `removeItem()` and `deleteCartItem()`.
-
----
-
-### Suite 3: Validation Utilities & Security Guards (`src/lib/`)
-*Validates input sanitize rules, regex guards, and namespace reservations.*
-
-- **Case 3.1: Reserved Photographer Handles (`src/lib/reserved-handles.ts`)**
-  - Verify core reserved slugs are blocked: `"admin"`, `"dashboard"`, `"login"`, `"register"`, `"api"`, `"cart"`.
-  - **Regression Test:** Verify `"verify"`, `"verify-email"`, and `"confirm-email-change"` are strictly rejected as reserved handles (Item 27).
-  - Valid custom handles (e.g., `"john-lens"`, `"marathon-pix"`) are accepted.
-  - Invalid formats (leading dash, trailing dash, consecutive dashes, symbols, uppercase, <3 or >32 chars) return descriptive error messages.
-
-- **Case 3.2: Auth Validation Rules (`src/lib/auth-validation.ts`)**
-  - Email regex rejects missing `@`, invalid TLDs, and leading/trailing whitespace.
-  - Password validator enforces minimum length (8 chars), rejecting empty or short inputs.
-  - OTP validator ensures strictly 6-digit numeric codes (`^\d{6}$`).
-
-- **Case 3.3: Image File Constraints (`src/lib/image-utils.ts`)**
-  - Rejects files exceeding `MAX_UPLOAD_BYTES` (10 MB).
-  - Accurately detects HEIC/HEIF files (`isHeicFile`) by MIME type and filename extension.
-  - Validates accepted MIME types (`image/jpeg`, `image/png`, `image/webp`).
-
----
-
-### Suite 4: Photo Discovery, Bib Search & Lightbox (`src/components/`)
-*Validates runner search experience and modal interactions.*
-
-- **Case 4.1: Bib Search Panel (`src/components/events/bib-search-panels.tsx`)**
-  - Form submission with valid bib number triggers `onBibChange` and dispatches search query.
-  - Form trims whitespace and handles alphanumeric bib tags (e.g. `"B-4082"`).
-  - Mode toggle switches between Bib mode and Selfie mode.
-
-- **Case 4.2: Photo Lightbox Preview Card (`src/components/photos/photo-preview-card.tsx`)**
-  - **Mode Switching:**
-    - In `"browse"` mode: displays "Buy now" / "Add to cart" buttons and watermark warning.
-    - In `"owned"` mode: displays "Download photo" button and unwatermarked `cleanUrl`.
-    - In `"review"` mode: renders read-only admin judgment layout without commerce CTAs.
-  - **Keyboard Navigation:** Pressing `Escape` calls `onClose()`, `ArrowLeft` calls `onPrev()`, `ArrowRight` calls `onNext()`.
-  - **Photographer Attribution:** Formats verified photographer handle as a link to `/{handle}`; unverified photographers display plain name without hyperlink.
-
----
-
-### Suite 5: Order Completion & Return Polling (`src/app/orders/return/page.tsx`)
-*Validates PayMongo redirect landing, status polling, and state transitions.*
-
-- **Case 5.1: Polling Happy Path**
-  - Renders `<PollingState>` while `status === "PENDING"`.
-  - Once backend returns `status === "PAID"` or `status === "FULFILLED"`:
-    - Clears runner cart (`clearCart()`).
-    - Invalidates query cache (`["me", "orders"]`).
-    - Transitions to `<PaidState>` rendering receipt and photo cards.
-
-- **Case 5.2: Polling Timeout Handling**
-  - If polling exceeds `POLL_MAX_ATTEMPTS` (30 attempts / 60 seconds) without a terminal status, smoothly transitions to `<TimeoutState>` displaying order reference and retry button.
-
-- **Case 5.3: Error & Cancellation Handling**
-  - If order status returns `REFUNDED` or endpoint returns 404, transitions to `<FailedState>`.
-
----
-
-### Suite 6: Photographer Direct Upload Flow (`src/lib/api-photographer.ts`)
-*Validates batch upload concurrency control, hash deduplication, and auth token rotation.*
-
-- **Case 6.1: Concurrency Throttling**
-  - Given a queue of 20 photos, only `MAX_CONCURRENT_UPLOADS` (4) active XHR requests are processed simultaneously.
-  - When one upload completes, the next queued item immediately occupies the slot.
-
-- **Case 6.2: Mid-Batch 401 Access Token Expiry Handling**
-  - During a large 500-photo batch where the 15-minute access token expires, an upload encountering `401 Unauthorized` invokes `refreshAccessToken()` once and retries without dropping the batch.
-
-- **Case 6.3: Pre-Flight Duplicate Checking**
-  - `checkPhotosExist()` hashes files locally via SHA-256 and skips uploading files flagged as `already_in_event`.
-
----
-
-## 4. Implementation Steps & Milestones
-
-1. **Milestone 1 — Setup Test Infrastructure:**
-   - Install `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, and `jsdom` as `devDependencies`.
-   - Create `vitest.config.mts` configured with path alias `@/*` -> `./src/*` and setup file.
-   - Add `"test": "vitest run"`, `"test:watch": "vitest"`, and `"test:coverage": "vitest run --coverage"` to `website/package.json`.
-   - Execute baseline command to confirm 0 failures on an empty suite.
-
-2. **Milestone 2 — Utility & Store Unit Tests (Suites 1, 2, 3):**
-   - Implement `auth.test.ts` (including Base64URL decoding test).
-   - Implement `cart-store.test.ts` (capacity caps, deduplication, price summation).
-   - Implement `reserved-handles.test.ts` and `auth-validation.test.ts`.
-
-3. **Milestone 3 — Component & Lifecycle Tests (Suites 4, 5, 6):**
-   - Implement `bib-search-panels.test.tsx` and `photo-preview-card.test.tsx`.
-   - Implement order return polling test `return-polling.test.tsx`.
-   - Implement upload queue concurrency logic test `api-photographer.test.ts`.
-
-4. **Milestone 4 — CI & Checklist Verification:**
-   - Run complete test suite and record results.
-   - Update `CAPSTONE_ISSUES_CHECKLIST.md` as testing safeguards are established.
+Live ownership and follow-up scheduling belong in the Second Brain `website/tasks.md`; implementation evidence and closeout rationale are in `_journal/2026-09-11-phase-3-settings.md`. Keep this specification as the versioned testing reference, not a second live task board.
