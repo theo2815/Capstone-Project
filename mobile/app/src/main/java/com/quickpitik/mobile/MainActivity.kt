@@ -271,9 +271,9 @@ class MainActivity : ComponentActivity() {
                 val currentRoute = navBackStackEntry?.destination?.route
 
                 // While any studio/* destination is on the stack this resolves
-                // the graph's back-stack entry — the owner of the ONE shared
-                // PhotographerDashboardViewModel. Null for runner sessions, so
-                // a runner never constructs the VM (and its init{} salvo).
+                // the graph's back-stack entry — the owner of the studio's four
+                // ViewModels. Null for runner sessions, so a runner constructs
+                // none of them, and none of their init salvos fire.
                 val studioEntry = remember(navBackStackEntry) {
                     runCatching { navController.getBackStackEntry("studio") }.getOrNull()
                 }
@@ -298,8 +298,8 @@ class MainActivity : ComponentActivity() {
                     val entry = runCatching {
                         navController.getBackStackEntry("studio")
                     }.getOrNull() ?: return@navigate
-                    val vm = ViewModelProvider(entry)[PhotographerDashboardViewModel::class.java]
                     val owner = ViewModelProvider(entry)
+                    val vm = owner[PhotographerDashboardViewModel::class.java]
                     when (route) {
                         "studio/home" -> {
                             vm.fetchVerificationStatus()
@@ -327,11 +327,23 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Inbox socket held once for the whole studio session — a
+                // The studio session's four ViewModels come up together here,
+                // outside the NavHost, exactly as the single ViewModel they
+                // were split from did: entering the studio on ANY route starts
+                // the same work. It matters for the two full-screen
+                // sub-surfaces (share, event form), which mount no tab chrome
+                // and so resolve none of these themselves — a back stack
+                // restored onto one of them would otherwise leave the tether's
+                // watch-resume waiting until the photographer pressed Back.
+                //
+                // The inbox socket is then held once for the whole session — a
                 // per-tab lifecycle would reconnect (and refetch) on every tab
                 // switch. See StudioInboxLifecycle.
                 if (studioEntry != null) {
                     val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
+                    viewModel<StudioSettingsViewModel>(studioEntry)
+                    viewModel<StudioEarningsViewModel>(studioEntry)
+                    studioTetherViewModel(navController, studioEntry)
                     StudioInboxLifecycle(studioVm)
                 }
 
