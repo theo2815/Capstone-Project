@@ -50,20 +50,21 @@ data class RejectEventRequest(
     val reason: String,
 )
 
-// POST /admin/events is now multipart — the controller pulls title/date/
-// location/pricePerPhoto off the multipart request and builds this DTO
-// before handing to the service. The cover image arrives as a separate
-// file part (handled by AdminEventsController + EventCoverService) so the
-// row's `cover_s3_key` is set after the event is persisted.
+// POST /admin/events is multipart — the text parts bind straight onto this
+// DTO as a `@Valid @ModelAttribute` (AdminEventsController). The cover image
+// arrives as a separate file part (handled by AdminEventsController +
+// EventCoverService) so the row's `cover_s3_key` is set after the event is
+// persisted. The three required fields carry an empty default so a missing
+// part fails @NotBlank as a 400 on that field rather than a construction error.
 data class CreateAdminEventRequest(
     @field:NotBlank
     @field:Size(max = 200)
-    val title: String,
+    val title: String = "",
     @field:NotBlank
-    val date: String,
+    val date: String = "",
     @field:NotBlank
     @field:Size(max = 200)
-    val location: String,
+    val location: String = "",
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
     // Organizer name + race-day notes shown in the runner-facing "About this
     // race" strip. Optional at create — blank leaves the entity defaults ("").

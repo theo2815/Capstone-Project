@@ -1,6 +1,5 @@
 package com.quickpitik.controller
 
-import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
@@ -9,15 +8,18 @@ import com.quickpitik.dto.admin.AdminReindexResponseDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.RejectEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
-import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
 import jakarta.validation.Valid
+import org.springframework.beans.propertyeditors.StringTrimmerEditor
 import org.springframework.http.MediaType
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.web.bind.WebDataBinder
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.InitBinder
+import org.springframework.web.bind.annotation.ModelAttribute
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -27,7 +29,6 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
-import java.math.BigDecimal
 import java.util.UUID
 
 @RestController
@@ -72,45 +73,17 @@ class AdminEventsController(
         @Valid @RequestBody body: RejectEventRequest,
     ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason)
 
-    // multipart/form-data — text fields ride as @RequestParam (read as
-    // plain strings from the multipart parts) and the optional `cover`
-    // part carries the image bytes (jpeg/png/webp). @RequestPart on a
-    // String would try to use a JSON converter and 500 on a Content-Type-
-    // less FormData part. Image bytes belong in object storage, not the
-    // JSON payload.
+    // multipart/form-data — the text parts bind onto the request DTO and the
+    // optional `cover` part carries the image bytes (jpeg/png/webp).
+    // @RequestPart on a String would try to use a JSON converter and 500 on a
+    // Content-Type-less FormData part. Image bytes belong in object storage,
+    // not the JSON payload.
     @PostMapping(consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun create(
         @AuthenticationPrincipal principal: AuthPrincipal,
-        @RequestParam("title") title: String,
-        @RequestParam("date") date: String,
-        @RequestParam("location") location: String,
-        @RequestParam("pricePerPhoto", required = false) pricePerPhoto: String?,
-        @RequestParam("organizerName", required = false) organizerName: String?,
-        @RequestParam("description", required = false) description: String?,
+        @Valid @ModelAttribute("form") form: CreateAdminEventRequest,
         @RequestPart("cover", required = false) cover: MultipartFile?,
-    ): AdminListEventDto {
-        val req = CreateAdminEventRequest(
-            title = title.trim(),
-            date = date.trim(),
-            location = location.trim(),
-            pricePerPhoto = parsePrice(pricePerPhoto) ?: BigDecimal.ZERO,
-            organizerName = organizerName?.trim(),
-            description = description?.trim(),
-        )
-        if (req.title.isBlank()) {
-            throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "title is required", field = "title")
-        }
-        if (req.date.isBlank()) {
-            throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "date is required", field = "date")
-        }
-        if (req.location.isBlank()) {
-            throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "location is required", field = "location")
-        }
-        val coverUpload = cover?.takeUnless { it.isEmpty }?.let {
-            AdminEventService.CoverUpload(bytes = it.bytes, contentType = it.contentType)
-        }
-        return adminEventService.create(principal.userId, req, coverUpload)
-    }
+    ): AdminListEventDto = adminEventService.create(principal.userId, form, coverOf(cover))
 
     // multipart/form-data so the cover image can ride alongside text fields,
     // mirroring POST. Text-only edits still work — they just send a form
@@ -120,34 +93,16 @@ class AdminEventsController(
     fun update(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
-        @RequestParam(required = false) title: String?,
-        @RequestParam(required = false) date: String?,
-        @RequestParam(required = false) location: String?,
-        @RequestParam(required = false) pricePerPhoto: String?,
-        @RequestParam(required = false) organizerName: String?,
-        @RequestParam(required = false) description: String?,
+        @Valid @ModelAttribute("form") form: UpdateAdminEventRequest,
         @RequestParam(required = false) removeCover: Boolean?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
-    ): AdminListEventDto {
-        val req = UpdateAdminEventRequest(
-            title = title?.trim()?.takeIf { it.isNotEmpty() },
-            date = date?.trim()?.takeIf { it.isNotEmpty() },
-            location = location?.trim()?.takeIf { it.isNotEmpty() },
-            pricePerPhoto = parsePrice(pricePerPhoto),
-            organizerName = organizerName?.trim()?.takeIf { it.isNotEmpty() },
-            description = description?.trim()?.takeIf { it.isNotEmpty() },
-        )
-        val coverUpload = cover?.takeUnless { it.isEmpty }?.let {
-            AdminEventService.CoverUpload(bytes = it.bytes, contentType = it.contentType)
-        }
-        return adminEventService.update(
-            adminId = principal.userId,
-            eventId = eventId,
-            req = req,
-            cover = coverUpload,
-            removeCover = removeCover == true,
-        )
-    }
+    ): AdminListEventDto = adminEventService.update(
+        adminId = principal.userId,
+        eventId = eventId,
+        req = form,
+        cover = coverOf(cover),
+        removeCover = removeCover == true,
+    )
 
     @DeleteMapping("/{eventId}")
     fun delete(
@@ -166,19 +121,18 @@ class AdminEventsController(
     ): AdminReindexResponseDto =
         AdminReindexResponseDto(requeued = adminEventService.reindexPhotos(principal.userId, eventId, all == true))
 
-    // FormData round-trips floats as strings ("80" or "80.00"). Blank /
-    // missing means "no change" on PATCH and "default to 0" on POST. Surface
-    // parse failures as 400 with the offending field so the FE shows it on
-    // the right input instead of a generic 500.
-    private fun parsePrice(raw: String?): BigDecimal? {
-        val trimmed = raw?.trim().orEmpty()
-        if (trimmed.isEmpty()) return null
-        return runCatching { BigDecimal(trimmed) }.getOrElse {
-            throw ValidationException(
-                code = ErrorCodes.VALIDATION_ERROR,
-                message = "pricePerPhoto must be a number",
-                field = "pricePerPhoto",
-            )
-        }
+    // FormData sends every field as a string and an untouched input as "", so
+    // blank has to read as "absent": "default to 0" on POST, "no change" on
+    // PATCH. Scoped by the `form` attribute name to the two event forms.
+    // Numbers convert themselves, and a non-numeric price comes back as a 400
+    // on that field so the FE shows it on the right input, not a generic 500.
+    @InitBinder("form")
+    fun trimEventForm(binder: WebDataBinder) {
+        binder.registerCustomEditor(String::class.java, StringTrimmerEditor(true))
     }
+
+    private fun coverOf(cover: MultipartFile?): AdminEventService.CoverUpload? =
+        cover?.takeUnless { it.isEmpty }?.let {
+            AdminEventService.CoverUpload(bytes = it.bytes, contentType = it.contentType)
+        }
 }

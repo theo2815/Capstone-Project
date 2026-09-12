@@ -78,12 +78,19 @@ class GlobalExceptionHandler {
             ),
         )
 
+    // One code for "the request did not validate" (2026-09-12): the multipart
+    // event forms moved from hand-rolled checks emitting VALIDATION_ERROR to
+    // Bean Validation, which lands here. No client branches on the old
+    // VALIDATION_FAILED string; the constant survives until the P2 sweep.
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun handleMethodArgNotValid(ex: MethodArgumentNotValidException): ResponseEntity<ApiResponse<Nothing>> {
         val errors = ex.bindingResult.fieldErrors.map {
             ApiError(
-                code = "VALIDATION_FAILED",
-                message = it.defaultMessage ?: "invalid",
+                code = ErrorCodes.VALIDATION_ERROR,
+                // A binding conversion failure carries Spring's internal
+                // sentence ("Failed to convert value of type …"); the wire says
+                // what handleTypeMismatch says for the @RequestParam twin.
+                message = if (it.code == "typeMismatch") "Invalid value for '${it.field}'" else it.defaultMessage ?: "invalid",
                 field = it.field,
             )
         }

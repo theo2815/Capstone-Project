@@ -245,7 +245,7 @@ class GlobalExceptionHandlerTest {
         assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
         assertEquals(listOf("email", "password"), response.body?.errors?.map { it.field })
         assertEquals(listOf("must be a valid email", "must not be blank"), response.body?.errors?.map { it.message })
-        assertTrue(response.body?.errors?.all { it.code == "VALIDATION_FAILED" } == true)
+        assertTrue(response.body?.errors?.all { it.code == ErrorCodes.VALIDATION_ERROR } == true)
     }
 
     @Suppress("UNUSED_PARAMETER", "unused")

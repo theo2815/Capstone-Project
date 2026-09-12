@@ -77,18 +77,22 @@ data class PhotographerEventDetailDto(
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
 )
 
-// POST /me/photographer/events (multipart text fields, parsed by the
-// controller like the admin create). pricingMode paid|free; a paid event
-// needs pricePerPhoto > 0; a free one may pick watermarkPolicy own|none.
+// POST /me/photographer/events — bound off the multipart form as a `@Valid
+// @ModelAttribute` (MePhotographerController). pricingMode paid|free; a paid
+// event needs pricePerPhoto > 0; a free one may pick watermarkPolicy own|none.
+// The three required fields carry an empty default so a missing part fails
+// @NotBlank as a 400 on that field rather than a construction error, and the
+// controller's trimmer reads a blank part as absent — which is what puts
+// visibility/pricingMode back on the defaults below.
 data class CreateMyEventRequest(
     @field:NotBlank
     @field:Size(max = 200)
-    val title: String,
+    val title: String = "",
     @field:NotBlank
-    val date: String,
+    val date: String = "",
     @field:NotBlank
     @field:Size(max = 200)
-    val location: String,
+    val location: String = "",
     @field:Size(max = 120)
     val organizerName: String? = null,
     @field:Size(max = 600)
