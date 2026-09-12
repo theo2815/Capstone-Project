@@ -159,13 +159,14 @@ fun StudioTheme(content: @Composable () -> Unit) {
 @Composable
 fun StudioTabScaffold(
     viewModel: PhotographerDashboardViewModel,
+    settingsViewModel: StudioSettingsViewModel,
     onLogout: () -> Unit,
     onPreviewProfile: () -> Unit,
     onSwitchToRunner: () -> Unit,
     content: @Composable () -> Unit,
 ) {
     val messages by viewModel.messages.collectAsState()
-    val brandSettings by viewModel.brandSettings.collectAsState()
+    val brandSettings by settingsViewModel.brandSettings.collectAsState()
     // Drives the cross-tab GlobalUploadBanner — surfaces sync progress so the
     // photographer doesn't lose track of in-flight uploads after dismissing
     // the import sheet. The Sync queue card on the Capture tab remains the

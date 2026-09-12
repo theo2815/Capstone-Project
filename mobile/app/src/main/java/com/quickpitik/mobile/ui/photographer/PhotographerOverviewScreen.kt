@@ -99,6 +99,7 @@ internal data class SetupStep(
 @Composable
 fun PhotographerOverviewScreen(
     viewModel: PhotographerDashboardViewModel,
+    settingsViewModel: StudioSettingsViewModel,
     onNavigateToSettings: () -> Unit,
     // Studio ROUTE name (e.g. "studio/capture") — the tabs are NavHost routes
     // now, and MainActivity's studioNavigate owns the per-tab refresh.
@@ -306,7 +307,7 @@ fun PhotographerOverviewScreen(
                     viewModel.fetchEvents()
                     viewModel.fetchEarningsAndTransactions()
                     viewModel.fetchMessages()
-                    viewModel.fetchSettings()
+                    settingsViewModel.fetchSettings()
                 },
             )
         }

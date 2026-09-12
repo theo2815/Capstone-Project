@@ -96,6 +96,7 @@ import com.quickpitik.mobile.ui.photographer.PhotographerSettingsScreen
 import com.quickpitik.mobile.ui.photographer.PublicPhotographerViewModel
 import com.quickpitik.mobile.ui.photographer.STUDIO_TAB_ROUTES
 import com.quickpitik.mobile.ui.photographer.StudioInboxLifecycle
+import com.quickpitik.mobile.ui.photographer.StudioSettingsViewModel
 import com.quickpitik.mobile.ui.photographer.StudioTabScaffold
 import com.quickpitik.mobile.ui.photographer.StudioTheme
 import com.quickpitik.mobile.ui.photographer.VerificationUiState
@@ -314,7 +315,7 @@ class MainActivity : ComponentActivity() {
                         "studio/earnings" -> vm.fetchEarningsAndTransactions()
                         "studio/settings" -> {
                             vm.fetchVerificationStatus()
-                            vm.fetchSettings()
+                            ViewModelProvider(entry)[StudioSettingsViewModel::class.java].fetchSettings()
                         }
                     }
                 }
@@ -659,14 +660,17 @@ class MainActivity : ComponentActivity() {
                                 }
                                 composable("studio/home") { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val settingsVm = studioSettingsViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = settingsVm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerOverviewScreen(
                                             viewModel = vm,
+                                            settingsViewModel = settingsVm,
                                             onNavigateToSettings = { studioNavigate("studio/settings") },
                                             onNavigateToTab = studioNavigate,
                                         )
@@ -676,6 +680,7 @@ class MainActivity : ComponentActivity() {
                                     val vm = studioViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = studioSettingsViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
@@ -687,6 +692,7 @@ class MainActivity : ComponentActivity() {
                                     val vm = studioViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = studioSettingsViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
@@ -713,6 +719,7 @@ class MainActivity : ComponentActivity() {
                                     val vm = studioViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = studioSettingsViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
@@ -722,14 +729,17 @@ class MainActivity : ComponentActivity() {
                                 }
                                 composable("studio/settings") { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val settingsVm = studioSettingsViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = settingsVm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerSettingsScreen(
                                             viewModel = vm,
+                                            settingsViewModel = settingsVm,
                                             onLogout = studioLogout,
                                         )
                                     }
@@ -779,16 +789,16 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 composable("studio/profile-preview") { entry ->
-                                    val vm = studioViewModel(navController, entry)
+                                    val settingsVm = studioSettingsViewModel(navController, entry)
                                     // Route-scoped on purpose: the same screen
                                     // serves a runner tapping a photo byline
                                     // via "photographer/{handle}".
                                     val publicVm: PublicPhotographerViewModel = viewModel()
-                                    val brandSettings by vm.brandSettings.collectAsState()
-                                    val isBrandSettingsLoading by vm.isFetchingBrandSettings.collectAsState()
-                                    val brandSettingsError by vm.settingsLoadError.collectAsState()
+                                    val brandSettings by settingsVm.brandSettings.collectAsState()
+                                    val isBrandSettingsLoading by settingsVm.isFetchingBrandSettings.collectAsState()
+                                    val brandSettingsError by settingsVm.settingsLoadError.collectAsState()
                                     LaunchedEffect(Unit) {
-                                        if (brandSettings == null) vm.fetchBrandSettings()
+                                        if (brandSettings == null) settingsVm.fetchBrandSettings()
                                     }
                                     StudioTheme {
                                         PhotographerPublicProfileScreen(
@@ -1165,18 +1175,29 @@ internal fun deepLinkTarget(uri: Uri): DeepLinkTarget? {
     }
 }
 
-// The ONE shared studio VM, owned by the "studio" graph's back-stack entry —
-// every studio route resolves the same instance, and it is cleared (tether
-// teardown included) exactly when logout pops the graph. `remember(entry)`
-// because getBackStackEntry must not run on every recomposition.
+// The "studio" graph's back-stack entry — the owner of every studio ViewModel.
+// They all resolve off this one entry, so they share a lifetime: created lazily
+// (a runner session constructs none of them, and none of their init salvos
+// fire) and cleared, tether teardown included, exactly when logout pops the
+// graph. `remember(entry)` because getBackStackEntry must not run on every
+// recomposition.
+@Composable
+private fun studioGraphEntry(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): NavBackStackEntry = remember(entry) { navController.getBackStackEntry("studio") }
+
 @Composable
 private fun studioViewModel(
     navController: NavHostController,
     entry: NavBackStackEntry,
-): PhotographerDashboardViewModel {
-    val graphEntry = remember(entry) { navController.getBackStackEntry("studio") }
-    return viewModel(graphEntry)
-}
+): PhotographerDashboardViewModel = viewModel(studioGraphEntry(navController, entry))
+
+@Composable
+private fun studioSettingsViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): StudioSettingsViewModel = viewModel(studioGraphEntry(navController, entry))
 
 @Composable
 private fun runnerGraphEntry(
