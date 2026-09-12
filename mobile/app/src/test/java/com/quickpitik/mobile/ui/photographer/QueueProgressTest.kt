@@ -70,14 +70,24 @@ class QueueProgressTest {
         // Mid-batch is where it matters: a failure and a duplicate refusal are
         // settled, nothing will ever move them, so a bar that ignored either
         // would stick short of full with an empty queue.
-        // A baseline left above the total (the queue was wiped mid-batch, so
-        // observeQueue's empty-counts return never reset it) reads 0, not a
-        // negative or a stuck 100% — filed #p3, not fixed in a behaviour-preserving phase.
-        assertEquals(0f, queueProgress(counts("QUEUED" to 2), previousBaseline = 500, wasActive = true).progress, 0f)
-
         val mid = queueProgress(counts("COMPLETED" to 1, "FAILED" to 1, "DUPLICATE" to 1, "UPLOADING" to 1), 0, true)
         assertEquals(0.75f, mid.progress, 0.001f)
         // Duplicates are also part of the history the next batch baselines against.
         assertEquals(7, queueProgress(counts("COMPLETED" to 5, "DUPLICATE" to 2, "QUEUED" to 1), 0, false).baseline)
+    }
+
+    @Test fun `a baseline above what is settled drops to it, so the bar never reads negative or freezes at zero`() {
+        // Rows can leave the settled count mid-batch: Retry sends FAILED rows back to
+        // QUEUED, and the worker retires COMPLETED rows whose phone copy was deleted
+        // (deleteCompletedBefore). And if the queue is ever emptied, observeQueue returns
+        // before calling this, so the old pair carries over.
+        val pruned = queueProgress(counts("COMPLETED" to 350, "QUEUED" to 250), previousBaseline = 500, wasActive = true)
+        assertEquals(0f, pruned.progress, 0f)
+        assertEquals(350, pruned.baseline)
+        // After an emptied queue the next batch measures from what is there, not from 500.
+        val wiped = queueProgress(counts("QUEUED" to 10), previousBaseline = 500, wasActive = true)
+        assertEquals(0, wiped.baseline)
+        val later = queueProgress(counts("COMPLETED" to 3, "QUEUED" to 7), wiped.baseline, wiped.active)
+        assertEquals(0.3f, later.progress, 0.001f)
     }
 }

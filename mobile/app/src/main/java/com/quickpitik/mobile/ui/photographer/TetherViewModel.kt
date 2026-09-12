@@ -805,7 +805,7 @@ internal data class QueueProgress(
     val failed: Int,
     val total: Int,
     val progress: Float,
-    /** Rows already settled when the current batch began — feed this back as `previousBaseline`. */
+    /** Rows already settled when the current batch began, capped at what is settled now — feed this back as `previousBaseline`. */
     val baseline: Int,
     val active: Boolean,
 )
@@ -815,7 +815,10 @@ internal data class QueueProgress(
  * dedupe ledger, so `synced/total` over all history meant a 500-photo race
  * followed by one new queued photo showed 500/501 ≈ 99% instantly. The baseline
  * is the rows already settled when the current batch began (the idle → active
- * edge); it only moves on that edge, so a batch's own completions fill the bar.
+ * edge); it only moves on that edge, so a batch's own completions fill the bar,
+ * except that it never exceeds what is settled: Retry and the worker retiring rows
+ * whose phone copy was deleted shrink that count mid-batch, and a baseline above it
+ * would read negative, or pin the next batch at 0% if carried over an emptied queue.
  * DUPLICATE counts as settled, like FAILED, so the bar still reaches 100%.
  */
 internal fun queueProgress(
@@ -833,7 +836,9 @@ internal fun queueProgress(
     val settled = synced + failed + duplicate
 
     val active = queued + uploading > 0
-    val baseline = if (active && !wasActive) settled else previousBaseline
+    // ponytail: a shrink mid-batch restarts the bar over the rows still to go (reads low,
+    // never high); knowing which rows belong to the batch would fix that, if it ever matters.
+    val baseline = if (active && !wasActive) settled else previousBaseline.coerceAtMost(settled)
     val batchTotal = total - baseline
     return QueueProgress(
         synced = synced,
