@@ -19,6 +19,7 @@ import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.disbursement.DisbursementService
 import com.quickpitik.service.disbursement.ManualDisbursementProvider
+import com.quickpitik.service.earnings.PayoutCycleTransitions
 import com.quickpitik.service.earnings.PayoutStatusRecorder
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
@@ -99,7 +100,7 @@ class AdminPayoutServiceTransitionTest {
             storageProperties,
             adminDecisionLogService,
             adminDecisionLogRepository,
-            recorder,
+            PayoutCycleTransitions(payoutCycleRepository, recorder),
             props,
             disbursementService,
         )

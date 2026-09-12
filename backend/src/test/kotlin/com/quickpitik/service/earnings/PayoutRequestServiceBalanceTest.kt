@@ -69,6 +69,7 @@ class PayoutRequestServiceBalanceTest {
         payoutAccountRepository,
         payoutAccountAuditRepository,
         payoutStatusRecorder,
+        PayoutCycleTransitions(payoutCycleRepository, payoutStatusRecorder),
         platformProperties,
         Mockito.mock(UserRepository::class.java),
     )

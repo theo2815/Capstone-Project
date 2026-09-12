@@ -60,6 +60,7 @@ class PayoutRequestServiceWithdrawTest {
         payoutAccountRepository,
         payoutAccountAuditRepository,
         payoutStatusRecorder,
+        PayoutCycleTransitions(payoutCycleRepository, payoutStatusRecorder),
         PlatformProperties(),
         Mockito.mock(UserRepository::class.java),
     )

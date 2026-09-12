@@ -34,7 +34,8 @@ import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.disbursement.DisbursementRequest
 import com.quickpitik.service.disbursement.DisbursementService
-import com.quickpitik.service.earnings.PayoutStatusRecorder
+import com.quickpitik.service.earnings.PayoutCycleTransitions
+import com.quickpitik.service.earnings.PayoutTransition
 import com.quickpitik.service.storage.StorageService
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
@@ -58,7 +59,7 @@ class AdminPayoutService(
     private val storageProperties: StorageProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
-    private val payoutStatusRecorder: PayoutStatusRecorder,
+    private val payoutCycleTransitions: PayoutCycleTransitions,
     private val platformProperties: PlatformProperties,
     private val disbursementService: DisbursementService,
 ) {
@@ -81,8 +82,7 @@ class AdminPayoutService(
 
     fun approve(adminId: UUID, payoutId: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
-        val from = cycle.status
-        ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD))
+        payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminApprove)
         cycle.holdReason = null
         val needsTwo = requiresTwoPerson(cycle)
 
@@ -96,9 +96,7 @@ class AdminPayoutService(
                 )
             }
             cycle.secondApprovedBy = adminId
-            cycle.status = PayoutCycleStatus.APPROVED
-            payoutCycleRepository.save(cycle)
-            payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId, "second approval")
+            payoutCycleTransitions.apply(cycle, PayoutTransition.AdminApprove, adminId, "second approval")
             val decision = adminDecisionLogService.logPayoutDecision(
                 adminId = adminId, targetPayoutId = cycle.id, decision = "approved-second",
             )
@@ -115,6 +113,9 @@ class AdminPayoutService(
         // Two-person first-approval leg — awaits a second, different admin. The
         // cycle stays PENDING (not payable) until the second approval lands.
         if (needsTwo) {
+            // Not a lifecycle move: the cycle stays PENDING and only the first
+            // approver is stamped, so this deliberately does not go through
+            // PayoutCycleTransitions and writes no history row.
             cycle.status = PayoutCycleStatus.PENDING
             cycle.approvedBy = adminId
             cycle.approvedAt = OffsetDateTime.now()
@@ -126,11 +127,9 @@ class AdminPayoutService(
         }
 
         // Single approval (below threshold, or fewer than two admins).
-        cycle.status = PayoutCycleStatus.APPROVED
         cycle.approvedBy = adminId
         cycle.approvedAt = OffsetDateTime.now()
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId)
+        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminApprove, adminId)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
@@ -156,12 +155,8 @@ class AdminPayoutService(
     fun hold(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
         ensureManual(cycle)
-        val from = cycle.status
-        ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.APPROVED, PayoutCycleStatus.PROCESSING))
-        cycle.status = PayoutCycleStatus.HELD
         cycle.holdReason = reason.take(255)
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.HELD, "admin", adminId, reason)
+        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminHold, adminId, reason)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
@@ -181,17 +176,14 @@ class AdminPayoutService(
     fun markPaid(adminId: UUID, payoutId: String, req: MarkPayoutPaidRequest): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
         ensureManual(cycle)
-        val from = cycle.status
-        // APPROVED/PROCESSING only — a cycle must be (fully) approved before it
-        // can be paid, which also enforces two-person approval for large amounts.
-        ensureFrom(cycle, setOf(PayoutCycleStatus.APPROVED, PayoutCycleStatus.PROCESSING))
-        cycle.status = PayoutCycleStatus.PAID
+        // AdminMarkPaid allows APPROVED/PROCESSING only — a cycle must be
+        // (fully) approved before it can be paid, which also enforces two-person
+        // approval for large amounts.
         cycle.paymentReference = req.paymentReference.trim()
         cycle.paidBy = adminId
         cycle.holdReason = null
         cycle.settledAt = OffsetDateTime.now()
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.PAID, "admin", adminId)
+        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminMarkPaid, adminId)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,
@@ -217,13 +209,9 @@ class AdminPayoutService(
 
     fun reject(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
-        val from = cycle.status
-        ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD, PayoutCycleStatus.APPROVED))
-        cycle.status = PayoutCycleStatus.REJECTED
         cycle.rejectedReason = reason.take(255)
         cycle.holdReason = null
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.REJECTED, "admin", adminId, reason)
+        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminReject, adminId, reason)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId, targetPayoutId = cycle.id, decision = "rejected", reason = reason,
         )
@@ -240,8 +228,9 @@ class AdminPayoutService(
 
     fun markProcessing(adminId: UUID, payoutId: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
-        val from = cycle.status
-        ensureFrom(cycle, setOf(PayoutCycleStatus.APPROVED))
+        // Guarded before the transfer, not after: a refused transition must
+        // never follow money that has already left.
+        payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkProcessing)
         // Route the money movement through the disbursement seam. Manual = no-op
         // (admin sends by hand, then attests via mark-paid); PayMongo = creates a
         // Transfer and returns its id, with the webhook confirming later (Phase 11).
@@ -249,10 +238,8 @@ class AdminPayoutService(
         disbursementRequestFor(cycle)?.let { req ->
             cycle.providerTransferId = disbursementService.initiate(req).providerTransferId
         }
-        cycle.status = PayoutCycleStatus.PROCESSING
         cycle.processingAt = OffsetDateTime.now()
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.PROCESSING, "admin", adminId)
+        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminMarkProcessing, adminId)
         // Internal step — no photographer inbox message; the status shows on billing.
         adminDecisionLogService.logPayoutDecision(
             adminId = adminId, targetPayoutId = cycle.id, decision = "processing",
@@ -279,12 +266,8 @@ class AdminPayoutService(
     fun markFailed(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
         ensureManual(cycle)
-        val from = cycle.status
-        ensureFrom(cycle, setOf(PayoutCycleStatus.PROCESSING))
-        cycle.status = PayoutCycleStatus.FAILED
         cycle.failedReason = reason.take(255)
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.FAILED, "admin", adminId, reason)
+        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminMarkFailed, adminId, reason)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId, targetPayoutId = cycle.id, decision = "failed", reason = reason,
         )
@@ -302,12 +285,8 @@ class AdminPayoutService(
     fun markReturned(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
         ensureManual(cycle)
-        val from = cycle.status
-        ensureFrom(cycle, setOf(PayoutCycleStatus.PAID))
-        cycle.status = PayoutCycleStatus.RETURNED
         cycle.returnedAt = OffsetDateTime.now()
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.RETURNED, "admin", adminId, reason)
+        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminMarkReturned, adminId, reason)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId, targetPayoutId = cycle.id, decision = "returned", reason = reason,
         )
@@ -327,16 +306,6 @@ class AdminPayoutService(
             throw ApiException(
                 HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
                 "This transfer is managed by the payment provider. Wait for its confirmed outcome.",
-            )
-        }
-    }
-
-    private fun ensureFrom(cycle: PayoutCycle, allowed: Set<PayoutCycleStatus>) {
-        if (cycle.status !in allowed) {
-            throw ApiException(
-                status = HttpStatus.CONFLICT,
-                code = ErrorCodes.INVALID_STATE_TRANSITION,
-                message = "Cannot do that to a ${cycle.statusWire} payout",
             )
         }
     }
@@ -423,8 +392,7 @@ class AdminPayoutService(
         if (adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(
                 adminId, idempotencyKey, payoutId,
             )) return
-        val from = cycle.status
-        ensureFrom(cycle, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD))
+        payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminApprove)
         val needsTwo = requiresTwoPerson(cycle)
         if (needsTwo && cycle.approvedBy == adminId) throw ApiException(
             HttpStatus.CONFLICT, ErrorCodes.PAYOUT_SECOND_APPROVER_REQUIRED,
@@ -434,10 +402,10 @@ class AdminPayoutService(
         val reachedApproved = when {
             needsTwo && cycle.approvedBy != null && cycle.approvedBy != adminId -> {
                 cycle.secondApprovedBy = adminId
-                cycle.status = PayoutCycleStatus.APPROVED
                 true
             }
             needsTwo && cycle.approvedBy == null -> {
+                // Mirrors approve()'s first leg: stays PENDING, no history row.
                 cycle.status = PayoutCycleStatus.PENDING
                 cycle.approvedBy = adminId
                 cycle.approvedAt = OffsetDateTime.now()
@@ -445,16 +413,15 @@ class AdminPayoutService(
             }
             needsTwo -> false // same admin already first-approved (or retry) — hold at PENDING
             else -> {
-                cycle.status = PayoutCycleStatus.APPROVED
                 cycle.approvedBy = adminId
                 cycle.approvedAt = OffsetDateTime.now()
                 true
             }
         }
-        payoutCycleRepository.save(cycle)
-
         if (reachedApproved) {
-            payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.APPROVED, "admin", adminId)
+            payoutCycleTransitions.apply(cycle, PayoutTransition.AdminApprove, adminId)
+        } else {
+            payoutCycleRepository.save(cycle)
         }
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
@@ -486,21 +453,8 @@ class AdminPayoutService(
                 adminId, idempotencyKey, payoutId,
             )) return
         ensureManual(cycle)
-        val from = cycle.status
-        ensureFrom(
-            cycle,
-            setOf(
-                PayoutCycleStatus.PENDING,
-                PayoutCycleStatus.APPROVED,
-                PayoutCycleStatus.PROCESSING,
-                PayoutCycleStatus.HELD,
-            ),
-        )
-        cycle.status = PayoutCycleStatus.HELD
         cycle.holdReason = reason.take(255)
-        payoutCycleRepository.save(cycle)
-
-        payoutStatusRecorder.record(cycle.id, from, PayoutCycleStatus.HELD, "admin", adminId, reason)
+        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminHold, adminId, reason)
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
             targetPayoutId = cycle.id,

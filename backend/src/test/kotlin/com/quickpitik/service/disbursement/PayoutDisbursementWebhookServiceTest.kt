@@ -9,6 +9,7 @@ import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PayoutStatusHistoryRepository
 import com.quickpitik.repository.ProcessedWebhookEventRepository
+import com.quickpitik.service.earnings.PayoutCycleTransitions
 import com.quickpitik.service.earnings.PayoutStatusRecorder
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -42,7 +43,7 @@ class PayoutDisbursementWebhookServiceTest {
     private fun service() = PayoutDisbursementWebhookService(
         payoutCycleRepository,
         processedWebhookEventRepository,
-        PayoutStatusRecorder(payoutStatusHistoryRepository),
+        PayoutCycleTransitions(payoutCycleRepository, PayoutStatusRecorder(payoutStatusHistoryRepository)),
     )
 
     private fun cycle(status: PayoutCycleStatus, transferId: String = "tr_1"): PayoutCycle {

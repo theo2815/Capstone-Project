@@ -55,6 +55,7 @@ class PayoutRequestService(
     private val payoutAccountRepository: PayoutAccountRepository,
     private val payoutAccountAuditRepository: PayoutAccountAuditRepository,
     private val payoutStatusRecorder: PayoutStatusRecorder,
+    private val payoutCycleTransitions: PayoutCycleTransitions,
     private val platformProperties: PlatformProperties,
     private val userRepository: UserRepository,
 ) {
@@ -225,15 +226,7 @@ class PayoutRequestService(
         // Soft-cancel: keep the row for the audit trail (was a hard delete, which
         // destroyed the history). CANCELLED is terminal + not "open", so it releases
         // the reservation and frees the photographer to request again.
-        cycle.status = PayoutCycleStatus.CANCELLED
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(
-            cycleId = cycle.id,
-            from = PayoutCycleStatus.HELD,
-            to = PayoutCycleStatus.CANCELLED,
-            actorType = "photographer",
-            actorId = photographerId,
-        )
+        payoutCycleTransitions.apply(cycle, PayoutTransition.PhotographerCancel, photographerId)
     }
 
     private data class Balances(
