@@ -147,7 +147,7 @@ class CameraConnectionManagerTest {
     private fun answer(ask: Pair<UsbDevice, PendingIntent>, granted: Boolean) {
         val (device, reply) = ask
         if (granted) usb.addOrUpdateUsbDevice(device, true)
-        reply.send(context, 0, Intent().putExtra(UsbManager.EXTRA_DEVICE, device).putExtra(UsbManager.EXTRA_PERMISSION_GRANTED, granted))
+        reply.send(context, 0, Intent().putExtra(UsbManager.EXTRA_DEVICE, device))
         shadowOf(Looper.getMainLooper()).idle()
     }
 

@@ -1,13 +1,11 @@
 package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.AppDatabase
@@ -169,12 +167,14 @@ private const val RECENT_RECORDS_LIMIT = 200
  * thing that reads it: after process death the saved snapshot is normally
  * enough, but when it is missing or names a different event (a build from
  * before the snapshot existed, or a crash between the two preference writes)
- * the event is looked up in the list instead. A defaulted parameter rather
- * than a reach into the other ViewModel, so a test hands it a flow directly.
+ * the event is looked up in the list instead. A constructor parameter rather
+ * than a reach into the other ViewModel — the composition root passes the
+ * dashboard's flow, a test passes one directly. There is no meaningful
+ * default: an empty flow would silently disable the resume fallback.
  */
 class TetherViewModel(
     application: Application,
-    private val knownEvents: StateFlow<EventsState> = MutableStateFlow(EventsState.Loading),
+    private val knownEvents: StateFlow<EventsState>,
 ) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application)
     private val sessionManager = SessionManager.getInstance(application)
@@ -355,43 +355,6 @@ class TetherViewModel(
         }
         _activeEvent.value = event
     }
-
-    fun queuePhotosFromGallery(context: Context, uris: List<Uri>) {
-        val event = _activeEvent.value ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            uris.forEachIndexed { index, uri ->
-                try {
-                    val cacheDir = context.cacheDir
-                    val targetFile = File(cacheDir, "gallery_upload_${System.currentTimeMillis()}_$index.jpg")
-                    
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        targetFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-
-                    if (targetFile.exists() && targetFile.length() > 0) {
-                        database.uploadQueueDao().insertRecord(
-                            UploadRecord(
-                                filePath = targetFile.absolutePath,
-                                eventId = event.id,
-                                photographerId = sessionManager.getUserEmail() ?: "gallery_upload",
-                                captureTimestamp = System.currentTimeMillis(),
-                                uploadStatus = "QUEUED"
-                            )
-                        )
-                    }
-                } catch (e: Exception) {
-                    // Fail silently or handle error log
-                }
-            }
-            
-            withContext(Dispatchers.Main) {
-                runSyncEngine()
-            }
-        }
-    }
-
 
     // Batch-progress bookkeeping for observeQueue — see the comment there.
     private var uploadBatchBaseline = 0

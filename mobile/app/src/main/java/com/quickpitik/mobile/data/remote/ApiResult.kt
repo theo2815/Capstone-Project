@@ -35,4 +35,4 @@ suspend fun <T> apiCall(fallback: String, block: suspend () -> ApiResponseEnvelo
     }
 
 /** The user-facing message [toResult] and [apiCall] always put on a failure. */
-val Throwable.uiMessage: String get() = message ?: "An unexpected error occurred"
+internal val Throwable.uiMessage: String get() = message ?: "An unexpected error occurred"

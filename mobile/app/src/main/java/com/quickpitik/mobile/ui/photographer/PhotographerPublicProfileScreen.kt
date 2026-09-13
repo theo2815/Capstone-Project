@@ -58,6 +58,7 @@ import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerEventCoverageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.runner.CartViewModel
 import com.quickpitik.mobile.ui.runner.rememberIsTrueRunner
@@ -190,7 +191,7 @@ fun PhotographerPublicProfileScreen(
                             label = "Events",
                         )
                         StatNumber(
-                            value = "%,d".format(coveredEvents.sumOf { it.photoCount }),
+                            value = count(coveredEvents.sumOf { it.photoCount }),
                             label = "Photos",
                         )
                         StatNumber(

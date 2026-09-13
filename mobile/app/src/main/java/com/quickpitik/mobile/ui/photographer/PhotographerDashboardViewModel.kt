@@ -1,10 +1,8 @@
 package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
@@ -13,7 +11,6 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.apiCall
 import com.quickpitik.mobile.data.remote.uiMessage
 import com.quickpitik.mobile.data.remote.WsState
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.map
@@ -21,8 +18,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody

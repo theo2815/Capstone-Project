@@ -37,6 +37,12 @@ class FormatTest {
         assertEquals("₱1,234,567.89", peso(1234567.891))
     }
 
+    @Test fun `counts group like the website, not the phone's region`() {
+        // The phone is set to Germany in @Before, where "%,d".format(1234) reads "1.234".
+        assertEquals("1,234", count(1234))
+        assertEquals("1,234,567", count(1234567))
+    }
+
     @Test fun `backend timestamps read on Manila's clock`() {
         // 20:00 UTC on Aug 31 is 04:00 on Sep 1 in Manila: a new day and a new month.
         val pattern = "MMM d, yyyy · h:mm a"

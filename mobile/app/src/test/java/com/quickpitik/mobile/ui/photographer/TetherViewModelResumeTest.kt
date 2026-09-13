@@ -9,6 +9,7 @@ import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.closeRoom
 import com.quickpitik.mobile.support.signInAs
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -63,7 +64,7 @@ class TetherViewModelResumeTest {
             .commit()
     }
 
-    private fun model() = TetherViewModel(application).also { viewModels.put("tether", it) }
+    private fun model() = TetherViewModel(application, MutableStateFlow(EventsState.Loading)).also { viewModels.put("tether", it) }
 
     @Test fun `the saved event comes back for the account that started the watch`() {
         persistWatch(eventId = "ev-1", owner = "juan@x.com", snapshotId = "ev-1")

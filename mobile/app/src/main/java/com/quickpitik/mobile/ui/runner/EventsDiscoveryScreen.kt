@@ -32,8 +32,29 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
-import com.quickpitik.mobile.ui.common.*
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.ui.common.EventState
+import com.quickpitik.mobile.ui.common.displayState
+import com.quickpitik.mobile.ui.common.eventDateLabel
+import com.quickpitik.mobile.ui.common.extractCity
+import com.quickpitik.mobile.ui.theme.ArrowLabel
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.ErrorView
+import com.quickpitik.mobile.ui.theme.FieldShape
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.FreshDeep
+import com.quickpitik.mobile.ui.theme.GhostCta
+import com.quickpitik.mobile.ui.theme.HeroText
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.InkSoft
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.LoadingSkeleton
+import com.quickpitik.mobile.ui.theme.PillShape
+import com.quickpitik.mobile.ui.theme.QpCardShape
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.StatusChip
+import com.quickpitik.mobile.ui.theme.Typography
 import kotlinx.coroutines.launch
 
 // Date-filter choices: 3 primary lifecycle options (Live, Upcoming, Finished),

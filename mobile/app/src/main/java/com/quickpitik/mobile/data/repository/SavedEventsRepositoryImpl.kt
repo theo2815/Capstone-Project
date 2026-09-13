@@ -40,6 +40,7 @@ class SavedEventsRepositoryImpl : SavedEventsRepository {
         }
         return apiCall("Failed to save event") { api.saveEvent("Bearer $token", SaveEventRequest(event.id)) }
             .onSuccess { row -> _saved.value = _saved.value.map { if (it.id == event.id) row else it } }
+            // Skipped on cancellation (apiCall rethrows it); safe only while this repository is per-ViewModel and dies with its scope.
             .onFailure { _saved.value = original }
     }
 
@@ -52,6 +53,7 @@ class SavedEventsRepositoryImpl : SavedEventsRepository {
         _saved.value = original.filter { it.id != eventId }
         return apiCall("Failed to remove saved event") { api.unsaveEvent("Bearer $token", eventId) }
             .map { it.removed }
+            // Skipped on cancellation (apiCall rethrows it); safe only while this repository is per-ViewModel and dies with its scope.
             .onFailure { _saved.value = original }
     }
 }

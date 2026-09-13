@@ -82,6 +82,7 @@ import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SelfieRefDto
+import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.eventDateLabel
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
@@ -689,7 +690,7 @@ fun AboutStrip(
                 Kicker("Organizer · ${detail?.organizerName}", color = SlateSoft)
             }
             Kicker("${eventDateLabel(event.date)} · ${event.location}", color = SlateSoft)
-            Kicker("${"%,d".format(event.photoCount)} photos", color = SlateSoft)
+            Kicker("${count(event.photoCount)} photos", color = SlateSoft)
         }
         Spacer(Modifier.height(24.dp))
         if (detail == null) {
