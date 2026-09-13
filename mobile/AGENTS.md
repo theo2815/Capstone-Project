@@ -155,7 +155,7 @@ graph TD
 **Three conventions this module holds to** (they replace a DI framework, and the studio ViewModels are the worked example):
 
 1. **A decision is a pure `internal` top-level function beside its consumer** — verb-named, a defaulted clock where it needs one, a named result type, constants hoisted with it (`queueProgress`, `verificationSummary`, `bottomBarFor`). It moves to `ui/common/` only when both roles share it. A decision inside a composable is a decision no test can reach.
-2. **A dependency a test must replace is a defaulted constructor parameter, never a framework.** `TetherViewModel(application, dashboard.eventsState)` and the tether layer's `openCamera` lambda are the shape; there is no Hilt or Koin here and none is wanted.
+2. **A dependency a test must replace is a constructor parameter, defaulted only where meaningful; never a framework.** `TetherViewModel(application, dashboard.eventsState)` and the tether layer's `openCamera` lambda are the shape; there is no Hilt or Koin here and none is wanted.
 3. **One ViewModel per concern, all scoped to the same nav-graph entry.** The studio graph owns four (`PhotographerDashboardViewModel`, `StudioSettingsViewModel`, `StudioEarningsViewModel`, `TetherViewModel`); each `init` loads only its own routes, so its test stubs only those. Screens take the narrow ones they read. When two concerns must talk, the composition root (`MainActivity`, or the screen holding both) wires them — a ViewModel never reaches into another.
 
 ### 4. Background Sync Layer (WorkManager)
