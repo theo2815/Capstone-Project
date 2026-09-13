@@ -218,6 +218,7 @@ class AdminPayoutService(
 
     fun reject(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
+        ensureManual(cycle)
         cycle.rejectedReason = reason.take(255)
         cycle.holdReason = null
         payoutCycleTransitions.apply(cycle, PayoutTransition.AdminReject, adminId, reason)

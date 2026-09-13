@@ -185,6 +185,26 @@ class AdminPayoutServiceTransitionTest {
     }
 
     @Test
+    fun `reject refuses a provider claimed payout before mutating its reasons`() {
+        val cycle = cycle(PayoutCycleStatus.APPROVED).apply {
+            provider = "paymongo"
+            holdReason = "original hold"
+            rejectedReason = "original rejection"
+        }
+        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+
+        val ex = assertFailsWith<ApiException> { service().reject(adminId, cycleId, "new rejection") }
+
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        assertEquals(PayoutCycleStatus.APPROVED, cycle.status)
+        assertEquals("original hold", cycle.holdReason)
+        assertEquals("original rejection", cycle.rejectedReason)
+        Mockito.verify(payoutCycleRepository, Mockito.never()).save(anyArg<PayoutCycle>())
+        Mockito.verifyNoInteractions(payoutStatusHistoryRepository, adminDecisionLogRepository, photographerMessageRepository)
+    }
+
+    @Test
     fun `mark-processing moves approved to processing`() {
         given(PayoutCycleStatus.APPROVED)
         service().markProcessing(adminId, cycleId)
@@ -438,6 +458,43 @@ class AdminPayoutProcessingIntegrationTest : PostgresIntegrationTest() {
         val persisted = cycles.findById(cycle.id).orElseThrow()
         assertEquals("tr_processing_success", persisted.providerTransferId)
         assertNotNull(persisted.processingAt)
+        assertEquals("processing", history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).single().toStatus)
+        assertEquals("processing", decisions.findAll().single { it.targetPayoutId == cycle.id }.decision)
+    }
+
+    @Test
+    fun `reject during provider initiation keeps the reservation and lets tx2 link the transfer`() {
+        val cycle = coveredCycle().apply { holdReason = "original hold" }
+        cycles.saveAndFlush(cycle)
+        val processingAdmin = user(Role.ADMIN).id
+        val rejectingAdmin = user(Role.ADMIN).id
+        Mockito.`when`(disbursements.activeName).thenReturn("paymongo")
+        Mockito.`when`(disbursements.initiate(anyArg())).thenAnswer {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            val refusal = runCatching { admin.reject(rejectingAdmin, cycle.id, "cancel transfer") }.exceptionOrNull()
+
+            // A separate admin request runs between the two processing transactions.
+            assertEquals(BigDecimal("1000.00"), cycles.sumReservedByPhotographer(cycle.photographerId),
+                "Reject must not release a provider-claimed payout's reservation")
+            assertTrue(refusal is ApiException)
+            assertEquals(HttpStatus.CONFLICT, refusal.status)
+            assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, refusal.code)
+            val duringInitiation = cycles.findById(cycle.id).orElseThrow()
+            assertEquals(PayoutCycleStatus.APPROVED, duringInitiation.status)
+            assertEquals("paymongo", duringInitiation.provider)
+            assertEquals("original hold", duringInitiation.holdReason)
+            assertEquals(null, duringInitiation.rejectedReason)
+            assertTrue(history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).isEmpty())
+            assertTrue(decisions.findAll().none { it.targetPayoutId == cycle.id })
+            DisbursementResult("tr_reject_race")
+        }
+
+        assertEquals("processing", admin.markProcessing(processingAdmin, cycle.id).status)
+
+        val persisted = cycles.findById(cycle.id).orElseThrow()
+        assertEquals(PayoutCycleStatus.PROCESSING, persisted.status)
+        assertEquals("tr_reject_race", persisted.providerTransferId)
+        assertEquals(BigDecimal("1000.00"), cycles.sumReservedByPhotographer(cycle.photographerId))
         assertEquals("processing", history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).single().toStatus)
         assertEquals("processing", decisions.findAll().single { it.targetPayoutId == cycle.id }.decision)
     }
