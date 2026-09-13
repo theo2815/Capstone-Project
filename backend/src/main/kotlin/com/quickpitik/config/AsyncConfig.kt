@@ -16,7 +16,7 @@ class AsyncConfig {
     @Bean(name = ["imageProcessing"])
     fun imageProcessingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
         corePoolSize = 4
-        maxPoolSize = 8
+        maxPoolSize = corePoolSize
         // A race burst (1,000 frames in minutes) used to overflow 200 and fall
         // back to the 60 s sweep. Tasks are a photo id each — cheap to hold.
         queueCapacity = 2000
@@ -31,8 +31,9 @@ class AsyncConfig {
     // LIVE for runners (2026-09-02 scale review).
     @Bean(name = ["watermarkProcessing"])
     fun watermarkProcessingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
-        corePoolSize = 4
-        maxPoolSize = 8
+        // 2 until SubsampledDecode (P0-6) + the 2 GB limit (OPS-2) land, then back to 4
+        corePoolSize = 2
+        maxPoolSize = 2
         queueCapacity = 2000
         setThreadNamePrefix("watermark-")
         setWaitForTasksToCompleteOnShutdown(true)
@@ -48,7 +49,7 @@ class AsyncConfig {
     @Bean(name = ["emailSending"])
     fun emailSendingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
         corePoolSize = 2
-        maxPoolSize = 4
+        maxPoolSize = corePoolSize
         queueCapacity = 1000
         setThreadNamePrefix("email-")
         setWaitForTasksToCompleteOnShutdown(true)

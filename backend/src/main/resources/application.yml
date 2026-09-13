@@ -14,6 +14,7 @@ spring:
       # Boot default is 10. Raise via DB_POOL_SIZE if marathon-day upload
       # concurrency ever saturates it (watch hikaricp.connections.* metrics).
       maximum-pool-size: ${DB_POOL_SIZE:10}
+      leak-detection-threshold: 60000
   jpa:
     hibernate:
       ddl-auto: validate
@@ -36,7 +37,7 @@ spring:
     scheduling:
       # Boot default is 1 thread, which let a slow indexing reconcile sweep
       # starve the reaper / batch drain / poll / photos-ready sweeps.
-      pool-size: 4
+      pool-size: 6
   flyway:
     enabled: true
     locations: classpath:db/migration
