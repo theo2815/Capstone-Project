@@ -32,11 +32,11 @@ class WatermarkServiceTest {
 
     @Test
     fun `output is a JPEG capped at 1280 on the long edge`() {
-        val marked = service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true)
+        val marked = service.processThumbnail(photoJpeg(3000, 2000), logoPng(), credit, platformMark = true)
 
         val decoded = ImageIO.read(ByteArrayInputStream(marked.jpeg))
         assertEquals(1280, decoded.width)
-        assertEquals(960, decoded.height)
+        assertEquals(853, decoded.height)
     }
 
     @Test
