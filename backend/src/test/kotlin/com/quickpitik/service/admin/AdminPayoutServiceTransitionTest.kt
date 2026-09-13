@@ -83,13 +83,14 @@ class AdminPayoutServiceTransitionTest {
         Mockito.`when`(payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(anyArg())).thenReturn(emptyList())
     }
 
-    private fun service(): AdminPayoutService {
+    private fun service(disbursementService: DisbursementService = DisbursementService(
+        listOf(ManualDisbursementProvider()), PlatformProperties(),
+    )): AdminPayoutService {
         val adminDecisionLogService = AdminDecisionLogService(
             adminDecisionLogRepository, photographerMessageRepository, eventPublisher,
         )
         val recorder = PayoutStatusRecorder(payoutStatusHistoryRepository)
         val props = PlatformProperties()
-        val disbursementService = DisbursementService(listOf(ManualDisbursementProvider()), props)
         return AdminPayoutService(
             payoutCycleRepository,
             payoutAccountRepository,
@@ -184,6 +185,43 @@ class AdminPayoutServiceTransitionTest {
         val dto = service().markPaid(adminId, cycleId, MarkPayoutPaidRequest(paymentReference = "GC-123456"))
         assertEquals("paid", dto.status)
         assertEquals(PayoutCycleStatus.PAID.wire, recordedToStatus())
+    }
+
+    @Test
+    fun `mark-paid on paid is rejected without saving, logging, or messaging`() {
+        given(PayoutCycleStatus.PAID)
+
+        val ex = assertFailsWith<ApiException> {
+            service().markPaid(adminId, cycleId, MarkPayoutPaidRequest(paymentReference = "GC-123456"))
+        }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verify(payoutCycleRepository, Mockito.never()).save(anyArg<PayoutCycle>())
+        Mockito.verifyNoInteractions(payoutStatusHistoryRepository)
+        Mockito.verifyNoInteractions(adminDecisionLogRepository)
+        Mockito.verifyNoInteractions(photographerMessageRepository)
+    }
+
+    @Test
+    fun `mark-processing on processing is rejected before the disbursement service`() {
+        given(PayoutCycleStatus.PROCESSING)
+        val disbursementService = Mockito.mock(DisbursementService::class.java)
+        Mockito.`when`(disbursementService.activeName).thenReturn("manual")
+
+        val ex = assertFailsWith<ApiException> { service(disbursementService).markProcessing(adminId, cycleId) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verifyNoInteractions(disbursementService)
+    }
+
+    @Test
+    fun `approve on approved is rejected without saving the cycle`() {
+        given(PayoutCycleStatus.APPROVED)
+
+        val ex = assertFailsWith<ApiException> { service().approve(adminId, cycleId) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verify(payoutCycleRepository, Mockito.never()).save(anyArg<PayoutCycle>())
     }
 
     @Test

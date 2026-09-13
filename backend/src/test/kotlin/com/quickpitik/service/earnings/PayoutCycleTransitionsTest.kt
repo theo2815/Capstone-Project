@@ -55,9 +55,8 @@ class PayoutCycleTransitionsTest {
     fun `an allowed transition moves the status, saves it and records one history row`() {
         val cycle = cycle(PayoutCycleStatus.APPROVED)
 
-        val moved = transitions.apply(cycle, PayoutTransition.AdminMarkPaid, adminId)
+        transitions.apply(cycle, PayoutTransition.AdminMarkPaid, adminId)
 
-        assertTrue(moved)
         assertEquals(PayoutCycleStatus.PAID, cycle.status)
         Mockito.verify(payoutCycleRepository).save(cycle)
         val captor = ArgumentCaptor.forClass(PayoutStatusHistory::class.java)
@@ -82,18 +81,16 @@ class PayoutCycleTransitionsTest {
     }
 
     @Test
-    fun `re-applying the state a cycle already holds saves field edits but records no duplicate row`() {
-        // The hold/bulkHold divergence resolves here: neither 409s, and neither
-        // writes a second HELD -> HELD row. Mirrors the already-applied skips in
-        // PayoutRequestService.withdraw and the transfer webhook.
+    fun `re-applying the state a cycle already holds is a 409 that writes nothing`() {
         val cycle = cycle(PayoutCycleStatus.HELD)
-        cycle.holdReason = "reason updated on the second click"
 
-        val moved = transitions.apply(cycle, PayoutTransition.AdminHold, adminId, "reason updated on the second click")
+        val ex = assertFailsWith<ApiException> {
+            transitions.apply(cycle, PayoutTransition.AdminHold, adminId)
+        }
 
-        assertFalse(moved)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
         assertEquals(PayoutCycleStatus.HELD, cycle.status)
-        Mockito.verify(payoutCycleRepository).save(cycle)
+        Mockito.verifyNoInteractions(payoutCycleRepository)
         Mockito.verifyNoInteractions(payoutStatusHistoryRepository)
     }
 

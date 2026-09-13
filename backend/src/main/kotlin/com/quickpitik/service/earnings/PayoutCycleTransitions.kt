@@ -42,7 +42,6 @@ class PayoutCycleTransitions(
      * follow money that has already left.
      */
     fun ensureAllowed(cycle: PayoutCycle, transition: PayoutTransition) {
-        if (cycle.status == transition.to) return
         if (cycle.status !in transition.allowedFrom) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,
@@ -54,29 +53,18 @@ class PayoutCycleTransitions(
 
     /**
      * Guard, move, persist and record as one step.
-     *
-     * Returns `false` when the cycle already holds the target state: the
-     * caller's other field edits are still saved, but no second history row is
-     * written. A double-clicked hold is a no-op — not a 409, and not a
-     * HELD -> HELD row — which matches the already-applied skips that
-     * `PayoutRequestService.withdraw` and the transfer webhook already use.
      */
     fun apply(
         cycle: PayoutCycle,
         transition: PayoutTransition,
         actorId: UUID?,
         reason: String? = null,
-    ): Boolean {
+    ) {
         val from = cycle.status
         ensureAllowed(cycle, transition)
-        if (from == transition.to) {
-            payoutCycleRepository.save(cycle)
-            return false
-        }
         cycle.status = transition.to
         payoutCycleRepository.save(cycle)
         payoutStatusRecorder.record(cycle.id, from, transition.to, transition.actorType, actorId, reason)
-        return true
     }
 }
 
