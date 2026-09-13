@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
+import org.springframework.http.HttpStatus
 import java.time.LocalDate
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -88,6 +89,7 @@ class PayoutCycleTransitionsTest {
             transitions.apply(cycle, PayoutTransition.AdminHold, adminId)
         }
 
+        assertEquals(HttpStatus.CONFLICT, ex.status)
         assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
         assertEquals(PayoutCycleStatus.HELD, cycle.status)
         Mockito.verifyNoInteractions(payoutCycleRepository)
