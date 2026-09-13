@@ -229,6 +229,20 @@ class PayoutRequestService(
         payoutCycleTransitions.apply(cycle, PayoutTransition.PhotographerCancel, photographerId)
     }
 
+    fun assertCovered(cycle: PayoutCycle) {
+        val cutoff = OffsetDateTime.now().minus(platformProperties.payoutClearingWindow)
+        val net = transactionRepository.sumCleared(cycle.photographerId, cutoff)
+            .subtract(payoutCycleRepository.sumPaidByPhotographer(cycle.photographerId))
+            .subtract(payoutCycleRepository.sumReservedByPhotographer(cycle.photographerId))
+        if (net < BigDecimal.ZERO) {
+            throw ApiException(
+                HttpStatus.CONFLICT,
+                ErrorCodes.PAYOUT_NOT_COVERED,
+                "Refunds since this request lowered the balance by ₱${net.negate()}. Reject or hold it so the photographer can re-request.",
+            )
+        }
+    }
+
     private data class Balances(
         val available: BigDecimal,
         val clearing: BigDecimal,

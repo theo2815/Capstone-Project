@@ -20,6 +20,7 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.disbursement.DisbursementService
 import com.quickpitik.service.disbursement.ManualDisbursementProvider
 import com.quickpitik.service.earnings.PayoutCycleTransitions
+import com.quickpitik.service.earnings.PayoutRequestService
 import com.quickpitik.service.earnings.PayoutStatusRecorder
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.http.HttpStatus
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.Optional
@@ -83,9 +85,12 @@ class AdminPayoutServiceTransitionTest {
         Mockito.`when`(payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(anyArg())).thenReturn(emptyList())
     }
 
-    private fun service(disbursementService: DisbursementService = DisbursementService(
-        listOf(ManualDisbursementProvider()), PlatformProperties(),
-    )): AdminPayoutService {
+    private fun service(
+        disbursementService: DisbursementService = DisbursementService(
+            listOf(ManualDisbursementProvider()), PlatformProperties(),
+        ),
+        payoutRequestService: PayoutRequestService = Mockito.mock(PayoutRequestService::class.java),
+    ): AdminPayoutService {
         val adminDecisionLogService = AdminDecisionLogService(
             adminDecisionLogRepository, photographerMessageRepository, eventPublisher,
         )
@@ -104,6 +109,7 @@ class AdminPayoutServiceTransitionTest {
             PayoutCycleTransitions(payoutCycleRepository, recorder),
             props,
             disbursementService,
+            payoutRequestService,
         )
     }
 
@@ -185,6 +191,23 @@ class AdminPayoutServiceTransitionTest {
         val dto = service().markPaid(adminId, cycleId, MarkPayoutPaidRequest(paymentReference = "GC-123456"))
         assertEquals("paid", dto.status)
         assertEquals(PayoutCycleStatus.PAID.wire, recordedToStatus())
+    }
+
+    @Test
+    fun `mark-paid refuses a covered cycle after refunds and saves nothing`() {
+        given(PayoutCycleStatus.APPROVED)
+        val payoutRequestService = Mockito.mock(PayoutRequestService::class.java)
+        Mockito.doThrow(ApiException(HttpStatus.CONFLICT, ErrorCodes.PAYOUT_NOT_COVERED, "refund"))
+            .`when`(payoutRequestService).assertCovered(anyArg())
+
+        val ex = assertFailsWith<ApiException> {
+            service(payoutRequestService = payoutRequestService)
+                .markPaid(adminId, cycleId, MarkPayoutPaidRequest(paymentReference = "GC-123456"))
+        }
+
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.PAYOUT_NOT_COVERED, ex.code)
+        Mockito.verify(payoutCycleRepository, Mockito.never()).save(anyArg<PayoutCycle>())
     }
 
     @Test

@@ -85,6 +85,26 @@ class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
 
     @Test fun `migration preserves legacy approvals as a payable explicit state`() {
         val c = cycle(PayoutCycleStatus.PENDING)
+        val event = events.saveAndFlush(Event(
+            slug = "review-${UUID.randomUUID()}", name = "Review", date = LocalDate.now(),
+            location = "Cebu", status = EventStatus.ACTIVE,
+        ))
+        val photo = photos.saveAndFlush(Photo(
+            eventId = event.id, photographerId = c.photographerId,
+            s3Key = "review/${UUID.randomUUID()}", pricePhp = c.amountPhp,
+        ))
+        val order = orders.saveAndFlush(Order(
+            eventId = event.id, recipientEmail = "review@test.local",
+            paymentMethodWire = "gcash", status = OrderStatus.PAID, totalPhp = c.amountPhp,
+        ))
+        transactions.saveAndFlush(Transaction(
+            paidAt = OffsetDateTime.now().minusDays(10),
+            photographerId = c.photographerId,
+            eventId = event.id,
+            photoId = photo.id,
+            orderId = order.id,
+            amountKeptPhp = c.amountPhp,
+        ))
         c.settledAt = OffsetDateTime.now().minusDays(1)
         cycles.saveAndFlush(c)
         val migration = org.springframework.core.io.ClassPathResource("db/migration/V61__payout_review_integrity.sql")

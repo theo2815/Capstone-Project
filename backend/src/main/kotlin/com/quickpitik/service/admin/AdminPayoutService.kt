@@ -35,6 +35,7 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.disbursement.DisbursementRequest
 import com.quickpitik.service.disbursement.DisbursementService
 import com.quickpitik.service.earnings.PayoutCycleTransitions
+import com.quickpitik.service.earnings.PayoutRequestService
 import com.quickpitik.service.earnings.PayoutTransition
 import com.quickpitik.service.storage.StorageService
 import org.springframework.dao.DataIntegrityViolationException
@@ -62,6 +63,7 @@ class AdminPayoutService(
     private val payoutCycleTransitions: PayoutCycleTransitions,
     private val platformProperties: PlatformProperties,
     private val disbursementService: DisbursementService,
+    private val payoutRequestService: PayoutRequestService,
 ) {
 
     @Transactional(readOnly = true)
@@ -176,6 +178,8 @@ class AdminPayoutService(
     fun markPaid(adminId: UUID, payoutId: String, req: MarkPayoutPaidRequest): AdminPayoutCycleDto {
         val cycle = loadCycle(payoutId)
         ensureManual(cycle)
+        payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkPaid)
+        payoutRequestService.assertCovered(cycle)
         // AdminMarkPaid allows APPROVED/PROCESSING only — a cycle must be
         // (fully) approved before it can be paid, which also enforces two-person
         // approval for large amounts.
@@ -231,6 +235,7 @@ class AdminPayoutService(
         // Guarded before the transfer, not after: a refused transition must
         // never follow money that has already left.
         payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkProcessing)
+        payoutRequestService.assertCovered(cycle)
         // Route the money movement through the disbursement seam. Manual = no-op
         // (admin sends by hand, then attests via mark-paid); PayMongo = creates a
         // Transfer and returns its id, with the webhook confirming later (Phase 11).
