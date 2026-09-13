@@ -4,8 +4,6 @@ import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.earnings.privacyBuyerDisplay
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeResolution
-import com.quickpitik.entity.EventPhotographer
-import com.quickpitik.entity.EventPhotographerId
 import com.quickpitik.entity.Transaction
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -105,7 +103,12 @@ class TransactionMintingService(
                         isRefund = false,
                     ),
                 )
-                bumpEventPhotographer(order.eventId, photographerId, amountKept)
+                eventPhotographerRepository.adjustSalesCounters(
+                    order.eventId,
+                    photographerId,
+                    saleDelta = 1,
+                    keptDelta = amountKept,
+                )
             } catch (ex: DataIntegrityViolationException) {
                 // Concurrent mint hit the unique index — clean no-op.
                 log.debug("transaction already exists for order={} photo={}", orderId, item.id.photoId)
@@ -117,12 +120,6 @@ class TransactionMintingService(
      * Reverses one sale row when a dispute refund settles. Same owner as the
      * sale side so the ledger keeps a single writer; the unique index on
      * (order_id, photo_id, is_refund) is the idempotency.
-     *
-     * Deliberately does NOT touch the event_photographer counters the sale side
-     * bumps: the reversal maths has no sales_count twin and never had one. The
-     * per-event earnings tile therefore over-reports after a refund (admin's
-     * aggregate recomputes from transactions and is right) - open task, not a
-     * behaviour change to smuggle into this move.
      */
     @Transactional(propagation = Propagation.REQUIRED)
     fun mintRefund(dispute: Dispute, amount: BigDecimal, photographerId: UUID) {
@@ -155,6 +152,12 @@ class TransactionMintingService(
                     refundOf = original?.id,
                 ),
             )
+            eventPhotographerRepository.adjustSalesCounters(
+                order.eventId,
+                photographerId,
+                saleDelta = if (dispute.resolution == DisputeResolution.REFUND_FULL) -1 else 0,
+                keptDelta = keptReversal,
+            )
         } catch (_: DataIntegrityViolationException) {
             // Concurrent reconciliation already minted the unique refund row.
         }
@@ -185,20 +188,6 @@ class TransactionMintingService(
         val fraction = amount.divide(charged, 10, RoundingMode.HALF_UP)
         return original.amountKeptPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate() to
             original.discountPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate()
-    }
-
-    private fun bumpEventPhotographer(eventId: UUID, photographerId: UUID, amount: BigDecimal) {
-        val key = EventPhotographerId(eventId = eventId, photographerId = photographerId)
-        val ep = eventPhotographerRepository.findById(key)
-            .orElseGet {
-                // PR 7 normally creates this row on first upload; lazily create
-                // it here too in case a sale lands before any upload was tracked
-                // (covered events where rows were imported by hand for testing).
-                EventPhotographer(id = key)
-            }
-        ep.salesCount = ep.salesCount + 1
-        ep.revenueKeptPhp = ep.revenueKeptPhp.add(amount)
-        eventPhotographerRepository.save(ep)
     }
 
     private fun displayFromEmail(email: String): String {

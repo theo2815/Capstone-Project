@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -109,4 +110,22 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId")
     fun adjustPhotoCount(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID,
         @Param("delta") delta: Int): Int
+
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_photographer (event_id, photographer_id, sales_count, revenue_kept_php)
+        VALUES (:eventId, :photographerId, GREATEST(0, :saleDelta), :keptDelta)
+        ON CONFLICT (event_id, photographer_id) DO UPDATE SET
+            sales_count = GREATEST(0, event_photographer.sales_count + :saleDelta),
+            revenue_kept_php = event_photographer.revenue_kept_php + :keptDelta
+        """,
+        nativeQuery = true,
+    )
+    fun adjustSalesCounters(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("saleDelta") saleDelta: Int,
+        @Param("keptDelta") keptDelta: BigDecimal,
+    ): Int
 }

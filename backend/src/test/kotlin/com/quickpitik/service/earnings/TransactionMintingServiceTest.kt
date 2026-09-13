@@ -41,6 +41,7 @@ class TransactionMintingServiceTest {
 
     private lateinit var orderItemRepository: OrderItemRepository
     private lateinit var transactionRepository: TransactionRepository
+    private lateinit var eventPhotographerRepository: EventPhotographerRepository
     private lateinit var service: TransactionMintingService
 
     @BeforeEach
@@ -49,14 +50,12 @@ class TransactionMintingServiceTest {
         orderItemRepository = Mockito.mock(OrderItemRepository::class.java)
         val photoRepository = Mockito.mock(PhotoRepository::class.java)
         transactionRepository = Mockito.mock(TransactionRepository::class.java)
-        val eventPhotographerRepository = Mockito.mock(EventPhotographerRepository::class.java)
+        eventPhotographerRepository = Mockito.mock(EventPhotographerRepository::class.java)
         Mockito.`when`(orderRepository.findById(order.id)).thenReturn(Optional.of(order))
         Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo))
         Mockito.`when`(transactionRepository.save(anyArg())).thenAnswer { call ->
             (call.arguments[0] as Transaction).also { minted += it }
         }
-        Mockito.`when`(eventPhotographerRepository.findById(anyArg())).thenReturn(Optional.empty())
-        Mockito.`when`(eventPhotographerRepository.save(anyArg())).thenAnswer { it.arguments[0] }
         service = TransactionMintingService(
             orderRepository,
             orderItemRepository,
@@ -77,6 +76,8 @@ class TransactionMintingServiceTest {
         val row = minted.single()
         assertEquals(BigDecimal("90.00"), row.amountKeptPhp)
         assertEquals(BigDecimal("22.50"), row.discountPhp)
+        Mockito.verify(eventPhotographerRepository)
+            .adjustSalesCounters(eventId, photographerId, 1, BigDecimal("90.00"))
         // Runner paid 127.50; platform fee = paid − kept = 37.50 = 25% of the list price.
         assertEquals(BigDecimal("37.50"), BigDecimal("127.50").subtract(row.amountKeptPhp))
     }
@@ -101,6 +102,18 @@ class TransactionMintingServiceTest {
         service.mintForPaidOrder(order.id)
 
         assertTrue(minted.isEmpty())
+        Mockito.verifyNoInteractions(eventPhotographerRepository)
+    }
+
+    @Test
+    fun `an existing sale row does not increment event counters again`() {
+        stubItems(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("150.00")))
+        stubSaleRow(kept = BigDecimal("112.50"), discount = BigDecimal.ZERO)
+
+        service.mintForPaidOrder(order.id)
+
+        assertTrue(minted.isEmpty())
+        Mockito.verifyNoInteractions(eventPhotographerRepository)
     }
 
     // Refund rows are minted here too - one writer for the ledger. A full
@@ -118,6 +131,8 @@ class TransactionMintingServiceTest {
         assertEquals(BigDecimal("-22.50"), refund.discountPhp)
         assertEquals(original.id, refund.refundOf)
         assertTrue(refund.isRefund)
+        Mockito.verify(eventPhotographerRepository)
+            .adjustSalesCounters(eventId, photographerId, -1, BigDecimal("-90.00"))
     }
 
     @Test
@@ -132,6 +147,21 @@ class TransactionMintingServiceTest {
         val refund = minted.single()
         assertEquals(BigDecimal("-45.00"), refund.amountKeptPhp)
         assertEquals(BigDecimal("-11.25"), refund.discountPhp)
+        Mockito.verify(eventPhotographerRepository)
+            .adjustSalesCounters(eventId, photographerId, 0, BigDecimal("-45.00"))
+    }
+
+    @Test
+    fun `a legacy refund without a sale row keeps the old keep-rate estimate`() {
+        val dispute = disputeResolvedAs(DisputeResolution.REFUND_FULL)
+
+        service.mintRefund(dispute, BigDecimal("94.06"), photographerId)
+
+        val refund = minted.single()
+        assertEquals(BigDecimal("-70.55"), refund.amountKeptPhp)
+        assertEquals(BigDecimal.ZERO, refund.discountPhp)
+        Mockito.verify(eventPhotographerRepository)
+            .adjustSalesCounters(eventId, photographerId, -1, BigDecimal("-70.55"))
     }
 
     private fun disputeResolvedAs(resolution: DisputeResolution): Dispute =
