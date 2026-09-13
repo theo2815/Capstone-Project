@@ -209,6 +209,43 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertNotNull(fresh.deletionStartedAt)
     }
 
+    @Test fun `background indexing update cannot clobber a concurrent watermark publish`() {
+        photo.status = PhotoStatus.PROCESSING
+        photo.watermarkS3Key = null
+        photo.thumbnailS3Key = null
+        photo.publishedAt = null
+        photos.saveAndFlush(photo)
+        val separateTx = TransactionTemplate(tx.transactionManager!!).apply {
+            propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+        }
+
+        tx.executeWithoutResult {
+            val stale = photos.findById(photo.id).orElseThrow()
+            separateTx.execute {
+                assertEquals(1, photos.publishWatermarked(photo.id, "review/watermark.jpg", 1L, 2L, 3L))
+            }
+            stale.indexingStatus = IndexingStatus.SKIPPED
+            photos.saveAndFlush(stale)
+        }
+
+        val fresh = photos.findById(photo.id).orElseThrow()
+        assertEquals(IndexingStatus.SKIPPED, fresh.indexingStatus)
+        assertEquals(PhotoStatus.LIVE, fresh.status)
+        assertEquals("review/watermark.jpg", fresh.watermarkS3Key)
+    }
+
+    @Test fun `publishWatermarked only flips an eligible processing photo`() {
+        val processing = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/processing.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.PROCESSING))
+        val hidden = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/hidden.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.HIDDEN))
+        val trashed = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/trashed.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.PROCESSING, deletedAt = OffsetDateTime.now()))
+
+        assertEquals(1, inTx { photos.publishWatermarked(processing.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(photo.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(hidden.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(trashed.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(PhotoStatus.LIVE, photos.findById(processing.id).orElseThrow().status)
+    }
+
     @Test fun `purchased photos and existing grants survive permanent deletion requests`() {
         val order = orders.saveAndFlush(Order(eventId = event.id, recipientEmail = "buyer@test.local", paymentMethodWire = "gcash", status = OrderStatus.FULFILLED, totalPhp = photo.pricePhp))
         items.saveAndFlush(OrderItem(id = OrderItemId(order.id, photo.id), pricePhpAtPurchase = photo.pricePhp))

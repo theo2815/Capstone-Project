@@ -104,10 +104,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     // Targeted, conditional flip to LIVE once the watermark object is stored.
     // Deliberately NOT an entity save: PhotoIndexingService writes the same row
-    // concurrently via full-row save(), and two load-mutate-save flows would
-    // clobber each other's columns. Touching only the watermark columns kills
-    // one direction of that race; the status guard makes re-runs no-ops (the
-    // sweep is the self-heal for the other direction).
+    // concurrently. Touching only the watermark columns and @DynamicUpdate on
+    // Photo keep the two writers column-disjoint; the status guard makes
+    // re-runs no-ops.
     @Modifying
     @Query(
         "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
