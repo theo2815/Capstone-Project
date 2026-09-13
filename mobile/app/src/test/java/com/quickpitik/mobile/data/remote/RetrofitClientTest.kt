@@ -92,6 +92,14 @@ class RetrofitClientTest {
         assertNull(RetrofitClient.parseHttpError(IOException("not http")))
     }
 
+    @Test fun `the api client pairs the session interceptor with the token authenticator`() {
+        // TokenAuthenticatorTest builds its own client; this pins that the production
+        // client carries the same pair, so dropping either from RetrofitClient fails here.
+        val client = RetrofitClient.okHttpClient
+        assertTrue(client.interceptors.any { it is SessionAuthInterceptor })
+        assertTrue(client.authenticator is TokenAuthenticator)
+    }
+
     private fun httpException(code: Int, body: String) =
         HttpException(Response.error<Any>(code, body.toResponseBody("application/json".toMediaType())))
 }
