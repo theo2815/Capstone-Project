@@ -12,6 +12,7 @@ import com.quickpitik.service.events.EventService
 import com.quickpitik.service.photos.PhotoSearchService
 import com.quickpitik.service.photos.PhotoService
 import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.image.ImagePixelGuardTest.Companion.overBudgetPngHeader
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -110,6 +111,18 @@ class EventPhotoSearchGateTest {
         }
 
         assertEquals(ErrorCodes.VALIDATION_ERROR, ex.code)
+        verifyNoSearch()
+    }
+
+    @Test
+    fun `selfie dimensions over 80MP are rejected before face search`() {
+        val ex = assertFailsWith<ValidationException> {
+            search(MockMultipartFile("selfie", "selfie.png", "image/png", overBudgetPngHeader()))
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("Image dimensions exceed the supported maximum.", ex.message)
+        assertEquals("selfie", ex.field)
         verifyNoSearch()
     }
 

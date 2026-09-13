@@ -2,6 +2,7 @@ package com.quickpitik.service.events
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.service.image.ImagePixelGuardTest.Companion.overBudgetPngHeader
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.service.storage.StoredObject
 import org.junit.jupiter.api.BeforeEach
@@ -76,6 +77,16 @@ class EventCoverServiceTest {
 
         assertTrue(key.startsWith("events/$eventId/cover/"))
         Mockito.verify(storageService).put(anyArg(), anyArg<ByteArray>(), anyArg())
+    }
+
+    @Test
+    fun `dimensions over 80MP are rejected before storage`() {
+        val ex = assertFailsWith<ValidationException> { upload(overBudgetPngHeader()) }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("Image dimensions exceed the supported maximum.", ex.message)
+        assertEquals("cover", ex.field)
+        verifyNothingStored()
     }
 
     private fun upload(bytes: ByteArray) = service.upload(eventId, bytes, "image/jpeg")

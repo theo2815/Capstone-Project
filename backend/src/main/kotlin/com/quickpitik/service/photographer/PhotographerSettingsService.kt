@@ -22,6 +22,7 @@ import com.quickpitik.repository.ReservedHandleRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
+import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.AdminInboxEvent
 import org.hibernate.exception.ConstraintViolationException
@@ -525,6 +526,13 @@ class PhotographerSettingsService(
                 status = HttpStatus.PAYLOAD_TOO_LARGE,
                 code = ErrorCodes.PAYLOAD_TOO_LARGE,
                 message = "Upload must be ≤ ${maxBytes / (1024 * 1024)} MB",
+                field = "file",
+            )
+        }
+        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
+            throw ValidationException(
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Image dimensions exceed the supported maximum.",
                 field = "file",
             )
         }

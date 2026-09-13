@@ -12,6 +12,15 @@ import kotlin.test.assertTrue
 // multi-hundred-MB fixture.
 class ImagePixelGuardTest {
 
+    companion object {
+        // 10,000 × 8,001 = 80,010,000 pixels, above MAX_PIXELS, without
+        // allocating the declared raster.
+        fun overBudgetPngHeader(): ByteArray = byteArrayOf(
+            -119, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+            0, 0, 39, 16, 0, 0, 31, 65, 8, 6, 0, 0, 0, -26, 16, 82, 64,
+        )
+    }
+
     private fun png(width: Int, height: Int): ByteArray {
         val out = ByteArrayOutputStream()
         ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "png", out)
@@ -25,7 +34,7 @@ class ImagePixelGuardTest {
 
     @Test
     fun `declared dimensions over budget are rejected without a full decode`() {
-        assertTrue(ImagePixelGuard.exceedsPixelBudget(png(100, 100), maxPixels = 9_999))
+        assertTrue(ImagePixelGuard.exceedsPixelBudget(overBudgetPngHeader()))
     }
 
     @Test

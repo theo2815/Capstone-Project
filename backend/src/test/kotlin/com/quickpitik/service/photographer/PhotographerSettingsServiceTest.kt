@@ -17,6 +17,7 @@ import com.quickpitik.repository.ReservedHandleRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
+import com.quickpitik.service.image.ImagePixelGuardTest.Companion.overBudgetPngHeader
 import com.quickpitik.service.storage.StorageService
 import org.hibernate.exception.ConstraintViolationException
 import org.junit.jupiter.api.BeforeEach
@@ -154,6 +155,30 @@ class PhotographerSettingsServiceTest {
 
         assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, ex.status)
         assertEquals(ErrorCodes.PAYLOAD_TOO_LARGE, ex.code)
+        Mockito.verifyNoInteractions(storageService)
+    }
+
+    @Test
+    fun `cover dimensions over 80MP are rejected before storage`() {
+        val ex = assertFailsWith<ValidationException> {
+            service().uploadCover(userId, overBudgetPngHeader(), "image/png")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("Image dimensions exceed the supported maximum.", ex.message)
+        assertEquals("file", ex.field)
+        Mockito.verifyNoInteractions(storageService)
+    }
+
+    @Test
+    fun `watermark dimensions over 80MP are rejected before storage`() {
+        val ex = assertFailsWith<ValidationException> {
+            service().uploadWatermark(userId, overBudgetPngHeader(), "image/png")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("Image dimensions exceed the supported maximum.", ex.message)
+        assertEquals("file", ex.field)
         Mockito.verifyNoInteractions(storageService)
     }
 

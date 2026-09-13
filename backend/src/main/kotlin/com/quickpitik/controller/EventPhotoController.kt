@@ -9,6 +9,7 @@ import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.events.EventService
+import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.photos.PhotoSearchService
 import com.quickpitik.service.photos.PhotoService
 import com.quickpitik.service.profile.SelfieService
@@ -114,10 +115,18 @@ class EventPhotoController(
     ): PaginatedResponse<PhotoDto> {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
         validateSelfieUpload(selfie)
+        val selfieBytes = selfie.bytes
+        if (ImagePixelGuard.exceedsPixelBudget(selfieBytes)) {
+            throw ValidationException(
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Image dimensions exceed the supported maximum.",
+                field = "selfie",
+            )
+        }
         val event = eventService.requirePublicBySlug(slug)
         return photoSearchService.searchByFace(
             eventId = event.id,
-            selfieBytes = selfie.bytes,
+            selfieBytes = selfieBytes,
             contentType = selfie.contentType ?: MediaType.APPLICATION_OCTET_STREAM_VALUE,
             filename = selfie.originalFilename ?: "selfie",
             pagination = PaginationParams.of(offset, limit),
