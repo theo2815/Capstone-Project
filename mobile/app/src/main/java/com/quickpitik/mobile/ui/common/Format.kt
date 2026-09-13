@@ -8,8 +8,8 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 // Money and backend timestamps with the region and zone pinned: a phone set to
-// another language or time zone still reads ₱1,234.50 and Manila's clock (the
-// website's en-PH grouping and its users' local time), so a receipt, the
+// another language or time zone still reads ₱1,234.50 and Manila's clock; the
+// website uses the browser's zone, which is Manila for its users, so a receipt, the
 // earnings list and the website agree on the same sale. Each screen keeps its
 // own decimals and date pattern.
 

@@ -352,7 +352,7 @@ This section supersedes the foundation's vendor-expansion deferral below. It was
 
 ### Findings and architecture decision
 
-The active flow is `CameraConnectionManager -> foreground service/coordinator -> CameraDrivers -> PtpSession/PtpWire -> CameraTransferStore -> Room -> WorkManager`. Browse and import use the same driver/session factory. The unused EOS remote-shutter and card-poll controllers are historical experiments, not alternate production backends. Keep the service, durable spool, account/event boundaries and existing backend JPEG contract.
+The active flow is `CameraConnectionManager -> foreground service/coordinator -> CameraDrivers -> PtpSession/PtpWire -> CameraTransferStore -> Room -> WorkManager`. Browse and import use the same driver/session factory. The unused EOS remote-shutter and card-poll controllers were deleted 2026-09-11; the EOS event parser survives as `data/usb/ptp/EosEvents.kt`, used by `CameraDriver`. Keep the service, durable spool, account/event boundaries and existing backend JPEG contract.
 
 Use Android USB Host with standard PTP/MTP object access as the broad import baseline, capability-negotiated vendor adapters for live capture, and standard interrupt events plus periodic card reconciliation. Import, physical-shutter operation, transient host transfers and remote control are separate capabilities. A USB VID or a vendor-extension ID is insufficient proof of any of them. Do not require a model allowlist for standard PTP; use model quirks only for demonstrated exceptions.
 

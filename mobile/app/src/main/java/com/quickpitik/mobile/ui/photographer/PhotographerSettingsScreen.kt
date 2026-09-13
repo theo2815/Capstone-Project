@@ -112,8 +112,8 @@ import kotlin.math.roundToInt
 // PH regions/provinces come from the backend (`GET /api/v1/regions`), not from
 // this file. A hardcoded 75-line copy lived here until 2026-08-16 while the
 // website carried a third copy of its own, so a region added backend-side
-// reached neither client. The list arrives via PhotographerDashboardViewModel
-// .regions as List<RegionDto> — see that DTO for the wire shape.
+// reached neither client. The list arrives via StudioSettingsViewModel.regions
+// as List<RegionDto> — see that DTO for the wire shape.
 
 // ─── Platform + payout constants (website parity) ────────────────────────────
 

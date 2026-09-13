@@ -18,7 +18,7 @@
 
 - [x] **1. Photographer — Fix "Preview Public profile" button & Photo Preview**
   - **Status:** **ALREADY SOLVED**
-  - **Verification:** `isFetchingBrandSettings` added to `PhotographerDashboardViewModel` to show a `CircularProgressIndicator` instead of an empty state when fetching. `PhotoPreviewMode.OwnerReview` passed explicitly in `PhotographerPublicProfileScreen` when previewed from studio mode (`cartViewModel == null`).
+  - **Verification:** `isFetchingBrandSettings` added to `StudioSettingsViewModel` to show a `CircularProgressIndicator` instead of an empty state when fetching. `PhotoPreviewMode.OwnerReview` passed explicitly in `PhotographerPublicProfileScreen` when previewed from studio mode (`cartViewModel == null`).
 
 - [x] **2. Runner — Selfie Library "Gallery" button layout overflow (Mobile & Desktop)**
   - **Status:** **ALREADY SOLVED**

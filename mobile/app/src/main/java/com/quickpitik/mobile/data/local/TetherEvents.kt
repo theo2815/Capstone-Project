@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.SharedFlow
 // One-shot signal raised when the photographer taps "Stop" on the tether
 // ingest notification. TetherIngestService is a dumb lifeline — it has no
 // reference to the controllers or the ViewModel that own the USB loop — so it
-// raises this and PhotographerDashboardViewModel decides which flow to end.
+// raises this and TetherViewModel decides which flow to end.
 //
 // Same shape as SessionEvents (extraBufferCapacity=1 keeps tryEmit()
 // non-suspending) because the service raises it from onStartCommand, which

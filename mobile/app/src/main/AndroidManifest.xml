@@ -113,8 +113,8 @@
 
         <!--
             Holds the process foreground-alive for the duration of a USB ingest
-            (live shutter watch or card import). Started and stopped by
-            PhotographerDashboardViewModel; see TetherIngestService for why it
+            (live shutter watch or card import). Owned by CameraIngestCoordinator
+            through the TetherViewModel flow; see TetherIngestService for why it
             does not own the ingest loop itself. The lint suppression covers
             the connected-device runtime prerequisite supplied by
             UsbManager.requestPermission(); lint only recognizes manifest-based
