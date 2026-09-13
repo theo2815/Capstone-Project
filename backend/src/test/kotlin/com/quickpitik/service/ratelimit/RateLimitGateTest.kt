@@ -10,8 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 // acquireOrThrow is the one seam between every rate-limited controller and the
-// bucket, and clientIp is the deliberate remoteAddr-not-X-Forwarded-For decision
-// (2026-08-27). Neither had a test (2026-09-11 test-suite audit).
+// bucket, and clientIp supplies the trusted-hop identity for pre-auth buckets.
 class RateLimitGateTest {
 
     private fun limiter(decision: RateLimiter.Decision) = object : RateLimiter {
@@ -42,10 +41,10 @@ class RateLimitGateTest {
     }
 
     @Test
-    fun `clientIp ignores a forged X-Forwarded-For`() {
+    fun `clientIp prefers CF-Connecting-IP over remoteAddr`() {
         val request = MockHttpServletRequest().apply {
-            remoteAddr = "203.0.113.9"
-            addHeader("X-Forwarded-For", "198.51.100.1, 203.0.113.9")
+            remoteAddr = "198.51.100.1"
+            addHeader("CF-Connecting-IP", "203.0.113.9")
         }
 
         assertEquals("203.0.113.9", clientIp(request))

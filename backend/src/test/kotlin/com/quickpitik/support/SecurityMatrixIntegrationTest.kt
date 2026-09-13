@@ -31,7 +31,10 @@ import kotlin.test.assertFalse
  * `PhotoBundleHttpIntegrationTest`: MockMvc's request shape differs from a
  * browser's in ways that have already produced a false green once.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = ["app.rate-limit.enabled=true"],
+)
 class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
@@ -92,6 +95,21 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
 
         assertEquals(401, get("/api/v1/auth/me", jwtTokenProvider.createMfaPendingToken(userId)).statusCode())
         assertEquals(401, get("/api/v1/auth/me", jwtTokenProvider.createStepUpToken(userId)).statusCode())
+    }
+
+    @Test
+    fun `auth rate limit uses the Cloudflare client IP when X-Forwarded-For changes`() {
+        val responses = (1..11).map { i ->
+            val request = HttpRequest.newBuilder(uri("/api/v1/auth/login"))
+                .header("Content-Type", "application/json")
+                .header("CF-Connecting-IP", "203.0.113.9")
+                .header("X-Forwarded-For", "198.51.100.$i")
+                .POST(HttpRequest.BodyPublishers.ofString("""{"email":"missing@test.local","password":"wrong-password"}"""))
+                .build()
+            client.send(request, HttpResponse.BodyHandlers.ofString())
+        }
+
+        assertEquals(429, responses.last().statusCode())
     }
 
     private fun register(role: Role): String = authService.register(
