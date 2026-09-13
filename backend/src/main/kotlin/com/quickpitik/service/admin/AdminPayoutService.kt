@@ -38,10 +38,13 @@ import com.quickpitik.service.earnings.PayoutCycleTransitions
 import com.quickpitik.service.earnings.PayoutRequestService
 import com.quickpitik.service.earnings.PayoutTransition
 import com.quickpitik.service.storage.StorageService
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -64,7 +67,9 @@ class AdminPayoutService(
     private val platformProperties: PlatformProperties,
     private val disbursementService: DisbursementService,
     private val payoutRequestService: PayoutRequestService,
+    private val transactionTemplate: TransactionTemplate,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
 
     @Transactional(readOnly = true)
     fun list(
@@ -230,26 +235,40 @@ class AdminPayoutService(
         return hydrateOne(cycle)
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun markProcessing(adminId: UUID, payoutId: String): AdminPayoutCycleDto {
-        val cycle = loadCycle(payoutId)
-        // Guarded before the transfer, not after: a refused transition must
-        // never follow money that has already left.
-        payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkProcessing)
-        payoutRequestService.assertCovered(cycle)
-        // Route the money movement through the disbursement seam. Manual = no-op
-        // (admin sends by hand, then attests via mark-paid); PayMongo = creates a
-        // Transfer and returns its id, with the webhook confirming later (Phase 11).
-        cycle.provider = disbursementService.activeName
-        disbursementRequestFor(cycle)?.let { req ->
-            cycle.providerTransferId = disbursementService.initiate(req).providerTransferId
+        val request = transactionTemplate.execute {
+            val cycle = loadCycle(payoutId)
+            // Refuse invalid or uncovered cycles before any money leaves.
+            payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkProcessing)
+            payoutRequestService.assertCovered(cycle)
+            cycle.provider = disbursementService.activeName
+            payoutCycleRepository.save(cycle)
+            disbursementRequestFor(cycle)
         }
-        cycle.processingAt = OffsetDateTime.now()
-        payoutCycleTransitions.apply(cycle, PayoutTransition.AdminMarkProcessing, adminId)
-        // Internal step — no photographer inbox message; the status shows on billing.
-        adminDecisionLogService.logPayoutDecision(
-            adminId = adminId, targetPayoutId = cycle.id, decision = "processing",
-        )
-        return hydrateOne(cycle)
+        // Provider I/O holds no DB transaction. Manual legacy cycles need no request.
+        val transferId = request?.let { disbursementService.initiate(it).providerTransferId }
+        try {
+            return transactionTemplate.execute {
+                val cycle = loadCycle(payoutId)
+                if (request != null) cycle.providerTransferId = transferId
+                cycle.processingAt = OffsetDateTime.now()
+                payoutCycleTransitions.apply(cycle, PayoutTransition.AdminMarkProcessing, adminId)
+                // Internal step — no photographer inbox message; the status shows on billing.
+                adminDecisionLogService.logPayoutDecision(
+                    adminId = adminId, targetPayoutId = cycle.id, decision = "processing",
+                )
+                hydrateOne(cycle)
+            } ?: error("Mark-processing returned null")
+        } catch (ex: Exception) {
+            if (transferId != null) {
+                log.error(
+                    "Failed to link provider transfer {} to payout cycle {}; manual reconciliation required",
+                    transferId, payoutId, ex,
+                )
+            }
+            throw ex
+        }
     }
 
     // Automated transfers require a frozen destination. Legacy cycles can still
