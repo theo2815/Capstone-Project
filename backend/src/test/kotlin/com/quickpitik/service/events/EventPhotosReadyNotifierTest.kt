@@ -21,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
 import org.springframework.transaction.support.AbstractPlatformTransactionManager
 import org.springframework.transaction.support.DefaultTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
@@ -30,6 +31,7 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 // Mirrors OrderReceiptEmailClaimTest: the single-send guarantee for the
 // "photos ready" mail. What matters is exactly one send per match, that a
@@ -197,6 +199,19 @@ class EventPhotosReadyNotifierTest {
 
         assertEquals(executionsAtSend!! + 1, tx.executions, "failure must add exactly one release transaction")
         assertEquals(true, openAtRelease, "releaseNotify must run inside the additional transaction")
+    }
+
+    @Test
+    fun `the notifier entrypoint has no method-wide transaction`() {
+        val method = EventPhotosReadyNotifier::class.java.getDeclaredMethod("notifyIfMatched", UUID::class.java)
+
+        assertNull(
+            AnnotationTransactionAttributeSource().getTransactionAttribute(
+                method,
+                EventPhotosReadyNotifier::class.java,
+            ),
+            "Spring must not wrap storage, face search, or email in an outer transaction",
+        )
     }
 
     // ─── fixtures ─────────────────────────────────────────────────────────
