@@ -40,6 +40,17 @@ class WatermarkServiceTest {
     }
 
     @Test
+    fun `orientation 6 preview is portrait and rotates the landmark clockwise`() {
+        val marked = service.processThumbnail(orientation6Jpeg(), null, credit, platformMark = false)
+        val decoded = ImageIO.read(ByteArrayInputStream(marked.jpeg))
+
+        assertEquals(853, decoded.width)
+        assertEquals(1280, decoded.height)
+        val landmark = Color(decoded.getRGB(decoded.width * 3 / 4, decoded.height / 5))
+        assertTrue(landmark.red > 180 && landmark.green < 80 && landmark.blue < 80, "orientation-6 landmark was not rotated to the upper-right: $landmark")
+    }
+
+    @Test
     fun `credit layer touches every region of the frame`() {
         val marked = ImageIO.read(ByteArrayInputStream(service.processThumbnail(photoJpeg(2000, 1500), logoPng(), credit, platformMark = true).jpeg))
         val plain = scaleToLongEdge(ImageIO.read(ByteArrayInputStream(photoJpeg(2000, 1500))), 1280)
@@ -400,6 +411,35 @@ class WatermarkServiceTest {
         val out = ByteArrayOutputStream()
         ImageIO.write(img, "png", out)
         return out.toByteArray()
+    }
+
+    private fun orientation6Jpeg(): ByteArray {
+        val image = BufferedImage(3000, 2000, BufferedImage.TYPE_INT_RGB)
+        val g = image.createGraphics()
+        try {
+            g.color = Color(20, 30, 180)
+            g.fillRect(0, 0, image.width, image.height)
+            g.color = Color(230, 20, 20)
+            g.fillRect(400, 300, 600, 600)
+        } finally {
+            g.dispose()
+        }
+        val jpeg = ByteArrayOutputStream().also { ImageIO.write(image, "jpg", it) }.toByteArray()
+        // Same APP1-after-JFIF insertion shape as JpegXmp, but with a tiny
+        // little-endian TIFF IFD0 carrying Orientation=6.
+        val exif = byteArrayOf(
+            'E'.code.toByte(), 'x'.code.toByte(), 'i'.code.toByte(), 'f'.code.toByte(), 0, 0,
+            'I'.code.toByte(), 'I'.code.toByte(), 42, 0, 8, 0, 0, 0,
+            1, 0,
+            0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0,
+            0, 0, 0, 0,
+        )
+        val cut = if (jpeg[2] == 0xFF.toByte() && jpeg[3] == 0xE0.toByte()) {
+            4 + ((jpeg[4].toInt() and 0xFF) shl 8) + (jpeg[5].toInt() and 0xFF)
+        } else 2
+        val length = exif.size + 2
+        val segment = byteArrayOf(0xFF.toByte(), 0xE1.toByte(), (length shr 8).toByte(), length.toByte()) + exif
+        return jpeg.copyOfRange(0, cut) + segment + jpeg.copyOfRange(cut, jpeg.size)
     }
 
     private fun scaleToLongEdge(src: BufferedImage, max: Int): BufferedImage {

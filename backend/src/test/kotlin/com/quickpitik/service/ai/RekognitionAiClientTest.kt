@@ -43,7 +43,7 @@ import javax.imageio.ImageWriteParam
 class RekognitionAiClientTest {
     private lateinit var rek: RekognitionClient
     private lateinit var client: RekognitionAiClient
-    private val props = RekognitionProperties()
+    private val props = RekognitionProperties(maxImageDimension = 1024)
     private val eventId: UUID = UUID.randomUUID()
     private val photoId: UUID = UUID.randomUUID()
     private val bytes = ByteArray(1024) { 1 }
@@ -90,7 +90,9 @@ class RekognitionAiClientTest {
         val captor = ArgumentCaptor.forClass(IndexFacesRequest::class.java)
         verify(rek).indexFaces(captor.capture())
         val sent = ImageIO.read(ByteArrayInputStream(captor.value.image().bytes().asByteArray()))
-        assertTrue(maxOf(sent.width, sent.height) <= props.maxImageDimension)
+        assertEquals(props.maxImageDimension, maxOf(sent.width, sent.height))
+        val stripeBrightness = (0 until sent.width).map { sent.getRGB(it, 100) and 0xFF }.average()
+        assertTrue(stripeBrightness > 240, "source subsampling should preserve the even-pixel white stripe phase")
     }
 
     @Test
@@ -165,8 +167,12 @@ class RekognitionAiClientTest {
         val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
         var state = 7
         for (y in 0 until height) for (x in 0 until width) {
-            state = state * 1_103_515_245 + 12_345
-            image.setRGB(x, y, state)
+            if (y < 400) {
+                image.setRGB(x, y, if (x % 2 == 0) 0xFFFFFF else 0)
+            } else {
+                state = state * 1_103_515_245 + 12_345
+                image.setRGB(x, y, state)
+            }
         }
         val writer = ImageIO.getImageWritersByFormatName("jpeg").next()
         val output = ByteArrayOutputStream()
