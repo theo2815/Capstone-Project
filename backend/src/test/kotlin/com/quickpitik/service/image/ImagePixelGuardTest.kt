@@ -7,9 +7,8 @@ import javax.imageio.ImageIO
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-// Header-only decompression-bomb gate. The budget is parameterized so the
-// "over budget" case uses a real 100×100 PNG against a tiny cap instead of a
-// multi-hundred-MB fixture.
+// Header-only decompression-bomb gate. The over-budget case uses a
+// header-only production-cap fixture without allocating the declared raster.
 class ImagePixelGuardTest {
 
     companion object {
