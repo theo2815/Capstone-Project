@@ -1,9 +1,12 @@
 package com.quickpitik.service.photographer
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.CreatePayoutRequest
 import com.quickpitik.entity.PayoutAccount
 import com.quickpitik.entity.PayoutAccountAudit
+import com.quickpitik.entity.PayoutMethod
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.service.storage.StorageService
@@ -14,6 +17,7 @@ import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 // Phase 3a — every payout-account change writes an append-only audit row, which
 // also drives the post-change payout cooldown. This covers the create path;
@@ -81,4 +85,24 @@ class PayoutAccountServiceAuditTest {
         assertEquals("create", captor.value.action)
         assertEquals("••••4567", captor.value.maskedAccount)
     }
+    @Test
+    fun `uploading a QR over the pixel budget is rejected before storage or save`() {
+        val account = PayoutAccount(userId = userId, method = PayoutMethod.GCASH, accountNumber = "09171234567", accountName = "Juan Dela Cruz")
+        Mockito.`when`(payoutAccountRepository.findByIdAndUserId(account.id, userId)).thenReturn(account)
+
+        val error = assertFailsWith<ValidationException> {
+            service().uploadQr(userId, account.id, overBudgetPngHeader(), "image/png")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, error.code)
+        assertEquals("qr", error.field)
+        Mockito.verifyNoInteractions(storageService)
+        Mockito.verify(payoutAccountRepository, Mockito.never()).save(Mockito.any(PayoutAccount::class.java))
+    }
+
+    // 10,000 × 8,001 = 80,010,000 pixels, above ImagePixelGuard.MAX_PIXELS.
+    private fun overBudgetPngHeader(): ByteArray = byteArrayOf(
+        -119, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+        0, 0, 39, 16, 0, 0, 31, 65, 8, 6, 0, 0, 0, -26, 16, 82, 64,
+    )
 }
