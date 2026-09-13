@@ -2,6 +2,7 @@ package com.quickpitik.support
 
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.CorsConfig
+import com.quickpitik.dto.admin.BulkPayoutsRequest
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.dto.orders.*
 import com.quickpitik.entity.*
@@ -26,6 +27,8 @@ import kotlin.test.*
 
 class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var cycles: PayoutCycleRepository
+    @Autowired lateinit var payoutStatusHistory: PayoutStatusHistoryRepository
+    @Autowired lateinit var adminDecisions: AdminDecisionLogRepository
     @Autowired lateinit var users: UserRepository
     @Autowired lateinit var admin: AdminPayoutService
     @Autowired lateinit var requests: PayoutRequestService
@@ -58,6 +61,32 @@ class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
         id = "PAY-REVIEW-${UUID.randomUUID()}", photographerId = user(Role.PHOTOGRAPHER).id,
         weekOf = LocalDate.now(), amountPhp = BigDecimal("1000"), statusWire = status.wire,
     ))
+
+    @Test fun `bulk hold refuses an already-held cycle without dirty-flushing its reason`() {
+        val c = cycle(PayoutCycleStatus.HELD)
+        c.holdReason = "original reason"
+        cycles.saveAndFlush(c)
+        val historyBefore = payoutStatusHistory.findByPayoutCycleIdOrderByCreatedAtAsc(c.id).size
+        val decisionsBefore = adminDecisions.findAll().count { it.targetPayoutId == c.id }
+
+        val result = admin.bulk(
+            user(Role.ADMIN).id,
+            "bulk-hold-${UUID.randomUUID()}",
+            BulkPayoutsRequest(ids = listOf(c.id), action = "hold", reason = "different reason"),
+        )
+
+        assertFalse(result.results.single().ok)
+        val persisted = requireNotNull(TransactionTemplate(txManager).execute {
+            Triple(
+                cycles.findById(c.id).get().holdReason,
+                payoutStatusHistory.findByPayoutCycleIdOrderByCreatedAtAsc(c.id).size,
+                adminDecisions.findAll().count { it.targetPayoutId == c.id },
+            )
+        })
+        assertEquals("original reason", persisted.first)
+        assertEquals(historyBefore, persisted.second)
+        assertEquals(decisionsBefore, persisted.third)
+    }
 
     @Test fun `CORS accepts the header required by step-up`() {
         val source = CorsConfig("https://quickpitik.com").corsConfigurationSource()

@@ -458,6 +458,7 @@ class AdminPayoutService(
                 adminId, idempotencyKey, payoutId,
             )) return
         ensureManual(cycle)
+        payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminHold)
         cycle.holdReason = reason.take(255)
         payoutCycleTransitions.apply(cycle, PayoutTransition.AdminHold, adminId, reason)
         val decision = adminDecisionLogService.logPayoutDecision(

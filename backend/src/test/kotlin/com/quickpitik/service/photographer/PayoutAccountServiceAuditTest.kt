@@ -95,6 +95,7 @@ class PayoutAccountServiceAuditTest {
         }
 
         assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, error.code)
+        assertEquals("Image dimensions exceed the supported maximum.", error.message)
         assertEquals("qr", error.field)
         Mockito.verifyNoInteractions(storageService)
         Mockito.verify(payoutAccountRepository, Mockito.never()).save(Mockito.any(PayoutAccount::class.java))

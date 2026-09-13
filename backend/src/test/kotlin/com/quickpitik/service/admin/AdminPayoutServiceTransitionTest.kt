@@ -194,7 +194,7 @@ class AdminPayoutServiceTransitionTest {
     }
 
     @Test
-    fun `mark-paid refuses a covered cycle after refunds and saves nothing`() {
+    fun `mark-paid refuses a no-longer-covered cycle after refunds and saves nothing`() {
         given(PayoutCycleStatus.APPROVED)
         val payoutRequestService = Mockito.mock(PayoutRequestService::class.java)
         Mockito.doThrow(ApiException(HttpStatus.CONFLICT, ErrorCodes.PAYOUT_NOT_COVERED, "refund"))
