@@ -16,13 +16,19 @@ import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.email.EmailService
 import com.quickpitik.service.photos.PhotoSearchService
 import com.quickpitik.service.storage.StorageService
+import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.support.AbstractPlatformTransactionManager
+import org.springframework.transaction.support.DefaultTransactionStatus
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 // Mirrors OrderReceiptEmailClaimTest: the single-send guarantee for the
@@ -132,9 +138,73 @@ class EventPhotosReadyNotifierTest {
         Mockito.verifyNoInteractions(photoSearchService)
     }
 
+    @Test
+    fun `storage search and email run outside transactions while the claim runs inside one`() {
+        val tx = TxTracker()
+        val alert = stubAlert(matchTotal = 3L)
+        var openAtStorage: Boolean? = null
+        var openAtSearch: Boolean? = null
+        var openAtClaim: Boolean? = null
+        var openAtSend: Boolean? = null
+        Mockito.`when`(storageService.getBytes(anyArg())).thenAnswer {
+            openAtStorage = tx.open
+            byteArrayOf(1, 2, 3)
+        }
+        Mockito.`when`(
+            photoSearchService.searchByFace(
+                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(),
+            ),
+        ).thenAnswer {
+            openAtSearch = tx.open
+            PaginatedResponse(emptyList<PhotoDto>(), 3L, 0, 1)
+        }
+        Mockito.`when`(alertRepository.claimNotify(eqArg(alert.id), anyArg())).thenAnswer {
+            openAtClaim = tx.open
+            1
+        }
+        Mockito.doAnswer {
+            openAtSend = tx.open
+            null
+        }.`when`(emailService)
+            .sendEventPhotosReadyEmail(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
+
+        notifier(transactionTemplate = tx.template).notifyIfMatched(alert.id)
+
+        assertEquals(false, openAtStorage, "storage must not be read while a DB connection is held")
+        assertEquals(false, openAtSearch, "face search must not run while a DB connection is held")
+        assertEquals(true, openAtClaim, "the claim is a @Modifying UPDATE and must be transactional")
+        assertEquals(false, openAtSend, "email must not be sent while a DB connection is held")
+    }
+
+    @Test
+    fun `a failed send releases the claim in one additional transaction`() {
+        val tx = TxTracker()
+        val alert = stubAlert(matchTotal = 3L)
+        stubClaim(alert, won = true)
+        var executionsAtSend: Int? = null
+        Mockito.doAnswer {
+            executionsAtSend = tx.executions
+            throw RuntimeException("resend down")
+        }.`when`(emailService)
+            .sendEventPhotosReadyEmail(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
+        var openAtRelease: Boolean? = null
+        Mockito.`when`(alertRepository.releaseNotify(eqArg(alert.id))).thenAnswer {
+            openAtRelease = tx.open
+            1
+        }
+
+        notifier(transactionTemplate = tx.template).notifyIfMatched(alert.id)
+
+        assertEquals(executionsAtSend!! + 1, tx.executions, "failure must add exactly one release transaction")
+        assertEquals(true, openAtRelease, "releaseNotify must run inside the additional transaction")
+    }
+
     // ─── fixtures ─────────────────────────────────────────────────────────
 
-    private fun notifier(props: AiApiProperties = AiApiProperties(enabled = true)) =
+    private fun notifier(
+        props: AiApiProperties = AiApiProperties(enabled = true),
+        transactionTemplate: TransactionTemplate = testTransactionTemplate(),
+    ) =
         EventPhotosReadyNotifier(
             alertRepository,
             eventRepository,
@@ -144,7 +214,30 @@ class EventPhotosReadyNotifierTest {
             photoSearchService,
             props,
             emailService,
+            transactionTemplate,
         )
+
+    private class TxTracker {
+        var open = false
+        var executions = 0
+        val template: TransactionTemplate = TransactionTemplate(
+            object : AbstractPlatformTransactionManager() {
+                override fun doGetTransaction(): Any = Any()
+                override fun doBegin(transaction: Any, definition: TransactionDefinition) {
+                    executions++
+                    open = true
+                }
+
+                override fun doCommit(status: DefaultTransactionStatus) {
+                    open = false
+                }
+
+                override fun doRollback(status: DefaultTransactionStatus) {
+                    open = false
+                }
+            },
+        )
+    }
 
     private fun stubClaim(alert: EventPhotoAlert, won: Boolean) {
         Mockito.`when`(alertRepository.claimNotify(eqArg(alert.id), anyArg()))

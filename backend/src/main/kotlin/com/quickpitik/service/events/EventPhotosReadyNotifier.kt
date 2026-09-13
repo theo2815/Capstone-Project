@@ -14,16 +14,15 @@ import com.quickpitik.service.storage.StorageService
 import com.quickpitik.service.storage.contentTypeForKey
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Propagation
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.OffsetDateTime
 import java.util.UUID
 
 // Per-alert worker for the "your photos are ready" email. Mirrors
 // OrderReceiptEmailService: face-match the runner's selfie against the event,
 // and if there is >= 1 hit, claim notified_at (conditional UPDATE) and send
-// once. REQUIRES_NEW so each alert commits independently within the sweep loop
-// and one failure doesn't roll back the others.
+// once. Database reads and claim/release updates use short transaction phases;
+// storage, face-provider, and email I/O run with no database connection held.
 @Service
 class EventPhotosReadyNotifier(
     private val alertRepository: EventPhotoAlertRepository,
@@ -34,25 +33,16 @@ class EventPhotosReadyNotifier(
     private val photoSearchService: PhotoSearchService,
     private val aiApiProperties: AiApiProperties,
     private val emailService: EmailService,
+    private val transactionTemplate: TransactionTemplate,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun notifyIfMatched(alertId: UUID) {
-        val alert = alertRepository.findById(alertId).orElse(null) ?: return
-        if (alert.notifiedAt != null) return // already sent (cheap fast path)
-        if (!aiApiProperties.enabled) return // no AI => no possible match (sweep also gates)
-        // Pending rows are ordered by this stamp, rotating unmatched or broken
-        // alerts behind runners the bounded sweep has not checked yet.
-        alert.lastCheckedAt = OffsetDateTime.now()
-
-        val event = eventRepository.findById(alert.eventId).orElse(null) ?: return
-
-        val selfie = resolveSelfie(alert) ?: return // selfie deleted + no fallback → skip
-        val bytes = runCatching { storageService.getBytes(selfie.s3Key) }.getOrElse {
+        val prepared = transactionTemplate.execute { prepare(alertId) } ?: return
+        val bytes = runCatching { storageService.getBytes(prepared.selfieKey) }.getOrElse {
             log.warn(
                 "Photos-ready: selfie bytes unavailable for alert {} (key {}) — retry next sweep",
-                alert.id, selfie.s3Key,
+                prepared.alertId, prepared.selfieKey,
             )
             return
         }
@@ -61,46 +51,78 @@ class EventPhotosReadyNotifier(
         // match count (PaginatedResponse.of computes it independently of limit).
         val page = try {
             photoSearchService.searchByFace(
-                eventId = event.id,
+                eventId = prepared.eventId,
                 selfieBytes = bytes,
-                contentType = contentTypeForKey(selfie.s3Key),
-                filename = selfie.s3Key.substringAfterLast('/'),
+                contentType = contentTypeForKey(prepared.selfieKey),
+                filename = prepared.selfieKey.substringAfterLast('/'),
                 pagination = PaginationParams.of(0, 1),
-                requesterUserId = alert.userId,
+                requesterUserId = prepared.userId,
                 allowFallbackOnError = false,
             )
         } catch (ex: Exception) {
-            log.warn("Photos-ready: face search failed for alert {} - retry after rotation: {}", alert.id, ex.message)
+            log.warn(
+                "Photos-ready: face search failed for alert {} - retry after rotation: {}",
+                prepared.alertId,
+                ex.message,
+            )
             return
         }
         if (page.total == 0L) return // photos not ready — claim NOT burned, retry next sweep
 
-        val user = userRepository.findById(alert.userId).orElse(null) ?: return
-        if (user.email.isBlank()) return
+        val recipient = transactionTemplate.execute { claim(prepared) } ?: return
+        try {
+            emailService.sendEventPhotosReadyEmail(
+                toEmail = recipient.email,
+                runnerName = recipient.name,
+                eventName = prepared.eventName,
+                eventSlug = prepared.eventSlug,
+                matchCount = page.total.toInt(),
+            )
+            log.info("Photos-ready notified · alert={} to={} matches={}", prepared.alertId, recipient.email, page.total)
+        } catch (ex: Exception) {
+            log.error("Photos-ready send failed · alert={} err={}", prepared.alertId, ex.message, ex)
+            // Hand the claim back so the next sweep retries — same door
+            // OrderReceiptEmailService.releaseReceiptSend leaves open.
+            transactionTemplate.executeWithoutResult { alertRepository.releaseNotify(prepared.alertId) }
+        }
+    }
+
+    private fun prepare(alertId: UUID): PreparedSearch? {
+        val alert = alertRepository.findById(alertId).orElse(null) ?: return null
+        if (alert.notifiedAt != null) return null // already sent (cheap fast path)
+        if (!aiApiProperties.enabled) return null // no AI => no possible match (sweep also gates)
+        // Pending rows are ordered by this stamp, rotating unmatched or broken
+        // alerts behind runners the bounded sweep has not checked yet.
+        alert.lastCheckedAt = OffsetDateTime.now()
+
+        val event = eventRepository.findById(alert.eventId).orElse(null) ?: return null
+        val selfie = resolveSelfie(alert) ?: return null // selfie deleted + no fallback → skip
+        return PreparedSearch(alert.id, alert.userId, event.id, selfie.s3Key, event.name, event.slug)
+    }
+
+    private fun claim(prepared: PreparedSearch): Recipient? {
+        val user = userRepository.findById(prepared.userId).orElse(null) ?: return null
+        if (user.email.isBlank()) return null
 
         // Claim AFTER every skip, exactly like OrderReceiptEmailService — an
         // alert that legitimately isn't ready must never spend its one claim.
-        if (alertRepository.claimNotify(alert.id, OffsetDateTime.now()) == 0) {
-            log.info("Photos-ready already claimed by a concurrent send for alert {} — skipping", alert.id)
-            return
+        if (alertRepository.claimNotify(prepared.alertId, OffsetDateTime.now()) == 0) {
+            log.info("Photos-ready already claimed by a concurrent send for alert {} — skipping", prepared.alertId)
+            return null
         }
-
-        try {
-            emailService.sendEventPhotosReadyEmail(
-                toEmail = user.email,
-                runnerName = user.name,
-                eventName = event.name,
-                eventSlug = event.slug,
-                matchCount = page.total.toInt(),
-            )
-            log.info("Photos-ready notified · alert={} to={} matches={}", alert.id, user.email, page.total)
-        } catch (ex: Exception) {
-            log.error("Photos-ready send failed · alert={} err={}", alert.id, ex.message, ex)
-            // Hand the claim back so the next sweep retries — same door
-            // OrderReceiptEmailService.releaseReceiptSend leaves open.
-            alertRepository.releaseNotify(alert.id)
-        }
+        return Recipient(user.email, user.name)
     }
+
+    private data class PreparedSearch(
+        val alertId: UUID,
+        val userId: UUID,
+        val eventId: UUID,
+        val selfieKey: String,
+        val eventName: String,
+        val eventSlug: String,
+    )
+
+    private data class Recipient(val email: String, val name: String)
 
     private fun resolveSelfie(alert: EventPhotoAlert): UserSelfie? =
         alert.selfieId?.let { userSelfieRepository.findByIdAndUserId(it, alert.userId) }
