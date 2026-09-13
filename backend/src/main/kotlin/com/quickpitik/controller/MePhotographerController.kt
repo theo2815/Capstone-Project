@@ -171,22 +171,26 @@ class MePhotographerController(
         )
     }
 
-    // Direct-to-storage upload, step 1 of 2 (2026-09-02). Cheap: gates + dedup
-    // + a presign, no bytes. The rate-limited step is the commit, where the
-    // photo actually becomes a row — same policy as the multipart upload.
+    // Direct-to-storage upload, step 1 of 2 (2026-09-02). Gates + dedup + a
+    // presign, no bytes. Begin and commit share the multipart upload policy.
     @PostMapping("/events/{eventId}/photos/direct")
     fun beginDirectUpload(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: DirectUploadBeginRequest,
-    ): DirectUploadBeginResponse =
-        photoUploadService.beginDirectUpload(
+    ): DirectUploadBeginResponse {
+        rateLimiter.acquireOrThrow(
+            policy = Bucket4jRateLimiter.POLICY_PHOTOGRAPHER_UPLOAD,
+            key = principal.userId.toString(),
+        )
+        return photoUploadService.beginDirectUpload(
             photographerId = principal.userId,
             eventId = eventId,
             contentHash = body.contentHash,
             contentType = body.contentType,
             sizeBytes = body.sizeBytes,
         )
+    }
 
     // Direct-to-storage upload, step 2 of 2: the object is in storage; register it.
     @PostMapping("/events/{eventId}/photos/direct/commit")
