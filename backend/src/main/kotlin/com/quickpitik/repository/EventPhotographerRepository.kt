@@ -67,9 +67,7 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         value = """
         SELECT t.event_id AS event_id,
                COALESCE(SUM(CASE WHEN t.is_refund = false THEN t.amount_kept_php ELSE 0 END), 0)
-                   AS implied_cut,
-               COALESCE(-SUM(CASE WHEN t.is_refund = true  THEN t.amount_kept_php ELSE 0 END), 0)
-                   AS refunds,
+                   AS photographer_keep,
                COUNT(*) FILTER (WHERE t.is_refund = false) AS sales_count,
                COALESCE(SUM(CASE WHEN t.is_refund = false THEN t.discount_php ELSE 0 END), 0)
                    AS discounts

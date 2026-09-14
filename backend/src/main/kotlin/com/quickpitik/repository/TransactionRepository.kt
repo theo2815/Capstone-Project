@@ -155,21 +155,6 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
         @Param("to") to: OffsetDateTime,
     ): List<Array<Any>>
 
-    // Refund total in a window — only the negative-amount refund rows. The
-    // sum is positive (we negate the negatives) so the FE can render it as
-    // a peso amount without sign juggling.
-    @Query(
-        """
-        SELECT COALESCE(-SUM(t.amountKeptPhp), 0) FROM Transaction t
-        WHERE t.isRefund = true
-          AND t.paidAt >= :from AND t.paidAt < :to
-        """,
-    )
-    fun sumRefundsInWindow(
-        @Param("from") from: OffsetDateTime,
-        @Param("to") to: OffsetDateTime,
-    ): BigDecimal
-
     @Query(
         """
         SELECT COUNT(t) FROM Transaction t
