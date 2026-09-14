@@ -36,6 +36,13 @@ class AdminNotificationHandshakeInterceptor(
             log.debug("WS handshake rejected (admin): invalid token ({})", ex.message)
             return false
         }
+        if (
+            claims["mfaPending"] == true ||
+            claims["stepUp"] == true ||
+            claims["suspended"] == true
+        ) {
+            return false
+        }
         val role = claims["role"] as? String
         if (role != "ADMIN") {
             log.debug("WS handshake rejected (admin): non-admin role={}", role)

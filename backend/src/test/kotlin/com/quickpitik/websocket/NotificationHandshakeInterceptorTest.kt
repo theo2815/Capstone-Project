@@ -13,6 +13,7 @@ import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.web.socket.WebSocketHandler
 import org.springframework.web.socket.server.HandshakeInterceptor
 import java.time.Duration
+import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -21,8 +22,8 @@ import kotlin.test.assertTrue
 // The event channel's handshake has six tests; the two notification channels
 // — which DO require a token, and one of which is the admin inbox — had none
 // (2026-09-11 test-suite audit). Pinned here: a token is mandatory on both,
-// the admin channel refuses every non-ADMIN claim set, and an MFA first-factor
-// token (no role claim) cannot open the admin channel.
+// the admin channel refuses every non-ADMIN claim set, and neither channel
+// accepts first-factor, step-up, or suspended access tokens.
 class NotificationHandshakeInterceptorTest {
 
     private val jwtTokenProvider = JwtTokenProvider(
@@ -62,6 +63,25 @@ class NotificationHandshakeInterceptorTest {
         assertTrue(result.admitted)
         assertEquals(user.id, attributes[MeNotificationWebSocketHandler.ATTR_USER_ID])
         assertEquals(token, result.protocolEcho)
+    }
+
+    @Test
+    fun `the me channel refuses an MFA first-factor token`() {
+        assertFalse(shake(me, mePath, jwtTokenProvider.createMfaPendingToken(UUID.randomUUID())).admitted)
+    }
+
+    @Test
+    fun `the me channel refuses a step-up token`() {
+        assertFalse(shake(me, mePath, jwtTokenProvider.createStepUpToken(UUID.randomUUID())).admitted)
+    }
+
+    @Test
+    fun `both notification channels refuse suspended access tokens`() {
+        val runner = user(Role.RUNNER).apply { suspendedAt = OffsetDateTime.now() }
+        val adminUser = user(Role.ADMIN).apply { suspendedAt = OffsetDateTime.now() }
+
+        assertFalse(shake(me, mePath, jwtTokenProvider.createAccessToken(runner)).admitted)
+        assertFalse(shake(admin, adminPath, jwtTokenProvider.createAccessToken(adminUser)).admitted)
     }
 
     @Test

@@ -34,11 +34,24 @@ class MeNotificationHandshakeInterceptor(
             log.debug("WS handshake rejected (me): missing token")
             return false
         }
-        val userId = try {
-            UUID.fromString(jwtTokenProvider.parse(token).subject)
+        val claims = try {
+            jwtTokenProvider.parse(token)
         } catch (ex: JwtException) {
             log.debug("WS handshake rejected (me): invalid token ({})", ex.message)
             return false
+        } catch (ex: IllegalArgumentException) {
+            log.debug("WS handshake rejected (me): malformed token ({})", ex.message)
+            return false
+        }
+        if (
+            claims["mfaPending"] == true ||
+            claims["stepUp"] == true ||
+            claims["suspended"] == true
+        ) {
+            return false
+        }
+        val userId = try {
+            UUID.fromString(claims.subject)
         } catch (ex: IllegalArgumentException) {
             log.debug("WS handshake rejected (me): malformed subject ({})", ex.message)
             return false
