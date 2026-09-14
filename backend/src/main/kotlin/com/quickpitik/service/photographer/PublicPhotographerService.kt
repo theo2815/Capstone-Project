@@ -192,9 +192,9 @@ class PublicPhotographerService(
     private fun resolveWatermarkedUrl(photo: Photo): String? {
         // Public gallery serves the watermarked variant when available so the
         // photographer's brand sticks even on incognito browsing. Falls back
-        // to the thumbnail (also watermarked in the upload pipeline) and only
-        // last to the source key.
-        val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key
+        // to the thumbnail (also watermarked in the upload pipeline), never
+        // to the clean original.
+        val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: return null
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 

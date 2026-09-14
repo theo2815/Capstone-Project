@@ -69,7 +69,7 @@ class PhotoSearchService(
                 )
             }!!
         } catch (ex: Exception) {
-            if (allowFallbackOnError && aiApiProperties.searchFallbackOnError) {
+            if (allowFallbackOnError && aiApiProperties.searchFallbackOnError && (ex !is AiApiException || ex.isRetryable)) {
                 log.warn(
                     "DEMO FALLBACK (app.ai-api.search-fallback-on-error=true): faces/search failed for event {}: {}. " +
                         "Returning the full event grid — these are NOT face matches.",

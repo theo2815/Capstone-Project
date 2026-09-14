@@ -123,6 +123,22 @@ class PhotoSearchServiceTest {
     }
 
     @Test
+    fun `with the fallback on a rejected selfie still propagates 422`() {
+        val service = service(fallback = true)
+        whenFacesSearch().thenThrow(AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, "NO_FACES", "no faces"))
+        Mockito.`when`(photoService.listForEvent(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(PaginatedResponse(emptyList<PhotoDto>(), 7L, 0, 20))
+
+        val ex = assertFailsWith<AiApiException> {
+            service.searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination)
+        }
+
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.status)
+        assertEquals("NO_FACES", ex.aiCode)
+        Mockito.verifyNoInteractions(photoService)
+    }
+
+    @Test
     fun `with the fallback off a transport failure becomes a 503`() {
         val service = service(fallback = false)
         whenFacesSearch().thenThrow(IllegalStateException("connection reset"))

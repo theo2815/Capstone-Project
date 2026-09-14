@@ -4,6 +4,9 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
@@ -21,11 +24,15 @@ import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.data.domain.PageImpl
+import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 // A suspended or not-yet-approved photographer must be invisible on the public
 // site — 404, the same answer as an unknown handle, so existence isn't leaked.
@@ -38,6 +45,7 @@ class PublicPhotographerServiceTest {
     private lateinit var eventPhotographerRepository: EventPhotographerRepository
     private lateinit var eventRepository: EventRepository
     private lateinit var photoRepository: PhotoRepository
+    private lateinit var storageService: StorageService
 
     @BeforeEach
     fun setUp() {
@@ -46,6 +54,7 @@ class PublicPhotographerServiceTest {
         eventPhotographerRepository = Mockito.mock(EventPhotographerRepository::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
         photoRepository = Mockito.mock(PhotoRepository::class.java)
+        storageService = Mockito.mock(StorageService::class.java)
     }
 
     private fun service() = PublicPhotographerService(
@@ -55,7 +64,7 @@ class PublicPhotographerServiceTest {
         eventRepository,
         photoRepository,
         StorageProperties(),
-        Mockito.mock(StorageService::class.java),
+        storageService,
         Mockito.mock(CouponService::class.java),
         PublicProperties(),
         Mockito.mock(EventDtoMapper::class.java),
@@ -70,6 +79,32 @@ class PublicPhotographerServiceTest {
         if (suspended) user.suspendedAt = OffsetDateTime.now()
         Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(user))
     }
+
+    @Test
+    fun `public gallery previews use derivatives or null and never the original`() {
+        photographer("shooter", VerificationStatus.APPROVED, suspended = false)
+        val ownerId = photographerSettingsRepository.findByHandleIgnoreCase("shooter")!!.userId
+        val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
+        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        val photos = listOf(
+            Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN),
+            Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN, thumbnailS3Key = "thumbnail.jpg"),
+            Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN, thumbnailS3Key = "thumbnail.jpg", watermarkS3Key = "watermark.jpg"),
+        )
+        Mockito.`when`(photoRepository.findPhotographerLibraryByStatus(anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(PageImpl(photos))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg()))
+            .thenAnswer { "https://storage/${it.getArgument<String>(0)}" }
+
+        val items = service().listEventPhotos("shooter", "race", PaginationParams.of(0, 20)).items
+
+        assertEquals(listOf(null, "https://storage/thumbnail.jpg", "https://storage/watermark.jpg"), items.map { it.imageUrl })
+        assertTrue(items.all { it.cleanUrl == null && it.downloadUrl == null })
+        Mockito.verify(storageService, Mockito.never()).presignedGetUrl(eqArg("original.jpg"), anyArg())
+    }
+
+    private fun <T> anyArg(): T = Mockito.any()
+    private fun <T> eqArg(value: T): T = Mockito.eq(value) ?: value
 
     @Test
     fun `a suspended photographer profile is not found`() {
