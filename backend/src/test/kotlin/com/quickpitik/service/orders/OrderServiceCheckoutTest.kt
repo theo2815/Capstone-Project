@@ -33,6 +33,8 @@ import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
+import com.quickpitik.entity.Role
+import com.quickpitik.entity.User
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -93,6 +95,8 @@ class OrderServiceCheckoutTest {
     private lateinit var paymongoClient: PaymongoClient
     private lateinit var couponRepository: PhotographerCouponRepository
     private lateinit var eventRepository: EventRepository
+    private lateinit var userRepository: UserRepository
+    private lateinit var cartItemRepository: CartItemRepository
     private lateinit var service: OrderService
     private lateinit var checkoutReconciler: PaymongoCheckoutReconciler
     private lateinit var webhookService: PaymongoWebhookService
@@ -115,6 +119,8 @@ class OrderServiceCheckoutTest {
         downloadGrants = Mockito.mock(DownloadGrantRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
+        userRepository = Mockito.mock(UserRepository::class.java)
+        cartItemRepository = Mockito.mock(CartItemRepository::class.java)
         checkoutReconciler = Mockito.mock(PaymongoCheckoutReconciler::class.java)
         webhookService = Mockito.mock(PaymongoWebhookService::class.java)
 
@@ -159,8 +165,8 @@ class OrderServiceCheckoutTest {
             downloadGrants,
             photoRepository,
             eventRepository,
-            Mockito.mock(UserRepository::class.java),
-            Mockito.mock(CartItemRepository::class.java),
+            userRepository,
+            cartItemRepository,
             storageService,
             StorageProperties(),
             paymongoClient,
@@ -478,6 +484,20 @@ class OrderServiceCheckoutTest {
     }
 
     @Test
+    fun `draft and archived events are rejected before reserving a checkout`() {
+        stubProvider()
+        for (status in listOf(EventStatus.DRAFT, EventStatus.ARCHIVED)) {
+            event.status = status
+
+            val ex = assertFailsWith<ConflictException> { service.create(null, request(), key) }
+
+            assertEquals(ErrorCodes.EVENT_ARCHIVED, ex.code)
+            assertTrue(savedOrders.isEmpty())
+            Mockito.verifyNoInteractions(paymentRepository, paymongoClient, cartItemRepository)
+        }
+    }
+
+    @Test
     fun `stale unknown provider outcome cannot create a second checkout session`() {
         val existing = Order(
             eventId = eventId,
@@ -786,6 +806,36 @@ class OrderServiceCheckoutTest {
         assertEquals(0, response.totalAmount.signum())
         assertEquals(null, response.qrPh)
         assertFalse(response.returnToken.isNullOrBlank())
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    @Test
+    fun `a signed-in giveaway checkout clears its cart item after settlement`() {
+        val user = User(email = email, passwordHash = "unused", name = "Runner", role = Role.RUNNER)
+        Mockito.`when`(userRepository.findById(user.id)).thenReturn(Optional.of(user))
+        val owner = UUID.randomUUID()
+        photo.photographerId = owner
+        val giveaway = PhotographerCoupon(eventId = eventId, photographerId = owner, code = "FREE100", percentOff = 100)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId))).thenReturn(listOf(giveaway))
+        Mockito.doAnswer {
+            savedOrders.forEach { it.status = OrderStatus.FULFILLED }
+            null
+        }.`when`(webhookService).settleFree(anyArg())
+        var statusAtCartClear: OrderStatus? = null
+        var cartClearWasTransactional: Boolean? = null
+        Mockito.`when`(cartItemRepository.deleteByUserIdAndPhotoId(user.id, photo.id)).thenAnswer {
+            statusAtCartClear = savedOrders.single().status
+            cartClearWasTransactional = TransactionSynchronizationManager.isActualTransactionActive()
+            1
+        }
+
+        val response = service.create(user.id, request(paymentMethod = "qrph"), key)
+
+        assertEquals(OrderStatus.FULFILLED, response.status)
+        assertEquals(OrderStatus.FULFILLED, statusAtCartClear)
+        assertEquals(false, cartClearWasTransactional)
+        Mockito.verify(cartItemRepository).deleteByUserIdAndPhotoId(user.id, photo.id)
+        Mockito.verifyNoMoreInteractions(cartItemRepository)
         Mockito.verifyNoInteractions(paymongoClient)
     }
 

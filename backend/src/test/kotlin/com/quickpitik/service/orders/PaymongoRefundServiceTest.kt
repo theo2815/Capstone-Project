@@ -64,6 +64,23 @@ class PaymongoRefundServiceTest {
     }
 
     @Test
+    fun `a partial refund preserves settlement status unless no longer fully refunded`() {
+        for ((before, after) in listOf(
+            OrderStatus.PAID to OrderStatus.PAID,
+            OrderStatus.FULFILLED to OrderStatus.FULFILLED,
+            OrderStatus.REFUNDED to OrderStatus.FULFILLED,
+        )) {
+            val h = couponHarness(providerAmount = 6_375L)
+            h.order.status = before
+
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_PARTIAL, BigDecimal("63.75"), null)
+
+            assertEquals(DisputeStatus.RESOLVED, h.dispute.status)
+            assertEquals(after, h.order.status)
+        }
+    }
+
+    @Test
     fun `a partial refund cannot exceed what the runner actually paid`() {
         val h = couponHarness()
 
@@ -78,6 +95,7 @@ class PaymongoRefundServiceTest {
         val service: PaymongoRefundService,
         val adminId: UUID,
         val dispute: Dispute,
+        val order: Order,
         val photographerId: UUID,
         val client: PaymongoClient,
         val minting: TransactionMintingService,
@@ -154,7 +172,7 @@ class PaymongoRefundServiceTest {
             Mockito.mock(RunnerMessagesService::class.java),
             testTransactionTemplate(),
         )
-        return CouponHarness(service, adminId, dispute, photographerId, client, minting) { sentRequest }
+        return CouponHarness(service, adminId, dispute, order, photographerId, client, minting) { sentRequest }
     }
     @Test
     fun `successful full refund uses PayMongo then revokes the grant`() {

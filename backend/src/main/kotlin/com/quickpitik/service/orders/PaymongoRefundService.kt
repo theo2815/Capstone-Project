@@ -259,11 +259,11 @@ class PaymongoRefundService(
         if (resolution == DisputeResolution.REFUND_FULL) {
             downloadGrantRepository.deleteById(DownloadGrantId(dispute.orderId, dispute.photoId))
         }
-        updateOrderRefundStatus(dispute.orderId)
+        updateOrderSettlementStatus(dispute.orderId)
         publishOutcome(dispute, resolution, refundAmount, photo?.photographerId)
     }
 
-    private fun updateOrderRefundStatus(orderId: UUID) {
+    private fun updateOrderSettlementStatus(orderId: UUID) {
         val order = orderRepository.findByIdForUpdate(orderId) ?: return
         val photoIds = orderItemRepository.findByIdOrderId(orderId).map { it.id.photoId }.toSet()
         val fullyRefunded = disputeRepository.findByOrderId(orderId)
@@ -272,8 +272,10 @@ class PaymongoRefundService(
             .toSet()
         order.status = if (photoIds.isNotEmpty() && fullyRefunded.containsAll(photoIds)) {
             OrderStatus.REFUNDED
-        } else {
+        } else if (order.status == OrderStatus.REFUNDED) {
             OrderStatus.FULFILLED
+        } else {
+            order.status
         }
         orderRepository.save(order)
     }

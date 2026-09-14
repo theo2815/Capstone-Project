@@ -121,6 +121,7 @@ class OrderService(
 
         val primary = pickPrimary(reservation.orders)
         if (primary.status in SETTLED_ORDER_STATUSES) {
+            clearCartBestEffort(userId, request.items)
             return toOrderResponse(primary)
         }
         if (primary.status == OrderStatus.EXPIRED) {
@@ -722,8 +723,8 @@ class OrderService(
         if (events.size != eventIds.size) {
             throw NotFoundException(message = "Event not found", code = ErrorCodes.EVENT_NOT_FOUND)
         }
-        events.values.firstOrNull { it.status == EventStatus.ARCHIVED }?.let { archived ->
-            throw ConflictException(message = "Event ${archived.slug} is archived", code = ErrorCodes.EVENT_ARCHIVED)
+        events.values.firstOrNull { it.status == EventStatus.ARCHIVED || it.status == EventStatus.DRAFT }?.let { event ->
+            throw ConflictException(message = "Event ${event.slug} is not published", code = ErrorCodes.EVENT_ARCHIVED)
         }
         return events
     }
