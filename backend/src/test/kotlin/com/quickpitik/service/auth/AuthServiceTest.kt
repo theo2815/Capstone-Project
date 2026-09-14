@@ -22,6 +22,8 @@ import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
 import java.time.Duration
 import java.time.OffsetDateTime
 import java.util.Optional
@@ -304,6 +306,7 @@ class AuthServiceTest {
         assertEquals("", res.accessToken)
         assertEquals(true, !res.mfaToken.isNullOrBlank())
         Mockito.verify(refreshTokenService, Mockito.never()).issue(anyArg())
+        Mockito.verify(loginAttemptService, Mockito.never()).recordSuccess(anyArg())
     }
 
     @Test
@@ -334,6 +337,7 @@ class AuthServiceTest {
 
         assertEquals(true, res.accessToken.isNotBlank())
         assertEquals(false, res.mfaRequired)
+        Mockito.verify(loginAttemptService).recordSuccess(admin.id)
     }
 
     @Test
@@ -345,11 +349,47 @@ class AuthServiceTest {
 
         val ex = assertFailsWith<ApiException> { service().verifyMfa(mfaToken, "000000") }
         assertEquals(ErrorCodes.INVALID_MFA_CODE, ex.code)
+        Mockito.verify(loginAttemptService).recordFailure(admin.id)
+    }
+
+    @Test
+    fun `verifyMfa locks after five wrong codes`() {
+        val admin = newUser(Role.ADMIN)
+        val mfaToken = tokenProvider.createMfaPendingToken(admin.id)
+        Mockito.`when`(userRepository.findById(admin.id)).thenReturn(Optional.of(admin))
+        Mockito.`when`(adminMfaService.verifyCode(admin.id, "000000")).thenReturn(false)
+        var checks = 0
+        Mockito.`when`(loginAttemptService.lockRemaining(anyArg(), anyArg())).thenAnswer {
+            if (checks++ < 5) null else Duration.ofMinutes(14)
+        }
+
+        repeat(5) {
+            val ex = assertFailsWith<ApiException> { service().verifyMfa(mfaToken, "000000") }
+            assertEquals(ErrorCodes.INVALID_MFA_CODE, ex.code)
+        }
+        val ex = assertFailsWith<ApiException> { service().verifyMfa(mfaToken, "000000") }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, ex.status)
+        Mockito.verify(loginAttemptService, Mockito.times(5)).recordFailure(admin.id)
+        Mockito.verify(adminMfaService, Mockito.times(5)).verifyCode(admin.id, "000000")
     }
 
     @Test
     fun `verifyMfa rejects a garbage token`() {
         val ex = assertFailsWith<UnauthorizedException> { service().verifyMfa("not-a-jwt", "123456") }
         assertEquals(ErrorCodes.INVALID_TOKEN, ex.code)
+    }
+
+    @Test
+    fun `verifyMfa suspends its outer transaction before the locked MFA check`() {
+        val method = AuthService::class.java.getDeclaredMethod(
+            "verifyMfa",
+            String::class.java,
+            String::class.java,
+        )
+        val attribute = AnnotationTransactionAttributeSource().getTransactionAttribute(method, AuthService::class.java)
+
+        assertEquals(TransactionDefinition.PROPAGATION_NOT_SUPPORTED, attribute?.propagationBehavior)
     }
 }

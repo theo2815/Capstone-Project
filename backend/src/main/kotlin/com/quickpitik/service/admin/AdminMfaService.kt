@@ -111,7 +111,8 @@ class AdminMfaService(
     }
 
     private fun consumeTotp(row: AdminMfa, code: String): Boolean {
-        val step = totpService.matchingStep(mfaSecretCipher.decrypt(row.secretEnc), code) ?: return false
+        val secret = runCatching { mfaSecretCipher.decrypt(row.secretEnc) }.getOrNull() ?: return false
+        val step = totpService.matchingStep(secret, code) ?: return false
         if (row.lastUsedStep?.let { step <= it } == true) return false
         row.lastUsedStep = step
         adminMfaRepository.save(row)

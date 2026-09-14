@@ -22,6 +22,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 
 @Service
@@ -88,15 +89,7 @@ class AuthService(
         // already discloses whether an address is taken (EMAIL_TAKEN), so this
         // reveals nothing new, and silently refusing a correct password would
         // send real users to support instead of back in 15 minutes.
-        loginAttemptService.lockRemaining(user)?.let { remaining ->
-            val minutes = remaining.toMinutes() + 1
-            throw ApiException(
-                status = HttpStatus.TOO_MANY_REQUESTS,
-                code = ErrorCodes.ACCOUNT_LOCKED,
-                message = "Too many failed sign-in attempts. Try again in about $minutes minute(s).",
-                retryAfterSeconds = remaining.toSeconds() + 1,
-            )
-        }
+        loginAttemptService.lockRemaining(user)?.let(::throwAccountLocked)
 
         if (!passwordMatches) {
             // Separate bean + REQUIRES_NEW: the throw below rolls this method's
@@ -112,13 +105,12 @@ class AuthService(
         if (user.suspendedAt != null) {
             throw UnauthorizedException("Account suspended", "ACCOUNT_SUSPENDED")
         }
-        loginAttemptService.recordSuccess(user.id)
-        return completeLogin(user)
+        return completeLogin(user, clearLoginFailures = true)
     }
 
     // Both first-factor paths use this gate. Refresh and successful MFA
     // verification mint tokens directly, without starting another challenge.
-    internal fun completeLogin(user: User): AuthResponse {
+    internal fun completeLogin(user: User, clearLoginFailures: Boolean = false): AuthResponse {
         // Opt-in admin MFA: a first-factor-passed admin who has enrolled gets a
         // challenge, not tokens. Everyone else (incl. admins without MFA) takes
         // the unchanged path below.
@@ -131,11 +123,13 @@ class AuthService(
                 mfaToken = tokenProvider.createMfaPendingToken(user.id),
             )
         }
+        if (clearLoginFailures) loginAttemptService.recordSuccess(user.id)
         return buildAuthResponse(user)
     }
 
     // Second step of an admin MFA login. The mfaPending token proves the first
     // factor (password or Google identity) already passed; the code is the second factor.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun verifyMfa(mfaToken: String, code: String): AuthResponse {
         val userId = tokenProvider.parseMfaPending(mfaToken)
             ?: throw UnauthorizedException("Invalid or expired MFA session", ErrorCodes.INVALID_TOKEN)
@@ -144,9 +138,12 @@ class AuthService(
         if (user.suspendedAt != null) {
             throw UnauthorizedException("Account suspended", ErrorCodes.ACCOUNT_SUSPENDED)
         }
+        loginAttemptService.lockRemaining(user)?.let(::throwAccountLocked)
         if (!adminMfaService.verifyCode(userId, code)) {
+            loginAttemptService.recordFailure(user.id)
             throw ApiException(HttpStatus.UNAUTHORIZED, ErrorCodes.INVALID_MFA_CODE, "That code is not valid.")
         }
+        loginAttemptService.recordSuccess(user.id)
         return buildAuthResponse(user)
     }
 
@@ -194,6 +191,16 @@ class AuthService(
             accessToken = accessToken,
             refreshToken = refreshToken,
             user = userDtoMapper.toDto(user),
+        )
+    }
+
+    private fun throwAccountLocked(remaining: java.time.Duration): Nothing {
+        val minutes = remaining.toMinutes() + 1
+        throw ApiException(
+            status = HttpStatus.TOO_MANY_REQUESTS,
+            code = ErrorCodes.ACCOUNT_LOCKED,
+            message = "Too many failed sign-in attempts. Try again in about $minutes minute(s).",
+            retryAfterSeconds = remaining.toSeconds() + 1,
         )
     }
 
