@@ -372,7 +372,11 @@ succeeds, so retry and Cancel retain the saved placement.
 **Photographer photo management — website/mobile integration:**
 `GET /api/v1/me/photographer/events/{id}/photos?deleted=true` lists trash using
 the same `items`, `offset`, `limit`, and `total` pagination envelope as the active
-library. Both clients must request additional server pages. Covered events stay
+library. Photo `status` preserves `processing`, `live`, or `hidden`; website and
+mobile show a Processing badge while watermark preparation is incomplete.
+Processing photos remain in the owner's library but are not runner-visible or
+sellable. The multipart/direct upload response also uses `processing` until ready.
+Both clients must request additional server pages. Covered events stay
 reachable with `withUploads=false`, including when their active count is zero.
 
 The `photos/trash` and `photos/restore` actions return the actual `affected`

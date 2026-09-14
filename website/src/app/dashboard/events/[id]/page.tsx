@@ -1191,9 +1191,10 @@ function PhotoTile({
         aria-haspopup={selecting ? undefined : "dialog"}
         aria-pressed={selecting ? selected : undefined}
         aria-label={
-          selecting
+          (selecting
             ? `${selected ? "Deselect" : "Select"} photo ${index + 1}`
-            : `Open photo ${index + 1}`
+            : `Open photo ${index + 1}`) +
+          (photo.status === "processing" ? ", Processing" : "")
         }
         className="block w-full h-full text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
@@ -1243,6 +1244,11 @@ function PhotoTile({
                   strokeLinejoin="round"
                 />
               </svg>
+            </span>
+          )}
+          {photo.status === "processing" && (
+            <span className="absolute bottom-2 left-2 rounded-full bg-bone px-2 py-1 font-mono text-[12px] uppercase tracking-wide text-ink">
+              Processing
             </span>
           )}
           {photo.salesCount > 0 && (

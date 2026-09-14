@@ -85,6 +85,8 @@ import com.quickpitik.mobile.ui.theme.QpCard
 import com.quickpitik.mobile.ui.theme.QpCardShape
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.StatusChip
+import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.StatNumber
 import com.quickpitik.mobile.ui.theme.SurfaceWhite
 import com.quickpitik.mobile.ui.theme.TileShape
@@ -705,7 +707,7 @@ private fun DangerPill(text: String, enabled: Boolean, onClick: () -> Unit, modi
 }
 
 @Composable
-private fun SharePhotoTile(
+internal fun SharePhotoTile(
     photo: PhotographerLibraryPhotoDto,
     selecting: Boolean,
     selected: Boolean,
@@ -745,6 +747,13 @@ private fun SharePhotoTile(
                     Icon(Icons.Default.Check, contentDescription = null, tint = Bone, modifier = Modifier.size(18.dp))
                 }
             }
+        }
+        if (photo.status == "processing") {
+            StatusChip(
+                text = "Processing",
+                tone = StatusTone.Neutral,
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+            )
         }
         if (photo.salesCount > 0) {
             Box(

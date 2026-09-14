@@ -133,7 +133,7 @@ export function getPhotographerEventById(
 // can manually "hide" individual photos from the public gallery.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type PhotoStatus = "live" | "hidden";
+export type PhotoStatus = "live" | "hidden" | "processing";
 
 export interface PhotographerLibraryPhoto {
   id: string;

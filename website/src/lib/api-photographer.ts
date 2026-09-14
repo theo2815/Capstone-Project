@@ -91,7 +91,7 @@ export type UploadedPhotoAiDetectionStatus =
 
 export interface UploadedPhoto {
   id: string;
-  status: "live";
+  status: "live" | "processing";
   uploadedAt: string;
   thumbnailUrl: string;
   span: "default" | "wide";

@@ -122,7 +122,7 @@ data class UpdateMyEventRequest(
 )
 
 // Mirrors website/src/lib/photographer-mock.ts PhotographerLibraryPhoto.
-// status is lowercase wire form; LIVE → "live", HIDDEN → "hidden". Bib is the
+// status preserves the lowercase lifecycle value, including "processing". Bib is the
 // alphabetically-first match if multiple were OCR-detected (matches PhotoDto).
 // thumbnailUrl is the watermarked variant (same URL runners see in
 // /events/[slug]?browse=1) — the photographer's own dashboard reuses it so
@@ -319,10 +319,7 @@ fun Photo.toLibraryDto(
         status = when (status) {
             PhotoStatus.LIVE -> "live"
             PhotoStatus.HIDDEN -> "hidden"
-            // Processing photos aren't listed yet on the runner-facing grid;
-            // surface them to the photographer dashboard as "live" so the
-            // upload-just-finished state stays visible.
-            PhotoStatus.PROCESSING -> "live"
+            PhotoStatus.PROCESSING -> "processing"
         },
         salesCount = salesCount.toInt(),
         uploadedAt = uploadedAt,
