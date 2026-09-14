@@ -29,7 +29,9 @@ import com.quickpitik.service.events.EventInputs
 import com.quickpitik.service.photographer.PricingTrio
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -47,6 +49,7 @@ class AdminEventService(
     private val aiApiProperties: AiApiProperties,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
+    private val transactionTemplate: TransactionTemplate,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -225,6 +228,7 @@ class AdminEventService(
         return ids.associateWith { PhotographerRef(handle = handles[it], name = names[it]) }
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun create(
         adminId: UUID,
         req: CreateAdminEventRequest,
@@ -233,47 +237,47 @@ class AdminEventService(
         val date = parseDate(req.date)
         val slug = slugify(req.title)
         val price = validatedPrice(req.pricePerPhoto)
-        // Persist the row first so the cover key can scope to the new
-        // event id (events/{id}/cover/{uuid}.jpg). Saves stay in the same
-        // @Transactional method — a cover-decode failure rolls back the
-        // event row.
-        val event = eventRepository.save(
-            Event(
-                slug = slug,
-                name = req.title.trim(),
-                date = date,
-                location = req.location.trim(),
-                photoCount = 0,
-                participantCount = 0,
-                status = EventStatus.ACTIVE,
-                description = req.description?.trim().orEmpty(),
-                organizerName = req.organizerName?.trim().orEmpty(),
-                pricePerPhoto = price,
-                createdAt = OffsetDateTime.now(),
-                updatedAt = OffsetDateTime.now(),
-            ),
-        )
-        if (cover != null) {
-            event.coverS3Key = eventCoverService.upload(event.id, cover.bytes, cover.contentType)
-            eventRepository.save(event)
-        }
-        adminDecisionLogService.logEventDecision(
-            adminId = adminId,
-            targetEventId = event.id,
-            decision = "event_created",
-            meta = mapOf(
-                "title" to req.title,
-                "date" to req.date,
-                "location" to req.location,
-                "pricePerPhoto" to price.toPlainString(),
-            ),
-        )
-        return eventDtoMapper.toAdminListDto(event)
+        val eventId = UUID.randomUUID()
+        val coverKey = cover?.let { eventCoverService.upload(eventId, it.bytes, it.contentType) }
+        // ponytail: a failed commit can orphan this new object; reconcile unreferenced keys if observed.
+        return transactionTemplate.execute {
+            val event = eventRepository.save(
+                Event(
+                    id = eventId,
+                    coverS3Key = coverKey,
+                    slug = slug,
+                    name = req.title.trim(),
+                    date = date,
+                    location = req.location.trim(),
+                    photoCount = 0,
+                    participantCount = 0,
+                    status = EventStatus.ACTIVE,
+                    description = req.description?.trim().orEmpty(),
+                    organizerName = req.organizerName?.trim().orEmpty(),
+                    pricePerPhoto = price,
+                    createdAt = OffsetDateTime.now(),
+                    updatedAt = OffsetDateTime.now(),
+                ),
+            )
+            adminDecisionLogService.logEventDecision(
+                adminId = adminId,
+                targetEventId = event.id,
+                decision = "event_created",
+                meta = mapOf(
+                    "title" to req.title,
+                    "date" to req.date,
+                    "location" to req.location,
+                    "pricePerPhoto" to price.toPlainString(),
+                ),
+            )
+            eventDtoMapper.toAdminListDto(event)
+        } ?: error("Event creation returned null")
     }
 
     /** Raw image bytes + content type for cover uploads. */
     data class CoverUpload(val bytes: ByteArray, val contentType: String?)
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun update(
         adminId: UUID,
         eventId: UUID,
@@ -281,9 +285,37 @@ class AdminEventService(
         cover: CoverUpload? = null,
         removeCover: Boolean = false,
     ): AdminListEventDto {
-        val event = eventRepository.findById(eventId).orElseThrow {
+        // Preserve validation before the PUT, then reload in the write transaction
+        // so edits made during the upload are not overwritten by a detached snapshot.
+        val coverKey = cover?.let {
+            val event = loadForUpdate(eventId)
+            req.date?.takeIf { date -> date.isNotBlank() }?.let(::parseDate)
+            req.pricePerPhoto?.let { price -> validatedUpdatePrice(price, event.isFree) }
+            eventCoverService.upload(eventId, it.bytes, it.contentType)
+        }
+        val (result, oldCoverKey) = transactionTemplate.execute {
+            val event = loadForUpdate(eventId)
+            val oldKey = event.coverS3Key
+            val dto = updateEvent(adminId, event, req, coverKey, removeCover)
+            dto to oldKey?.takeIf { it.isNotBlank() && it != event.coverS3Key }
+        } ?: error("Event update returned null")
+        // Never delete the stored cover until its replacement/removal has committed.
+        oldCoverKey?.let(eventCoverService::delete)
+        return result
+    }
+
+    private fun loadForUpdate(eventId: UUID): Event =
+        eventRepository.findById(eventId).orElseThrow {
             NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         }
+
+    private fun updateEvent(
+        adminId: UUID,
+        event: Event,
+        req: UpdateAdminEventRequest,
+        coverKey: String?,
+        removeCover: Boolean,
+    ): AdminListEventDto {
         val changes = mutableMapOf<String, Any?>()
         val before = mutableMapOf<String, Any?>()
         val after = mutableMapOf<String, Any?>()
@@ -341,16 +373,7 @@ class AdminEventService(
         // change. Existing carts need no fix-up: CartService renders the live
         // photos.price_php, which is also what OrderService.create charges.
         req.pricePerPhoto?.let { rawPrice ->
-            val newPrice = validatedPrice(rawPrice, allowZero = event.isFree)
-            // A FREE photographer event (V46) has no price; the trio only
-            // changes through an approved pricing request.
-            if (event.isFree && newPrice.signum() != 0) {
-                throw ValidationException(
-                    code = ErrorCodes.VALIDATION_ERROR,
-                    message = "This is a free event — approve a pricing change from the event requests queue instead.",
-                    field = "pricePerPhoto",
-                )
-            }
+            val newPrice = validatedUpdatePrice(rawPrice, event.isFree)
             if (event.pricePerPhoto.compareTo(newPrice) != 0) {
                 val oldPriceStr = event.pricePerPhoto.toPlainString()
                 val newPriceStr = newPrice.toPlainString()
@@ -364,21 +387,18 @@ class AdminEventService(
         // Cover handling — upload wins over remove when both are signalled.
         // Audit log records the high-level transition (set/none) rather than
         // the S3 key so the admin-overrides surface stays readable.
-        if (cover != null) {
+        if (coverKey != null) {
             val oldKey = event.coverS3Key
-            event.coverS3Key = eventCoverService.upload(event.id, cover.bytes, cover.contentType)
+            event.coverS3Key = coverKey
             val fromState = if (oldKey.isNullOrBlank()) "none" else "set"
             changes["cover"] = mapOf("from" to fromState, "to" to "set")
             before["cover"] = fromState
             after["cover"] = "set"
-            if (!oldKey.isNullOrBlank()) eventCoverService.delete(oldKey)
         } else if (removeCover && !event.coverS3Key.isNullOrBlank()) {
-            val oldKey = event.coverS3Key!!
             event.coverS3Key = null
             changes["cover"] = mapOf("from" to "set", "to" to "none")
             before["cover"] = "set"
             after["cover"] = "none"
-            eventCoverService.delete(oldKey)
         }
         if (changes.isEmpty()) {
             return eventDtoMapper.toAdminListDto(event)
@@ -403,14 +423,22 @@ class AdminEventService(
         return eventDtoMapper.toAdminListDto(event)
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun delete(adminId: UUID, eventId: UUID): AdminEventDeleteResponseDto {
-        val event = eventRepository.findById(eventId).orElse(null)
-            ?: return AdminEventDeleteResponseDto(removed = false)
-        if (event.deletedAt != null) {
-            return AdminEventDeleteResponseDto(removed = false)
-        }
-        event.deletedAt = OffsetDateTime.now()
-        eventRepository.save(event)
+        val removed = transactionTemplate.execute {
+            val event = eventRepository.findById(eventId).orElse(null)
+                ?: return@execute false
+            if (event.deletedAt != null) return@execute false
+            event.deletedAt = OffsetDateTime.now()
+            eventRepository.save(event)
+            adminDecisionLogService.logEventDecision(
+                adminId = adminId,
+                targetEventId = event.id,
+                decision = "event_deleted",
+            )
+            true
+        } == true
+        if (!removed) return AdminEventDeleteResponseDto(removed = false)
         // GDPR: erase the biometric face embeddings ai-api holds for this event's
         // photos. One event-scoped bulk call — not a per-photo loop — so deleting
         // an event with thousands of photos doesn't fan out into thousands of HTTP
@@ -420,11 +448,6 @@ class AdminEventService(
             runCatching { aiApiClient.deleteFacesByEvent(eventId) }
                 .onFailure { log.warn("ai-api face erasure failed for deleted event {}: {}", eventId, it.message) }
         }
-        adminDecisionLogService.logEventDecision(
-            adminId = adminId,
-            targetEventId = event.id,
-            decision = "event_deleted",
-        )
         return AdminEventDeleteResponseDto(removed = true)
     }
 
@@ -445,6 +468,19 @@ class AdminEventService(
         val requeued = photoRepository.requeueIndexing(eventId, statuses)
         log.info("Admin {} requeued {} photo(s) for indexing on event {} (all={})", adminId, requeued, event.id, all)
         return requeued
+    }
+
+    private fun validatedUpdatePrice(raw: BigDecimal, isFree: Boolean): BigDecimal {
+        val price = validatedPrice(raw, allowZero = isFree)
+        // A FREE event's pricing trio changes only through an approved request.
+        if (isFree && price.signum() != 0) {
+            throw ValidationException(
+                code = ErrorCodes.VALIDATION_ERROR,
+                message = "This is a free event — approve a pricing change from the event requests queue instead.",
+                field = "pricePerPhoto",
+            )
+        }
+        return price
     }
 
     private fun parseDate(raw: String): LocalDate = EventInputs.parseDate(raw)

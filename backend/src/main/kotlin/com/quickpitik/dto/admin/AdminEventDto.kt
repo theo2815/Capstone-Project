@@ -53,8 +53,8 @@ data class RejectEventRequest(
 // POST /admin/events is multipart — the text parts bind straight onto this
 // DTO as a `@Valid @ModelAttribute` (AdminEventsController). The cover image
 // arrives as a separate file part (handled by AdminEventsController +
-// EventCoverService) so the row's `cover_s3_key` is set after the event is
-// persisted. The three required fields carry an empty default so a missing
+// EventCoverService) before the row and its `cover_s3_key` are persisted.
+// The three required fields carry an empty default so a missing
 // part fails @NotBlank as a 400 on that field rather than a construction error.
 data class CreateAdminEventRequest(
     @field:NotBlank
