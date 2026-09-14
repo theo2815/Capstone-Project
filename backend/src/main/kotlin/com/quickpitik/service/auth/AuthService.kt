@@ -194,19 +194,19 @@ class AuthService(
         )
     }
 
-    private fun throwAccountLocked(remaining: java.time.Duration): Nothing {
-        val minutes = remaining.toMinutes() + 1
-        throw ApiException(
-            status = HttpStatus.TOO_MANY_REQUESTS,
-            code = ErrorCodes.ACCOUNT_LOCKED,
-            message = "Too many failed sign-in attempts. Try again in about $minutes minute(s).",
-            retryAfterSeconds = remaining.toSeconds() + 1,
-        )
-    }
-
     private companion object {
         // Never a real credential — only ever fed to passwordEncoder.encode()
         // to produce a hash of the right cost for the timing-equalizer above.
         const val DUMMY_PASSWORD = "quickpitik-login-timing-equalizer"
     }
+}
+
+internal fun throwAccountLocked(remaining: java.time.Duration): Nothing {
+    val minutes = remaining.toMinutes() + 1
+    throw ApiException(
+        status = HttpStatus.TOO_MANY_REQUESTS,
+        code = ErrorCodes.ACCOUNT_LOCKED,
+        message = "Too many failed sign-in attempts. Try again in about $minutes minute(s).",
+        retryAfterSeconds = remaining.toSeconds() + 1,
+    )
 }

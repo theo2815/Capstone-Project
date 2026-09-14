@@ -9,8 +9,10 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EmailChangeTokenRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.OpaqueTokens
-import com.quickpitik.service.email.EmailService
+import com.quickpitik.service.auth.LoginAttemptService
 import com.quickpitik.service.auth.RefreshTokenService
+import com.quickpitik.service.auth.throwAccountLocked
+import com.quickpitik.service.email.EmailService
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -39,6 +41,7 @@ class EmailChangeService(
     private val passwordEncoder: PasswordEncoder,
     private val emailService: EmailService,
     private val refreshTokenService: RefreshTokenService,
+    private val loginAttemptService: LoginAttemptService,
 ) {
     fun requestChange(userId: UUID, request: EmailChangeRequest) {
         val user = userRepository.findById(userId).orElseThrow {
@@ -53,7 +56,10 @@ class EmailChangeService(
                 )
             }
         } else {
-            if (!passwordEncoder.matches(request.currentPassword, user.passwordHash)) {
+            val passwordMatches = passwordEncoder.matches(request.currentPassword, user.passwordHash)
+            loginAttemptService.lockRemaining(user)?.let(::throwAccountLocked)
+            if (!passwordMatches) {
+                loginAttemptService.recordFailure(user.id)
                 throw UnauthorizedException(
                     code = ErrorCodes.INVALID_CREDENTIALS,
                     message = "Current password is incorrect",

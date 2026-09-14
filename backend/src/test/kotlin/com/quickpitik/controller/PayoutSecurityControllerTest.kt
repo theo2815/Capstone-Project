@@ -1,6 +1,7 @@
 package com.quickpitik.controller
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.AuthLockoutProperties
 import com.quickpitik.config.JwtProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.RateLimitProperties
@@ -10,6 +11,7 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.security.JwtTokenProvider
+import com.quickpitik.service.auth.LoginAttemptService
 import com.quickpitik.service.auth.StepUpService
 import com.quickpitik.service.admin.AdminMfaService
 import com.quickpitik.service.admin.AdminPayoutService
@@ -31,7 +33,8 @@ class PayoutSecurityControllerTest {
         val jwt = JwtTokenProvider(JwtProperties(secret = "test-only-step-up-key-at-least-32-bytes-long",
             accessTokenTtl = Duration.ofMinutes(15), refreshTokenTtl = Duration.ofDays(7)))
         val stepUp = StepUpService(Mockito.mock(UserRepository::class.java), Mockito.mock(PasswordEncoder::class.java),
-            jwt, PlatformProperties(payoutStepUpEnabled = true))
+            jwt, PlatformProperties(payoutStepUpEnabled = true),
+            LoginAttemptService(Mockito.mock(UserRepository::class.java), AuthLockoutProperties()))
         val controller = AdminPayoutsController(payouts, stepUp)
         for (proof in listOf(null, jwt.createStepUpToken(UUID.randomUUID()))) {
             assertEquals(ErrorCodes.STEP_UP_REQUIRED,

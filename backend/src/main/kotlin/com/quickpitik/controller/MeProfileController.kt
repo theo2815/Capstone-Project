@@ -8,6 +8,9 @@ import com.quickpitik.dto.profile.ProfileUpdateRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.profile.EmailChangeService
 import com.quickpitik.service.profile.ProfileService
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.ratelimit.acquireOrThrow
 import jakarta.validation.Valid
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.PutMapping
@@ -20,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController
 class MeProfileController(
     private val profileService: ProfileService,
     private val emailChangeService: EmailChangeService,
+    private val rateLimiter: RateLimiter,
 ) {
     @PutMapping("/profile")
     fun updateProfile(
@@ -32,6 +36,7 @@ class MeProfileController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @Valid @RequestBody body: PasswordChangeRequest,
     ): MessageResponse {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, principal.userId.toString())
         profileService.changePassword(principal.userId, body)
         return MessageResponse("Password updated. Sign in again on your other devices.")
     }
@@ -45,6 +50,7 @@ class MeProfileController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @Valid @RequestBody body: EmailChangeRequest,
     ): MessageResponse {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, principal.userId.toString())
         emailChangeService.requestChange(principal.userId, body)
         return MessageResponse(
             "Check your new inbox — we sent a confirmation link. " +

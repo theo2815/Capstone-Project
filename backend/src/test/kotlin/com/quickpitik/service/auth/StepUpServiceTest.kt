@@ -1,6 +1,7 @@
 package com.quickpitik.service.auth
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.AuthLockoutProperties
 import com.quickpitik.config.JwtProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.entity.Role
@@ -11,12 +12,14 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.JwtTokenProvider
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.http.HttpStatus
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
 import java.time.Duration
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 
 class StepUpServiceTest {
 
@@ -36,9 +39,10 @@ class StepUpServiceTest {
         encoder,
         tokenProvider,
         PlatformProperties(payoutStepUpEnabled = stepUpEnabled),
+        LoginAttemptService(userRepository, AuthLockoutProperties()),
     )
 
-    private fun givenPassword(raw: String) {
+    private fun givenPassword(raw: String): User {
         val user = User(
             id = userId,
             email = "p@test.local",
@@ -47,6 +51,7 @@ class StepUpServiceTest {
             role = Role.PHOTOGRAPHER,
         )
         Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(user))
+        return user
     }
 
     @Test
@@ -63,6 +68,25 @@ class StepUpServiceTest {
             service(stepUpEnabled = false).reauth(userId, "not-the-password")
         }
         assertEquals(ErrorCodes.INVALID_CREDENTIALS, ex.code)
+    }
+
+    @Test
+    fun `the sixth wrong step-up password is rejected as account locked`() {
+        val user = givenPassword("correct-horse-battery-staple-42")
+        repeat(5) {
+            assertFailsWith<UnauthorizedException> {
+                service(stepUpEnabled = false).reauth(userId, "not-the-password")
+            }
+        }
+
+        val ex = assertFailsWith<ApiException> {
+            service(stepUpEnabled = false).reauth(userId, "not-the-password")
+        }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, ex.status)
+        assertNotNull(user.lockedUntil)
+        assertEquals(0, user.failedLoginAttempts)
     }
 
     @Test

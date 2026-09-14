@@ -24,6 +24,7 @@ class StepUpService(
     private val passwordEncoder: PasswordEncoder,
     private val tokenProvider: JwtTokenProvider,
     private val platformProperties: PlatformProperties,
+    private val loginAttemptService: LoginAttemptService,
 ) {
     /**
      * Verify the authenticated user's password and mint a step-up token. Wrong
@@ -34,7 +35,10 @@ class StepUpService(
         val user = userRepository.findById(userId).orElseThrow {
             UnauthorizedException(code = ErrorCodes.INVALID_CREDENTIALS, message = "Invalid credentials")
         }
-        if (!passwordEncoder.matches(password, user.passwordHash)) {
+        val passwordMatches = passwordEncoder.matches(password, user.passwordHash)
+        loginAttemptService.lockRemaining(user)?.let(::throwAccountLocked)
+        if (!passwordMatches) {
+            loginAttemptService.recordFailure(user.id)
             throw UnauthorizedException(code = ErrorCodes.INVALID_CREDENTIALS, message = "Invalid credentials")
         }
         return tokenProvider.createStepUpToken(userId)
