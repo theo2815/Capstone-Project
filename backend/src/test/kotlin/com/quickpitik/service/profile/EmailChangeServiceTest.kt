@@ -111,6 +111,18 @@ class EmailChangeServiceTest {
     }
 
     @Test
+    fun `a locked account rejects the correct current password after comparing it`() {
+        stubUser().lockedUntil = OffsetDateTime.now().plusMinutes(15)
+        Mockito.`when`(passwordEncoder.matches("correct-horse", "hashed")).thenReturn(true)
+
+        val ex = assertThrows<ApiException> { service().requestChange(userId, request()) }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        Mockito.verify(passwordEncoder).matches("correct-horse", "hashed")
+        Mockito.verifyNoInteractions(emailService)
+    }
+
+    @Test
     fun `a standard user omitting current password is rejected`() {
         stubUser() // googleSub is null
 

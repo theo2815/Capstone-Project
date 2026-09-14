@@ -18,6 +18,7 @@ import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
 import org.springframework.http.HttpStatus
 import org.springframework.security.crypto.password.PasswordEncoder
+import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -103,6 +104,22 @@ class ProfileServiceTest {
         assertEquals(HttpStatus.TOO_MANY_REQUESTS, ex.status)
         assertNotNull(user.lockedUntil)
         assertEquals(0, user.failedLoginAttempts)
+    }
+
+    @Test
+    fun `a locked account rejects the correct current password after comparing it`() {
+        stubUser().lockedUntil = OffsetDateTime.now().plusMinutes(15)
+        Mockito.`when`(passwordEncoder.matches("correct-password", "old-hash")).thenReturn(true)
+
+        val ex = assertThrows<ApiException> {
+            service().changePassword(
+                userId,
+                PasswordChangeRequest(currentPassword = "correct-password", newPassword = "NewPassword123!"),
+            )
+        }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        Mockito.verify(passwordEncoder).matches("correct-password", "old-hash")
     }
 
     @Test

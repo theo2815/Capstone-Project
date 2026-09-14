@@ -15,6 +15,7 @@ import org.mockito.Mockito
 import org.springframework.http.HttpStatus
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
 import java.time.Duration
+import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -24,7 +25,7 @@ import kotlin.test.assertNotNull
 class StepUpServiceTest {
 
     private val userId = UUID.randomUUID()
-    private val encoder = BCryptPasswordEncoder()
+    private val encoder = Mockito.spy(BCryptPasswordEncoder())
     private val tokenProvider = JwtTokenProvider(
         JwtProperties(
             secret = "step-up-test-secret-at-least-32-bytes-1234567890",
@@ -87,6 +88,19 @@ class StepUpServiceTest {
         assertEquals(HttpStatus.TOO_MANY_REQUESTS, ex.status)
         assertNotNull(user.lockedUntil)
         assertEquals(0, user.failedLoginAttempts)
+    }
+
+    @Test
+    fun `a locked account rejects the correct step-up password after comparing it`() {
+        val user = givenPassword("correct-horse-battery-staple-42")
+        user.lockedUntil = OffsetDateTime.now().plusMinutes(15)
+
+        val ex = assertFailsWith<ApiException> {
+            service(stepUpEnabled = false).reauth(userId, "correct-horse-battery-staple-42")
+        }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        Mockito.verify(encoder).matches("correct-horse-battery-staple-42", user.passwordHash)
     }
 
     @Test
