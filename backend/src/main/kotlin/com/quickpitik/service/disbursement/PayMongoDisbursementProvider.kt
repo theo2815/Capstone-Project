@@ -1,5 +1,6 @@
 package com.quickpitik.service.disbursement
 
+import com.quickpitik.common.toCentavos
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.dto.orders.PaymongoTransferAccount
 import com.quickpitik.dto.orders.PaymongoTransferRequest
@@ -11,7 +12,6 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientResponseException
-import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
@@ -79,10 +79,6 @@ class PayMongoDisbursementProvider(
     }
 
     companion object {
-        // Pesos → centavos, exact (no rounding on a money value).
-        internal fun toCentavos(amountPhp: BigDecimal): Long =
-            amountPhp.movePointRight(2).longValueExact()
-
         internal fun buildTransferRequest(
             request: DisbursementRequest,
             properties: PaymongoProperties,
@@ -99,13 +95,10 @@ class PayMongoDisbursementProvider(
             }
             require(properties.transferRail in setOf("instapay", "pesonet")) { "Unsupported transfer rail" }
             require(request.amountPhp.signum() > 0) { "Transfer amount must be positive" }
-            require(properties.transferRail != "instapay" || request.amountPhp <= BigDecimal("50000")) {
-                "InstaPay supports at most PHP 50,000; use a verified PESONet configuration for larger transfers"
-            }
             return PaymongoTransferRequest(
                 listOf(
                     PaymongoTransferRequestAttributes(
-                        amount = toCentavos(request.amountPhp),
+                        amount = request.amountPhp.toCentavos(),
                         description = "QuickPitik payout ${request.cycleId}",
                         sourceAccount = PaymongoTransferAccount(
                             properties.transferSourceNumber, properties.transferSourceName, properties.transferSourceBic,

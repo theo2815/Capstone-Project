@@ -11,6 +11,7 @@ import com.quickpitik.repository.PayoutStatusHistoryRepository
 import com.quickpitik.repository.ProcessedWebhookEventRepository
 import com.quickpitik.service.earnings.PayoutCycleTransitions
 import com.quickpitik.service.earnings.PayoutStatusRecorder
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -29,6 +30,7 @@ class PayoutDisbursementWebhookServiceTest {
     private lateinit var payoutCycleRepository: PayoutCycleRepository
     private lateinit var processedWebhookEventRepository: ProcessedWebhookEventRepository
     private lateinit var payoutStatusHistoryRepository: PayoutStatusHistoryRepository
+    private val meterRegistry = SimpleMeterRegistry()
 
     private fun <T> anyArg(): T = Mockito.any()
 
@@ -44,6 +46,7 @@ class PayoutDisbursementWebhookServiceTest {
         payoutCycleRepository,
         processedWebhookEventRepository,
         PayoutCycleTransitions(payoutCycleRepository, PayoutStatusRecorder(payoutStatusHistoryRepository)),
+        meterRegistry,
     )
 
     private fun cycle(status: PayoutCycleStatus, transferId: String = "tr_1"): PayoutCycle {
@@ -118,6 +121,17 @@ class PayoutDisbursementWebhookServiceTest {
         assertEquals("returned", service().handle(event("transfer.outward.returned"))["status"])
         assertEquals("already-applied", service().handle(event("transfer.outward.successful", eventId = "evt_late"))["skipped"])
         assertEquals(PayoutCycleStatus.RETURNED, c.status)
+    }
+
+    @Test
+    fun `a conflicting outcome is counted and redelivered, not recorded`() {
+        // Success racing an admin mark-failed: nothing can apply it, so it must be visible.
+        Mockito.`when`(payoutCycleRepository.findByProviderTransferId("tr_1"))
+            .thenReturn(cycle(PayoutCycleStatus.FAILED))
+        val ex = assertFailsWith<ApiException> { service().handle(event("transfer.outward.successful")) }
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.status)
+        assertEquals(1.0, meterRegistry.counter("qp.payout.webhook.conflict", "from", "failed", "to", "paid").count())
+        Mockito.verify(processedWebhookEventRepository, Mockito.never()).save(anyArg())
     }
 
     @Test

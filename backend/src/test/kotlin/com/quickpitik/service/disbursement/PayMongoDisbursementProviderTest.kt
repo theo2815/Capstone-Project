@@ -53,8 +53,5 @@ class PayMongoDisbursementProviderTest {
     @Test fun `missing institution configuration and invalid amounts fail before sending`() {
         assertFailsWith<IllegalArgumentException> { PayMongoDisbursementProvider.buildTransferRequest(req, PaymongoProperties()) }
         assertFailsWith<IllegalArgumentException> { PayMongoDisbursementProvider.buildTransferRequest(req.copy(method = "unknown"), properties) }
-        assertFailsWith<IllegalArgumentException> { PayMongoDisbursementProvider.buildTransferRequest(req.copy(amountPhp = BigDecimal("50000.01")), properties) }
-        assertFailsWith<ArithmeticException> { PayMongoDisbursementProvider.toCentavos(BigDecimal("1.001")) }
-        assertEquals(50000L, PayMongoDisbursementProvider.toCentavos(BigDecimal("500")))
     }
 }

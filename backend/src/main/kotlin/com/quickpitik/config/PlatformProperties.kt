@@ -29,6 +29,10 @@ data class PlatformProperties(
     // PAYOUT_DISBURSEMENT_PROVIDER. Keep "manual" until PayMongo KYB is approved
     // and the adapter is verified in a test-mode account (Phase 11).
     val disbursementProvider: String = "manual",
+    // Largest payout an automated (non-manual) transfer may carry. Default is the
+    // InstaPay ceiling; raise it only with a verified PESONet rail. Larger cycles
+    // are refused with a 409 and settled manually. Overridable: PAYOUT_MAX_PER_TRANSFER_PHP.
+    val payoutMaxPerTransferPhp: BigDecimal = BigDecimal("50000"),
     // Step-up re-auth master switch (like AI_API_ENABLED). OFF by default so the
     // shipped web + mobile clients — which don't yet send an X-Step-Up header —
     // keep working. Turn ON only once both clients do the /me/reauth flow; then

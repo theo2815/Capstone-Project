@@ -281,6 +281,13 @@ class AdminPayoutService(
     // Automated transfers require a frozen destination. Legacy cycles can still
     // be settled manually after the admin verifies the recipient.
     private fun disbursementRequestFor(cycle: PayoutCycle): DisbursementRequest? {
+        if (cycle.provider != "manual" && cycle.amountPhp > platformProperties.payoutMaxPerTransferPhp) {
+            throw ApiException(
+                HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "This payout is above the ₱${platformProperties.payoutMaxPerTransferPhp.toPlainString()} " +
+                    "automated transfer limit. Settle it manually.",
+            )
+        }
         val method = cycle.accountSnapshotMethod
         val number = cycle.accountSnapshotNumber
         val name = cycle.accountSnapshotName

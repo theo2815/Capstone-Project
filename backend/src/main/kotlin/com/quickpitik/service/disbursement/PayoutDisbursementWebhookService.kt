@@ -10,6 +10,7 @@ import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.ProcessedWebhookEventRepository
 import com.quickpitik.service.earnings.PayoutCycleTransitions
 import com.quickpitik.service.earnings.PayoutTransition
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -36,6 +37,7 @@ class PayoutDisbursementWebhookService(
     private val payoutCycleRepository: PayoutCycleRepository,
     private val processedWebhookEventRepository: ProcessedWebhookEventRepository,
     private val payoutCycleTransitions: PayoutCycleTransitions,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -92,6 +94,8 @@ class PayoutDisbursementWebhookService(
         // an out-of-order delivery must ask PayMongo to redeliver (503), never
         // hand it the admin surface's 409.
         if (from !in transition.allowedFrom) {
+            // Redelivered forever until reconciled by hand — alert on this counter.
+            meterRegistry.counter("qp.payout.webhook.conflict", "from", from.wire, "to", target.wire).increment()
             log.warn(
                 "PayMongo transfer webhook: cycle {} is {}, cannot move to {} — reconciliation required",
                 cycle.id, from.wire, target.wire,

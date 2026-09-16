@@ -33,6 +33,7 @@ import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.disbursement.DisbursementProvider
 import com.quickpitik.service.disbursement.DisbursementRequest
 import com.quickpitik.service.disbursement.DisbursementResult
 import com.quickpitik.service.disbursement.DisbursementService
@@ -227,6 +228,25 @@ class AdminPayoutServiceTransitionTest {
         assertEquals("manual", captor.value.provider)
         // Manual disbursement creates no external transfer, so no id is recorded.
         assertEquals(null, captor.value.providerTransferId)
+    }
+
+    @Test
+    fun `mark-processing above the per-transfer limit is a 409 before any money moves`() {
+        val cycle = cycle(PayoutCycleStatus.APPROVED, amount = "50000.01").apply {
+            accountSnapshotMethod = "gcash"
+            accountSnapshotNumber = "09123456789"
+            accountSnapshotName = "Test recipient"
+        }
+        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+        val paymongo = Mockito.mock(DisbursementProvider::class.java)
+        Mockito.`when`(paymongo.providerName).thenReturn("paymongo")
+        val disbursements = DisbursementService(listOf(paymongo), PlatformProperties(disbursementProvider = "paymongo"))
+
+        val ex = assertFailsWith<ApiException> { service(disbursementService = disbursements).markProcessing(adminId, cycleId) }
+
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verify(paymongo, Mockito.never()).initiate(anyArg())
     }
 
     @Test
