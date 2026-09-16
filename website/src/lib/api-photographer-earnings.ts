@@ -20,7 +20,7 @@ import type { PaginatedResponse } from "@/types/api";
 //        → PaginatedResponse<PerEventEarning>
 //   GET  /api/v1/me/photographer/payouts?offset=&limit=                  → PaginatedResponse<PhotographerPayout>
 //   POST /api/v1/me/photographer/payouts/{id}/report { reason, note? }   → PayoutReport
-//   GET  /api/v1/me/photographer/payouts/reports?cycleId=&status=        → PayoutReport[]
+//   GET  /api/v1/me/photographer/payouts/reports?cycleId=&status=&offset=&limit= → PaginatedResponse<PayoutReport>
 //   GET  /api/v1/me/photographer/billing/transactions?offset=&limit=
 //        → PaginatedResponse<PhotographerTransaction> & { monthTotals: Record<string, number> }
 //
@@ -113,13 +113,15 @@ export interface PhotographerPayoutReportsArgs {
 
 export async function fetchPhotographerPayoutReports(
   args: PhotographerPayoutReportsArgs = {},
-): Promise<PayoutReport[] | null> {
+): Promise<PayoutReport[]> {
   const p = new URLSearchParams();
   if (args.cycleId) p.set("cycleId", args.cycleId);
   if (args.status) p.set("status", args.status);
-  return api.get<PayoutReport[]>(
+  // First page only (backend default 50) — reports are rare per photographer.
+  const res = await api.get<PaginatedResponse<PayoutReport>>(
     `/me/photographer/payouts/reports?${p.toString()}`,
   );
+  return res.items;
 }
 
 // ───────────────────────────────────────────── Payout requests
