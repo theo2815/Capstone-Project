@@ -82,11 +82,6 @@ class BoundariesTest {
     @Test
     fun `only the earnings domain writes payout cycles`() {
         noClasses().that().resideOutsideOfPackage("com.quickpitik.service.earnings..")
-            // ponytail: AdminPayoutService still saves four non-lifecycle field
-            // edits (account snapshot, provider reference, report links) directly.
-            // Drop this exemption when the payout lane routes them through
-            // service/earnings; the status moves already go through Transitions.
-            .and().doNotHaveSimpleName("AdminPayoutService")
             .should().callMethodWhere(WRITES_PAYOUT_CYCLES)
             .because(
                 "payout_cycles moves only through service/earnings/PayoutCycleTransitions (37f214f5, audit P-2)",
@@ -95,11 +90,23 @@ class BoundariesTest {
     }
 
     private companion object {
+        /**
+         * The AdminPayoutService methods that still save `payout_cycles` directly,
+         * none of them a status move: `generateForWeek` creates cycles and refreshes
+         * a PENDING row's amount; `saveFirstApproval` stamps the first approver
+         * on a cycle that stays PENDING; `markProcessing` claims the provider before
+         * the transfer leaves. Matched by method (lambdas compile to `name$lambda$n`)
+         * so a new method in that class that saves directly still fails the build.
+         */
+        val DIRECT_CYCLE_SAVES = setOf("generateForWeek", "saveFirstApproval", "markProcessing")
+
         val WRITES_PAYOUT_CYCLES =
             object : DescribedPredicate<JavaMethodCall>("a write call on PayoutCycleRepository") {
                 override fun test(call: JavaMethodCall): Boolean =
                     call.targetOwner.isAssignableTo(PayoutCycleRepository::class.java) &&
-                        (call.target.name.startsWith("save") || call.target.name.startsWith("delete"))
+                        (call.target.name.startsWith("save") || call.target.name.startsWith("delete")) &&
+                        !(call.originOwner.simpleName == "AdminPayoutService" &&
+                            call.origin.name.substringBefore('$') in DIRECT_CYCLE_SAVES)
             }
     }
 }

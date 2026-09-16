@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.http.HttpStatus
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -105,6 +107,15 @@ class PayoutCycleTransitionsTest {
         assertFalse(PayoutCycleStatus.APPROVED in PayoutTransition.ProviderPaid.allowedFrom)
         assertTrue(PayoutCycleStatus.PROCESSING in PayoutTransition.ProviderReturned.allowedFrom)
         assertFalse(PayoutCycleStatus.PROCESSING in PayoutTransition.AdminMarkReturned.allowedFrom)
+    }
+
+    @Test
+    fun `the audit recorder refuses to run outside a caller transaction`() {
+        val tx = PayoutStatusRecorder::class.java.getMethod(
+            "record", String::class.java, PayoutCycleStatus::class.java, PayoutCycleStatus::class.java,
+            String::class.java, UUID::class.java, String::class.java,
+        ).getAnnotation(Transactional::class.java)
+        assertEquals(Propagation.MANDATORY, tx?.propagation)
     }
 
     @Test

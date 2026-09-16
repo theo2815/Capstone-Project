@@ -120,13 +120,9 @@ class AdminPayoutService(
         // Two-person first-approval leg — awaits a second, different admin. The
         // cycle stays PENDING (not payable) until the second approval lands.
         if (needsTwo) {
-            // Not a lifecycle move: the cycle stays PENDING and only the first
-            // approver is stamped, so this deliberately does not go through
-            // PayoutCycleTransitions and writes no history row.
-            cycle.status = PayoutCycleStatus.PENDING
             cycle.approvedBy = adminId
             cycle.approvedAt = OffsetDateTime.now()
-            payoutCycleRepository.save(cycle)
+            saveFirstApproval(cycle, adminId)
             adminDecisionLogService.logPayoutDecision(
                 adminId = adminId, targetPayoutId = cycle.id, decision = "approved-first",
             )
@@ -150,6 +146,16 @@ class AdminPayoutService(
             sourceDecisionId = decision.id,
         )
         return hydrateOne(cycle)
+    }
+
+    // A held cycle returns to review (a lifecycle move with a history row); a
+    // PENDING one only gains its first approver, which is a plain field edit.
+    private fun saveFirstApproval(cycle: PayoutCycle, adminId: UUID) {
+        if (cycle.status == PayoutCycleStatus.HELD) {
+            payoutCycleTransitions.apply(cycle, PayoutTransition.AdminFirstApproveFromHold, adminId, "first approval")
+        } else {
+            payoutCycleRepository.save(cycle)
+        }
     }
 
     // Payouts >= the configured threshold need a second, distinct admin — but
@@ -338,8 +344,10 @@ class AdminPayoutService(
     /**
      * POST /api/v1/admin/payouts/bulk (C-3).
      *
-     * Idempotent on the inbound `Idempotency-Key` header. A retry with the
-     * same (admin_id, idempotency_key) returns the original group_id and
+     * Idempotent on the inbound `Idempotency-Key` header, scoped to the action
+     * (stored as `key:action`) so a replayed key with a different action runs
+     * that action instead of matching the first one. A retry with the
+     * same (admin_id, idempotency_key, action) returns the original group_id and
      * does NOT re-issue per-cycle audit-log rows or photographer-inbox
      * messages — every per-item write is gated by the partial unique index
      * `uq_admin_decision_log_admin_idem_target_payout` so duplicates are
@@ -352,21 +360,23 @@ class AdminPayoutService(
      */
     fun bulk(adminId: UUID, idempotencyKey: String, req: BulkPayoutsRequest): BulkPayoutResultDto {
         userRepository.lockById(adminId)
+        val action = req.action.trim().lowercase()
+        val scopedKey = "$idempotencyKey:$action"
         // Fast path: a prior bulk run with this (admin_id, idempotency_key)
         // already minted a group_id — reuse it so the dashboard kpi
         // (`COUNT(DISTINCT group_id)`) still collapses retries into one
         // logical decision and the FE bulk-undo button has a stable id.
         val groupId = adminDecisionLogRepository.findGroupIdByAdminAndIdempotencyKey(
             adminId,
-            idempotencyKey,
+            scopedKey,
         ) ?: UUID.randomUUID()
 
         val results = try {
             req.ids.distinct().sorted().map { id ->
                 try {
-                    when (req.action.trim().lowercase()) {
+                    when (action) {
                         "approve" -> {
-                            bulkApprove(adminId, id, groupId, idempotencyKey)
+                            bulkApprove(adminId, id, groupId, scopedKey)
                             BulkPayoutItemResultDto(id = id, ok = true)
                         }
                         "hold" -> {
@@ -376,7 +386,7 @@ class AdminPayoutService(
                                     message = "reason required for hold",
                                     field = "reason",
                                 )
-                            bulkHold(adminId, id, reason, groupId, idempotencyKey)
+                            bulkHold(adminId, id, reason, groupId, scopedKey)
                             BulkPayoutItemResultDto(id = id, ok = true)
                         }
                         else -> throw ValidationException(
@@ -430,8 +440,7 @@ class AdminPayoutService(
                 true
             }
             needsTwo && cycle.approvedBy == null -> {
-                // Mirrors approve()'s first leg: stays PENDING, no history row.
-                cycle.status = PayoutCycleStatus.PENDING
+                // Mirrors approve()'s first leg.
                 cycle.approvedBy = adminId
                 cycle.approvedAt = OffsetDateTime.now()
                 false
@@ -446,7 +455,7 @@ class AdminPayoutService(
         if (reachedApproved) {
             payoutCycleTransitions.apply(cycle, PayoutTransition.AdminApprove, adminId)
         } else {
-            payoutCycleRepository.save(cycle)
+            saveFirstApproval(cycle, adminId)
         }
         val decision = adminDecisionLogService.logPayoutDecision(
             adminId = adminId,
@@ -599,9 +608,12 @@ class AdminPayoutService(
                     existing.amountPhp = amount
                     existing.itemCount = itemCount
                     existing.methodWire = existing.accountSnapshotMethod ?: method.wire
-                    existing.status = PayoutCycleStatus.PENDING
                     existing.settledAt = null
-                    payoutCycleRepository.save(existing)
+                    if (existing.status == PayoutCycleStatus.SCHEDULED) {
+                        payoutCycleTransitions.apply(existing, PayoutTransition.AdminScheduleForReview, null)
+                    } else {
+                        payoutCycleRepository.save(existing)
+                    }
                     updated++
                     totalAmount = totalAmount.add(amount)
                 }

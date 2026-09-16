@@ -81,6 +81,10 @@ enum class PayoutTransition(
     val actorType: String,
 ) {
     AdminApprove(PayoutCycleStatus.APPROVED, setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.HELD), "admin"),
+    // Two-person first approval of a held cycle: it returns to review, awaiting the second admin.
+    AdminFirstApproveFromHold(PayoutCycleStatus.PENDING, setOf(PayoutCycleStatus.HELD), "admin"),
+    // generateForWeek refreshing a scheduled cycle into the review queue.
+    AdminScheduleForReview(PayoutCycleStatus.PENDING, setOf(PayoutCycleStatus.SCHEDULED), "admin"),
     AdminHold(
         PayoutCycleStatus.HELD,
         setOf(PayoutCycleStatus.PENDING, PayoutCycleStatus.APPROVED, PayoutCycleStatus.PROCESSING),

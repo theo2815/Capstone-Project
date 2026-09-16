@@ -8,7 +8,9 @@ import ch.qos.logback.core.read.ListAppender
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.admin.BulkPayoutsRequest
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
+import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Order
@@ -361,6 +363,53 @@ class AdminPayoutServiceTransitionTest {
         given(PayoutCycleStatus.PENDING, amount = "15000", approvedBy = adminId)
         val ex = assertFailsWith<ApiException> { service().approve(adminId, cycleId) }
         assertEquals(ErrorCodes.PAYOUT_SECOND_APPROVER_REQUIRED, ex.code)
+    }
+
+    @Test
+    fun `large payout first approval from hold records the held to pending move`() {
+        Mockito.`when`(userRepository.countByRole(Role.ADMIN)).thenReturn(2L)
+        given(PayoutCycleStatus.HELD, amount = "15000")
+        val dto = service().approve(adminId, cycleId)
+        assertEquals("pending_review", dto.status)
+        assertEquals("pending", recordedToStatus())
+    }
+
+    @Test
+    fun `a bulk key replayed with a different action runs that action instead of reporting a silent ok`() {
+        val cycle = cycle(PayoutCycleStatus.PENDING)
+        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+        val svc = service()
+        val key = UUID.randomUUID().toString()
+
+        svc.bulk(adminId, key, BulkPayoutsRequest(listOf(cycleId), "approve"))
+        val captor = ArgumentCaptor.forClass(AdminDecisionLog::class.java)
+        Mockito.verify(adminDecisionLogRepository).save(captor.capture())
+        val storedKey = captor.value.idempotencyKey
+        Mockito.`when`(
+            adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(adminId, storedKey!!, cycleId),
+        ).thenReturn(true)
+
+        val result = svc.bulk(
+            adminId, key, BulkPayoutsRequest(listOf(cycleId), "hold", "recheck"),
+        )
+
+        assertTrue(result.results.single().ok)
+        assertEquals(PayoutCycleStatus.HELD, cycle.status)
+    }
+
+    @Test
+    fun `weekly generation records the scheduled to pending move`() {
+        val weekOf = LocalDate.of(2026, 9, 7)
+        Mockito.`when`(transactionRepository.aggregateByPhotographerInWindow(anyArg(), anyArg()))
+            .thenReturn(listOf(arrayOf(photographerId, BigDecimal("500"), 3L)))
+        val existing = cycle(PayoutCycleStatus.SCHEDULED)
+        Mockito.`when`(payoutCycleRepository.lockById(anyArg())).thenReturn(existing)
+
+        val result = service().generateForWeek(weekOf)
+
+        assertEquals(1, result.updated)
+        assertEquals(PayoutCycleStatus.PENDING, existing.status)
+        assertEquals("pending", recordedToStatus())
     }
 
     @Test
