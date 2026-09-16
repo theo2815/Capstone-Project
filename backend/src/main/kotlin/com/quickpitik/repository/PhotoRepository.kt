@@ -149,26 +149,6 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     )
     fun unhideForFlag(@Param("id") id: UUID, @Param("target") target: PhotoStatus): Int
 
-    // Fingerprint registry (V42) catch-up: LIVE previews that predate the
-    // phash column. PhotoWatermarkTrigger.backfillPhash hashes them in batches.
-    // `LIVE and not trashed` = Photo.isSellable — JPQL/SQL cannot call the
-    // Kotlin helper, so this copy changes with it.
-    @Query(
-        """
-        SELECT p FROM Photo p
-        WHERE p.status = com.quickpitik.entity.PhotoStatus.LIVE
-          AND p.phash IS NULL
-          AND p.deletedAt IS NULL
-          AND p.watermarkS3Key IS NOT NULL
-        ORDER BY p.uploadedAt ASC
-        """,
-    )
-    fun findPhashBacklog(pageable: Pageable): List<Photo>
-
-    @Modifying
-    @Query("UPDATE Photo p SET p.phash = :phash WHERE p.id = :id")
-    fun setPhash(@Param("id") id: UUID, @Param("phash") phash: Long): Int
-
     // Nearest stored fingerprint by Hamming distance, for POST
     // /public/photos/verify. The upload is compared against all three
     // registered hashes — marked frame, clean frame, clean centre crop (V43;
