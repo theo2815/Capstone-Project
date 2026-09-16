@@ -10,11 +10,14 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.service.email.ResendClient
 import org.slf4j.LoggerFactory
+import org.springframework.data.domain.PageRequest
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -44,6 +47,7 @@ class OrderReceiptEmailService(
     private val paymongoProperties: PaymongoProperties,
     private val orderAccessTokenService: OrderAccessTokenService,
     private val transactionTemplate: TransactionTemplate,
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -60,20 +64,14 @@ class OrderReceiptEmailService(
     fun sendReceiptIfPending(orderId: UUID) {
         val receipt = transactionTemplate.execute { claimReceipt(orderId) } ?: return
 
-        try {
-            val response = resendClient.send(
+        val response = try {
+            resendClient.send(
                 ResendSendEmailRequest(
                     from = receipt.sender,
                     to = listOf(receipt.recipient),
                     subject = receipt.subject,
                     html = receipt.html,
                 ),
-            )
-            log.info(
-                "Receipt sent · orderId={} resendId={} to={}",
-                orderId,
-                response.id,
-                receipt.recipient,
             )
         } catch (ex: Exception) {
             log.error("Receipt send failed · orderId={} err={}", orderId, ex.message, ex)
@@ -82,6 +80,31 @@ class OrderReceiptEmailService(
             // don't-stamp-on-failure behaviour left open. Needs its own
             // transaction: the claim's committed long before we get here.
             transactionTemplate.executeWithoutResult { orderRepository.releaseReceiptSend(orderId) }
+            return
+        }
+
+        transactionTemplate.executeWithoutResult {
+            orderRepository.stampReceiptDelivered(orderId, OffsetDateTime.now(clock))
+        }
+        log.info(
+            "Receipt sent · orderId={} resendId={} to={}",
+            orderId,
+            response.id,
+            receipt.recipient,
+        )
+    }
+
+    @Scheduled(fixedDelayString = "\${app.email.resend.receipt-sweep-interval-ms:900000}")
+    fun recoverStaleReceiptClaims() {
+        val cutoff = OffsetDateTime.now(clock).minusMinutes(STALE_CLAIM_MINUTES)
+        val stale = transactionTemplate.execute {
+            orderRepository.findStaleReceiptClaimIds(cutoff, PageRequest.of(0, STALE_CLAIM_BATCH_SIZE))
+        }.orEmpty()
+        stale.forEach { orderId ->
+            val released = transactionTemplate.execute {
+                orderRepository.releaseStaleReceiptSend(orderId, cutoff)
+            } == 1
+            if (released) sendReceiptIfPending(orderId)
         }
     }
 
@@ -137,7 +160,7 @@ class OrderReceiptEmailService(
         // actually decides who sends. Placed here, after every skip condition,
         // so an order that legitimately isn't ready yet (no grants, no items)
         // never burns its one claim.
-        if (orderRepository.claimReceiptSend(orderId, OffsetDateTime.now()) == 0) {
+        if (orderRepository.claimReceiptSend(orderId, OffsetDateTime.now(clock)) == 0) {
             log.info("Receipt already claimed by a concurrent send for order {} — skipping", orderId)
             return null
         }
@@ -278,6 +301,8 @@ $discountLine
     private fun escapeUrl(s: String): String = s.replace("&", "&amp;")
 
     private companion object {
+        const val STALE_CLAIM_BATCH_SIZE = 50
+        const val STALE_CLAIM_MINUTES = 10L
         val DISPLAY_ZONE: ZoneId = ZoneId.of("Asia/Manila")
         val DATE_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d · h:mm a")
     }

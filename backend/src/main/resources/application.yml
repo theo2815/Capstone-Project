@@ -354,6 +354,7 @@ app:
       base-url: ${RESEND_BASE_URL:https://api.resend.com}
       connect-timeout: PT5S
       read-timeout: PT15S
+      receipt-sweep-interval-ms: ${RECEIPT_SWEEP_INTERVAL_MS:900000}
 
 # Actuator: /actuator/health is a public liveness probe; metrics + info need
 # an ADMIN bearer (SecurityConfig). Nothing else is exposed over the web.

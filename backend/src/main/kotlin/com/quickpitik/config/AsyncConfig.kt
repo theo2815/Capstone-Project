@@ -6,11 +6,15 @@ import org.springframework.core.task.TaskExecutor
 import org.springframework.scheduling.annotation.EnableAsync
 import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
+import java.time.Clock
 
 @Configuration
 @EnableAsync
 @EnableScheduling
 class AsyncConfig {
+
+    @Bean
+    fun clock(): Clock = Clock.systemUTC()
 
     // AI indexing (Rekognition / ai-api): ~9 s of pool time per photo.
     @Bean(name = ["imageProcessing"])

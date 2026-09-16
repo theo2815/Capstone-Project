@@ -96,4 +96,36 @@ interface OrderRepository : JpaRepository<Order, UUID> {
     @Modifying
     @Query("UPDATE Order o SET o.emailSentAt = NULL WHERE o.id = :orderId")
     fun releaseReceiptSend(@Param("orderId") orderId: UUID): Int
+
+    @Modifying
+    @Query(
+        "UPDATE Order o SET o.receiptDeliveredAt = :deliveredAt " +
+            "WHERE o.id = :orderId AND o.receiptDeliveredAt IS NULL",
+    )
+    fun stampReceiptDelivered(
+        @Param("orderId") orderId: UUID,
+        @Param("deliveredAt") deliveredAt: OffsetDateTime,
+    ): Int
+
+    @Query(
+        "SELECT o.id FROM Order o " +
+            "WHERE o.emailSentAt < :cutoff AND o.receiptDeliveredAt IS NULL " +
+            "ORDER BY o.emailSentAt ASC",
+    )
+    fun findStaleReceiptClaimIds(
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<UUID>
+
+    // A second app instance may have reclaimed the row after the sweep read
+    // it. Match the old timestamp and missing delivery stamp before releasing.
+    @Modifying
+    @Query(
+        "UPDATE Order o SET o.emailSentAt = NULL " +
+            "WHERE o.id = :orderId AND o.emailSentAt < :cutoff AND o.receiptDeliveredAt IS NULL",
+    )
+    fun releaseStaleReceiptSend(
+        @Param("orderId") orderId: UUID,
+        @Param("cutoff") cutoff: OffsetDateTime,
+    ): Int
 }

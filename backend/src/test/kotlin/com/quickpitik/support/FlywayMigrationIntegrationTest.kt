@@ -7,11 +7,15 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.core.io.ClassPathResource
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.datasource.init.ScriptUtils
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
 import java.util.UUID
+import javax.sql.DataSource
 
 /**
  * The migrations apply, in order, on a database that has never seen them — and
@@ -40,6 +44,9 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
     @Autowired
     private lateinit var photographerSettings: PhotographerSettingsService
 
+    @Autowired
+    private lateinit var dataSource: DataSource
+
     @Test
     fun `account route handles are reserved by the database and rejected by the service`() {
         for (handle in listOf("reset-password", "verify", "verify-email", "confirm-email-change")) {
@@ -65,9 +72,66 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             "SELECT count(*) FROM flyway_schema_history WHERE success = true",
             Int::class.java,
         ) ?: 0
-        // V1..V39 today. A floor rather than an equality so adding V40 doesn't
+        // A floor rather than an equality so adding the next migration doesn't
         // fail this test for the wrong reason.
-        assertTrue(applied >= 39, "expected at least 39 applied migrations, found $applied")
+        assertTrue(applied >= 63, "expected at least 63 applied migrations, found $applied")
+    }
+
+    @Test
+    fun `V63 backfills delivered receipts before creating the stale claim index`() {
+        val schema = "receipt_v63_${UUID.randomUUID().toString().replace("-", "")}"
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE SCHEMA $schema")
+                statement.execute("SET search_path TO $schema")
+                statement.execute("CREATE TABLE orders (id UUID PRIMARY KEY, email_sent_at TIMESTAMPTZ)")
+                statement.execute(
+                    "INSERT INTO orders (id, email_sent_at) VALUES " +
+                        "('00000000-0000-0000-0000-000000000001', '2026-09-01T12:00:00Z'), " +
+                        "('00000000-0000-0000-0000-000000000002', NULL)",
+                )
+            }
+
+            try {
+                ScriptUtils.executeSqlScript(
+                    connection,
+                    ClassPathResource("db/migration/V63__receipt_delivery_marker.sql"),
+                )
+
+                connection.prepareStatement(
+                    "SELECT email_sent_at, receipt_delivered_at FROM orders WHERE id = ?",
+                ).use { statement ->
+                    statement.setObject(1, UUID.fromString("00000000-0000-0000-0000-000000000001"))
+                    statement.executeQuery().use { result ->
+                        result.next()
+                        assertEquals(result.getObject("email_sent_at"), result.getObject("receipt_delivered_at"))
+                    }
+                    statement.setObject(1, UUID.fromString("00000000-0000-0000-0000-000000000002"))
+                    statement.executeQuery().use { result ->
+                        result.next()
+                        assertNull(result.getObject("receipt_delivered_at"))
+                    }
+                }
+
+                val indexDefinition = connection.prepareStatement(
+                    "SELECT indexdef FROM pg_indexes WHERE schemaname = ? AND indexname = 'idx_orders_stale_receipt_claims'",
+                ).use { statement ->
+                    statement.setString(1, schema)
+                    statement.executeQuery().use { result ->
+                        result.next()
+                        result.getString("indexdef")
+                    }
+                }
+                assertTrue(indexDefinition.contains("(email_sent_at)"), indexDefinition)
+                assertTrue(indexDefinition.contains("email_sent_at IS NOT NULL"), indexDefinition)
+                assertTrue(indexDefinition.contains("receipt_delivered_at IS NULL"), indexDefinition)
+            } finally {
+                connection.createStatement().use {
+                    it.execute("DROP SCHEMA $schema CASCADE")
+                    it.execute("SET search_path TO public")
+                }
+            }
+        }
     }
 
     // The columns V29 and V30 add — the two this session introduced, and the
