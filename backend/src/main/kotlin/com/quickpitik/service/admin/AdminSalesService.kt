@@ -3,7 +3,6 @@ package com.quickpitik.service.admin
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
-import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.admin.AdminSalesEventRowDto
 import com.quickpitik.dto.admin.AdminSalesKpisDto
 import com.quickpitik.repository.DisputeRepository
@@ -13,7 +12,6 @@ import com.quickpitik.repository.TransactionRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
-import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.temporal.WeekFields
@@ -27,7 +25,6 @@ class AdminSalesService(
     private val disputeRepository: DisputeRepository,
     private val eventPhotographerRepository: EventPhotographerRepository,
     private val eventRepository: EventRepository,
-    private val platformProperties: PlatformProperties,
 ) {
 
     fun kpis(rangeRaw: String?): AdminSalesKpisDto {
@@ -36,16 +33,13 @@ class AdminSalesService(
         val discounts = transactionRepository.sumDiscountsInWindow(from, to)
         val refunds = disputeRepository.sumSucceededRefundsInWindow(from, to)
         val totalSales = transactionRepository.countSalesInWindow(from, to)
-        val keepRate = platformProperties.photographerKeepRate
-        // GMV is reconstructed from the photographer's share / keepRate so we
-        // don't need a parallel source-of-truth on order_items totals (the
-        // transactions table already nets refunds via the negative-amount
-        // row pattern from PR 9). A coupon (V45) lowers kept but not the
-        // share the platform fee is computed on, so the discount is added
-        // back first — otherwise the fee under-reports by discount / keepRate.
+        // GMV is the list price the sold items were charged from (order_items),
+        // net of refunded shares — never kept / keepRate, which would restate
+        // history whenever the configured cut changes (M-16). A coupon (V45)
+        // lowers kept but not the share the platform fee comes out of, so the
+        // discount is added back before taking the fee.
+        val gmv = transactionRepository.sumListGrossInWindow(from, to)
         val grossBase = photographerKeep.add(discounts)
-        val gmv = if (keepRate.signum() == 0) BigDecimal.ZERO
-        else grossBase.divide(keepRate, 2, RoundingMode.HALF_UP)
         val platformRevenue = gmv.subtract(grossBase).max(BigDecimal.ZERO)
         return AdminSalesKpisDto(
             gmv = gmv,
@@ -70,7 +64,8 @@ class AdminSalesService(
                 val eventId = row[0] as UUID
                 val keep = (row[1] as? Number)?.let { BigDecimal(it.toString()) } ?: BigDecimal.ZERO
                 val discounts = (row.getOrNull(3) as? Number)?.let { BigDecimal(it.toString()) } ?: BigDecimal.ZERO
-                eventId to Pair(keep, discounts)
+                val listGross = (row.getOrNull(4) as? Number)?.let { BigDecimal(it.toString()) } ?: BigDecimal.ZERO
+                eventId to Triple(keep, discounts, listGross)
             }
             .toMap()
         val refundsByEvent = disputeRepository.sumSucceededRefundsByEvent().associate { row ->
@@ -79,13 +74,8 @@ class AdminSalesService(
         }
 
         val events = eventRepository.findAllById(rows.keys).filter { it.deletedAt == null }
-        val keepRate = platformProperties.photographerKeepRate
         val items = events.mapNotNull { event ->
-            val (keep, discounts) = rows[event.id] ?: return@mapNotNull null
-            // Same add-back as kpis(): kept + coupon discounts is the share
-            // the platform fee was taken from.
-            val impliedGmv = if (keepRate.signum() == 0) BigDecimal.ZERO
-            else keep.add(discounts).divide(keepRate, 2, RoundingMode.HALF_UP)
+            val (keep, discounts, impliedGmv) = rows[event.id] ?: return@mapNotNull null
             event to AdminSalesEventRowDto(
                 id = event.id.toString(),
                 slug = event.slug,
@@ -96,6 +86,8 @@ class AdminSalesService(
                 state = com.quickpitik.service.events.EventDtoMapper.deriveAdminEventState(event),
                 photoCount = event.photoCount,
                 impliedGmv = impliedGmv,
+                // Same add-back as kpis(): kept + coupon discounts is the share
+                // the platform fee was taken from.
                 impliedCut = impliedGmv.subtract(keep.add(discounts)),
                 refundsIssued = refundsByEvent[event.id] ?: BigDecimal.ZERO,
             )

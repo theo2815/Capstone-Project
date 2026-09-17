@@ -61,8 +61,8 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
 
     // Admin sales-by-event — sums photographer-keep across all photographers
     // covering an event so the admin tile shows event-level (not per-row)
-    // numbers. impliedGmv is reconstructed from amount_kept / keep_rate
-    // service-side.
+    // numbers. list_gross is what the sold items listed at (order_items), so
+    // impliedGmv never depends on today's keep rate (M-16).
     @Query(
         value = """
         SELECT t.event_id AS event_id,
@@ -70,8 +70,11 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
                    AS photographer_keep,
                COUNT(*) FILTER (WHERE t.is_refund = false) AS sales_count,
                COALESCE(SUM(CASE WHEN t.is_refund = false THEN t.discount_php ELSE 0 END), 0)
-                   AS discounts
+                   AS discounts,
+               COALESCE(SUM(CASE WHEN t.is_refund = false THEN oi.price_php_at_purchase ELSE 0 END), 0)
+                   AS list_gross
         FROM transactions t
+        LEFT JOIN order_items oi ON oi.order_id = t.order_id AND oi.photo_id = t.photo_id
         GROUP BY t.event_id
         """,
         nativeQuery = true,
