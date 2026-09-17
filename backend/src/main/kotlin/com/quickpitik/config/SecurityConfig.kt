@@ -101,7 +101,16 @@ class SecurityConfig(
                 // the same content from a different origin and this rule is a
                 // no-op (no handler registered).
                 auth.requestMatchers(HttpMethod.GET, "/storage/**").permitAll()
-                auth.requestMatchers(HttpMethod.GET, "/api/v1/events", "/api/v1/events/**").permitAll()
+                // The four public event reads, listed by shape: a `/**` here also
+                // permitted the RUNNER-only `GET /events/{slug}/photo-alert`, which then
+                // answered an anonymous caller 403 instead of 401.
+                auth.requestMatchers(
+                    HttpMethod.GET,
+                    "/api/v1/events",
+                    "/api/v1/events/*",
+                    "/api/v1/events/*/photos",
+                    "/api/v1/events/*/photos/*/download",
+                ).permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()

@@ -18,6 +18,7 @@ import java.net.http.HttpResponse
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * The route matrix in `SecurityConfig` and the `@PreAuthorize` role gates on the
@@ -71,6 +72,20 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val me = get("/api/v1/auth/me")
         assertEquals(401, me.statusCode())
         assertEquals("UNAUTHORIZED", errorCode(me))
+    }
+
+    @Test
+    fun `edge routes answer as their own guards say`() {
+        // The public events rule lists its handler shapes; the RUNNER-only
+        // photo-alert status under the same prefix is not one of them.
+        assertEquals(401, get("/api/v1/events/any-slug/photo-alert").statusCode())
+        // The mobile bridge page embeds an order capability token: never cached.
+        val bridge = get("/api/v1/orders/mobile-return?orderId=o1&token=t1")
+        assertEquals(200, bridge.statusCode())
+        assertTrue("no-store" in bridge.headers().firstValue("Cache-Control").orElse(""))
+        // Webhooks verify the signature before parsing: unsigned junk is a 401, not a 400.
+        assertEquals(401, post("/api/v1/payments/webhook/stub", "not-json").statusCode())
+        assertEquals(401, post("/api/v1/internal/ai-webhooks", "not-json").statusCode())
     }
 
     @Test
