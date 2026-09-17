@@ -15,6 +15,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 /**
@@ -70,18 +71,22 @@ class PhotoDedupIndexIntegrationTest : PostgresIntegrationTest() {
     @Test
     fun `a different photographer may store the same hash`() {
         val hash = randomHash()
+        val before = photoRepository.count()
         photoRepository.saveAndFlush(newPhoto(photographerId, hash))
 
         photoRepository.saveAndFlush(newPhoto(otherPhotographerId, hash))
+        assertEquals(before + 2, photoRepository.count())
     }
 
     // Rows that predate V24 have no hash at all. If the index covered NULLs,
     // the second of these would collide and any backfill would be impossible.
     @Test
     fun `rows with no hash never collide`() {
+        val before = photoRepository.count()
         photoRepository.saveAndFlush(newPhoto(photographerId, contentHash = null))
 
         photoRepository.saveAndFlush(newPhoto(photographerId, contentHash = null))
+        assertEquals(before + 2, photoRepository.count())
     }
 
     // ON DELETE SET NULL orphans a photo's photographer_id. Those rows must
@@ -89,9 +94,11 @@ class PhotoDedupIndexIntegrationTest : PostgresIntegrationTest() {
     @Test
     fun `orphaned rows never collide`() {
         val hash = randomHash()
+        val before = photoRepository.count()
         photoRepository.saveAndFlush(newPhoto(photographerId = null, contentHash = hash))
 
         photoRepository.saveAndFlush(newPhoto(photographerId = null, contentHash = hash))
+        assertEquals(before + 2, photoRepository.count())
     }
 
     // ─── fixtures ─────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import com.quickpitik.service.photographer.PhotographerSettingsService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.core.io.ClassPathResource
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.init.ScriptUtils
 import kotlin.test.assertEquals
@@ -69,12 +70,13 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, failed, "a migration is recorded as failed in flyway_schema_history")
 
         val applied = jdbcTemplate.queryForObject(
-            "SELECT count(*) FROM flyway_schema_history WHERE success = true",
+            "SELECT count(*) FROM flyway_schema_history WHERE success = true AND version IS NOT NULL",
             Int::class.java,
         ) ?: 0
-        // A floor rather than an equality so adding the next migration doesn't
-        // fail this test for the wrong reason.
-        assertTrue(applied >= 63, "expected at least 63 applied migrations, found $applied")
+        // Every versioned script shipped on the classpath, so a migration Flyway
+        // skipped (misnamed, out of order) fails here without a floor to maintain.
+        val shipped = PathMatchingResourcePatternResolver().getResources("classpath*:db/migration/V*.sql").size
+        assertEquals(shipped, applied, "applied migrations do not match the V*.sql scripts on the classpath")
     }
 
     @Test
