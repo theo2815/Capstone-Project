@@ -1,6 +1,7 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.RefundDisputeDto
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.dto.orders.RefundResponse
@@ -33,6 +34,7 @@ class RefundService(
     private val disputeRepository: DisputeRepository,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val eventPublisher: ApplicationEventPublisher,
+    private val platformProperties: PlatformProperties,
 ) {
     /**
      * POST /api/v1/me/orders/{id}/refund.
@@ -59,6 +61,16 @@ class RefundService(
         }
         if (order.userId != userId) {
             throw NotFoundException(code = ErrorCodes.ORDER_NOT_FOUND, message = "Order not found")
+        }
+        // Refunds close when the sale clears for payout, so money never comes
+        // back after the photographer could have withdrawn it. Same basis and
+        // same inclusive cutoff as minting + sumCleared.
+        val window = platformProperties.payoutClearingWindow
+        if (!(order.paidAt ?: order.createdAt).plus(window).isAfter(OffsetDateTime.now())) {
+            throw ConflictException(
+                code = ErrorCodes.CONFLICT,
+                message = "Refund requests close ${window.toDays()} days after purchase",
+            )
         }
 
         val reason = DisputeReason.fromWire(request.reason)

@@ -16,7 +16,7 @@ interface AdminDenyDisputeModalProps {
 }
 
 const DENY_REASONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: "outside_window", label: "Outside refund window (>30 days)" },
+  { value: "outside_window", label: "Outside refund window (>7 days)" },
   { value: "evidence_insufficient", label: "Evidence doesn't support claim" },
   { value: "policy_excluded", label: "Reason excluded by platform policy" },
   { value: "duplicate_claim", label: "Duplicate of an earlier dispute" },
@@ -55,7 +55,7 @@ export function AdminDenyDisputeModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Deny ${disputeId}`}
-      intro="The runner sees the reason in their orders ledger. No refund is issued. They can re-file with new evidence within 7 days."
+      intro="The runner sees the reason in their orders ledger. No refund is issued. They can re-file with new evidence while the refund window is open."
       submitLabel="Deny claim"
     >
       <AdminFormSection label="Reason">

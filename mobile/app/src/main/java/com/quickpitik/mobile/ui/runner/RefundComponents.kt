@@ -90,7 +90,7 @@ fun refundReasonLabel(code: String): String =
 // cockpit; the website also reuses it inside the request modal.
 
 private const val REFUND_PROCESSING_DAYS = 3
-private const val REFUND_ELIGIBILITY_DAYS = 30
+private const val REFUND_ELIGIBILITY_DAYS = 7
 
 val REFUND_POLICY_BULLETS: List<Pair<String, String>> = listOf(
     "Eligibility" to
@@ -102,7 +102,7 @@ val REFUND_POLICY_BULLETS: List<Pair<String, String>> = listOf(
     "Where the money goes" to
         "Approved refunds return to your original payment method. GCash and Maya land within 24 hours; cards take 5–7 business days depending on the bank.",
     "What we don't refund" to
-        "Photos you've already downloaded and kept past the eligibility window, change-of-mind after 30 days, or photos that match your bib and selfie correctly.",
+        "Photos you've already downloaded and kept past the eligibility window, change-of-mind after $REFUND_ELIGIBILITY_DAYS days, or photos that match your bib and selfie correctly.",
 )
 
 // Read-only policy disclosure — port of the website's RefundModal mode="policy",

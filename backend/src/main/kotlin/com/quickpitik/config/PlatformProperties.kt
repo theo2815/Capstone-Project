@@ -12,8 +12,8 @@ data class PlatformProperties(
     // share. Whatever the value, the platform cut on a sale never moves.
     val couponMaxPercent: Int = 50,
     // Earnings become withdrawable only after this window elapses from the sale,
-    // so a refund/dispute in the meantime is absorbed before any payout. Align
-    // to the refund/dispute-eligibility window. Overridable: PAYOUT_CLEARING_WINDOW.
+    // and it is also the refund window: RefundService refuses requests past it,
+    // so a refund is always absorbed before any payout. Overridable: PAYOUT_CLEARING_WINDOW.
     val payoutClearingWindow: Duration = Duration.ofDays(7),
     // After ANY payout-account change (add/edit/set-primary/delete/QR), block new
     // payout requests for this long — a compromised account can't change the

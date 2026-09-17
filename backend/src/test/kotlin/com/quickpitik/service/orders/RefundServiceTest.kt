@@ -1,5 +1,6 @@
 package com.quickpitik.service.orders
 
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertFailsWith
@@ -48,12 +50,77 @@ class RefundServiceTest {
             disputes,
             Mockito.mock(AdminDecisionLogRepository::class.java),
             Mockito.mock(ApplicationEventPublisher::class.java),
+            PlatformProperties(),
         )
 
         assertFailsWith<ConflictException> {
             service.submit(runnerId, order.id, RefundRequest(photoIds = listOf(photoId), reason = "wrong_runner", note = ""))
         }
         Mockito.verify(disputes, Mockito.never()).save(anyArg())
+    }
+
+    // M-06: disputes close with the payout clearing window, so a refund can
+    // never land after the sale has become withdrawable.
+    @Test
+    fun `a refund request after the clearing window is refused`() {
+        val (service, disputes, order, photoId) = paidOrder(paidDaysAgo = 8)
+
+        assertFailsWith<ConflictException> {
+            service.submit(order.userId!!, order.id, RefundRequest(photoIds = listOf(photoId), reason = "wrong_runner", note = ""))
+        }
+        Mockito.verify(disputes, Mockito.never()).save(anyArg())
+    }
+
+    // Minting clears such a sale from createdAt, so the window starts there too.
+    @Test
+    fun `an order with no paidAt closes its refund window from createdAt`() {
+        val (service, disputes, order, photoId) = paidOrder(paidDaysAgo = null, createdDaysAgo = 8)
+
+        assertFailsWith<ConflictException> {
+            service.submit(order.userId!!, order.id, RefundRequest(photoIds = listOf(photoId), reason = "wrong_runner", note = ""))
+        }
+        Mockito.verify(disputes, Mockito.never()).save(anyArg())
+    }
+
+    @Test
+    fun `a refund request inside the clearing window is filed`() {
+        val (service, disputes, order, photoId) = paidOrder(paidDaysAgo = 6)
+        Mockito.`when`(disputes.save(anyArg())).thenAnswer { it.arguments[0] }
+
+        service.submit(order.userId!!, order.id, RefundRequest(photoIds = listOf(photoId), reason = "wrong_runner", note = ""))
+
+        Mockito.verify(disputes).save(anyArg())
+    }
+
+    private data class Fixture(val service: RefundService, val disputes: DisputeRepository, val order: Order, val photoId: UUID)
+
+    private fun paidOrder(paidDaysAgo: Long?, createdDaysAgo: Long = 0): Fixture {
+        val photoId = UUID.randomUUID()
+        val order = Order(
+            userId = UUID.randomUUID(),
+            eventId = UUID.randomUUID(),
+            recipientEmail = "runner@example.com",
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("125.00"),
+            createdAt = OffsetDateTime.now().minusDays(createdDaysAgo),
+        ).apply { paidAt = paidDaysAgo?.let { OffsetDateTime.now().minusDays(it) } }
+        val orders = Mockito.mock(OrderRepository::class.java)
+        val items = Mockito.mock(OrderItemRepository::class.java)
+        val disputes = Mockito.mock(DisputeRepository::class.java)
+        Mockito.`when`(orders.findById(order.id)).thenReturn(Optional.of(order))
+        Mockito.`when`(items.findByIdOrderId(order.id)).thenReturn(
+            listOf(OrderItem(OrderItemId(order.id, photoId), BigDecimal("125.00"))),
+        )
+        val service = RefundService(
+            orders,
+            items,
+            disputes,
+            Mockito.mock(AdminDecisionLogRepository::class.java),
+            Mockito.mock(ApplicationEventPublisher::class.java),
+            PlatformProperties(),
+        )
+        return Fixture(service, disputes, order, photoId)
     }
 
     private fun <T> anyArg(): T = Mockito.any()
