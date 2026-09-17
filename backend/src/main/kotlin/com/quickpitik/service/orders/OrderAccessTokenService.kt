@@ -35,7 +35,7 @@ class OrderAccessTokenService(
     }
 
     // RETURN token for the receipt email — valid as long as the order's bundle
-    // link (order.tokenExpiresAt, ~90d), not the 35-min orderReturnTtl: the
+    // link (order.tokenExpiresAt, ~1 year), not the 35-min orderReturnTtl: the
     // email is opened hours or days after checkout, long after the PayMongo
     // bounce window closes.
     fun issueReceiptReturn(order: Order): String =

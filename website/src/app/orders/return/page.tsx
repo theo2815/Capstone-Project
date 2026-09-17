@@ -31,7 +31,7 @@ import { SavePhotosButton } from "@/components/orders/save-photos-button";
 // here. Polls the order until status flips to PAID, then renders an editorial
 // receipt: photo cards on the left, receipt details + actions on the right
 // (mobile stacks photo-first). Guests get a "create account" upsell so
-// they keep their photos beyond the email link's 90-day window.
+// they keep their photos beyond the email link's 1-year window.
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_MAX_ATTEMPTS = 30; // 60s
@@ -272,10 +272,10 @@ function PaidState({
                   <>
                     We&rsquo;ve also emailed these links to{" "}
                     <span className="text-ink">{recipientEmail}</span>. They
-                    work for <span className="tnum">90</span> days.
+                    work for <span className="tnum">1</span> year.
                   </>
                 ) : (
-                  <>The download links above work for 90 days.</>
+                  <>The download links above work for 1 year.</>
                 )}
               </p>
             </div>

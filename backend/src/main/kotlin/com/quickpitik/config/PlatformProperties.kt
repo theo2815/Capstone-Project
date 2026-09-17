@@ -40,10 +40,12 @@ data class PlatformProperties(
     // Overridable: PAYOUT_STEP_UP_ENABLED.
     val payoutStepUpEnabled: Boolean = false,
     // Upper bound for emailed bundle capabilities and migrated legacy tokens.
-    // The user-facing "works for 90 days" copy is hardcoded to this default —
-    // if you change it, update the receipt email (OrderReceiptEmailService) and
-    // the website /orders/return page copy too.
-    val shareTokenTtl: Duration = Duration.ofDays(90),
+    // 366 days outlasts the download grant (the webhook services' plusYears(1),
+    // which spans 366 days across a leap day), so a bundle link never dies
+    // before the purchase. The user-facing "works for 1 year" copy is hardcoded
+    // to this default — if you change it, update the receipt email
+    // (OrderReceiptEmailService) and the website /orders/return page copy too.
+    val shareTokenTtl: Duration = Duration.ofDays(366),
     // Long enough for a 30-minute QRPH payment plus webhook/polling delay.
     val orderReturnTtl: Duration = Duration.ofMinutes(35),
     // Separate HMAC key for purpose-bound order return/download links.

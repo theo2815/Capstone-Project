@@ -30,7 +30,7 @@ import java.util.zip.ZipOutputStream
  * top-level <a href> navigation, which carries no Authorization header. The
  * The purpose-bound capability is signed rather than stored; migrated V18
  * bearer links remain valid through a one-way hash. Both expire at
- * `orders.token_expires_at` (90 days by default).
+ * `orders.token_expires_at` (`app.platform.share-token-ttl`, 366 days by default).
  *
  * Split into two phases so the JPA transaction closes before the bytes start
  * streaming: `prepare()` runs inside @Transactional and resolves everything

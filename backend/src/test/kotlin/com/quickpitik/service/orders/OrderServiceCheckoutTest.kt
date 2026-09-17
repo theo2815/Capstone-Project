@@ -158,7 +158,10 @@ class OrderServiceCheckoutTest {
         service = newService()
     }
 
-    private fun newService(paymongo: PaymongoProperties = PaymongoProperties()): OrderService = OrderService(
+    private fun newService(
+        paymongo: PaymongoProperties = PaymongoProperties(),
+        platform: PlatformProperties = this.platform,
+    ): OrderService = OrderService(
             orderRepository,
             orderItemRepository,
             paymentRepository,
@@ -305,6 +308,33 @@ class OrderServiceCheckoutTest {
         assertEquals("https://pay.test/cs_test", response.redirectUrl)
         Mockito.verify(orderRepository)
             .findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key)
+    }
+
+    // M-13: the bundle link (BUNDLE token, and the signed-in per-photo download
+    // built from it) must not die before the one-year download grant. Binds the
+    // shipped application.yml so the production default is what is tested.
+    @Test
+    fun `a new order's bundle link lasts as long as its one-year download grant`() {
+        val environment = org.springframework.mock.env.MockEnvironment()
+        org.springframework.boot.env.YamlPropertySourceLoader()
+            .load("application", org.springframework.core.io.ClassPathResource("application.yml"))
+            .forEach { environment.propertySources.addLast(it) }
+        val shipped = org.springframework.boot.context.properties.bind.Binder.get(environment)
+            .bindOrCreate("app.platform", PlatformProperties::class.java)
+        Mockito.`when`(paymongoClient.createCheckoutSession(anyArg(), anyArg())).thenReturn(
+            PaymongoCheckoutSessionResponse(
+                PaymongoCheckoutSessionResponseEnvelope(
+                    id = "cs_test",
+                    attributes = PaymongoCheckoutSessionResponseAttributes(checkoutUrl = "https://pay.test/cs_test"),
+                ),
+            ),
+        )
+
+        newService(platform = shipped).create(null, request(), key)
+
+        val grantEnds = OffsetDateTime.now().plusYears(1).minusMinutes(1)
+        val tokenEnds = savedOrders.single().tokenExpiresAt
+        assertFalse(tokenEnds.isBefore(grantEnds), "bundle link ends $tokenEnds, before the grant ($grantEnds)")
     }
 
     @Test

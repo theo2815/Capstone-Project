@@ -260,7 +260,7 @@ $discountLine
           </p>
 
           <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:28px 0 0;">
-            Tap the button to open your receipt and save your photos. The link works for 90 days.
+            Tap the button to open your receipt and save your photos. The link works for 1 year.
           </p>
         </td></tr>
       </table>
