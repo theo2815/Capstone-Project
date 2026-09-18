@@ -20,6 +20,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default is "tools platform-tools"; the obsolete `tools`
+          # package left Google's SDK repo on 2026-09-17 and hard-fails the step.
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
       # The JVM suite (Robolectric + MockWebServer, no device) plus the release
       # compile: a release-only break must not pass CI. Both were hand-run per
