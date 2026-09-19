@@ -3,10 +3,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/store/auth-store";
+import { AuthHydrator } from "@/components/layout/auth-hydrator";
+import { api } from "@/lib/api";
 import { resetUserScopedStores } from "@/lib/auth-reset";
-import { postSocial, withdrawVerification } from "@/lib/api-photographer-settings";
+import { postCover, postSocial, withdrawVerification } from "@/lib/api-photographer-settings";
+import { fitToDataUrl, inspectImageDimensions } from "@/lib/image-utils";
 import SettingsPage from "./page";
 import { DEFAULT_WATERMARK_PLACEMENT, usePhotographerSettingsStore } from "@/store/photographer-settings-store";
+import { useUserMediaStore } from "@/store/user-media-store";
 import { putHandle, putWatermarkSettings, postPayoutAccount, patchPayoutAccount, postPayoutQr } from "@/lib/api-photographer-settings";
 
 const mocks = vi.hoisted(() => ({ toast: vi.fn(), confirm: vi.fn(), regions: [] }));
@@ -18,9 +22,14 @@ vi.mock("@/lib/photographer-verification-sync", () => ({ syncVerificationNow: vi
 vi.mock("@/lib/api-photographer-settings", async (importActual) => ({
   ...await importActual<typeof import("@/lib/api-photographer-settings")>(),
   postSocial: vi.fn(), withdrawVerification: vi.fn(), submitVerification: vi.fn(),
+  postCover: vi.fn(),
   putHandle: vi.fn(),
   putWatermarkSettings: vi.fn(),
   postPayoutAccount: vi.fn(), patchPayoutAccount: vi.fn(), postPayoutQr: vi.fn(),
+}));
+vi.mock("@/lib/image-utils", async (importActual) => ({
+  ...await importActual<typeof import("@/lib/image-utils")>(),
+  inspectImageDimensions: vi.fn(), fitToDataUrl: vi.fn(),
 }));
 
 const photographer = { id: "photographer", role: "PHOTOGRAPHER" as const, name: "Photo", email: "photo@example.test", createdAt: "2026-09-10" };
@@ -65,6 +74,138 @@ it("requires a QR before adding an account and invalidates it when its number ch
   expect(section.getByRole("button", { name: /Update account/ })).toBeDisabled();
   expect(section.getByText("QR code (required)")).toBeInTheDocument();
   expect(section.getByLabelText(/Upload QR/)).toHaveAttribute("aria-required", "true");
+});
+
+it("keeps a second edit when the first save's settings refetch finishes late", async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let finishRefetch!: (value: unknown) => void;
+  let brandReads = 0;
+  const brand = (brandName: string) => ({
+    brandName, brandColor: "none", bio: "", handle: "old-handle",
+    regionCode: "", provinceCode: "", avatarUrl: null, coverUrl: "", watermarkUrl: "", watermarkSettings: null,
+  });
+  vi.spyOn(api, "get").mockImplementation((path) => {
+    if (!path.endsWith("/brand")) return Promise.resolve([]);
+    brandReads += 1;
+    return brandReads === 1
+      ? Promise.resolve(brand("Original"))
+      : new Promise((resolve) => { finishRefetch = resolve; });
+  });
+  vi.spyOn(api, "put").mockResolvedValue(undefined);
+  rtlRender(
+    <QueryClientProvider client={queryClient}>
+      <AuthHydrator />
+      <SettingsPage />
+    </QueryClientProvider>,
+  );
+  await waitFor(() => expect(screen.getByLabelText("Display name")).toHaveValue("Original"));
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Saved A" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(brandReads).toBe(2));
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Unsaved B" } });
+  await act(async () => { finishRefetch(brand("Saved A")); });
+  await waitFor(() => expect(queryClient.getQueriesData({ queryKey: ["photographer", "settings", "brand"] })[0]?.[1]).toMatchObject({ brandName: "Saved A" }));
+  expect(screen.getByLabelText("Display name")).toHaveValue("Unsaved B");
+  expect(screen.getByLabelText("Display name")).not.toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.getByLabelText("Display name")).toHaveValue("Saved A"));
+});
+
+it("keeps a confirmed partial save when Cancel follows a stale refetch during editing", async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let reads = 0;
+  vi.spyOn(api, "get").mockImplementation((path) => Promise.resolve(path.endsWith("/brand")
+    ? { brandName: ++reads === 1 ? "Original" : "Saved A", brandColor: "none", bio: "", handle: "old-handle", regionCode: "", provinceCode: "", avatarUrl: "", coverUrl: "", watermarkUrl: "", watermarkSettings: null }
+    : []));
+  vi.spyOn(api, "put").mockResolvedValue(undefined);
+  rtlRender(<QueryClientProvider client={queryClient}><AuthHydrator /><SettingsPage /></QueryClientProvider>);
+  await waitFor(() => expect(screen.getByLabelText("Display name")).toHaveValue("Original"));
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Confirmed B" } });
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["photographer", "settings"] }); });
+  expect(screen.getByLabelText("Display name")).toHaveValue("Confirmed B");
+  act(() => usePhotographerSettingsStore.setState({ handle: "taken-handle" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.getByLabelText("Display name")).toHaveValue("Confirmed B"));
+});
+
+it("does not let a detached save release a new page's draft", async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let finishSave!: () => void;
+  let reads = 0;
+  vi.spyOn(api, "get").mockImplementation((path) => Promise.resolve(path.endsWith("/brand")
+    ? { brandName: ++reads === 1 ? "Original" : "Saved A", brandColor: "none", bio: "", handle: "old-handle", regionCode: "", provinceCode: "", avatarUrl: "", coverUrl: "", watermarkUrl: "", watermarkSettings: null }
+    : []));
+  vi.spyOn(api, "put").mockImplementation(() => new Promise((resolve) => { finishSave = () => resolve(undefined); }));
+  const page = (key: string) => <QueryClientProvider client={queryClient}><AuthHydrator /><SettingsPage key={key} /></QueryClientProvider>;
+  const view = rtlRender(page("first"));
+  await waitFor(() => expect(screen.getByLabelText("Display name")).toHaveValue("Original"));
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Saved A" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+  view.rerender(page("second"));
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Unsaved B" } });
+  await act(async () => { finishSave(); });
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["photographer", "settings"] }); });
+  expect(screen.getByLabelText("Display name")).toHaveValue("Unsaved B");
+});
+
+it("keeps text and media drafts through a settings refresh, then uses refreshed data on Cancel and next Edit", async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const first = { brandName: "Old", brandColor: "none", bio: "", handle: "old-handle", regionCode: "", provinceCode: "", avatarUrl: "/avatar-old", coverUrl: "/cover-old", watermarkUrl: "/mark-old", watermarkSettings: null };
+  const refreshed = { ...first, brandName: "Server new", avatarUrl: "/avatar-new", coverUrl: "/cover-new", watermarkUrl: "/mark-new" };
+  const oldSocial = { id: "old-social", platform: "website" as const, url: "https://old.test" };
+  const newSocial = { ...oldSocial, url: "https://new.test" };
+  const oldPayout = { ...payout, qr };
+  const newPayout = { ...oldPayout, accountName: "Server new" };
+  let refresh = false;
+  vi.spyOn(api, "get").mockImplementation((path) => Promise.resolve(
+    path.endsWith("/brand") ? (refresh ? refreshed : first)
+      : path.endsWith("/socials") ? [refresh ? newSocial : oldSocial]
+        : [refresh ? newPayout : oldPayout],
+  ));
+  rtlRender(
+    <QueryClientProvider client={queryClient}>
+      <AuthHydrator />
+      <SettingsPage />
+    </QueryClientProvider>,
+  );
+  await waitFor(() => expect(screen.getByLabelText("Display name")).toHaveValue("Old"));
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  act(() => {
+    usePhotographerSettingsStore.setState({
+      brandName: "Unsaved", cover: { dataUrl: "data:cover", uploadedAt: "" },
+      watermark: { dataUrl: "data:mark", uploadedAt: "" },
+      socials: [{ ...oldSocial, url: "https://draft.test" }],
+      payouts: [{ ...oldPayout, accountName: "Draft" }],
+    });
+    useUserMediaStore.getState().setAvatar({ dataUrl: "data:avatar", uploadedAt: "" });
+  });
+  refresh = true;
+  await act(async () => { await queryClient.invalidateQueries({ queryKey: ["photographer", "settings"] }); });
+  expect(screen.getByLabelText("Display name")).toHaveValue("Unsaved");
+  expect(usePhotographerSettingsStore.getState()).toMatchObject({
+    cover: { dataUrl: "data:cover" }, watermark: { dataUrl: "data:mark" },
+    socials: [{ url: "https://draft.test" }], payouts: [{ accountName: "Draft" }],
+  });
+  expect(useUserMediaStore.getState().avatar?.dataUrl).toBe("data:avatar");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.getByLabelText("Display name")).toHaveValue("Server new"));
+  expect(usePhotographerSettingsStore.getState()).toMatchObject({
+    cover: { dataUrl: "/cover-new" }, watermark: { dataUrl: "/mark-new" },
+    socials: [{ url: "https://new.test" }], payouts: [{ accountName: "Server new" }],
+  });
+  expect(useUserMediaStore.getState().avatar?.dataUrl).toBe("/avatar-new");
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Another draft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByLabelText("Display name")).toHaveValue("Server new");
 });
 
 it("keeps a failed required QR upload retryable without duplicating the account", async () => {
@@ -136,6 +277,88 @@ it("keeps a saved placement on retry and Cancel when another settings request fa
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(usePhotographerSettingsStore.getState().watermarkPlacement).toEqual(saved);
   expect(usePhotographerSettingsStore.getState().handle).toBe("old-handle");
+});
+
+it("keeps a confirmed brand change when a sibling save fails and the edit is cancelled", async () => {
+  usePhotographerSettingsStore.setState({ brandName: "Original" });
+  const saveBrand = vi.spyOn(api, "put").mockResolvedValue(undefined);
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Saved A" } });
+  act(() => usePhotographerSettingsStore.setState({ handle: "taken-handle" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).not.toBeDisabled());
+  expect(saveBrand).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByLabelText("Display name")).toHaveValue("Saved A");
+  expect(usePhotographerSettingsStore.getState().handle).toBe("old-handle");
+});
+
+it("does not upload a confirmed cover twice when another save stage fails", async () => {
+  vi.mocked(inspectImageDimensions).mockResolvedValue({ width: 1600, height: 500, aspectRatio: 3.2 });
+  vi.mocked(fitToDataUrl).mockResolvedValue("data:image/png;base64,AA==");
+  vi.mocked(postCover).mockResolvedValue({ url: "/saved-cover", uploadedAt: "2026-09-20T00:00:00Z" });
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText(/Upload cover/), { target: { files: [new File(["cover"], "cover.png", { type: "image/png" })] } });
+  await waitFor(() => expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("data:image/png;base64,AA=="));
+  act(() => usePhotographerSettingsStore.setState({ handle: "taken-handle" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(putHandle).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).not.toBeDisabled());
+  expect(postCover).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("/saved-cover");
+});
+
+it("keeps a replacement cover selected while the previous upload is saving", async () => {
+  vi.mocked(inspectImageDimensions).mockResolvedValue({ width: 1600, height: 500, aspectRatio: 3.2 });
+  vi.mocked(fitToDataUrl).mockImplementation((file) => Promise.resolve(`data:${file.name}`));
+  let finishCover!: () => void;
+  vi.mocked(postCover)
+    .mockImplementationOnce(() => new Promise((resolve) => { finishCover = () => resolve({ url: "/cover-a", uploadedAt: "2026-09-20T00:00:00Z" }); }))
+    .mockResolvedValueOnce({ url: "/cover-b", uploadedAt: "2026-09-20T00:00:01Z" });
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText(/Upload cover/), { target: { files: [new File(["a"], "a.png", { type: "image/png" })] } });
+  await waitFor(() => expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("data:a.png"));
+  act(() => usePhotographerSettingsStore.setState({ handle: "taken-handle" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(postCover).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByLabelText(/Replace cover/), { target: { files: [new File(["b"], "b.png", { type: "image/png" })] } });
+  await waitFor(() => expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("data:b.png"));
+  await act(async () => { finishCover(); });
+  expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("data:b.png");
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(postCover).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("/cover-b");
+});
+
+it("keeps editing to save a newer cover even when the earlier batch succeeds", async () => {
+  vi.mocked(inspectImageDimensions).mockResolvedValue({ width: 1600, height: 500, aspectRatio: 3.2 });
+  vi.mocked(fitToDataUrl).mockImplementation((file) => Promise.resolve(`data:${file.name}`));
+  let finishCover!: () => void;
+  vi.mocked(postCover)
+    .mockImplementationOnce(() => new Promise((resolve) => { finishCover = () => resolve({ url: "/cover-a", uploadedAt: "2026-09-20T00:00:00Z" }); }))
+    .mockResolvedValueOnce({ url: "/cover-b", uploadedAt: "2026-09-20T00:00:01Z" });
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.change(screen.getByLabelText(/Upload cover/), { target: { files: [new File(["a"], "a.png", { type: "image/png" })] } });
+  await waitFor(() => expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("data:a.png"));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(postCover).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByLabelText(/Replace cover/), { target: { files: [new File(["b"], "b.png", { type: "image/png" })] } });
+  await waitFor(() => expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("data:b.png"));
+  await act(async () => { finishCover(); });
+  expect(screen.getByRole("button", { name: /Save changes/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(postCover).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).toBeInTheDocument());
+  expect(usePhotographerSettingsStore.getState().cover?.dataUrl).toBe("/cover-b");
 });
 
 

@@ -63,3 +63,22 @@ it("does not apply a late response after logout", async () => {
   await act(async () => { finish(brand); });
   expect(usePhotographerSettingsStore.getState().brandName).toBe("");
 });
+
+it("releases draft ownership when switching photographer accounts", async () => {
+  vi.spyOn(api, "get").mockImplementation((path) =>
+    Promise.resolve(path.endsWith("/brand")
+      ? { ...brand, brandName: useAuthStore.getState().user?.id === "photo-b" ? "Brand B" : "Brand A" }
+      : []),
+  );
+  renderHook(usePhotographerSettingsHydration, { wrapper });
+  await waitFor(() => expect(usePhotographerSettingsStore.getState().brandName).toBe("Brand A"));
+  act(() => {
+    usePhotographerSettingsStore.getState().beginDraft();
+    usePhotographerSettingsStore.getState().setBrandName("Unsaved A");
+    useAuthStore.getState().logout();
+    resetUserScopedStores();
+    useAuthStore.getState().setUser({ ...user, id: "photo-b" });
+  });
+  await waitFor(() => expect(usePhotographerSettingsStore.getState().brandName).toBe("Brand B"));
+  expect(usePhotographerSettingsStore.getState().draftEditing).toBe(false);
+});

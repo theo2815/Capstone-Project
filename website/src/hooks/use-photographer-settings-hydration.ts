@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   usePhotographerSettingsQueries,
 } from "@/hooks/use-photographer-settings";
@@ -25,9 +25,16 @@ export function resetPhotographerHydrationGuard(): void {
 
 export function usePhotographerSettingsHydration(): void {
   const { session, brand, socials, payouts } = usePhotographerSettingsQueries();
+  const draftEditing = usePhotographerSettingsStore((s) => s.draftEditing);
+  const applied = useRef({
+    brand: undefined as typeof brand.data,
+    socials: undefined as typeof socials.data,
+    payouts: undefined as typeof payouts.data,
+  });
 
   useEffect(() => {
-    if (!session.enabled || !brand.data) return;
+    if (!session.enabled || !brand.data || draftEditing || applied.current.brand === brand.data) return;
+    applied.current.brand = brand.data;
     const value = brand.data;
     const isKnownBrandColor = (v: string): v is BrandColor =>
       v in BRAND_COLOR_HEX;
@@ -72,17 +79,19 @@ export function usePhotographerSettingsHydration(): void {
         uploadedAt: now,
       });
     }
-  }, [brand.data, session.enabled]);
+  }, [brand.data, draftEditing, session.enabled]);
 
   useEffect(() => {
-    if (session.enabled && socials.data) {
+    if (session.enabled && socials.data && !draftEditing && applied.current.socials !== socials.data) {
+      applied.current.socials = socials.data;
       usePhotographerSettingsStore.setState({ socials: socials.data });
     }
-  }, [session.enabled, socials.data]);
+  }, [draftEditing, session.enabled, socials.data]);
 
   useEffect(() => {
-    if (session.enabled && payouts.data) {
+    if (session.enabled && payouts.data && !draftEditing && applied.current.payouts !== payouts.data) {
+      applied.current.payouts = payouts.data;
       usePhotographerSettingsStore.setState({ payouts: payouts.data });
     }
-  }, [session.enabled, payouts.data]);
+  }, [draftEditing, session.enabled, payouts.data]);
 }

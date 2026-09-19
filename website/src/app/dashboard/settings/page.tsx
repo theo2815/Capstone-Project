@@ -237,6 +237,8 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
 function EditModeProvider({ children }: { children: ReactNode }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const draftEpochRef = useRef<number | null>(null);
+  const confirmedRef = useRef(false);
   const editSessionRef = useRef<(() => boolean) | null>(null);
   const snapshotRef = useRef<EditModeSnapshot | null>(null);
   const pendingFilesRef = useRef<Record<PendingFileSlot, File | null>>({
@@ -247,12 +249,31 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   const { showToast } = useToast();
   const queryClient = useQueryClient();
 
+  const reconcileDraft = useCallback((epoch: number) => {
+    void queryClient.invalidateQueries({ queryKey: photographerSettingsKeys.all }, { throwOnError: true })
+      .catch(() => {
+        if (usePhotographerSettingsStore.getState().draftEpoch === epoch) {
+          queryClient.removeQueries({ queryKey: photographerSettingsKeys.all });
+        }
+      })
+      .finally(() => usePhotographerSettingsStore.getState().endDraft(epoch));
+  }, [queryClient]);
+
+  useEffect(() => () => {
+    if (snapshotRef.current && editSessionRef.current?.()) restoreSnapshot(snapshotRef.current);
+    if (draftEpochRef.current !== null) {
+      usePhotographerSettingsStore.getState().endDraft(draftEpochRef.current);
+    }
+  }, []);
+
   // BE-sourced hydration of the photographer-settings + user-media stores
   // now lives on the global AuthHydrator via `usePhotographerSettingsHydration` so
   // every /dashboard/* page sees populated state on mount (not just here).
   // See `hooks/use-photographer-settings-hydration.ts`.
 
   const beginEdit = useCallback(() => {
+    draftEpochRef.current = usePhotographerSettingsStore.getState().beginDraft();
+    confirmedRef.current = false;
     editSessionRef.current = captureAuthSession();
     snapshotRef.current = takeSnapshot();
     pendingFilesRef.current = { avatar: null, cover: null, watermark: null };
@@ -266,9 +287,15 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     }
     snapshotRef.current = null;
     pendingFilesRef.current = { avatar: null, cover: null, watermark: null };
+    const epoch = draftEpochRef.current;
+    if (epoch !== null) {
+      if (confirmedRef.current) reconcileDraft(epoch);
+      else usePhotographerSettingsStore.getState().endDraft(epoch);
+      draftEpochRef.current = null;
+    }
     setEditing(false);
     showToast({ kind: "info", message: "Edits discarded." });
-  }, [showToast]);
+  }, [reconcileDraft, showToast]);
 
   const setPendingFile = useCallback(
     (slot: PendingFileSlot, file: File | null) => {
@@ -280,7 +307,9 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   const saveEdit = useCallback(async () => {
     if (saving) return;
     const isCurrent = editSessionRef.current;
-    if (!isCurrent?.()) return;
+    const epoch = draftEpochRef.current;
+    if (!isCurrent?.() || epoch === null || usePhotographerSettingsStore.getState().draftEpoch !== epoch) return;
+    const ownsDraft = () => isCurrent() && usePhotographerSettingsStore.getState().draftEpoch === epoch;
     const snap = snapshotRef.current;
     if (!snap) return;
     setSaving(true);
@@ -322,6 +351,11 @@ function EditModeProvider({ children }: { children: ReactNode }) {
             brandColor: settings.brandColor,
             bio: settings.bio,
           }),
+        onSuccess: () => {
+          snap.brandName = settings.brandName.trim();
+          snap.brandColor = settings.brandColor;
+          snap.bio = settings.bio;
+        },
       });
     }
 
@@ -329,6 +363,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       tasks.push({
         label: "Public URL",
         run: () => putHandle(settings.handle.trim().toLowerCase()),
+        onSuccess: () => { snap.handle = settings.handle.trim().toLowerCase(); },
       });
     }
 
@@ -338,16 +373,35 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       tasks.push({
         label: "Region",
         run: () => putRegion(settings.region!),
+        onSuccess: () => { snap.region = settings.region; },
       });
     }
 
     if (pending.cover) {
-      tasks.push({ label: "Cover", run: () => postCover(pending.cover!) });
+      tasks.push({
+        label: "Cover", run: () => postCover(pending.cover!),
+        onSuccess: (result) => {
+          const media = result as Awaited<ReturnType<typeof postCover>>;
+          snap.cover = { dataUrl: media.url, uploadedAt: media.uploadedAt };
+          if (pendingFilesRef.current.cover === pending.cover) {
+            usePhotographerSettingsStore.setState({ cover: snap.cover });
+            pendingFilesRef.current.cover = null;
+          }
+        },
+      });
     }
     if (pending.watermark) {
       tasks.push({
         label: "Watermark",
         run: () => postWatermark(pending.watermark!),
+        onSuccess: (result) => {
+          const media = result as Awaited<ReturnType<typeof postWatermark>>;
+          snap.watermark = { dataUrl: media.url, uploadedAt: media.uploadedAt };
+          if (pendingFilesRef.current.watermark === pending.watermark) {
+            usePhotographerSettingsStore.setState({ watermark: snap.watermark });
+            pendingFilesRef.current.watermark = null;
+          }
+        },
       });
     }
 
@@ -386,7 +440,15 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         run: () => uploadAvatar(pending.avatar!),
         // Write the fresh User (avatarUrl populated) back to auth-store so the
         // header + AvatarDisc show the new photo in-session, not the stale one.
-        onSuccess: (result) => useAuthStore.getState().setUser(result as User),
+        onSuccess: (result) => {
+          const user = result as User;
+          useAuthStore.getState().setUser(user);
+          snap.avatar = user.avatarUrl ? { dataUrl: user.avatarUrl, uploadedAt: new Date().toISOString() } : null;
+          if (pendingFilesRef.current.avatar === pending.avatar) {
+            useUserMediaStore.getState().setAvatar(snap.avatar);
+            pendingFilesRef.current.avatar = null;
+          }
+        },
       });
     }
 
@@ -491,7 +553,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
               accountNumber: p.accountNumber,
               accountName: p.accountName,
             });
-            if (!isCurrent()) return;
+            if (!ownsDraft()) return;
             usePhotographerSettingsStore.setState((prev) => ({
               payouts: prev.payouts.map((row) =>
                 row.id === localId
@@ -508,10 +570,11 @@ function EditModeProvider({ children }: { children: ReactNode }) {
             // against the local one, sees qrChanged, and retries just the
             // QR through the existing path below — no duplicate account.
             snap.payouts = [...snap.payouts, { ...serverRow, qr: null }];
+            confirmedRef.current = true;
             if (p.qr) {
               const file = dataUrlToFile(p.qr.dataUrl, `qr-${serverRow.id}.png`);
               await postPayoutQr(serverRow.id, file);
-              if (!isCurrent()) return;
+              if (!ownsDraft()) return;
               const row = snap.payouts.find((x) => x.id === serverRow.id);
               if (row) row.qr = { ...p.qr };
             }
@@ -534,12 +597,13 @@ function EditModeProvider({ children }: { children: ReactNode }) {
                   accountNumber: p.accountNumber,
                   accountName: p.accountName,
                 });
-                if (!isCurrent()) return;
+                if (!ownsDraft()) return;
                 Object.assign(prev, updated);
+                confirmedRef.current = true;
               }
               if (qrChanged && p.qr) {
                 await postPayoutQr(p.id, dataUrlToFile(p.qr.dataUrl, `qr-${p.id}.png`));
-                if (!isCurrent()) return;
+                if (!ownsDraft()) return;
                 prev.qr = { ...p.qr };
               }
             },
@@ -585,12 +649,16 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         tasks.map(({ run }) => run()),
       );
 
-      if (!isCurrent()) return;
+      if (!ownsDraft()) return;
+
+      const newerFile = (Object.keys(pending) as PendingFileSlot[])
+        .some((slot) => pendingFilesRef.current[slot] !== pending[slot]);
 
       // Run onSuccess callbacks for fulfilled tasks. These mutate the store
       // + snapshot so partial-success retries stay idempotent (e.g. a
       // socials POST that succeeded last attempt won't fire again).
       results.forEach((r, i) => {
+        if (r.status === "fulfilled") confirmedRef.current = true;
         if (r.status === "fulfilled" && tasks[i].onSuccess) {
           try {
             tasks[i].onSuccess!(r.value);
@@ -607,7 +675,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         .map((r, i) => ({ r, label: tasks[i].label }))
         .filter((x) => x.r.status === "rejected");
 
-      if (failures.length === 0) {
+      if (failures.length === 0 && !newerFile) {
         snapshotRef.current = null;
         pendingFilesRef.current = {
           avatar: null,
@@ -615,7 +683,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
           watermark: null,
         };
         setEditing(false);
-        void queryClient.invalidateQueries({ queryKey: photographerSettingsKeys.all });
+        reconcileDraft(epoch);
         // Refresh completeness from the BE now the save landed, so the Submit
         // button + banners reflect it without waiting for the next focus/poll.
         void syncVerificationNow();
@@ -633,6 +701,8 @@ function EditModeProvider({ children }: { children: ReactNode }) {
                 ? `${savedLabels[0]} saved.`
                 : "Settings saved.",
         });
+      } else if (failures.length === 0) {
+        showToast({ kind: "info", message: "Earlier changes saved. Save again for the new image." });
       } else {
         // Stay in edit mode so the photographer can retry / fix the failure.
         for (const { label, r } of failures) {
@@ -660,9 +730,9 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         });
       }
     } finally {
-      if (isCurrent()) setSaving(false);
+      if (ownsDraft()) setSaving(false);
     }
-  }, [queryClient, saving, showToast]);
+  }, [reconcileDraft, saving, showToast]);
 
   const value = useMemo<EditModeContextValue>(
     () => ({

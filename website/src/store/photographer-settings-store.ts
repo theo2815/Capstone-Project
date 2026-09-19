@@ -191,6 +191,10 @@ export interface PhotographerSettings {
 }
 
 interface PhotographerSettingsState extends PhotographerSettings {
+  draftEditing: boolean;
+  draftEpoch: number;
+  beginDraft: () => number;
+  endDraft: (epoch: number) => void;
   setCover: (cover: CoverMedia | null) => void;
   setBrandName: (name: string) => void;
   setBrandColor: (color: BrandColor) => void;
@@ -253,6 +257,16 @@ function newId(): string {
 export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
     (set, get) => ({
       ...SEED,
+      draftEditing: false,
+      draftEpoch: 0,
+      beginDraft: () => {
+        const draftEpoch = get().draftEpoch + 1;
+        set({ draftEditing: true, draftEpoch });
+        return draftEpoch;
+      },
+      endDraft: (epoch) => set((s) => s.draftEpoch === epoch
+        ? { draftEditing: false, draftEpoch: epoch + 1 }
+        : {}),
       setCover: (cover) => set({ cover }),
       setBrandName: (name) => set({ brandName: name }),
       setBrandColor: (color) => set({ brandColor: color }),
@@ -344,6 +358,6 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
         const m = get().verificationMissing;
         return m !== null && m.length === 0;
       },
-      reset: () => set(SEED),
+      reset: () => set((s) => ({ ...SEED, draftEditing: false, draftEpoch: s.draftEpoch + 1 })),
     }),
 );
