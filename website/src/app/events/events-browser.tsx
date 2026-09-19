@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Event } from "@/types/event";
+import type { EventState, ListEvent } from "@/types/event";
 import {
   Dropdown,
   DropdownItem,
@@ -10,12 +10,9 @@ import {
 import { EventTile } from "@/components/events/event-tile";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { useEventCatalog } from "@/lib/event-catalog";
+import { usePublicEvents } from "@/hooks/use-public-events";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-
-export type EventState = "upcoming" | "live" | "open" | "past";
-export type ListEvent = Event & { state: EventState; city: string };
 
 type DateKey = "any" | "upcoming" | "live" | "recent" | "archive";
 
@@ -80,9 +77,7 @@ const SEGMENT_GROUPS: {
 ];
 
 export function EventsBrowser({ events: seed }: EventsBrowserProps) {
-  // Apply admin overrides on top of the SSR-passed seed so admin state
-  // changes propagate to /events without re-fetching.
-  const events = useEventCatalog(seed);
+  const events = usePublicEvents({}, seed) ?? seed;
   const [query, setQuery] = useUrlState<string>("q", "", { debounceMs: 300 });
   const [city, setCity] = useUrlState<string>("city", "all");
   const [date, setDate] = useUrlState<DateKey>("date", "any");

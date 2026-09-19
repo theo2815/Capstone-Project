@@ -1,10 +1,17 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { permanentDeletePhotographerPhotos, restorePhotographerPhotos, trashPhotographerPhotos } from "./api-photographer";
+import { fetchPhotographerPayoutReports } from "./api-photographer-earnings";
+import { report } from "@/test/fixtures/admin";
 
-const { post } = vi.hoisted(() => ({ post: vi.fn() }));
-vi.mock("@/lib/api", () => ({ api: { post }, refreshAccessToken: vi.fn() }));
-beforeEach(() => { post.mockReset(); });
+const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+vi.mock("@/lib/api", () => ({ api: { get, post }, refreshAccessToken: vi.fn() }));
+beforeEach(() => { get.mockReset(); post.mockReset(); });
 const ids = (count: number) => Array.from({ length: count }, (_, i) => `photo-${i}`);
+
+it("unwraps the paginated photographer report response for report consumers", async () => {
+  get.mockResolvedValue({ items: [report], total: 1, offset: 0, limit: 50 });
+  expect(await fetchPhotographerPayoutReports()).toEqual([report]);
+});
 
 it("batches all selected pages within the 500-photo mutation limit", async () => {
   post.mockImplementation(async (_path, body) => ({ affected: body.photoIds.length }));

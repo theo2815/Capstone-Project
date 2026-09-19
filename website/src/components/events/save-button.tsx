@@ -6,7 +6,6 @@ import { useAuthStore } from "@/store/auth-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useToast } from "@/hooks/use-toast";
 import { useEffectiveRole } from "@/hooks/use-effective-role";
-import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -98,7 +97,7 @@ export function SaveButton({
     };
     toggle(eventId, optimistic);
 
-    const eventName = event?.name ?? getEventById(eventId)?.name ?? "this event";
+    const eventName = event?.name ?? "this event";
     showToast({
       kind: "success",
       message: willBeSaved

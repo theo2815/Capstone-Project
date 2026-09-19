@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import {
-  fetchBrand,
-  fetchPayoutAccounts,
-  fetchSocials,
-} from "@/lib/api-photographer-settings";
-import { useAuthStore } from "@/store/auth-store";
+  usePhotographerSettingsQueries,
+} from "@/hooks/use-photographer-settings";
 import {
   BRAND_COLOR_HEX,
   DEFAULT_WATERMARK_PLACEMENT,
@@ -15,147 +12,77 @@ import {
 } from "@/store/photographer-settings-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 
-// Photographer-settings hydration, mounted in DashboardShell so every
-// /dashboard/* page sees populated state on mount — not just /dashboard/settings.
-//
-// Without this hook, `resetUserScopedStores()` (lib/auth-reset.ts) leaves the
-// photographer-settings + user-media stores empty on every fresh login. Symptoms:
-// /dashboard/billing disabled the Request payout button (no primary payout in
-// store), the focused share page copied a `quickpitik.com/your-handle/…`
-// placeholder URL to clipboard, and the verification banner flashed "Add your
-// profile picture" before usePhotographerVerificationSync resolved to "approved".
-// See vault audit `tasks#-photographer-flow-audit--2026-05-27` P0-1.
-//
-// Three blocks hydrate independently (no shared Promise.all) so a null on one
-// block doesn't abort the others. The settings page's Edit→Save state machine
-// still owns writes; this hook is read-only into the store.
-// Module-level, not a ref: app/dashboard/layout.tsx swaps DashboardShell out
-// for the focused share page (FOCUSED_PATTERNS), so a ref-based guard died on
-// every dashboard → share → back hop and re-fired all three fetches — which
-// bypass React Query, so nothing deduped them. Deliberately NOT persisted:
-// a page reload must re-hydrate (the stored presigned URLs go stale in 1 h).
-let hydratedFor: string | null = null;
-
-// Called from resetUserScopedStores() so an auth transition re-arms
-// hydration for the next account.
+/**
+ * Settings server data is cached by Query; Zustand remains the editable draft
+ * bridge used by the existing Settings slabs and dashboard readiness consumers.
+ * The bridge is populated only from successful query results and is reset on
+ * auth transitions.
+ */
 export function resetPhotographerHydrationGuard(): void {
-  hydratedFor = null;
+  // Query keys include the auth session version, so a logout/login cannot
+  // reuse old results. Keep this compatibility export for auth-reset callers.
 }
 
 export function usePhotographerSettingsHydration(): void {
-  const user = useAuthStore((s) => s.user);
-  const isPhotographer = user?.role === "PHOTOGRAPHER";
-  // Retry trigger. DashboardShell is mounted from app/dashboard/layout.tsx,
-  // an App Router layout — it persists across /dashboard/* navigation, so a
-  // remount-based retry would never fire. Bumping state is the only way to
-  // re-run the effect, and without it one bad network moment leaves every
-  // dashboard page reading an empty store for the rest of the session.
-  const [attempt, setAttempt] = useState(0);
+  const { session, brand, socials, payouts } = usePhotographerSettingsQueries();
 
   useEffect(() => {
-    if (!isPhotographer || !user) return;
-    if (hydratedFor === user.id) return;
-    hydratedFor = user.id;
-    void hydrateAll().then((ok) => {
-      if (ok || attempt >= MAX_HYDRATION_RETRIES) return;
-      hydratedFor = null;
-      setTimeout(() => setAttempt((a) => a + 1), HYDRATION_RETRY_MS);
+    if (!session.enabled || !brand.data) return;
+    const value = brand.data;
+    const isKnownBrandColor = (v: string): v is BrandColor =>
+      v in BRAND_COLOR_HEX;
+    const validBrandColor: BrandColor = isKnownBrandColor(value.brandColor)
+      ? value.brandColor
+      : "none";
+    const hasRegion =
+      value.regionCode.length > 0 && value.provinceCode.length > 0;
+    const now = new Date().toISOString();
+
+    usePhotographerSettingsStore.setState({
+      brandName: value.brandName,
+      brandColor: validBrandColor,
+      bio: value.bio,
+      handle: value.handle,
+      region: hasRegion
+        ? { regionCode: value.regionCode, provinceCode: value.provinceCode }
+        : null,
+      cover: value.coverUrl ? { dataUrl: value.coverUrl, uploadedAt: now } : null,
+      watermark: value.watermarkUrl
+        ? { dataUrl: value.watermarkUrl, uploadedAt: now }
+        : null,
+      watermarkPlacement: value.watermarkSettings
+        ? {
+            opacity: value.watermarkSettings.opacity,
+            scale: value.watermarkSettings.scale,
+            landscape: {
+              x: value.watermarkSettings.landscapeX,
+              y: value.watermarkSettings.landscapeY,
+            },
+            portrait: {
+              x: value.watermarkSettings.portraitX,
+              y: value.watermarkSettings.portraitY,
+            },
+          }
+        : DEFAULT_WATERMARK_PLACEMENT,
     });
-  }, [isPhotographer, user, attempt]);
-}
 
-const MAX_HYDRATION_RETRIES = 2;
-const HYDRATION_RETRY_MS = 2000;
-
-// Resolves true when at least one block populated the store. All three
-// failing means the photographer is looking at empty slabs, which is what
-// the caller retries on.
-async function hydrateAll(): Promise<boolean> {
-  const now = new Date().toISOString();
-
-  // Brand block: brand name/color/bio + handle + region + presigned
-  // cover/watermark/avatar URLs.
-  const brandBlock = fetchBrand()
-    .then((brand) => {
-      if (!brand) return;
-      const isKnownBrandColor = (v: string): v is BrandColor =>
-        v in BRAND_COLOR_HEX;
-      const validBrandColor: BrandColor = isKnownBrandColor(brand.brandColor)
-        ? brand.brandColor
-        : "none";
-      const hasRegion =
-        brand.regionCode.length > 0 && brand.provinceCode.length > 0;
-
-      usePhotographerSettingsStore.setState({
-        brandName: brand.brandName,
-        brandColor: validBrandColor,
-        bio: brand.bio,
-        handle: brand.handle,
-        region: hasRegion
-          ? { regionCode: brand.regionCode, provinceCode: brand.provinceCode }
-          : null,
-        cover: brand.coverUrl
-          ? { dataUrl: brand.coverUrl, uploadedAt: now }
-          : null,
-        watermark: brand.watermarkUrl
-          ? { dataUrl: brand.watermarkUrl, uploadedAt: now }
-          : null,
-        watermarkPlacement: brand.watermarkSettings
-          ? {
-              opacity: brand.watermarkSettings.opacity,
-              scale: brand.watermarkSettings.scale,
-              landscape: {
-                x: brand.watermarkSettings.landscapeX,
-                y: brand.watermarkSettings.landscapeY,
-              },
-              portrait: {
-                x: brand.watermarkSettings.portraitX,
-                y: brand.watermarkSettings.portraitY,
-              },
-            }
-          : DEFAULT_WATERMARK_PLACEMENT,
+    if (value.avatarUrl) {
+      useUserMediaStore.getState().setAvatar({
+        dataUrl: value.avatarUrl,
+        uploadedAt: now,
       });
-
-      // Avatar lives in useUserMediaStore (shared with the runner account
-      // flow). Same auth-transition wipe applies, so re-hydrate from the
-      // same payload.
-      if (brand.avatarUrl) {
-        useUserMediaStore.getState().setAvatar({
-          dataUrl: brand.avatarUrl,
-          uploadedAt: now,
-        });
-      }
-    });
-
-  const socialsBlock = fetchSocials().then((socials) => {
-    if (!socials) return;
-    usePhotographerSettingsStore.setState({ socials });
-  });
-
-  const payoutsBlock = fetchPayoutAccounts().then((payouts) => {
-    if (!payouts) return;
-    usePhotographerSettingsStore.setState({ payouts });
-  });
-
-  // allSettled keeps the blocks independent — one rejection can't abort the
-  // others, which is the property the 2026-05-27 P0-1 hoist introduced.
-  const results = await Promise.allSettled([
-    brandBlock,
-    socialsBlock,
-    payoutsBlock,
-  ]);
-  const labels = ["brand", "socials", "payouts"];
-  results.forEach((r, i) => {
-    if (r.status === "rejected") {
-      console.warn(
-        `[photographer/hydration] ${labels[i]} fetch failed`,
-        r.reason,
-      );
     }
-  });
+  }, [brand.data, session.enabled]);
 
-  // A block that resolves null counts as success — the backend answered and
-  // the account genuinely has nothing there yet. Only a rejection is worth
-  // retrying.
-  return results.some((r) => r.status === "fulfilled");
+  useEffect(() => {
+    if (session.enabled && socials.data) {
+      usePhotographerSettingsStore.setState({ socials: socials.data });
+    }
+  }, [session.enabled, socials.data]);
+
+  useEffect(() => {
+    if (session.enabled && payouts.data) {
+      usePhotographerSettingsStore.setState({ payouts: payouts.data });
+    }
+  }, [session.enabled, payouts.data]);
 }

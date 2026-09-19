@@ -110,7 +110,7 @@ export const PHOTOGRAPHER_PIPELINE: PhotographerPipeline = {
   lastUploadDisplay: null,
   lastSaleDisplay: null,
 };
-// The photographer's covered events — a subset of EVENT_CATALOG (most events
+// The photographer's covered events — a subset of the event catalog (most events
 // in the catalog are organized by other photographers / organizers in real
 // data). Listed newest-first by date.
 export const PHOTOGRAPHER_EVENTS: ReadonlyArray<PhotographerEventSummary> = [];

@@ -1,49 +1,19 @@
 import { api } from "@/lib/api";
 import { API_BASE_URL, ROUTES } from "@/lib/constants";
-import type {
-  DisputeReason,
-  DisputeResolution,
-} from "@/lib/admin-disputes";
-import type { MockOrder } from "@/store/orders-store";
+export type { RunnerDispute, RunnerDisputeStatus } from "@/types/order";
+import type { OrderSummary, RunnerDispute } from "@/types/order";
 import type { PaginatedResponse } from "@/types/api";
 import type { Order, OrderPhotoDetail, OrderStatus } from "@/types/order";
 
-// Embedded on every MockOrder / OrderDetail payload from /me/orders. Carries
-// what the /orders surface needs to render the status chip, timeline, cancel
-// button, and admin's resolution note — without a separate per-order fetch.
-// Mirrors the BE RunnerDisputeDto.
-export type RunnerDisputeStatus =
-  | "open"
-  | "resolved"
-  | "denied"
-  | "escalated"
-  | "withdrawn";
-
-export interface RunnerDispute {
-  id: string;
-  photoId: string;
-  reason: DisputeReason;
-  note: string;
-  status: RunnerDisputeStatus;
-  resolution: DisputeResolution | null;
-  refundAmount: number | null;
-  // Most-recent admin_decision_log.reason for this dispute (resolve / deny /
-  // escalate). Null when admin hasn't engaged yet.
-  resolutionNote: string | null;
-  openedAt: string;
-  resolvedAt: string | null;
-  withdrawnAt: string | null;
-}
-
 // Orders backend contract (Q-008 idempotency, Q-005 photo URLs RESOLVED 2026-05-09).
-//   GET  /api/v1/me/orders?offset=&limit=    → PaginatedResponse<MockOrder>
-//   GET  /api/v1/me/orders/{id}              → OrderDetail (MockOrder + photos[] + downloadBundleUrl)
+//   GET  /api/v1/me/orders?offset=&limit=    → PaginatedResponse<OrderSummary>
+//   GET  /api/v1/me/orders/{id}              → OrderDetail (OrderSummary + photos[] + downloadBundleUrl)
 //   POST /api/v1/orders                      { items, paymentMethod, recipientEmail?, couponCode? } + Idempotency-Key header → Order
 //   POST /api/v1/me/orders/{id}/refund       { photoIds, reason, note } → unknown
 //
 // Idempotency-Key arrives as an HTTP header per RFC 9110 §9.2.2.
 
-export interface OrderDetail extends MockOrder {
+export interface OrderDetail extends OrderSummary {
   photos: OrderPhotoDetail[];
   downloadBundleUrl?: string;
   // Populated for the /orders/return success state. May be empty on legacy
@@ -74,23 +44,26 @@ export interface RefundSubmitArgs {
 
 export async function fetchOrders(
   args: { offset?: number; limit?: number } = {},
-): Promise<MockOrder[]> {
+  signal?: AbortSignal,
+): Promise<OrderSummary[]> {
   const offset = args.offset ?? 0;
   const limit = args.limit ?? 200;
 
   const params = new URLSearchParams();
   params.set("offset", String(offset));
   params.set("limit", String(limit));
-  const res = await api.get<PaginatedResponse<MockOrder>>(
+  const res = await api.get<PaginatedResponse<OrderSummary>>(
     `/me/orders?${params.toString()}`,
+    { signal },
   );
   return res.items;
 }
 
 export async function fetchOrderDetail(
   orderId: string,
+  signal?: AbortSignal,
 ): Promise<OrderDetail | null> {
-  return api.get<OrderDetail>(`/me/orders/${encodeURIComponent(orderId)}`);
+  return api.get<OrderDetail>(`/me/orders/${encodeURIComponent(orderId)}`, { signal });
 }
 
 export async function postOrder(args: CreateOrderArgs): Promise<Order> {

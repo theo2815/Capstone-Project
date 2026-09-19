@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import {
@@ -15,9 +14,8 @@ import {
   PAYOUT_REPORT_REASON_LABEL,
   type PayoutReportReason,
 } from "@/lib/admin-payout-reports";
-import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
+import { usePayoutReportActions } from "@/hooks/use-payout-reports";
 import { useToast } from "@/hooks/use-toast";
-import { submitPayoutReport } from "@/lib/api-photographer-earnings";
 import { resolveCurrentPhotographer } from "@/lib/current-photographer";
 import { useAuth } from "@/hooks/use-auth";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
@@ -39,15 +37,14 @@ const REASON_OPTIONS = Object.entries(PAYOUT_REPORT_REASON_LABEL) as ReadonlyArr
 // Photographer-side report form. Anchored to a specific PhotographerPayout
 // row from /dashboard/billing — cycle context is read-only at the top of
 // the modal, no cycle picker. Reason dropdown is required, note is
-// optional (max 500). Submits into admin-payout-report-store; admin sees
+// optional (max 500). Submits to the backend; admin sees
 // the new row in /admin/payouts under "Reports from photographers".
 export function FilePayoutReportModal({
   cycle,
   onClose,
 }: FilePayoutReportModalProps) {
   const { user } = useAuth();
-  const submitReport = useAdminPayoutReportStore((s) => s.submitReport);
-  const queryClient = useQueryClient();
+  const { submit } = usePayoutReportActions();
   const { showToast } = useToast();
 
   const [reason, setReason] = useState<PayoutReportReason | null>(null);
@@ -69,8 +66,8 @@ export function FilePayoutReportModal({
 
   if (!cycle) return null;
 
-  function handleSubmit() {
-    if (!cycle) return;
+  async function handleSubmit() {
+    if (!cycle || submitting) return;
     if (!reason) {
       setError("Pick a reason for the report.");
       return;
@@ -85,57 +82,26 @@ export function FilePayoutReportModal({
     }
     setError(null);
     setSubmitting(true);
-    // Local store update fires immediately for the UI snap; backend POST
-    // fires-and-forgets (Q-A1 cycle ID). 600ms latency seam keeps the toast
-    // from feeling rushed.
-    setTimeout(() => {
-      submitReport({
-        payoutCycleId: cycle.id,
-        photographerId: photographer.id,
-        photographerName: photographer.name,
-        handle: photographer.handle ?? "",
-        reason,
-        note: note.trim(),
-      });
-      void submitPayoutReport({
-        payoutId: cycle.id,
-        reason,
-        note: note.trim() || null,
-      })
-        .then(() => {
-          // Refresh photographer-side Track-your-report so the new row
-          // appears immediately, and the admin queue when they next open
-          // /admin/payouts (admin's React Query cache is keyed separately
-          // but invalidating both is cheap).
-          queryClient.invalidateQueries({
-            queryKey: ["photographer", "payouts", "reports"],
-          });
-          queryClient.invalidateQueries({
-            queryKey: ["admin", "payouts", "reports"],
-          });
-        })
-        .catch((err) => {
-          console.error("[photographer/payout-report] submit failed", err);
-        });
-      setSubmitting(false);
-      showToast({
-        kind: "success",
-        message: "Report sent. Admin will review and reply in your inbox.",
-      });
-      onClose();
-    }, 600);
+    const ok = await submit({ payoutId: cycle.id, reason, note: note.trim() || null });
+    setSubmitting(false);
+    if (!ok) return;
+    showToast({
+      kind: "success",
+      message: "Report sent. Admin will review and reply in your inbox.",
+    });
+    onClose();
   }
 
   const reasonLabel = reason ? PAYOUT_REPORT_REASON_LABEL[reason] : "Pick a reason";
 
   return (
-    <Modal isOpen={cycle !== null} onClose={onClose} title="File a report">
+    <Modal isOpen={cycle !== null} onClose={() => { if (!submitting) onClose(); }} hideClose={submitting} title="File a report">
       <Kicker as="p" tone="soft" tnum className="mb-5">
         PAYOUT · {cycle.id} · {formatLongDate(cycle.requestedAt)} ·{" "}
         {formatPrice(cycle.amount)}
       </Kicker>
 
-      <div className="space-y-5">
+      <fieldset disabled={submitting} className="min-w-0 space-y-5">
         <div>
           <Kicker as="label" tone="soft" className="mb-2 block">
             Reason
@@ -159,6 +125,7 @@ export function FilePayoutReportModal({
                 key={value}
                 active={reason === value}
                 onClick={() => {
+                  if (submitting) return;
                   setReason(value);
                   setError(null);
                 }}
@@ -196,14 +163,14 @@ export function FilePayoutReportModal({
         </div>
 
         <FieldError id="report-error" message={error ?? undefined} />
-      </div>
+      </fieldset>
 
       <div className="mt-6 flex items-center justify-end gap-3">
         <button
           type="button"
           onClick={onClose}
           disabled={submitting}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Cancel
         </button>
@@ -211,7 +178,7 @@ export function FilePayoutReportModal({
           type="button"
           onClick={handleSubmit}
           disabled={submitting || !reason}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-bone hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {submitting ? "Sending…" : "Send report"}
         </button>

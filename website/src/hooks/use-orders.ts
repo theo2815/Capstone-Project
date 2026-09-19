@@ -6,7 +6,10 @@ import {
   fetchOrderDetail,
   type OrderDetail,
 } from "@/lib/api-orders";
-import type { MockOrder } from "@/store/orders-store";
+import type { OrderSummary } from "@/types/order";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+
+const EMPTY_ORDERS: OrderSummary[] = [];
 
 // Full order list (capped at the fetcher default). Both /orders slabs share it:
 // SpendSlab needs every order to compute lifetime totals, so ReceiptsSlab
@@ -14,19 +17,21 @@ import type { MockOrder } from "@/store/orders-store";
 // receipts pagination is blocked on a BE order-summary endpoint to decouple the
 // spend aggregate — filed under "requires backend changes".
 export function useOrdersList(): {
-  orders: MockOrder[];
+  orders: OrderSummary[];
   isLoading: boolean;
   error: unknown;
 } {
-  const query = useQuery<MockOrder[]>({
-    queryKey: ["me", "orders"],
-    queryFn: () => fetchOrders(),
+  const session = usePrivateQuerySession();
+  const query = useQuery<OrderSummary[]>({
+    queryKey: ["me", "orders", "list", ...session.key],
+    queryFn: ({ signal }) => fetchOrders({}, signal),
+    enabled: session.enabled,
     staleTime: 30_000,
   });
 
   return {
-    orders: query.data ?? [],
-    isLoading: query.isPending,
+    orders: query.data ?? EMPTY_ORDERS,
+    isLoading: query.isPending && session.enabled,
     error: query.error,
   };
 }
@@ -36,16 +41,17 @@ export function useOrderDetail(orderId: string | null): {
   isLoading: boolean;
   error: unknown;
 } {
+  const session = usePrivateQuerySession();
   const query = useQuery<OrderDetail | null>({
-    queryKey: ["me", "orders", orderId],
-    queryFn: () => (orderId ? fetchOrderDetail(orderId) : Promise.resolve(null)),
-    enabled: orderId !== null,
+    queryKey: ["me", "orders", "detail", orderId, ...session.key],
+    queryFn: ({ signal }) => (orderId ? fetchOrderDetail(orderId, signal) : Promise.resolve(null)),
+    enabled: session.enabled && !!orderId,
     staleTime: 60_000,
   });
 
   return {
     detail: query.data ?? null,
-    isLoading: query.isPending,
+    isLoading: query.isPending && session.enabled && !!orderId,
     error: query.error,
   };
 }

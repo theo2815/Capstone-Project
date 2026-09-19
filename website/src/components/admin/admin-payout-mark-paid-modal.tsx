@@ -9,6 +9,7 @@ import { formatPrice } from "@/lib/utils";
 
 interface AdminPayoutMarkPaidModalProps {
   open: boolean;
+  submitting?: boolean;
   onClose: () => void;
   onSubmit: (reference: string) => void;
   cycle: AdminPayoutCycle;
@@ -25,6 +26,7 @@ interface AdminPayoutMarkPaidModalProps {
 // enter the reference.
 export function AdminPayoutMarkPaidModal({
   open,
+  submitting = false,
   onClose,
   onSubmit,
   cycle,
@@ -46,6 +48,7 @@ export function AdminPayoutMarkPaidModal({
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Mark paid · ${cycle.id}`}

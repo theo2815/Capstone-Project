@@ -11,8 +11,8 @@ import type { SelfieRef } from "@/store/user-media-store";
 //   SELFIE_REJECTED         — 422 with verbatim ai-api reason ("no face", "too blurry", "multiple faces")
 //   SELFIE_LIMIT_REACHED    — 409 cap=5 reached
 
-export async function fetchSelfies(): Promise<SelfieRef[]> {
-  return api.get<SelfieRef[]>("/me/selfies");
+export async function fetchSelfies(signal?: AbortSignal): Promise<SelfieRef[]> {
+  return api.get<SelfieRef[]>("/me/selfies", { signal });
 }
 
 export async function uploadSelfie(file: File): Promise<SelfieRef> {

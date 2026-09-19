@@ -8,7 +8,7 @@ import {
   AdminTextInput,
   AdminTextarea,
 } from "@/components/admin/admin-form-fields";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 import {
   ACCEPTED_IMAGE_MIME,
   validateImageFile,
@@ -22,9 +22,8 @@ import { cn } from "@/lib/utils";
 // that overflowed banner_url VARCHAR(512) and 500'd the create.
 //
 // Mode prop selects copy + button label. In `edit` mode the form prefills
-// from the passed `event`; the date input enforces ISO YYYY-MM-DD. Cover
-// edits over PATCH /admin/events/{id} aren't wired yet — picking a file in
-// edit mode just stages it locally.
+// from the passed `event`; the date input enforces ISO YYYY-MM-DD.
+// Cover changes are submitted as multipart through the same backend API.
 
 const DATE_INPUT_CLS =
   "w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh tnum";
@@ -88,6 +87,7 @@ export function AdminEventFormModal({
   const [initialHadCover, setInitialHadCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   // Reset / prefill whenever the modal opens or the target event flips.
   useEffect(() => {
@@ -150,12 +150,13 @@ export function AdminEventFormModal({
     !submitting;
 
   async function handleSubmit() {
-    if (!canSubmit || parsedPrice === null) return;
+    if (!canSubmit || parsedPrice === null || submittingRef.current) return;
     // User cleared an existing cover (Remove button) and didn't replace it.
     // The new file branch takes precedence in the parent + backend if the
     // user actually picked a replacement.
     const removeCover =
       initialHadCover && coverFile === null && existingBannerUrl === undefined;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       await onSubmit({
@@ -169,6 +170,7 @@ export function AdminEventFormModal({
         removeCover,
       });
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -194,6 +196,7 @@ export function AdminEventFormModal({
       title={title}
       intro={intro}
       submitLabel={submitLabel}
+      submitting={submitting}
       submitDisabled={!canSubmit}
     >
       <AdminTextInput

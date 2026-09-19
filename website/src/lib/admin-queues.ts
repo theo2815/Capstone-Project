@@ -1,30 +1,10 @@
-import { useAdminDisputeStore, getEffectiveDisputes } from "@/store/admin-dispute-store";
-import {
-  useAdminPayoutStore,
-  mergePayoutsWithOverrides,
-} from "@/store/admin-payout-store";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import {
   useAdminFlags,
   useAdminKpis,
-  useAdminPayouts,
-  EMPTY_PAYOUTS,
 } from "@/hooks/use-admin-data";
-import { getAdminUsersDataSnapshot } from "@/lib/admin-users-data";
+import { usePendingVerificationsCount } from "@/hooks/use-admin-users";
 import { ROUTES } from "@/lib/constants";
-
-function countPendingPhotographers(): number {
-  let count = 0;
-  for (const row of getAdminUsersDataSnapshot()) {
-    if (
-      row.role === "PHOTOGRAPHER" &&
-      row.verificationStatus === "pending" &&
-      row.suspendedAt === null
-    ) {
-      count += 1;
-    }
-  }
-  return count;
-}
 
 // One-fresh-per-viewport rule: at most ONE rail row carries the breathing
 // fresh attention dot. Priority order:
@@ -37,8 +17,8 @@ function countPendingPhotographers(): number {
 //
 // useAdminAttentionTarget / useAdminQueueCounts are hooks because the
 // payouts count now hydrates from BE via useAdminPayouts (React Query).
-// The other queues still read snapshot state from Zustand — the React
-// Query call is the only reactive piece that forces this to be a hook.
+// Dispute/event counts come from backend KPIs; verification counts subscribe
+// to the canonical user directory.
 
 export interface AdminAttentionTarget {
   href: string;
@@ -47,17 +27,14 @@ export interface AdminAttentionTarget {
 }
 
 export function useAdminAttentionTarget(): AdminAttentionTarget | null {
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  const pendingVerifications = usePendingVerificationsCount();
+  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   // BE-hydrated; useAdminFlags is a no-op when the feature gate is off.
   const openFlags = useAdminFlags({ status: "open" })?.total ?? 0;
-  const pendingEventRequests = useAdminKpis()?.pendingEventRequests ?? 0;
+  const kpis = useAdminKpis();
+  const pendingEventRequests = kpis?.pendingEventRequests ?? 0;
 
-  // Disputes — read effective state via store overrides + seed + submissions
-  const disputeState = useAdminDisputeStore.getState();
-  const openDisputes = getEffectiveDisputes(
-    disputeState.overrides,
-    disputeState.submissions,
-  ).filter((d) => d.status === "open").length;
+  const openDisputes = kpis?.openDisputes ?? 0;
   if (openDisputes > 0) {
     return {
       href: ROUTES.ADMIN_DISPUTES,
@@ -78,7 +55,6 @@ export function useAdminAttentionTarget(): AdminAttentionTarget | null {
   // the new daily home for the verifications queue (Phase 1 admin redesign).
   // /admin/verifications still exists as a deep-link route but no longer
   // appears in the rail.
-  const pendingVerifications = countPendingPhotographers();
   if (pendingVerifications > 0) {
     return {
       href: ROUTES.ADMIN_INBOX,
@@ -95,12 +71,8 @@ export function useAdminAttentionTarget(): AdminAttentionTarget | null {
     };
   }
 
-  // Payouts — BE-hydrated count; mock seed is empty in the new flow.
-  const payoutOverrides = useAdminPayoutStore.getState().overrides;
-  const pendingPayouts = mergePayoutsWithOverrides(
-    serverPayouts,
-    payoutOverrides,
-  ).filter((p) => p.status === "pending_review").length;
+  // Payouts — count the canonical backend rows.
+  const pendingPayouts = serverPayouts.filter((p) => p.status === "pending_review").length;
   if (pendingPayouts > 0) {
     return {
       href: ROUTES.ADMIN_PAYOUTS,
@@ -125,21 +97,14 @@ export interface AdminQueueCounts {
 // to render the row-level count and the "QUEUES · N open / all clear"
 // summary line.
 export function useAdminQueueCounts(): AdminQueueCounts {
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   const flags = useAdminFlags({ status: "open" })?.total ?? 0;
-  const events = useAdminKpis()?.pendingEventRequests ?? 0;
-  const disputeState = useAdminDisputeStore.getState();
-  const payoutOverrides = useAdminPayoutStore.getState().overrides;
+  const kpis = useAdminKpis();
+  const events = kpis?.pendingEventRequests ?? 0;
 
-  const disputes = getEffectiveDisputes(
-    disputeState.overrides,
-    disputeState.submissions,
-  ).filter((d) => d.status === "open").length;
-  const payouts = mergePayoutsWithOverrides(
-    serverPayouts,
-    payoutOverrides,
-  ).filter((p) => p.status === "pending_review").length;
-  const inbox = countPendingPhotographers();
+  const disputes = kpis?.openDisputes ?? 0;
+  const payouts = serverPayouts.filter((p) => p.status === "pending_review").length;
+  const inbox = usePendingVerificationsCount();
 
   return {
     inbox,

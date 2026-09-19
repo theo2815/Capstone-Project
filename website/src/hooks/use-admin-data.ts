@@ -1,42 +1,30 @@
 "use client";
 
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminKpis,
   fetchAdminKpiTrend,
-  fetchAdminDisputes,
   fetchAdminFlags,
   hideAdminFlag,
   dismissAdminFlag,
   escalateAdminFlag,
-  fetchAdminPayouts,
-  fetchAdminPayoutReports,
-  fetchAdminEvents,
   fetchAdminSalesKpis,
   fetchAdminSalesByEvent,
   type AdminKpis,
   type AdminTrendPoint,
-  type AdminDisputeStatusFilter,
   type AdminFlagListArgs,
   type AdminSalesEventRow,
   type AdminSalesKpis,
   type AdminSalesRange,
 } from "@/lib/api-admin";
-import type { Dispute } from "@/lib/admin-disputes";
 import type { Flag } from "@/lib/admin-flags";
-import type {
-  AdminPayoutCycle,
-  AdminPayoutStatus,
-} from "@/lib/admin-payouts";
-import type {
-  PayoutReport,
-  PayoutReportStatus,
-} from "@/lib/admin-payout-reports";
-import type { AdminEventListArgs, AdminEventRow } from "@/lib/api-admin";
 import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-import { useAdminPayoutStore } from "@/store/admin-payout-store";
+import { captureAuthSession } from "@/lib/auth-session";
+import { useAuthStore } from "@/store/auth-store";
 
 // React Query hooks for admin reads.
 // Keys: ["admin", <domain>, ...]
@@ -51,17 +39,16 @@ const SALES_STALE_MS = 60_000;
 // query loads, which defeats every downstream useMemo keyed on it (the whole
 // derive chain recomputes per render). Same trick as the upload page's
 // EMPTY_SEED.
-export const EMPTY_DISPUTES: Dispute[] = [];
 export const EMPTY_FLAGS: Flag[] = [];
-export const EMPTY_PAYOUTS: AdminPayoutCycle[] = [];
-export const EMPTY_REPORTS: PayoutReport[] = [];
 
 // ───────────────────────────────────────────── KPIs
 
 export function useAdminKpis(): AdminKpis | null {
+  const session = usePrivateQuerySession("ADMIN");
   const query = useQuery<AdminKpis>({
-    queryKey: ["admin", "kpis"],
-    queryFn: () => fetchAdminKpis(),
+    queryKey: ["admin", "kpis", ...session.key],
+    queryFn: ({ signal }) => fetchAdminKpis(signal),
+    enabled: session.enabled,
     staleTime: KPI_STALE_MS,
   });
   return query.data ?? null;
@@ -70,24 +57,12 @@ export function useAdminKpis(): AdminKpis | null {
 export function useAdminKpiTrend(
   days: number = 30,
 ): AdminTrendPoint[] | null {
+  const session = usePrivateQuerySession("ADMIN");
   const query = useQuery<AdminTrendPoint[]>({
-    queryKey: ["admin", "kpis", "trend", days],
-    queryFn: () => fetchAdminKpiTrend(days),
+    queryKey: ["admin", "kpis", "trend", days, ...session.key],
+    queryFn: ({ signal }) => fetchAdminKpiTrend(days, signal),
+    enabled: session.enabled,
     staleTime: KPI_STALE_MS,
-  });
-  return query.data ?? null;
-}
-
-// ───────────────────────────────────────────── Disputes
-
-export function useAdminDisputes(args: {
-  status?: AdminDisputeStatusFilter;
-  q?: string;
-} = {}): Dispute[] | null {
-  const query = useQuery<Dispute[]>({
-    queryKey: ["admin", "disputes", args],
-    queryFn: () => fetchAdminDisputes(args),
-    staleTime: LIST_STALE_MS,
   });
   return query.data ?? null;
 }
@@ -101,11 +76,12 @@ export function useAdminDisputes(args: {
 export function useAdminFlags(
   args: AdminFlagListArgs = {},
 ): PaginatedResponse<Flag> | null {
+  const session = usePrivateQuerySession("ADMIN");
   const query = useQuery<PaginatedResponse<Flag>>({
-    queryKey: ["admin", "flags", args],
-    queryFn: () => fetchAdminFlags(args),
+    queryKey: ["admin", "flags", args, ...session.key],
+    queryFn: ({ signal }) => fetchAdminFlags(args, signal),
     staleTime: LIST_STALE_MS,
-    enabled: ADMIN_FLAGS_ENABLED,
+    enabled: session.enabled && ADMIN_FLAGS_ENABLED,
   });
   return query.data ?? null;
 }
@@ -117,90 +93,32 @@ export function useAdminFlags(
 export function useFlagActions() {
   const qc = useQueryClient();
   return useMemo(() => {
-    const settle = async (p: Promise<unknown>) => {
-      await p;
+    const settle = async (operation: () => Promise<unknown>): Promise<boolean> => {
+      const auth = useAuthStore.getState();
+      if (!auth.isAuthenticated || auth.user?.role !== "ADMIN") return false;
+      const isCurrent = captureAuthSession();
+      try {
+        await operation();
+      } catch (error) {
+        if (!isCurrent()) return false;
+        throw error;
+      }
+      if (!isCurrent()) return false;
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["admin", "flags"] }),
         qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
       ]);
+      return isCurrent();
     };
     return {
       hide: (flagId: string, reason: string | null) =>
-        settle(hideAdminFlag(flagId, reason)),
+        settle(() => hideAdminFlag(flagId, reason)),
       dismiss: (flagId: string, reason: string | null = null) =>
-        settle(dismissAdminFlag(flagId, reason)),
+        settle(() => dismissAdminFlag(flagId, reason)),
       escalate: (flagId: string, note: string | null) =>
-        settle(escalateAdminFlag(flagId, note)),
+        settle(() => escalateAdminFlag(flagId, note)),
     };
   }, [qc]);
-}
-
-// ───────────────────────────────────────────── Payouts
-
-// Like flag actions, payout decisions refresh canonical state, including partial
-// bulk results. A first approval may still be pending a different admin.
-export function usePayoutActions() {
-  const qc = useQueryClient();
-  return useMemo(() => {
-    const actions = useAdminPayoutStore.getState();
-    const settle = async (operation: Promise<boolean>) => {
-      const ok = await operation;
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin", "payouts"] }),
-        qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
-      ]);
-      return ok;
-    };
-    return {
-      approve: (id: string) => settle(actions.approve(id)),
-      hold: (id: string, reason: string) => settle(actions.hold(id, reason)),
-      markPaid: (id: string, reference: string) => settle(actions.markPaid(id, reference)),
-      reject: (id: string, reason: string) => settle(actions.reject(id, reason)),
-      markProcessing: (id: string) => settle(actions.markProcessing(id)),
-      markFailed: (id: string, reason: string) => settle(actions.markFailed(id, reason)),
-      markReturned: (id: string, reason: string) => settle(actions.markReturned(id, reason)),
-      bulkApprove: (ids: string[]) => settle(actions.bulkApprove(ids)),
-      bulkHold: (ids: string[], reason: string) => settle(actions.bulkHold(ids, reason)),
-    };
-  }, [qc]);
-}
-
-export function useAdminPayouts(args: {
-  status?: AdminPayoutStatus;
-  q?: string;
-} = {}): AdminPayoutCycle[] | null {
-  const query = useQuery<AdminPayoutCycle[]>({
-    queryKey: ["admin", "payouts", args],
-    queryFn: () => fetchAdminPayouts(args),
-    staleTime: LIST_STALE_MS,
-  });
-  return query.data ?? null;
-}
-
-// ───────────────────────────────────────────── Payout reports
-
-export function useAdminPayoutReports(args: {
-  status?: PayoutReportStatus;
-} = {}): PayoutReport[] | null {
-  const query = useQuery<PayoutReport[]>({
-    queryKey: ["admin", "payouts", "reports", args],
-    queryFn: () => fetchAdminPayoutReports(args),
-    staleTime: LIST_STALE_MS,
-  });
-  return query.data ?? null;
-}
-
-// ───────────────────────────────────────────── Events catalog
-
-export function useAdminEvents(
-  args: AdminEventListArgs = {},
-): AdminEventRow[] | null {
-  const query = useQuery<AdminEventRow[]>({
-    queryKey: ["admin", "events", args],
-    queryFn: () => fetchAdminEvents(args),
-    staleTime: LIST_STALE_MS,
-  });
-  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Sales
@@ -208,9 +126,11 @@ export function useAdminEvents(
 export function useAdminSalesKpisLive(
   range: AdminSalesRange = "ytd",
 ): AdminSalesKpis | null {
+  const session = usePrivateQuerySession("ADMIN");
   const query = useQuery<AdminSalesKpis>({
-    queryKey: ["admin", "sales", "kpis", range],
-    queryFn: () => fetchAdminSalesKpis(range),
+    queryKey: ["admin", "sales", "kpis", range, ...session.key],
+    queryFn: ({ signal }) => fetchAdminSalesKpis(range, signal),
+    enabled: session.enabled,
     staleTime: SALES_STALE_MS,
   });
   return query.data ?? null;
@@ -219,9 +139,11 @@ export function useAdminSalesKpisLive(
 export function useAdminSalesByEventLive(args: {
   order?: "gmv" | "refunds";
 } = {}): AdminSalesEventRow[] | null {
+  const session = usePrivateQuerySession("ADMIN");
   const query = useQuery<AdminSalesEventRow[]>({
-    queryKey: ["admin", "sales", "by-event", args],
-    queryFn: () => fetchAdminSalesByEvent(args),
+    queryKey: ["admin", "sales", "by-event", args, ...session.key],
+    queryFn: ({ signal }) => fetchAdminSalesByEvent(args, signal),
+    enabled: session.enabled,
     staleTime: SALES_STALE_MS,
   });
   return query.data ?? null;

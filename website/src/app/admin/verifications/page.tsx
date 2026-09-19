@@ -1,8 +1,9 @@
 "use client";
 
+import { usePendingVerificationsCount } from "@/hooks/use-admin-users";
+
 import {
   VerificationsQueue,
-  usePendingVerificationsCount,
 } from "@/components/admin/verifications-queue";
 import { Kicker } from "@/components/ui/kicker";
 

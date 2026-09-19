@@ -2,23 +2,24 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { fetchEventsList, type EventsListFilters } from "@/lib/api-events";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 
 // Events change on admin edits, not by the half-minute. Cover URLs inside are
 // presigned for 1 h, so 5 min is comfortably safe.
 const LIST_STALE_MS = 5 * 60_000;
 
-// Client-side fetcher for the public events catalog. /events SSR-loads this
-// list, but dashboard surfaces (e.g. /dashboard/upload) can't SSR because the
-// page is interactive, so they read through here. Pass the result as the
-// seed to useEventCatalog() to keep admin overrides + tombstones merged in.
+// Shared public catalog. SSR pages can seed the cache; admin mutations
+// invalidate it without copying privileged admin rows into public results.
 export function usePublicEvents(
   filters: EventsListFilters = {},
+  initialEvents?: ReadonlyArray<ListEvent>,
 ): ListEvent[] | null {
   const query = useQuery<ListEvent[]>({
     queryKey: ["public", "events", filters],
     queryFn: () => fetchEventsList(filters),
     staleTime: LIST_STALE_MS,
+    initialData: initialEvents ? () => [...initialEvents] : undefined,
+    initialDataUpdatedAt: initialEvents ? 0 : undefined,
   });
   return query.data ?? null;
 }

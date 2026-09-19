@@ -9,6 +9,7 @@ export type PayoutReportActionMode = "acknowledge" | "resolve";
 
 interface PayoutReportActionModalProps {
   open: boolean;
+  submitting?: boolean;
   mode: PayoutReportActionMode;
   report: PayoutReport;
   onClose: () => void;
@@ -56,6 +57,7 @@ const COPY: Record<
 // resolution note. Both share the same form shape (textarea + 500 max).
 export function PayoutReportActionModal({
   open,
+  submitting = false,
   mode,
   report,
   onClose,
@@ -79,6 +81,7 @@ export function PayoutReportActionModal({
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
       title={config.title(report.id)}

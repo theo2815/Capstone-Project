@@ -1,13 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
-import { type AdminUserRow } from "@/lib/admin-user-registry";
-import {
-  useAdminUserStore,
-  type DecisionLogEntry,
-  type DecisionType,
-} from "@/store/admin-user-store";
-import { useAdminUsersData } from "@/lib/admin-users-data";
+import Link from "next/link";
+import { useAdminUserDetail } from "@/hooks/use-admin-users";
+import type { DecisionLogEntry, DecisionType } from "@/lib/admin-user-registry";
 
 interface AdminDecisionsTimelineProps {
   /** Cap on entries rendered. Defaults to 10 (Overview compact view). */
@@ -18,30 +13,16 @@ interface AdminDecisionsTimelineProps {
   emptyCopy?: string;
 }
 
-// Timeline of admin decisions read from useAdminUserStore.log. Each row
-// shows: action chip · target name · timestamp · optional reason / meta.
-// The action chip is the only colored element; everything else stays
-// slate/ink. Mirrors the transaction-ledger pattern from /dashboard/billing.
 export function AdminDecisionsTimeline({
   limit = 10,
   userId,
   emptyCopy = "No decisions on file yet.",
 }: AdminDecisionsTimelineProps) {
-  const { rows } = useAdminUsersData();
-  const log = useAdminUserStore((s) => s.log);
-
-  const byId = useMemo(() => {
-    const map = new Map<string, AdminUserRow>();
-    for (const row of rows) {
-      map.set(row.userId, row);
-    }
-    return map;
-  }, [rows]);
-
-  const visible = useMemo(() => {
-    const filtered = userId ? log.filter((e) => e.userId === userId) : log;
-    return filtered.slice(0, limit);
-  }, [log, userId, limit]);
+  const query = useAdminUserDetail(userId ?? null);
+  if (!userId) return <p className="font-sans text-sm text-slate-soft">Decision history is available on each <Link className="underline" href="/admin/photographers">photographer’s profile</Link>.</p>;
+  if (query.isPending) return <p role="status">Loading decisions…</p>;
+  if (query.isError) return <p role="alert">Couldn&apos;t load decisions. <button onClick={() => void query.refetch()}>Try again</button></p>;
+  const visible = (query.data?.decisionLog ?? []).slice(0, limit);
 
   if (visible.length === 0) {
     return <p className="font-sans text-sm text-slate-soft">{emptyCopy}</p>;
@@ -50,7 +31,7 @@ export function AdminDecisionsTimeline({
   return (
     <ul className="space-y-3">
       {visible.map((entry, i) => {
-        const target = byId.get(entry.userId);
+        const target = query.data;
         const targetLabel = target?.brandName ?? target?.name ?? entry.userId;
         return (
           <li
@@ -90,6 +71,7 @@ const DECISION_LABEL: Record<DecisionType, string> = {
   unsuspended: "Unsuspended",
   "force-edited": "Force-edited",
   reset: "Reset",
+  messaged: "Messaged",
 };
 
 function decisionTone(decision: DecisionType): string {

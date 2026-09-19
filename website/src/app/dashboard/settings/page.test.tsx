@@ -1,5 +1,10 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useAuthStore } from "@/store/auth-store";
+import { resetUserScopedStores } from "@/lib/auth-reset";
+import { postSocial, withdrawVerification } from "@/lib/api-photographer-settings";
 import SettingsPage from "./page";
 import { DEFAULT_WATERMARK_PLACEMENT, usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { putHandle, putWatermarkSettings, postPayoutAccount, patchPayoutAccount, postPayoutQr } from "@/lib/api-photographer-settings";
@@ -12,12 +17,26 @@ vi.mock("@/hooks/use-regions", () => ({ useRegions: () => ({ regions: mocks.regi
 vi.mock("@/lib/photographer-verification-sync", () => ({ syncVerificationNow: vi.fn() }));
 vi.mock("@/lib/api-photographer-settings", async (importActual) => ({
   ...await importActual<typeof import("@/lib/api-photographer-settings")>(),
+  postSocial: vi.fn(), withdrawVerification: vi.fn(), submitVerification: vi.fn(),
   putHandle: vi.fn(),
   putWatermarkSettings: vi.fn(),
   postPayoutAccount: vi.fn(), patchPayoutAccount: vi.fn(), postPayoutQr: vi.fn(),
 }));
 
+const photographer = { id: "photographer", role: "PHOTOGRAPHER" as const, name: "Photo", email: "photo@example.test", createdAt: "2026-09-10" };
+
+function render(ui: ReactElement) {
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        {children}
+      </QueryClientProvider>
+    ),
+  });
+}
+
 beforeEach(() => {
+  useAuthStore.getState().setUser(photographer);
   vi.clearAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => {}); // expected failed handle request
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -84,6 +103,8 @@ it("saves a changed number before its QR and only retries the failed upload", as
 });
 
 afterEach(() => {
+  cleanup();
+  useAuthStore.getState().logout();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -115,4 +136,57 @@ it("keeps a saved placement on retry and Cancel when another settings request fa
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(usePhotographerSettingsStore.getState().watermarkPlacement).toEqual(saved);
   expect(usePhotographerSettingsStore.getState().handle).toBe("old-handle");
+});
+
+
+it("drops a stale account-create response before committing its ID or uploading its QR", async () => {
+  let finish!: (value: typeof payout) => void;
+  vi.mocked(postPayoutAccount).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  act(() => usePhotographerSettingsStore.setState({ payouts: [{ ...payout, id: "local", qr }] }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  expect(screen.getByRole("button", { name: /Saving/ })).toBeDisabled();
+  act(() => {
+    useAuthStore.getState().logout(); resetUserScopedStores();
+    useAuthStore.getState().setUser(photographer);
+  });
+  await act(async () => { finish(payout); });
+  expect(usePhotographerSettingsStore.getState().payouts).toEqual([]);
+  expect(postPayoutQr).not.toHaveBeenCalled();
+  expect(mocks.toast).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: /Saving/ })).not.toBeInTheDocument();
+});
+
+it.each(["success", "failure"])("does not apply a stale Settings batch or toast (%s)", async (outcome) => {
+  let finish!: (value: { id: string; platform: "website"; url: string }) => void;
+  let fail!: (error: Error) => void;
+  vi.mocked(postSocial).mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+  render(<SettingsPage />); fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  act(() => usePhotographerSettingsStore.setState({ socials: [{ id: "local", platform: "website", url: "https://example.test" }] }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  act(() => { useAuthStore.getState().logout(); resetUserScopedStores(); });
+  await act(async () => {
+    if (outcome === "success") finish({ id: "server-id", platform: "website", url: "https://example.test" });
+    else fail(new Error("Late failure"));
+  });
+  expect(usePhotographerSettingsStore.getState().socials).toEqual([]);
+  expect(mocks.toast).not.toHaveBeenCalled();
+});
+
+it("ignores an old verification withdrawal after account switching", async () => {
+  usePhotographerSettingsStore.setState({ verificationStatus: "pending" });
+  let finish!: (value: { status: "incomplete" }) => void;
+  mocks.confirm.mockResolvedValue(true);
+  vi.mocked(withdrawVerification).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  render(<SettingsPage />); fireEvent.click(screen.getByRole("button", { name: "Withdraw application" }));
+  await waitFor(() => expect(withdrawVerification).toHaveBeenCalledTimes(1));
+  act(() => {
+    useAuthStore.getState().logout(); resetUserScopedStores();
+    useAuthStore.getState().setUser({ ...photographer, id: "other" });
+    usePhotographerSettingsStore.setState({ verificationStatus: "approved" });
+  });
+  await act(async () => { finish({ status: "incomplete" }); });
+  expect(usePhotographerSettingsStore.getState().verificationStatus).toBe("approved");
+  expect(mocks.toast).not.toHaveBeenCalled();
 });

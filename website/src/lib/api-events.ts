@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import { deriveEventState } from "@/lib/event-catalog";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 import type { Event, EventDetail } from "@/types/event";
 import type { PaginatedResponse } from "@/types/api";
 

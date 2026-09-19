@@ -24,7 +24,7 @@ import {
   ownedEventNote,
   summaryToListEvent,
 } from "@/lib/photographer-events";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
 import { cn } from "@/lib/utils";
 

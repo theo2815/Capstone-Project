@@ -1,5 +1,7 @@
 "use client";
 
+import { captureAuthSession } from "@/lib/auth-session";
+
 import Link from "next/link";
 import {
   createContext,
@@ -15,6 +17,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
@@ -48,10 +51,8 @@ import {
 } from "@/lib/api-photographer-settings";
 import { syncVerificationNow } from "@/lib/photographer-verification-sync";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useUserMediaStore } from "@/store/user-media-store";
-import type { AdminUserRow } from "@/lib/admin-user-registry";
 import type { User } from "@/types/user";
 import {
   ACCEPTED_IMAGE_MIME,
@@ -64,12 +65,11 @@ import {
 } from "@/lib/image-utils";
 import {
   REGION_GROUP_LABEL,
-  formatRegionLabel,
   getRegion,
-  type PHRegion,
   type RegionGroup,
 } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
+import { photographerSettingsKeys } from "@/hooks/use-photographer-settings";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { validateHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
@@ -237,6 +237,7 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
 function EditModeProvider({ children }: { children: ReactNode }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const editSessionRef = useRef<(() => boolean) | null>(null);
   const snapshotRef = useRef<EditModeSnapshot | null>(null);
   const pendingFilesRef = useRef<Record<PendingFileSlot, File | null>>({
     avatar: null,
@@ -244,19 +245,22 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     watermark: null,
   });
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
 
   // BE-sourced hydration of the photographer-settings + user-media stores
-  // now lives on DashboardShell via `usePhotographerSettingsHydration` so
+  // now lives on the global AuthHydrator via `usePhotographerSettingsHydration` so
   // every /dashboard/* page sees populated state on mount (not just here).
   // See `hooks/use-photographer-settings-hydration.ts`.
 
   const beginEdit = useCallback(() => {
+    editSessionRef.current = captureAuthSession();
     snapshotRef.current = takeSnapshot();
     pendingFilesRef.current = { avatar: null, cover: null, watermark: null };
     setEditing(true);
   }, []);
 
   const cancelEdit = useCallback(() => {
+    if (!editSessionRef.current?.()) return;
     if (snapshotRef.current) {
       restoreSnapshot(snapshotRef.current);
     }
@@ -275,6 +279,8 @@ function EditModeProvider({ children }: { children: ReactNode }) {
 
   const saveEdit = useCallback(async () => {
     if (saving) return;
+    const isCurrent = editSessionRef.current;
+    if (!isCurrent?.()) return;
     const snap = snapshotRef.current;
     if (!snap) return;
     setSaving(true);
@@ -485,6 +491,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
               accountNumber: p.accountNumber,
               accountName: p.accountName,
             });
+            if (!isCurrent()) return;
             usePhotographerSettingsStore.setState((prev) => ({
               payouts: prev.payouts.map((row) =>
                 row.id === localId
@@ -504,6 +511,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
             if (p.qr) {
               const file = dataUrlToFile(p.qr.dataUrl, `qr-${serverRow.id}.png`);
               await postPayoutQr(serverRow.id, file);
+              if (!isCurrent()) return;
               const row = snap.payouts.find((x) => x.id === serverRow.id);
               if (row) row.qr = { ...p.qr };
             }
@@ -526,10 +534,12 @@ function EditModeProvider({ children }: { children: ReactNode }) {
                   accountNumber: p.accountNumber,
                   accountName: p.accountName,
                 });
+                if (!isCurrent()) return;
                 Object.assign(prev, updated);
               }
               if (qrChanged && p.qr) {
                 await postPayoutQr(p.id, dataUrlToFile(p.qr.dataUrl, `qr-${p.id}.png`));
+                if (!isCurrent()) return;
                 prev.qr = { ...p.qr };
               }
             },
@@ -575,6 +585,8 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         tasks.map(({ run }) => run()),
       );
 
+      if (!isCurrent()) return;
+
       // Run onSuccess callbacks for fulfilled tasks. These mutate the store
       // + snapshot so partial-success retries stay idempotent (e.g. a
       // socials POST that succeeded last attempt won't fire again).
@@ -603,6 +615,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
           watermark: null,
         };
         setEditing(false);
+        void queryClient.invalidateQueries({ queryKey: photographerSettingsKeys.all });
         // Refresh completeness from the BE now the save landed, so the Submit
         // button + banners reflect it without waiting for the next focus/poll.
         void syncVerificationNow();
@@ -647,9 +660,9 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         });
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
-  }, [saving, showToast]);
+  }, [queryClient, saving, showToast]);
 
   const value = useMemo<EditModeContextValue>(
     () => ({
@@ -771,64 +784,6 @@ function SlabStatusChip({ ready }: { ready: boolean }) {
   );
 }
 
-// Mirror a fresh "Submit for review" into the admin store so the
-// /admin/verifications queue shows the row. Phase F backend will receive
-// the submit POST and emit a server-rendered row on the admin's next poll;
-// in mock mode, we have to bridge the two stores ourselves. Returns null
-// when there's no authenticated session (defensive — caller bails).
-function buildAdminSubmissionRow(
-  regions: readonly PHRegion[],
-): AdminUserRow | null {
-  const sessionUser = useAuthStore.getState().user;
-  if (!sessionUser) return null;
-  const settings = usePhotographerSettingsStore.getState();
-  const regionLabel = settings.region
-    ? formatRegionLabel(
-        regions,
-        settings.region.regionCode,
-        settings.region.provinceCode,
-      )
-    : null;
-  return {
-    userId: sessionUser.id,
-    role: "PHOTOGRAPHER",
-    email: sessionUser.email,
-    name: sessionUser.name,
-    avatarUrl: sessionUser.avatarUrl ?? null,
-    brandName: settings.brandName.trim() || null,
-    handle: settings.handle.trim() || null,
-    region: regionLabel,
-    // City isn't a separate field in photographer-settings yet — fall back to
-    // the region label so the admin row still shows a location string.
-    city: regionLabel ?? "—",
-    createdAt: sessionUser.createdAt,
-    verificationStatus: "pending",
-    suspendedAt: null,
-    suspensionReason: null,
-    settingsSnapshot: {
-      hasCover: !!settings.cover,
-      hasBrandName: settings.brandName.trim().length > 0,
-      hasWatermark: !!settings.watermark,
-      hasHandle: settings.handle.trim().length >= 3,
-      hasRegion: !!settings.region,
-      socialCount: settings.socials.filter((s) => s.url.trim().length > 0)
-        .length,
-      payoutCount: settings.payouts.length,
-    },
-  };
-}
-
-// `regions` comes from useRegions() at the component boundary — these two are
-// plain functions (they read Zustand via getState()), so the list has to be
-// passed in rather than hooked. The label is only a fallback for the admin
-// queue, which resolves its own via formatRegionLabel; an empty list here just
-// leaves it null.
-function mirrorSubmissionToAdminStore(regions: readonly PHRegion[]): void {
-  const row = buildAdminSubmissionRow(regions);
-  if (!row) return;
-  useAdminUserStore.getState().upsertSubmission(row);
-}
-
 // Phase 1 — consume the BE submitVerification response instead of fire-and-
 // forget. Three outcomes per the controller + DTO:
 //   1. { status: "pending" }                 — accepted; row in DB is PENDING.
@@ -837,15 +792,15 @@ function mirrorSubmissionToAdminStore(regions: readonly PHRegion[]): void {
 // Returns whether the BE accepted, so callers (the nudge modal) can decide
 // to close their own UI or stay open for a retry.
 async function submitForReview(opts: {
-  regions: readonly PHRegion[];
   setStatus: (s: VerificationStatus) => void;
   showToast: (t: { kind: "info" | "success" | "error"; message: string }) => void;
 }): Promise<{ submitted: boolean }> {
+  const isCurrent = captureAuthSession();
   try {
     const response = await submitVerification();
+    if (!isCurrent()) return { submitted: false };
     if (response.status === "pending") {
       opts.setStatus("pending");
-      mirrorSubmissionToAdminStore(opts.regions);
       opts.showToast({
         kind: "info",
         message: "Submitted for review. We'll let you know.",
@@ -868,6 +823,7 @@ async function submitForReview(opts: {
     opts.setStatus(response.status);
     return { submitted: false };
   } catch (err) {
+    if (!isCurrent()) return { submitted: false };
     console.error("[photographer/settings] submitVerification failed", err);
     opts.showToast({
       kind: "error",
@@ -941,12 +897,13 @@ function validateSocialUrl(
 }
 
 export default function SettingsPage() {
+  const sessionVersion = useAuthStore((s) => s.sessionVersion);
   // Verification sync lives in DashboardShell — single mount across every
   // /dashboard/* page so the suspended banner + approve/reject decisions
   // surface here without a manual refresh.
 
   return (
-    <EditModeProvider>
+    <EditModeProvider key={sessionVersion}>
       <PendingEditWatcher />
       <VerificationStatusPanel />
       <PublicProfileSlab />
@@ -980,72 +937,17 @@ function EventCouponsSlab() {
 }
 
 
-// While status === "pending", keep the admin store's snapshot in sync with
-// the photographer's live edits, and auto-flip back to "incomplete" if any
-// required field is removed. The photographer is allowed to keep editing
-// after they've submitted (a sealed-envelope model would be cleaner but
-// makes "I have a typo, can I fix it?" require admin support churn), so
-// the admin always sees the latest snapshot. If they delete a required
-// field while pending, the application can't stay pending — drop it from
-// the admin queue and put the photographer back in the "Not yet verified"
-// state so they re-submit when fixed.
+// Preserve the existing local completeness gate while editing pending settings.
 function PendingEditWatcher() {
   const { editing } = useEditMode();
-  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
-  const setStatus = usePhotographerSettingsStore(
-    (s) => s.setVerificationStatus,
-  );
+  const setStatus = usePhotographerSettingsStore((s) => s.setVerificationStatus);
   const complete = useAllRequiredFilled();
-  // Subscribe to every snapshot-contributing field so this effect re-fires
-  // on any settings change. The `useAllRequiredFilled` boolean alone isn't
-  // enough — if the photographer edits a non-gating detail (brand name,
-  // bio, social URL) the boolean stays true and the effect wouldn't
-  // re-mirror without these explicit subscriptions.
-  const cover = usePhotographerSettingsStore((s) => s.cover);
-  const brandName = usePhotographerSettingsStore((s) => s.brandName);
-  const bio = usePhotographerSettingsStore((s) => s.bio);
-  const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
-  const watermark = usePhotographerSettingsStore((s) => s.watermark);
-  const handle = usePhotographerSettingsStore((s) => s.handle);
-  const region = usePhotographerSettingsStore((s) => s.region);
-  const socials = usePhotographerSettingsStore((s) => s.socials);
-  const payouts = usePhotographerSettingsStore((s) => s.payouts);
-  const avatar = useUserMediaStore((s) => s.avatar);
-
   useEffect(() => {
-    if (status !== "pending") return;
-    // Pause the auto-withdraw + admin-mirror loop while the photographer is
-    // mid-edit. Otherwise transient field clears during an edit (e.g. wiping
-    // the brand name to retype it) would yank their pending submission. Save
-    // commits trigger the rest of the page to re-evaluate.
-    if (editing) return;
-    const sessionUser = useAuthStore.getState().user;
-    if (!sessionUser) return;
-    if (!complete) {
-      useAdminUserStore.getState().revokeSubmission(sessionUser.id);
+    if (status === "pending" && !editing && !complete && useAuthStore.getState().user) {
       setStatus("incomplete");
-      return;
     }
-    mirrorSubmissionToAdminStore(regions);
-  }, [
-    regions,
-    status,
-    complete,
-    editing,
-    cover,
-    brandName,
-    bio,
-    brandColor,
-    watermark,
-    handle,
-    region,
-    socials,
-    payouts,
-    avatar,
-    setStatus,
-  ]);
-
+  }, [status, complete, editing, setStatus]);
   return null;
 }
 
@@ -1056,7 +958,6 @@ function PendingEditWatcher() {
 // the nudge resets so it can fire again on next completion).
 function ReadyToSubmitNudge() {
   const { editing } = useEditMode();
-  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1103,7 +1004,7 @@ function ReadyToSubmitNudge() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await submitForReview({ regions, setStatus, showToast });
+      await submitForReview({ setStatus, showToast });
     } finally {
       setSubmitting(false);
       // Close the modal regardless of outcome — the toast surfaces success
@@ -1213,7 +1114,6 @@ function useAllRequiredFilled(): boolean {
 
 function VerificationStatusPanel() {
   const { editing, beginEdit } = useEditMode();
-  const { regions } = useRegions();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1231,13 +1131,14 @@ function VerificationStatusPanel() {
       // `/admin/verifications`. The photographer sits in `pending` until a
       // human reviews them. Phase 1 wires the real BE call: the helper
       // flips local state only after the BE confirms.
-      await submitForReview({ regions, setStatus, showToast });
+      await submitForReview({ setStatus, showToast });
     } finally {
       setSubmitting(false);
     }
   }
 
   async function handleWithdraw() {
+    const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Withdraw application?",
       message:
@@ -1246,14 +1147,10 @@ function VerificationStatusPanel() {
       cancelLabel: "Keep waiting",
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     try {
       const response = await withdrawVerification();
-      const sessionUser = useAuthStore.getState().user;
-      if (sessionUser) {
-        // Drop the optimistic submission row from the admin store mirror.
-        useAdminUserStore.getState().revokeSubmission(sessionUser.id);
-      }
+      if (!isCurrent()) return;
       // BE returns the new status — use it directly. Should always be
       // "incomplete" after a successful withdraw; defensive narrow anyway.
       const next =
@@ -1268,6 +1165,7 @@ function VerificationStatusPanel() {
         message: "Application withdrawn.",
       });
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("[photographer/settings] withdrawVerification failed", err);
       showToast({
         kind: "error",
@@ -1583,6 +1481,7 @@ function PictureSubsection() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
+    const isCurrent = captureAuthSession();
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -1599,6 +1498,7 @@ function PictureSubsection() {
       // Local center-crop stages an instant preview; the actual upload runs
       // on Save (the File handle is stashed on the EditMode context).
       const dataUrl = await squareCropToDataUrl(file, AVATAR_SIZE_PX);
+      if (!isCurrent()) return;
       setAvatar({ dataUrl, uploadedAt: new Date().toISOString() });
       setPendingFile("avatar", file);
       showToast({
@@ -1606,20 +1506,22 @@ function PictureSubsection() {
         message: "Profile picture ready — click Save to upload.",
       });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(imageErrorCopy(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   async function handleRemove() {
+    const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Remove profile picture?",
       message:
         "Your initials will show next to your name until you upload a new one.",
       confirmLabel: "Remove",
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     setAvatar(null);
     setPendingFile("avatar", null);
     setError(null);
@@ -1712,6 +1614,7 @@ function CoverSubsection() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
+    const isCurrent = captureAuthSession();
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -1729,8 +1632,10 @@ function CoverSubsection() {
     let aspectRatio: number;
     try {
       const dims = await inspectImageDimensions(file);
+      if (!isCurrent()) return;
       aspectRatio = dims.aspectRatio;
     } catch (err) {
+      if (!isCurrent()) return;
       setError(imageErrorCopy(err));
       return;
     }
@@ -1742,6 +1647,7 @@ function CoverSubsection() {
           "Your image is taller than wide. Only the middle horizontal strip will show. Use it anyway?",
         confirmLabel: "Use it",
       });
+      if (!isCurrent()) return;
       if (!ok) {
         setError(null);
         return;
@@ -1754,6 +1660,7 @@ function CoverSubsection() {
       // Local downscale keeps the optimistic preview snappy; the upload
       // fires on Save via the EditMode context stash.
       const dataUrl = await fitToDataUrl(file, COVER_MAX_PX, 0.82);
+      if (!isCurrent()) return;
       setCover({ dataUrl, uploadedAt: new Date().toISOString() });
       setPendingFile("cover", file);
       showToast({
@@ -1761,20 +1668,22 @@ function CoverSubsection() {
         message: "Cover ready — click Save to upload.",
       });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(imageErrorCopy(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   async function handleRemove() {
+    const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Remove cover?",
       message:
         "Your portfolio will fall back to the default banner until you upload a new one.",
       confirmLabel: "Remove",
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     setCover(null);
     setPendingFile("cover", null);
     setError(null);
@@ -1989,6 +1898,7 @@ function WatermarkSlab() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
+    const isCurrent = captureAuthSession();
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -2010,6 +1920,7 @@ function WatermarkSlab() {
           "New uploads will use the new watermark. Photos already stamped won't change.",
         confirmLabel: "Replace",
       });
+      if (!isCurrent()) return;
       if (!ok) {
         setError(null);
         return;
@@ -2026,6 +1937,7 @@ function WatermarkSlab() {
         file.type === "image/png"
           ? await fitToPngDataUrl(file, WATERMARK_MAX_PX)
           : await fitToDataUrl(file, WATERMARK_MAX_PX);
+      if (!isCurrent()) return;
       setWatermark({ dataUrl, uploadedAt: new Date().toISOString() });
       setPendingFile("watermark", file);
       showToast({
@@ -2033,20 +1945,22 @@ function WatermarkSlab() {
         message: "Watermark ready — click Save to upload.",
       });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(imageErrorCopy(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   async function handleRemove() {
+    const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Remove watermark?",
       message:
         "New uploads will go out unwatermarked until you replace it. Existing photos already stamped won't change.",
       confirmLabel: "Remove",
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     setWatermark(null);
     setPendingFile("watermark", null);
     setError(null);
@@ -2543,6 +2457,7 @@ function SocialSlab() {
   }
 
   async function handleRemove(id: string, platform: SocialPlatform) {
+    const isCurrent = captureAuthSession();
     const label = SOCIAL_PLATFORM_LABEL[platform];
     const ok = await confirm({
       title: `Remove ${label} link?`,
@@ -2550,7 +2465,7 @@ function SocialSlab() {
         "Runners use these to verify you're real. You can add it back anytime.",
       confirmLabel: "Remove",
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     removeSocial(id);
     showToast({
       kind: "success",
@@ -2844,6 +2759,7 @@ function PayoutSlab() {
   }
 
   async function handleRemove(id: string, method: PayoutMethod) {
+    const isCurrent = captureAuthSession();
     const label = PAYOUT_METHOD_LABEL[method];
     const isOnlyPayout = payouts.length === 1;
     const account = payouts.find((p) => p.id === id);
@@ -2858,7 +2774,7 @@ function PayoutSlab() {
       confirmLabel: "Remove",
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !isCurrent()) return;
     removePayout(id);
     showToast({
       kind: "success",
@@ -3045,6 +2961,7 @@ function PayoutForm({
       : "11-digit mobile number registered to this wallet.";
 
   async function handleQrPick(e: ChangeEvent<HTMLInputElement>) {
+    const isCurrent = captureAuthSession();
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -3061,11 +2978,13 @@ function PayoutForm({
       // TODO(backend): swap for `api.post("/me/photographer/payouts/{id}/qr", formData)`
       // — server stores the image privately; only finance staff can read it.
       const dataUrl = await fitToPngDataUrl(file, QR_MAX_PX);
+      if (!isCurrent()) return;
       setQr({ dataUrl, uploadedAt: new Date().toISOString() });
     } catch (err) {
+      if (!isCurrent()) return;
       setQrError(imageErrorCopy(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 

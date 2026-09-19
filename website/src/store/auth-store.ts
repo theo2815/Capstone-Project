@@ -5,6 +5,9 @@ interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  // Changes on identity transitions, including logout + login as the same user.
+  // Async mutations use it to discard responses from an earlier session.
+  sessionVersion: number;
   // A Google identity that still needs a role pick on /onboarding. Held in
   // memory only — a hard refresh loses it, and the onboarding page bounces
   // back to /login where one more button click restores it. Completing the
@@ -23,19 +26,24 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isAuthenticated: false,
   isLoading: true,
+  sessionVersion: 0,
   pendingOAuth: null,
   pendingMfa: null,
   setUser: (user) =>
-    set({ user, isAuthenticated: !!user, isLoading: false, pendingMfa: null }),
+    set((s) => ({
+      user, isAuthenticated: !!user, isLoading: false, pendingMfa: null,
+      sessionVersion: s.sessionVersion + (s.user?.id !== user?.id ? 1 : 0),
+    })),
   setLoading: (isLoading) => set({ isLoading }),
   setPendingOAuth: (pendingOAuth) => set({ pendingOAuth, isLoading: false }),
   setPendingMfa: (pendingMfa) => set({ pendingMfa }),
   logout: () =>
-    set({
+    set((s) => ({
       user: null,
       isAuthenticated: false,
       isLoading: false,
       pendingOAuth: null,
       pendingMfa: null,
-    }),
+      sessionVersion: s.sessionVersion + 1,
+    })),
 }));

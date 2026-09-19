@@ -1,26 +1,19 @@
 import { useCartStore } from "@/store/cart-store";
-import { useOrdersStore } from "@/store/orders-store";
+import { useAuthStore } from "@/store/auth-store";
+import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useUserMediaStore } from "@/store/user-media-store";
-import { useAdminDisputeStore } from "@/store/admin-dispute-store";
-import { useAdminEventOverridesStore } from "@/store/admin-event-overrides-store";
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
-import { useAdminPayoutStore } from "@/store/admin-payout-store";
-import { useAdminPayoutReportStore } from "@/store/admin-payout-report-store";
-import { useAdminUserStore } from "@/store/admin-user-store";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
-import { useAdminUsersServerStore } from "@/lib/admin-users-data";
-import { useMyPhotographerMessagesStore } from "@/lib/me-photographer-messages-data";
-import { useMyRunnerMessagesStore } from "@/lib/me-runner-messages-data";
 import { resetPhotographerHydrationGuard } from "@/hooks/use-photographer-settings-hydration";
 import { useViewModeStore } from "@/store/view-mode-store";
 
-// Reset every Zustand store that carries user-scoped data + clears the
-// underlying localStorage slot each one persists into. Call this on every
+// Reset every Zustand store that carries user-scoped data and clear any
+// legacy persistence slots. Call this on every
 // auth transition (login, register, logout) so a fresh authenticated
-// session never inherits the previous user's photographer settings,
+// session never inherits the previous user's photographer draft settings,
 // cart, saved events, orders, selfies, or admin decisions/queue caches.
 //
 // History: the 2026-05-18 audit found that User A's photographer-settings
@@ -51,29 +44,19 @@ export function resetUserScopedStores(): void {
   // The hydration guard lives at module level (it must survive DashboardShell
   // remounts) — re-arm it here so the next account hydrates fresh.
   resetPhotographerHydrationGuard();
-  // PF-9 (2026-05-27): the photographer-messages inbox cache survived logout
-  // — next photographer login saw stale messages + unread badge from the
-  // previous account until the first refetch. Same class as the 9 admin-store
-  // leaks closed 2026-05-27 (see admin-flow audit P0).
-  useMyPhotographerMessagesStore.getState().reset();
-  // Same leak, runner side (2026-08-28 audit): PF-9 closed the photographer
-  // inbox only — the runner inbox store kept the previous account's messages
-  // and unread badge until the first refetch.
-  useMyRunnerMessagesStore.getState().reset();
+  // Notification inboxes now live in Query; auth transitions clear that cache.
   useUserMediaStore.getState().clear();
-  useOrdersStore.getState().clear();
+  // Drain the retired orders cache; Query is the only order-history owner.
+  try { globalThis.localStorage?.removeItem("quickpitik-orders"); } catch { /* Storage may be unavailable. */ }
+  usePendingPaymentStore.getState().clear();
   useCartStore.getState().clear();
   useSavedEventsStore.getState().clear();
 
   // Admin stores — decision logs, queue caches, optimistic overrides, and
   // command-palette recents. The legend + WS status stores reset via their
   // existing setters since they don't expose a `clear()` action.
-  useAdminUserStore.getState().clear();
-  useAdminPayoutStore.getState().clear();
-  useAdminPayoutReportStore.getState().clear();
-  useAdminDisputeStore.getState().clear();
-  useAdminEventOverridesStore.getState().clear();
-  useAdminUsersServerStore.getState().clear();
+  // Retired persisted demo submissions/logs must not survive an auth transition.
+  try { globalThis.localStorage?.removeItem("quickpitik-admin-user-store"); } catch { /* Storage may be unavailable. */ }
   useAdminPaletteStore.getState().setOpen(false);
   useAdminPaletteStore.getState().clearRecents();
   useAdminLegendStore.getState().setOpen(false);
@@ -95,6 +78,9 @@ export function resetUserScopedStores(): void {
 // That invariant is why this can be a straight restore instead of scoping the
 // persist keys by userId.
 export function captureGuestBuffer(): () => void {
+  // /login is reachable while signed in. That cart belongs to the existing
+  // account, so an account switch must not reclassify it as guest data.
+  if (useAuthStore.getState().isAuthenticated) return () => {};
   const items = useCartStore.getState().items;
   const ids = useSavedEventsStore.getState().ids;
 

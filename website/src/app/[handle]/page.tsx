@@ -25,7 +25,7 @@ import {
   usePhotographerSettingsStore,
   BRAND_COLOR_HEX,
 } from "@/store/photographer-settings-store";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 
 // Public photographer profile. Pure read surface — no edit affordances, no
 // URL pill, no "back to QuickPitik" footer, no Sales stat, even when the

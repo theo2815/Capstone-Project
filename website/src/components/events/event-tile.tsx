@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/types/event";
 import { SaveButton } from "@/components/events/save-button";
 import { ROUTES } from "@/lib/constants";
 import { canOwnerUploadToEvent, canUploadToEvent } from "@/lib/event-catalog";

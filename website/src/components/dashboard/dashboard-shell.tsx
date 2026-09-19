@@ -5,7 +5,6 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { DashboardRail } from "@/components/dashboard/dashboard-rail";
 import { DashboardBottomNav } from "@/components/dashboard/dashboard-bottom-nav";
 import { VerificationBanner } from "@/components/dashboard/verification-banner";
-import { usePhotographerSettingsHydration } from "@/hooks/use-photographer-settings-hydration";
 import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
 
 // Persistent shell for every /dashboard/* page. SiteHeader, sticky rail with
@@ -27,13 +26,6 @@ import { usePhotographerVerificationSync } from "@/lib/photographer-verification
 // mobile (hidden from md up).
 export function DashboardShell({ children }: { children: ReactNode }) {
   usePhotographerVerificationSync();
-  // Repopulates the photographer-settings + user-media stores from the BE
-  // after `resetUserScopedStores()` wipes them on every auth transition.
-  // Without this, /dashboard/billing's Request payout button is disabled,
-  // the share page copies a placeholder URL, and the verification banner
-  // flashes "Add your profile picture" for a verified photographer.
-  usePhotographerSettingsHydration();
-
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
       <SiteHeader />

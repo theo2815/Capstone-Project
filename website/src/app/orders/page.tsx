@@ -19,7 +19,7 @@ import {
   withdrawDispute,
   type RunnerDispute,
 } from "@/lib/api-orders";
-import { type MockOrder } from "@/store/orders-store";
+import { type OrderSummary } from "@/types/order";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import {
@@ -34,7 +34,6 @@ import {
   getOrderRefundStatus,
   type OrderRefundStatus,
 } from "@/lib/refund-helpers";
-import { getEventById } from "@/lib/event-catalog";
 import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
@@ -63,7 +62,7 @@ export default function OrdersPage() {
 
 function OrdersBody() {
   const { user } = useAuth();
-  const [refundOrder, setRefundOrder] = useState<MockOrder | null>(null);
+  const [refundOrder, setRefundOrder] = useState<OrderSummary | null>(null);
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -96,14 +95,7 @@ function OrdersBody() {
   if (!user) return null;
 
   const memberSince = formatMemberSince(user.createdAt);
-  const refundEvent = refundOrder
-    ? getEventById(refundOrder.eventId)
-    : undefined;
-  // Live event name lives on the order itself (BE-hydrated). Catalog
-  // fallback only matters for locally-pushed CheckoutModal orders that
-  // haven't been refetched yet.
-  const refundEventName =
-    refundOrder?.eventName ?? refundEvent?.name ?? "—";
+  const refundEventName = refundOrder?.eventName ?? "—";
 
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
@@ -222,7 +214,7 @@ function ReceiptsSlab({
   onRefundRequest,
   pendingExpand,
 }: {
-  onRefundRequest: (order: MockOrder) => void;
+  onRefundRequest: (order: OrderSummary) => void;
   pendingExpand: string | null;
 }) {
   const { orders } = useOrdersList();
@@ -288,16 +280,12 @@ function ReceiptRow({
   onRefundRequest,
   pendingExpand,
 }: {
-  order: MockOrder;
-  onRefundRequest: (order: MockOrder) => void;
+  order: OrderSummary;
+  onRefundRequest: (order: OrderSummary) => void;
   pendingExpand: string | null;
 }) {
-  // Prefer the BE-hydrated event fields on the order itself. The local
-  // EVENT_CATALOG seed is empty, so getEventById() returns undefined for any
-  // real backend order and we'd render "Event archived" for live data.
-  const catalogEvent = getEventById(order.eventId);
-  const eventName = order.eventName ?? catalogEvent?.name ?? null;
-  const eventSlug = order.eventSlug ?? catalogEvent?.slug ?? null;
+  const eventName = order.eventName ?? null;
+  const eventSlug = order.eventSlug ?? null;
   const [expanded, setExpanded] = useState(pendingExpand === order.id);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
@@ -674,7 +662,7 @@ function ReceiptsEmpty() {
   );
 }
 
-function computeSpendStats(orders: ReadonlyArray<MockOrder>): {
+function computeSpendStats(orders: ReadonlyArray<OrderSummary>): {
   total: number;
   orderCount: number;
   photoCount: number;

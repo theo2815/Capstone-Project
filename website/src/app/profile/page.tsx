@@ -34,12 +34,12 @@ import {
   fetchSavedEvents,
   type SavedEventSummary,
 } from "@/lib/api-saved-events";
-import type { MockOrder } from "@/store/orders-store";
+import type { OrderSummary } from "@/types/order";
 import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { formatMemberSince, formatRaceDate } from "@/lib/format";
 import type { PhotographerEventSummary } from "@/lib/photographer-mock";
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/types/event";
 import { deriveEventState } from "@/lib/event-catalog";
 import {
   usePhotographerSettingsStore,
@@ -362,7 +362,7 @@ function RaceLogEmpty() {
 // rows win when both signals fire so the unsave control stays attached.
 function buildRaceLog(
   summaries: ReadonlyArray<SavedEventSummary>,
-  orders: ReadonlyArray<MockOrder>,
+  orders: ReadonlyArray<OrderSummary>,
 ): ReadonlyArray<RaceLogEntry> {
   const photosByEvent = new Map<string, number>();
   for (const order of orders) {

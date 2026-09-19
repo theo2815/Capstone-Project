@@ -1,0 +1,48 @@
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { api } from "@/lib/api";
+import { admin, adminEvent } from "@/test/fixtures/admin";
+import { adminEventKeys } from "@/hooks/use-admin-events";
+import { useAuthStore } from "@/store/auth-store";
+import { useToastStore } from "@/store/toast-store";
+import { EventRequestsQueue } from "./event-requests-queue";
+let client: QueryClient;
+const key = adminEventKeys.list(admin.id, { review: "queue" });
+beforeEach(() => {
+  useAuthStore.getState().setUser(admin); useToastStore.getState().clear();
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(key, [{ ...adminEvent, status: "DRAFT", reviewStatus: "pending", createdByName: "Photographer" }]);
+  vi.spyOn(api, "get").mockResolvedValue({ items: [] });
+});
+afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
+it.each(["pending", "change_pending"] as const)("retains %s rejection input through failure and retries", async (reviewStatus) => {
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus }]);
+  const user = userEvent.setup(); let fail!: (error: Error) => void;
+  const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  const label = reviewStatus === "pending" ? "Send back" : "Decline";
+  await user.click(screen.getByRole("button", { name: label }));
+  const dialog = screen.getByRole("dialog"); const reason = within(dialog).getByLabelText("Reason (max 500)");
+  await user.type(reason, "Please clarify pricing"); await user.click(within(dialog).getByRole("button", { name: label }));
+  expect(reason).toBeDisabled(); await user.keyboard("{Escape}{Enter}"); expect(post).toHaveBeenCalledTimes(1);
+  await act(async () => { fail(new Error("Unavailable")); });
+  expect(reason).toHaveValue("Please clarify pricing"); expect(reason).toBeEnabled(); expect(dialog).toBeInTheDocument();
+  post.mockResolvedValueOnce({ ...adminEvent, reviewStatus: reviewStatus === "pending" ? "rejected" : "approved" });
+  await user.click(within(dialog).getByRole("button", { name: label }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(client.getQueryData(key)).toEqual([]);
+  expect(post).toHaveBeenLastCalledWith(`/admin/events/${adminEvent.id}/reject`, { reason: "Please clarify pricing" });
+});
+it("awaits approval before success and prevents duplicate submission", async () => {
+  let confirm!: (value: unknown) => void;
+  const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((resolve) => { confirm = resolve; }));
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  const submit = screen.getByRole("button", { name: "Approve" });
+  await userEvent.click(submit); await userEvent.click(submit);
+  expect(submit).toBeDisabled(); expect(post).toHaveBeenCalledTimes(1); expect(useToastStore.getState().toasts).toEqual([]);
+  await act(async () => { confirm(adminEvent); });
+  await waitFor(() => expect(client.getQueryData(key)).toEqual([]));
+  expect(useToastStore.getState().toasts[0].kind).toBe("success");
+});

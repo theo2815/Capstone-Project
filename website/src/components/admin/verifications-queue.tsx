@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -16,10 +16,11 @@ import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
 import { AvatarDisc } from "@/components/account/avatar-disc";
-import { useAdminUserStore } from "@/store/admin-user-store";
-import { useAdminUsersData } from "@/lib/admin-users-data";
+import { useAdminUserActions, useAdminUserDetail } from "@/hooks/use-admin-users";
+import { AdminDecisionsTimeline } from "./admin-decisions-timeline";
+import { useAdminUsers, EMPTY_ADMIN_USERS } from "@/hooks/use-admin-users";
+import { useAuthStore } from "@/store/auth-store";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
 import { useUrlState } from "@/hooks/use-url-state";
 import {
   useQueueKeyboardNav,
@@ -29,7 +30,6 @@ import {
   PAYOUT_METHOD_LABEL,
   SOCIAL_PLATFORM_LABEL,
   SOCIAL_PLATFORM_TILE,
-  usePhotographerSettingsStore,
 } from "@/store/photographer-settings-store";
 import {
   type AdminUserRow,
@@ -59,12 +59,6 @@ import { useRegions } from "@/hooks/use-regions";
 // on the right always opens. URL state via ?row=<userId> so refresh and
 // browser-back behave; the drawer mirrors the chip route pattern.
 //
-// Demo loop: when the admin Approves the row matching the currently
-// logged-in user, useAdminUserStore.approve() also flips
-// usePhotographerSettingsStore.verificationStatus to "approved" — so
-// toggling back to PHOTOGRAPHER role shows the updated dashboard banner
-// without a refresh.
-
 const SNAPSHOT_FIELDS: ReadonlyArray<{
   key: keyof PhotographerSettingsSnapshot;
   label: string;
@@ -78,24 +72,32 @@ const SNAPSHOT_FIELDS: ReadonlyArray<{
 ];
 
 export function VerificationsQueue() {
-  // Server data + optimistic overrides/submissions merged in a single hook.
-  // The decision log + mutation actions still live in useAdminUserStore.
-  const { rows: effective, loading, error, refetch } = useAdminUsersData();
-  const log = useAdminUserStore((s) => s.log);
-  const approve = useAdminUserStore((s) => s.approve);
-  const reject = useAdminUserStore((s) => s.reject);
+  const users = useAdminUsers();
+  const effective = users.data ?? EMPTY_ADMIN_USERS;
+  const { isPending: loading, refetch } = users;
+  const error = users.error?.message;
+  const { approve, reject } = useAdminUserActions();
+  const busy = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  async function run(action: () => Promise<void>) {
+    if (busy.current) return;
+    busy.current = true; setSubmitting(true);
+    try { await action(); }
+    finally { busy.current = false; setSubmitting(false); }
+  }
   const { showToast } = useToast();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [drawerRejectOpen, setDrawerRejectOpen] = useState(false);
   const [rowId, setRowId] = useUrlState<string>("row", "");
+  const detail = useAdminUserDetail(rowId || null);
 
   const pending = useMemo(
     () =>
       effective.filter(
         (u) =>
-          u.role === "PHOTOGRAPHER" && u.verificationStatus === "pending",
+          u.role === "PHOTOGRAPHER" && u.verificationStatus === "pending" && u.suspendedAt === null,
       ),
     [effective],
   );
@@ -121,19 +123,19 @@ export function VerificationsQueue() {
   // close the drawer by clearing the URL state.
   const openRow = useMemo<AdminUserRow | null>(() => {
     if (!rowId) return null;
-    const candidate = byId.get(rowId);
+    const candidate = detail.isSuccess ? detail.data : byId.get(rowId);
     if (!candidate) return null;
     if (
       candidate.role !== "PHOTOGRAPHER" ||
-      candidate.verificationStatus !== "pending"
+      candidate.verificationStatus !== "pending" || candidate.suspendedAt !== null
     )
       return null;
     return candidate;
-  }, [rowId, byId]);
+  }, [rowId, byId, detail.data, detail.isSuccess]);
 
   useEffect(() => {
-    if (rowId && !openRow) setRowId("");
-  }, [rowId, openRow, setRowId]);
+    if (rowId && detail.isSuccess && !detail.isFetching && !openRow && !submitting) setRowId("");
+  }, [rowId, openRow, setRowId, detail.isSuccess, detail.isFetching, submitting]);
 
   // Drop ids that have left the pending pool (e.g. just approved /
   // rejected — the row no longer renders a checkbox).
@@ -142,6 +144,7 @@ export function VerificationsQueue() {
     [pending],
   );
   useEffect(() => {
+    if (submitting) return;
     setSelected((prev) => {
       let mutated = false;
       const next = new Set<string>();
@@ -151,19 +154,19 @@ export function VerificationsQueue() {
       }
       return mutated ? next : prev;
     });
-  }, [pendingIds]);
+  }, [pendingIds, submitting]);
 
   // ESC clears selection when no modal/drawer is open.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
-      if (bulkRejectOpen || drawerRejectOpen || openRow) return;
+      if (submitting || bulkRejectOpen || drawerRejectOpen || openRow) return;
       if (selected.size === 0) return;
       setSelected(new Set());
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [selected, bulkRejectOpen, drawerRejectOpen, openRow]);
+  }, [selected, bulkRejectOpen, drawerRejectOpen, openRow, submitting]);
 
   const selectionActive = selected.size > 0;
 
@@ -178,19 +181,12 @@ export function VerificationsQueue() {
   const [incompleteLoaded, setIncompleteLoaded] = useState(
     PAGE_SIZE.ADMIN_INITIAL,
   );
-  const [decisionsLoaded, setDecisionsLoaded] = useState(
-    PAGE_SIZE.ADMIN_INITIAL,
-  );
   const incompleteVisible = useMemo(
     () => incomplete.slice(0, incompleteLoaded),
     [incomplete, incompleteLoaded],
   );
-  const decisionsVisible = useMemo(
-    () => log.slice(0, decisionsLoaded),
-    [log, decisionsLoaded],
-  );
   const queueNavDisabled =
-    openRow !== null || bulkRejectOpen || drawerRejectOpen;
+    submitting || openRow !== null || bulkRejectOpen || drawerRejectOpen;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
     rowIds,
     disabled: queueNavDisabled,
@@ -204,6 +200,7 @@ export function VerificationsQueue() {
   }, [rowId, setFocusedId]);
 
   function toggleSelect(id: string) {
+    if (busy.current) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -213,93 +210,78 @@ export function VerificationsQueue() {
   }
 
   function clearSelection() {
+    if (busy.current) return;
     setSelected(new Set());
   }
 
   function handleRowActivate(id: string) {
+    if (busy.current) return;
     setFocusedId(id);
     if (selectionActive) toggleSelect(id);
     else setRowId(id);
   }
 
   function handleOpenDrawer(id: string) {
+    if (busy.current) return;
     setFocusedId(id);
     setRowId(id);
   }
 
-  // Bulk handlers fan out N awaits in parallel via Promise.allSettled so
+  // Bulk handlers await explicit outcomes in parallel so
   // one BE failure doesn't block the rest. The summary toast tallies
   // successes vs failures so admin sees an honest count — individual
-  // failures already surfaced their own error toast from the store.
+  // failures already surfaced their own error toast from the action hook.
   async function handleBulkApprove() {
-    const ids = Array.from(selected);
-    const results = await Promise.allSettled(ids.map((id) => approve(id)));
-    const ok = results.filter(
-      (r) => r.status === "fulfilled" && r.value === true,
-    ).length;
-    clearSelection();
-    if (ok === ids.length) {
-      showToast({
-        kind: "success",
-        message: `Approved · ${ok} ${ok === 1 ? "photographer" : "photographers"}`,
-      });
-    } else if (ok > 0) {
-      showToast({
-        kind: "error",
-        message: `Approved ${ok}/${ids.length} — ${ids.length - ok} failed`,
-      });
-    }
+    await run(() => handleBulkDecision());
   }
 
   async function handleBulkRejectSubmit(reason: string) {
-    const ids = Array.from(selected);
-    setBulkRejectOpen(false);
-    const results = await Promise.allSettled(
-      ids.map((id) => reject(id, reason)),
-    );
-    const ok = results.filter(
-      (r) => r.status === "fulfilled" && r.value === true,
-    ).length;
-    clearSelection();
-    if (ok === ids.length) {
-      showToast({
-        kind: "info",
-        message: `Sent back · ${ok} ${ok === 1 ? "photographer" : "photographers"}`,
-      });
-    } else if (ok > 0) {
-      showToast({
-        kind: "error",
-        message: `Sent back ${ok}/${ids.length} — ${ids.length - ok} failed`,
-      });
-    }
+    await run(() => handleBulkDecision(reason));
+  }
+
+  async function handleBulkDecision(reason?: string) {
+    const sessionVersion = useAuthStore.getState().sessionVersion;
+    const ids = Array.from(selected).filter((id) => pendingIds.has(id));
+    if (!ids.length) return;
+    const results = await Promise.all(ids.map((id) => reason === undefined ? approve(id) : reject(id, reason)));
+    if (useAuthStore.getState().sessionVersion !== sessionVersion) return;
+    const failed = ids.filter((_, i) => !results[i]);
+    setSelected(new Set(failed));
+    const count = ids.length - failed.length;
+    if (!failed.length) setBulkRejectOpen(false);
+    if (count) showToast({
+      kind: failed.length ? "error" : reason === undefined ? "success" : "info",
+      message: failed.length ? `${count}/${ids.length} updated — ${failed.length} failed` : `${reason === undefined ? "Approved" : "Sent back"} · ${count} ${count === 1 ? "photographer" : "photographers"}`,
+    });
   }
 
   async function handleDrawerApprove() {
     if (!openRow) return;
-    const brand = openRow.brandName ?? openRow.name;
-    const ok = await approve(openRow.userId);
-    if (ok) {
-      showToast({ kind: "success", message: `Approved · ${brand}` });
-      setRowId("");
-    }
+    const row = openRow;
+    await run(async () => {
+      if (await approve(row.userId)) {
+        showToast({ kind: "success", message: `Approved · ${row.brandName ?? row.name}` });
+        setRowId("");
+      }
+    });
   }
 
   async function handleDrawerRejectSubmit(reason: string) {
     if (!openRow) return;
-    const brand = openRow.brandName ?? openRow.name;
-    setDrawerRejectOpen(false);
-    const ok = await reject(openRow.userId, reason);
-    if (ok) {
-      showToast({ kind: "info", message: `Sent back · ${brand}` });
-      setRowId("");
-    }
+    const row = openRow;
+    await run(async () => {
+      if (await reject(row.userId, reason)) {
+        showToast({ kind: "info", message: `Sent back · ${row.brandName ?? row.name}` });
+        setDrawerRejectOpen(false); setRowId("");
+      }
+    });
   }
 
   // Drawer verbs: E approves the open photographer, R opens the reject
   // reason modal. Disabled while the modal is on top so a stray E/R
   // doesn't punch through.
   useDrawerVerbs({
-    active: openRow !== null && !drawerRejectOpen,
+    active: openRow !== null && !drawerRejectOpen && !submitting,
     verbs: openRow
       ? {
           E: handleDrawerApprove,
@@ -316,6 +298,8 @@ export function VerificationsQueue() {
 
   return (
     <>
+      {rowId && detail.isPending && !openRow && <p role="status">Loading verification…</p>}
+      {rowId && detail.isError && <p role="alert">Couldn&apos;t load verification. <button onClick={() => void detail.refetch()}>Try again</button></p>}
       {(showFirstLoad || showError) && (
         <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           {showFirstLoad
@@ -349,6 +333,7 @@ export function VerificationsQueue() {
               <li key={row.userId}>
                 <PendingRow
                   row={row}
+                  disabled={submitting}
                   selected={selected.has(row.userId)}
                   selectionActive={selectionActive}
                   focused={focusedId === row.userId}
@@ -409,67 +394,12 @@ export function VerificationsQueue() {
         )}
       </Slab>
 
-      <Slab
-        id="recent-decisions"
-        number="03"
-        title="Recent decisions"
-        caption="Last 30 days"
-        trailing={`${log.length} logged`}
-      >
-        {log.length === 0 ? (
-          <p className="font-sans text-sm text-slate-soft">
-            No decisions in the last 30 days.
-          </p>
-        ) : (
-          <>
-            <ul className="space-y-3">
-              {decisionsVisible.map((entry, i) => {
-                const target = byId.get(entry.userId);
-                return (
-                  <li
-                    key={`${entry.userId}-${entry.decidedAt}-${i}`}
-                    className="flex items-center justify-between gap-4 border-b border-line pb-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-display text-base text-ink truncate">
-                        {target?.brandName ?? target?.name ?? entry.userId}
-                      </p>
-                      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
-                        {formatDecidedAt(entry.decidedAt)}
-                        {entry.reason && (
-                          <>
-                            <span className="text-slate-soft"> · </span>
-                            <span className="text-slate">{entry.reason}</span>
-                          </>
-                        )}
-                      </p>
-                    </div>
-                    <span
-                      className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 ${
-                        entry.decision === "approved"
-                          ? "text-fresh"
-                          : "text-slate"
-                      }`}
-                    >
-                      {entry.decision === "approved" ? "Approved" : "Rejected"}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-            <LoadMoreButton
-              shown={decisionsVisible.length}
-              total={log.length}
-              increment={PAGE_SIZE.ADMIN_INCREMENT}
-              onLoadMore={() =>
-                setDecisionsLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT)
-              }
-            />
-          </>
-        )}
+      <Slab id="recent-decisions" number="03" title="Decision history">
+        <AdminDecisionsTimeline />
       </Slab>
 
       <VerificationsBulkBar
+        submitting={submitting}
         count={selected.size}
         onApprove={handleBulkApprove}
         onReject={() => setBulkRejectOpen(true)}
@@ -477,6 +407,8 @@ export function VerificationsQueue() {
       />
 
       <AdminRejectModal
+
+        submitting={submitting}
         open={bulkRejectOpen}
         onClose={() => setBulkRejectOpen(false)}
         onSubmit={handleBulkRejectSubmit}
@@ -488,8 +420,8 @@ export function VerificationsQueue() {
       {openRow && (
         <AdminDetailDrawer
           open={true}
-          onClose={() => setRowId("")}
-          escDisabled={drawerRejectOpen}
+          onClose={() => { if (!busy.current) setRowId(""); }}
+          escDisabled={drawerRejectOpen || submitting}
           kicker="Verification"
           title={openRow.brandName ?? openRow.name}
           rightHeader={
@@ -512,6 +444,7 @@ export function VerificationsQueue() {
             <>
               <button
                 type="button"
+                disabled={submitting}
                 onClick={() => setDrawerRejectOpen(true)}
                 className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
               >
@@ -519,6 +452,7 @@ export function VerificationsQueue() {
               </button>
               <button
                 type="button"
+                disabled={submitting}
                 onClick={handleDrawerApprove}
                 className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
               >
@@ -533,6 +467,7 @@ export function VerificationsQueue() {
 
       {openRow && (
         <AdminRejectModal
+          submitting={submitting}
           open={drawerRejectOpen}
           onClose={() => setDrawerRejectOpen(false)}
           onSubmit={handleDrawerRejectSubmit}
@@ -543,26 +478,9 @@ export function VerificationsQueue() {
   );
 }
 
-// Pending count is also exported so headers (inbox / verifications) can
-// show "N waiting" without re-deriving from the store.
-export function usePendingVerificationsCount(): number {
-  const { rows } = useAdminUsersData();
-  return useMemo(() => {
-    let count = 0;
-    for (const row of rows) {
-      if (
-        row.role === "PHOTOGRAPHER" &&
-        row.verificationStatus === "pending"
-      ) {
-        count += 1;
-      }
-    }
-    return count;
-  }, [rows]);
-}
-
 function PendingRow({
   row,
+  disabled,
   selected,
   selectionActive,
   focused,
@@ -571,6 +489,7 @@ function PendingRow({
   onOpenDrawer,
 }: {
   row: AdminUserRow;
+  disabled: boolean;
   selected: boolean;
   selectionActive: boolean;
   focused: boolean;
@@ -578,26 +497,7 @@ function PendingRow({
   onActivate: () => void;
   onOpenDrawer: () => void;
 }) {
-  const { user: sessionUser } = useAuth();
-  const liveSettings = usePhotographerSettingsStore();
-
-  const isSelf = sessionUser?.id === row.userId;
-  // For the seeded user matching the logged-in admin's previous session,
-  // pull live settings instead of the snapshot so the demo loop reflects
-  // photographer's most recent /dashboard/settings edits.
-  const liveSnapshot: PhotographerSettingsSnapshot | null = isSelf
-    ? {
-        hasCover: !!liveSettings.cover,
-        hasBrandName: liveSettings.brandName.trim().length > 0,
-        hasWatermark: !!liveSettings.watermark,
-        hasHandle: liveSettings.handle.trim().length >= 3,
-        hasRegion: !!liveSettings.region,
-        socialCount: liveSettings.socials.length,
-        payoutCount: liveSettings.payouts.length,
-      }
-    : row.settingsSnapshot;
-
-  const completeness = computeCompleteness(liveSnapshot);
+  const completeness = computeCompleteness(row.settingsSnapshot);
 
   function handleArticleKeyDown(e: React.KeyboardEvent<HTMLElement>) {
     if (e.key === "Enter" || e.key === " ") {
@@ -609,6 +509,7 @@ function PendingRow({
   return (
     <article
       role="button"
+      aria-disabled={disabled}
       tabIndex={0}
       data-row-id={row.userId}
       aria-label={`${row.brandName ?? row.name}${
@@ -623,6 +524,7 @@ function PendingRow({
       <div className="flex items-start gap-4 flex-wrap md:flex-nowrap">
         <input
           type="checkbox"
+          disabled={disabled}
           checked={selected}
           onChange={onToggleSelect}
           onClick={(e) => e.stopPropagation()}
@@ -649,16 +551,16 @@ function PendingRow({
               </p>
 
               <div className="mt-5 flex items-center gap-3 flex-wrap">
-                <CompletenessStrip snapshot={liveSnapshot} />
+                <CompletenessStrip snapshot={row.settingsSnapshot} />
                 <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
                   {completeness.filled}/{completeness.total} fields
                 </span>
-                {liveSnapshot && (
+                {row.settingsSnapshot && (
                   <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
                     ·{" "}
-                    <span className="tnum">{liveSnapshot.socialCount}</span>{" "}
+                    <span className="tnum">{row.settingsSnapshot.socialCount}</span>{" "}
                     social ·{" "}
-                    <span className="tnum">{liveSnapshot.payoutCount}</span>{" "}
+                    <span className="tnum">{row.settingsSnapshot.payoutCount}</span>{" "}
                     payout
                   </span>
                 )}
@@ -667,12 +569,13 @@ function PendingRow({
 
             <button
               type="button"
+              disabled={disabled}
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenDrawer();
               }}
               aria-label={`Open review for ${row.brandName ?? row.name}`}
-              className="shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
+              className="disabled:opacity-50 disabled:cursor-not-allowed shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
             >
               <span aria-hidden="true" className="text-lg leading-none">
                 ›
@@ -686,12 +589,10 @@ function PendingRow({
 }
 
 function VerificationDetailBody({ row }: { row: AdminUserRow }) {
-  const { user: sessionUser } = useAuth();
-  const liveSettings = usePhotographerSettingsStore();
-  const effective = useEffectivePhotographerSettings(row.userId);
+  const settings = useEffectivePhotographerSettings(row.userId);
+  const effective = settings.data;
   const { regions } = useRegions();
 
-  const isSelf = sessionUser?.id === row.userId;
   const liveSnapshot: PhotographerSettingsSnapshot | null = effective
     ? {
         hasCover: !!effective.cover,
@@ -702,17 +603,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         socialCount: effective.socials.length,
         payoutCount: effective.payouts.length,
       }
-    : isSelf
-      ? {
-          hasCover: !!liveSettings.cover,
-          hasBrandName: liveSettings.brandName.trim().length > 0,
-          hasWatermark: !!liveSettings.watermark,
-          hasHandle: liveSettings.handle.trim().length >= 3,
-          hasRegion: !!liveSettings.region,
-          socialCount: liveSettings.socials.length,
-          payoutCount: liveSettings.payouts.length,
-        }
-      : row.settingsSnapshot;
+    : row.settingsSnapshot;
 
   const completeness = computeCompleteness(liveSnapshot);
   const resolvedRegion = effective?.region
@@ -728,6 +619,9 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const socialsCount = effective?.socials.length ?? 0;
   const payoutsCount = effective?.payouts.length ?? 0;
   const avatarUrl = effective?.avatarUrl ?? row.avatarUrl ?? null;
+
+  if (settings.isPending) return <p role="status">Loading verification details…</p>;
+  if (settings.isError) return <p role="alert">Couldn&apos;t load verification details. <button onClick={() => void settings.refetch()}>Try again</button></p>;
 
   return (
     <div className="space-y-6">
@@ -1082,11 +976,13 @@ function FieldRow({
 
 function VerificationsBulkBar({
   count,
+  submitting,
   onApprove,
   onReject,
   onClear,
 }: {
   count: number;
+  submitting: boolean;
   onApprove: () => void;
   onReject: () => void;
   onClear: () => void;
@@ -1106,6 +1002,7 @@ function VerificationsBulkBar({
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
+            disabled={submitting}
             onClick={onApprove}
             className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
           >
@@ -1113,6 +1010,7 @@ function VerificationsBulkBar({
           </button>
           <button
             type="button"
+            disabled={submitting}
             onClick={onReject}
             className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
           >
@@ -1120,8 +1018,9 @@ function VerificationsBulkBar({
           </button>
           <button
             type="button"
+            disabled={submitting}
             onClick={onClear}
-            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-2"
+            className="disabled:opacity-50 disabled:cursor-not-allowed font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-2"
           >
             Clear
           </button>
@@ -1200,15 +1099,4 @@ function formatJoinDate(iso: string): string {
   const d = new Date(iso + "T00:00:00");
   const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
   return `${month} ${d.getFullYear()}`;
-}
-
-function formatDecidedAt(iso: string): string {
-  const d = new Date(iso);
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  const day = d.getDate().toString().padStart(2, "0");
-  const time = d.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  return `${month} ${day} · ${time}`;
 }

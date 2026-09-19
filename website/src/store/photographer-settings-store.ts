@@ -1,11 +1,7 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-
-// TODO(backend): swap localStorage persist for Spring Boot Phase F
-// (`/me/photographer/settings`). State shape mirrors the eventual API
-// contract — cover, brand, watermark are URL-bearing fields on the server.
-// Until then, data URLs are stored client-side which has a ~5 MB total
-// localStorage budget — `lib/image-utils.ts` downscales before writing.
+// Server-owned settings are cached by TanStack Query. This store is an
+// in-memory draft bridge for the Settings editor and cross-route readiness UI;
+// it must not persist server records across refreshes or account transitions.
 //
 // Backend ownership of new collections (added 2026-05-06 PM):
 // - region: read-write via `PUT /me/photographer/region`. The list of regions
@@ -255,7 +251,6 @@ function newId(): string {
 }
 
 export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
-  persist(
     (set, get) => ({
       ...SEED,
       setCover: (cover) => set({ cover }),
@@ -351,6 +346,4 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
       },
       reset: () => set(SEED),
     }),
-    { name: "quickpitik-photographer-settings" },
-  ),
 );

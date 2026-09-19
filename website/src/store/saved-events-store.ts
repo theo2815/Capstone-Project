@@ -1,3 +1,4 @@
+import { captureAuthSession } from "@/lib/auth-session";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
@@ -56,8 +57,10 @@ export const useSavedEventsStore = create<SavedEventsState>()(
           return { ids: nextIds, summaries: nextSummaries };
         });
         if (added && get().syncEnabled) {
+          const isCurrent = captureAuthSession();
           postSaveEvent(eventId)
             .then((summary) => {
+              if (!isCurrent()) return;
               // Reconcile: replace the optimistic row with the BE truth so
               // bannerUrl + savedAt match what other clients will see.
               set((state) => ({
@@ -68,6 +71,7 @@ export const useSavedEventsStore = create<SavedEventsState>()(
               }));
             })
             .catch(() => {
+            if (!isCurrent()) return;
               set((state) => ({
                 ids: state.ids.filter((x) => x !== eventId),
                 summaries: state.summaries.filter((s) => s.id !== eventId),
@@ -88,7 +92,9 @@ export const useSavedEventsStore = create<SavedEventsState>()(
           };
         });
         if (removed && get().syncEnabled) {
+          const isCurrent = captureAuthSession();
           postUnsaveEvent(eventId).catch(() => {
+            if (!isCurrent()) return;
             set((state) =>
               state.ids.includes(eventId)
                 ? state

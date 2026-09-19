@@ -142,13 +142,9 @@ export default function AdminOverviewPage() {
       <Slab
         id="decisions"
         number="03"
-        title="Latest decisions"
-        caption="Most recent first"
+        title="Decision history"
       >
-        <AdminDecisionsTimeline
-          limit={10}
-          emptyCopy="No decisions yet — approve or reject a photographer in /admin/inbox to start the timeline."
-        />
+        <AdminDecisionsTimeline />
       </Slab>
     </>
   );
@@ -164,8 +160,8 @@ function Header() {
         The week.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Eight metrics across every queue, the platform&apos;s last 30 days,
-        and your recent decisions. Open the Inbox for today&apos;s work.
+        Eight metrics across every queue and the platform&apos;s last 30 days.
+        Open the Inbox for today&apos;s work.
       </p>
     </header>
   );

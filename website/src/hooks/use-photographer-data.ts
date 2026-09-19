@@ -1,5 +1,7 @@
 "use client";
 
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { dedupeItems, useInfiniteList } from "@/hooks/use-infinite-list";
 import { PAGE_SIZE } from "@/lib/pagination-config";
@@ -15,7 +17,6 @@ import {
   fetchPerEventEarnings,
   fetchPhotographerPayouts,
   fetchPhotographerPayoutBalance,
-  fetchPhotographerPayoutReports,
   fetchPhotographerTransactions,
   type PayoutBalanceResponse,
   type PerEventEarning,
@@ -32,10 +33,6 @@ import type {
   PhotographerLibraryPhoto,
   PhotographerPayout,
 } from "@/lib/photographer-mock";
-import type {
-  PayoutReport,
-  PayoutReportStatus,
-} from "@/lib/admin-payout-reports";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
 import type { PaginatedResponse } from "@/types/api";
 
@@ -65,9 +62,11 @@ export const COVERED_EVENTS_MAX = 200;
 export function usePhotographerEvents(
   args: { withUploads?: boolean; limit?: number } = {},
 ): PhotographerEventSummary[] | null {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   const query = useQuery<PhotographerEventSummary[]>({
-    queryKey: ["photographer", "events", args],
-    queryFn: () => fetchPhotographerEvents(args).then((r) => r.items),
+    queryKey: ["photographer", "events", args, ...session.key],
+    queryFn: ({ signal }) => fetchPhotographerEvents(args, signal).then((r) => r.items),
+    enabled: session.enabled,
     staleTime: EVENTS_STALE_MS,
   });
   return query.data ?? null;
@@ -87,11 +86,12 @@ export interface PhotographerEventDetailResult {
 export function usePhotographerEventDetail(
   eventId: string | null,
 ): PhotographerEventDetailResult {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   const query = useQuery<PhotographerEventDetail | null>({
-    queryKey: ["photographer", "events", eventId],
-    queryFn: () =>
-      eventId ? fetchPhotographerEventDetail(eventId) : Promise.resolve(null),
-    enabled: !!eventId,
+    queryKey: ["photographer", "events", eventId, ...session.key],
+    queryFn: ({ signal }) =>
+      eventId ? fetchPhotographerEventDetail(eventId, signal) : Promise.resolve(null),
+    enabled: session.enabled && !!eventId,
     staleTime: EVENTS_STALE_MS,
     // A 404 is a verdict, not a blip. Retrying it just holds the skeleton up
     // for several seconds before the page can render its 404. 429 is excluded
@@ -115,6 +115,7 @@ export function usePhotographerEventPhotos(
   opts: { deleted?: boolean; enabled?: boolean } = {},
 ) {
   const deleted = opts.deleted ?? false;
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   return useInfiniteList<PhotographerLibraryPhoto>({
     // Active and Deleted (trash) are separate cached lists for the same event.
     queryKey: [
@@ -123,13 +124,14 @@ export function usePhotographerEventPhotos(
       eventId,
       "photos",
       deleted ? "deleted" : "active",
+      ...session.key,
     ],
-    fetchPage: (offset, limit) =>
+    fetchPage: (offset, limit, signal) =>
       eventId
-        ? fetchPhotographerEventPhotos(eventId, { offset, limit, deleted })
+        ? fetchPhotographerEventPhotos(eventId, { offset, limit, deleted }, signal)
         : Promise.resolve({ items: [], total: 0, offset, limit }),
     limit: PAGE_SIZE.PHOTO_INCREMENT,
-    enabled: !!eventId && (opts.enabled ?? true),
+    enabled: session.enabled && !!eventId && (opts.enabled ?? true),
     staleTime: EVENTS_STALE_MS,
   });
 }
@@ -137,9 +139,11 @@ export function usePhotographerEventPhotos(
 // ───────────────────────────────────────────── Earnings
 
 export function usePhotographerEarnings(): PhotographerEarnings | null {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   const query = useQuery<PhotographerEarnings | null>({
-    queryKey: ["photographer", "earnings"],
-    queryFn: () => fetchPhotographerEarnings(),
+    queryKey: ["photographer", "earnings", ...session.key],
+    queryFn: ({ signal }) => fetchPhotographerEarnings(signal),
+    enabled: session.enabled,
     staleTime: EARNINGS_STALE_MS,
   });
   return query.data ?? null;
@@ -150,9 +154,11 @@ export function usePhotographerEarnings(): PhotographerEarnings | null {
 // rank the loaded page. The fetcher defaults to the BE max, and the slab
 // client-slices the render. Envelope kept so the page can say "N of M".
 export function usePhotographerPerEventEarnings(): PaginatedResponse<PerEventEarning> | null {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   const query = useQuery<PaginatedResponse<PerEventEarning>>({
-    queryKey: ["photographer", "earnings", "per-event"],
-    queryFn: () => fetchPerEventEarnings(),
+    queryKey: ["photographer", "earnings", "per-event", ...session.key],
+    queryFn: ({ signal }) => fetchPerEventEarnings({}, signal),
+    enabled: session.enabled,
     staleTime: EARNINGS_STALE_MS,
   });
   return query.data ?? null;
@@ -161,10 +167,12 @@ export function usePhotographerPerEventEarnings(): PaginatedResponse<PerEventEar
 // ───────────────────────────────────────────── Payouts
 
 export function usePhotographerPayouts() {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   return useInfiniteList<PhotographerPayout>({
-    queryKey: ["photographer", "payouts"],
-    fetchPage: (offset, limit) => fetchPhotographerPayouts({ offset, limit }),
+    queryKey: ["photographer", "payouts", ...session.key],
+    fetchPage: (offset, limit, signal) => fetchPhotographerPayouts({ offset, limit }, signal),
     limit: PAGE_SIZE.PAYOUT_INCREMENT,
+    enabled: session.enabled,
     staleTime: EARNINGS_STALE_MS,
   });
 }
@@ -173,21 +181,12 @@ export function usePhotographerPayouts() {
 // /dashboard/billing. Short stale time so the hero reacts quickly after a
 // request is submitted or admin acts on a cycle.
 export function usePhotographerPayoutBalance(): PayoutBalanceResponse | null {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   const query = useQuery<PayoutBalanceResponse | null>({
-    queryKey: ["photographer", "payouts", "balance"],
-    queryFn: () => fetchPhotographerPayoutBalance(),
+    queryKey: ["photographer", "payouts", "balance", ...session.key],
+    queryFn: ({ signal }) => fetchPhotographerPayoutBalance(signal),
+    enabled: session.enabled,
     staleTime: 30_000,
-  });
-  return query.data ?? null;
-}
-
-export function usePhotographerPayoutReports(args: {
-  status?: PayoutReportStatus;
-} = {}): PayoutReport[] | null {
-  const query = useQuery<PayoutReport[] | null>({
-    queryKey: ["photographer", "payouts", "reports", args],
-    queryFn: () => fetchPhotographerPayoutReports(args),
-    staleTime: EARNINGS_STALE_MS,
   });
   return query.data ?? null;
 }
@@ -198,18 +197,20 @@ export function usePhotographerPayoutReports(args: {
 // `monthTotals` envelope field. The server computes monthTotals over ALL rows,
 // so it is identical on every page — read it from page 0, never accumulate.
 export function usePhotographerTransactions() {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   const query = useInfiniteQuery({
-    queryKey: ["photographer", "transactions"],
-    queryFn: ({ pageParam }) =>
+    queryKey: ["photographer", "transactions", ...session.key],
+    queryFn: ({ pageParam, signal }) =>
       fetchPhotographerTransactions({
         offset: pageParam,
         limit: PAGE_SIZE.TRANSACTION_INCREMENT,
-      }),
+      }, signal),
     initialPageParam: 0,
     getNextPageParam: (last) => {
       const next = last.offset + last.limit;
       return next < last.total ? next : undefined;
     },
+    enabled: session.enabled,
     staleTime: EARNINGS_STALE_MS,
   });
   const pages = query.data?.pages ?? [];
@@ -217,7 +218,7 @@ export function usePhotographerTransactions() {
     items: dedupeItems(pages),
     total: pages.at(-1)?.total ?? 0,
     monthTotals: pages[0]?.monthTotals ?? {},
-    isLoading: query.isPending,
+    isLoading: query.isPending && session.enabled,
     isFetchingNextPage: query.isFetchingNextPage,
     hasNextPage: query.hasNextPage,
     fetchNextPage: () => void query.fetchNextPage(),

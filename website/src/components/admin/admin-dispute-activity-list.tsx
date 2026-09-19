@@ -2,85 +2,23 @@
 
 import { useMemo } from "react";
 import {
-  useAdminDisputeStore,
-  type DisputeDecision,
-} from "@/store/admin-dispute-store";
-import {
   DISPUTE_RESOLUTION_LABEL,
   type DisputeActivityEntry,
-  type DisputeResolution,
 } from "@/lib/admin-disputes";
 import { formatPrice } from "@/lib/utils";
 
+type DisputeDecision = DisputeActivityEntry["decision"];
+
 interface AdminDisputeActivityListProps {
-  disputeId: string;
-  // Server-side audit trail from admin_decision_log. When provided, this is
-  // the source of truth. Local-store entries layer on top to surface
-  // optimistic actions that haven't roundtripped yet.
   activity?: DisputeActivityEntry[];
 }
 
-interface ActivityRow {
-  key: string;
-  decidedAt: string;
-  decision: DisputeDecision;
-  resolution: DisputeResolution | null;
-  refundAmount: number | null;
-  reason: string | null;
-}
-
-// Per-dispute activity log. Prefers the BE-persisted activity (survives
-// page reloads + session changes); merges in the local-store optimistic
-// log so admin actions show instantly before the query refetches.
-export function AdminDisputeActivityList({
-  disputeId,
-  activity,
-}: AdminDisputeActivityListProps) {
-  const localLog = useAdminDisputeStore((s) => s.log);
-
-  const rows = useMemo<ActivityRow[]>(() => {
-    const serverRows: ActivityRow[] = (activity ?? []).map((e) => ({
-      key: `srv-${e.id}`,
-      decidedAt: e.decidedAt,
-      decision: e.decision,
-      resolution: e.resolution,
-      refundAmount: e.refundAmount,
-      reason: e.reason,
-    }));
-
-    // Layer local entries on top — keyed by decidedAt to avoid double-counting
-    // once the BE round-trips and the same action lands in `activity`. We
-    // consider a local entry already represented if any server row's
-    // decidedAt is within 60s of it AND the decisions match.
-    const matched = (local: (typeof localLog)[number]): boolean => {
-      const lt = Date.parse(local.decidedAt);
-      if (!Number.isFinite(lt)) return false;
-      return serverRows.some((s) => {
-        const st = Date.parse(s.decidedAt);
-        return (
-          s.decision === local.decision &&
-          Number.isFinite(st) &&
-          Math.abs(st - lt) < 60_000
-        );
-      });
-    };
-
-    const localRows: ActivityRow[] = localLog
-      .filter((e) => e.disputeId === disputeId && !matched(e))
-      .map((e, i) => ({
-        key: `loc-${e.disputeId}-${e.decidedAt}-${i}`,
-        decidedAt: e.decidedAt,
-        decision: e.decision,
-        resolution: e.resolution,
-        refundAmount: e.refundAmount,
-        reason: e.reason,
-      }));
-
-    // Newest first — matches the BE ORDER BY decidedAt DESC.
-    return [...serverRows, ...localRows]
-      .sort((a, b) => b.decidedAt.localeCompare(a.decidedAt))
-      .slice(0, 20);
-  }, [activity, localLog, disputeId]);
+// Render the backend audit trail directly, without session logs or timestamp deduplication.
+export function AdminDisputeActivityList({ activity }: AdminDisputeActivityListProps) {
+  const rows = useMemo(
+    () => [...(activity ?? [])].sort((a, b) => b.decidedAt.localeCompare(a.decidedAt)).slice(0, 20),
+    [activity],
+  );
 
   if (rows.length === 0) {
     return (
@@ -95,7 +33,7 @@ export function AdminDisputeActivityList({
     <ul className="space-y-3">
       {rows.map((entry) => (
         <li
-          key={entry.key}
+          key={entry.id}
           className="flex items-start justify-between gap-4 border-b border-line pb-3"
         >
           <div className="min-w-0 flex-1">

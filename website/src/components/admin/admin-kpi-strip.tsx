@@ -1,24 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
+import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-import { useAdminUsersData } from "@/lib/admin-users-data";
-import {
-  useAdminDisputeStore,
-  getEffectiveDisputes,
-} from "@/store/admin-dispute-store";
-import {
-  useAdminPayoutStore,
-  mergePayoutsWithOverrides,
-} from "@/store/admin-payout-store";
+import { useAdminUsers, EMPTY_ADMIN_USERS } from "@/hooks/use-admin-users";
+import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { cn } from "@/lib/utils";
 import {
   useAdminKpis,
   useAdminFlags,
-  useAdminPayouts,
-  EMPTY_PAYOUTS,
 } from "@/hooks/use-admin-data";
 
 // Compact at-a-glance metrics row. Sits above the inbox queue (Phase 1)
@@ -43,14 +35,12 @@ interface KpiEntry {
 }
 
 export function AdminKpiStrip() {
-  const { rows: userRows } = useAdminUsersData();
-  const disputeOverrides = useAdminDisputeStore((s) => s.overrides);
-  const disputeSubmissions = useAdminDisputeStore((s) => s.submissions);
+  const userRows = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
+  const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const serverOpenFlags = useAdminFlags({ status: "open" })?.total ?? 0;
-  const payoutOverrides = useAdminPayoutStore((s) => s.overrides);
   // A-1 followup: hydrate payouts from BE so the fallback path matches the
   // live data shape instead of the empty mock seed.
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
+  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   // Live-mode preference: when GET /admin/kpis returns, override the
   // 4 counts the strip surfaces. Falls back to derivation from the merged
   // admin users hook while the kpis endpoint is still loading.
@@ -68,15 +58,9 @@ export function AdminKpiStrip() {
       }
     }
 
-    let openDisputes = getEffectiveDisputes(
-      disputeOverrides,
-      disputeSubmissions,
-    ).filter((d) => d.status === "open").length;
+    let openDisputes = disputes.filter((d) => d.status === "open").length;
     let openFlags = serverOpenFlags;
-    let pendingPayouts = mergePayoutsWithOverrides(
-      serverPayouts,
-      payoutOverrides,
-    ).filter((p) => p.status === "pending_review").length;
+    let pendingPayouts = serverPayouts.filter((p) => p.status === "pending_review").length;
     // Event requests (V46) have no client-side fallback — BE count only.
     const pendingEventRequests = liveKpis?.pendingEventRequests ?? 0;
 
@@ -129,10 +113,8 @@ export function AdminKpiStrip() {
       : all.filter((e) => e.label !== "Flags");
   }, [
     userRows,
-    disputeOverrides,
-    disputeSubmissions,
+    disputes,
     serverOpenFlags,
-    payoutOverrides,
     serverPayouts,
     liveKpis,
   ]);

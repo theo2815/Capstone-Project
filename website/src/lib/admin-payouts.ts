@@ -3,7 +3,7 @@ import {
   type PayoutMethod,
 } from "@/store/photographer-settings-store";
 
-// Phase 2b — admin payout review queue. Distinct from the photographer-
+// Admin payout review queue. Distinct from the photographer-
 // facing PhotographerPayout (which is the photographer's view of their own
 // cycles in `lib/photographer-mock.ts`). Admin sees a flat list of every
 // photographer's pending cycles with status transitions:
@@ -91,14 +91,4 @@ export const ADMIN_PAYOUT_STATUS_LABEL: Record<AdminPayoutStatus, string> = {
 
 export function payoutMethodLabel(method: PayoutMethod): string {
   return PAYOUT_METHOD_LABEL[method];
-}
-
-export const ADMIN_PAYOUT_SEED: ReadonlyArray<AdminPayoutCycle> = [];
-
-export function getPendingPayouts(): AdminPayoutCycle[] {
-  return ADMIN_PAYOUT_SEED.filter((p) => p.status === "pending_review");
-}
-
-export function getPayoutById(id: string): AdminPayoutCycle | undefined {
-  return ADMIN_PAYOUT_SEED.find((p) => p.id === id);
 }
