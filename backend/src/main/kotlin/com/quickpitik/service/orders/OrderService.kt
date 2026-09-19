@@ -120,19 +120,20 @@ class OrderService(
         }
 
         val primary = pickPrimary(reservation.orders)
+        val checkoutTotalAmount = reservation.orders.fold(BigDecimal.ZERO) { sum, order -> sum + order.totalPhp }
         if (primary.status in SETTLED_ORDER_STATUSES) {
             clearCartBestEffort(userId, request.items)
-            return toOrderResponse(primary)
+            return toOrderResponse(primary, checkoutTotalAmount)
         }
         if (primary.status == OrderStatus.EXPIRED) {
             throw checkoutConflict("This checkout expired. Start again with a new Idempotency-Key.")
         }
 
         if (paymentMethod == PaymentMethod.QRPH) {
-            return createQrPhPayment(reservation, primary, recipientEmail, userId, request.items)
+            return createQrPhPayment(reservation, primary, checkoutTotalAmount, recipientEmail, userId, request.items)
         }
 
-        resumeCheckoutUrl(primary)?.let { return toOrderResponse(primary, redirectUrl = it) }
+        resumeCheckoutUrl(primary)?.let { return toOrderResponse(primary, checkoutTotalAmount, redirectUrl = it) }
 
         // PayMongo forgets idempotency results after 24 hours. Once our
         // shorter checkout window has elapsed, an unlinked provider outcome
@@ -186,7 +187,7 @@ class OrderService(
             )
         }
         clearCartBestEffort(userId, request.items)
-        return toOrderResponse(primary, redirectUrl = checkoutUrl)
+        return toOrderResponse(primary, checkoutTotalAmount, redirectUrl = checkoutUrl)
     }
 
     private fun reserveCheckout(
@@ -408,6 +409,7 @@ class OrderService(
     private fun createQrPhPayment(
         reservation: CheckoutReservation,
         primary: Order,
+        checkoutTotalAmount: BigDecimal,
         recipientEmail: String,
         userId: UUID?,
         items: List<CreateOrderItem>,
@@ -421,9 +423,7 @@ class OrderService(
                     PaymongoPaymentIntentRequest(
                         PaymongoPaymentIntentRequestEnvelope(
                             PaymongoPaymentIntentRequestAttributes(
-                                amount = reservation.orders.fold(BigDecimal.ZERO) { sum, order ->
-                                    sum + order.totalPhp
-                                }.toCentavos(),
+                                amount = checkoutTotalAmount.toCentavos(),
                                 description = buildSessionDescription(
                                     reservation.items.size,
                                     reservation.events.values.map { it.name },
@@ -487,7 +487,7 @@ class OrderService(
                 intent.data.attributes.metadata,
             )
             clearCartBestEffort(userId, items)
-            return toOrderResponse(orderRepository.findById(primary.id).orElse(primary))
+            return toOrderResponse(orderRepository.findById(primary.id).orElse(primary), checkoutTotalAmount)
         }
 
         val imageUrl = intent.data.attributes.nextAction?.code?.imageUrl.orEmpty()
@@ -510,6 +510,7 @@ class OrderService(
         clearCartBestEffort(userId, items)
         return toOrderResponse(
             primary,
+            checkoutTotalAmount,
             qrPh = QrPhPaymentResponse(
                 imageUrl = imageUrl,
                 expiresAt = expiresAt,
@@ -738,6 +739,7 @@ class OrderService(
 
     private fun toOrderResponse(
         order: Order,
+        checkoutTotalAmount: BigDecimal,
         redirectUrl: String? = null,
         qrPh: QrPhPaymentResponse? = null,
     ): OrderResponse {
@@ -757,6 +759,7 @@ class OrderService(
                 )
             },
             totalAmount = order.totalPhp,
+            checkoutTotalAmount = checkoutTotalAmount,
             paymentMethod = order.paymentMethodWire,
             createdAt = order.createdAt,
             redirectUrl = redirectUrl,

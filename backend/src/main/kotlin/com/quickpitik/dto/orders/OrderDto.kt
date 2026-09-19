@@ -37,14 +37,15 @@ data class CreateOrderItem(
 )
 
 // POST /orders response — matches website/src/types/order.ts Order interface.
-// Returned: the FIRST order created (smallest event date / first event_id) so the
-// FE has a stable id to navigate to. Multi-event checkouts produce N rows; the
+// Returned: the earliest-created order so the FE has a stable id to navigate to.
+// Multi-event checkouts produce N rows; the
 // remaining N-1 are visible via the next GET /me/orders fetch.
 data class OrderResponse(
     val id: UUID,
     val status: OrderStatus,
     val items: List<OrderResponseItem>,
     val totalAmount: BigDecimal,
+    val checkoutTotalAmount: BigDecimal,
     val paymentMethod: String,
     val createdAt: OffsetDateTime,
     val redirectUrl: String? = null,
