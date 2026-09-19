@@ -1,11 +1,13 @@
-import { StrictMode } from "react";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { StrictMode, type ReactNode } from "react";
+import { act, cleanup, render, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as auth from "@/lib/auth";
 import * as cartApi from "@/lib/api-cart";
 import * as savedApi from "@/lib/api-saved-events";
+import { api } from "@/lib/api";
 import { resetUserScopedStores } from "@/lib/auth-reset";
+import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
@@ -62,6 +64,13 @@ function startMerge() {
   return { cart, saved };
 }
 
+function mountAuth() {
+  return renderHook(useAuth, {
+    wrapper: ({ children }: { children: ReactNode }) =>
+      <QueryClientProvider client={client}><AuthHydrator />{children}</QueryClientProvider>,
+  });
+}
+
 it("merges guest buffers once and enables sync after confirmation for the same runner", async () => {
   const guestItems = [{ ...mergedItem, photoId: "guest-photo" }];
   useCartStore.getState().setItems(guestItems);
@@ -77,6 +86,107 @@ it("merges guest buffers once and enables sync after confirmation for the same r
   await act(async () => { saved.resolve([savedEvent]); });
   expect(useCartStore.getState()).toMatchObject({ items: [mergedItem], syncEnabled: true });
   expect(useSavedEventsStore.getState()).toMatchObject({ ids: [savedEvent.id], summaries: [savedEvent], syncEnabled: true });
+});
+
+it("rehydrates and syncs after signing in again as the same runner without logout", async () => {
+  vi.spyOn(cartApi, "mergeCart").mockResolvedValue([mergedItem]);
+  vi.spyOn(savedApi, "mergeSavedEvents").mockResolvedValue([savedEvent]);
+  vi.spyOn(api, "post").mockImplementation(async (path) => {
+    if (path === "/auth/login") return { user: runner, accessToken: "next-access", refreshToken: "next-refresh" };
+    if (path === "/me/cart/items") return mergedItem;
+    if (path === "/me/saved-events") return savedEvent;
+    throw new Error(`Unexpected POST ${path}`);
+  });
+  const { result } = mountAuth();
+  await waitFor(() => expect(useCartStore.getState().syncEnabled).toBe(true));
+
+  await act(async () => { await result.current.login({ email: runner.email, password: "password" }); });
+  await waitFor(() => expect(useCartStore.getState().items).toEqual([mergedItem]));
+  expect(useSavedEventsStore.getState().ids).toEqual([savedEvent.id]);
+  expect(useCartStore.getState().syncEnabled).toBe(true);
+  expect(useSavedEventsStore.getState().syncEnabled).toBe(true);
+
+  act(() => {
+    useCartStore.getState().addItem({ ...mergedItem, photoId: "later-photo" });
+    useSavedEventsStore.getState().save("later-event");
+  });
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith("/me/cart/items", { photoId: "later-photo", eventId: mergedItem.eventId }));
+  expect(api.post).toHaveBeenCalledWith("/me/saved-events", { eventId: "later-event" });
+});
+
+it("discards an old merge after direct same-runner authentication", async () => {
+  const oldCart = deferred<CartItem[]>();
+  const oldSaved = deferred<savedApi.SavedEventSummary[]>();
+  const latestItem = { ...mergedItem, photoId: "new-session-photo" };
+  vi.spyOn(cartApi, "mergeCart").mockReturnValueOnce(oldCart.promise).mockResolvedValueOnce([latestItem]);
+  vi.spyOn(savedApi, "mergeSavedEvents").mockReturnValueOnce(oldSaved.promise).mockResolvedValueOnce([]);
+  vi.spyOn(api, "post").mockResolvedValue({ user: runner, accessToken: "next-access", refreshToken: "next-refresh" });
+  const { result } = mountAuth();
+
+  await act(async () => { await result.current.login({ email: runner.email, password: "password" }); });
+  await waitFor(() => expect(useCartStore.getState()).toMatchObject({ items: [latestItem], syncEnabled: true }));
+  const cartState = useCartStore.getState();
+  const savedState = useSavedEventsStore.getState();
+  await act(async () => { oldCart.resolve([mergedItem]); oldSaved.resolve([savedEvent]); });
+  expect(useCartStore.getState()).toBe(cartState);
+  expect(useSavedEventsStore.getState()).toBe(savedState);
+});
+
+it("does not transfer an authenticated account's buffers into a direct account switch", async () => {
+  const other = { ...runner, id: "runner-b" };
+  const otherItem = { ...mergedItem, photoId: "runner-b-photo" };
+  const otherEvent = { ...savedEvent, id: "runner-b-event" };
+  vi.spyOn(cartApi, "mergeCart").mockResolvedValueOnce([mergedItem]).mockResolvedValueOnce([otherItem]);
+  vi.spyOn(savedApi, "mergeSavedEvents").mockResolvedValueOnce([savedEvent]).mockResolvedValueOnce([otherEvent]);
+  vi.spyOn(api, "post").mockResolvedValue({ user: other, accessToken: "other-access", refreshToken: "other-refresh" });
+  const { result } = mountAuth();
+  await waitFor(() => expect(useCartStore.getState().items).toEqual([mergedItem]));
+
+  await act(async () => { await result.current.login({ email: other.email, password: "password" }); });
+  await waitFor(() => expect(useCartStore.getState().items).toEqual([otherItem]));
+  expect(useSavedEventsStore.getState().ids).toEqual([otherEvent.id]);
+  expect(cartApi.mergeCart).toHaveBeenNthCalledWith(2, []);
+  expect(savedApi.mergeSavedEvents).toHaveBeenNthCalledWith(2, []);
+});
+
+it("merges real guest buffers on login", async () => {
+  act(() => { useAuthStore.getState().logout(); resetUserScopedStores(); });
+  const guestItem = { ...mergedItem, photoId: "guest-photo" };
+  useCartStore.getState().setItems([guestItem]);
+  useSavedEventsStore.getState().setIds(["guest-event"]);
+  vi.spyOn(cartApi, "mergeCart").mockResolvedValue([mergedItem]);
+  vi.spyOn(savedApi, "mergeSavedEvents").mockResolvedValue([savedEvent]);
+  vi.spyOn(api, "post").mockResolvedValue({ user: runner, accessToken: "access", refreshToken: "refresh" });
+  const { result } = mountAuth();
+
+  await act(async () => { await result.current.login({ email: runner.email, password: "password" }); });
+  await waitFor(() => expect(useCartStore.getState().syncEnabled).toBe(true));
+  expect(cartApi.mergeCart).toHaveBeenCalledWith([guestItem]);
+  expect(savedApi.mergeSavedEvents).toHaveBeenCalledWith(["guest-event"]);
+  expect(useCartStore.getState().items).toEqual([mergedItem]);
+  expect(useSavedEventsStore.getState().ids).toEqual([savedEvent.id]);
+});
+
+it("keeps the epoch for profile updates and incomplete authentication", async () => {
+  vi.spyOn(api, "post")
+    .mockRejectedValueOnce(new Error("Bad credentials"))
+    .mockResolvedValueOnce({ mfaRequired: true, mfaToken: "challenge", user: runner, accessToken: "", refreshToken: "" })
+    .mockResolvedValueOnce({ user: runner, accessToken: "verified-access", refreshToken: "verified-refresh" });
+  const { result } = renderHook(useAuth, {
+    wrapper: ({ children }: { children: ReactNode }) =>
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+  });
+  const epoch = useAuthStore.getState().sessionVersion;
+  act(() => useAuthStore.getState().setUser({ ...runner, name: "Updated profile" }));
+  expect(useAuthStore.getState().sessionVersion).toBe(epoch);
+
+  await act(async () => { await expect(result.current.login({ email: runner.email, password: "wrong" })).rejects.toThrow("Bad credentials"); });
+  expect(useAuthStore.getState().sessionVersion).toBe(epoch);
+  await act(async () => { expect((await result.current.login({ email: runner.email, password: "password" })).kind).toBe("mfa"); });
+  expect(useAuthStore.getState().sessionVersion).toBe(epoch);
+
+  await act(async () => { await result.current.verifyMfa("challenge", "123456"); });
+  expect(useAuthStore.getState().sessionVersion).toBe(epoch + 1);
 });
 
 it.each(["success", "failure"])("discards a guest merge completing after logout (%s)", async (outcome) => {
