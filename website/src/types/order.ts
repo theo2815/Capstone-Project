@@ -24,6 +24,7 @@ export interface Order {
   status: OrderStatus;
   items: OrderItem[];
   totalAmount: number;
+  checkoutTotalAmount: number;
   paymentMethod: string;
   createdAt: string;
   // PayMongo hosted-checkout URL. Present for newly-created PENDING orders

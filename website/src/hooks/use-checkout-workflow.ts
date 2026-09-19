@@ -42,7 +42,7 @@ export interface Receipt {
   orderId: string;
   returnToken: string | null;
   email: string;
-  total: number;
+  total: number | null;
   itemCount: number;
   paidAt: string | null;
 }
@@ -137,9 +137,9 @@ export function useCheckoutWorkflow(isOpen: boolean) {
   const recipientEmail = isAuthenticated ? authUser?.email ?? email : email;
   const discountTotal = coupon?.discountTotal ?? 0;
   const payable = Math.max(0, Math.round((total - discountTotal) * 100) / 100);
-  // While a QR is live the cart may already be empty (resume after refresh),
-  // so the amount on screen comes from the record.
-  const qrTotal = pending?.total ?? payable;
+  // The cart may be empty after refresh. Only new records carry a trustworthy
+  // checkout-wide amount; legacy records keep their QR without showing a total.
+  const qrTotal = pending?.totalSource === "checkout" ? pending.total : null;
   const qrEmail = pending?.email ?? recipientEmail ?? "";
 
   const handleApplyCoupon = async () => {
@@ -246,7 +246,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
           orderId: order.id,
           returnToken: order.returnToken ?? order.qrPh?.returnToken ?? null,
           email: recipientEmail ?? "",
-          total: order.totalAmount,
+          total: order.checkoutTotalAmount,
           itemCount,
           paidAt: null,
         });
@@ -272,7 +272,8 @@ export function useCheckoutWorkflow(isOpen: boolean) {
       setPending({
         ...qr,
         email: recipientEmail ?? "",
-        total: order.totalAmount,
+        total: order.checkoutTotalAmount,
+        totalSource: "checkout",
         itemCount,
         paidClaimedAt: null,
       });
@@ -314,7 +315,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
         orderId: qr.orderId,
         returnToken: qr.returnToken,
         email: live?.email ?? recipientEmail ?? "",
-        total: live?.total ?? payable,
+        total: live?.totalSource === "checkout" ? live.total : null,
         itemCount: live?.itemCount ?? itemCount,
         paidAt: status.paidAt,
       });
@@ -323,7 +324,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
       queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
       setStep("success");
     },
-    [clearCart, clearPending, itemCount, payable, queryClient, recipientEmail],
+    [clearCart, clearPending, itemCount, queryClient, recipientEmail],
   );
 
   // The QR is finished without a payment (expired, declined, or cancelled):

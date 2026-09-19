@@ -50,6 +50,7 @@ const order: Order = {
   status: "PENDING",
   items: [],
   totalAmount: 125,
+  checkoutTotalAmount: 125,
   paymentMethod: "qrph",
   createdAt: "2026-09-01T00:00:00Z",
   qrPh: {

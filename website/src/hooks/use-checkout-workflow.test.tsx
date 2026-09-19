@@ -27,11 +27,11 @@ beforeEach(() => {
     orderId: "order-1", imageUrl: "data:image/png;base64,cXI=",
     expiresAt: new Date(Date.now() + 600_000).toISOString(),
     returnToken: "guest-token", testUrl: null, email: "runner@example.test",
-    total: 125, itemCount: 1, paidClaimedAt: null,
+    total: 125, totalSource: "checkout", itemCount: 1, paidClaimedAt: null,
   };
   usePendingPaymentStore.getState().clear();
   nextOrder = {
-    id: live.orderId, status: "PENDING", items: [], totalAmount: 125,
+    id: live.orderId, status: "PENDING", items: [], totalAmount: 125, checkoutTotalAmount: 125,
     paymentMethod: "qrph", createdAt: new Date().toISOString(), qrPh: live,
   };
   vi.spyOn(api, "get").mockResolvedValue({ id: live.orderId, status: "PENDING", paidAt: null });
@@ -104,7 +104,7 @@ it("snapshots a settled receipt before clearing the cart and pending payment", a
 });
 
 it("lands directly on success for an already settled order without a QR", async () => {
-  nextOrder = { ...nextOrder, status: "PAID", totalAmount: 0, qrPh: null, returnToken: "free-token" };
+  nextOrder = { ...nextOrder, status: "PAID", totalAmount: 0, checkoutTotalAmount: 0, qrPh: null, returnToken: "free-token" };
   const { result } = await openPayment();
   await act(async () => result.current.handlePay());
 
@@ -113,16 +113,16 @@ it("lands directly on success for an already settled order without a QR", async 
 });
 
 it("uses the confirmed order amount for the QR and subsequent receipt", async () => {
-  nextOrder = { ...nextOrder, totalAmount: 90 };
+  nextOrder = { ...nextOrder, totalAmount: 90, checkoutTotalAmount: 375 };
   const { result } = await openPayment();
   expect(result.current.payable).toBe(125);
   await act(async () => result.current.handlePay());
-  expect(result.current.qrTotal).toBe(90);
-  expect(usePendingPaymentStore.getState().pending?.total).toBe(90);
+  expect(result.current.qrTotal).toBe(375);
+  expect(usePendingPaymentStore.getState().pending?.total).toBe(375);
 
   vi.mocked(api.get).mockResolvedValue({ id: live.orderId, status: "PAID", paidAt: null });
   await act(async () => result.current.handlePaidClaim());
-  expect(result.current.receipt?.total).toBe(90);
+  expect(result.current.receipt?.total).toBe(375);
 });
 
 it.each(["create", "status", "cancel"] as const)(

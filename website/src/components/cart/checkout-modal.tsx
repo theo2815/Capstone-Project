@@ -854,7 +854,7 @@ function QrPaymentStep({
   onLeaveForEmail,
 }: {
   payment: QrPayment;
-  total: number;
+  total: number | null;
   email: string;
   paidClaimedAt: string | null;
   lastManualCheckAt: number;
@@ -895,14 +895,14 @@ function QrPaymentStep({
     <div className="px-6 md:px-7 py-6 flex flex-col gap-6">
       <div className="text-center">
         <Kicker as="p" tone="soft" tnum>
-          Amount due · {formatPrice(total)}
+          {total === null ? "Amount unavailable · Check your payment app" : `Amount due · ${formatPrice(total)}`}
         </Kicker>
         <div className="mx-auto mt-3 w-fit rounded-2xl border border-line bg-white p-3 shadow-sm">
           {/* PayMongo returns the QR as a trusted image data URI. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={payment.imageUrl}
-            alt={`QR Ph payment code for ${formatPrice(total)}`}
+            alt={total === null ? "QR Ph payment code" : `QR Ph payment code for ${formatPrice(total)}`}
             className="size-[248px] max-w-full object-contain"
           />
         </div>
@@ -981,7 +981,8 @@ function QrPaymentStep({
             <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
               Banks usually take <span className="tnum">10–30</span> seconds to
               report back. <span className="font-semibold text-ink">Don&rsquo;t pay again</span>{" "}
-              — your <span className="tnum text-ink">{formatPrice(total)}</span> is tied to
+              {total === null ? " — check the amount in your payment app. This QR is tied to " :
+                <> — your <span className="tnum text-ink">{formatPrice(total)}</span> is tied to </>}
               Ref <span className="tnum text-ink">{ref}</span>.
             </p>
             <p className="mt-2 font-sans text-sm leading-relaxed text-ink-soft">
@@ -1201,7 +1202,7 @@ function SuccessStep({
             <p className="font-display text-xl font-medium text-ink tracking-tight leading-tight">
               <span className="tnum">{itemCount}</span>{" "}
               {itemCount === 1 ? "photo" : "photos"} ·{" "}
-              <span className="tnum">{formatPrice(total)}</span>
+              <span className="tnum">{total === null ? "Amount unavailable · View receipt" : formatPrice(total)}</span>
             </p>
           </div>
         </div>
