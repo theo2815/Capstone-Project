@@ -16,6 +16,8 @@ import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.Order
+import com.quickpitik.entity.OrderItem
+import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
@@ -28,6 +30,7 @@ import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderRepository
+import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
@@ -48,6 +51,7 @@ import java.util.UUID
 class AdminDisputeService(
     private val disputeRepository: DisputeRepository,
     private val orderRepository: OrderRepository,
+    private val orderItemRepository: OrderItemRepository,
     private val photoRepository: PhotoRepository,
     private val eventRepository: EventRepository,
     private val userRepository: UserRepository,
@@ -225,6 +229,9 @@ class AdminDisputeService(
         val ordersById = orderRepository
             .findAllById(disputes.mapTo(mutableSetOf()) { it.orderId })
             .associateBy { it.id }
+        val itemsById = orderItemRepository
+            .findByIdOrderIdIn(disputes.mapTo(mutableSetOf()) { it.orderId })
+            .associateBy { it.id }
         val photosById = photoRepository
             .findAllById(disputes.mapTo(mutableSetOf()) { it.photoId })
             .associateBy { it.id }
@@ -248,6 +255,7 @@ class AdminDisputeService(
                 d,
                 activity = activityByDispute[d.id].orEmpty(),
                 order = order,
+                orderItem = itemsById[OrderItemId(d.orderId, d.photoId)],
                 photo = photo,
                 runner = d.runnerId?.let { runnersById[it] },
                 photographerSettings = photo?.photographerId?.let { settingsById[it] },
@@ -289,6 +297,7 @@ class AdminDisputeService(
         dispute: Dispute,
         activity: List<DisputeActivityEntry> = loadActivityForDisputes(listOf(dispute.id))[dispute.id].orEmpty(),
         order: Order? = orderRepository.findById(dispute.orderId).orElse(null),
+        orderItem: OrderItem? = orderItemRepository.findById(OrderItemId(dispute.orderId, dispute.photoId)).orElse(null),
         photo: Photo? = photoRepository.findById(dispute.photoId).orElse(null),
         runner: User? = dispute.runnerId?.let { userRepository.findById(it).orElse(null) },
         photographerSettings: PhotographerSettings? =
@@ -322,6 +331,7 @@ class AdminDisputeService(
             reportedAt = dispute.openedAt.toString(),
             resolvedAt = dispute.resolvedAt?.toString(),
             refundAmount = dispute.refundAmountPhp,
+            itemChargeAmount = orderItem?.pricePhpAtPurchase?.subtract(orderItem.discountPhp),
             resolution = dispute.resolutionWire,
             orderSnapshot = DisputeOrderSnapshotDto(
                 total = order?.totalPhp ?: BigDecimal.ZERO,

@@ -45,8 +45,8 @@ export function AdminRefundConfirmModal({
         <span className="text-ink">@{runnerHandle}</span>?
       </p>
       <p className="font-sans text-sm text-slate">
-        The original payment method is credited automatically. The dispute
-        closes as resolved.
+        The refund goes to the original payment method when the provider confirms it.
+        The dispute then closes.
       </p>
     </AdminConfirmModal>
   );

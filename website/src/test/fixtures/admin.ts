@@ -11,7 +11,7 @@ export const dispute: Dispute = {
   id: "dispute-1", orderId: "order-1", photoId: "photo-1", eventId: "event-1",
   runnerHandle: "runner", photographerHandle: "photographer", reason: "low_quality",
   note: "The photo is blurry.", status: "open", reportedAt: "2026-09-10T00:00:00Z",
-  resolvedAt: null, refundAmount: null, resolution: null,
+  resolvedAt: null, refundAmount: null, itemChargeAmount: 100, resolution: null,
   orderSnapshot: { total: 100, paymentMethod: "gcash", paidAt: "2026-09-09T00:00:00Z" },
   photoSnapshot: { alt: "Runner", bib: "123", kmMark: 5 },
 };

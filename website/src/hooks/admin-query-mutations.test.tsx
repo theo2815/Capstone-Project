@@ -82,7 +82,7 @@ describe.each(cases)("$action", ({ action, method, endpoint, payload, base, conf
     vi.spyOn(api, method).mockRejectedValueOnce(new Error("Backend unavailable"));
     const { result } = renderHook(() => useActionRunner(action), { wrapper: Wrapper });
 
-    await act(async () => { expect(await result.current()).toBe(false); });
+    await act(async () => { expect(await result.current()).toBe(action === "resolve dispute" ? null : false); });
 
     expect(client.getQueryData(listKey)).toBe(before);
     expect(invalidate).not.toHaveBeenCalled();
@@ -98,13 +98,13 @@ describe.each(cases)("$action", ({ action, method, endpoint, payload, base, conf
     const request = vi.spyOn(api, method).mockReturnValueOnce(response.promise);
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useActionRunner(action), { wrapper: Wrapper });
-    let operation!: Promise<boolean>;
+    let operation!: Promise<boolean | Dispute | null>;
     act(() => { operation = result.current(); });
 
     expect(request).toHaveBeenCalledWith(endpoint, payload);
     expect(client.getQueryData(listKey)).toEqual([base]);
     expect(useToastStore.getState().toasts).toEqual([]);
-    await act(async () => { response.resolve(confirmed); expect(await operation).toBe(true); });
+    await act(async () => { response.resolve(confirmed); expect(await operation).toEqual(action === "resolve dispute" ? confirmed : true); });
 
     expect(client.getQueryData(listKey)).toEqual([confirmed]);
     expect(client.getQueryData(openKey)).toEqual([]);
@@ -115,6 +115,17 @@ describe.each(cases)("$action", ({ action, method, endpoint, payload, base, conf
     } else {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: payoutReportKeys.photographer });
     }
+  });
+});
+
+it("returns the backend dispute from resolve so callers can distinguish pending from refunded", async () => {
+  const pending: Dispute = { ...dispute, status: "escalated", refundAmount: 25, resolution: "refund_partial" };
+  vi.spyOn(api, "post").mockResolvedValueOnce(pending).mockResolvedValueOnce(confirmedDispute);
+  const { result } = renderHook(() => useDisputeActions(), { wrapper: Wrapper });
+
+  await act(async () => {
+    expect(await result.current.resolve(dispute.id, resolution)).toEqual(pending);
+    expect(await result.current.resolve(dispute.id, resolution)).toEqual(confirmedDispute);
   });
 });
 
@@ -132,7 +143,7 @@ it.each(["resolve dispute", "resolve report"])("cancels an older list read befor
   }), { wrapper: Wrapper });
 
   await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
-  await act(async () => { expect(await result.current.run()).toBe(true); });
+  await act(async () => { expect(await result.current.run()).toEqual(isDispute ? confirmed : true); });
   await waitFor(() => expect(result.current.query.data).toEqual([confirmed]));
   await act(async () => { oldRead.resolve({ items: [base] }); });
   expect(result.current.query.data).toEqual([confirmed]);
@@ -149,7 +160,7 @@ describe.each(["resolve dispute", "resolve report"])("stale session: %s", (actio
     const response = deferred<Dispute | PayoutReport>();
     vi.spyOn(api, action === "resolve dispute" ? "post" : "fetch").mockReturnValueOnce(response.promise);
     const { result } = renderHook(() => useActionRunner(action), { wrapper: Wrapper });
-    let operation!: Promise<boolean>;
+    let operation!: Promise<boolean | Dispute | null>;
     act(() => { operation = result.current(); });
     act(() => {
       useAuthStore.getState().logout();
@@ -163,7 +174,7 @@ describe.each(["resolve dispute", "resolve report"])("stale session: %s", (actio
     await act(async () => {
       if (outcome === "failure") response.reject(new Error("Late failure"));
       else response.resolve(action === "resolve dispute" ? confirmedDispute : confirmedReport);
-      expect(await operation).toBe(false);
+      expect(await operation).toBe(action === "resolve dispute" ? null : false);
     });
 
     expect(client.getQueryData(nextKey)).toBe(nextData);

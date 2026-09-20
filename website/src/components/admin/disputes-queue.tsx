@@ -221,16 +221,22 @@ export function DisputesQueue() {
   async function handleConfirmRefund() {
     if (!openRow || !pendingResolve || submitting) return;
     setSubmitting(true);
-    const ok = await resolve(openRow.id, {
+    const confirmed = await resolve(openRow.id, {
       resolution: pendingResolve.resolution,
       refundAmount: pendingResolve.refundAmount,
       reason: pendingResolve.note,
     });
     setSubmitting(false);
-    if (!ok) return;
+    if (!confirmed) return;
     setPendingResolve(null);
     setResolveOpen(false);
-    showToast({ kind: "success", message: `Refunded · ${openRow.id}` });
+    const refunded = confirmed.status === "resolved" && confirmed.refundAmount !== null;
+    showToast({
+      kind: refunded ? "success" : "info",
+      message: refunded
+        ? `Refunded · ${confirmed.id} · ${formatPrice(confirmed.refundAmount!)}`
+        : `Refund requested · ${confirmed.id}`,
+    });
   }
 
   function handleCancelRefund() {
@@ -382,6 +388,7 @@ export function DisputesQueue() {
             onContinue={handleContinueResolve}
             disputeId={openRow.id}
             orderTotal={openRow.orderSnapshot.total}
+            itemChargeAmount={openRow.itemChargeAmount}
           />
           {pendingResolve &&
             pendingResolve.resolution !== "deny" &&

@@ -25,6 +25,7 @@ interface AdminResolveDisputeModalProps {
   }) => void;
   disputeId: string;
   orderTotal: number;
+  itemChargeAmount?: number | null;
 }
 
 // Resolve modal for /admin/disputes/[id]. Carries the resolution radio +
@@ -40,6 +41,7 @@ export function AdminResolveDisputeModal({
   onContinue,
   disputeId,
   orderTotal,
+  itemChargeAmount,
 }: AdminResolveDisputeModalProps) {
   const [resolution, setResolution] = useState<DisputeResolution>("refund_full");
   const [partialAmount, setPartialAmount] = useState<string>("");
@@ -55,21 +57,25 @@ export function AdminResolveDisputeModal({
   }, [open]);
 
   const parsedPartial = Number(partialAmount);
+  const chargeAvailable = itemChargeAmount != null && Number.isFinite(itemChargeAmount) && itemChargeAmount > 0;
   const partialValid =
+    chargeAvailable &&
+    /^\d+(?:\.\d{1,2})?$/.test(partialAmount) &&
     Number.isFinite(parsedPartial) &&
     parsedPartial > 0 &&
-    parsedPartial <= orderTotal;
+    parsedPartial < itemChargeAmount;
 
   const continueDisabled =
     note.trim().length === 0 ||
+    (resolution !== "deny" && !chargeAvailable) ||
     (resolution === "refund_partial" && !partialValid);
 
   const partialHint =
     resolution === "refund_partial" && partialAmount.length > 0 && !partialValid
       ? (
           <>
-            Must be between 1 and{" "}
-            <span className="tnum">{orderTotal}</span>.
+            Enter an amount above zero and below{" "}
+            <span className="tnum">{formatPrice(itemChargeAmount ?? 0)}</span>, with up to two decimals.
           </>
         )
       : undefined;
@@ -77,7 +83,7 @@ export function AdminResolveDisputeModal({
   function handleSubmit() {
     const amount =
       resolution === "refund_full"
-        ? orderTotal
+        ? itemChargeAmount ?? null
         : resolution === "refund_partial"
           ? parsedPartial
           : null;
@@ -96,7 +102,11 @@ export function AdminResolveDisputeModal({
         <>
           Order total{" "}
           <span className="text-ink tnum">{formatPrice(orderTotal)}</span>.
-          Choose how to settle this dispute.
+          {chargeAvailable
+            ? " Choose how to settle this dispute."
+            : itemChargeAmount === 0
+              ? " This item has no refundable charge."
+              : " Item charge unavailable; retry when order details load."}
         </>
       }
       submitLabel={resolution === "deny" ? "Deny" : "Continue"}
@@ -113,8 +123,9 @@ export function AdminResolveDisputeModal({
               label: (
                 <>
                   Full refund —{" "}
-                  <span className="text-ink tnum">{formatPrice(orderTotal)}</span>{" "}
-                  returned to runner.
+                  {chargeAvailable
+                    ? <><span className="text-ink tnum">{formatPrice(itemChargeAmount)}</span> returned to runner.</>
+                    : itemChargeAmount === 0 ? "no refundable charge." : "amount unavailable."}
                 </>
               ),
             },
@@ -135,14 +146,14 @@ export function AdminResolveDisputeModal({
           id="partial-amount"
           label={
             <>
-              Refund amount (₱, max <span className="tnum">{orderTotal}</span>)
+              Refund amount (₱, below <span className="tnum">{formatPrice(itemChargeAmount ?? 0)}</span>)
             </>
           }
           type="number"
           inputMode="decimal"
-          step="1"
-          min={1}
-          max={orderTotal}
+          step="0.01"
+          min={0.01}
+          max={itemChargeAmount ?? undefined}
           value={partialAmount}
           onChange={setPartialAmount}
           placeholder="e.g. 100"
@@ -153,10 +164,10 @@ export function AdminResolveDisputeModal({
 
       <AdminTextarea
         id="resolve-note"
-        label="Reasoning (required, max 600)"
+        label="Reasoning (required, max 500)"
         value={note}
         onChange={setNote}
-        maxLength={600}
+        maxLength={500}
         rows={4}
         placeholder="What did you decide and why?"
       />

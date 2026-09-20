@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
 import type { Dispute, DisputeResolution } from "@/lib/admin-disputes";
+import { formatPrice } from "@/lib/utils";
 import { AdminResolveDisputeModal } from "./admin-resolve-dispute-modal";
 import { AdminRefundConfirmModal } from "./admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "./admin-deny-dispute-modal";
@@ -81,18 +82,21 @@ export function AdminDisputeActionAside({
   async function handleConfirmRefund() {
     if (!pendingResolve || submitting) return;
     setSubmitting(true);
-    const ok = await resolve(dispute.id, {
+    const confirmed = await resolve(dispute.id, {
       resolution: pendingResolve.resolution,
       refundAmount: pendingResolve.refundAmount,
       reason: pendingResolve.note,
     });
     setSubmitting(false);
-    if (!ok) return;
+    if (!confirmed) return;
     setPendingResolve(null);
     setResolveOpen(false);
+    const refunded = confirmed.status === "resolved" && confirmed.refundAmount !== null;
     showToast({
-      kind: "success",
-      message: `Refunded · ${dispute.id}`,
+      kind: refunded ? "success" : "info",
+      message: refunded
+        ? `Refunded · ${confirmed.id} · ${formatPrice(confirmed.refundAmount!)}`
+        : `Refund requested · ${confirmed.id}`,
     });
   }
 
@@ -178,6 +182,7 @@ export function AdminDisputeActionAside({
         onContinue={handleContinueResolve}
         disputeId={dispute.id}
         orderTotal={dispute.orderSnapshot.total}
+        itemChargeAmount={dispute.itemChargeAmount}
       />
       {pendingResolve &&
         pendingResolve.resolution !== "deny" &&

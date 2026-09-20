@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import { adminPayoutKeys } from "@/hooks/use-admin-payouts";
 import { admin, dispute, report } from "@/test/fixtures/admin";
 import { useToastStore } from "@/store/toast-store";
 import { AdminDisputeActionAside } from "./admin-dispute-action-aside";
+import { AdminResolveDisputeModal } from "./admin-resolve-dispute-modal";
 import { DisputesQueue } from "./disputes-queue";
 import { PayoutReportsSection } from "./payout-reports-section";
 
@@ -134,6 +135,91 @@ describe.each(["detail", "queue"])("dispute %s", (surface) => {
     expect(useToastStore.getState().toasts).toHaveLength(2);
     expect(useToastStore.getState().toasts[1].kind).not.toBe("error");
   });
+});
+
+it.each([
+  ["detail", "open"], ["detail", "escalated"],
+  ["queue", "open"], ["queue", "escalated"],
+] as const)(
+  "uses the disputed item charge on %s, and reports %s as pending", async (surface, status) => {
+  const user = userEvent.setup();
+  const priced: Dispute = {
+    ...dispute, itemChargeAmount: 127.5,
+    orderSnapshot: { ...dispute.orderSnapshot, total: 300 },
+  };
+  fixtures.disputes = [priced];
+  client.setQueryData(adminDisputeKeys.list(admin.id), [priced]);
+  render(<QueryClientProvider client={client}>{surface === "detail"
+    ? <AdminDisputeActionAside dispute={priced} runnerHandle={priced.runnerHandle} />
+    : <DisputesQueue />}</QueryClientProvider>);
+  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  await user.click(screen.getByRole("button", { name: "Resolve…" }));
+  const form = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  expect(within(form).getByText(/Full refund/)).toHaveTextContent("₱127.50");
+  await user.type(within(form).getByRole("textbox"), "Refund approved.");
+  await user.click(within(form).getByRole("button", { name: "Continue" }));
+  const confirm = screen.getByRole("dialog", { name: "Confirm refund" });
+  expect(confirm).toHaveTextContent("₱127.50");
+
+  const pending: Dispute = { ...priced, status, resolution: "refund_full", refundAmount: 127.5 };
+  vi.spyOn(api, "post").mockResolvedValueOnce(pending);
+  await user.click(within(confirm).getByRole("button", { name: "Confirm refund" }));
+  expect(api.post).toHaveBeenCalledWith(`/admin/disputes/${dispute.id}/resolve`, {
+    resolution: "refund_full", refundAmount: 127.5, reason: "Refund approved.",
+  });
+  expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/Refund requested|Refund pending/);
+  expect(useToastStore.getState().toasts.at(-1)?.message).not.toMatch(/Refunded/);
+  },
+);
+
+it.each(["detail", "queue"])("labels a provider-confirmed %s refund with the returned amount", async (surface) => {
+  const user = userEvent.setup();
+  render(<QueryClientProvider client={client}>{surface === "detail"
+    ? <AdminDisputeActionAside dispute={dispute} runnerHandle={dispute.runnerHandle} />
+    : <DisputesQueue />}</QueryClientProvider>);
+  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  await user.click(screen.getByRole("button", { name: "Resolve…" }));
+  const form = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  await user.type(within(form).getByRole("textbox"), "Refund approved.");
+  await user.click(within(form).getByRole("button", { name: "Continue" }));
+  const confirm = screen.getByRole("dialog", { name: "Confirm refund" });
+  const returned: Dispute = { ...dispute, status: "resolved", resolution: "refund_full", refundAmount: 85 };
+  vi.spyOn(api, "post").mockResolvedValueOnce(returned);
+  await user.click(within(confirm).getByRole("button", { name: "Confirm refund" }));
+  expect(useToastStore.getState().toasts.at(-1)?.message).toContain("Refunded");
+  expect(useToastStore.getState().toasts.at(-1)?.message).toContain("₱85.00");
+});
+
+it.each([null, 0, undefined])("disables monetary resolve when the item charge is %s", async (itemChargeAmount) => {
+  const user = userEvent.setup();
+  render(<AdminResolveDisputeModal open onClose={() => {}} onContinue={() => {}}
+    disputeId="dispute-1" orderTotal={300} itemChargeAmount={itemChargeAmount} />);
+  const dialog = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  await user.type(within(dialog).getByRole("textbox"), "Reviewed the request.");
+  if (itemChargeAmount === 0) expect(dialog).toHaveTextContent("This item has no refundable charge.");
+  expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
+  await user.click(within(dialog).getByRole("radio", { name: /Deny/ }));
+  expect(within(dialog).getByRole("button", { name: "Deny" })).toBeEnabled();
+});
+
+it("accepts at most 500 resolve-note characters and only centavo partial amounts below the item charge", async () => {
+  const user = userEvent.setup();
+  const onContinue = vi.fn();
+  render(<AdminResolveDisputeModal open onClose={() => {}} onContinue={onContinue}
+    disputeId="dispute-1" orderTotal={300} itemChargeAmount={127.5} />);
+  const dialog = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  const note = within(dialog).getByRole("textbox");
+  fireEvent.change(note, { target: { value: "a".repeat(501) } });
+  expect(note).toHaveValue("a".repeat(500));
+  await user.click(within(dialog).getByRole("radio", { name: /Partial refund/ }));
+  const amount = within(dialog).getByRole("spinbutton");
+  for (const invalid of ["0", "127.5", "127.501", "1.001"]) {
+    fireEvent.change(amount, { target: { value: invalid } });
+    expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
+  }
+  fireEvent.change(amount, { target: { value: "127.49" } });
+  await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+  expect(onContinue).toHaveBeenCalledWith({ resolution: "refund_partial", refundAmount: 127.49, note: "a".repeat(500) });
 });
 
 it.each(["acknowledge", "resolve"])("keeps payout report %s open on failure and refreshes only on success", async (action) => {

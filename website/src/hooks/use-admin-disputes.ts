@@ -46,9 +46,9 @@ export function useAdminDispute(id: string) {
 export function useDisputeActions() {
   const qc = useQueryClient();
   return useMemo(() => {
-    const settle = async (label: string, operation: () => Promise<Dispute>): Promise<boolean> => {
+    const settle = async (label: string, operation: () => Promise<Dispute>): Promise<Dispute | null> => {
       const session = useAuthStore.getState();
-      if (!session.isAuthenticated || session.user?.role !== "ADMIN") return false;
+      if (!session.isAuthenticated || session.user?.role !== "ADMIN") return null;
       const userId = session.user.id;
       const isCurrent = () => {
         const current = useAuthStore.getState();
@@ -64,12 +64,12 @@ export function useDisputeActions() {
             kind: "error", message: `Couldn't ${label} dispute — please try again.`,
           });
         }
-        return false;
+        return null;
       }
-      if (!isCurrent()) return false;
+      if (!isCurrent()) return null;
       // An older read must not overwrite the confirmed mutation response.
       await qc.cancelQueries({ queryKey: adminDisputeKeys.owner(userId) });
-      if (!isCurrent()) return false;
+      if (!isCurrent()) return null;
       for (const [key] of qc.getQueriesData<Dispute[]>({ queryKey: adminDisputeKeys.lists(userId) })) {
         const args = key.at(-1) as AdminDisputeListArgs;
         qc.setQueryData<Dispute[]>(key, (rows) => rows?.flatMap((row) => {
@@ -84,12 +84,12 @@ export function useDisputeActions() {
         qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
         qc.invalidateQueries({ queryKey: ["admin", "sales"] }),
       ]);
-      return isCurrent();
+      return isCurrent() ? dispute : null;
     };
     return {
       resolve: (id: string, args: ResolveDisputeArgs) => settle("resolve", () => resolveDispute(id, args)),
-      deny: (id: string, reason: string | null) => settle("deny", () => denyDispute(id, reason)),
-      escalate: (id: string, reason: string | null) => settle("escalate", () => escalateDispute(id, reason)),
+      deny: async (id: string, reason: string | null) => !!(await settle("deny", () => denyDispute(id, reason))),
+      escalate: async (id: string, reason: string | null) => !!(await settle("escalate", () => escalateDispute(id, reason))),
     };
   }, [qc]);
 }
