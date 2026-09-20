@@ -331,6 +331,7 @@ class AdminDisputeService(
             reportedAt = dispute.openedAt.toString(),
             resolvedAt = dispute.resolvedAt?.toString(),
             refundAmount = dispute.refundAmountPhp,
+            refundStatus = dispute.refundStatus,
             itemChargeAmount = orderItem?.pricePhpAtPurchase?.subtract(orderItem.discountPhp),
             resolution = dispute.resolutionWire,
             orderSnapshot = DisputeOrderSnapshotDto(

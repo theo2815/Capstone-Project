@@ -2,7 +2,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { fetchAdminDispute } from "@/lib/api-admin";
 import type { Dispute } from "@/lib/admin-disputes";
 import type { PayoutReport } from "@/lib/admin-payout-reports";
@@ -10,7 +10,7 @@ import type { PaginatedResponse } from "@/types/api";
 import { admin, dispute, report } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
-import { adminDisputeKeys, useAdminDisputes, useDisputeActions } from "./use-admin-disputes";
+import { adminDisputeKeys, useAdminDispute, useAdminDisputes, useDisputeActions } from "./use-admin-disputes";
 import { payoutReportKeys, useAdminPayoutReports, usePhotographerPayoutReports, usePayoutReportActions } from "./use-payout-reports";
 
 const reason = "Reviewed the evidence.";
@@ -127,6 +127,31 @@ it("returns the backend dispute from resolve so callers can distinguish pending 
     expect(await result.current.resolve(dispute.id, resolution)).toEqual(pending);
     expect(await result.current.resolve(dispute.id, resolution)).toEqual(confirmedDispute);
   });
+});
+
+it("shows manual-review feedback and refreshes disputes after a rejected refund", async () => {
+  const manualReview: Dispute = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 125, refundStatus: "manual_review" };
+  client.setQueryData(adminDisputeKeys.list(admin.id), [dispute]);
+  client.setQueryData(adminDisputeKeys.detail(admin.id, dispute.id), dispute);
+  vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([
+    { code: "PAYMENT_FAILED", message: "PayMongo rejected this refund. Review the payment manually." },
+  ], 409));
+  vi.spyOn(api, "get").mockResolvedValue({ items: [manualReview], total: 1 });
+  const { result } = renderHook(() => ({
+    list: useAdminDisputes(),
+    detail: useAdminDispute(dispute.id),
+    actions: useDisputeActions(),
+  }), { wrapper: Wrapper });
+
+  await act(async () => {
+    expect(await result.current.actions.resolve(dispute.id, resolution)).toBeNull();
+  });
+
+  expect(useToastStore.getState().toasts).toEqual([
+    expect.objectContaining({ kind: "error", message: "PayMongo rejected this refund. Review the payment manually." }),
+  ]);
+  await waitFor(() => expect(result.current.list.data).toEqual([manualReview]));
+  await waitFor(() => expect(result.current.detail.data).toEqual(manualReview));
 });
 
 it.each(["resolve dispute", "resolve report"])("cancels an older list read before applying %s, then accepts later server changes", async (action) => {

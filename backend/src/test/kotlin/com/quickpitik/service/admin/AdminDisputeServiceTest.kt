@@ -85,6 +85,15 @@ class AdminDisputeServiceTest {
     }
 
     @Test
+    fun `hydrate exposes the refund state needed to distinguish manual review from in-flight`() {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.refundStatus = "manual_review"
+        assertEquals("manual_review", service.hydrateOne(dispute, activity = emptyList(), order = null, photo = null).refundStatus)
+        dispute.refundStatus = "requesting"
+        assertEquals("requesting", service.hydrateOne(dispute, activity = emptyList(), order = null, photo = null).refundStatus)
+    }
+
+    @Test
     fun `list batches historical items for the dispute page`() {
         val order = order(BigDecimal("300.00"))
         val first = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")

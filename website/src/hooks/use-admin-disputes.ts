@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api";
 import {
   fetchAdminDisputes, fetchAdminDispute, resolveDispute, denyDispute, escalateDispute,
   type AdminDisputeListArgs, type ResolveDisputeArgs,
@@ -60,9 +61,11 @@ export function useDisputeActions() {
       } catch (error) {
         if (isCurrent()) {
           console.error(`[admin/disputes] ${label} failed`, error);
+          const conflict = error instanceof ApiError && error.status === 409;
           useToastStore.getState().showToast({
-            kind: "error", message: `Couldn't ${label} dispute — please try again.`,
+            kind: "error", message: conflict ? error.message : `Couldn't ${label} dispute — please try again.`,
           });
+          if (conflict) await qc.invalidateQueries({ queryKey: adminDisputeKeys.owner(userId) });
         }
         return null;
       }

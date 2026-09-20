@@ -166,7 +166,9 @@ export function AdminDisputeActionAside({
         )}
         {!isOpen && !isDenied && (
           <p className="font-sans text-sm text-slate-soft">
-            This dispute is closed. No further actions are available.
+            {dispute.refundStatus === "manual_review"
+              ? "Review the payment in PayMongo before another refund attempt."
+              : "This dispute is closed. No further actions are available."}
           </p>
         )}
       </div>

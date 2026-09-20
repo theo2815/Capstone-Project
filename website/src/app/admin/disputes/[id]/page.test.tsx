@@ -45,9 +45,17 @@ it("shows a retryable read error instead of treating a failed request as a missi
 });
 
 it("does not show an unknown refund outcome as refunded on the dispute page", async () => {
-  vi.spyOn(api, "get").mockResolvedValueOnce({ items: [{ ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, activity: [] }], total: 1 });
+  vi.spyOn(api, "get").mockResolvedValueOnce({ items: [{ ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [] }], total: 1 });
   render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
   expect(await screen.findByRole("heading", { name: "@runner vs @photographer" })).toBeInTheDocument();
   expect(screen.getByText("Escalated")).toBeInTheDocument();
+  expect(screen.getByText("Review the payment in PayMongo before another refund attempt.")).toBeInTheDocument();
   expect(screen.queryByText(/refunded/i)).not.toBeInTheDocument();
+});
+
+it("does not prescribe manual review for an escalated refund still in flight", async () => {
+  vi.spyOn(api, "get").mockResolvedValueOnce({ items: [{ ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "requesting" }], total: 1 });
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  expect(await screen.findByRole("heading", { name: "@runner vs @photographer" })).toBeInTheDocument();
+  expect(screen.queryByText("Review the payment in PayMongo before another refund attempt.")).not.toBeInTheDocument();
 });

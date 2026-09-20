@@ -49,6 +49,7 @@ export interface Dispute {
   reportedAt: string;
   resolvedAt: string | null;
   refundAmount: number | null;
+  refundStatus?: string | null;
   itemChargeAmount?: number | null;
   resolution: DisputeResolution | null;
   orderSnapshot: DisputeOrderSnapshot;
