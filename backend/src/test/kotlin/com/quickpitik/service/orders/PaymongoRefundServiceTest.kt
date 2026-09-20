@@ -4,6 +4,11 @@ import com.quickpitik.dto.orders.PaymongoRefundAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundResource
 import com.quickpitik.dto.orders.PaymongoRefundResponse
+import com.quickpitik.dto.orders.PaymongoPaymentIntentResponse
+import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseEnvelope
+import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseAttributes
+import com.quickpitik.dto.orders.PaymongoPaymentResource
+import com.quickpitik.dto.orders.PaymongoPaymentAttributes
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeResolution
@@ -18,6 +23,7 @@ import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.exception.ConflictException
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -30,8 +36,12 @@ import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpStatus
+import org.springframework.web.client.HttpClientErrorException
 import java.math.BigDecimal
 import java.time.OffsetDateTime
+import java.nio.charset.StandardCharsets
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -91,6 +101,49 @@ class PaymongoRefundServiceTest {
         Mockito.verifyNoInteractions(h.client)
     }
 
+    @Test
+    fun `a QR Ph refund recovers a missing payment ID from its Payment Intent`() {
+        val h = couponHarness(providerRef = "pi_test", providerPaymentId = null)
+        Mockito.`when`(h.client.retrievePaymentIntent("pi_test")).thenReturn(
+            PaymongoPaymentIntentResponse(
+                PaymongoPaymentIntentResponseEnvelope(
+                    id = "pi_test",
+                    attributes = PaymongoPaymentIntentResponseAttributes(
+                        status = "succeeded",
+                        payments = listOf(
+                            PaymongoPaymentResource(id = "pay_failed", attributes = PaymongoPaymentAttributes(status = "failed")),
+                            PaymongoPaymentResource(id = "pay_paid", attributes = PaymongoPaymentAttributes(status = "paid")),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+
+        assertEquals("pay_paid", h.sentRequest!!.data.attributes.paymentId)
+        Mockito.verify(h.client, Mockito.never()).retrieveCheckoutSession("pi_test")
+    }
+
+    @Test
+    fun `a rejected refund is escalated instead of retried for hours`() {
+        val h = couponHarness()
+        Mockito.`when`(h.client.createRefund(anyArg(), anyArg())).thenAnswer {
+            throw HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders(),
+                """{"errors":[{"code":"parameter_invalid","detail":"Refunds are not allowed for payments with source type qrph"}]}"""
+                    .toByteArray(StandardCharsets.UTF_8), StandardCharsets.UTF_8,
+            )
+        }
+
+        assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals("manual_review", h.dispute.refundStatus)
+        assertEquals(DisputeStatus.ESCALATED, h.dispute.status)
+    }
+
     private class CouponHarness(
         val service: PaymongoRefundService,
         val adminId: UUID,
@@ -104,7 +157,11 @@ class PaymongoRefundServiceTest {
         val sentRequest: PaymongoRefundRequest? get() = sentRequestRef()
     }
 
-    private fun couponHarness(providerAmount: Long = 12_750L): CouponHarness {
+    private fun couponHarness(
+        providerAmount: Long = 12_750L,
+        providerRef: String = "cs_test",
+        providerPaymentId: String? = "pay_test",
+    ): CouponHarness {
         val adminId = UUID.randomUUID()
         val photographerId = UUID.randomUUID()
         val photo = Photo(eventId = UUID.randomUUID(), s3Key = "photos/test.jpg", pricePhp = BigDecimal("150.00"))
@@ -121,8 +178,8 @@ class PaymongoRefundServiceTest {
         val payment = Payment(
             orderId = order.id,
             provider = "paymongo",
-            providerRef = "cs_test",
-            providerPaymentId = "pay_test",
+            providerRef = providerRef,
+            providerPaymentId = providerPaymentId,
             amountPhp = order.totalPhp,
             status = PaymentStatus.SUCCEEDED,
         )
