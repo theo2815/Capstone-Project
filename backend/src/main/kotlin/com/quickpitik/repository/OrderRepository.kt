@@ -88,15 +88,6 @@ interface OrderRepository : JpaRepository<Order, UUID> {
     @Query("UPDATE Order o SET o.emailSentAt = :now WHERE o.id = :orderId AND o.emailSentAt IS NULL")
     fun claimReceiptSend(@Param("orderId") orderId: UUID, @Param("now") now: OffsetDateTime): Int
 
-    // Give the claim back when the send itself failed, so a later webhook
-    // re-delivery or a manual reprocess can retry. Without this the atomic claim
-    // would convert every transient Resend failure into a permanently lost
-    // receipt — the opposite of the old behaviour, which deliberately left
-    // email_sent_at null on failure for exactly this reason.
-    @Modifying
-    @Query("UPDATE Order o SET o.emailSentAt = NULL WHERE o.id = :orderId")
-    fun releaseReceiptSend(@Param("orderId") orderId: UUID): Int
-
     @Modifying
     @Query(
         "UPDATE Order o SET o.receiptDeliveredAt = :deliveredAt " +

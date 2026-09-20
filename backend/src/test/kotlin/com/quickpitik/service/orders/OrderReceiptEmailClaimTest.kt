@@ -90,27 +90,27 @@ class OrderReceiptEmailClaimTest {
     }
 
     @Test
-    fun `a failed send releases the claim so a retry can still deliver`() {
+    fun `a failed send leaves its claim for the stale sweep`() {
         val order = stubReadyOrder()
         stubClaimResult(order, won = true)
         Mockito.`when`(resendClient.send(anyArg())).thenThrow(RuntimeException("resend down"))
 
         service().sendReceiptIfPending(order.id)
 
-        // Without this the atomic claim would turn every transient outage into
-        // a permanently lost receipt.
-        Mockito.verify(orderRepository).releaseReceiptSend(order.id)
+        Mockito.verify(orderRepository).findById(order.id)
+        Mockito.verify(orderRepository).claimReceiptSend(eqArg(order.id), anyArg())
+        Mockito.verifyNoMoreInteractions(orderRepository)
     }
 
     @Test
-    fun `a successful send keeps the claim`() {
+    fun `a successful send stamps delivery`() {
         val order = stubReadyOrder()
         stubClaimResult(order, won = true)
         Mockito.`when`(resendClient.send(anyArg())).thenReturn(ResendSendEmailResponse(id = "re_123"))
 
         service().sendReceiptIfPending(order.id)
 
-        Mockito.verify(orderRepository, Mockito.never()).releaseReceiptSend(anyArg())
+        Mockito.verify(orderRepository).stampReceiptDelivered(eqArg(order.id), anyArg())
     }
 
     @Test
@@ -269,25 +269,6 @@ class OrderReceiptEmailClaimTest {
 
         assertEquals(true, openAtClaim, "the claim is a @Modifying UPDATE — it must stay in the transaction")
         assertEquals(false, openAtSend, "Resend must not be called while a DB connection is held")
-    }
-
-    @Test
-    fun `a failed send releases the claim in its own transaction`() {
-        val tx = TxTracker()
-        val order = stubReadyOrder()
-        stubClaimResult(order, won = true)
-        Mockito.`when`(resendClient.send(anyArg())).thenThrow(RuntimeException("resend down"))
-        var openAtRelease: Boolean? = null
-        Mockito.`when`(orderRepository.releaseReceiptSend(eqArg(order.id))).thenAnswer {
-            openAtRelease = tx.open
-            1
-        }
-
-        service(tx.template).sendReceiptIfPending(order.id)
-
-        // The claim transaction is long gone by now, so the release needs one
-        // of its own or the UPDATE never reaches Postgres.
-        assertEquals(true, openAtRelease, "the release must run inside a transaction of its own")
     }
 
     // ─── fixtures ─────────────────────────────────────────────────────────

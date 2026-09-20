@@ -13,10 +13,8 @@ import org.springframework.transaction.event.TransactionalEventListener
 // Runs on the bounded `emailSending` pool (AsyncConfig): with named
 // executors present Spring creates no default one, so a bare `@Async` would
 // fall back to one unbounded thread per call. On
-// Resend failure we log and move on; no automatic retry — the next
-// PayMongo webhook re-delivery (if any) will re-publish the event and
-// OrderReceiptEmailService.sendReceiptIfPending will try again because
-// email_sent_at stays NULL on failure.
+// Resend failure leaves a dated send claim; the scheduled receipt sweep
+// retries it after the claim becomes stale.
 @Component
 class OrderPaidEmailListener(
     private val orderReceiptEmailService: OrderReceiptEmailService,

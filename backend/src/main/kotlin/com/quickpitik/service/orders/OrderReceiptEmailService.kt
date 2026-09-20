@@ -31,8 +31,7 @@ import java.util.UUID
 // Idempotency: orders.email_sent_at is the source of truth, claimed with a
 // conditional UPDATE (claimReceiptSend) rather than a read-check-write, so two
 // concurrent webhook retries can't both decide to send. The loser skips. On a
-// failed Resend call the claim is released, so PayMongo's webhook retry (if it
-// happens) re-fires the AFTER_COMMIT listener and the send is re-tried.
+// failed Resend call the dated claim remains for the stale-claim sweep.
 //
 // Each order produces one email. Multi-event carts produce N receipts —
 // clean attribution per event matches the multi-Order split.
@@ -75,11 +74,6 @@ class OrderReceiptEmailService(
             )
         } catch (ex: Exception) {
             log.error("Receipt send failed · orderId={} err={}", orderId, ex.message, ex)
-            // Hand the claim back so a manual reprocess or a future PayMongo
-            // webhook re-delivery can try again — the same door the old
-            // don't-stamp-on-failure behaviour left open. Needs its own
-            // transaction: the claim's committed long before we get here.
-            transactionTemplate.executeWithoutResult { orderRepository.releaseReceiptSend(orderId) }
             return
         }
 
