@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -145,6 +146,18 @@ class OrderBundleServiceTest {
 
         assertContentEquals(bytes, out.toByteArray())
         Mockito.verify(storageService, Mockito.never()).getBytes(anyArg())
+    }
+
+    @Test
+    fun `a failed photo aborts a multi-photo ZIP instead of returning a partial archive`() {
+        val order = order(tokenExpiresAt = OffsetDateTime.now().plusDays(30))
+        val photos = stub(order, photoCount = 2)
+        Mockito.`when`(storageService.getBytes(photos[0].s3Key)).thenReturn("first".toByteArray())
+        Mockito.`when`(storageService.getBytes(photos[1].s3Key)).thenAnswer { throw IOException("storage unavailable") }
+
+        assertFailsWith<IOException> {
+            service.writeTo(service.prepare(order.id, token), ByteArrayOutputStream())
+        }
     }
 
     @Test

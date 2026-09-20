@@ -135,25 +135,19 @@ class OrderBundleService(
     }
 
     private fun writeZipTo(spec: BundleSpec, out: OutputStream) {
-        ZipOutputStream(out).use { zip ->
+        // A failed read must abort, not finalize a valid partial ZIP.
+        val zip = object : ZipOutputStream(out) {
+            override fun close() { def.end() }
+        }
+        zip.use {
             spec.entries.forEach { entry ->
-                try {
-                    val bytes = storageService.getBytes(entry.s3Key)
-                    zip.putNextEntry(ZipEntry(entry.entryName))
-                    zip.write(bytes)
-                    zip.closeEntry()
-                } catch (ex: Exception) {
-                    // Per-photo failure is non-fatal — log and continue so
-                    // the rest of the order still bundles. A half-written
-                    // entry from a failed copy isn't closed here; the next
-                    // putNextEntry will roll over cleanly.
-                    log.warn(
-                        "Skipping {} in bundle {}: {}",
-                        entry.s3Key, spec.orderId, ex.message,
-                    )
-                }
+                val bytes = storageService.getBytes(entry.s3Key)
+                zip.putNextEntry(ZipEntry(entry.entryName))
+                zip.write(bytes)
+                zip.closeEntry()
             }
             zip.finish()
+            zip.flush()
         }
     }
 
