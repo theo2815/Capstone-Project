@@ -120,4 +120,3 @@ export function useRefundedThisWeekTotal(): number {
       .reduce((acc, d) => acc + (d.refundAmount ?? 0), 0);
   }, [serverDisputes]);
 }
-

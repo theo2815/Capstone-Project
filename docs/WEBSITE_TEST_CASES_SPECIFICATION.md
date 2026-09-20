@@ -3,12 +3,13 @@
 > **Status:** Implemented; architecture workstream closed with acceptance follow-ups tracked separately.
 > **Scope:** `website/` automated unit, component and mocked API-boundary regression tests.
 > **Recorded baseline:** 391 passing tests across 46 test files, measured on 2026-09-12 at application commit `ba239c7`.
+> **Candidate check:** 438 passing tests across 48 test files, measured on 2026-09-20 at `c90736ee` with Node 22.23.2.
 
 ## 1. Objectives and Evidence
 
 The suite protects authentication/session isolation, server-data ownership, administrative mutations, photographer workflows, and runner checkout behavior. Phase 2 moved server records into TanStack Query; Phase 3 separated Settings queries from editable drafts and Checkout orchestration from presentation.
 
-The baseline is a historical execution result, not a fresh test run or a claim that every product journey is covered. Test files and `website/package.json` are the live source of truth; rerun the command below for current totals. No tests were rerun for this documentation-only closeout.
+The baseline is a historical execution result, not a claim that every product journey is covered. Test files and `website/package.json` are the live source of truth; rerun the command below for current totals.
 
 | Recorded check | Result on 2026-09-12 |
 | --- | --- |
@@ -17,7 +18,7 @@ The baseline is a historical execution result, not a fresh test run or a claim t
 | `npm run lint` | 0 errors; 118 existing warnings |
 | `NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1 npm run build` | Passed |
 
-These are distinct checks: lint, typechecking, builds and manual browser checks are not included in the 391 automated tests. No code-coverage percentage is claimed.
+The candidate's 2026-09-20 `npm run test` check passed 438 tests in 48 files. Lint, typechecking, builds and manual browser checks are separate; no code-coverage percentage is claimed.
 
 ## 2. Implemented Test Architecture
 
@@ -26,7 +27,7 @@ These are distinct checks: lint, typechecking, builds and manual browser checks 
 | Runner and assertions | Vitest; dependency ranges in `website/package.json` |
 | Component interaction | React Testing Library, jest-dom and user-event |
 | DOM environment | jsdom |
-| Configuration | `website/vitest.config.mts`: automatic JSX, `@` alias to `src`, jsdom environment |
+| Configuration | `website/vitest.config.ts`: automatic JSX, `@` alias to `src`, jsdom environment |
 | Shared setup | `website/src/test/setup.ts` |
 | Test placement | Colocated `.test.ts` and `.test.tsx` files under `website/src/` |
 | API isolation | Mocked dependencies/API responses; does not exercise a live Spring Boot or payment service |
@@ -42,7 +43,7 @@ npm run test
 
 ## 3. Automated Test File Inventory
 
-Paths below are relative to `website/src/`. This inventory identifies all 46 test files associated with the recorded baseline. Individual assertions, parameterized cases and expected outcomes remain beside the implementation rather than being duplicated as 391 independently maintained prose entries.
+Paths below are relative to `website/src/`. This inventory identifies the 48 test files at candidate `c90736ee`. Individual assertions, parameterized cases and expected outcomes remain beside the implementation.
 
 | Area | Test files |
 | --- | --- |
@@ -57,7 +58,7 @@ Paths below are relative to `website/src/`. This inventory identifies all 46 tes
 | Auth, account and layout components | `components/auth/payout-security.test.tsx`, `components/auth/google-button.test.tsx`, `components/account/avatar-slab.test.tsx`, `components/layout/auth-hydrator.test.tsx`, `components/layout/notification-inboxes.test.tsx` |
 | Photographer components | `components/dashboard/watermark-placement-editor.test.tsx`, `components/dashboard/event-coupon-modal.test.tsx`, `components/dashboard/file-payout-report-modal.test.tsx` |
 | Admin components | `components/admin/admin-user-actions.test.tsx`, `components/admin/event-requests-queue.test.tsx`, `components/admin/payouts-queue.test.tsx`, `components/admin/admin-mutation-flows.test.tsx` |
-| Photo and checkout components | `components/photos/photo-preview-card.test.tsx`, `components/events/photo-mosaic-tile.test.tsx`, `components/cart/checkout-modal.test.tsx`, `components/cart/pending-payment-watcher.test.tsx` |
+| Photo and checkout components | `components/photos/photo-preview-card.test.tsx`, `components/events/photo-mosaic-tile.test.tsx`, `components/events/bib-search-panels.test.tsx`, `components/profile/selfie-library.test.tsx`, `components/cart/checkout-modal.test.tsx`, `components/cart/pending-payment-watcher.test.tsx` |
 | Route-level workflows | `app/admin/disputes/[id]/page.test.tsx`, `app/admin/events/page.test.tsx`, `app/dashboard/settings/page.test.tsx`, `app/dashboard/events/photo-management.test.tsx` |
 
 ## 4. Architecture Regression Coverage
@@ -82,7 +83,7 @@ Separate local Chrome checks used fictional API responses, not real provider tra
 | Guest Checkout | Email confirmation, failed creation/retry, QR refresh recovery, cancellation failure/retry, server-confirmed amount, simulated settlement and receipt layout |
 | Signed-in Checkout | Authenticated status polling, QR recovery, simulated settlement, Orders cache refresh, receipt persistence and cart cleanup |
 
-These manual checks are not automated end-to-end tests and are not part of the 391 count. Viewport resizing does not establish physical-device or native webview behavior.
+These manual checks are not automated end-to-end tests and are not part of the automated test counts. Viewport resizing does not establish physical-device or native webview behavior.
 
 ## 6. Closeout and Remaining Acceptance
 
