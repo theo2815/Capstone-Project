@@ -11,6 +11,7 @@ import { useSelfiesList } from "@/hooks/use-selfies";
 import { useToast } from "@/hooks/use-toast";
 import { Kicker } from "@/components/ui/kicker";
 import { ApiError } from "@/lib/api";
+import { captureAuthSession } from "@/lib/auth-session";
 import {
   uploadSelfie,
   deleteSelfie,
@@ -49,6 +50,7 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (files.length === 0) return;
+    const isCurrent = captureAuthSession();
 
     setBusy(true);
     setError(null);
@@ -59,6 +61,7 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
       let capHit = false;
 
       for (const file of accepted) {
+        if (!isCurrent()) return;
         const validationError = validateImageFile(file);
         if (validationError) {
           if (!firstSkipReason) {
@@ -69,8 +72,10 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
 
         try {
           await uploadSelfie(file);
+          if (!isCurrent()) return;
           addedCount++;
         } catch (err) {
+          if (!isCurrent()) return;
           if (err instanceof ApiError) {
             const code = err.errors[0]?.code;
             if (code === "SELFIE_LIMIT_REACHED") {
@@ -87,6 +92,7 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
           }
         }
       }
+      if (!isCurrent()) return;
 
       // The cap rides the success toast rather than a red line beneath it. A
       // multi-pick past the limit used to fire both at once — green "Added 2
@@ -120,6 +126,7 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
       // old `else if` chain dropped it whenever the pick was over cap too.
       if (firstSkipReason) setError(firstSkipReason);
     } catch {
+      if (!isCurrent()) return;
       setError("Could not process one of the images. Try again.");
     } finally {
       setBusy(false);

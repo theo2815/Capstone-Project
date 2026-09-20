@@ -15,6 +15,7 @@ import {
   type EventPhotosResult,
 } from "@/lib/api-photos";
 import { ApiError } from "@/lib/api";
+import { captureAuthSession } from "@/lib/auth-session";
 import { FieldError } from "@/components/ui/field-error";
 import { buildLoginRedirect } from "@/lib/redirect";
 import {
@@ -181,6 +182,7 @@ export function SelfieSearchPanel({
   }
 
   async function searchWithFile(file: File) {
+    const isCurrent = captureAuthSession();
     const validation = validateImageFile(file);
     if (validation) {
       setError(validation);
@@ -197,17 +199,22 @@ export function SelfieSearchPanel({
         // the one-shot file search below still runs.
         try {
           await uploadSelfie(file);
+          if (!isCurrent()) return;
           void queryClient.invalidateQueries({ queryKey: ["me", "selfies"] });
           setNotice("Saved to your selfie library.");
           result = await searchEventByFace(eventSlug, { allSelfies: true });
         } catch (saveErr) {
+          if (!isCurrent()) return;
           const why = saveErr instanceof ApiError ? saveErr.message : "upload failed";
           setNotice(`Not saved to your library (${why}) — searching with it anyway.`);
         }
       }
+      if (!isCurrent()) return;
       if (!result) result = await searchEventByFace(eventSlug, { selfieFile: file });
+      if (!isCurrent()) return;
       onSearchSuccess(result);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(humanizeError(err));
     } finally {
       setIsSearching(false);
