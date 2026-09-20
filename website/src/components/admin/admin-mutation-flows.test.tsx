@@ -64,6 +64,16 @@ function pendingRequest(method: "post" | "fetch") {
   return async () => { await act(async () => { reject(new Error("Backend unavailable")); }); };
 }
 
+it("does not show an unknown refund outcome as refunded in the dispute drawer", async () => {
+  const pending: Dispute = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, activity: [] };
+  fixtures.search = `row=${pending.id}`;
+  client.setQueryData(adminDisputeKeys.list(admin.id), [pending]);
+  render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
+  const drawer = await screen.findByRole("dialog");
+  expect(drawer).toHaveTextContent("Escalated");
+  expect(within(drawer).queryByText(/refunded/i)).not.toBeInTheDocument();
+});
+
 it.each([false, true])("preserves the selected dispute while loading (stale cache: %s)", async (stale) => {
   fixtures.search = `row=${dispute.id}`;
   if (stale) client.setQueryData(adminDisputeKeys.list(admin.id), [], { updatedAt: 1 });

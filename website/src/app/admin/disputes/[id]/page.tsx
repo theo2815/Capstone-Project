@@ -177,7 +177,7 @@ export default function AdminDisputeDetailPage() {
           </Slab>
 
           <Slab id="activity" number="05" title="Activity" caption="Decision log">
-            {dispute.status !== "open" && !dispute.activity?.length && (
+            {(dispute.status === "resolved" || dispute.status === "denied") && !dispute.activity?.length && (
               <ResolutionNote
                 resolution={dispute.resolution}
                 refundAmount={dispute.refundAmount}

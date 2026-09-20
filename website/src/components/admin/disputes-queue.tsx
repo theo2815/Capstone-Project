@@ -681,7 +681,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         <Kicker as="p" tone="soft" className="mb-3">
           Activity
         </Kicker>
-        {dispute.status !== "open" &&
+        {(dispute.status === "resolved" || dispute.status === "denied") &&
           (dispute.activity ?? []).length === 0 && (
             <ResolutionNote
               resolution={dispute.resolution}

@@ -43,3 +43,11 @@ it("shows a retryable read error instead of treating a failed request as a missi
   await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByRole("heading", { name: "@runner vs @photographer" })).toBeInTheDocument();
 });
+
+it("does not show an unknown refund outcome as refunded on the dispute page", async () => {
+  vi.spyOn(api, "get").mockResolvedValueOnce({ items: [{ ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, activity: [] }], total: 1 });
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  expect(await screen.findByRole("heading", { name: "@runner vs @photographer" })).toBeInTheDocument();
+  expect(screen.getByText("Escalated")).toBeInTheDocument();
+  expect(screen.queryByText(/refunded/i)).not.toBeInTheDocument();
+});
