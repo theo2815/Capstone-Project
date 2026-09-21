@@ -23,6 +23,7 @@ import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.RunnerMessageKind
 import com.quickpitik.entity.User
+import com.quickpitik.entity.refundNeedsReconciliation
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -109,6 +110,13 @@ class AdminDisputeService(
     fun deny(adminId: UUID, disputeId: UUID, reason: String?): AdminDisputeDto {
         val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: throw
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+        if (dispute.refundNeedsReconciliation()) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "Refund is in progress or requires manual reconciliation",
+            )
+        }
         if (dispute.status == DisputeStatus.RESOLVED || dispute.status == DisputeStatus.DENIED) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,

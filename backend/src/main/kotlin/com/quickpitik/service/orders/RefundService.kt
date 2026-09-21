@@ -9,6 +9,7 @@ import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeReason
 import com.quickpitik.entity.DisputeStatus
+import com.quickpitik.entity.refundNeedsReconciliation
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -184,12 +185,18 @@ class RefundService(
      *     disappears from the open filter.
      */
     fun withdraw(userId: UUID, disputeId: UUID): RunnerDisputeDto {
-        val dispute = disputeRepository.findById(disputeId).orElseThrow {
+        val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: throw
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
-        }
         if (dispute.runnerId != userId) {
             // Anti-IDOR — never reveal that the dispute exists for another user.
             throw NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+        }
+        if (dispute.refundNeedsReconciliation()) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "Refund is in progress or requires manual reconciliation",
+            )
         }
         if (dispute.status != DisputeStatus.OPEN) {
             throw ApiException(

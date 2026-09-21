@@ -7,6 +7,10 @@ import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.PaymentMethod
+import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.DisputeStatus
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
@@ -20,11 +24,45 @@ import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertFailsWith
+import kotlin.test.assertEquals
 
 // Free checkout (2026-09-05): a 100% giveaway charged nothing, so a refund
 // request on it is refused before a dispute row exists — the admin path
 // would otherwise reach PayMongo with no payment to refund against.
 class RefundServiceTest {
+    @Test
+    fun `a pending provider refund cannot be withdrawn or reopened`() {
+        val runnerId = UUID.randomUUID()
+        val dispute = Dispute(
+            orderId = UUID.randomUUID(),
+            photoId = UUID.randomUUID(),
+            runnerId = runnerId,
+            reasonWire = "other",
+        ).apply {
+            refundStatus = "processing"
+            refundAmountPhp = BigDecimal("125.00")
+        }
+        val disputes = Mockito.mock(DisputeRepository::class.java)
+        Mockito.`when`(disputes.findById(dispute.id)).thenReturn(Optional.of(dispute))
+        Mockito.`when`(disputes.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        val service = RefundService(
+            Mockito.mock(OrderRepository::class.java),
+            Mockito.mock(OrderItemRepository::class.java),
+            disputes,
+            Mockito.mock(AdminDecisionLogRepository::class.java),
+            Mockito.mock(ApplicationEventPublisher::class.java),
+            PlatformProperties(),
+        )
+
+        val error = assertFailsWith<ApiException> { service.withdraw(runnerId, dispute.id) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.OPEN, dispute.status)
+        assertEquals(BigDecimal("125.00"), dispute.refundAmountPhp)
+        Mockito.verify(disputes).findByIdForUpdate(dispute.id)
+        Mockito.verify(disputes, Mockito.never()).save(dispute)
+    }
+
     @Test
     fun `a photo that was charged nothing cannot be disputed`() {
         val runnerId = UUID.randomUUID()

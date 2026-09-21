@@ -1,9 +1,12 @@
 package com.quickpitik.service.admin
 
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
@@ -18,6 +21,7 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.orders.PaymongoRefundService
 import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.storage.StorageService
+import com.quickpitik.exception.ApiException
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.data.domain.PageImpl
@@ -27,6 +31,7 @@ import java.math.BigDecimal
 import java.util.UUID
 import java.util.Optional
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class AdminDisputeServiceTest {
@@ -38,6 +43,7 @@ class AdminDisputeServiceTest {
     private val userRepository = Mockito.mock(UserRepository::class.java)
     private val settingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
     private val decisionLogRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
+    private val decisionLogService = Mockito.mock(AdminDecisionLogService::class.java)
     private val service = AdminDisputeService(
         disputeRepository,
         orderRepository,
@@ -48,12 +54,49 @@ class AdminDisputeServiceTest {
         settingsRepository,
         Mockito.mock(StorageService::class.java),
         StorageProperties(),
-        Mockito.mock(AdminDecisionLogService::class.java),
+        decisionLogService,
         decisionLogRepository,
         Mockito.mock(RunnerMessagesService::class.java),
         Mockito.mock(PaymongoRefundService::class.java),
         Mockito.mock(TransactionTemplate::class.java),
     )
+
+    @Test
+    fun `deny refuses a dispute while its refund is pending`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.refundStatus = "pending"
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(disputeRepository.save(dispute)).thenReturn(dispute)
+        Mockito.`when`(photoRepository.findById(dispute.photoId)).thenReturn(Optional.empty())
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "denied", null))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "denied"))
+
+        val error = assertFailsWith<ApiException> { service.deny(adminId, dispute.id, null) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.OPEN, dispute.status)
+        Mockito.verify(disputeRepository, Mockito.never()).save(dispute)
+    }
+
+    @Test
+    fun `deny refuses a dispute that needs manual refund reconciliation`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.status = DisputeStatus.ESCALATED
+        dispute.refundStatus = "manual_review"
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(disputeRepository.save(dispute)).thenReturn(dispute)
+        Mockito.`when`(photoRepository.findById(dispute.photoId)).thenReturn(Optional.empty())
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "denied", null))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "denied"))
+
+        val error = assertFailsWith<ApiException> { service.deny(adminId, dispute.id, null) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.ESCALATED, dispute.status)
+        Mockito.verify(disputeRepository, Mockito.never()).save(dispute)
+    }
 
     @Test
     fun `hydrate uses only the disputed item's historical charge`() {
