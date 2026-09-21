@@ -144,6 +144,63 @@ class PaymongoRefundServiceTest {
         assertEquals(DisputeStatus.ESCALATED, h.dispute.status)
     }
 
+    @Test
+    fun `a delayed failed response cannot overwrite a completed retry`() {
+        val h = couponHarness()
+        h.dispute.apply {
+            resolution = DisputeResolution.REFUND_FULL
+            refundAmountPhp = BigDecimal("127.50")
+            refundStatus = "processing"
+            refundRequestedAt = OffsetDateTime.now().minusMinutes(1)
+            refundRequestedBy = h.adminId
+            providerRefundId = "ref_old"
+        }
+        Mockito.`when`(h.disputes.findByRefundStatusInOrderByRefundRequestedAtAsc(anyArg(), anyArg()))
+            .thenReturn(listOf(h.dispute))
+        Mockito.`when`(h.client.retrieveRefund("ref_old")).thenAnswer {
+            h.dispute.refundStatus = "failed"
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+            PaymongoRefundResponse(
+                PaymongoRefundResource(
+                    id = "ref_old",
+                    attributes = PaymongoRefundAttributes(
+                        amount = 12_750,
+                        paymentId = "pay_test",
+                        status = "failed",
+                    ),
+                ),
+            )
+        }
+
+        h.service.reconcile()
+
+        assertEquals("ref_test", h.dispute.providerRefundId)
+        assertEquals("succeeded", h.dispute.refundStatus)
+        assertEquals(DisputeStatus.RESOLVED, h.dispute.status)
+        Mockito.verify(h.client, Mockito.times(1)).createRefund(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a stale webhook cannot downgrade a completed refund`() {
+        val h = couponHarness()
+        h.dispute.apply {
+            resolution = DisputeResolution.REFUND_FULL
+            refundAmountPhp = BigDecimal("127.50")
+            refundStatus = "succeeded"
+            refundRequestedAt = OffsetDateTime.now()
+            refundedAt = OffsetDateTime.now()
+            providerRefundId = "ref_current"
+            status = DisputeStatus.RESOLVED
+        }
+        Mockito.`when`(h.disputes.findByProviderRefundId("ref_old")).thenReturn(h.dispute)
+
+        val handled = h.service.handleWebhook("ref_old", "failed")
+
+        assertEquals(false, handled)
+        assertEquals("ref_current", h.dispute.providerRefundId)
+        assertEquals("succeeded", h.dispute.refundStatus)
+    }
+
     private class CouponHarness(
         val service: PaymongoRefundService,
         val adminId: UUID,
@@ -152,6 +209,7 @@ class PaymongoRefundServiceTest {
         val photographerId: UUID,
         val client: PaymongoClient,
         val minting: TransactionMintingService,
+        val disputes: DisputeRepository,
         val sentRequestRef: () -> PaymongoRefundRequest?,
     ) {
         val sentRequest: PaymongoRefundRequest? get() = sentRequestRef()
@@ -229,7 +287,7 @@ class PaymongoRefundServiceTest {
             Mockito.mock(RunnerMessagesService::class.java),
             testTransactionTemplate(),
         )
-        return CouponHarness(service, adminId, dispute, order, photographerId, client, minting) { sentRequest }
+        return CouponHarness(service, adminId, dispute, order, photographerId, client, minting, disputes) { sentRequest }
     }
     @Test
     fun `successful full refund uses PayMongo then revokes the grant`() {

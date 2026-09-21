@@ -71,6 +71,8 @@ class PaymongoRefundService(
         transactionTemplate.execute {
             val dispute = disputeRepository.findByProviderRefundId(providerRefundId) ?: return@execute false
             val locked = disputeRepository.findByIdForUpdate(dispute.id) ?: return@execute false
+            if (locked.providerRefundId != providerRefundId) return@execute false
+            if (isCompletedRefund(locked)) return@execute true
             locked.refundStatus = status.lowercase()
             disputeRepository.save(locked)
             if (locked.refundStatus == SUCCEEDED) completeSucceededRefund(locked)
@@ -97,7 +99,11 @@ class PaymongoRefundService(
     ): PreparedRefund {
         val dispute = disputeRepository.findByIdForUpdate(disputeId)
             ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
-        if (dispute.refundStatus == SUCCEEDED && dispute.status == DisputeStatus.RESOLVED) {
+        if (isCompletedRefund(dispute)) {
+            if (dispute.refundStatus != SUCCEEDED) {
+                dispute.refundStatus = SUCCEEDED
+                disputeRepository.save(dispute)
+            }
             return snapshotOf(dispute, completed = true)
         }
         if (dispute.refundStatus == MANUAL_REVIEW) {
@@ -171,7 +177,7 @@ class PaymongoRefundService(
         if (prepared.providerRefundId == null &&
             OffsetDateTime.now().isAfter(prepared.requestedAt.plus(PROVIDER_RETRY_WINDOW))
         ) {
-            markManualReview(prepared.disputeId, prepared.providerRefundId)
+            markManualReview(prepared)
             log.error("Refund {} has an unknown provider outcome and requires manual reconciliation", prepared.disputeId)
             if (reportFailure) {
                 throw checkoutConflict("Refund outcome is unknown. Reconcile it in PayMongo before retrying.")
@@ -200,6 +206,15 @@ class PaymongoRefundService(
             val status = response.data.attributes.status.lowercase()
             transactionTemplate.executeWithoutResult {
                 val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId) ?: return@executeWithoutResult
+                if (isCompletedRefund(dispute) || dispute.refundRequestedAt != prepared.requestedAt) {
+                    return@executeWithoutResult
+                }
+                if (dispute.providerRefundId != null &&
+                    response.data.id.isNotBlank() &&
+                    dispute.providerRefundId != response.data.id
+                ) {
+                    return@executeWithoutResult
+                }
                 dispute.providerRefundId = response.data.id.ifBlank { dispute.providerRefundId }
                 dispute.refundStatus = status.ifBlank { REQUESTING }
                 disputeRepository.save(dispute)
@@ -212,7 +227,7 @@ class PaymongoRefundService(
             throw ex
         } catch (ex: Exception) {
             if (ex is RestClientResponseException && ex.statusCode.value() == 400) {
-                markManualReview(prepared.disputeId, prepared.providerRefundId)
+                markManualReview(prepared)
                 log.error("PayMongo rejected refund {}: {}", prepared.disputeId, ex.responseBodyAsString)
                 if (reportFailure) {
                     throw ConflictException(
@@ -232,10 +247,14 @@ class PaymongoRefundService(
         }
     }
 
-    private fun markManualReview(disputeId: UUID, providerRefundId: String?) {
+    private fun markManualReview(prepared: PreparedRefund) {
         transactionTemplate.executeWithoutResult {
-            val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: return@executeWithoutResult
-            if (dispute.providerRefundId == providerRefundId && dispute.refundStatus in IN_FLIGHT_STATUSES) {
+            val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId) ?: return@executeWithoutResult
+            if (!isCompletedRefund(dispute) &&
+                dispute.refundRequestedAt == prepared.requestedAt &&
+                dispute.providerRefundId == prepared.providerRefundId &&
+                dispute.refundStatus in IN_FLIGHT_STATUSES
+            ) {
                 dispute.refundStatus = MANUAL_REVIEW
                 dispute.status = DisputeStatus.ESCALATED
                 disputeRepository.save(dispute)
@@ -366,6 +385,9 @@ class PaymongoRefundService(
 
     private fun checkoutConflict(message: String): ConflictException =
         ConflictException(message = message, code = ErrorCodes.CONFLICT)
+
+    private fun isCompletedRefund(dispute: Dispute): Boolean =
+        dispute.status == DisputeStatus.RESOLVED && dispute.refundedAt != null
 
     private data class PreparedRefund(
         val disputeId: UUID,
