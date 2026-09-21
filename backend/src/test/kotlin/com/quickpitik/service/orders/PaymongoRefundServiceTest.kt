@@ -102,8 +102,8 @@ class PaymongoRefundServiceTest {
     }
 
     @Test
-    fun `a QR Ph refund recovers a missing payment ID from its Payment Intent`() {
-        val h = couponHarness(providerRef = "pi_test", providerPaymentId = null)
+    fun `a QR Ph refund replaces a stale payment ID from its Payment Intent`() {
+        val h = couponHarness(providerRef = "pi_test", providerPaymentId = "pay_failed")
         Mockito.`when`(h.client.retrievePaymentIntent("pi_test")).thenReturn(
             PaymongoPaymentIntentResponse(
                 PaymongoPaymentIntentResponseEnvelope(

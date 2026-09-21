@@ -483,7 +483,7 @@ class OrderService(
             linkQrPhIntent(reservation, intent)
             paymongoWebhookService.settlePaymentIntent(
                 intent.data.id,
-                intent.data.attributes.payments.firstOrNull()?.id,
+                intent.data.attributes.payments.paidPaymentId(),
                 intent.data.attributes.metadata,
             )
             clearCartBestEffort(userId, items)

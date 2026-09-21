@@ -179,7 +179,11 @@ class PaymongoRefundService(
             return
         }
         try {
-            val paymentId = prepared.paymentId ?: recoverPaymentId(prepared)
+            val paymentId = if (prepared.providerRef.startsWith("pi_")) {
+                recoverPaymentId(prepared)
+            } else {
+                prepared.paymentId ?: recoverPaymentId(prepared)
+            }
             val response = prepared.providerRefundId?.let(paymongoClient::retrieveRefund)
                 ?: paymongoClient.createRefund(
                     request = PaymongoRefundRequest(
@@ -243,10 +247,9 @@ class PaymongoRefundService(
         val paymentId = if (prepared.providerRef.startsWith("pi_")) {
             val intent = paymongoClient.retrievePaymentIntent(prepared.providerRef)
             intent.data.attributes.payments.takeIf { intent.data.attributes.status == "succeeded" }
-                ?.firstOrNull { it.attributes.status.equals("paid", ignoreCase = true) }?.id
+                ?.paidPaymentId()
         } else {
-            paymongoClient.retrieveCheckoutSession(prepared.providerRef).data.attributes.payments
-                .firstOrNull { it.attributes.status.equals("paid", ignoreCase = true) }?.id
+            paymongoClient.retrieveCheckoutSession(prepared.providerRef).data.attributes.payments.paidPaymentId()
         }
         val paidPaymentId = paymentId
             ?.takeIf { it.isNotBlank() }

@@ -124,7 +124,7 @@ class PaymongoCheckoutReconciler(
     private fun closeUnpaidIntent(intentId: String, paymentRef: String): Boolean {
         var intent = paymongoClient.retrievePaymentIntent(intentId)
         if (intent.data.attributes.status == "succeeded") {
-            webhookService.settleCheckoutSession(paymentRef, intent.data.attributes.payments.firstOrNull()?.id)
+            webhookService.settleCheckoutSession(paymentRef, intent.data.attributes.payments.paidPaymentId())
             return false
         }
         if (intent.data.attributes.status !in setOf("cancelled", "canceled")) {
@@ -145,7 +145,7 @@ class PaymongoCheckoutReconciler(
         if (intent.data.attributes.status == "succeeded") {
             webhookService.settlePaymentIntent(
                 intentId,
-                intent.data.attributes.payments.firstOrNull()?.id,
+                intent.data.attributes.payments.paidPaymentId(),
                 intent.data.attributes.metadata,
             )
             return

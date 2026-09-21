@@ -16,9 +16,11 @@ import com.quickpitik.dto.orders.PaymongoPaymentIntentRequest
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponse
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseAttributes
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseEnvelope
+import com.quickpitik.dto.orders.PaymongoPaymentAttributes
 import com.quickpitik.dto.orders.PaymongoPaymentMethodResponse
 import com.quickpitik.dto.orders.PaymongoPaymentMethodResponseEnvelope
 import com.quickpitik.dto.orders.PaymongoPaymentMethodRequest
+import com.quickpitik.dto.orders.PaymongoPaymentResource
 import com.quickpitik.dto.orders.PaymongoQrCode
 import com.quickpitik.entity.DownloadGrant
 import com.quickpitik.entity.DownloadGrantId
@@ -496,11 +498,23 @@ class OrderServiceCheckoutTest {
             PaymongoPaymentIntentResponse(
                 PaymongoPaymentIntentResponseEnvelope(
                     id = "pi_test",
-                    attributes = PaymongoPaymentIntentResponseAttributes(status = "succeeded"),
+                    attributes = PaymongoPaymentIntentResponseAttributes(
+                        status = "succeeded",
+                        payments = listOf(
+                            PaymongoPaymentResource(
+                                id = "pay_failed",
+                                attributes = PaymongoPaymentAttributes(status = "failed"),
+                            ),
+                            PaymongoPaymentResource(
+                                id = "pay_paid",
+                                attributes = PaymongoPaymentAttributes(status = "paid"),
+                            ),
+                        ),
+                    ),
                 ),
             ),
         )
-        Mockito.`when`(webhookService.settlePaymentIntent("pi_test", null, null)).thenAnswer {
+        Mockito.`when`(webhookService.settlePaymentIntent("pi_test", "pay_paid", null)).thenAnswer {
             savedOrders.forEach { it.status = OrderStatus.FULFILLED }
             emptyMap<String, Any?>()
         }
@@ -513,6 +527,7 @@ class OrderServiceCheckoutTest {
         assertEquals(BigDecimal("125.00"), settled.totalAmount)
         assertEquals(BigDecimal("375.00"), settled.checkoutTotalAmount)
         assertEquals(null, settled.qrPh)
+        Mockito.verify(webhookService).settlePaymentIntent("pi_test", "pay_paid", null)
     }
 
     @Test
