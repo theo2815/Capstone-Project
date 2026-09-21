@@ -99,6 +99,25 @@ class AdminDisputeServiceTest {
     }
 
     @Test
+    fun `escalate locks the dispute before changing its state`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(photoRepository.findById(dispute.photoId)).thenReturn(Optional.empty())
+        Mockito.`when`(orderRepository.findById(dispute.orderId)).thenReturn(Optional.empty())
+        Mockito.`when`(orderItemRepository.findById(OrderItemId(dispute.orderId, dispute.photoId)))
+            .thenReturn(Optional.empty())
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "escalated", null))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "escalated"))
+
+        service.escalate(adminId, dispute.id, null)
+
+        Mockito.verify(disputeRepository).findByIdForUpdate(dispute.id)
+        Mockito.verify(disputeRepository, Mockito.never()).findById(dispute.id)
+    }
+
+    @Test
     fun `hydrate uses only the disputed item's historical charge`() {
         val order = order(BigDecimal("300.00"))
         val disputed = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
