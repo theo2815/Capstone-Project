@@ -1,6 +1,9 @@
 package com.quickpitik.support
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.PaymentWebhookProperties
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.entity.Role
@@ -15,7 +18,11 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.time.Instant
+import java.util.HexFormat
 import java.util.UUID
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -34,9 +41,18 @@ import kotlin.test.assertTrue
  */
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = ["app.rate-limit.enabled=true"],
+    properties = ["app.rate-limit.enabled=true", "app.ai-api.webhook.hmac-secret=test-only-ai-webhook-secret"],
 )
 class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
+
+    @Autowired
+    private lateinit var aiApiProperties: AiApiProperties
+
+    @Autowired
+    private lateinit var paymentWebhookProperties: PaymentWebhookProperties
+
+    @Autowired
+    private lateinit var paymongoProperties: PaymongoProperties
 
     @Autowired
     private lateinit var authService: AuthService
@@ -86,6 +102,41 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         // Webhooks verify the signature before parsing: unsigned junk is a 401, not a 400.
         assertEquals(401, post("/api/v1/payments/webhook/stub", "not-json").statusCode())
         assertEquals(401, post("/api/v1/internal/ai-webhooks", "not-json").statusCode())
+        assertEquals(401, post("/api/v1/payments/webhook/paymongo", "not-json").statusCode())
+        assertEquals(401, post("/api/v1/payments/webhook/paymongo-transfers", "not-json").statusCode())
+    }
+
+    @Test
+    fun `signed malformed webhook bodies return validation errors on all four routes`() {
+        val body = "not-json"
+        val paymongoTimestamp = Instant.now().epochSecond.toString()
+        val paymongoSignature = "t=$paymongoTimestamp,te=${hmac(paymongoProperties.webhookSecret, "$paymongoTimestamp.$body")}"
+        val routes = listOf(
+            Triple("/api/v1/payments/webhook/stub", paymentWebhookProperties.signatureHeader, hmac(paymentWebhookProperties.hmacSecret, body)),
+            Triple("/api/v1/internal/ai-webhooks", "X-QuickPitik-Signature", "sha256=${hmac(aiApiProperties.webhook.hmacSecret, body)}"),
+            Triple("/api/v1/payments/webhook/paymongo", "Paymongo-Signature", paymongoSignature),
+            Triple("/api/v1/payments/webhook/paymongo-transfers", "Paymongo-Signature", paymongoSignature),
+        )
+
+        routes.forEach { (path, header, signature) ->
+            val response = client.send(
+                HttpRequest.newBuilder(uri(path))
+                    .header("Content-Type", "application/json")
+                    .header(header, signature)
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+            assertEquals(400, response.statusCode(), path)
+            assertEquals("VALIDATION_ERROR", errorCode(response), path)
+            assertFalse(response.body().contains(body), path)
+        }
+    }
+
+    private fun hmac(secret: String, payload: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        return HexFormat.of().formatHex(mac.doFinal(payload.toByteArray(Charsets.UTF_8)))
     }
 
     @Test

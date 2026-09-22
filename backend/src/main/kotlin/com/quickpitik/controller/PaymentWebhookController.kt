@@ -1,8 +1,10 @@
 package com.quickpitik.controller
 
+import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.dto.orders.PaymentWebhookRequest
 import com.quickpitik.dto.orders.PaymentWebhookResponse
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.WebhookSignatureVerifier
 import com.quickpitik.service.orders.PaymentWebhookService
 import jakarta.servlet.http.HttpServletRequest
@@ -33,7 +35,11 @@ class PaymentWebhookController(
         @RequestBody rawBody: String,
     ): PaymentWebhookResponse {
         signatureVerifier.verify(request)
-        val body = objectMapper.readValue(rawBody, PaymentWebhookRequest::class.java)
+        val body = try {
+            objectMapper.readValue(rawBody, PaymentWebhookRequest::class.java)
+        } catch (_: JsonProcessingException) {
+            throw ValidationException("Invalid webhook payload.")
+        }
         return webhookService.handle(provider = provider, request = body)
     }
 }

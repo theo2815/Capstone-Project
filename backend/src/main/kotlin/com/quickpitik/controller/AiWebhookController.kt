@@ -1,7 +1,9 @@
 package com.quickpitik.controller
 
+import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.dto.ai.AiWebhookEvent
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AiWebhookSignatureVerifier
 import com.quickpitik.service.ai.AiWebhookService
 import jakarta.servlet.http.HttpServletRequest
@@ -29,7 +31,11 @@ class AiWebhookController(
         @RequestBody rawBody: String,
     ): Map<String, Any?> {
         verifier.verify(request)
-        val body = objectMapper.readValue(rawBody, AiWebhookEvent::class.java)
+        val body = try {
+            objectMapper.readValue(rawBody, AiWebhookEvent::class.java)
+        } catch (_: JsonProcessingException) {
+            throw ValidationException("Invalid webhook payload.")
+        }
         if (body.job_id.isNotBlank() && (body.event == "job.completed" || body.event == "job.failed")) {
             service.onJobEvent(body.job_id)
         }

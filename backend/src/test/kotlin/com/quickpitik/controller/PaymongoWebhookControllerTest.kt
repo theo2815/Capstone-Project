@@ -1,7 +1,11 @@
 package com.quickpitik.controller
 
+import com.fasterxml.jackson.core.JsonParseException
+import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.dto.orders.PaymongoWebhookEvent
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.security.PaymongoSignatureVerifier
 import com.quickpitik.service.orders.PaymongoWebhookService
@@ -26,5 +30,20 @@ class PaymongoWebhookControllerTest {
 
         assertSame(failure, thrown)
         Mockito.verifyNoInteractions(service)
+    }
+
+    @Test
+    fun `provider parsing failure after a valid body remains a server failure`() {
+        val verifier = Mockito.mock(PaymongoSignatureVerifier::class.java)
+        val service = Mockito.mock(PaymongoWebhookService::class.java)
+        val request = Mockito.mock(HttpServletRequest::class.java)
+        val failure = JsonParseException(null, "provider response could not be parsed")
+        Mockito.doAnswer { throw failure }.`when`(service).handle(PaymongoWebhookEvent())
+
+        val thrown = assertFailsWith<JsonProcessingException> {
+            PaymongoWebhookController(verifier, service, jacksonObjectMapper()).handle(request, "{}")
+        }
+
+        assertSame(failure, thrown)
     }
 }
