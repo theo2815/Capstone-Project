@@ -244,36 +244,66 @@ class AdminPayoutService(
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun markProcessing(adminId: UUID, payoutId: String): AdminPayoutCycleDto {
-        val request = transactionTemplate.execute {
+        data class Claim(
+            val provider: String,
+            val request: DisbursementRequest?,
+            val result: AdminPayoutCycleDto,
+        )
+
+        val claim = transactionTemplate.execute {
             val cycle = loadCycle(payoutId)
-            // Refuse invalid or uncovered cycles before any money leaves.
+            // A non-manual stamp is a durable provider claim, including on
+            // legacy APPROVED rows. Never replace or replay it.
+            ensureManual(cycle)
             payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkProcessing)
             payoutRequestService.assertCovered(cycle)
-            cycle.provider = disbursementService.activeName
-            payoutCycleRepository.save(cycle)
-            disbursementRequestFor(cycle)
+            val provider = disbursementService.activeName
+            cycle.provider = provider
+            val request = if (provider == "manual") null else disbursementRequestFor(cycle)
+            cycle.processingAt = OffsetDateTime.now()
+            payoutCycleTransitions.apply(cycle, PayoutTransition.AdminMarkProcessing, adminId)
+            adminDecisionLogService.logPayoutDecision(
+                adminId = adminId, targetPayoutId = cycle.id, decision = "processing",
+            )
+            Claim(provider, request, hydrateOne(cycle))
+        } ?: error("Mark-processing claim returned null")
+
+        // Manual payouts are fully claimed above. Automated provider I/O holds
+        // no DB transaction and a retry cannot pass the durable PROCESSING claim.
+        val request = claim.request ?: return claim.result
+        val transferId = try {
+            disbursementService.initiate(request).providerTransferId
+                ?: error("Provider returned no transfer id for payout $payoutId")
+        } catch (ex: Exception) {
+            log.error(
+                "Provider initiation outcome is unknown for payout cycle {} with provider {}; " +
+                    "manual reconciliation required",
+                payoutId, claim.provider, ex,
+            )
+            throw ex
         }
-        // Provider I/O holds no DB transaction. Manual legacy cycles need no request.
-        val transferId = request?.let { disbursementService.initiate(it).providerTransferId }
         try {
             return transactionTemplate.execute {
                 val cycle = loadCycle(payoutId)
-                if (request != null) cycle.providerTransferId = transferId
-                cycle.processingAt = OffsetDateTime.now()
-                payoutCycleTransitions.apply(cycle, PayoutTransition.AdminMarkProcessing, adminId)
-                // Internal step — no photographer inbox message; the status shows on billing.
-                adminDecisionLogService.logPayoutDecision(
-                    adminId = adminId, targetPayoutId = cycle.id, decision = "processing",
-                )
+                if (cycle.provider != claim.provider || cycle.status != PayoutCycleStatus.PROCESSING ||
+                    cycle.providerTransferId?.let { it != transferId } == true
+                ) {
+                    throw ApiException(
+                        HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                        "The payout provider claim changed; manual reconciliation is required.",
+                    )
+                }
+                if (cycle.providerTransferId == null) {
+                    cycle.providerTransferId = transferId
+                    payoutCycleRepository.save(cycle)
+                }
                 hydrateOne(cycle)
-            } ?: error("Mark-processing returned null")
+            } ?: error("Transfer-link transaction returned null")
         } catch (ex: Exception) {
-            if (transferId != null) {
-                log.error(
-                    "Failed to link provider transfer {} to payout cycle {}; manual reconciliation required",
-                    transferId, payoutId, ex,
-                )
-            }
+            log.error(
+                "Failed to link provider transfer {} to payout cycle {}; manual reconciliation required",
+                transferId, payoutId, ex,
+            )
             throw ex
         }
     }

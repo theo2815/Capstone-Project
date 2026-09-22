@@ -62,6 +62,7 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -215,19 +216,41 @@ class AdminPayoutServiceTransitionTest {
     }
 
     @Test
-    fun `mark-processing routes through the disbursement seam and stamps the manual provider`() {
+    fun `manual mark-processing finishes without initiating an external transfer`() {
         val cycle = cycle(PayoutCycleStatus.APPROVED).apply {
             accountSnapshotMethod = "gcash"
             accountSnapshotNumber = "09123456789"
             accountSnapshotName = "Test recipient"
         }
         Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
-        service().markProcessing(adminId, cycleId)
+        val disbursements = Mockito.mock(DisbursementService::class.java)
+        Mockito.`when`(disbursements.activeName).thenReturn("manual")
+        Mockito.`when`(disbursements.initiate(anyArg())).thenReturn(DisbursementResult(null))
+
+        service(disbursements).markProcessing(adminId, cycleId)
+
         val captor = ArgumentCaptor.forClass(PayoutCycle::class.java)
-        Mockito.verify(payoutCycleRepository, Mockito.times(2)).save(captor.capture())
+        Mockito.verify(payoutCycleRepository).save(captor.capture())
         assertEquals("manual", captor.value.provider)
-        // Manual disbursement creates no external transfer, so no id is recorded.
         assertEquals(null, captor.value.providerTransferId)
+        Mockito.verify(disbursements, Mockito.never()).initiate(anyArg())
+    }
+
+    @Test
+    fun `mark-processing refuses a legacy provider claim before consulting the active provider`() {
+        val cycle = cycle(PayoutCycleStatus.APPROVED).apply { provider = "paymongo" }
+        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+        val disbursements = Mockito.mock(DisbursementService::class.java)
+        Mockito.`when`(disbursements.activeName).thenReturn("manual")
+        Mockito.`when`(disbursements.initiate(anyArg())).thenReturn(DisbursementResult(null))
+
+        val ex = assertFailsWith<ApiException> { service(disbursements).markProcessing(adminId, cycleId) }
+
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        assertEquals(PayoutCycleStatus.APPROVED, cycle.status)
+        assertEquals("paymongo", cycle.provider)
+        Mockito.verifyNoInteractions(disbursements)
     }
 
     @Test
@@ -462,6 +485,7 @@ class AdminPayoutProcessingIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var decisions: AdminDecisionLogRepository
     @Autowired lateinit var tx: TransactionTemplate
     @Autowired lateinit var dataSource: javax.sql.DataSource
+    @Autowired lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
     @MockitoBean lateinit var disbursements: DisbursementService
     @MockitoSpyBean lateinit var decisionService: AdminDecisionLogService
 
@@ -497,7 +521,7 @@ class AdminPayoutProcessingIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `provider runs without a transaction or bound connection after the provider stamp commits`() {
+    fun `provider runs after the processing claim commits without a transaction or bound connection`() {
         val cycle = coveredCycle()
         val adminId = user(Role.ADMIN).id
         Mockito.`when`(disbursements.activeName).thenReturn("paymongo")
@@ -506,9 +530,11 @@ class AdminPayoutProcessingIntegrationTest : PostgresIntegrationTest() {
             assertFalse(TransactionSynchronizationManager.hasResource(dataSource))
             val committed = cycles.findById(cycle.id).orElseThrow()
             assertEquals("paymongo", committed.provider)
-            assertEquals(PayoutCycleStatus.APPROVED, committed.status)
-            assertEquals(null, committed.processingAt)
+            assertEquals(PayoutCycleStatus.PROCESSING, committed.status)
+            assertNotNull(committed.processingAt)
             assertEquals(null, committed.providerTransferId)
+            assertEquals("processing", history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).single().toStatus)
+            assertEquals("processing", decisions.findAll().single { it.targetPayoutId == cycle.id }.decision)
             assertEquals(DisbursementRequest(cycle.id, BigDecimal("1000.00"), "gcash", "09123456789", "Test recipient"),
                 call.getArgument(0))
             DisbursementResult("tr_processing_success")
@@ -532,70 +558,138 @@ class AdminPayoutProcessingIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `reject during provider initiation keeps the reservation and lets tx2 link the transfer`() {
-        val cycle = coveredCycle().apply { holdReason = "original hold" }
-        cycles.saveAndFlush(cycle)
+    fun `concurrent mark-processing during provider IO cannot initiate a second transfer`() {
+        val cycle = coveredCycle()
         val processingAdmin = user(Role.ADMIN).id
-        val rejectingAdmin = user(Role.ADMIN).id
+        val retryingAdmin = user(Role.ADMIN).id
+        val calls = AtomicInteger()
+        var retryFailure: Throwable? = null
         Mockito.`when`(disbursements.activeName).thenReturn("paymongo")
         Mockito.`when`(disbursements.initiate(anyArg())).thenAnswer {
             assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
-            val refusal = runCatching { admin.reject(rejectingAdmin, cycle.id, "cancel transfer") }.exceptionOrNull()
-
-            // A separate admin request runs between the two processing transactions.
-            assertEquals(BigDecimal("1000.00"), cycles.sumReservedByPhotographer(cycle.photographerId),
-                "Reject must not release a provider-claimed payout's reservation")
-            assertTrue(refusal is ApiException)
-            assertEquals(HttpStatus.CONFLICT, refusal.status)
-            assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, refusal.code)
-            val duringInitiation = cycles.findById(cycle.id).orElseThrow()
-            assertEquals(PayoutCycleStatus.APPROVED, duringInitiation.status)
-            assertEquals("paymongo", duringInitiation.provider)
-            assertEquals("original hold", duringInitiation.holdReason)
-            assertEquals(null, duringInitiation.rejectedReason)
-            assertTrue(history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).isEmpty())
-            assertTrue(decisions.findAll().none { it.targetPayoutId == cycle.id })
-            DisbursementResult("tr_reject_race")
+            if (calls.incrementAndGet() == 1) {
+                retryFailure = runCatching { admin.markProcessing(retryingAdmin, cycle.id) }.exceptionOrNull()
+            }
+            DisbursementResult("tr_concurrent")
         }
 
         assertEquals("processing", admin.markProcessing(processingAdmin, cycle.id).status)
 
+        val refusal = assertNotNull(retryFailure)
+        assertTrue(refusal is ApiException)
+        assertEquals(HttpStatus.CONFLICT, refusal.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, refusal.code)
+        Mockito.verify(disbursements).initiate(anyArg())
         val persisted = cycles.findById(cycle.id).orElseThrow()
         assertEquals(PayoutCycleStatus.PROCESSING, persisted.status)
-        assertEquals("tr_reject_race", persisted.providerTransferId)
+        assertEquals("tr_concurrent", persisted.providerTransferId)
         assertEquals(BigDecimal("1000.00"), cycles.sumReservedByPhotographer(cycle.photographerId))
         assertEquals("processing", history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).single().toStatus)
         assertEquals("processing", decisions.findAll().single { it.targetPayoutId == cycle.id }.decision)
     }
 
     @Test
-    fun `tx2 failure rolls back processing but keeps tx1 and logs the orphan transfer with the original failure`() {
+    fun `claim failure rolls back before provider initiation`() {
         val cycle = coveredCycle()
         val adminId = user(Role.ADMIN).id
         val failure = IllegalStateException("decision store unavailable")
         Mockito.`when`(disbursements.activeName).thenReturn("paymongo")
-        Mockito.`when`(disbursements.initiate(anyArg())).thenReturn(DisbursementResult("tr_processing_orphan"))
+        Mockito.`when`(disbursements.initiate(anyArg())).thenReturn(DisbursementResult("tr_must_not_run"))
         Mockito.doThrow(failure).`when`(AopTestUtils.getUltimateTargetObject<AdminDecisionLogService>(decisionService))
             .logPayoutDecision(adminId, cycle.id, "processing")
+
+        assertSame(failure, assertFailsWith<IllegalStateException> { admin.markProcessing(adminId, cycle.id) })
+
+        val persisted = cycles.findById(cycle.id).orElseThrow()
+        assertEquals(PayoutCycleStatus.APPROVED, persisted.status)
+        assertEquals("manual", persisted.provider)
+        assertEquals(null, persisted.providerTransferId)
+        assertEquals(null, persisted.processingAt)
+        assertTrue(history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).isEmpty())
+        assertTrue(decisions.findAll().none { it.targetPayoutId == cycle.id })
+        Mockito.verify(disbursements, Mockito.never()).initiate(anyArg())
+    }
+
+    @Test
+    fun `provider success followed by link failure stays reserved and cannot initiate again`() {
+        val cycle = coveredCycle()
+        val adminId = user(Role.ADMIN).id
+        val retryingAdmin = user(Role.ADMIN).id
+        val oversizedTransferId = "tr_" + "x".repeat(100)
+        Mockito.`when`(disbursements.activeName).thenReturn("paymongo")
+        Mockito.`when`(disbursements.initiate(anyArg()))
+            .thenReturn(DisbursementResult(oversizedTransferId), DisbursementResult("tr_after_expiry"))
         val logger = LoggerFactory.getLogger(AdminPayoutService::class.java) as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         logger.addAppender(appender)
         try {
-            assertSame(failure, assertFailsWith<IllegalStateException> { admin.markProcessing(adminId, cycle.id) })
+            assertFailsWith<Exception> { admin.markProcessing(adminId, cycle.id) }
             val persisted = cycles.findById(cycle.id).orElseThrow()
-            assertEquals(PayoutCycleStatus.APPROVED, persisted.status)
+            assertEquals(PayoutCycleStatus.PROCESSING, persisted.status)
             assertEquals("paymongo", persisted.provider)
             assertEquals(null, persisted.providerTransferId)
-            assertEquals(null, persisted.processingAt)
-            assertTrue(history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).isEmpty())
-            assertTrue(decisions.findAll().none { it.targetPayoutId == cycle.id })
+            assertNotNull(persisted.processingAt)
+            assertEquals("processing", history.findByPayoutCycleIdOrderByCreatedAtAsc(cycle.id).single().toStatus)
+            assertEquals("processing", decisions.findAll().single { it.targetPayoutId == cycle.id }.decision)
+
+            val retry = assertFailsWith<ApiException> { admin.markProcessing(retryingAdmin, cycle.id) }
+            assertEquals(HttpStatus.CONFLICT, retry.status)
+            assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, retry.code)
+            Mockito.verify(disbursements).initiate(anyArg())
             val error = appender.list.single { it.level == Level.ERROR }
-            assertTrue(error.formattedMessage.contains("tr_processing_orphan"))
+            assertTrue(error.formattedMessage.contains(oversizedTransferId))
             assertTrue(error.formattedMessage.contains(cycle.id))
-            assertSame(failure, (error.throwableProxy as ThrowableProxy).throwable)
+            assertNotNull((error.throwableProxy as ThrowableProxy).throwable)
         } finally {
             logger.detachAppender(appender)
             appender.stop()
         }
+    }
+
+    @Test
+    fun `ambiguous provider timeout stays processing across a provider config change`() {
+        val cycle = coveredCycle()
+        val adminId = user(Role.ADMIN).id
+        val retryingAdmin = user(Role.ADMIN).id
+        val timeout = IllegalStateException("provider timeout")
+        Mockito.`when`(disbursements.activeName).thenReturn("paymongo", "manual")
+        Mockito.`when`(disbursements.initiate(anyArg()))
+            .thenThrow(timeout)
+            .thenReturn(DisbursementResult(null))
+
+        assertSame(timeout, assertFailsWith<IllegalStateException> { admin.markProcessing(adminId, cycle.id) })
+
+        val persisted = cycles.findById(cycle.id).orElseThrow()
+        assertEquals(PayoutCycleStatus.PROCESSING, persisted.status)
+        assertEquals("paymongo", persisted.provider)
+        assertEquals(null, persisted.providerTransferId)
+        assertNotNull(persisted.processingAt)
+        assertEquals(BigDecimal("1000.00"), cycles.sumReservedByPhotographer(cycle.photographerId))
+
+        val retry = assertFailsWith<ApiException> { admin.markProcessing(retryingAdmin, cycle.id) }
+        assertEquals(HttpStatus.CONFLICT, retry.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, retry.code)
+        Mockito.verify(disbursements).initiate(anyArg())
+        Mockito.verify(disbursements).activeName
+    }
+
+    @Test
+    fun `transfer linkage never overwrites a different linked id`() {
+        val cycle = coveredCycle()
+        val adminId = user(Role.ADMIN).id
+        Mockito.`when`(disbursements.activeName).thenReturn("paymongo")
+        Mockito.`when`(disbursements.initiate(anyArg())).thenAnswer {
+            jdbc.update("UPDATE payout_cycles SET provider_transfer_id = ? WHERE id = ?", "tr_existing", cycle.id)
+            DisbursementResult("tr_new")
+        }
+
+        val conflict = assertFailsWith<ApiException> { admin.markProcessing(adminId, cycle.id) }
+
+        assertEquals(HttpStatus.CONFLICT, conflict.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, conflict.code)
+        val persisted = cycles.findById(cycle.id).orElseThrow()
+        assertEquals(PayoutCycleStatus.PROCESSING, persisted.status)
+        assertEquals("tr_existing", persisted.providerTransferId)
+        Mockito.verify(disbursements).initiate(anyArg())
     }
 }
