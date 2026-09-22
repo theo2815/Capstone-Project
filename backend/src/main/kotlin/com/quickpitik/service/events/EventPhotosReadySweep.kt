@@ -19,8 +19,9 @@ import java.time.ZoneId
 // Mirrors PhotoIndexingTrigger.reconcile — synchronous per-tick loop, gated on
 // aiApiProperties.enabled, bounded batch. fixedDelay waits for a tick to finish
 // before starting the next, so a slow provider can't overlap runs. Single-instance
-// assumption like the other sweeps; the conditional claim UPDATE keeps the
-// send single even if two instances ever sweep at once.
+// assumption like the other sweeps; across instances, the conditional claim
+// permits one active lease at a time. Expiry recovery is intentionally
+// at-least-once, so a stalled old worker and its retry may both deliver.
 @Component
 class EventPhotosReadySweep(
     private val alertRepository: EventPhotoAlertRepository,

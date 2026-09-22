@@ -1,19 +1,34 @@
 package com.quickpitik.support
 
+import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.config.AiApiProperties
+import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventPhotoAlert
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
+import com.quickpitik.entity.UserSelfie
 import com.quickpitik.repository.EventPhotoAlertRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.repository.UserSelfieRepository
+import com.quickpitik.service.email.EmailService
+import com.quickpitik.service.events.EventPhotosReadyNotifier
+import com.quickpitik.service.photos.PhotoSearchService
+import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.domain.PageRequest
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -36,6 +51,9 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var userRepository: UserRepository
+
+    @Autowired
+    private lateinit var userSelfieRepository: UserSelfieRepository
 
     @Autowired
     private lateinit var transactionTemplate: TransactionTemplate
@@ -109,6 +127,71 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(ENTITY_UPDATE_AT, stored.lastCheckedAt)
         assertNull(stored.notificationClaimedAt)
         assertEquals(DELIVERED_AT, stored.notifiedAt)
+    }
+
+    @Test
+    fun `failed send is reclaimed after ttl and successful retry records delivery`() {
+        val clock = MutableClock(LIFECYCLE_NOW.toInstant())
+        val event = event(EventStatus.ACTIVE, LocalDate.now(clock.withZone(PH_ZONE)))
+        val user = userRepository.save(
+            User(
+                email = "lifecycle-${UUID.randomUUID()}@test.local",
+                passwordHash = "stub",
+                name = "Lifecycle Runner",
+                role = Role.RUNNER,
+            ),
+        )
+        val selfie = userSelfieRepository.save(
+            UserSelfie(userId = user.id, s3Key = "selfies/${user.id}/lifecycle.jpg", isPrimary = true),
+        )
+        val pending = alertRepository.save(
+            EventPhotoAlert(eventId = event.id, userId = user.id, selfieId = selfie.id),
+        )
+        val storage = Mockito.mock(StorageService::class.java)
+        val search = Mockito.mock(PhotoSearchService::class.java)
+        val email = Mockito.mock(EmailService::class.java)
+        var retryClaimToken: OffsetDateTime? = null
+        Mockito.`when`(storage.getBytes(selfie.s3Key)).thenReturn(byteArrayOf(1, 2, 3))
+        Mockito.`when`(
+            search.searchByFace(
+                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(),
+            ),
+        ).thenReturn(PaginatedResponse(emptyList<PhotoDto>(), 1L, 0, 1))
+        Mockito.doThrow(RuntimeException("resend down")).doAnswer {
+            retryClaimToken = alertRepository.findById(pending.id).orElseThrow().notificationClaimedAt
+            null
+        }.`when`(email)
+            .sendEventPhotosReadyEmail(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
+        val notifier = EventPhotosReadyNotifier(
+            alertRepository,
+            eventRepository,
+            userRepository,
+            userSelfieRepository,
+            storage,
+            search,
+            AiApiProperties(enabled = true, photosReadyClaimTtl = CLAIM_TTL),
+            email,
+            transactionTemplate,
+            clock,
+        )
+
+        notifier.notifyIfMatched(pending.id)
+
+        var stored = alertRepository.findById(pending.id).orElseThrow()
+        assertEquals(LIFECYCLE_NOW, stored.notificationClaimedAt)
+        assertNull(stored.notifiedAt)
+        assertFalse(pendingAt(clock, pending.id))
+
+        clock.advance(CLAIM_TTL.plusSeconds(1))
+        assertTrue(pendingAt(clock, pending.id))
+
+        notifier.notifyIfMatched(pending.id)
+
+        stored = alertRepository.findById(pending.id).orElseThrow()
+        assertEquals(OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC), retryClaimToken)
+        assertNull(stored.notificationClaimedAt)
+        assertEquals(OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC), stored.notifiedAt)
+        assertFalse(pendingAt(clock, pending.id))
     }
 
     @Test
@@ -256,6 +339,17 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
             alertRepository.stampNotificationDelivered(id, token, deliveredAt)
         } ?: 0
 
+    private fun pendingAt(clock: Clock, id: UUID): Boolean {
+        val now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC)
+        val today = LocalDate.now(clock.withZone(PH_ZONE))
+        return id in alertRepository.findPendingInWindow(
+            today,
+            today.minusDays(4),
+            now.minus(CLAIM_TTL),
+            PageRequest.of(0, 100),
+        ).map { it.id }
+    }
+
     private fun whileManagedUpdateIsOpen(id: UUID, interleavingUpdate: () -> Unit) {
         val entityLoaded = CountDownLatch(1)
         val allowFlush = CountDownLatch(1)
@@ -279,6 +373,17 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    private class MutableClock(private var current: Instant) : Clock() {
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+        override fun withZone(zone: ZoneId): Clock = Clock.fixed(current, zone)
+        override fun instant(): Instant = current
+        fun advance(duration: Duration) {
+            current = current.plus(duration)
+        }
+    }
+
+    private fun <T> anyArg(): T = Mockito.any()
+
     private companion object {
         val OLD_CLAIM: OffsetDateTime = OffsetDateTime.parse("2026-09-22T03:00:00.123456Z")
         val CLAIM_CUTOFF: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:00:00.123456Z")
@@ -286,5 +391,8 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
         val REPLACEMENT_CLAIM: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:10:00.123456Z")
         val DELIVERED_AT: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:11:00.123456Z")
         val ENTITY_UPDATE_AT: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:12:00.123456Z")
+        val LIFECYCLE_NOW: OffsetDateTime = OffsetDateTime.parse("2026-09-22T16:10:00.123456Z")
+        val CLAIM_TTL: Duration = Duration.ofMinutes(10)
+        val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
     }
 }
