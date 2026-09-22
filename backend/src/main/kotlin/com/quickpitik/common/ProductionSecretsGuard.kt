@@ -7,9 +7,9 @@ import org.springframework.stereotype.Component
 
 /**
  * Refuses to boot under the `prod` profile while any secret is still the
- * in-repo dev placeholder. Every one of these has a `dev-only…` default in
- * application.yml so the app runs out of the box locally; none of them trips
- * a runtime error in production (the JWT placeholder is long enough for jjwt,
+ * in-repo dev placeholder, or the origin secret is blank. Dev defaults let
+ * the app run locally, but do not otherwise trip a production runtime error
+ * (the JWT placeholder is long enough for jjwt,
  * Resend silently logs instead of sending, LOCAL storage just writes to the
  * container disk). Failing at bean construction means this runs before any
  * ApplicationRunner — no bootstrap admin gets minted with `changeme123`.
@@ -31,6 +31,7 @@ class ProductionSecretsGuard(
     @Value("\${app.email.resend.api-key}") resendApiKey: String,
     @Value("\${app.admin.bootstrap-password:}") adminBootstrapPassword: String,
     @Value("\${app.storage.backend}") storageBackend: String,
+    @Value("\${app.security.origin-secret}") originSecret: String,
 ) : FlywayConfigurationCustomizer {
     override fun customize(configuration: org.flywaydb.core.api.configuration.FluentConfiguration) = Unit
 
@@ -45,9 +46,10 @@ class ProductionSecretsGuard(
             resendApiKey = resendApiKey,
             adminBootstrapPassword = adminBootstrapPassword,
             storageBackend = storageBackend,
+            originSecret = originSecret,
         )
         check(offenders.isEmpty()) {
-            "Refusing to start with profile 'prod': dev placeholder values for " +
+            "Refusing to start with profile 'prod': invalid values for " +
                 offenders.joinToString() + ". Set them as environment variables."
         }
     }
@@ -66,6 +68,7 @@ class ProductionSecretsGuard(
             resendApiKey: String,
             adminBootstrapPassword: String,
             storageBackend: String,
+            originSecret: String,
         ): List<String> = buildList {
             if (PLACEHOLDER in jwtSecret) add("JWT_SECRET")
             if (PLACEHOLDER in orderCapabilitySecret) add("ORDER_CAPABILITY_SECRET")
@@ -76,6 +79,7 @@ class ProductionSecretsGuard(
             if (PLACEHOLDER in resendApiKey) add("RESEND_API_KEY")
             if (adminBootstrapPassword == "changeme123") add("ADMIN_BOOTSTRAP_PASSWORD")
             if (!storageBackend.equals("S3", ignoreCase = true)) add("STORAGE_BACKEND")
+            if (originSecret.isBlank() || PLACEHOLDER in originSecret) add("ORIGIN_SECRET")
         }
     }
 }

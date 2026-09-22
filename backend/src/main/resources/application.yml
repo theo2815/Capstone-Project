@@ -76,6 +76,8 @@ jwt:
   refresh-token-ttl: P7D
 
 app:
+  security:
+    origin-secret: ${ORIGIN_SECRET:}
   # Externally-reachable URLs the BE needs to embed in artifacts whose request
   # context can't tell it about (e.g. the receipt email). When running ngrok
   # for cross-device download testing, set PUBLIC_API_BASE_URL alongside

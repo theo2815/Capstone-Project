@@ -146,6 +146,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `DB_USER` | `quickpitik` | — |
 | `DB_PASSWORD` | `quickpitik` | **MUST OVERRIDE** |
 | `JWT_SECRET` | dev-only string (insecure, marked) | **MUST OVERRIDE** — generate with `openssl rand -base64 64` |
+| `ORIGIN_SECRET` | *(blank)* | **MUST OVERRIDE** under `prod`; Cloudflare must overwrite `X-Origin-Secret` on every request to `api.quickpitik.com` with the same value. `/actuator/health` alone is exempt for Railway's direct health probe. Set the edge rule and Railway healthcheck before deploying the guarded backend. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated list of frontend origins |
 | `ADMIN_BOOTSTRAP_EMAIL` | `admin@quickpitik.local` | Set per environment |
 | `ADMIN_BOOTSTRAP_PASSWORD` | `changeme123` | **MUST OVERRIDE** |
