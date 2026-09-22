@@ -32,6 +32,10 @@ import { useViewModeStore } from "@/store/view-mode-store";
 // mutations to /me/cart and /me/saved-events. Flip both off BEFORE calling
 // clear() so a logout-time clear doesn't fire a spurious DELETE against a
 // stale token (which would 401 silently but pollutes the network panel).
+export function clearLegacyPhotographerSettings(): void {
+  try { globalThis.localStorage?.removeItem("quickpitik-photographer-settings"); } catch { /* Storage may be unavailable. */ }
+}
+
 export function resetUserScopedStores(): void {
   useCartStore.getState().setSyncEnabled(false);
   useSavedEventsStore.getState().setSyncEnabled(false);
@@ -48,6 +52,7 @@ export function resetUserScopedStores(): void {
   useUserMediaStore.getState().clear();
   // Drain the retired orders cache; Query is the only order-history owner.
   try { globalThis.localStorage?.removeItem("quickpitik-orders"); } catch { /* Storage may be unavailable. */ }
+  clearLegacyPhotographerSettings();
   usePendingPaymentStore.getState().clear();
   useCartStore.getState().clear();
   useSavedEventsStore.getState().clear();

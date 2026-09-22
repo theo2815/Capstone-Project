@@ -142,11 +142,17 @@ it("does not transfer an authenticated account's buffers into a direct account s
   const { result } = mountAuth();
   await waitFor(() => expect(useCartStore.getState().items).toEqual([mergedItem]));
 
+  localStorage.setItem("quickpitik-photographer-settings", "old-account-payout");
   await act(async () => { await result.current.login({ email: other.email, password: "password" }); });
   await waitFor(() => expect(useCartStore.getState().items).toEqual([otherItem]));
+  expect(localStorage.getItem("quickpitik-photographer-settings")).toBeNull();
   expect(useSavedEventsStore.getState().ids).toEqual([otherEvent.id]);
   expect(cartApi.mergeCart).toHaveBeenNthCalledWith(2, []);
   expect(savedApi.mergeSavedEvents).toHaveBeenNthCalledWith(2, []);
+
+  localStorage.setItem("quickpitik-photographer-settings", "old-account-payout");
+  act(() => result.current.logout());
+  expect(localStorage.getItem("quickpitik-photographer-settings")).toBeNull();
 });
 
 it("merges real guest buffers on login", async () => {
@@ -159,8 +165,10 @@ it("merges real guest buffers on login", async () => {
   vi.spyOn(api, "post").mockResolvedValue({ user: runner, accessToken: "access", refreshToken: "refresh" });
   const { result } = mountAuth();
 
+  localStorage.setItem("quickpitik-photographer-settings", "old-account-payout");
   await act(async () => { await result.current.login({ email: runner.email, password: "password" }); });
   await waitFor(() => expect(useCartStore.getState().syncEnabled).toBe(true));
+  expect(localStorage.getItem("quickpitik-photographer-settings")).toBeNull();
   expect(cartApi.mergeCart).toHaveBeenCalledWith([guestItem]);
   expect(savedApi.mergeSavedEvents).toHaveBeenCalledWith(["guest-event"]);
   expect(useCartStore.getState().items).toEqual([mergedItem]);
@@ -270,6 +278,7 @@ it.each([true, false])("ignores initial auth hydration after a new login (old re
 
 it("restores a valid current session on page refresh", async () => {
   useAuthStore.getState().logout();
+  localStorage.setItem("quickpitik-photographer-settings", JSON.stringify({ state: { payouts: [{ accountNumber: "1234567890" }] } }));
   vi.mocked(auth.getAccessToken).mockReturnValue("access");
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, data: runner }))));
   vi.spyOn(cartApi, "mergeCart").mockResolvedValue([mergedItem]); vi.spyOn(savedApi, "mergeSavedEvents").mockResolvedValue([savedEvent]);
@@ -277,5 +286,19 @@ it("restores a valid current session on page refresh", async () => {
   await waitFor(() => expect(useCartStore.getState().syncEnabled).toBe(true));
   expect(useAuthStore.getState().user).toEqual(runner);
   expect(useSavedEventsStore.getState().ids).toEqual([savedEvent.id]);
+  expect(localStorage.getItem("quickpitik-photographer-settings")).toBeNull();
   vi.unstubAllGlobals();
+});
+
+it("removes retired settings on guest startup without resetting guest buffers", () => {
+  useAuthStore.getState().logout();
+  localStorage.setItem("quickpitik-photographer-settings", JSON.stringify({ state: { payouts: [{ accountNumber: "1234567890" }] } }));
+  useCartStore.getState().setItems([mergedItem]);
+  useSavedEventsStore.getState().setIds([savedEvent.id]);
+
+  render(<QueryClientProvider client={client}><AuthHydrator /></QueryClientProvider>);
+
+  expect(localStorage.getItem("quickpitik-photographer-settings")).toBeNull();
+  expect(useCartStore.getState().items).toEqual([mergedItem]);
+  expect(useSavedEventsStore.getState().ids).toEqual([savedEvent.id]);
 });

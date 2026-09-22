@@ -6,7 +6,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { clearTokens, getAccessToken, getRefreshToken } from "@/lib/auth";
-import { resetUserScopedStores } from "@/lib/auth-reset";
+import { clearLegacyPhotographerSettings, resetUserScopedStores } from "@/lib/auth-reset";
 import { captureAuthSession } from "@/lib/auth-session";
 import { refreshAccessToken } from "@/lib/api";
 import { usePhotographerSettingsHydration } from "@/hooks/use-photographer-settings-hydration";
@@ -32,6 +32,7 @@ export function AuthHydrator() {
   const mergedForUserRef = useRef<number | null>(null);
 
   useEffect(() => {
+    clearLegacyPhotographerSettings();
     let cancelled = false;
     const isCurrent = captureAuthSession();
 

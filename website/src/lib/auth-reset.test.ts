@@ -1,5 +1,5 @@
-import { afterEach, expect, it } from "vitest";
-import { captureGuestBuffer, resetUserScopedStores } from "./auth-reset";
+import { afterEach, expect, it, vi } from "vitest";
+import { captureGuestBuffer, clearLegacyPhotographerSettings, resetUserScopedStores } from "./auth-reset";
 import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
@@ -47,4 +47,35 @@ it("removes the retired persisted admin submissions and decision log", () => {
   localStorage.setItem("quickpitik-admin-user-store", JSON.stringify({ state: { submissions: { private: {} }, log: [{ reason: "private" }] } }));
   resetUserScopedStores();
   expect(localStorage.getItem("quickpitik-admin-user-store")).toBeNull();
+});
+
+it("removes retired photographer settings on every reset without clearing unrelated storage", () => {
+  localStorage.setItem("quickpitik-photographer-settings", JSON.stringify({ state: {
+    brandName: "Private brand", socials: [{ url: "https://example.test/private" }],
+    payouts: [{ accountHolderName: "Private Name", accountNumber: "1234567890", qrJson: "private-qr" }],
+  } }));
+  localStorage.setItem("unrelated-key", "keep");
+
+  resetUserScopedStores();
+  resetUserScopedStores();
+
+  expect(localStorage.getItem("quickpitik-photographer-settings")).toBeNull();
+  expect(localStorage.getItem("unrelated-key")).toBe("keep");
+});
+
+it("tolerates unavailable storage while removing retired photographer settings", () => {
+  vi.stubGlobal("localStorage", undefined);
+  try {
+    expect(() => clearLegacyPhotographerSettings()).not.toThrow();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+
+  const remove = vi.spyOn(localStorage, "removeItem").mockImplementation(() => { throw new Error("Storage blocked"); });
+  try {
+    expect(() => clearLegacyPhotographerSettings()).not.toThrow();
+    expect(remove).toHaveBeenCalledWith("quickpitik-photographer-settings");
+  } finally {
+    remove.mockRestore();
+  }
 });
