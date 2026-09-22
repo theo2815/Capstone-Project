@@ -34,9 +34,12 @@ class EventPhotoAlert(
     @Column(name = "last_checked_at")
     var lastCheckedAt: OffsetDateTime? = null,
 
-    @Column(name = "notified_at")
+    // Written only through token-guarded repository updates. Excluding both
+    // fields from managed-entity flushes prevents lastCheckedAt/selfie changes
+    // from restoring stale notification state.
+    @Column(name = "notified_at", updatable = false)
     var notifiedAt: OffsetDateTime? = null,
 
-    @Column(name = "notification_claimed_at")
+    @Column(name = "notification_claimed_at", updatable = false)
     var notificationClaimedAt: OffsetDateTime? = null,
 )

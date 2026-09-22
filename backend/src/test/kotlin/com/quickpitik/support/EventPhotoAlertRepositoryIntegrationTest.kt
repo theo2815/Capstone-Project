@@ -15,8 +15,13 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -38,13 +43,72 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
     @Test
     fun `only one concurrent notification claim wins without marking delivery`() {
         val pending = alert(event(EventStatus.ACTIVE, LocalDate.now()).id)
+        val firstClaimHeld = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val secondTransactionStarted = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
 
-        assertEquals(1, claim(pending.id, FRESH_CLAIM, CLAIM_CUTOFF))
-        assertEquals(0, claim(pending.id, REPLACEMENT_CLAIM, CLAIM_CUTOFF))
+        try {
+            val first = executor.submit<Int> {
+                transactionTemplate.execute {
+                    val updated = alertRepository.claimNotification(pending.id, FRESH_CLAIM, CLAIM_CUTOFF)
+                    firstClaimHeld.countDown()
+                    check(releaseFirst.await(5, TimeUnit.SECONDS))
+                    updated
+                } ?: 0
+            }
+            assertTrue(firstClaimHeld.await(5, TimeUnit.SECONDS))
+
+            val second = executor.submit<Int> {
+                transactionTemplate.execute {
+                    secondTransactionStarted.countDown()
+                    alertRepository.claimNotification(pending.id, REPLACEMENT_CLAIM, CLAIM_CUTOFF)
+                } ?: 0
+            }
+            assertTrue(secondTransactionStarted.await(5, TimeUnit.SECONDS))
+
+            assertFailsWith<TimeoutException> { second.get(200, TimeUnit.MILLISECONDS) }
+            releaseFirst.countDown()
+
+            assertEquals(1, first.get(5, TimeUnit.SECONDS))
+            assertEquals(0, second.get(5, TimeUnit.SECONDS))
+        } finally {
+            releaseFirst.countDown()
+            executor.shutdownNow()
+        }
 
         val stored = alertRepository.findById(pending.id).orElseThrow()
         assertNull(stored.notifiedAt)
         assertEquals(FRESH_CLAIM, stored.notificationClaimedAt)
+    }
+
+    @Test
+    fun `managed last-checked update cannot erase a concurrent claim`() {
+        val pending = alert(event(EventStatus.ACTIVE, LocalDate.now()).id)
+
+        whileManagedUpdateIsOpen(pending.id) {
+            assertEquals(1, claim(pending.id, FRESH_CLAIM, CLAIM_CUTOFF))
+        }
+
+        val stored = alertRepository.findById(pending.id).orElseThrow()
+        assertEquals(ENTITY_UPDATE_AT, stored.lastCheckedAt)
+        assertEquals(FRESH_CLAIM, stored.notificationClaimedAt)
+        assertNull(stored.notifiedAt)
+    }
+
+    @Test
+    fun `managed last-checked update cannot erase a concurrent delivery stamp`() {
+        val pending = alert(event(EventStatus.ACTIVE, LocalDate.now()).id)
+        assertEquals(1, claim(pending.id, FRESH_CLAIM, CLAIM_CUTOFF))
+
+        whileManagedUpdateIsOpen(pending.id) {
+            assertEquals(1, stamp(pending.id, FRESH_CLAIM, DELIVERED_AT))
+        }
+
+        val stored = alertRepository.findById(pending.id).orElseThrow()
+        assertEquals(ENTITY_UPDATE_AT, stored.lastCheckedAt)
+        assertNull(stored.notificationClaimedAt)
+        assertEquals(DELIVERED_AT, stored.notifiedAt)
     }
 
     @Test
@@ -192,11 +256,35 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
             alertRepository.stampNotificationDelivered(id, token, deliveredAt)
         } ?: 0
 
+    private fun whileManagedUpdateIsOpen(id: UUID, interleavingUpdate: () -> Unit) {
+        val entityLoaded = CountDownLatch(1)
+        val allowFlush = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val entityUpdate = executor.submit {
+                transactionTemplate.executeWithoutResult {
+                    val managed = alertRepository.findById(id).orElseThrow()
+                    managed.lastCheckedAt = ENTITY_UPDATE_AT
+                    entityLoaded.countDown()
+                    check(allowFlush.await(5, TimeUnit.SECONDS))
+                }
+            }
+            assertTrue(entityLoaded.await(5, TimeUnit.SECONDS))
+            interleavingUpdate()
+            allowFlush.countDown()
+            entityUpdate.get(5, TimeUnit.SECONDS)
+        } finally {
+            allowFlush.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     private companion object {
         val OLD_CLAIM: OffsetDateTime = OffsetDateTime.parse("2026-09-22T03:00:00.123456Z")
         val CLAIM_CUTOFF: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:00:00.123456Z")
         val FRESH_CLAIM: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:05:00.123456Z")
         val REPLACEMENT_CLAIM: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:10:00.123456Z")
         val DELIVERED_AT: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:11:00.123456Z")
+        val ENTITY_UPDATE_AT: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:12:00.123456Z")
     }
 }
