@@ -59,6 +59,9 @@ ai-api/CMakeLists.txt
 tmpclaude-*
 ai-api/tmpclaude-*
 
+# Agent worktrees
+.worktrees/
+
 # Misc generated files
 nul
 ai-api/nul
