@@ -10,7 +10,6 @@ object FujiSdkNative : FujiSdkApi {
     private external fun nativeError(handle: Long, out: LongArray): Long
     private external fun nativeDeviceInfo(handle: Long): Array<String>?
     private external fun nativeGetLong(handle: Long, what: Int, out: LongArray): Long
-    private external fun nativeSetMediaRecord(handle: Long, mode: Long): Long
     private external fun nativeReadImageInfo(handle: Long, out: LongArray, name: Array<String?>): Long
     private external fun nativeReadImage(handle: Long, into: ByteArray): Long
     private external fun nativeDeleteImage(handle: Long): Long
@@ -40,18 +39,10 @@ object FujiSdkNative : FujiSdkApi {
     }
     override fun mode(handle: Long) = LongArray(1).also { check(handle, nativeGetLong(handle, 0, it)) }[0]
     override fun mediaRecord(handle: Long) = LongArray(1).also { check(handle, nativeGetLong(handle, 1, it)) }[0]
-    override fun setMediaRecord(handle: Long, mode: Long) = check(handle, nativeSetMediaRecord(handle, mode))
     override fun readImageInfo(handle: Long): FujiImageInfo {
         val out = LongArray(2)
         val name = arrayOfNulls<String>(1)
-        try {
-            check(handle, nativeReadImageInfo(handle, out, name))
-        } catch (e: FujiSdkException) {
-            // Fujifilm's own sample retries on exactly these three; treat them as "nothing yet".
-            if (e.code in setOf(FujiSdk.ERR_BUSY, FujiSdk.ERR_FORCEMODE_BUSY, FujiSdk.ERR_RUNNING_OTHER_FUNCTION))
-                return FujiImageInfo("", FujiSdk.FORMAT_NONE.toLong(), 0)
-            throw e
-        }
+        check(handle, nativeReadImageInfo(handle, out, name))
         return FujiImageInfo(name[0].orEmpty(), out[0], out[1])
     }
     override fun readImage(handle: Long, into: ByteArray): Int { check(handle, nativeReadImage(handle, into)); return into.size }

@@ -13,14 +13,13 @@ typedef long (*handle_fn)(void*);
 typedef long (*errno_fn)(void*, long*, long*);
 typedef long (*devinfo_fn)(void*, void*);
 typedef long (*getlong_fn)(void*, long*);
-typedef long (*setlong_fn)(void*, long);
 typedef long (*imginfo_fn)(void*, void*);
 typedef long (*readimg_fn)(void*, unsigned char*, unsigned long);
 
 static void* lib;
 static init_fn xInit; static exit_fn xExit; static open_fn xOpen; static handle_fn xClose;
 static errno_fn xErr; static devinfo_fn xDevInfo; static getlong_fn xMode; static getlong_fn xGetRec;
-static setlong_fn xSetRec; static imginfo_fn xImgInfo; static readimg_fn xReadImg; static handle_fn xDelImg;
+static imginfo_fn xImgInfo; static readimg_fn xReadImg; static handle_fn xDelImg;
 
 #define SYM(var, name) var = (decltype(var)) dlsym(lib, name); if (!var) return -1;
 
@@ -30,7 +29,7 @@ Java_com_quickpitik_mobile_data_usb_fuji_FujiSdkNative_nativeLoad(JNIEnv*, jobje
     if (!lib) return -1;
     SYM(xInit, "XSDK_Init") SYM(xExit, "XSDK_Exit") SYM(xOpen, "XSDK_SetUSBDeviceHandle") SYM(xClose, "XSDK_Close")
     SYM(xErr, "XSDK_GetErrorNumber") SYM(xDevInfo, "XSDK_GetDeviceInfo") SYM(xMode, "XSDK_GetMode")
-    SYM(xGetRec, "XSDK_GetMediaRecord") SYM(xSetRec, "XSDK_SetMediaRecord") SYM(xImgInfo, "XSDK_ReadImageInfo")
+    SYM(xGetRec, "XSDK_GetMediaRecord") SYM(xImgInfo, "XSDK_ReadImageInfo")
     SYM(xReadImg, "XSDK_ReadImage") SYM(xDelImg, "XSDK_DeleteImage")
     return 0;
 }
@@ -75,10 +74,6 @@ Java_com_quickpitik_mobile_data_usb_fuji_FujiSdkNative_nativeGetLong(JNIEnv* env
     jlong v = value;
     env->SetLongArrayRegion(out, 0, 1, &v);
     return res;
-}
-extern "C" JNIEXPORT jlong JNICALL
-Java_com_quickpitik_mobile_data_usb_fuji_FujiSdkNative_nativeSetMediaRecord(JNIEnv*, jobject, jlong h, jlong mode) {
-    return xSetRec(reinterpret_cast<void*>(h), (long) mode);
 }
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_quickpitik_mobile_data_usb_fuji_FujiSdkNative_nativeReadImageInfo(JNIEnv* env, jobject, jlong h, jlongArray out, jobjectArray name) {

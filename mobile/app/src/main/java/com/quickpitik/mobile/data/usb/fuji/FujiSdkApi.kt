@@ -13,8 +13,7 @@ interface FujiSdkApi {
     fun deviceInfo(handle: Long): FujiDeviceInfo
     fun mode(handle: Long): Long
     fun mediaRecord(handle: Long): Long
-    fun setMediaRecord(handle: Long, mode: Long)
-    /** Top of the in-camera buffer; format NONE when it is empty or the camera is momentarily busy. */
+    /** Top of the in-camera buffer; format NONE only when it is verified empty. */
     fun readImageInfo(handle: Long): FujiImageInfo
     /** Reads and removes the top image; returns the bytes written into [into]. */
     fun readImage(handle: Long, into: ByteArray): Int

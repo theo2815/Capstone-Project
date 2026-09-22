@@ -93,6 +93,21 @@ implemented.
 | α7R IV, α7R IV A | Camera Control PTP 3 (PTP 2 also listed) | Implemented (MTP mode) | Implemented | negotiation asks for 3, accepts 2 |
 | α9 (2017) | PTP 2 era SDIO | Implemented (MTP mode) | Partial | absent from Sony's published tables; libgphoto2 drives it with the same commands, so the protocol 2 fallback applies; unverified |
 
+## Fujifilm
+
+Default release artifacts use the existing PTP path for card import and compatible
+card-arrival events. The proprietary Android SDK path is explicitly disabled unless
+the build uses `-PQP_ENABLE_FUJI_SDK=true` and supplies the required gitignored vendor
+files. SDK file presence alone never enables it.
+
+An opted-in build still refuses live capture unless the camera is already in still
+mode with RAW+JPEG card recording and an empty verified SDK buffer. Single-format,
+unknown, busy, old-buffer and mid-session mode-change states preserve the buffer and
+stop. This software guard is **Implemented**, not Verified: no Fujifilm body was
+available for the required card/phone preservation pass. Do not distribute an
+SDK-enabled artifact until that exact build passes the hardware matrix in
+`usb-tethering-plan.md`. Unsupported SDK model modules fall back to standard PTP.
+
 ## Common requirements and failure modes
 
 - A data-capable USB cable and, on the phone, USB OTG host support. Charge-only cables

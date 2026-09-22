@@ -21,48 +21,66 @@ class FujiSdkCamera(
     private val release: () -> Unit,
 ) : LiveCamera {
     private var closed = false
-    override var setupWarning: String? = null
+    override val setupWarning: String? = null
     override val isUsable: Boolean get() = !closed
     override val capabilities = CameraCapabilities(
         cardImport = false, thumbnails = false, eventPolling = false,
-        physicalShutter = "Fujifilm SDK, Camera Priority: shoot with the body; each JPEG is pulled from the camera buffer.",
+        physicalShutter = "Fujifilm SDK, Camera Priority: RAW+JPEG card recording and an empty buffer are required before auto-upload starts.",
         imageFormats = listOf(Ptp.OBJECT_FORMAT_EXIF_JPEG), transientObjects = true,
         assumptions = listOf(
-            "Camera Priority is the SDK default and keeps the body's controls and shutter (SDK reference §1.7); verified only on the body used in the spike.",
-            "RAW and HEIF frames are removed from the buffer without upload; their card copy depends on the camera's media-record setting, which is forced to RAW+JPEG only when it was OFF.",
+            "Camera Priority should keep the body's controls and shutter (SDK reference §1.7); hardware verification is still required.",
+            "Only recognized RAW or HEIF companions are discarded, and only while verified RAW+JPEG card recording remains active.",
         ),
     )
 
-    /** Still mode and a card copy before the first frame. Called by the opener. */
+    /** Verify a safe new session before any buffered frame can be consumed. Called by the opener. */
     fun start() {
         if (api.mode(handle) >= FujiSdk.MODE_MOVIE_FIRST)
             throw CameraSetupException("Switch the camera to a still-photo mode (P, A, S or M), then start again.")
-        when (api.mediaRecord(handle)) {
-            FujiSdk.MEDIAREC_OFF -> {
-                api.setMediaRecord(handle, FujiSdk.MEDIAREC_RAWJPEG)
-                setupWarning = "The camera was not saving tethered shots to its card; RAW+JPEG card recording was turned on so every shot keeps a backup."
-            }
-            FujiSdk.MEDIAREC_JPEG, FujiSdk.MEDIAREC_RAW ->
-                setupWarning = "The camera saves only one format to its card while tethered; frames of the other format exist only on the phone."
+        requireSafeRecordingMode()
+        val pending = try {
+            api.readImageInfo(handle)
+        } catch (e: FujiSdkException) {
+            throw CameraSetupException("The Fujifilm buffer could not be verified empty. Save existing buffered shots with the camera/vendor workflow, then start again.")
         }
+        if (pending.baseFormat != FujiSdk.FORMAT_NONE)
+            throw CameraSetupException("The Fujifilm buffer already contains a shot. Save it with the camera/vendor workflow before starting; changing settings now does not back it up.")
     }
 
     override fun nextCapture(): Pair<Long, PtpObjectInfo>? {
         while (true) {
-            val image = api.readImageInfo(handle)
+            requireSafeRecordingMode()
+            val image = try {
+                api.readImageInfo(handle)
+            } catch (e: FujiSdkException) {
+                if (e.code in BUSY_ERRORS) return null
+                throw e
+            }
             when (image.baseFormat) {
                 FujiSdk.FORMAT_NONE -> return null
                 FujiSdk.FORMAT_JPEG -> return FujiSdk.BUFFER_HANDLE to PtpObjectInfo(
                     Ptp.OBJECT_FORMAT_EXIF_JPEG, image.size,
                     image.name.ifBlank { "FUJI_%d.JPG".format(System.currentTimeMillis()) },
                 )
-                else -> api.deleteImage(handle) // RAW / HEIF: not uploadable; the card copy is the photographer's
+                FujiSdk.FORMAT_RAW, FujiSdk.FORMAT_HEIF -> api.deleteImage(handle)
+                else -> throw CameraSetupException("The Fujifilm buffer contains an unknown format. Preserve it with the camera/vendor workflow before restarting auto-upload.")
             }
         }
     }
 
     override fun readObject(handle: Long, sink: OutputStream, expectedSize: Long?): Long {
+        if (handle != FujiSdk.BUFFER_HANDLE) throw CameraSetupException("The Fujifilm buffer changed. Restart auto-upload after preserving its contents.")
+        requireSafeRecordingMode()
+        val image = try {
+            api.readImageInfo(this.handle)
+        } catch (e: FujiSdkException) {
+            throw CameraSetupException("The Fujifilm buffer could not be verified before transfer. Preserve it with the camera/vendor workflow, then restart auto-upload.")
+        }
+        if (image.baseFormat != FujiSdk.FORMAT_JPEG)
+            throw CameraSetupException("The Fujifilm buffer no longer contains the expected JPEG. Preserve it with the camera/vendor workflow, then restart auto-upload.")
         val size = requireNotNull(expectedSize) { "Fujifilm frames always carry a size." }.toInt()
+        if (image.size != expectedSize)
+            throw CameraSetupException("The Fujifilm buffer changed before transfer. Preserve it with the camera/vendor workflow, then restart auto-upload.")
         val bytes = ByteArray(size)
         val read = api.readImage(this.handle, bytes)
         sink.write(bytes, 0, read)
@@ -75,11 +93,25 @@ class FujiSdkCamera(
         throw CameraSetupException("Card files are not readable through the Fujifilm SDK. Use USB CARD READER mode for import.")
     override fun keepAlive() {}
 
+    private fun requireSafeRecordingMode() {
+        val recording = try {
+            api.mediaRecord(handle)
+        } catch (e: FujiSdkException) {
+            throw CameraSetupException("The Fujifilm card recording mode could not be verified. Preserve buffered shots and restart auto-upload.")
+        }
+        if (recording != FujiSdk.MEDIAREC_RAWJPEG)
+            throw CameraSetupException("Set Fujifilm tether card recording to RAW+JPEG, save any existing buffered shots with the camera/vendor workflow, then start again.")
+    }
+
     override fun close() {
         if (closed) return
         closed = true
         runCatching { api.close(handle) }
         runCatching { api.exit() }
         release()
+    }
+
+    private companion object {
+        val BUSY_ERRORS = setOf(FujiSdk.ERR_BUSY, FujiSdk.ERR_FORCEMODE_BUSY, FujiSdk.ERR_RUNNING_OTHER_FUNCTION)
     }
 }

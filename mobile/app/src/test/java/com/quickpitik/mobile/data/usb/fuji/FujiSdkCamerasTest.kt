@@ -10,7 +10,10 @@ import org.robolectric.shadow.api.Shadow
 
 @RunWith(RobolectricTestRunner::class)
 class FujiSdkCamerasTest {
-    private class Sdk(private val openError: Long? = null) : FujiSdkApi {
+    private class Sdk(
+        private val openError: Long? = null,
+        private val record: Long = FujiSdk.MEDIAREC_RAWJPEG,
+    ) : FujiSdkApi {
         val calls = mutableListOf<String>()
         override fun load() { calls += "load" }
         override fun init() { calls += "init" }
@@ -23,8 +26,7 @@ class FujiSdkCamerasTest {
         override fun close(handle: Long) { calls += "close" }
         override fun deviceInfo(handle: Long) = FujiDeviceInfo("FUJIFILM", "X-T5", "S123", "1.0")
         override fun mode(handle: Long) = 0x0001L
-        override fun mediaRecord(handle: Long) = FujiSdk.MEDIAREC_RAWJPEG
-        override fun setMediaRecord(handle: Long, mode: Long) {}
+        override fun mediaRecord(handle: Long) = record
         override fun readImageInfo(handle: Long) = FujiImageInfo("", FujiSdk.FORMAT_NONE.toLong(), 0)
         override fun readImage(handle: Long, into: ByteArray) = 0
         override fun deleteImage(handle: Long) {}
@@ -63,5 +65,15 @@ class FujiSdkCamerasTest {
         assertNull(FujiSdkCameras.open(device, connect, noModule, enabled = true, vendorId = 0x04cb))
         assertTrue(FujiSdkCameras.ownershipAvailable())
         assertEquals(2, closedHandles)
+    }
+
+    @Test fun `unsafe recording mode closes the sdk and releases usb ownership`() {
+        val sdk = Sdk(record = FujiSdk.MEDIAREC_JPEG)
+        val result = runCatching { FujiSdkCameras.open(device, connect, sdk, enabled = true, vendorId = 0x04cb) }
+        result.getOrNull()?.close()
+        assertTrue(result.exceptionOrNull() is CameraSetupException)
+        assertEquals(listOf("load", "init", "open:42", "close", "exit"), sdk.calls)
+        assertEquals(1, closedHandles)
+        assertTrue(FujiSdkCameras.ownershipAvailable())
     }
 }

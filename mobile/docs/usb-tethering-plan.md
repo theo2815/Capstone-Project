@@ -2,6 +2,28 @@
 
 Scope: Android USB ingestion into the existing Room/WorkManager/backend pipeline. Preserve physical-shutter Canon capture and on-card originals. Wi-Fi, remote shutter/live view, multi-camera operation, and RAW cloud processing are outside this increment. This repository has no iOS app; this work adds no iPhone USB implementation.
 
+## Fujifilm SDK is explicit opt-in and fail-closed — 2026-09-22
+
+Fujifilm Camera Control SDK capture is compiled only with
+`-PQP_ENABLE_FUJI_SDK=true`; `mobile/gradle.properties` defaults it to `false`.
+Local `fuji-sdk/` file presence is never permission to enable it. An opt-in build
+fails during Gradle configuration unless `HEADERS/XAPI.H` and
+`Android/arm64-v8a/XAPI.so` are present. The same final Boolean controls
+`BuildConfig.FUJI_SDK`, JNI packaging and the external native build.
+
+The SDK path starts only in still mode with verified RAW+JPEG card recording and
+an empty, readable SDK buffer. OFF, RAW-only, JPEG-only, unknown, busy and old-buffer
+states stop without reading or deleting a frame. Recording mode is rechecked before
+polling and immediately before a consuming JPEG read. Only recognized RAW/HEIF
+companions may be discarded, and only while the session remains in verified
+RAW+JPEG mode; unknown formats are preserved. Changing the mode after buffered shots
+exist is not treated as a backup for those shots.
+
+SDK-enabled distribution remains blocked on the body-specific hardware matrix below:
+the exact artifact must prove that every consumed JPEG and discarded companion has a
+durable card copy through storage-full, disconnect and mode-change failures. Until
+then, release artifacts stay SDK-disabled and Fujifilm uses the existing PTP fallback.
+
 ## Target camera list classified — 2026-09-11 (phase 4)
 
 The per-model matrix for the Canon, Nikon and Sony target list lives in
@@ -387,7 +409,7 @@ Standards/API references: [USB still-image transport definition and errata](http
 | Canon EOS DSLR/mirrorless | Standard PTP if advertised | Existing EOS mode plus card reconciliation; interrupt/vendor events where usable | R6/R10 history must be recertified; R10 warm-up stays narrow. Older PowerShot/EOS proprietary protocols are not automatically covered. Host-only EOS capture is not enabled. |
 | Nikon DSLR/Z / older PTP | Standard PTP, healthy card slots | Standard events, advertised Nikon event polling, card reconciliation without PC-control mode writes | Nikon 1 vendor events can break sessions and are excluded. Storage-less SDRAM capture and shutter-unlocking behavior are not universally supported. |
 | Sony Alpha / compatible SDIO generations | MTP/PTP in transfer mode | Negotiated SDIO PC Remote, property polling and sequential temporary JPEG objects with camera+host destination | Some older bodies lack these operations or simultaneous saving; QX/legacy DSLR protocols differ. PTP 2 remains a fallback, not the preferred protocol (Sony warns about future support). Body/firmware/mode testing required. |
-| Fujifilm X/GFX / older FinePix | USB CARD READER mode when it exposes PTP/MTP (some modes/devices are mass storage) | Generic accessible card objects/events only | USB TETHER may be host-only and may not save to the card. Do not force undocumented PCMode/control transitions. Official Android SDK is a viable licensed extension, not integrated or claimed supported here. |
+| Fujifilm X/GFX / older FinePix | USB CARD READER mode when it exposes PTP/MTP (some modes/devices are mass storage) | Default: generic accessible card objects/events. Explicit SDK opt-in: supported X/GFX modules only, guarded as described above. | SDK capture is implemented but disabled for distributed artifacts pending the hardware gate. Unsupported modules fall back to PTP; no body is newly certified here. |
 | Panasonic LUMIX | PTP/MTP mode when advertised | Standard/card-arrival events plus card reconciliation in a mode permitting shooting | PC(Storage) may be mass storage; PC(Tether) and models vary. Proprietary SDRAM/object acknowledgement flow and desktop SDK integration are not implemented. |
 
 ### Physical acceptance matrix
@@ -464,9 +486,9 @@ Record exact body, firmware, camera USB/save mode, phone/Android version and cab
 
 Evaluate a pinned libgphoto2/libusb Android backend before building more vendor stacks. Gate adoption on an unrooted-phone proof of permission/FD ownership, identification, exact file transfer, physical-shutter operation, card backup, cancellation/reconnection, ABI packaging and component licensing. Sony's published Camera Remote Command is a targeted alternative. Manufacturer support remains model/firmware/mode specific.
 
-Follow-up order: (1) recertify R6/R10; (2) test the implemented Nikon events and Sony protocol 2/3 buffer paths; (3) build and validate a native backend for missing proprietary protocols, or a licensed Fujifilm Android SDK adapter; (4) expand the measured matrix to Fujifilm, Panasonic, Olympus/OM System, Leica and further models. Expose verified import/live capabilities per model rather than declaring whole brands supported. Buffer tuning, ledger retention and diagnostic export follow hardware measurements.
+Follow-up order: (1) recertify R6/R10; (2) test the implemented Nikon events and Sony protocol 2/3 buffer paths; (3) hardware-certify the default-disabled Fujifilm SDK adapter before any distributed opt-in; (4) build and validate a native backend for other missing proprietary protocols; (5) expand the measured matrix to Fujifilm, Panasonic, Olympus/OM System, Leica and further models. Expose verified import/live capabilities per model rather than declaring whole brands supported. Buffer tuning, ledger retention and diagnostic export follow hardware measurements.
 
-Manufacturer references correcting the historical vault: [Canon SDK platforms](https://www.usa.canon.com/support/sdk), [Nikon SDK updates](https://sdk.nikonimaging.com/information/en/), [Fujifilm Android SDK](https://www.fujifilm-x.com/global/camera-control-sdk/), [Fujifilm individual distribution agreement](https://www.fujifilm-x.com/global/camera-control-sdk/agreement/), [Sony command protocol and PTP 2 notice](https://support.d-imaging.sony.co.jp/app/cameraremotecommand/en/index.html), [Panasonic Windows SDK](https://av.jpn.support.panasonic.com/support/global/cs/soft/tool/sdk.html). No manufacturer agreement was accepted and no proprietary SDK was downloaded or bundled.
+Manufacturer references correcting the historical vault: [Canon SDK platforms](https://www.usa.canon.com/support/sdk), [Nikon SDK updates](https://sdk.nikonimaging.com/information/en/), [Fujifilm Android SDK](https://www.fujifilm-x.com/global/camera-control-sdk/), [Fujifilm individual distribution agreement](https://www.fujifilm-x.com/global/camera-control-sdk/agreement/), [Sony command protocol and PTP 2 notice](https://support.d-imaging.sony.co.jp/app/cameraremotecommand/en/index.html), [Panasonic Windows SDK](https://av.jpn.support.panasonic.com/support/global/cs/soft/tool/sdk.html). Proprietary Fujifilm files remain gitignored and optional; their local presence does not enable or certify a build.
 
 Camera setup references: [Sony PC+Camera destination](https://helpguide.sony.net/ilc/1640/v1/en/contents/TP0001306054.html), [Fujifilm X-T3 USB modes and card-saving warning](https://fujifilm-dsc.com/en/manual/x-t3/connections/computer/index.html), [Nikon MTP/PTP USB setting](https://onlinemanual.nikonimglib.com/z6III/en/nwm_usb_data_connection_365.html), [Panasonic USB mode settings](https://eww.pavc.panasonic.co.jp/dscoi/DC-S5M2X/html/DC-S5M2X_DVQP2992_eng/0125.html).
 

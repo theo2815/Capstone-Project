@@ -6,9 +6,17 @@ plugins {
     kotlin("kapt")
 }
 
-// Fujifilm SDK is present only on machines that copied it (mobile/docs/usb-tethering-plan.md § Fujifilm SDK).
+// Fujifilm SDK capture is opt-in even on machines that copied the proprietary files.
 val fujiSdkDir = rootProject.file("fuji-sdk")
-val fujiSdk = fujiSdkDir.resolve("HEADERS/XAPI.H").exists() && fujiSdkDir.resolve("Android/arm64-v8a/XAPI.so").exists()
+val fujiSdk = providers.gradleProperty("QP_ENABLE_FUJI_SDK").getOrElse("false").toBooleanStrictOrNull()
+    ?: throw GradleException("QP_ENABLE_FUJI_SDK must be true or false.")
+if (fujiSdk) {
+    val missing = listOf("HEADERS/XAPI.H", "Android/arm64-v8a/XAPI.so")
+        .filterNot { fujiSdkDir.resolve(it).isFile }
+    if (missing.isNotEmpty()) throw GradleException(
+        "QP_ENABLE_FUJI_SDK=true requires these files under mobile/fuji-sdk: ${missing.joinToString()}"
+    )
+}
 
 android {
     namespace = "com.quickpitik.mobile"
