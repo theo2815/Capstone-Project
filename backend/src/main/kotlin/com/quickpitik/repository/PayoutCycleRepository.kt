@@ -13,6 +13,9 @@ import java.util.UUID
 
 interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
 
+    @Query("SELECT c.photographerId FROM PayoutCycle c WHERE c.id = :id")
+    fun findPhotographerIdById(@Param("id") id: String): UUID?
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT c FROM PayoutCycle c WHERE c.id = :id")
     fun lockById(@Param("id") id: String): PayoutCycle?

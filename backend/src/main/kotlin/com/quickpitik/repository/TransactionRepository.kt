@@ -45,15 +45,26 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
     )
     fun sumLifetime(@Param("photographerId") photographerId: UUID): BigDecimal
 
-    // Withdrawable ("cleared") kept amount: non-refund sales that have aged past
-    // the clearing cutoff, PLUS all refund rows (refunds bite immediately — we
-    // never wait to claw back money that's been returned). Drives the payout
-    // available balance. COALESCE keeps it non-null.
+    // Withdrawable ("cleared") kept amount: undisputed sales that have aged
+    // past the clearing cutoff, PLUS all refund rows (refunds bite immediately
+    // — we never wait to claw back money that's been returned). Drives the
+    // payout available balance. COALESCE keeps it non-null.
     @Query(
         """
         SELECT COALESCE(SUM(t.amountKeptPhp), 0) FROM Transaction t
         WHERE t.photographerId = :photographerId
-          AND ((t.isRefund = false AND t.paidAt <= :cutoff) OR t.isRefund = true)
+          AND (
+            t.isRefund = true OR (
+              t.isRefund = false
+              AND t.paidAt <= :cutoff
+              AND NOT EXISTS (
+                SELECT d.id FROM Dispute d
+                WHERE d.orderId = t.orderId
+                  AND d.photoId = t.photoId
+                  AND d.statusWire IN ('open', 'escalated')
+              )
+            )
+          )
         """,
     )
     fun sumCleared(

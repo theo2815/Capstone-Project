@@ -18,12 +18,15 @@ import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
+import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.UserRepository
 import com.quickpitik.websocket.AdminInboxEvent
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -36,6 +39,9 @@ class RefundService(
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val eventPublisher: ApplicationEventPublisher,
     private val platformProperties: PlatformProperties,
+    private val photoRepository: PhotoRepository,
+    private val userRepository: UserRepository,
+    private val clock: Clock,
 ) {
     /**
      * POST /api/v1/me/orders/{id}/refund.
@@ -63,23 +69,13 @@ class RefundService(
         if (order.userId != userId) {
             throw NotFoundException(code = ErrorCodes.ORDER_NOT_FOUND, message = "Order not found")
         }
-        // Refunds close when the sale clears for payout, so money never comes
-        // back after the photographer could have withdrawn it. Same basis and
-        // same inclusive cutoff as minting + sumCleared.
-        val window = platformProperties.payoutClearingWindow
-        if (!(order.paidAt ?: order.createdAt).plus(window).isAfter(OffsetDateTime.now())) {
-            throw ConflictException(
-                code = ErrorCodes.CONFLICT,
-                message = "Refund requests close ${window.toDays()} days after purchase",
-            )
-        }
-
         val reason = DisputeReason.fromWire(request.reason)
         val note = request.note.trim()
 
         val orderItems = orderItemRepository.findByIdOrderId(orderId)
         val orderPhotoIds = orderItems.map { it.id.photoId }.toSet()
-        val invalid = request.photoIds.toSet() - orderPhotoIds
+        val requestedPhotoIds = request.photoIds.distinct()
+        val invalid = requestedPhotoIds.toSet() - orderPhotoIds
         if (invalid.isNotEmpty()) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
@@ -88,12 +84,28 @@ class RefundService(
             )
         }
 
-        val now = OffsetDateTime.now()
+        photoRepository.findAllById(requestedPhotoIds)
+            .mapNotNull { it.photographerId }
+            .distinct()
+            .sorted()
+            .forEach { userRepository.lockById(it) }
+
+        // Read the cutoff only after the photographer locks. A request that
+        // waited behind payout authorization cannot inherit an earlier time.
+        val now = OffsetDateTime.now(clock)
+        val window = platformProperties.payoutClearingWindow
+        if (!(order.paidAt ?: order.createdAt).plus(window).isAfter(now)) {
+            throw ConflictException(
+                code = ErrorCodes.CONFLICT,
+                message = "Refund requests close ${window.toDays()} days after purchase",
+            )
+        }
+
         val refundedPhotoIds = disputeRepository.findByOrderId(orderId)
             .filter { it.refundStatus == "succeeded" }
             .mapTo(mutableSetOf()) { it.photoId }
         val createdDisputes = mutableListOf<Dispute>()
-        for (photoId in request.photoIds.distinct()) {
+        for (photoId in requestedPhotoIds) {
             if (photoId in refundedPhotoIds) {
                 throw ConflictException(
                     code = ErrorCodes.CONFLICT,

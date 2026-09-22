@@ -16,10 +16,13 @@ import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
+import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.UserRepository
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
@@ -52,6 +55,9 @@ class RefundServiceTest {
             Mockito.mock(AdminDecisionLogRepository::class.java),
             Mockito.mock(ApplicationEventPublisher::class.java),
             PlatformProperties(),
+            Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(UserRepository::class.java),
+            Clock.systemUTC(),
         )
 
         val error = assertFailsWith<ApiException> { service.withdraw(runnerId, dispute.id) }
@@ -89,6 +95,9 @@ class RefundServiceTest {
             Mockito.mock(AdminDecisionLogRepository::class.java),
             Mockito.mock(ApplicationEventPublisher::class.java),
             PlatformProperties(),
+            Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(UserRepository::class.java),
+            Clock.systemUTC(),
         )
 
         assertFailsWith<ConflictException> {
@@ -157,6 +166,9 @@ class RefundServiceTest {
             Mockito.mock(AdminDecisionLogRepository::class.java),
             Mockito.mock(ApplicationEventPublisher::class.java),
             PlatformProperties(),
+            Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(UserRepository::class.java),
+            Clock.systemUTC(),
         )
         return Fixture(service, disputes, order, photoId)
     }

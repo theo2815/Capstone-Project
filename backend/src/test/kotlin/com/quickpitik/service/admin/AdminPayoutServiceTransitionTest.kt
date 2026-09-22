@@ -162,8 +162,12 @@ class AdminPayoutServiceTransitionTest {
     }
 
     private fun given(status: PayoutCycleStatus, amount: String = "1000", approvedBy: UUID? = null) {
-        Mockito.`when`(payoutCycleRepository.lockById(cycleId))
-            .thenReturn(cycle(status, amount, approvedBy))
+        givenCycle(cycle(status, amount, approvedBy))
+    }
+
+    private fun givenCycle(cycle: PayoutCycle) {
+        Mockito.`when`(payoutCycleRepository.findPhotographerIdById(cycle.id)).thenReturn(cycle.photographerId)
+        Mockito.`when`(payoutCycleRepository.lockById(cycle.id)).thenReturn(cycle)
     }
 
     private fun recordedToStatus(): String {
@@ -195,7 +199,7 @@ class AdminPayoutServiceTransitionTest {
             holdReason = "original hold"
             rejectedReason = "original rejection"
         }
-        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+        givenCycle(cycle)
 
         val ex = assertFailsWith<ApiException> { service().reject(adminId, cycleId, "new rejection") }
 
@@ -222,7 +226,7 @@ class AdminPayoutServiceTransitionTest {
             accountSnapshotNumber = "09123456789"
             accountSnapshotName = "Test recipient"
         }
-        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+        givenCycle(cycle)
         val disbursements = Mockito.mock(DisbursementService::class.java)
         Mockito.`when`(disbursements.activeName).thenReturn("manual")
         Mockito.`when`(disbursements.initiate(anyArg())).thenReturn(DisbursementResult(null))
@@ -239,7 +243,7 @@ class AdminPayoutServiceTransitionTest {
     @Test
     fun `mark-processing refuses a legacy provider claim before consulting the active provider`() {
         val cycle = cycle(PayoutCycleStatus.APPROVED).apply { provider = "paymongo" }
-        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+        givenCycle(cycle)
         val disbursements = Mockito.mock(DisbursementService::class.java)
         Mockito.`when`(disbursements.activeName).thenReturn("manual")
         Mockito.`when`(disbursements.initiate(anyArg())).thenReturn(DisbursementResult(null))
@@ -260,7 +264,7 @@ class AdminPayoutServiceTransitionTest {
             accountSnapshotNumber = "09123456789"
             accountSnapshotName = "Test recipient"
         }
-        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+        givenCycle(cycle)
         val paymongo = Mockito.mock(DisbursementProvider::class.java)
         Mockito.`when`(paymongo.providerName).thenReturn("paymongo")
         val disbursements = DisbursementService(listOf(paymongo), PlatformProperties(disbursementProvider = "paymongo"))

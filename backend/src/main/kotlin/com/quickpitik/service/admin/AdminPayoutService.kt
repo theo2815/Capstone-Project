@@ -187,7 +187,7 @@ class AdminPayoutService(
     }
 
     fun markPaid(adminId: UUID, payoutId: String, req: MarkPayoutPaidRequest): AdminPayoutCycleDto {
-        val cycle = loadCycle(payoutId)
+        val cycle = loadCycleForAuthorization(payoutId)
         ensureManual(cycle)
         payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkPaid)
         payoutRequestService.assertCovered(cycle)
@@ -251,7 +251,7 @@ class AdminPayoutService(
         )
 
         val claim = transactionTemplate.execute {
-            val cycle = loadCycle(payoutId)
+            val cycle = loadCycleForAuthorization(payoutId)
             // A non-manual stamp is a durable provider claim, including on
             // legacy APPROVED rows. Never replace or replay it.
             ensureManual(cycle)
@@ -673,6 +673,13 @@ class AdminPayoutService(
     private fun loadCycle(payoutId: String): PayoutCycle =
         payoutCycleRepository.lockById(payoutId) ?: throw
             NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout cycle not found")
+
+    private fun loadCycleForAuthorization(payoutId: String): PayoutCycle {
+        val photographerId = payoutCycleRepository.findPhotographerIdById(payoutId) ?: throw
+            NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout cycle not found")
+        userRepository.lockById(photographerId)
+        return loadCycle(payoutId)
+    }
 
     // Approval is a stored state. Only pending_review needs a wire alias.
     private fun mapAdminStatusFilter(filter: String): String? {

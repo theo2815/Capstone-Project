@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
+import java.time.Clock
 import java.time.LocalDate
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -63,6 +64,7 @@ class PayoutRequestServiceWithdrawTest {
         PayoutCycleTransitions(payoutCycleRepository, payoutStatusRecorder),
         PlatformProperties(),
         Mockito.mock(UserRepository::class.java),
+        Clock.systemUTC(),
     )
 
     private fun cycle(status: PayoutCycleStatus): PayoutCycle {

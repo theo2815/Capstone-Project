@@ -24,6 +24,7 @@ import org.mockito.Mockito
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
@@ -72,6 +73,7 @@ class PayoutRequestServiceBalanceTest {
         PayoutCycleTransitions(payoutCycleRepository, payoutStatusRecorder),
         platformProperties,
         Mockito.mock(UserRepository::class.java),
+        Clock.systemUTC(),
     )
 
     // Stub the four money sums; each test sets the numbers it cares about.
