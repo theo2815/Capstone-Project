@@ -15,13 +15,15 @@ import com.quickpitik.service.storage.contentTypeForKey
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Clock
 import java.time.OffsetDateTime
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 // Per-alert worker for the "your photos are ready" email. Mirrors
 // OrderReceiptEmailService: face-match the runner's selfie against the event,
-// and if there is >= 1 hit, claim notified_at (conditional UPDATE) and send
-// once. Database reads and claim/release updates use short transaction phases;
+// and if there is >= 1 hit, claim a dated lease (conditional UPDATE) and send.
+// Database reads and claim/delivery updates use short transaction phases;
 // storage, face-provider, and email I/O run with no database connection held.
 @Service
 class EventPhotosReadyNotifier(
@@ -34,6 +36,7 @@ class EventPhotosReadyNotifier(
     private val aiApiProperties: AiApiProperties,
     private val emailService: EmailService,
     private val transactionTemplate: TransactionTemplate,
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -78,12 +81,19 @@ class EventPhotosReadyNotifier(
                 eventSlug = prepared.eventSlug,
                 matchCount = page.total.toInt(),
             )
-            log.info("Photos-ready notified · alert={} to={} matches={}", prepared.alertId, recipient.email, page.total)
         } catch (ex: Exception) {
             log.error("Photos-ready send failed · alert={} err={}", prepared.alertId, ex.message, ex)
-            // Hand the claim back so the next sweep retries — same door
-            // OrderReceiptEmailService.releaseReceiptSend leaves open.
-            transactionTemplate.executeWithoutResult { alertRepository.releaseNotify(prepared.alertId) }
+            return
+        }
+
+        val deliveredAt = clock.postgresTimestamp()
+        val stamped = transactionTemplate.execute {
+            alertRepository.stampNotificationDelivered(prepared.alertId, recipient.claimToken, deliveredAt)
+        } == 1
+        if (stamped) {
+            log.info("Photos-ready notified · alert={} to={} matches={}", prepared.alertId, recipient.email, page.total)
+        } else {
+            log.warn("Photos-ready delivery claim changed before stamping alert {}", prepared.alertId)
         }
     }
 
@@ -93,7 +103,7 @@ class EventPhotosReadyNotifier(
         if (!aiApiProperties.enabled) return null // no AI => no possible match (sweep also gates)
         // Pending rows are ordered by this stamp, rotating unmatched or broken
         // alerts behind runners the bounded sweep has not checked yet.
-        alert.lastCheckedAt = OffsetDateTime.now()
+        alert.lastCheckedAt = clock.postgresTimestamp()
 
         val event = eventRepository.findById(alert.eventId).orElse(null) ?: return null
         val selfie = resolveSelfie(alert) ?: return null // selfie deleted + no fallback → skip
@@ -106,11 +116,13 @@ class EventPhotosReadyNotifier(
 
         // Claim AFTER every skip, exactly like OrderReceiptEmailService — an
         // alert that legitimately isn't ready must never spend its one claim.
-        if (alertRepository.claimNotify(prepared.alertId, OffsetDateTime.now()) == 0) {
+        val claimToken = clock.postgresTimestamp()
+        val claimExpiredBefore = claimToken.minus(aiApiProperties.photosReadyClaimTtl).truncatedTo(ChronoUnit.MICROS)
+        if (alertRepository.claimNotification(prepared.alertId, claimToken, claimExpiredBefore) == 0) {
             log.info("Photos-ready already claimed by a concurrent send for alert {} — skipping", prepared.alertId)
             return null
         }
-        return Recipient(user.email, user.name)
+        return Recipient(user.email, user.name, claimToken)
     }
 
     private data class PreparedSearch(
@@ -122,10 +134,13 @@ class EventPhotosReadyNotifier(
         val eventSlug: String,
     )
 
-    private data class Recipient(val email: String, val name: String)
+    private data class Recipient(val email: String, val name: String, val claimToken: OffsetDateTime)
 
     private fun resolveSelfie(alert: EventPhotoAlert): UserSelfie? =
         alert.selfieId?.let { userSelfieRepository.findByIdAndUserId(it, alert.userId) }
             ?: userSelfieRepository.findFirstByUserIdAndIsPrimaryTrue(alert.userId)
             ?: userSelfieRepository.findFirstByUserIdOrderByUploadedAtDesc(alert.userId)
 }
+
+internal fun Clock.postgresTimestamp(): OffsetDateTime =
+    OffsetDateTime.now(this).truncatedTo(ChronoUnit.MICROS)

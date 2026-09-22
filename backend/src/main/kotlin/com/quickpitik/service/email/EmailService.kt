@@ -112,9 +112,8 @@ class EmailService(
 
     // Sent by EventPhotosReadyNotifier when the date-based sweep finds the
     // runner's matched photos. Unlike the reset/verification mails, a failure
-    // here MUST propagate: the notifier claimed notified_at before calling, and
-    // its catch releases that claim so the next sweep retries. Swallowing here
-    // would strand the claim and the runner would never be told.
+    // here MUST propagate: the notifier retains its dated claim so a later sweep
+    // can recover it after expiry. Swallowing here would falsely stamp delivery.
     fun sendEventPhotosReadyEmail(
         toEmail: String,
         runnerName: String,

@@ -176,6 +176,7 @@ app:
     # failures (bad image, 4xx) do, so an outage self-heals via the reconciler.
     max-indexing-attempts: ${AI_MAX_INDEXING_ATTEMPTS:5}
     reconcile-interval-ms: ${AI_RECONCILE_INTERVAL_MS:60000}
+    photos-ready-claim-ttl: ${AI_PHOTOS_READY_CLAIM_TTL:PT10M}
     # Phase C bulk indexing. PER_PHOTO (default) = Phase-B behaviour (one enroll
     # + one bib HTTP call per photo, off the upload request). BATCH stands that
     # down and drains PENDING photos per event into mega jobs + webhook/poll

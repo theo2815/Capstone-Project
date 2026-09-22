@@ -25,8 +25,12 @@ import org.springframework.transaction.annotation.AnnotationTransactionAttribute
 import org.springframework.transaction.support.AbstractPlatformTransactionManager
 import org.springframework.transaction.support.DefaultTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -35,8 +39,8 @@ import kotlin.test.assertNull
 
 // Mirrors OrderReceiptEmailClaimTest: the single-send guarantee for the
 // "photos ready" mail. What matters is exactly one send per match, that a
-// not-ready alert never spends its one claim, and that a failed send hands the
-// claim back so the next sweep retries.
+// not-ready alert never spends its one claim, and that delivery is stamped only
+// after a successful send by the worker that still owns the dated claim.
 class EventPhotosReadyNotifierTest {
 
     private lateinit var alertRepository: EventPhotoAlertRepository
@@ -67,6 +71,7 @@ class EventPhotosReadyNotifierTest {
 
         Mockito.verify(emailService)
             .sendEventPhotosReadyEmail(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
+        Mockito.verify(alertRepository).stampNotificationDelivered(alert.id, NOW, NOW)
     }
 
     @Test
@@ -81,7 +86,7 @@ class EventPhotosReadyNotifierTest {
     }
 
     @Test
-    fun `a failed send releases the claim so the next sweep retries`() {
+    fun `a failed send leaves the dated claim for expiry recovery`() {
         val alert = stubAlert(matchTotal = 3L)
         stubClaim(alert, won = true)
         Mockito.doThrow(RuntimeException("resend down")).`when`(emailService)
@@ -89,17 +94,19 @@ class EventPhotosReadyNotifierTest {
 
         notifier().notifyIfMatched(alert.id)
 
-        Mockito.verify(alertRepository).releaseNotify(alert.id)
+        Mockito.verify(alertRepository, Mockito.never())
+            .stampNotificationDelivered(anyArg(), anyArg(), anyArg())
     }
 
     @Test
-    fun `a successful send keeps the claim`() {
+    fun `a stale sender can only stamp with its own claim token`() {
         val alert = stubAlert(matchTotal = 3L)
         stubClaim(alert, won = true)
+        Mockito.`when`(alertRepository.stampNotificationDelivered(alert.id, NOW, NOW)).thenReturn(0)
 
         notifier().notifyIfMatched(alert.id)
 
-        Mockito.verify(alertRepository, Mockito.never()).releaseNotify(anyArg())
+        Mockito.verify(alertRepository).stampNotificationDelivered(alert.id, NOW, NOW)
     }
 
     @Test
@@ -109,7 +116,7 @@ class EventPhotosReadyNotifierTest {
         notifier().notifyIfMatched(alert.id)
 
         assertNotNull(alert.lastCheckedAt)
-        Mockito.verify(alertRepository, Mockito.never()).claimNotify(anyArg(), anyArg())
+        Mockito.verify(alertRepository, Mockito.never()).claimNotification(anyArg(), anyArg(), anyArg())
         Mockito.verify(emailService, Mockito.never())
             .sendEventPhotosReadyEmail(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
         Mockito.verify(photoSearchService).searchByFace(
@@ -141,6 +148,25 @@ class EventPhotosReadyNotifierTest {
     }
 
     @Test
+    fun `a missing selfie returns before storage and search`() {
+        val alert = EventPhotoAlert(eventId = UUID.randomUUID(), userId = UUID.randomUUID())
+        val event = Event(
+            slug = "cebu-marathon",
+            name = "Cebu Marathon",
+            date = LocalDate.of(2026, 1, 11),
+            location = "Cebu City, Cebu",
+            status = EventStatus.ACTIVE,
+        )
+        Mockito.`when`(alertRepository.findById(alert.id)).thenReturn(Optional.of(alert))
+        Mockito.`when`(eventRepository.findById(alert.eventId)).thenReturn(Optional.of(event))
+
+        notifier().notifyIfMatched(alert.id)
+
+        Mockito.verifyNoInteractions(storageService, photoSearchService)
+        Mockito.verify(alertRepository, Mockito.never()).claimNotification(anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
     fun `storage search and email run outside transactions while the claim runs inside one`() {
         val tx = TxTracker()
         val alert = stubAlert(matchTotal = 3L)
@@ -160,8 +186,15 @@ class EventPhotosReadyNotifierTest {
             openAtSearch = tx.open
             PaginatedResponse(emptyList<PhotoDto>(), 3L, 0, 1)
         }
-        Mockito.`when`(alertRepository.claimNotify(eqArg(alert.id), anyArg())).thenAnswer {
+        Mockito.`when`(alertRepository.claimNotification(eqArg(alert.id), anyArg(), anyArg())).thenAnswer {
             openAtClaim = tx.open
+            1
+        }
+        var openAtStamp: Boolean? = null
+        Mockito.`when`(
+            alertRepository.stampNotificationDelivered(eqArg(alert.id), anyArg(), anyArg()),
+        ).thenAnswer {
+            openAtStamp = tx.open
             1
         }
         Mockito.doAnswer {
@@ -176,10 +209,11 @@ class EventPhotosReadyNotifierTest {
         assertEquals(false, openAtSearch, "face search must not run while a DB connection is held")
         assertEquals(true, openAtClaim, "the claim is a @Modifying UPDATE and must be transactional")
         assertEquals(false, openAtSend, "email must not be sent while a DB connection is held")
+        assertEquals(true, openAtStamp, "delivery must be stamped in a short transaction after email")
     }
 
     @Test
-    fun `a failed send releases the claim in one additional transaction`() {
+    fun `a failed send does not open a transaction to release the claim`() {
         val tx = TxTracker()
         val alert = stubAlert(matchTotal = 3L)
         stubClaim(alert, won = true)
@@ -189,16 +223,9 @@ class EventPhotosReadyNotifierTest {
             throw RuntimeException("resend down")
         }.`when`(emailService)
             .sendEventPhotosReadyEmail(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
-        var openAtRelease: Boolean? = null
-        Mockito.`when`(alertRepository.releaseNotify(eqArg(alert.id))).thenAnswer {
-            openAtRelease = tx.open
-            1
-        }
-
         notifier(transactionTemplate = tx.template).notifyIfMatched(alert.id)
 
-        assertEquals(executionsAtSend!! + 1, tx.executions, "failure must add exactly one release transaction")
-        assertEquals(true, openAtRelease, "releaseNotify must run inside the additional transaction")
+        assertEquals(executionsAtSend, tx.executions, "the dated claim must remain for expiry recovery")
     }
 
     @Test
@@ -230,6 +257,7 @@ class EventPhotosReadyNotifierTest {
             props,
             emailService,
             transactionTemplate,
+            FIXED_CLOCK,
         )
 
     private class TxTracker {
@@ -255,7 +283,9 @@ class EventPhotosReadyNotifierTest {
     }
 
     private fun stubClaim(alert: EventPhotoAlert, won: Boolean) {
-        Mockito.`when`(alertRepository.claimNotify(eqArg(alert.id), anyArg()))
+        Mockito.`when`(
+            alertRepository.claimNotification(eqArg(alert.id), eqArg(NOW), eqArg(NOW.minus(CLAIM_TTL))),
+        )
             .thenReturn(if (won) 1 else 0)
     }
 
@@ -293,4 +323,10 @@ class EventPhotosReadyNotifierTest {
     private fun <T> eqArg(value: T): T = Mockito.eq(value) ?: value
 
     private fun <T> anyArg(): T = Mockito.any()
+
+    private companion object {
+        val CLAIM_TTL: Duration = Duration.ofMinutes(10)
+        val NOW: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:05:06.123456Z")
+        val FIXED_CLOCK: Clock = Clock.fixed(Instant.parse("2026-09-22T04:05:06.123456789Z"), ZoneOffset.UTC)
+    }
 }

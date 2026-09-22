@@ -8,8 +8,8 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 // "Notify me when my photos are ready" opt-in — one row per (event, runner).
-// notified_at doubles as the single-send idempotency stamp, claimed with a
-// conditional UPDATE by EventPhotosReadyNotifier (mirrors orders.email_sent_at).
+// notification_claimed_at is the recoverable send lease; notified_at records
+// only successful delivery.
 @Entity
 @Table(name = "event_photo_alerts")
 class EventPhotoAlert(
@@ -36,4 +36,7 @@ class EventPhotoAlert(
 
     @Column(name = "notified_at")
     var notifiedAt: OffsetDateTime? = null,
+
+    @Column(name = "notification_claimed_at")
+    var notificationClaimedAt: OffsetDateTime? = null,
 )

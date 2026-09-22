@@ -15,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
+import java.time.OffsetDateTime
 import java.util.UUID
 import javax.sql.DataSource
 
@@ -127,6 +128,49 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
                 assertTrue(indexDefinition.contains("(email_sent_at)"), indexDefinition)
                 assertTrue(indexDefinition.contains("email_sent_at IS NOT NULL"), indexDefinition)
                 assertTrue(indexDefinition.contains("receipt_delivered_at IS NULL"), indexDefinition)
+            } finally {
+                connection.createStatement().use {
+                    it.execute("DROP SCHEMA $schema CASCADE")
+                    it.execute("SET search_path TO public")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `V64 adds a separate photos-ready claim without changing delivered rows`() {
+        val schema = "photo_alert_v64_${UUID.randomUUID().toString().replace("-", "")}"
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE SCHEMA $schema")
+                statement.execute("SET search_path TO $schema")
+                statement.execute("CREATE TABLE event_photo_alerts (id UUID PRIMARY KEY, notified_at TIMESTAMPTZ)")
+                statement.execute(
+                    "INSERT INTO event_photo_alerts (id, notified_at) VALUES " +
+                        "('00000000-0000-0000-0000-000000000001', '2026-09-01T12:00:00Z'), " +
+                        "('00000000-0000-0000-0000-000000000002', NULL)",
+                )
+            }
+
+            try {
+                ScriptUtils.executeSqlScript(
+                    connection,
+                    ClassPathResource("db/migration/V64__event_photo_alert_notification_claim.sql"),
+                )
+
+                connection.prepareStatement(
+                    "SELECT notified_at, notification_claimed_at FROM event_photo_alerts WHERE id = ?",
+                ).use { statement ->
+                    statement.setObject(1, UUID.fromString("00000000-0000-0000-0000-000000000001"))
+                    statement.executeQuery().use { result ->
+                        result.next()
+                        assertEquals(
+                            OffsetDateTime.parse("2026-09-01T12:00:00Z"),
+                            result.getObject("notified_at", OffsetDateTime::class.java),
+                        )
+                        assertNull(result.getObject("notification_claimed_at"))
+                    }
+                }
             } finally {
                 connection.createStatement().use {
                     it.execute("DROP SCHEMA $schema CASCADE")

@@ -11,11 +11,14 @@ import com.quickpitik.repository.UserRepository
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.domain.PageRequest
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
@@ -28,6 +31,21 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var userRepository: UserRepository
+
+    @Autowired
+    private lateinit var transactionTemplate: TransactionTemplate
+
+    @Test
+    fun `only one concurrent notification claim wins without marking delivery`() {
+        val pending = alert(event(EventStatus.ACTIVE, LocalDate.now()).id)
+
+        assertEquals(1, claim(pending.id, FRESH_CLAIM, CLAIM_CUTOFF))
+        assertEquals(0, claim(pending.id, REPLACEMENT_CLAIM, CLAIM_CUTOFF))
+
+        val stored = alertRepository.findById(pending.id).orElseThrow()
+        assertNull(stored.notifiedAt)
+        assertEquals(FRESH_CLAIM, stored.notificationClaimedAt)
+    }
 
     @Test
     fun `pending sweep covers completed grace-day events and rotates checked alerts`() {
@@ -46,6 +64,7 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
         val pending = alertRepository.findPendingInWindow(
             today,
             today.minusDays(4),
+            CLAIM_CUTOFF,
             PageRequest.of(0, 100),
         ).map { it.id }
 
@@ -54,6 +73,77 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
         assertFalse(archivedAlert.id in pending)
         assertFalse(expiredAlert.id in pending)
         assertTrue(pending.indexOf(neverChecked.id) < pending.indexOf(alreadyChecked.id))
+    }
+
+    @Test
+    fun `fresh leases are skipped while expired leases are selected and reclaimed`() {
+        val event = event(EventStatus.ACTIVE, LocalDate.now())
+        val fresh = alert(event.id, notificationClaimedAt = FRESH_CLAIM)
+        val expired = alert(event.id, notificationClaimedAt = OLD_CLAIM)
+        val unclaimed = alert(event.id)
+
+        val pending = pending(LocalDate.now()).map { it.id }
+
+        assertFalse(fresh.id in pending)
+        assertContains(pending, expired.id)
+        assertContains(pending, unclaimed.id)
+        assertEquals(1, claim(expired.id, REPLACEMENT_CLAIM, CLAIM_CUTOFF))
+        assertEquals(REPLACEMENT_CLAIM, alertRepository.findById(expired.id).orElseThrow().notificationClaimedAt)
+    }
+
+    @Test
+    fun `an expired crash claim remains recoverable after the event window`() {
+        val today = LocalDate.now()
+        val oldEvent = event(EventStatus.COMPLETED, today.minusDays(5))
+        val crashed = alert(oldEvent.id, notificationClaimedAt = OLD_CLAIM)
+        val neverClaimed = alert(oldEvent.id)
+
+        val pending = pending(today).map { it.id }
+
+        assertContains(pending, crashed.id)
+        assertFalse(neverClaimed.id in pending)
+    }
+
+    @Test
+    fun `a stale worker cannot stamp or clear a replacement claim`() {
+        val pending = alert(event(EventStatus.ACTIVE, LocalDate.now()).id, notificationClaimedAt = OLD_CLAIM)
+        assertEquals(1, claim(pending.id, REPLACEMENT_CLAIM, CLAIM_CUTOFF))
+
+        assertEquals(0, stamp(pending.id, OLD_CLAIM, DELIVERED_AT))
+        var stored = alertRepository.findById(pending.id).orElseThrow()
+        assertNull(stored.notifiedAt)
+        assertEquals(REPLACEMENT_CLAIM, stored.notificationClaimedAt)
+
+        assertEquals(1, stamp(pending.id, REPLACEMENT_CLAIM, DELIVERED_AT))
+        stored = alertRepository.findById(pending.id).orElseThrow()
+        assertEquals(DELIVERED_AT, stored.notifiedAt)
+        assertNull(stored.notificationClaimedAt)
+    }
+
+    @Test
+    fun `pending selection excludes delivered deleted hidden and opted-out alerts`() {
+        val today = LocalDate.now()
+        val visibleEvent = event(EventStatus.ACTIVE, today)
+        val eligible = alert(visibleEvent.id)
+        val delivered = alert(visibleEvent.id, notifiedAt = DELIVERED_AT)
+
+        val deletedEvent = event(EventStatus.ACTIVE, today).also {
+            it.deletedAt = OffsetDateTime.now()
+            eventRepository.saveAndFlush(it)
+        }
+        val deleted = alert(deletedEvent.id)
+        val hidden = alert(event(EventStatus.ARCHIVED, today).id)
+        val optedOut = alert(visibleEvent.id)
+        alertRepository.delete(optedOut)
+        alertRepository.flush()
+
+        val pending = pending(today).map { it.id }
+
+        assertContains(pending, eligible.id)
+        assertFalse(delivered.id in pending)
+        assertFalse(deleted.id in pending)
+        assertFalse(hidden.id in pending)
+        assertFalse(optedOut.id in pending)
     }
 
     private fun event(status: EventStatus, date: LocalDate): Event = eventRepository.save(
@@ -66,7 +156,12 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
         ),
     )
 
-    private fun alert(eventId: UUID, lastCheckedAt: OffsetDateTime? = null): EventPhotoAlert =
+    private fun alert(
+        eventId: UUID,
+        lastCheckedAt: OffsetDateTime? = null,
+        notificationClaimedAt: OffsetDateTime? = null,
+        notifiedAt: OffsetDateTime? = null,
+    ): EventPhotoAlert =
         alertRepository.save(
             EventPhotoAlert(
                 eventId = eventId,
@@ -79,6 +174,29 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
                     ),
                 ).id,
                 lastCheckedAt = lastCheckedAt,
+                notificationClaimedAt = notificationClaimedAt,
+                notifiedAt = notifiedAt,
             ),
         )
+
+    private fun pending(today: LocalDate): List<EventPhotoAlert> =
+        alertRepository.findPendingInWindow(today, today.minusDays(4), CLAIM_CUTOFF, PageRequest.of(0, 100))
+
+    private fun claim(id: UUID, token: OffsetDateTime, expiredBefore: OffsetDateTime): Int =
+        transactionTemplate.execute {
+            alertRepository.claimNotification(id, token, expiredBefore)
+        } ?: 0
+
+    private fun stamp(id: UUID, token: OffsetDateTime, deliveredAt: OffsetDateTime): Int =
+        transactionTemplate.execute {
+            alertRepository.stampNotificationDelivered(id, token, deliveredAt)
+        } ?: 0
+
+    private companion object {
+        val OLD_CLAIM: OffsetDateTime = OffsetDateTime.parse("2026-09-22T03:00:00.123456Z")
+        val CLAIM_CUTOFF: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:00:00.123456Z")
+        val FRESH_CLAIM: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:05:00.123456Z")
+        val REPLACEMENT_CLAIM: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:10:00.123456Z")
+        val DELIVERED_AT: OffsetDateTime = OffsetDateTime.parse("2026-09-22T04:11:00.123456Z")
+    }
 }

@@ -31,6 +31,7 @@ data class AiApiProperties(
     // how often it runs, and the max attempts before a photo settles as FAILED.
     val reconcileIntervalMs: Long = 60_000L,
     val maxIndexingAttempts: Int = 5,
+    val photosReadyClaimTtl: Duration = Duration.ofMinutes(10),
     // Orphan-person reaper (PhotoOrphanReaper.reap): deletes ai-api person rows
     // no live photo references anymore (left when a photo is re-indexed or a
     // batch is rolled back). Gated additionally by `enabled`. Runs slowly — it
@@ -49,7 +50,11 @@ data class AiApiProperties(
     val indexingMode: IndexingMode = IndexingMode.PER_PHOTO,
     val batch: BatchIndexingProperties = BatchIndexingProperties(),
     val webhook: AiWebhookProperties = AiWebhookProperties(),
-)
+) {
+    init {
+        require(photosReadyClaimTtl > Duration.ZERO) { "photosReadyClaimTtl must be positive" }
+    }
+}
 
 enum class IndexingMode {
     PER_PHOTO,

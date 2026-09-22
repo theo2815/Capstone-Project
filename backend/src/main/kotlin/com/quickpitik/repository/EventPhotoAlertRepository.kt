@@ -19,23 +19,26 @@ interface EventPhotoAlertRepository : JpaRepository<EventPhotoAlert, UUID> {
     @Modifying
     fun deleteByEventIdAndUserId(eventId: UUID, userId: UUID): Long
 
-    // Un-notified opt-ins for uploadable events, including one post-window day
-    // so the last accepted uploads can finish indexing. Never-checked rows sort
-    // first, then the least recently checked, so a batch cannot starve later
-    // runners when early opt-ins have no match.
+    // Un-notified opt-ins with no active claim. Ordinary rows stay inside the
+    // event window; expired claims remain recoverable after it. Never-checked
+    // rows sort first, then least recently checked, so bounded batches rotate.
     @Query(
         """
         SELECT a FROM EventPhotoAlert a
         WHERE a.notifiedAt IS NULL
-          AND a.eventId IN (
+          AND (a.notificationClaimedAt IS NULL OR a.notificationClaimedAt <= :claimExpiredBefore)
+          AND EXISTS (
               SELECT e.id FROM Event e
-              WHERE e.deletedAt IS NULL
+              WHERE e.id = a.eventId
+                AND e.deletedAt IS NULL
                 AND e.status IN (
                     com.quickpitik.entity.EventStatus.ACTIVE,
                     com.quickpitik.entity.EventStatus.COMPLETED
                 )
-                AND e.date <= :today
-                AND e.date >= :windowStart
+                AND (
+                    a.notificationClaimedAt IS NOT NULL
+                    OR (e.date <= :today AND e.date >= :windowStart)
+                )
           )
         ORDER BY
           CASE WHEN a.lastCheckedAt IS NULL THEN 0 ELSE 1 END,
@@ -47,19 +50,32 @@ interface EventPhotoAlertRepository : JpaRepository<EventPhotoAlert, UUID> {
     fun findPendingInWindow(
         @Param("today") today: LocalDate,
         @Param("windowStart") windowStart: LocalDate,
+        @Param("claimExpiredBefore") claimExpiredBefore: OffsetDateTime,
         pageable: Pageable,
     ): List<EventPhotoAlert>
 
-    // Atomically claim the right to send this alert's email — mirrors
-    // OrderRepository.claimReceiptSend. Returns 1 if this caller won the claim,
-    // 0 if someone else already holds it. The WHERE clause makes the check and
-    // the write one statement, so two concurrent sweeps can't both send.
+    // The claim timestamp is also the attempt token used by the delivery stamp.
     @Modifying
-    @Query("UPDATE EventPhotoAlert a SET a.notifiedAt = :now WHERE a.id = :id AND a.notifiedAt IS NULL")
-    fun claimNotify(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+    @Query(
+        "UPDATE EventPhotoAlert a SET a.notificationClaimedAt = :claimToken " +
+            "WHERE a.id = :id AND a.notifiedAt IS NULL " +
+            "AND (a.notificationClaimedAt IS NULL OR a.notificationClaimedAt <= :claimExpiredBefore)",
+    )
+    fun claimNotification(
+        @Param("id") id: UUID,
+        @Param("claimToken") claimToken: OffsetDateTime,
+        @Param("claimExpiredBefore") claimExpiredBefore: OffsetDateTime,
+    ): Int
 
-    // Give the claim back when the send itself failed, so the next sweep retries.
+    // A stale worker cannot stamp delivery or clear a replacement worker's claim.
     @Modifying
-    @Query("UPDATE EventPhotoAlert a SET a.notifiedAt = NULL WHERE a.id = :id")
-    fun releaseNotify(@Param("id") id: UUID): Int
+    @Query(
+        "UPDATE EventPhotoAlert a SET a.notifiedAt = :deliveredAt, a.notificationClaimedAt = NULL " +
+            "WHERE a.id = :id AND a.notifiedAt IS NULL AND a.notificationClaimedAt = :claimToken",
+    )
+    fun stampNotificationDelivered(
+        @Param("id") id: UUID,
+        @Param("claimToken") claimToken: OffsetDateTime,
+        @Param("deliveredAt") deliveredAt: OffsetDateTime,
+    ): Int
 }
