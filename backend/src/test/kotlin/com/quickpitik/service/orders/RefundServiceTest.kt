@@ -12,6 +12,7 @@ import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -19,6 +20,8 @@ import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import java.math.BigDecimal
@@ -129,9 +132,10 @@ class RefundServiceTest {
         Mockito.verify(disputes, Mockito.never()).save(anyArg())
     }
 
-    @Test
-    fun `a refund request inside the clearing window is filed`() {
-        val (service, disputes, order, photoId) = paidOrder(paidDaysAgo = 6)
+    @ParameterizedTest
+    @EnumSource(value = OrderStatus::class, names = ["PAID", "FULFILLED"])
+    fun `a settled order inside the clearing window can file a refund`(status: OrderStatus) {
+        val (service, disputes, order, photoId) = paidOrder(paidDaysAgo = 6, status = status)
         Mockito.`when`(disputes.save(anyArg())).thenAnswer { it.arguments[0] }
 
         service.submit(order.userId!!, order.id, RefundRequest(photoIds = listOf(photoId), reason = "wrong_runner", note = ""))
@@ -139,22 +143,66 @@ class RefundServiceTest {
         Mockito.verify(disputes).save(anyArg())
     }
 
-    private data class Fixture(val service: RefundService, val disputes: DisputeRepository, val order: Order, val photoId: UUID)
+    @Test
+    fun `a settled legacy order can file within the createdAt window`() {
+        val (service, disputes, order, photoId) = paidOrder(paidDaysAgo = null, createdDaysAgo = 1)
+        Mockito.`when`(disputes.save(anyArg())).thenAnswer { it.arguments[0] }
 
-    private fun paidOrder(paidDaysAgo: Long?, createdDaysAgo: Long = 0): Fixture {
+        service.submit(order.userId!!, order.id, RefundRequest(listOf(photoId), "wrong_runner", ""))
+
+        Mockito.verify(disputes).save(anyArg())
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = OrderStatus::class, names = ["PENDING", "EXPIRED", "REFUNDED"])
+    fun `an unsettled order cannot file a refund even with paidAt`(status: OrderStatus) {
+        val (service, disputes, order, photoId, publisher) = paidOrder(paidDaysAgo = 1, status = status)
+        Mockito.`when`(disputes.save(anyArg())).thenAnswer { it.arguments[0] }
+
+        val error = assertFailsWith<ConflictException> {
+            service.submit(order.userId!!, order.id, RefundRequest(listOf(photoId), "wrong_runner", ""))
+        }
+
+        assertEquals(ErrorCodes.CONFLICT, error.code)
+        Mockito.verify(disputes, Mockito.never()).save(anyArg())
+        Mockito.verifyNoInteractions(publisher)
+    }
+
+    @Test
+    fun `a foreign order stays hidden before eligibility is checked`() {
+        val (service, disputes, order, photoId, publisher) = paidOrder(paidDaysAgo = 1, status = OrderStatus.PENDING)
+
+        val error = assertFailsWith<NotFoundException> {
+            service.submit(UUID.randomUUID(), order.id, RefundRequest(listOf(photoId), "wrong_runner", ""))
+        }
+
+        assertEquals(ErrorCodes.ORDER_NOT_FOUND, error.code)
+        Mockito.verifyNoInteractions(disputes, publisher)
+    }
+
+    private data class Fixture(
+        val service: RefundService,
+        val disputes: DisputeRepository,
+        val order: Order,
+        val photoId: UUID,
+        val publisher: ApplicationEventPublisher,
+    )
+
+    private fun paidOrder(paidDaysAgo: Long?, createdDaysAgo: Long = 0, status: OrderStatus = OrderStatus.FULFILLED): Fixture {
         val photoId = UUID.randomUUID()
         val order = Order(
             userId = UUID.randomUUID(),
             eventId = UUID.randomUUID(),
             recipientEmail = "runner@example.com",
             paymentMethodWire = PaymentMethod.QRPH.wire,
-            status = OrderStatus.FULFILLED,
+            status = status,
             totalPhp = BigDecimal("125.00"),
             createdAt = OffsetDateTime.now().minusDays(createdDaysAgo),
         ).apply { paidAt = paidDaysAgo?.let { OffsetDateTime.now().minusDays(it) } }
         val orders = Mockito.mock(OrderRepository::class.java)
         val items = Mockito.mock(OrderItemRepository::class.java)
         val disputes = Mockito.mock(DisputeRepository::class.java)
+        val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
         Mockito.`when`(orders.findById(order.id)).thenReturn(Optional.of(order))
         Mockito.`when`(items.findByIdOrderId(order.id)).thenReturn(
             listOf(OrderItem(OrderItemId(order.id, photoId), BigDecimal("125.00"))),
@@ -164,13 +212,13 @@ class RefundServiceTest {
             items,
             disputes,
             Mockito.mock(AdminDecisionLogRepository::class.java),
-            Mockito.mock(ApplicationEventPublisher::class.java),
+            publisher,
             PlatformProperties(),
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
         )
-        return Fixture(service, disputes, order, photoId)
+        return Fixture(service, disputes, order, photoId, publisher)
     }
 
     private fun <T> anyArg(): T = Mockito.any()

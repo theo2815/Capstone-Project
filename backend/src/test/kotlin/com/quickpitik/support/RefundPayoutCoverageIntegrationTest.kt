@@ -273,6 +273,24 @@ class RefundPayoutCoverageIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `pending order with paidAt cannot persist a refund dispute`() {
+        val fixture = sale(amount = "1000", paidAt = NOW.minusDays(1))
+        fixture.order.status = OrderStatus.PENDING
+        orders.saveAndFlush(fixture.order)
+
+        val error = assertFailsWith<ConflictException> {
+            refunds.submit(
+                fixture.runner.id,
+                fixture.order.id,
+                RefundRequest(listOf(fixture.photo.id), "other", "unpaid"),
+            )
+        }
+
+        assertEquals(ErrorCodes.CONFLICT, error.code)
+        assertEquals(emptyList(), disputes.findByOrderId(fixture.order.id))
+    }
+
+    @Test
     fun `refund cutoff and payout authorization serialize on the photographer lock`() {
         val paidAt = OffsetDateTime.parse("2026-09-15T12:00:00Z")
         clock.set(OffsetDateTime.parse("2026-09-22T11:59:00Z"))

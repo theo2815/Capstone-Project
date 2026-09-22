@@ -9,6 +9,7 @@ import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeReason
 import com.quickpitik.entity.DisputeStatus
+import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.refundNeedsReconciliation
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
@@ -68,6 +69,12 @@ class RefundService(
         }
         if (order.userId != userId) {
             throw NotFoundException(code = ErrorCodes.ORDER_NOT_FOUND, message = "Order not found")
+        }
+        if (order.status != OrderStatus.PAID && order.status != OrderStatus.FULFILLED) {
+            throw ConflictException(
+                code = ErrorCodes.CONFLICT,
+                message = "Only paid or fulfilled orders can request a refund",
+            )
         }
         val reason = DisputeReason.fromWire(request.reason)
         val note = request.note.trim()
