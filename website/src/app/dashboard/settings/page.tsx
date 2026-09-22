@@ -69,7 +69,10 @@ import {
   type RegionGroup,
 } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
-import { photographerSettingsKeys } from "@/hooks/use-photographer-settings";
+import {
+  photographerSettingsKeys,
+  usePhotographerSettingsQueries,
+} from "@/hooks/use-photographer-settings";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { validateHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
@@ -163,6 +166,7 @@ interface EditModeSnapshot {
 interface EditModeContextValue {
   editing: boolean;
   saving: boolean;
+  canEdit: boolean;
   beginEdit: () => void;
   saveEdit: () => Promise<void>;
   cancelEdit: () => void;
@@ -248,6 +252,12 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   });
   const { showToast } = useToast();
   const queryClient = useQueryClient();
+  const { session, brand, socials, payouts } = usePhotographerSettingsQueries();
+  const hydratedSessionVersion = usePhotographerSettingsStore((s) => s.hydratedSessionVersion);
+  const canEdit = session.enabled && hydratedSessionVersion === session.key[2];
+  const initialQueries = [brand, socials, payouts];
+  const initialLoadFailed = !canEdit && initialQueries.some((query) => query.isError);
+  const retryingInitialLoad = initialQueries.some((query) => query.isFetching);
 
   const reconcileDraft = useCallback((epoch: number) => {
     void queryClient.invalidateQueries({ queryKey: photographerSettingsKeys.all }, { throwOnError: true })
@@ -272,7 +282,13 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   // See `hooks/use-photographer-settings-hydration.ts`.
 
   const beginEdit = useCallback(() => {
-    draftEpochRef.current = usePhotographerSettingsStore.getState().beginDraft();
+    const state = usePhotographerSettingsStore.getState();
+    const auth = useAuthStore.getState();
+    if (
+      !auth.isAuthenticated || auth.user?.role !== "PHOTOGRAPHER" ||
+      state.hydratedSessionVersion !== auth.sessionVersion
+    ) return;
+    draftEpochRef.current = state.beginDraft();
     confirmedRef.current = false;
     editSessionRef.current = captureAuthSession();
     snapshotRef.current = takeSnapshot();
@@ -738,16 +754,32 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     () => ({
       editing,
       saving,
+      canEdit,
       beginEdit,
       saveEdit,
       cancelEdit,
       setPendingFile,
     }),
-    [editing, saving, beginEdit, saveEdit, cancelEdit, setPendingFile],
+    [editing, saving, canEdit, beginEdit, saveEdit, cancelEdit, setPendingFile],
   );
 
   return (
     <EditModeContext.Provider value={value}>
+      {!canEdit && (initialLoadFailed ? (
+        <div role="alert" className="mb-6 space-y-3 text-sm text-error">
+          <p>Couldn&apos;t load settings. Please try again.</p>
+          <button
+            type="button"
+            disabled={retryingInitialLoad}
+            onClick={() => void Promise.all(initialQueries.filter((query) => query.isError).map((query) => query.refetch()))}
+            className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <p role="status" className="mb-6 font-sans text-sm text-slate">Loading settings…</p>
+      ))}
       {children}
     </EditModeContext.Provider>
   );
@@ -765,7 +797,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
 // mid-fill, pending, approved) the pill shows so Edit + Save + Cancel are
 // never more than a corner-tap away.
 function EditModePill() {
-  const { editing, saving, beginEdit, saveEdit, cancelEdit } = useEditMode();
+  const { editing, saving, canEdit, beginEdit, saveEdit, cancelEdit } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const ready = usePhotographerSettingsStore((s) => s.isComplete());
   const [mounted, setMounted] = useState(false);
@@ -805,7 +837,8 @@ function EditModePill() {
         <button
           type="button"
           onClick={beginEdit}
-          className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2"
+          disabled={!canEdit}
+          className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-2xl transition-colors inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Edit settings
           <span aria-hidden="true">→</span>
@@ -1140,7 +1173,7 @@ function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
   // pairing principle as VerificationStatusPanel: wherever Submit is visible,
   // Edit sits beside it. The floating EditModePill stays suppressed in this
   // state (it early-returns null when status === "incomplete" && !editing).
-  const { beginEdit } = useEditMode();
+  const { canEdit, beginEdit } = useEditMode();
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
@@ -1151,7 +1184,8 @@ function ReadyToSubmitPill({ onClick }: { onClick: () => void }) {
       <button
         type="button"
         onClick={beginEdit}
-        className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-lg transition-colors inline-flex items-center gap-2"
+        disabled={!canEdit}
+        className="font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-5 rounded-full shadow-lg transition-colors inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Edit settings
         <span aria-hidden="true">→</span>
@@ -1183,7 +1217,7 @@ function useAllRequiredFilled(): boolean {
 }
 
 function VerificationStatusPanel() {
-  const { editing, beginEdit } = useEditMode();
+  const { editing, canEdit, beginEdit } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1320,7 +1354,8 @@ function VerificationStatusPanel() {
           <button
             type="button"
             onClick={beginEdit}
-            className="inline-flex items-center gap-2 font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors"
+            disabled={!canEdit}
+            className="inline-flex items-center gap-2 font-sans text-base font-medium border border-ink text-ink bg-bone hover:bg-ink hover:text-bone py-3 px-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Edit settings
             <span aria-hidden="true">→</span>

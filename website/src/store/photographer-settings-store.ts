@@ -191,6 +191,7 @@ export interface PhotographerSettings {
 }
 
 interface PhotographerSettingsState extends PhotographerSettings {
+  hydratedSessionVersion: number | null;
   draftEditing: boolean;
   draftEpoch: number;
   beginDraft: () => number;
@@ -257,6 +258,7 @@ function newId(): string {
 export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
     (set, get) => ({
       ...SEED,
+      hydratedSessionVersion: null,
       draftEditing: false,
       draftEpoch: 0,
       beginDraft: () => {
@@ -358,6 +360,11 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
         const m = get().verificationMissing;
         return m !== null && m.length === 0;
       },
-      reset: () => set((s) => ({ ...SEED, draftEditing: false, draftEpoch: s.draftEpoch + 1 })),
+      reset: () => set((s) => ({
+        ...SEED,
+        hydratedSessionVersion: null,
+        draftEditing: false,
+        draftEpoch: s.draftEpoch + 1,
+      })),
     }),
 );

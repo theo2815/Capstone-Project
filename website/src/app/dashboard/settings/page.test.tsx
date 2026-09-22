@@ -34,6 +34,12 @@ vi.mock("@/lib/image-utils", async (importActual) => ({
 
 const photographer = { id: "photographer", role: "PHOTOGRAPHER" as const, name: "Photo", email: "photo@example.test", createdAt: "2026-09-10" };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
+}
+
 function render(ui: ReactElement) {
   return rtlRender(ui, {
     wrapper: ({ children }) => (
@@ -55,6 +61,7 @@ beforeEach(() => {
   usePhotographerSettingsStore.setState({
     verificationStatus: "approved", verificationMissing: [], verificationMissingCodes: [],
     handle: "old-handle", watermark: { dataUrl: "data:image/png;base64,AA==", uploadedAt: "" },
+    hydratedSessionVersion: useAuthStore.getState().sessionVersion,
   });
   vi.mocked(putWatermarkSettings).mockResolvedValue();
   vi.mocked(putHandle).mockRejectedValue(new Error("Handle already taken"));
@@ -62,6 +69,96 @@ beforeEach(() => {
 
 const payout = { id: "account", method: "gcash" as const, accountName: "Test Recipient", accountNumber: "09171234567", isPrimary: true, qr: null };
 const qr = { dataUrl: "data:image/png;base64,AA==", uploadedAt: "2026-09-09T00:00:00Z" };
+
+it("keeps every Edit entry disabled until initial settings hydrate", async () => {
+  usePhotographerSettingsStore.setState({
+    verificationStatus: "incomplete", verificationMissing: ["profile picture"],
+    hydratedSessionVersion: null,
+  });
+  const reads = {
+    brand: deferred<unknown>(), socials: deferred<unknown>(), payouts: deferred<unknown>(),
+  };
+  vi.spyOn(api, "get").mockImplementation((path) =>
+    path.endsWith("/brand") ? reads.brand.promise
+      : path.endsWith("/socials") ? reads.socials.promise
+        : reads.payouts.promise,
+  );
+
+  rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AuthHydrator /><SettingsPage /></QueryClientProvider>);
+
+  expect(screen.getByRole("status")).toHaveTextContent("Loading settings…");
+  const editButtons = await screen.findAllByRole("button", { name: /Edit settings/ });
+  expect(editButtons.length).toBeGreaterThan(0);
+  editButtons.forEach((button) => expect(button).toBeDisabled());
+  fireEvent.click(editButtons[0]);
+  expect(usePhotographerSettingsStore.getState().draftEditing).toBe(false);
+
+  await act(async () => { reads.socials.resolve([]); reads.payouts.resolve([]); });
+  expect(editButtons[0]).toBeDisabled();
+  await act(async () => { reads.brand.resolve({
+    brandName: "Canonical", brandColor: "indigo", bio: "Existing biography", handle: "old-handle",
+    regionCode: "", provinceCode: "", avatarUrl: null, coverUrl: "", watermarkUrl: "", watermarkSettings: null,
+  }); });
+  await waitFor(() => editButtons.forEach((button) => expect(button).not.toBeDisabled()));
+});
+
+it("preserves untouched canonical brand fields after deferred hydration", async () => {
+  usePhotographerSettingsStore.setState({ hydratedSessionVersion: null });
+  const reads = {
+    brand: deferred<unknown>(), socials: deferred<unknown>(), payouts: deferred<unknown>(),
+  };
+  vi.spyOn(api, "get").mockImplementation((path) =>
+    path.endsWith("/brand") ? reads.brand.promise
+      : path.endsWith("/socials") ? reads.socials.promise
+        : reads.payouts.promise,
+  );
+  const save = vi.spyOn(api, "put").mockResolvedValue(undefined);
+  rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AuthHydrator /><SettingsPage /></QueryClientProvider>);
+
+  await act(async () => {
+    reads.brand.resolve({
+      brandName: "Canonical", brandColor: "indigo", bio: "Existing biography", handle: "old-handle",
+      regionCode: "", provinceCode: "", avatarUrl: null, coverUrl: "", watermarkUrl: "", watermarkSettings: null,
+    });
+    reads.socials.resolve([]);
+    reads.payouts.resolve([]);
+  });
+  const edit = await screen.findByRole("button", { name: /Edit settings/ });
+  await waitFor(() => expect(edit).not.toBeDisabled());
+  fireEvent.click(edit);
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Changed name" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+
+  await waitFor(() => expect(save).toHaveBeenCalledWith("/me/photographer/brand", {
+    brandName: "Changed name", brandColor: "indigo", bio: "Existing biography",
+  }));
+});
+
+it.each(["brand", "socials", "payouts"] as const)("keeps editing blocked and retries a failed initial %s read", async (failedRead) => {
+  usePhotographerSettingsStore.setState({ hydratedSessionVersion: null });
+  let recovered = false;
+  const get = vi.spyOn(api, "get").mockImplementation((path) => {
+    const key = path.endsWith("/brand") ? "brand" : path.endsWith("/socials") ? "socials" : "payouts";
+    if (key === failedRead && !recovered) return Promise.reject(new Error("Offline"));
+    return Promise.resolve(key === "brand" ? {
+      brandName: "Canonical", brandColor: "indigo", bio: "Existing biography", handle: "old-handle",
+      regionCode: "", provinceCode: "", avatarUrl: null, coverUrl: "", watermarkUrl: "", watermarkSettings: null,
+    } : []);
+  });
+  rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AuthHydrator /><SettingsPage /></QueryClientProvider>);
+
+  expect(await screen.findByRole("alert", undefined, { timeout: 6_000 })).toHaveTextContent("Couldn't load settings");
+  screen.getAllByRole("button", { name: /Edit settings/ }).forEach((button) => expect(button).toBeDisabled());
+  recovered = true;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+  await waitFor(() => screen.getAllByRole("button", { name: /Edit settings/ }).forEach((button) => expect(button).not.toBeDisabled()));
+  expect(usePhotographerSettingsStore.getState()).toMatchObject({
+    brandName: "Canonical", bio: "Existing biography",
+    hydratedSessionVersion: useAuthStore.getState().sessionVersion,
+  });
+  expect(get).toHaveBeenCalledTimes(6);
+});
 
 it("requires a QR before adding an account and invalidates it when its number changes", () => {
   usePhotographerSettingsStore.setState({ payouts: [{ ...payout, qr }] });
