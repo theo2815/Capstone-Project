@@ -72,6 +72,14 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
 - Never use `--no-verify` or bypass signing unless the user asks. Never force-push `main`.
 - Stage specific files; avoid `git add -A`.
 - **No agent/tool identity in commits** (no `Co-Authored-By`, no session trailer) — this is the maintainer's house style. Who did what belongs on the vault board + journal, not in git trailers.
+- **Commit messages: plain English a teammate who wasn't there can follow.** A subject line (≤72 chars, optional `module:` prefix) saying what changed, a blank line, then a 2–5 line body: what changed, why, and what it means for users or other code. Describe behaviour in everyday words, not just file or function names; explain any task code you mention. No essays — test output and full rationale go in the vault journal. Only a truly trivial change (typo, one-line config) may be subject-only. Pass the body with a second `-m`. Example:
+  ```
+  backend: stop retried uploads from saving the same photo twice
+
+  If a photographer's upload timed out and they retried, the server could
+  store two copies. It now checks the file hash first and returns the
+  existing photo instead. Adds a test for the retry case.
+  ```
 
 **Cross-module changes**
 - Changes spanning `ai-api` ↔ backend ↔ client require coordination — update the integration docs in the same commit.
