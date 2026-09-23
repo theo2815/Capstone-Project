@@ -32,11 +32,11 @@ class PaymentWebhookController(
     fun handle(
         request: HttpServletRequest,
         @PathVariable provider: String,
-        @RequestBody rawBody: String,
+        @RequestBody(required = false) rawBody: String?,
     ): PaymentWebhookResponse {
         signatureVerifier.verify(request)
         val body = try {
-            objectMapper.readValue(rawBody, PaymentWebhookRequest::class.java)
+            objectMapper.readValue(rawBody ?: "", PaymentWebhookRequest::class.java)
         } catch (_: JsonProcessingException) {
             throw ValidationException("Invalid webhook payload.")
         }

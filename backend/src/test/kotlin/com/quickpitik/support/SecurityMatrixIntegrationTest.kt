@@ -104,6 +104,11 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(401, post("/api/v1/internal/ai-webhooks", "not-json").statusCode())
         assertEquals(401, post("/api/v1/payments/webhook/paymongo", "not-json").statusCode())
         assertEquals(401, post("/api/v1/payments/webhook/paymongo-transfers", "not-json").statusCode())
+        // An absent body must still reach the signature verifier.
+        assertEquals(401, post("/api/v1/payments/webhook/stub", "").statusCode())
+        assertEquals(401, post("/api/v1/internal/ai-webhooks", "").statusCode())
+        assertEquals(401, post("/api/v1/payments/webhook/paymongo", "").statusCode())
+        assertEquals(401, post("/api/v1/payments/webhook/paymongo-transfers", "").statusCode())
     }
 
     @Test

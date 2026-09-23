@@ -28,11 +28,11 @@ class AiWebhookController(
     @PostMapping
     fun handle(
         request: HttpServletRequest,
-        @RequestBody rawBody: String,
+        @RequestBody(required = false) rawBody: String?,
     ): Map<String, Any?> {
         verifier.verify(request)
         val body = try {
-            objectMapper.readValue(rawBody, AiWebhookEvent::class.java)
+            objectMapper.readValue(rawBody ?: "", AiWebhookEvent::class.java)
         } catch (_: JsonProcessingException) {
             throw ValidationException("Invalid webhook payload.")
         }

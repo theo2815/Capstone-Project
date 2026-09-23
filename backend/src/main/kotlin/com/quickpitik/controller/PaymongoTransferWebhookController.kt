@@ -28,11 +28,11 @@ class PaymongoTransferWebhookController(
     @PostMapping("/paymongo-transfers")
     fun handle(
         request: HttpServletRequest,
-        @RequestBody rawBody: String,
+        @RequestBody(required = false) rawBody: String?,
     ): Map<String, Any?> {
         verifier.verify(request)
         val body = try {
-            objectMapper.readValue(rawBody, PaymongoTransferWebhookEvent::class.java)
+            objectMapper.readValue(rawBody ?: "", PaymongoTransferWebhookEvent::class.java)
         } catch (_: JsonProcessingException) {
             throw ValidationException("Invalid webhook payload.")
         }
