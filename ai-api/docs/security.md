@@ -96,27 +96,27 @@ Every uploaded image goes through multiple checks before any processing:
 |---|---|---|
 | Content-Type header | Must be `image/jpeg`, `image/png`, or `image/webp` | Reject non-image files early |
 | File size | Maximum 25MB (`MAX_FILE_SIZE`) | Prevent memory exhaustion. Matches the Spring backend's multipart ceiling — it forwards ORIGINAL photo bytes for indexing, so a lower bound here would fail photos it had already accepted. |
-| Magic bytes | Opens file with PIL and calls `.verify()` | A file renamed to .jpg is still detected as non-image |
-| Dimensions | Max 12000px per side (`MAX_IMAGE_DIMENSION`); min 32px on the single-image path | Too large = memory bomb. This is a fail-closed guard, not a quality gate — it is sized to pass any real camera (102 MP = 11648×8736), since every path downscales to `MAX_INFERENCE_DIMENSION` anyway. |
+| Image header | Pillow checks actual JPEG/PNG/WebP format and dimensions before decode; batch/mega also call `.verify()` after the header limits | Reject disguised files and pixel bombs before allocation |
+| Dimensions | Max 12000px per side (`MAX_IMAGE_DIMENSION`); min 32px on the single-image path. The blur profile also limits decoded images to 24 MP. | Bound decode memory before EXIF transpose or OpenCV. |
 
 | EXIF handling | Pillow applies `ImageOps.exif_transpose` (preserves orientation) then the image is converted to a BGR numpy array which carries no EXIF | Privacy: EXIF metadata (GPS, device info, timestamps) is discarded as soon as the bytes leave Pillow |
-| Total request body | Maximum 2 GB (`MAX_REQUEST_BODY`) | The only bound on a multipart upload *in aggregate*. Per-file limits cannot supply it: the `/stream` endpoints hold every file in memory at once, so 500 files each under `MAX_FILE_SIZE` still sum to 12.5 GB. Sized by the backend's mega drain at its worst case — 50 photos (its `batch.max-size`) × the 25 MB ceiling = 1250 MB. |
+| Total request body | 2 GB shared (`MAX_REQUEST_BODY`); 128 MiB on the dedicated blur profile (`BLUR_MAX_REQUEST_BODY`) | Counts actual ASGI body bytes before multipart parsing, including chunked uploads. The shared ceiling still accommodates the backend's original-photo mega drain. |
 
 **Which paths enforce which check.**
 
 | Path | Size | Dimensions | Content-Type | Magic bytes |
 |---|---|---|---|---|
-| 7 single-image endpoints (`validate_and_decode`) | ✅ | ✅ (+ min 32px) | ✅ | ✅ `.verify()` |
-| 11 batch/mega endpoints (`validate_batch_file`) | ✅ | ✅ | ✅ | ✅ `.verify()` |
-| 2 `/stream` endpoints (`validate_stream_file`) | ✅ | ✅ | ❌ | ❌ |
+| 7 single-image endpoints (`validate_and_decode`) | ✅ | ✅ (+ min 32px) | ✅ | ✅ format/header + decode |
+| 11 batch/mega endpoints (`validate_batch_file`) | ✅ | ✅ | ✅ | ✅ format/header + `.verify()` |
+| 2 `/stream` endpoints (`validate_stream_file`) | ✅ | ✅ | ❌ | ✅ format/header |
 
-`validate_stream_file` is deliberately the narrow one. It drops `.verify()` because that walks the whole file while `cv2.imdecode` already fails closed on corrupt bytes, and it drops the Content-Type check because that is the one test that could reject a correct desktop client posting `application/octet-stream`. It keeps size and dimensions — the two `cv2.imdecode` cannot enforce for itself, since unlike Pillow it has no decompression-bomb guard.
+`validate_stream_file` reads only the header. It accepts desktop multipart parts marked `application/octet-stream` when the actual file is JPEG, PNG, or WebP. Corrupt headers and over-budget pixels are rejected before OpenCV decode.
 
 A `/stream` rejection is reported as a per-image NDJSON error line, not an HTTP error; the request still returns 200 and the remaining images are still scored.
 
-`MAX_REQUEST_BODY` is enforced by `BodySizeLimitMiddleware` (`src/main.py`) from the `Content-Length` header, before multipart is parsed. A chunked request declares no length and is not caught by it — the per-file layer still applies. Keep the value equal to `client_max_body_size` in `nginx.conf`; `TestBodySizeLimit` both parses that file for the value and hands it to a real `nginx -t` (the value check alone passed for months against a config nginx could not load).
+`BodySizeLimitMiddleware` (`src/main.py`) rejects an oversized declared `Content-Length` immediately and counts received bytes before multipart parsing, including chunked and underdeclared bodies. The shared 2 GB ceiling remains equal to `client_max_body_size` in `nginx.conf`; the dedicated blur profile uses its lower application cap.
 
-**Memory consequence of the 2 GB ceiling.** The batch/mega paths spill to the blob store, so they hold no more than one file at a time. `/stream` does not — it reads every file into a list before processing, so this ceiling *is* its worst-case resident size. At `WORKERS=2` two saturating requests reach 4 GB of raw bytes against the 8 GB container limit in `docker-compose.prod.yml`. The exposure is theoretical today: the only `/stream` client is the desktop, which downscales to 1280px/q90 before uploading and sends ~49 MB per 200-image chunk. Revisit if a client ever streams originals.
+**Dedicated blur memory budget.** With one worker, at most two requests are admitted, each with 128 MiB of body bytes; streams retain only one 50-image sub-batch and at most two images decode at once. A 2 vCPU/2 GiB local container processed two concurrent 200-image JPEG streams (121,535,400 image bytes per request) with 1,004,142,592 bytes cgroup peak and zero OOM events. This is a local Task 3 measurement, not Railway capacity certification.
 
 ### Face Enrollment Quality Gate
 
@@ -140,7 +140,7 @@ Bib text is cleaned using a strict character filter (`[A-Za-z0-9\-_]`) that pres
 
 Status codes:
 - 400: Any per-image validation failure (wrong file type, corrupt image, too small, too large). The backing `ImageValidationError` always uses `status_code=400`.
-- 413 `REQUEST_TOO_LARGE`: the whole request body exceeds `MAX_REQUEST_BODY`. This is the one case that is not an `ImageValidationError` — it is refused by middleware before any file is parsed, so it names no filename.
+- 413 `REQUEST_TOO_LARGE`: the whole request body exceeds the active profile's cap. This is not an `ImageValidationError` and names no filename.
 
 ---
 

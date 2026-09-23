@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import io
+import struct
+import threading
+import zlib
 from unittest.mock import patch
 
 import numpy as np
@@ -12,10 +16,33 @@ from src.utils.exceptions import ImageValidationError
 from src.utils.image_utils import (
     MAX_DIMENSION,
     MIN_DIMENSION,
+    bounded_to_thread,
     get_image_dimensions,
     validate_and_decode,
     validate_batch_file,
 )
+
+
+async def test_decode_slot_survives_request_cancellation():
+    semaphore = asyncio.Semaphore(1)
+    started = threading.Event()
+    finish = threading.Event()
+
+    def decode():
+        started.set()
+        finish.wait(2)
+
+    task = asyncio.create_task(bounded_to_thread(semaphore, decode))
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert semaphore.locked()
+    finally:
+        finish.set()
+    await asyncio.wait_for(semaphore.acquire(), 2)
+    semaphore.release()
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +120,47 @@ class TestValidateAndDecode:
         with pytest.raises(ImageValidationError, match="limit"):
             await validate_and_decode(upload, max_file_size=10)
 
+    async def test_rejects_pixel_budget_before_exif_load(self):
+        raw = _make_image_bytes(width=100, height=100)
+        upload = _make_upload_file(raw)
+        with patch("src.utils.image_utils.ImageOps.exif_transpose") as transpose:
+            with pytest.raises(ImageValidationError, match="pixel"):
+                await validate_and_decode(upload, max_pixels=9_999)
+            transpose.assert_not_called()
+
+    async def test_file_read_stops_at_limit_plus_one(self):
+        upload = _make_upload_file(b"x" * 100)
+        with patch.object(upload, "read", wraps=upload.read) as read:
+            with pytest.raises(ImageValidationError, match="limit"):
+                await validate_and_decode(upload, max_file_size=10)
+        read.assert_awaited_once_with(11)
+
+    def test_large_header_rejected_without_decoding(self):
+        from src.utils.image_utils import validate_stream_file
+
+        raw = bytearray(_make_image_bytes(width=64, height=64, fmt="PNG"))
+        raw[16:24] = struct.pack(">II", 6000, 5000)
+        raw[29:33] = struct.pack(">I", zlib.crc32(raw[12:29]))
+        with patch("src.api.v1.blur.cv2.imdecode") as decode:
+            assert "pixel" in validate_stream_file(bytes(raw), "large.png", 100000, 24_000_000)
+            decode.assert_not_called()
+
+    async def test_exif_rotation_still_applies(self):
+        image = Image.new("RGB", (40, 80), (255, 0, 0))
+        exif = image.getexif()
+        exif[274] = 6
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", exif=exif)
+        _, decoded = await validate_and_decode(_make_upload_file(buf.getvalue()), max_pixels=10_000)
+        assert decoded.shape[:2] == (40, 80)
+
+    async def test_heif_content_type_is_rejected_before_read(self):
+        upload = _make_upload_file(b"untrusted", content_type="image/heif")
+        with patch.object(upload, "read", wraps=upload.read) as read:
+            with pytest.raises(ImageValidationError, match="Unsupported file type"):
+                await validate_and_decode(upload)
+            read.assert_not_awaited()
+
     # 5. Corrupt image data raises ImageValidationError
     async def test_corrupt_image_data(self):
         corrupt = b"not-an-image-at-all"
@@ -159,7 +227,10 @@ class TestValidateAndDecode:
         raw = _make_image_bytes(fmt="JPEG")
         upload = _make_upload_file(raw, content_type="image/jpeg")
 
-        with patch("src.utils.image_utils.ImageOps.exif_transpose", wraps=__import__("PIL").ImageOps.exif_transpose) as mock_transpose:
+        with patch(
+            "src.utils.image_utils.ImageOps.exif_transpose",
+            wraps=__import__("PIL").ImageOps.exif_transpose,
+        ) as mock_transpose:
             await validate_and_decode(upload)
             mock_transpose.assert_called_once()
 
@@ -213,6 +284,15 @@ class TestValidateBatchFile:
     def test_dslr_dimensions_are_accepted(self):
         raw = _make_image_bytes(width=6000, height=MIN_DIMENSION, fmt="JPEG")
         validate_batch_file(raw, filename="dslr.jpg", max_file_size=50 * 1024 * 1024)
+
+    def test_pixel_limit_precedes_verify(self):
+        raw = bytearray(_make_image_bytes(width=64, height=64, fmt="PNG"))
+        raw[16:24] = struct.pack(">II", 6000, 5000)
+        raw[29:33] = struct.pack(">I", zlib.crc32(raw[12:29]))
+        with patch("PIL.PngImagePlugin.PngImageFile.verify") as verify:
+            with pytest.raises(ImageValidationError, match="pixel"):
+                validate_batch_file(bytes(raw), "large.png", 100000, max_pixels=24_000_000)
+            verify.assert_not_called()
 
 
 # ===========================================================================

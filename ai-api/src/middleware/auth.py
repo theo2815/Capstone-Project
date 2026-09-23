@@ -21,6 +21,9 @@ async def verify_api_key(
     In development mode (DEBUG=true), a missing key is allowed.
     """
     settings = request.app.state.settings
+    cached = getattr(request.state, "blur_key_meta", None)
+    if isinstance(cached, dict):
+        return cached
 
     if settings.DEBUG and not api_key:
         logger.warning("Auth bypassed in DEBUG mode — do not use in production")

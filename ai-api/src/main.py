@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.api.v1.router import make_v1_router
@@ -157,21 +157,13 @@ def create_app() -> FastAPI:
                 response.headers["X-RateLimit-Reset"] = str(rate_info["reset"])
             return response
 
-    # Total request body ceiling. Pure ASGI so the check costs one header lookup
-    # and never touches the body — the /stream endpoints are the desktop's
-    # high-throughput path, and an O(1) guard here is what makes bounding them
-    # affordable at all.
-    #
-    # This is the only thing bounding the AGGREGATE of a multipart upload. Both
-    # /blur/*/stream endpoints read every file into a list and hold all of them
-    # at once, so at STREAM_*_MAX_SIZE=500 the per-file checks in image_utils
-    # cannot bound memory on their own — 500 files under the per-file cap still
-    # sum to 12.5 GB.
-    #
-    # Content-Length only: a chunked request carries no length to check and
-    # passes through to the per-file layer. Not a total guarantee, and not
-    # claimed as one.
     _max_body = settings.MAX_REQUEST_BODY
+    _blur_body = settings.BLUR_MAX_REQUEST_BODY
+    _blur_admission = asyncio.Semaphore(settings.BLUR_MAX_ACTIVE_REQUESTS)
+    app.state.blur_decode_semaphore = asyncio.Semaphore(settings.BLUR_DECODE_CONCURRENCY)
+
+    class BodyTooLarge(Exception):
+        pass
 
     class BodySizeLimitMiddleware:
         def __init__(self, app):
@@ -182,6 +174,34 @@ def create_app() -> FastAPI:
                 await self.app(scope, receive, send)
                 return
 
+            blur_request = (
+                settings.MODEL_PROFILE == "blur"
+                and scope.get("path", "").startswith("/api/v1/blur/")
+            )
+            limit = _blur_body if blur_request else _max_body
+            acquired = False
+            if blur_request:
+                try:
+                    await asyncio.wait_for(_blur_admission.acquire(), timeout=0.01)
+                    acquired = True
+                except asyncio.TimeoutError:
+                    response = JSONResponse(status_code=503, content={
+                        "success": False,
+                        "request_id": scope.get("state", {}).get("request_id", ""),
+                        "error": {"code": "BLUR_BUSY", "message": "Blur service is busy"},
+                    })
+                    await response(scope, receive, send)
+                    return
+
+            async def reject():
+                response = JSONResponse(status_code=413, content={
+                    "success": False,
+                    "request_id": scope.get("state", {}).get("request_id", ""),
+                    "error": {"code": "REQUEST_TOO_LARGE", "message": "Request body exceeds limit"},
+                })
+                await response(scope, receive, send)
+
+            declared_too_large = False
             for name, value in scope.get("headers", []):
                 if name != b"content-length":
                     continue
@@ -189,27 +209,51 @@ def create_app() -> FastAPI:
                     declared = int(value)
                 except ValueError:
                     break  # malformed — let the server reject it
-                if declared > _max_body:
-                    response = JSONResponse(
-                        status_code=413,
-                        content={
-                            "success": False,
-                            "request_id": scope.get("state", {}).get("request_id", ""),
-                            "error": {
-                                "code": "REQUEST_TOO_LARGE",
-                                "message": (
-                                    f"Request body of {declared // (1024 * 1024)}MB exceeds the "
-                                    f"{_max_body // (1024 * 1024)}MB limit. Send fewer files "
-                                    f"per request."
-                                ),
-                            },
-                        },
-                    )
-                    await response(scope, receive, send)
-                    return
+                declared_too_large = declared > limit
                 break
 
-            await self.app(scope, receive, send)
+            received = 0
+            started = False
+            overflow = False
+
+            async def bounded_receive():
+                nonlocal received, overflow
+                message = await receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > limit:
+                        overflow = True
+                        raise BodyTooLarge()
+                return message
+
+            async def track_send(message):
+                nonlocal started
+                if overflow and not started:
+                    return
+                if message["type"] == "http.response.start":
+                    started = True
+                await send(message)
+
+            try:
+                if declared_too_large:
+                    await reject()
+                    return
+                try:
+                    await self.app(scope, bounded_receive, track_send)
+                    if overflow and not started:
+                        await reject()
+                except BodyTooLarge:
+                    if started:
+                        raise  # Headers already sent; abort the connection.
+                    await reject()
+                except BaseExceptionGroup as group:
+                    overflow, other = group.split(BodyTooLarge)
+                    if overflow is None or other is not None or started:
+                        raise
+                    await reject()
+            finally:
+                if acquired:
+                    _blur_admission.release()
 
     # Middleware (order matters: last added = outermost = first on request)
     app.add_middleware(RateLimitHeadersMiddleware)
@@ -253,8 +297,8 @@ def create_app() -> FastAPI:
         instrumentator.expose(app, include_in_schema=False)
     elif settings.METRICS_ENABLED:
         # In production, serve metrics behind a dedicated authenticated route
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
         from starlette.responses import Response
-        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
         @app.get("/metrics", include_in_schema=False)
         async def metrics(request: Request):
@@ -270,8 +314,9 @@ def create_app() -> FastAPI:
 
             # Validate API key against DB (same logic as verify_api_key)
             key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-            from src.db.models import APIKey
             from sqlalchemy import select
+
+            from src.db.models import APIKey
 
             try:
                 async with get_session_ctx() as session:

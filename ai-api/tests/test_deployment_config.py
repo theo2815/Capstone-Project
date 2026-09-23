@@ -25,6 +25,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROD_COMPOSE = PROJECT_ROOT / "docker-compose.prod.yml"
@@ -39,6 +40,24 @@ APP_SERVICES = (
     "celery-bib",
     "celery-default",
 )
+
+
+@pytest.mark.parametrize("override", [
+    {"INFERENCE_SUB_BATCH_SIZE": 0},
+    {"BLUR_DECODE_CONCURRENCY": 0},
+    {"BLUR_MAX_ACTIVE_REQUESTS": 0},
+    {"BLUR_DETECTION_MIN_CONFIDENCE": 1.1},
+    {"BLUR_MAX_REQUEST_BODY": 1},
+    {"MAX_REQUEST_BODY": 1},
+    {"MODEL_PROFILE": "blur", "BLUR_MAX_ACTIVE_REQUESTS": 3},
+    {"MODEL_PROFILE": "blur", "BLUR_DECODE_CONCURRENCY": 3},
+    {"MODEL_PROFILE": "blur", "INFERENCE_SUB_BATCH_SIZE": 51},
+])
+def test_invalid_upload_budget_fails_at_config_load(override):
+    from src.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **override)
 
 
 def _services(path: Path) -> dict:

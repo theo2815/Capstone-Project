@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from starlette.responses import StreamingResponse
 
 from src.api.v1.batch_utils import (
@@ -20,8 +21,8 @@ from src.api.v1.batch_utils import (
 from src.api.v1.mega_batch import dispatch_mega_batch
 from src.middleware.auth import check_scope, verify_api_key
 from src.schemas.blur import (
-    BlurClassProbabilities,
     BlurClassificationResponse,
+    BlurClassProbabilities,
     BlurDetectionResponse,
     BlurMetrics,
     BlurType,
@@ -29,6 +30,7 @@ from src.schemas.blur import (
 )
 from src.schemas.common import APIResponse
 from src.utils.image_utils import (
+    bounded_to_thread,
     downscale_for_inference,
     get_image_dimensions,
     validate_and_decode,
@@ -38,7 +40,21 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/blur", tags=["Blur Detection"])
+
+class BlurAuthRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def authenticate_before_form(request: Request):
+            key_meta = await verify_api_key(request, request.headers.get("X-API-Key"))
+            check_scope("blur:read", key_meta)
+            request.state.blur_key_meta = key_meta
+            return await handler(request)
+
+        return authenticate_before_form
+
+
+router = APIRouter(prefix="/blur", tags=["Blur Detection"], route_class=BlurAuthRoute)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +165,14 @@ async def detect_blur(
     start = time.perf_counter()
 
     settings = request.app.state.settings
-    _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
+    if settings.MODEL_PROFILE == "blur":
+        _, image = await validate_and_decode(
+            file, max_file_size=settings.MAX_FILE_SIZE,
+            max_pixels=settings.BLUR_MAX_IMAGE_PIXELS,
+            decode_semaphore=request.app.state.blur_decode_semaphore,
+        )
+    else:
+        _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
 
     registry = request.app.state.model_registry
     detector = registry.get("blur")
@@ -250,20 +273,15 @@ async def detect_blur_stream(
             ).model_dump(mode="json"),
         )
 
-    # Read all file data into memory (UploadFile is async). Each item carries the
-    # validation verdict alongside its bytes so a rejected file still gets a line
-    # at its own index instead of shifting the ones after it.
-    items: list[tuple[int, str, bytes, str | None]] = []
-    for i, f in enumerate(files):
-        data = await f.read()
-        name = f.filename or f"image_{i}"
-        items.append((i, name, data, validate_stream_file(data, name, settings.MAX_FILE_SIZE)))
-
-    total = len(items)
+    total = len(files)
     start = time.perf_counter()
 
     async def generate():
-        sem = asyncio.Semaphore(concurrency)
+        sem = (
+            request.app.state.blur_decode_semaphore
+            if settings.MODEL_PROFILE == "blur"
+            else asyncio.Semaphore(concurrency)
+        )
 
         async def process(index: int, filename: str, data: bytes, error: str | None) -> str:
             if error is not None:
@@ -272,23 +290,49 @@ async def detect_blur_stream(
                     {"index": index, "filename": filename, "error": error},
                     separators=(",", ":"),
                 ) + "\n"
-            async with sem:
-                result = await asyncio.to_thread(
-                    _fast_decode_and_detect, data, filename, index, detector,
-                    threshold, include_hf_ratio,
-                )
-                return json.dumps(result, separators=(",", ":")) + "\n"
+            result = await bounded_to_thread(
+                sem, _fast_decode_and_detect, data, filename, index, detector,
+                threshold, include_hf_ratio,
+            )
+            return json.dumps(result, separators=(",", ":")) + "\n"
 
-        tasks = [process(i, name, data, err) for i, name, data, err in items]
-        for coro in asyncio.as_completed(tasks):
-            yield await coro
+        try:
+            for start_idx in range(0, total, settings.INFERENCE_SUB_BATCH_SIZE):
+                items = []
+                end_idx = min(start_idx + settings.INFERENCE_SUB_BATCH_SIZE, total)
+                for i in range(start_idx, end_idx):
+                    f = files[i]
+                    data = await f.read(settings.MAX_FILE_SIZE + 1)
+                    name = f.filename or f"image_{i}"
+                    err = validate_stream_file(
+                        data, name, settings.MAX_FILE_SIZE,
+                        settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
+                    )
+                    items.append((i, name, data, err))
+                tasks = [
+                    asyncio.create_task(process(i, name, data, err))
+                    for i, name, data, err in items
+                ]
+                try:
+                    for coro in asyncio.as_completed(tasks):
+                        yield await coro
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            for f in files:
+                await f.close()
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000
         summary = {"_summary": True, "total": total, "processing_time_ms": round(elapsed, 2)}
         yield json.dumps(summary, separators=(",", ":")) + "\n"
 
-    logger.info("Stream blur detection started", total=total, request_id=getattr(request.state, "request_id", ""))
+    logger.info(
+        "Stream blur detection started", total=total,
+        request_id=getattr(request.state, "request_id", ""),
+    )
 
     return StreamingResponse(
         generate(),
@@ -311,7 +355,8 @@ async def detect_blur_batch(
     settings = request.app.state.settings
 
     result = await validate_batch_files(
-        request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE
+        request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE,
+        settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
     )
     if isinstance(result, JSONResponse):
         return result
@@ -356,7 +401,14 @@ async def classify_blur(
     start = time.perf_counter()
 
     settings = request.app.state.settings
-    _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
+    if settings.MODEL_PROFILE == "blur":
+        _, image = await validate_and_decode(
+            file, max_file_size=settings.MAX_FILE_SIZE,
+            max_pixels=settings.BLUR_MAX_IMAGE_PIXELS,
+            decode_semaphore=request.app.state.blur_decode_semaphore,
+        )
+    else:
+        _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
     # Reported before the classify downscale so the response keeps meaning the
     # same thing it did before.
     reported_w, reported_h = get_image_dimensions(image)
@@ -505,16 +557,7 @@ async def classify_blur_stream(
             ).model_dump(mode="json"),
         )
 
-    # Read all file data into memory (UploadFile is async). Each item carries the
-    # validation verdict alongside its bytes so a rejected file still gets a line
-    # at its own index instead of shifting the ones after it.
-    items: list[tuple[int, str, bytes, str | None]] = []
-    for i, f in enumerate(files):
-        data = await f.read()
-        name = f.filename or f"image_{i}"
-        items.append((i, name, data, validate_stream_file(data, name, settings.MAX_FILE_SIZE)))
-
-    total = len(items)
+    total = len(files)
     bt = blur_type.value if blur_type else None
     sub_batch = settings.INFERENCE_SUB_BATCH_SIZE
     decode_dim = settings.BLUR_CLASSIFY_DECODE_DIM
@@ -552,48 +595,58 @@ async def classify_blur_stream(
         }
 
     async def generate():
-        sem = asyncio.Semaphore(concurrency)
+        sem = (
+            request.app.state.blur_decode_semaphore
+            if settings.MODEL_PROFILE == "blur"
+            else asyncio.Semaphore(concurrency)
+        )
 
         async def decode_one(data: bytes, error: str | None):
             if error is not None:
                 # Rejected before decode. None is what classify_batch already
                 # maps to a None result, so the sub-batch shape is unchanged.
                 return None
-            async with sem:
-                return await asyncio.to_thread(_decode_bgr_for_classify, data, decode_dim)
+            return await bounded_to_thread(sem, _decode_bgr_for_classify, data, decode_dim)
 
         # Sequential sub-batches (mirrors the Celery blur_classify_batch worker):
         # decode each sub-batch's images in parallel, then ONE batched inference.
         # classify_batch runs a true (N,3,224,224) ONNX call when the model has a
         # dynamic batch axis, and a per-image loop otherwise — identical results.
-        for chunk_start in range(0, total, sub_batch):
-            sub = items[chunk_start:chunk_start + sub_batch]
-            images = await asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub])
-            try:
-                results = await asyncio.to_thread(classifier.classify_batch, images)
-            except Exception as e:
-                # The status line and headers are already on the wire, so we
-                # cannot turn this into an HTTP error. Letting it propagate would
-                # kill the generator mid-stream and hand the desktop a truncated
-                # body with no _summary — indistinguishable from success. Emit a
-                # per-image error line for this sub-batch instead and keep going,
-                # so the stream stays well-formed and every index is accounted for.
-                logger.error(
-                    "Stream classify sub-batch failed",
-                    chunk_start=chunk_start,
-                    size=len(sub),
-                    error=str(e),
-                )
-                for idx, name, _, err in sub:
-                    # A file rejected up front gets its own reason, not the
-                    # sub-batch's — it never reached the classifier.
-                    line = {"index": idx, "filename": name, "error": err or str(e)}
-                    yield json.dumps(line, separators=(",", ":")) + "\n"
-                continue
-            for (idx, name, _, err), image, result in zip(sub, images, results):
-                yield json.dumps(
-                    _build_line(idx, name, image, result, err), separators=(",", ":")
-                ) + "\n"
+        try:
+            for chunk_start in range(0, total, sub_batch):
+                sub = []
+                for i in range(chunk_start, min(chunk_start + sub_batch, total)):
+                    f = files[i]
+                    data = await f.read(settings.MAX_FILE_SIZE + 1)
+                    name = f.filename or f"image_{i}"
+                    err = validate_stream_file(
+                        data, name, settings.MAX_FILE_SIZE,
+                        settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
+                    )
+                    sub.append((i, name, data, err))
+                images = await asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub])
+                try:
+                    results = await asyncio.to_thread(classifier.classify_batch, images)
+                except Exception as e:
+                    # Headers are already sent; preserve the stream's indexed rows.
+                    logger.error(
+                        "Stream classify sub-batch failed",
+                        chunk_start=chunk_start,
+                        size=len(sub),
+                        error=str(e),
+                    )
+                    for idx, name, _, err in sub:
+                        # A rejected file keeps its own reason.
+                        line = {"index": idx, "filename": name, "error": err or str(e)}
+                        yield json.dumps(line, separators=(",", ":")) + "\n"
+                    continue
+                for (idx, name, _, err), image, result in zip(sub, images, results):
+                    yield json.dumps(
+                        _build_line(idx, name, image, result, err), separators=(",", ":")
+                    ) + "\n"
+        finally:
+            for f in files:
+                await f.close()
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000
@@ -635,7 +688,8 @@ async def classify_blur_batch(
     settings = request.app.state.settings
 
     result = await validate_batch_files(
-        request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE
+        request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE,
+        settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
     )
     if isinstance(result, JSONResponse):
         return result
@@ -673,7 +727,8 @@ async def detect_blur_mega(
     settings = request.app.state.settings
 
     result = await validate_batch_files(
-        request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE
+        request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE,
+        settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
     )
     if isinstance(result, JSONResponse):
         return result
@@ -711,7 +766,8 @@ async def classify_blur_mega(
     settings = request.app.state.settings
 
     result = await validate_batch_files(
-        request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE
+        request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE,
+        settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
     )
     if isinstance(result, JSONResponse):
         return result

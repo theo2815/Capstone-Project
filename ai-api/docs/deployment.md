@@ -60,6 +60,14 @@ For a smaller CPU blur image, supply the audited ONNX and ordered labels under
 `docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur:2026-08-14-dynamic .` and run it
 with `MODEL_PROFILE=blur`. This profile installs the pinned
 `requirements-blur.lock` and loads only blur models; face and bib routes return 404.
+The initial one-worker blur budget admits two uploads per process, each at most
+128 MiB total, 25 MiB per file and 500 files per stream. Header dimensions
+must fit 12,000px per edge and 24 megapixels; at most two images decode at
+once across admitted requests. Streams retain one 50-image sub-batch in memory.
+The upload contract remains JPEG/PNG/WebP; clients convert HEIF before upload.
+The full `all` profile retains its 2 GiB shared body ceiling and existing
+per-file limits. Tune the blur values in `src/config.py` only after measuring
+real desktop payloads and container peak RSS under the target Railway quota.
 Regenerate the lock from `requirements-blur.in` with `pip-compile` in a clean Python 3.12
 Linux environment with `libpq-dev` installed. The two files are gitignored; the
 build checks their manifest hashes, label order, ONNX shape, and warm inference,

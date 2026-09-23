@@ -1,10 +1,16 @@
 """Integration tests for POST /api/v1/blur/detect endpoint."""
 from __future__ import annotations
 
+import asyncio
 import io
+import json
+import threading
+import time
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -554,12 +560,13 @@ class TestValidateStreamFile:
         data = _solid_png(MAX_DIMENSION, 32)
         assert validate_stream_file(data, "edge.png", 25 * 1024 * 1024) is None
 
-    def test_defers_undecodable_bytes_to_cv2(self):
-        """Not PIL-parseable is not the same as invalid — cv2 reads formats PIL
-        does not, and returns None when it genuinely cannot."""
+    def test_rejects_unparseable_header_before_cv2(self):
         from src.utils.image_utils import validate_stream_file
 
-        assert validate_stream_file(b"not an image", "x.jpg", 25 * 1024 * 1024) is None
+        assert (
+            validate_stream_file(b"not an image", "x.jpg", 25 * 1024 * 1024)
+            == "Failed to decode image"
+        )
 
     def test_rejects_a_decompression_bomb(self, monkeypatch):
         """PIL raises rather than reporting a size once past MAX_IMAGE_PIXELS,
@@ -579,11 +586,7 @@ class TestValidateStreamFile:
 
 
 class TestBodySizeLimit:
-    """The only thing bounding a multipart upload in total.
-
-    Per-file limits cannot do it: both /stream endpoints hold every file in
-    memory at once, so 500 files each under MAX_FILE_SIZE still sum to 12.5 GB.
-    """
+    """Aggregate ASGI byte limits apply before multipart parsing."""
 
     def test_declared_body_over_the_cap_is_refused(self, client, app):
         over = app.state.settings.MAX_REQUEST_BODY + 1
@@ -608,16 +611,101 @@ class TestBodySizeLimit:
 
         assert resp.status_code == 200
 
-    def test_request_without_content_length_is_not_refused(self, client):
-        """A chunked request declares no length. It passes to the per-file layer
-        rather than being blocked — stated as a limit, not papered over."""
+    def test_actual_body_limit_without_content_length(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(MAX_REQUEST_BODY=1024, MAX_FILE_SIZE=100)
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+
+        @app.post("/probe")
+        async def probe(request: Request):
+            await request.body()
+            return {"ok": True}
 
         def chunked():
-            yield b"not-multipart"
+            yield b"x" * 700
+            yield b"x" * 700
 
-        resp = client.post("/api/v1/blur/detect/stream", content=chunked())
+        response = TestClient(app).post("/probe", content=chunked())
+        assert response.status_code == 413, response.text
+        assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"
 
-        assert resp.status_code != 413
+
+        assert response.json()["request_id"]
+
+    def test_lying_content_length_is_rejected(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(MAX_REQUEST_BODY=1024, MAX_FILE_SIZE=100)
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+
+        @app.post("/probe")
+        async def probe(request: Request):
+            await request.body()
+            return {"ok": True}
+
+        response = TestClient(app).post(
+            "/probe", content=iter([b"x" * 700, b"x" * 700]),
+            headers={"Content-Length": "500"},
+        )
+        assert response.status_code == 413
+
+    def test_blur_auth_precedes_multipart_parse(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(DEBUG=False, MODEL_PROFILE="blur")
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        response = TestClient(app).post(
+            "/api/v1/blur/detect",
+            content=b"broken multipart",
+            headers={"Content-Type": "multipart/form-data; boundary=missing"},
+        )
+        assert response.status_code == 401
+
+    def test_blur_key_rate_limited_once_before_parse(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(DEBUG=False, MODEL_PROFILE="blur")
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        app.state.redis = AsyncMock()
+        app.state.redis.get.return_value = json.dumps({
+            "key_id": "test", "scopes": ["blur:read"], "rate_tier": "internal",
+        })
+        with patch("src.middleware.auth._enforce_rate_limit", new_callable=AsyncMock) as limit:
+            response = TestClient(app).post("/api/v1/blur/detect", headers={"X-API-Key": "test"})
+        assert response.status_code == 422
+        limit.assert_awaited_once()
+
+    def test_blur_actual_multipart_bytes_rejected(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(
+            DEBUG=True, MODEL_PROFILE="blur", BLUR_MAX_REQUEST_BODY=1024, MAX_FILE_SIZE=100,
+        )
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        body = (
+            b"--test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.jpg\"\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + b"x" * 1400 + b"\r\n--test--\r\n"
+        )
+        response = TestClient(app).post(
+            "/api/v1/blur/detect", content=iter([body[:700], body[700:]]),
+            headers={"Content-Type": "multipart/form-data; boundary=test"},
+        )
+        assert response.status_code == 413
+        assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"
 
     def test_nginx_client_max_body_size_matches_the_setting(self):
         """The ceiling lives in two files. This is what stops them drifting —
@@ -673,3 +761,55 @@ class TestBodySizeLimit:
         )
 
         assert result.returncode == 0, result.stderr.decode(errors="replace")
+
+
+async def test_blur_streams_share_decode_capacity_and_admission():
+    import httpx
+
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(DEBUG=True, MODEL_PROFILE="blur", METRICS_ENABLED=False,
+                        BLUR_DECODE_CONCURRENCY=2)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+
+    class Classifier:
+        min_detection_confidence = 0.5
+
+        def classify_batch(self, images):
+            return [{"predicted_class": "sharp", "confidence": 1.0,
+                     "probabilities": {"sharp": 1.0}} for _ in images]
+
+    class Registry:
+        def get(self, name):
+            return Classifier() if name == "blur_classifier" else None
+
+    app.state.model_registry = Registry()
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def decode(data, max_dim):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.03)
+        with lock:
+            active -= 1
+        return np.zeros((32, 32, 3), dtype=np.uint8)
+
+    image = _make_jpeg_bytes(width=32, height=32)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch("src.api.v1.blur._decode_bgr_for_classify", side_effect=decode):
+            responses = await asyncio.gather(*[
+                client.post("/api/v1/blur/classify/stream", files=_files([image] * 4))
+                for _ in range(3)
+            ])
+    assert sorted(r.status_code for r in responses) == [200, 200, 503]
+    assert peak == 2
+    assert all(len(r.text.splitlines()) == 5 for r in responses if r.status_code == 200)
+    assert next(r for r in responses if r.status_code == 503).json()["error"]["code"] == "BLUR_BUSY"
