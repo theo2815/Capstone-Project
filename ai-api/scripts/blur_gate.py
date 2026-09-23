@@ -36,7 +36,7 @@ Usage:
         [--min-accuracy 0.97] [--max-miss-rate 0.02] [--max-overcull-rate 0]
 
 Set AI_API_KEY in the environment instead of --api-key-file when preferred.
---limit requires --diagnostic-subset and never prints PASS for a partial corpus.
+--limit requires --diagnostic-subset. Diagnostic runs exit 2, never release PASS.
 
 Requires a running ai-api with the blur classifier loaded.
 
@@ -383,7 +383,7 @@ def main() -> int:
           + f" over-cull <= {args.max_overcull_rate})")
     print(f"report: {args.report_json}")
     print("=" * 68)
-    return 0 if status != "FAIL" else 1
+    return {"PASS": 0, "FAIL": 1, "DIAGNOSTIC": 2}[status]
 
 
 if __name__ == "__main__":

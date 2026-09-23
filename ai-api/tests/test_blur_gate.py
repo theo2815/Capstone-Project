@@ -267,5 +267,5 @@ def test_diagnostic_mode_never_reports_release_pass(tmp_path, monkeypatch):
     rows = _rows() + [{"_summary": True, "total": 4, "successful": 4,
                        "errors": 0, "complete": True}]
     code, report, _ = _run(tmp_path, monkeypatch, rows, "--diagnostic-subset")
-    assert code == 0
+    assert code == 2
     assert report["status"] == "DIAGNOSTIC"
