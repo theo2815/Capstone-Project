@@ -13,12 +13,12 @@ from pathlib import Path
 from ultralytics import YOLO
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATASET_DIR = PROJECT_ROOT / "Training-Images" / "dataset"
+DATASET_DIR = PROJECT_ROOT / "Training-Images" / "dataset_clean"
 
 
 def train() -> None:
     """Fine-tune YOLOv8n-cls on the blur classification dataset."""
-    if not DATASET_DIR.exists():
+    if not (DATASET_DIR / "split_manifest.json").is_file():
         print("ERROR: Dataset not found. Run prepare_blur_dataset.py first.")
         return
 
@@ -42,6 +42,7 @@ def train() -> None:
         lrf=0.01,
         weight_decay=0.001,
         label_smoothing=0.1,
+        seed=42,
         # Augmentation (built-in)
         hsv_h=0.015,
         hsv_s=0.4,

@@ -279,7 +279,7 @@ ai-api/
 ├── models/                     # === ML MODEL FILES (gitignored) ===
 │   ├── manifest.json           # Lists required models with sources/notes.
 │   ├── blur_classifier/
-│   │   ├── blur_classifier.onnx  # YOLOv8n-cls, 4 classes — 98.68% accuracy.
+│   │   ├── blur_classifier.onnx  # YOLOv8n-cls, 4 classes; see ai-system-overview.md for quality evidence.
 │   │   └── class_names.json
 │   ├── bib_detection/
 │   │   └── yolov8n_bib.onnx    # Custom-trained bib detector (Ultralytics).

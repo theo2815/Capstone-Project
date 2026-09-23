@@ -6,7 +6,7 @@ Current state of the three ML pipelines in the QuickPitik `ai-api` service. All 
 
 | Module | Model | Accuracy | Artifact | Runtime |
 |---|---|---|---|---|
-| Blur Detection | Laplacian + FFT + YOLOv8n-cls | 98.68% top-1 (sharp: 100%) | `models/blur_classifier/blur_classifier.onnx` | ONNX Runtime (CPU/GPU) |
+| Blur Detection | Laplacian + FFT + YOLOv8n-cls | See quality evidence below | `models/blur_classifier/blur_classifier.onnx` | ONNX Runtime (CPU/GPU) |
 | Face Search | InsightFace `buffalo_l` (RetinaFace + ArcFace) | Production-grade pretrained | `models/models/buffalo_l/` | ONNX Runtime via InsightFace |
 | Bib Search | YOLOv8n (custom) + PaddleOCR PP-OCRv5 | Dedicated bib detector (trained on 1,713 images) | `models/bib_detection/yolov8n_bib.onnx` | Ultralytics YOLO + PaddleOCR |
 
@@ -27,9 +27,9 @@ Two-tier pipeline:
    - `defocused_blurred` — whole frame soft
    - `motion_blurred` — camera shake or subject motion
 
-**Key guarantee:** zero false positives on valid portraits (sharp subject + blurred background). Callers can pass `?blur_type=...` to get a targeted `detected: true/false` response; omitting it returns the full class probability vector.
+Callers can pass `?blur_type=...` to get a targeted `detected: true/false` response; omitting it returns the full class probability vector. A sharp subject with intentional background bokeh belongs to `sharp`.
 
-**Served accuracy (2026-08-14, `scripts/blur_gate.py` over 1057 labelled val images through the live HTTP path):** 98.30% overall, with 4/698 blurry photos called `sharp` and 0/359 sharp photos called blurry. The 98.68% above is Ultralytics' training-time figure; the gap is the serving preprocess, which reimplements Ultralytics' PIL/torchvision transform in OpenCV. Both the decode step and the 224 px resize area-average — see `BLUR_CLASSIFY_DECODE_DIM` in `src/config.py` and `BlurClassifier._preprocess`. Re-check with `python scripts/blur_gate.py Training-Images/dataset/val` after any change to either.
+**Quality evidence (2026-09-24):** The old 98.68% training-time figure and 98.30% served figure came from a validation split with 31 train-overlapping files. After excluding those files, the unchanged ONNX model classified 1,009/1,026 correctly, missed 4/667 blurry photos, and culled 0/359 sharp photos. This is diagnostic because the historical validation data informed model and preprocessing choices. On a separately selected, visually labeled night-marathon sample, it culled **36/120 sharp runner photos** (30%; Wilson 95% interval 22.5–38.7%). All 120 were sharp, so blur misses and overall four-class accuracy cannot be assessed on that sample. The photos came from one event and camera; labels have not had a second human review. Near-burst correlation also limits the interval's generalizability. See the 2026-09-24 Task 8 vault journal and ignored `Training-Images/quality_evidence/` manifests for full provenance. No production accuracy or zero-over-cull guarantee is established.
 
 ## Face Search
 

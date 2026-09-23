@@ -6,7 +6,7 @@ This is a modular AI API built with FastAPI (Python 3.11+) for computer vision t
 
 All three ML pipelines are trained, integrated, and wired into the API:
 
-- **Blur classifier** — YOLOv8n-cls ONNX at `models/blur_classifier/blur_classifier.onnx` (98.68% top-1, 100% on sharp class)
+- **Blur classifier** — YOLOv8n-cls ONNX at `models/blur_classifier/blur_classifier.onnx`; quality evidence and limitations are in `docs/ai-system-overview.md`
 - **Face pipeline** — InsightFace `buffalo_l` (RetinaFace + ArcFace, 512-dim embeddings) at `models/models/buffalo_l/`
 - **Bib detector** — custom YOLOv8n at `models/bib_detection/yolov8n_bib.onnx` + PaddleOCR PP-OCRv5 for OCR
 
