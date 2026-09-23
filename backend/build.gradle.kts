@@ -79,6 +79,7 @@ dependencies {
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.springframework.security:spring-security-test")
 	testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
+	testImplementation("com.squareup.okhttp3:okhttp:4.12.0") // Mobile's exact live PUT request shape.
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
 	// Real-Postgres integration tests, tagged "integration" and excluded from
