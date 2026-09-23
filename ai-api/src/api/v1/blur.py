@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from functools import partial
 from typing import Any
 
@@ -47,6 +48,42 @@ from src.utils.timeout import (
 )
 
 logger = get_logger(__name__)
+
+
+async def _submit_blur_job(request, job_id, raw_bytes_list, task, *, mega=False, blur_type=None):
+    """Stage every input before dispatch and terminally fail an unaccepted submission."""
+    try:
+        classify = task.name == "blur.classify_batch"
+        if mega:
+            kwargs = {"blur_type": blur_type} if classify else None
+            await asyncio.to_thread(dispatch_mega_batch, job_id, raw_bytes_list, task,
+                                    extra_kwargs=kwargs)
+        else:
+            keys = await asyncio.to_thread(store_blobs_and_get_paths, job_id, raw_bytes_list)
+            if classify:
+                await asyncio.to_thread(task.delay, job_id, keys, blur_type)
+            else:
+                await asyncio.to_thread(task.delay, job_id, keys)
+        return None
+    except Exception as exc:
+        from src.db.repositories.job_repo import JobRepository
+        from src.db.session import get_session_ctx
+        from src.utils.blob_store import cleanup_batch
+
+        logger.error("Blur async submission failed", job_id=job_id,
+                     error_type=type(exc).__name__)
+        async with get_session_ctx() as session:
+            failed = await JobRepository(session).fail(uuid.UUID(job_id), "Submission failed")
+        if failed:
+            try:
+                await asyncio.to_thread(cleanup_batch, job_id)
+            except Exception as cleanup_error:
+                logger.error("Blur submission cleanup failed", job_id=job_id,
+                             error_type=type(cleanup_error).__name__)
+        return JSONResponse(status_code=503, content=APIResponse(
+            success=False, request_id=getattr(request.state, "request_id", ""),
+            error={"code": "ASYNC_UNAVAILABLE", "message": "Async job submission failed"},
+        ).model_dump(mode="json"))
 
 
 def _inference_error_response(request: Request, error: Exception) -> JSONResponse:
@@ -412,11 +449,10 @@ async def detect_blur_batch(
     if isinstance(job_id, JSONResponse):
         return job_id
 
-    image_paths = store_blobs_and_get_paths(job_id, raw_bytes_list)
-
     from src.workers.tasks.blur_tasks import blur_detect_batch
-
-    blur_detect_batch.delay(job_id, image_paths)
+    failure = await _submit_blur_job(request, job_id, raw_bytes_list, blur_detect_batch)
+    if failure is not None:
+        return failure
 
     return batch_accepted_response(request, job_id, len(files))
 
@@ -809,13 +845,11 @@ async def classify_blur_batch(
     if isinstance(job_id, JSONResponse):
         return job_id
 
-    image_paths = store_blobs_and_get_paths(job_id, raw_bytes_list)
-
     from src.workers.tasks.blur_tasks import blur_classify_batch
-
-    blur_classify_batch.delay(
-        job_id, image_paths, blur_type.value if blur_type else None
-    )
+    failure = await _submit_blur_job(request, job_id, raw_bytes_list,
+                                     blur_classify_batch, blur_type=blur_type.value if blur_type else None)
+    if failure is not None:
+        return failure
 
     return batch_accepted_response(request, job_id, len(files))
 
@@ -850,7 +884,10 @@ async def detect_blur_mega(
 
     from src.workers.tasks.blur_tasks import blur_detect_batch
 
-    dispatch_mega_batch(job_id, raw_bytes_list, blur_detect_batch)
+    failure = await _submit_blur_job(request, job_id, raw_bytes_list, blur_detect_batch,
+                                     mega=True)
+    if failure is not None:
+        return failure
 
     return batch_accepted_response(request, job_id, len(files))
 
@@ -889,9 +926,9 @@ async def classify_blur_mega(
 
     from src.workers.tasks.blur_tasks import blur_classify_batch
 
-    dispatch_mega_batch(
-        job_id, raw_bytes_list, blur_classify_batch,
-        extra_kwargs={"blur_type": blur_type.value if blur_type else None},
-    )
+    failure = await _submit_blur_job(request, job_id, raw_bytes_list, blur_classify_batch,
+                                     mega=True, blur_type=blur_type.value if blur_type else None)
+    if failure is not None:
+        return failure
 
     return batch_accepted_response(request, job_id, len(files))

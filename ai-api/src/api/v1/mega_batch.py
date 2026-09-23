@@ -32,7 +32,7 @@ def dispatch_mega_batch(
             stable caller ref instead of relying solely on positional index.
             Only pass for tasks whose signature accepts ``refs``.
     """
-    from src.workers.tasks.maintenance_tasks import finalize_mega_batch
+    from src.workers.tasks.maintenance_tasks import fail_mega_batch, finalize_mega_batch
 
     settings = get_settings()
     chunk_size = settings.MAX_BATCH_SIZE
@@ -50,15 +50,14 @@ def dispatch_mega_batch(
         # The task receives standard (job_id, image_paths, ...) — the
         # finalize callback uses the original index stored in each result dict.
         #
-        # Sub-tasks use a throwaway job_id (empty string) since the parent
-        # job is the real tracking record.  Progress updates are skipped for
-        # sub-tasks and the parent is updated once by finalize_mega_batch.
-        chunk_kwargs = dict(extra)
+        # Every child carries the real parent identity. Child workers avoid
+        # writing parent progress/result; the chord owns finalization.
+        chunk_kwargs = {**extra, "mega_child": True}
         if refs is not None:
             chunk_kwargs["refs"] = refs[chunk_start:chunk_start + chunk_size]
-        sig = task_func.s("", chunk_paths, **chunk_kwargs)
+        sig = task_func.s(job_id, chunk_paths, **chunk_kwargs)
         tasks.append(sig)
 
     # Chord: run all sub-tasks in parallel → finalize merges results
-    callback = finalize_mega_batch.s(job_id)
+    callback = finalize_mega_batch.s(job_id).on_error(fail_mega_batch.s(job_id))
     chord(group(tasks))(callback)

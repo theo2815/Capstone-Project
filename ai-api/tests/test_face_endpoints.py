@@ -361,7 +361,7 @@ class TestEnrollMegaBatch:
     person (unlike ``face_enroll_batch`` which lumps all images under one
     shared person), storing every detected face under it with a per-face
     distinct hash. Runs the task body synchronously with ``.apply()`` and a
-    throwaway ``job_id=""`` so it returns the result list directly instead of
+    valid parent ID with ``mega_child=True`` so it returns the result list instead of
     writing to the DB / firing webhooks. Mocks the embedder, blob loader, and
     sync session because the suite has no test database.
     """
@@ -425,14 +425,16 @@ class TestEnrollMegaBatch:
 
         monkeypatch.setattr("src.db.sync_session.get_sync_session", _fake_sync_session)
         monkeypatch.setattr("src.db.repositories.sync_face_repo.SyncFaceRepository", _FakeRepo)
+        monkeypatch.setattr("src.workers.helpers.touch_mega_job", lambda _: True)
 
         from src.workers.tasks.face_tasks import face_enroll_mega_batch
 
         event_id = str(_uuid.uuid4())
         refs = ["photo-A", "photo-B", "photo-C"]
         results = face_enroll_mega_batch.apply(
-            args=["", ["p0", "p1", "p2"]],
-            kwargs={"api_key_id": "key-1", "event_id": event_id, "refs": refs},
+            args=[str(_uuid.uuid4()), ["p0", "p1", "p2"]],
+            kwargs={"api_key_id": "key-1", "event_id": event_id,
+                    "refs": refs, "mega_child": True},
         ).get()
 
         assert len(results) == 3

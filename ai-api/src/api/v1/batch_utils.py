@@ -110,6 +110,7 @@ async def create_batch_job(
         repo = JobRepository(session)
 
         if api_key_id and max_active > 0:
+            await repo.lock_admission(api_key_id)
             active_count = await repo.count_active_by_key(api_key_id)
             if active_count >= max_active:
                 return JSONResponse(

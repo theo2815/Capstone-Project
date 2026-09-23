@@ -81,6 +81,44 @@ For the initial dedicated Railway blur launch, `.railway/railway.ts` sets
   Task 10B and its cross-service tests before setting the switch to `true`
   on this Railway service.
 
+### Optional durable async blur topology (Task 10B)
+
+Keep `.railway/railway.ts` as the stream-only default. When async batch/mega is
+approved for a separate release, preview `.railway/railway-async.ts` with
+`railway config plan --file .railway/railway-async.ts` from an isolated staging
+directory linked to **quickpitik-ai-api-blur**. Review resource creation and
+deletion before applying it. That plan adds one private Railway Bucket, one
+blur worker (`blur,default`, concurrency 1), and one beat scheduler; it enables
+async on the API. Deploy the same verified `MODEL_PROFILE=blur` image/source to
+all three services. Run `railway up . --path-as-root --no-gitignore --service
+<service-name>` separately for the API, worker and beat from the trusted build
+staging directory after the configuration is applied. Deploy the migration
+before accepting async traffic. The worker and beat have no public domain.
+
+The bucket's `BUCKET`, `ENDPOINT`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` and
+`REGION` references feed the matching `AWS_*` variables in each service. Use
+the bucket's reported URL style if it differs from `virtual`. Do not share its
+credentials with desktop keys. The API uploads opaque `jobs/<uuid>/...` keys
+before dispatch, and the worker reads at most the configured per-file limit.
+The single beat process runs the reaper every 5 minutes and blob cleanup every
+30 minutes. Terminal inputs remain for `BLOB_RETENTION_SECONDS` (default 24 h)
+after completion; orphan uploads use the same age window. A cleanup error is
+logged and retried on the next beat pass. Railway Buckets currently have no
+native lifecycle policy, so this scheduler is required for retention.
+
+For the existing Redis service, verify `CONFIG GET appendonly appendfsync
+maxmemory-policy` returns `yes`, `everysec` and `noeviction`, and confirm its
+data volume actually persists through a service restart. Set a memory limit
+with headroom for pending chord results and monitor its usage; an evicting
+cache policy can silently lose jobs. Celery uses a 4,200-second visibility
+timeout, 3,600-second hard task limit and 3,900-second processing lease.
+Start with one 2 vCPU / 2 GiB API process and one 2 vCPU / 2 GiB worker with
+prefetch 1; measure real queue and memory use before changing either budget.
+Keep `WEBHOOK_SECRET_KEY`, Postgres and Redis references aligned across the
+services. A successful `/readyz` checks API dependencies, so also run a
+restricted-key batch request through the separate worker and confirm the
+terminal job before exposing async routes.
+
 The initial one-worker blur budget admits two uploads per process, each at most
 128 MiB total, 25 MiB per file and 500 files per stream. Header dimensions
 must fit 12,000px per edge and 24 megapixels; at most two images decode at

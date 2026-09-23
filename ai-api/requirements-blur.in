@@ -16,6 +16,7 @@ alembic>=1.14,<2
 pgvector>=0.3.6,<0.4
 celery[redis]>=5.4,<6
 redis>=5.2,<6
+boto3>=1.43,<2
 PyJWT[crypto]>=2.9,<3
 bcrypt>=4.2,<5
 structlog>=24.4,<25

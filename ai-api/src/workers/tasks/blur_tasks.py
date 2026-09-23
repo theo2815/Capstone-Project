@@ -6,8 +6,22 @@ from src.workers.celery_app import celery_app
 logger = get_logger(__name__)
 
 
+def _begin(self, job_id: str, mega_child: bool):
+    from src.config import get_settings
+    from src.workers.helpers import claim_job, touch_mega_job
+
+    if mega_child:
+        return ("claimed" if touch_mega_job(job_id) else "terminal"), None, None
+    if get_settings().MODEL_PROFILE != "blur":
+        return "claimed", None, None
+    state, token, result = claim_job(job_id)
+    if state == "busy":
+        raise self.retry(countdown=60, max_retries=None)
+    return state, token, result
+
+
 @celery_app.task(bind=True, name="blur.detect_batch")
-def blur_detect_batch(self, job_id: str, image_paths: list[str]):
+def blur_detect_batch(self, job_id: str, image_paths: list[str], mega_child: bool = False):
     """Process a batch of images for blur detection.
 
     Uses sub-batching with parallel grayscale decode and Laplacian-only
@@ -27,9 +41,16 @@ def blur_detect_batch(self, job_id: str, image_paths: list[str]):
     )
     from src.workers.model_loader import get_blur_detector
 
+    state, token, previous = _begin(self, job_id, mega_child)
+    if state != "claimed":
+        return previous
+    attempt = {"attempt_token": token} if token else {}
+
     detector = get_blur_detector()
     if detector is None:
-        fail_job(job_id, "Blur detector model not loaded in worker")
+        if mega_child:
+            raise RuntimeError("Blur detector model not loaded in worker")
+        fail_job(job_id, "Blur detector model not loaded in worker", **attempt)
         return
 
     settings = get_settings()
@@ -57,18 +78,25 @@ def blur_detect_batch(self, job_id: str, image_paths: list[str]):
                 logger.error("Blur detection failed for image", index=idx, error=str(e))
                 results[idx] = {"index": idx, "error": str(e)}
 
-        update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total)
+        if mega_child:
+            from src.workers.helpers import touch_mega_job
+            if not touch_mega_job(job_id):
+                return
+        else:
+            update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total,
+                                **attempt)
 
-    if not job_id:
+    if mega_child:
         # Mega-batch sub-task: return results for chord callback
         return results
-    complete_job(job_id, results)
+    complete_job(job_id, results, **attempt)
     logger.info("Blur batch job completed", job_id=job_id, total=total)
 
 
 @celery_app.task(bind=True, name="blur.classify_batch")
 def blur_classify_batch(
-    self, job_id: str, image_paths: list[str], blur_type: str | None = None
+    self, job_id: str, image_paths: list[str], blur_type: str | None = None,
+    mega_child: bool = False,
 ):
     """Process a batch of images for blur classification.
 
@@ -90,9 +118,16 @@ def blur_classify_batch(
     )
     from src.workers.model_loader import get_blur_classifier
 
+    state, token, previous = _begin(self, job_id, mega_child)
+    if state != "claimed":
+        return previous
+    attempt = {"attempt_token": token} if token else {}
+
     classifier = get_blur_classifier()
     if classifier is None:
-        fail_job(job_id, "Blur classifier model not loaded in worker")
+        if mega_child:
+            raise RuntimeError("Blur classifier model not loaded in worker")
+        fail_job(job_id, "Blur classifier model not loaded in worker", **attempt)
         return
 
     settings = get_settings()
@@ -159,9 +194,15 @@ def blur_classify_batch(
                     except Exception as e2:
                         results[img_i] = {"index": img_i, "error": str(e2)}
 
-        update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total)
+        if mega_child:
+            from src.workers.helpers import touch_mega_job
+            if not touch_mega_job(job_id):
+                return
+        else:
+            update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total,
+                                **attempt)
 
-    if not job_id:
+    if mega_child:
         return results
-    complete_job(job_id, results)
+    complete_job(job_id, results, **attempt)
     logger.info("Blur classify batch job completed", job_id=job_id, total=total)

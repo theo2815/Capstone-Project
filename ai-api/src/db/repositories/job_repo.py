@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Job
@@ -45,73 +45,65 @@ class JobRepository:
     async def update_progress(
         self, job_id: uuid.UUID, processed_items: int, progress: float
     ) -> None:
-        result = await self.session.execute(
-            select(Job).where(Job.id == job_id).with_for_update()
+        await self.session.execute(
+            update(Job).where(Job.id == job_id, Job.status.in_(["pending", "processing"]),
+                              Job.processed_items <= processed_items)
+            .values(processed_items=processed_items, progress=progress, status="processing")
         )
-        job = result.scalar_one_or_none()
-        if job:
-            job.processed_items = processed_items
-            job.progress = progress
-            job.status = "processing"
-            await self.session.flush()
 
     async def complete(
         self, job_id: uuid.UUID, result: dict | list
     ) -> None:
-        row = await self.session.execute(
-            select(Job).where(Job.id == job_id).with_for_update()
+        await self.session.execute(
+            update(Job).where(Job.id == job_id, Job.status.in_(["pending", "processing"]))
+            .values(status="completed", progress=1.0, processed_items=Job.total_items,
+                    result=result, completed_at=datetime.now(UTC), lease_expires_at=None)
         )
-        job = row.scalar_one_or_none()
-        if job:
-            job.status = "completed"
-            job.progress = 1.0
-            job.processed_items = job.total_items
-            job.result = result
-            job.completed_at = datetime.now(UTC)
-            await self.session.flush()
+
+    async def lock_admission(self, api_key_id: str) -> None:
+        """Serialize submissions for one key until the surrounding transaction commits."""
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": api_key_id},
+        )
 
     async def count_active_by_key(self, api_key_id: str) -> int:
-        """Count pending + processing jobs for a given API key.
-
-        Excludes stale jobs older than task_time_limit + buffer (3600s + 300s)
-        to prevent zombie jobs from permanently consuming backpressure slots.
-        """
-        cutoff = datetime.now(UTC) - timedelta(seconds=3600 + 300)
+        """Count active jobs; the reaper, not admission, releases stale slots."""
         result = await self.session.execute(
             select(func.count())
             .select_from(Job)
             .where(
                 Job.api_key_id == api_key_id,
                 Job.status.in_(["pending", "processing"]),
-                Job.created_at > cutoff,
             )
         )
         return result.scalar_one()
 
-    async def fail(self, job_id: uuid.UUID, error: str) -> None:
-        row = await self.session.execute(
-            select(Job).where(Job.id == job_id).with_for_update()
+    async def fail(self, job_id: uuid.UUID, error: str) -> bool:
+        changed = await self.session.execute(
+            update(Job).where(Job.id == job_id, Job.status.in_(["pending", "processing"]))
+            .values(status="failed", error=error, completed_at=datetime.now(UTC),
+                    lease_expires_at=None)
         )
-        job = row.scalar_one_or_none()
-        if job:
-            job.status = "failed"
-            job.error = error
-            job.completed_at = datetime.now(UTC)
-            await self.session.flush()
+        return bool(changed.rowcount)
 
     async def reap_stale_jobs(self, max_age_seconds: int = 3900) -> int:
         """Mark stale pending/processing jobs as failed.
 
         Returns the number of jobs reaped.
         """
-        from sqlalchemy import update
-
-        cutoff = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(seconds=max_age_seconds)
         result = await self.session.execute(
             update(Job)
             .where(
-                Job.status.in_(["pending", "processing"]),
-                Job.created_at <= cutoff,
+                or_(
+                    and_(Job.status == "pending", Job.created_at <= cutoff),
+                    and_(Job.status == "processing", Job.lease_expires_at.is_not(None),
+                         Job.lease_expires_at <= cutoff),
+                    and_(Job.status == "processing", Job.lease_expires_at.is_(None),
+                         Job.created_at <= cutoff),
+                ),
             )
             .values(
                 status="failed",
@@ -133,7 +125,7 @@ class JobRepository:
         result = await self.session.execute(
             delete(Job).where(
                 Job.status.in_(["completed", "failed"]),
-                Job.created_at <= cutoff,
+                Job.completed_at <= cutoff,
             )
         )
         await self.session.flush()

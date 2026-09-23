@@ -23,6 +23,12 @@ bcrypt==4.3.0
     # via -r requirements-blur.in
 billiard==4.3.0
     # via celery
+boto3==1.43.101
+    # via -r requirements-blur.in
+botocore==1.43.101
+    # via
+    #   boto3
+    #   s3transfer
 celery[redis]==5.6.3
     # via -r requirements-blur.in
 certifi==2026.7.22
@@ -66,6 +72,10 @@ idna==3.20
     # via
     #   anyio
     #   httpx
+jmespath==1.1.0
+    # via
+    #   boto3
+    #   botocore
 kombu[redis]==5.6.2
     # via celery
 mako==1.4.3
@@ -123,7 +133,9 @@ pyjwt[crypto]==2.14.0
     #   pyjwt
     #   redis
 python-dateutil==2.9.0.post0
-    # via celery
+    # via
+    #   botocore
+    #   celery
 python-dotenv==1.2.3
     # via
     #   pydantic-settings
@@ -136,6 +148,8 @@ redis==5.3.1
     # via
     #   -r requirements-blur.in
     #   kombu
+s3transfer==0.19.2
+    # via boto3
 six==1.17.0
     # via python-dateutil
 sqlalchemy[asyncio]==2.0.54
@@ -165,9 +179,13 @@ typing-inspection==0.4.4
     #   pydantic
     #   pydantic-settings
 tzdata==2026.4
-    # via kombu
+    # via
+    #   kombu
+    #   tzlocal
 tzlocal==5.4.4
     # via celery
+urllib3==2.8.0
+    # via botocore
 uvicorn[standard]==0.53.0
     # via -r requirements-blur.in
 uvloop==0.22.1

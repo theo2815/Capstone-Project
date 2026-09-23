@@ -689,12 +689,18 @@ class TestDetectStream:
         stream_fft = _ndjson(client.post(
             "/api/v1/blur/detect/stream?include_hf_ratio=true", files=_files([data])
         ))[0]
-        path = tmp_path / "pattern.jpg"
-        path.write_bytes(data)
+        import uuid
+
+        from src.utils.blob_store import store_batch
+
+        monkeypatch.setattr(app.state.settings, "BLOB_STORE_PATH", str(tmp_path))
+        job_id = str(uuid.uuid4())
+        key = store_batch(job_id, [data])[0]
+        monkeypatch.setattr("src.workers.helpers.touch_mega_job", lambda _: True)
         with patch("src.workers.model_loader.get_blur_detector",
                    return_value=app.state.model_registry.get("blur")), patch(
                    "src.config.get_settings", return_value=app.state.settings):
-            worker = blur_detect_batch("", [str(path)])[0]
+            worker = blur_detect_batch(job_id, [key], mega_child=True)[0]
 
         assert (
             single["is_blurry"] == stream["is_blurry"]

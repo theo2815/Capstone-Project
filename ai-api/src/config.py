@@ -133,6 +133,8 @@ class Settings(BaseSettings):
 
     # Celery
     CELERY_SECURITY_KEY: str = ""
+    CELERY_VISIBILITY_TIMEOUT: int = Field(default=4200, gt=3600)
+    JOB_LEASE_SECONDS: int = Field(default=3900, gt=3600)
 
     # File Upload
     # 25 MB matches the Spring backend's multipart ceiling
@@ -165,8 +167,13 @@ class Settings(BaseSettings):
     MAX_ACTIVE_JOBS_PER_KEY_INTERNAL: int = 50
     JOB_RETENTION_DAYS: int = 7  # Auto-delete completed/failed jobs older than this
 
-    # Blob store — images written to shared volume instead of base64-in-Redis
+    # Local development falls back to disk. Railway async uses a private S3 bucket.
     BLOB_STORE_PATH: str = "/tmp/quickpitik-blobs"
+    AWS_S3_BUCKET_NAME: str = ""
+    AWS_ENDPOINT_URL: str = ""
+    AWS_DEFAULT_REGION: str = "auto"
+    AWS_S3_URL_STYLE: str = "virtual"
+    BLOB_RETENTION_SECONDS: int = Field(default=86400, gt=0)
 
     # Image preprocessing — downscale large images before inference.
     # 640 was too aggressive for marathon photos: a 2400x1600 frame got shrunk

@@ -16,6 +16,7 @@ def face_process_batch(
     event_id: str | None = None,
     threshold: float | None = None,
     top_k: int | None = None,
+    mega_child: bool = False,
 ):
     """Process a batch of images for face recognition.
 
@@ -36,8 +37,14 @@ def face_process_batch(
     )
     from src.workers.model_loader import get_face_embedder
 
+    if mega_child:
+        from src.workers.helpers import touch_mega_job
+        if not touch_mega_job(job_id):
+            return
     embedder = get_face_embedder()
     if embedder is None:
+        if mega_child:
+            raise RuntimeError("Face embedder model not loaded in worker")
         fail_job(job_id, "Face embedder model not loaded in worker")
         return
 
@@ -47,7 +54,7 @@ def face_process_batch(
     if operation == "search":
         # Open ONE session for all images instead of per-image
         _search_batch(
-            image_paths, embedder, results, job_id, total,
+            image_paths, embedder, results, job_id if not mega_child else None, total,
             api_key_id=api_key_id, event_id=event_id,
             threshold=threshold, top_k=top_k,
         )
@@ -64,7 +71,8 @@ def face_process_batch(
             image = decode_image_from_path(path)
             if image is None:
                 results[i] = {"index": i, "error": "Failed to decode image"}
-                update_job_progress(job_id, i + 1, total)
+                if not mega_child:
+                    update_job_progress(job_id, i + 1, total)
                 continue
             try:
                 faces = embedder.detect_faces(image)
@@ -72,9 +80,10 @@ def face_process_batch(
             except Exception as e:
                 logger.error("Face detection failed for image", index=i, error=str(e))
                 results[i] = {"index": i, "error": str(e)}
-            update_job_progress(job_id, i + 1, total)
+            if not mega_child:
+                update_job_progress(job_id, i + 1, total)
 
-    if not job_id:
+    if mega_child:
         return results
     complete_job(job_id, results)
     logger.info("Face batch job completed", job_id=job_id, total=total)
@@ -84,7 +93,7 @@ def _search_batch(
     image_paths: list[str],
     embedder,
     results: list[dict],
-    job_id: str,
+    job_id: str | None,
     total: int,
     api_key_id: str | None = None,
     event_id: str | None = None,
@@ -113,13 +122,15 @@ def _search_batch(
             image = decode_image_from_path(path)
             if image is None:
                 results[i] = {"index": i, "error": "Failed to decode image"}
-                update_job_progress(job_id, i + 1, total)
+                if job_id:
+                    update_job_progress(job_id, i + 1, total)
                 continue
             try:
                 faces = embedder.get_embeddings(image)
                 if not faces:
                     results[i] = {"index": i, "faces_detected": 0, "matches": []}
-                    update_job_progress(job_id, i + 1, total)
+                    if job_id:
+                        update_job_progress(job_id, i + 1, total)
                     continue
 
                 embeddings = [face["embedding"] for face in faces]
@@ -144,7 +155,8 @@ def _search_batch(
             except Exception as e:
                 logger.error("Face search failed for image", index=i, error=str(e))
                 results[i] = {"index": i, "error": str(e)}
-            update_job_progress(job_id, i + 1, total)
+            if job_id:
+                update_job_progress(job_id, i + 1, total)
 
 
 @celery_app.task(bind=True, name="faces.enroll_batch")
@@ -280,6 +292,7 @@ def face_enroll_mega_batch(
     api_key_id: str | None = None,
     event_id: str | None = None,
     refs: list[str] | None = None,
+    mega_child: bool = False,
 ):
     """Bulk photo-indexing enroll — ONE person per image, all faces stored.
 
@@ -309,8 +322,14 @@ def face_enroll_mega_batch(
     )
     from src.workers.model_loader import get_face_embedder
 
+    if mega_child:
+        from src.workers.helpers import touch_mega_job
+        if not touch_mega_job(job_id):
+            return
     embedder = get_face_embedder()
     if embedder is None:
+        if mega_child:
+            raise RuntimeError("Face embedder model not loaded in worker")
         fail_job(job_id, "Face embedder model not loaded in worker")
         return
 
@@ -337,7 +356,8 @@ def face_enroll_mega_batch(
         except Exception as e:
             logger.error("Face inference failed for image", index=i, error=str(e))
             results[i] = {"index": i, "ref": _ref(i), "error": str(e)}
-        update_job_progress(job_id, i + 1, total)
+        if not mega_child:
+            update_job_progress(job_id, i + 1, total)
 
     # --- Phase 2: DB — one person per image, per-image savepoint isolation ---
     with get_sync_session() as session:
@@ -392,7 +412,7 @@ def face_enroll_mega_batch(
                 logger.error("Face enroll (mega) failed for image", index=i, error=str(e))
                 results[i] = {"index": i, "ref": ref, "error": str(e)}
 
-    if not job_id:
+    if mega_child:
         return results
     complete_job(job_id, results)
     logger.info("Face enroll mega batch completed", job_id=job_id, total=total)

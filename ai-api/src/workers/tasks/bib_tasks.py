@@ -7,7 +7,8 @@ logger = get_logger(__name__)
 
 
 @celery_app.task(bind=True, name="bibs.recognize_batch")
-def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[str] | None = None):
+def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[str] | None = None,
+                        mega_child: bool = False):
     """Process a batch of images for bib number recognition.
 
     Uses sub-batching for the decode+detect phase to bound memory, while
@@ -30,8 +31,14 @@ def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[st
     )
     from src.workers.model_loader import get_bib_detector, get_bib_recognizer
 
+    if mega_child:
+        from src.workers.helpers import touch_mega_job
+        if not touch_mega_job(job_id):
+            return
     bib_ocr = get_bib_recognizer()
     if bib_ocr is None:
+        if mega_child:
+            raise RuntimeError("Bib OCR model not loaded in worker")
         fail_job(job_id, "Bib OCR model not loaded in worker")
         return
 
@@ -71,7 +78,8 @@ def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[st
                 chunk_global_indices.append(idx)
 
         if not chunk_images:
-            update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total)
+            if not mega_child:
+                update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total)
             continue
 
         # Batch YOLO detection for this sub-batch
@@ -106,7 +114,8 @@ def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[st
                 crop_tasks.append((global_i, det, cropped))
 
         # chunk_images freed after this iteration
-        update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total)
+        if not mega_child:
+            update_job_progress(job_id, min(chunk_start + len(chunk_paths), total), total)
 
     # --- Phase 3: Batch OCR on all accumulated crops ---
     ocr_results_map: dict[int, list[tuple[dict, dict]]] = {}
@@ -171,7 +180,7 @@ def bib_recognize_batch(self, job_id: str, image_paths: list[str], refs: list[st
             if isinstance(results[i], dict):
                 results[i]["ref"] = refs[i] if i < len(refs) else None
 
-    if not job_id:
+    if mega_child:
         return results
     complete_job(job_id, results)
     logger.info("Bib batch job completed", job_id=job_id, total=total)
