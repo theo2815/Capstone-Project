@@ -4,7 +4,9 @@ import hashlib
 
 from fastapi import HTTPException, Request, Security
 from fastapi.security import APIKeyHeader
+from redis.exceptions import RedisError
 
+from src.middleware.rate_limit import redis_unavailable
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -19,6 +21,8 @@ async def verify_api_key(
     """Validate API key, enforce rate limits, and return key metadata.
 
     In development mode (DEBUG=true), a missing key is allowed.
+    Cached key metadata expires after 300 seconds; revocation should also
+    invalidate the cache entry via ``invalidate_api_key_cache``.
     """
     settings = request.app.state.settings
     cached = getattr(request.state, "blur_key_meta", None)
@@ -36,14 +40,19 @@ async def verify_api_key(
 
     # Check Redis cache first
     redis = getattr(request.app.state, "redis", None)
-    if redis:
+    if redis is None:
+        raise redis_unavailable()
+    try:
         cached = await redis.get(f"apikey:{key_hash}")
-        if cached:
-            import json
+    except RedisError as exc:
+        logger.warning("API key cache unavailable", error_type=type(exc).__name__)
+        raise redis_unavailable() from exc
+    if cached:
+        import json
 
-            key_meta = json.loads(cached)
-            await _enforce_rate_limit(request, key_meta)
-            return key_meta
+        key_meta = json.loads(cached)
+        await _enforce_rate_limit(request, key_meta)
+        return key_meta
 
     # Fallback: check database
     from sqlalchemy import select
@@ -67,10 +76,13 @@ async def verify_api_key(
         }
 
         # Cache in Redis for 5 minutes
-        if redis:
-            import json
+        import json
 
+        try:
             await redis.set(f"apikey:{key_hash}", json.dumps(key_meta), ex=300)
+        except RedisError as exc:
+            logger.warning("API key cache unavailable", error_type=type(exc).__name__)
+            raise redis_unavailable() from exc
 
         await _enforce_rate_limit(request, key_meta)
         return key_meta

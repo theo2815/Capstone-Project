@@ -590,6 +590,7 @@ Prometheus text format. In `DEBUG=true` mode the endpoint is open. In production
 | 429 | *(FastAPI `HTTPException`)* | Rate limit exceeded — honor `Retry-After` header |
 | 429 | `TOO_MANY_JOBS` | `MAX_ACTIVE_JOBS_PER_KEY` (10) already active |
 | 503 | `MODEL_UNAVAILABLE` | Required model not loaded at startup |
+| 503 | *(FastAPI `HTTPException`)* | Redis authentication cache or rate limiter unavailable — honor `Retry-After` |
 | 504 | `REQUEST_TIMEOUT` | Request exceeded 60-second wall clock |
 
 Errors raised from `QuickPitikError` subclasses (`ImageValidationError`, `ModelNotLoadedError`, `AuthenticationError`, `RateLimitExceededError`, `JobNotFoundError`) are translated into the standard envelope by an exception handler in `main.py`. Raw `HTTPException`s from middleware (auth, rate limit) use FastAPI's default `{"detail": ...}` body.
@@ -598,7 +599,7 @@ Errors raised from `QuickPitikError` subclasses (`ImageValidationError`, `ModelN
 
 ## Rate Limits
 
-Rate limiting is **enforced** on every authenticated endpoint via `verify_api_key → check_rate_limit`. A token bucket per API key is maintained in Redis (Lua script, atomic). If Redis is unavailable the limiter becomes a no-op — convenient in dev, expected always-on in production.
+Rate limiting is **enforced** on every authenticated endpoint via `verify_api_key → check_rate_limit`. A token bucket per API key is maintained in Redis (Lua script, atomic). If Redis is unavailable, authenticated requests return 503 with `Retry-After: 1` until it recovers.
 
 | Tier | Max burst | Refill | Effective |
 |---|---|---|---|

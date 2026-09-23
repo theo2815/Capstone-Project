@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -41,8 +42,17 @@ async def _checks(request: Request) -> ReadinessResponse:
         if redis is None:
             return False
         try:
-            await asyncio.wait_for(redis.ping(), timeout)
-            return True
+            from src.middleware.rate_limit import TOKEN_BUCKET_SCRIPT
+
+            async def probe() -> bool:
+                await redis.ping()
+                await redis.set("apikey:readyz", "ready", ex=10)
+                if await redis.get("apikey:readyz") != "ready":
+                    return False
+                await redis.eval(TOKEN_BUCKET_SCRIPT, 1, "ratelimit:readyz", 1, 1, time.time())
+                return True
+
+            return await asyncio.wait_for(probe(), timeout)
         except Exception:
             return False
 

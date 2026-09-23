@@ -859,6 +859,38 @@ class TestBodySizeLimit:
         assert response.status_code == 422
         limit.assert_awaited_once()
 
+    def test_blur_redis_outage_returns_503_then_recovers(self):
+        from redis.exceptions import ConnectionError as RedisConnectionError
+
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(DEBUG=False, MODEL_PROFILE="blur", METRICS_ENABLED=False)
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        redis = AsyncMock()
+        app.state.redis = redis
+        redis.get.side_effect = RedisConnectionError("down")
+        client = TestClient(app)
+        url = "/api/v1/blur/detect"
+        headers = {"X-API-Key": "test"}
+
+        response = client.post(url, headers=headers)
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "1"
+
+        redis.get.side_effect = None
+        redis.get.return_value = json.dumps({
+            "key_id": "test", "scopes": ["blur:read"], "rate_tier": "internal"
+        })
+        redis.eval.side_effect = RedisConnectionError("down")
+        assert client.post(url, headers=headers).status_code == 503
+
+        redis.eval.side_effect = None
+        redis.eval.return_value = [1, 999, 1]
+        assert client.post(url, headers=headers).status_code == 422
+
     def test_blur_actual_multipart_bytes_rejected(self):
         from src.config import Settings
         from src.main import create_app

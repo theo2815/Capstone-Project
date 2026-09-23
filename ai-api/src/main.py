@@ -6,6 +6,7 @@ from threading import BoundedSemaphore
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.api.v1.router import make_v1_router
@@ -44,21 +45,20 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized")
 
     # Initialize Redis with connection pooling
-    app.state.redis = None
-    try:
-        import redis.asyncio as aioredis
+    import redis.asyncio as aioredis
 
-        app.state.redis = aioredis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            max_connections=50,
-            socket_timeout=5,
-            socket_connect_timeout=5,
-        )
+    app.state.redis = aioredis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        max_connections=50,
+        socket_timeout=5,
+        socket_connect_timeout=5,
+    )
+    try:
         await app.state.redis.ping()
         logger.info("Redis connected")
-    except Exception as e:
-        logger.warning("Redis not available at startup", error=str(e))
+    except RedisError as exc:
+        logger.warning("Redis not available at startup", error_type=type(exc).__name__)
 
     # Load ML models
     registry = ModelRegistry()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 
 from fastapi import HTTPException, Request
+from redis.exceptions import RedisError
 
 from src.utils.logging import get_logger
 
@@ -45,6 +46,14 @@ RATE_TIERS = {
 }
 
 
+def redis_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="Rate limiting unavailable",
+        headers={"Retry-After": "1"},
+    )
+
+
 async def check_rate_limit(request: Request, key_meta: dict) -> dict:
     """Check rate limit for the given API key.
 
@@ -52,9 +61,8 @@ async def check_rate_limit(request: Request, key_meta: dict) -> dict:
     Raises HTTPException 429 if limit exceeded.
     """
     redis = getattr(request.app.state, "redis", None)
-    if not redis:
-        # No Redis = no rate limiting (development fallback)
-        return {"remaining": -1, "limit": -1, "reset": 0}
+    if redis is None:
+        raise redis_unavailable()
 
     rate_tier = key_meta.get("rate_tier", "free")
     tier_config = RATE_TIERS.get(rate_tier, RATE_TIERS["free"])
@@ -63,14 +71,18 @@ async def check_rate_limit(request: Request, key_meta: dict) -> dict:
     bucket_key = f"ratelimit:{key_id}"
     now = time.time()
 
-    result = await redis.eval(
-        TOKEN_BUCKET_SCRIPT,
-        1,
-        bucket_key,
-        tier_config["max_tokens"],
-        tier_config["refill_rate"],
-        now,
-    )
+    try:
+        result = await redis.eval(
+            TOKEN_BUCKET_SCRIPT,
+            1,
+            bucket_key,
+            tier_config["max_tokens"],
+            tier_config["refill_rate"],
+            now,
+        )
+    except RedisError as exc:
+        logger.warning("Rate limiter unavailable", error_type=type(exc).__name__)
+        raise redis_unavailable() from exc
 
     allowed, remaining, retry_after = result
 

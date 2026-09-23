@@ -413,6 +413,15 @@ class TestReadinessVisibility:
                 if not self.available:
                     raise ConnectionError("redis down")
 
+            async def set(self, *_args, **_kwargs):
+                return True
+
+            async def get(self, *_args):
+                return "ready"
+
+            async def eval(self, *_args):
+                return [1, 0, 1]
+
         redis = Redis()
         app.state.redis = redis
         db = {"available": False}
@@ -518,12 +527,28 @@ def test_readyz_recovers_when_redis_was_down_at_startup(monkeypatch):
         return True
 
     class Redis:
-        calls = 0
+        available = False
 
         async def ping(self):
-            self.calls += 1
-            if self.calls == 1:
-                raise ConnectionError("redis unavailable")
+            if not self.available:
+                from redis.exceptions import ConnectionError as RedisConnectionError
+
+                raise RedisConnectionError("redis unavailable")
+
+        async def set(self, *_args, **_kwargs):
+            return True
+
+        async def get(self, key):
+            if not self.available:
+                from redis.exceptions import ConnectionError as RedisConnectionError
+
+                raise RedisConnectionError("redis unavailable")
+            if key == "apikey:readyz":
+                return "ready"
+            return '{"key_id":"test","scopes":["blur:read"],"rate_tier":"free"}'
+
+        async def eval(self, *_args):
+            return [1, 0, 1]
 
         async def aclose(self):
             pass
@@ -531,7 +556,70 @@ def test_readyz_recovers_when_redis_was_down_at_startup(monkeypatch):
     redis = Redis()
     monkeypatch.setattr("redis.asyncio.from_url", lambda *_args, **_kwargs: redis)
     with TestClient(create_app()) as client:
+        assert client.get("/api/v1/health").status_code == 200
+        assert client.get("/api/v1/health/readyz").status_code == 503
+        path = "/api/v1/blur/detect"
+        headers = {"X-API-Key": "test"}
+        assert client.post(path, headers=headers).status_code == 503
+        redis.available = True
         assert client.get("/api/v1/health/readyz").status_code == 200
+        assert client.post(path, headers=headers).status_code == 422
+
+
+def test_readyz_requires_redis_auth_and_limiter_commands(monkeypatch):
+    from src.config import Settings
+    from src.main import create_app
+    from src.ml.registry import ModelRegistry
+    from src.utils.timeout import start_timeout_executor
+
+    start_timeout_executor()
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+    registry = ModelRegistry()
+    registry._profile = "blur"
+    registry._models = {
+        "blur": object(), "blur_classifier": SimpleNamespace(session=object())
+    }
+    app.state.model_registry = registry
+
+    class Redis:
+        fail_at = None
+
+        async def ping(self):
+            return True
+
+        async def set(self, *_args, **_kwargs):
+            if self.fail_at == "set":
+                raise ConnectionError("set unavailable")
+            return True
+
+        async def get(self, *_args):
+            if self.fail_at == "get":
+                raise ConnectionError("get unavailable")
+            return "ready"
+
+        async def eval(self, *_args):
+            if self.fail_at == "eval":
+                raise ConnectionError("eval unavailable")
+            return [1, 0, 1]
+
+    redis = Redis()
+    app.state.redis = redis
+
+    async def healthy_db():
+        return True
+
+    monkeypatch.setattr("src.db.session.check_db_health", healthy_db)
+    client = TestClient(app)
+    assert client.get("/api/v1/health/readyz").status_code == 200
+    for command in ("set", "get", "eval"):
+        redis.fail_at = command
+        assert client.get("/api/v1/health/readyz").status_code == 503
+        assert client.get("/api/v1/health").status_code == 200
+    redis.fail_at = None
+    assert client.get("/api/v1/health/readyz").status_code == 200
 
 
 @pytest.mark.asyncio

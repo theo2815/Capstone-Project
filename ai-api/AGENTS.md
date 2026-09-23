@@ -302,7 +302,7 @@ Training images live in `Training-Images/` (gitignored). Model artifacts live in
 | Service | Purpose | Required for |
 |---------|---------|-------------|
 | PostgreSQL 16 + pgvector | Jobs, webhook subscriptions, persons, face embeddings, API keys | All features |
-| Redis 7 | Celery broker/backend, rate limiting, API key cache | All features (rate limiting and caching degrade gracefully if absent) |
+| Redis 7 | Celery broker/backend, rate limiting, API key cache | All features (authenticated requests return 503 while Redis is unavailable) |
 | Celery worker | Async task execution | Batch / mega endpoints and webhooks |
 | Blob store volume | `BLOB_STORE_PATH` (default `/tmp/quickpitik-blobs`) — shared between API and workers | Batch / mega endpoints |
 

@@ -80,9 +80,9 @@ On 429 responses these same headers are set, plus `Retry-After: <seconds>`.
 
 Each API key is capped at `MAX_ACTIVE_JOBS_PER_KEY` (default 10) concurrent async jobs. Submitting past that returns `429 TOO_MANY_JOBS` until earlier jobs complete.
 
-### No Redis fallback
+### Redis outages
 
-If Redis is unavailable, rate limiting is **disabled** (not enforced). This is a deliberate choice for development convenience. In production, Redis should always be available.
+If Redis cannot serve authentication cache or rate-limit commands, authenticated requests return 503 with `Retry-After: 1`; readiness returns 503 while liveness stays available. The pooled Redis client reconnects after recovery. Cached key metadata expires after 300 seconds; invalidate its cache entry when revoking a key to close that window immediately.
 
 ---
 
