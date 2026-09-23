@@ -2,7 +2,7 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.entity.User
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.EmailService
+import com.quickpitik.service.email.EmailService
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.util.Optional

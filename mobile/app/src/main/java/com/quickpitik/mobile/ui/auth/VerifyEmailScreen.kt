@@ -20,10 +20,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,52 +33,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.isPhotographerRole
-import com.quickpitik.mobile.data.remote.RetrofitClient
-import com.quickpitik.mobile.data.remote.VerifyEmailRequest
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Slate
 
-enum class VerifyEmailState {
-    Loading, Success, Error
-}
-
 @Composable
 fun VerifyEmailScreen(
+    viewModel: AuthViewModel,
     token: String?,
     onNavigateToLogin: () -> Unit,
     onNavigateToDashboard: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
-    // rememberSaveable + requestFired: the token is one-shot server-side.
-    // Plain remember would reset on rotation/process death, re-fire the
-    // LaunchedEffect, and turn a real success into "Verification Failed"
-    // (the website guards the same hazard with a useRef).
-    var uiState by rememberSaveable { mutableStateOf(VerifyEmailState.Loading) }
-    var errorMessage by rememberSaveable { mutableStateOf("") }
-    var requestFired by rememberSaveable { mutableStateOf(false) }
-
-    LaunchedEffect(token) {
-        if (requestFired) return@LaunchedEffect
-        requestFired = true
-        if (token.isNullOrBlank()) {
-            errorMessage = "Invalid or missing verification token."
-            uiState = VerifyEmailState.Error
-            return@LaunchedEffect
-        }
-        try {
-            val response = RetrofitClient.apiService.verifyEmail(VerifyEmailRequest(token))
-            if (response.success) {
-                uiState = VerifyEmailState.Success
-            } else {
-                errorMessage = response.error ?: "Verification failed."
-                uiState = VerifyEmailState.Error
-            }
-        } catch (e: Exception) {
-            errorMessage = e.localizedMessage ?: "A network error occurred."
-            uiState = VerifyEmailState.Error
-        }
-    }
+    // Asking on every entry is safe: the token is one-shot server-side, and
+    // AuthViewModel sends it once and keeps the answer across rotation and
+    // process death (the website guards the same hazard with a useRef).
+    val key = token.orEmpty()
+    LaunchedEffect(key) { viewModel.verifyEmail(key) }
+    val links by viewModel.emailLinks.collectAsState()
 
     Column(
         modifier = Modifier
@@ -89,8 +60,8 @@ fun VerifyEmailScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        when (uiState) {
-            VerifyEmailState.Loading -> {
+        when (val state = links[key]) {
+            null -> {
                 CircularProgressIndicator(color = Ink)
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
@@ -99,7 +70,7 @@ fun VerifyEmailScreen(
                     fontSize = 16.sp
                 )
             }
-            VerifyEmailState.Success -> {
+            is EmailLinkState.Success -> {
                 Icon(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = "Success",
@@ -140,7 +111,9 @@ fun VerifyEmailScreen(
                     Text("Continue", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
-            VerifyEmailState.Error -> {
+            is EmailLinkState.Error -> {
+                // Signed in, the exit goes back to the screen the link opened over.
+                val signedIn = remember { SessionManager.getInstance(context).getAccessToken() != null }
                 Icon(
                     imageVector = Icons.Default.Warning,
                     contentDescription = "Error",
@@ -156,7 +129,7 @@ fun VerifyEmailScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = errorMessage,
+                    text = state.message,
                     color = Slate,
                     fontSize = 16.sp,
                     textAlign = TextAlign.Center
@@ -170,7 +143,7 @@ fun VerifyEmailScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Bone),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Return to Login", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (signedIn) "Go back" else "Return to Login", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

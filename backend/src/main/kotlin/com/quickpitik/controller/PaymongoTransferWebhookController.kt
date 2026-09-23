@@ -1,7 +1,9 @@
 package com.quickpitik.controller
 
+import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.dto.orders.PaymongoTransferWebhookEvent
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.PaymongoSignatureVerifier
 import com.quickpitik.service.disbursement.PayoutDisbursementWebhookService
 import jakarta.servlet.http.HttpServletRequest
@@ -26,11 +28,14 @@ class PaymongoTransferWebhookController(
     @PostMapping("/paymongo-transfers")
     fun handle(
         request: HttpServletRequest,
-        @RequestBody rawBody: String,
+        @RequestBody(required = false) rawBody: String?,
     ): Map<String, Any?> {
         verifier.verify(request)
-        return service.handle(
-            objectMapper.readValue(rawBody, PaymongoTransferWebhookEvent::class.java),
-        )
+        val body = try {
+            objectMapper.readValue(rawBody ?: "", PaymongoTransferWebhookEvent::class.java)
+        } catch (_: JsonProcessingException) {
+            throw ValidationException("Invalid webhook payload.")
+        }
+        return service.handle(body)
     }
 }

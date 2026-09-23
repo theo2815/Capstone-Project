@@ -5,6 +5,7 @@ import { formatPrice } from "@/lib/utils";
 
 interface AdminRefundConfirmModalProps {
   open: boolean;
+  submitting?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
   amount: number;
@@ -18,6 +19,7 @@ interface AdminRefundConfirmModalProps {
 // intact (state lives in the action-aside, not in either modal).
 export function AdminRefundConfirmModal({
   open,
+  submitting = false,
   onCancel,
   onConfirm,
   amount,
@@ -27,6 +29,7 @@ export function AdminRefundConfirmModal({
   return (
     <AdminConfirmModal
       open={open}
+      submitting={submitting}
       onClose={onCancel}
       onConfirm={onConfirm}
       title="Confirm refund"
@@ -42,8 +45,8 @@ export function AdminRefundConfirmModal({
         <span className="text-ink">@{runnerHandle}</span>?
       </p>
       <p className="font-sans text-sm text-slate">
-        The original payment method is credited automatically. The dispute
-        closes as resolved.
+        The refund goes to the original payment method when the provider confirms it.
+        The dispute then closes.
       </p>
     </AdminConfirmModal>
   );

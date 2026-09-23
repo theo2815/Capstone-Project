@@ -1,4 +1,4 @@
-import type { EventState, ListEvent } from "@/app/events/events-browser";
+import type { EventState, ListEvent } from "@/types/event";
 import type {
   PendingPricingChange,
   PhotographerEventSummary,

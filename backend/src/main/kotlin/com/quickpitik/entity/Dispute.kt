@@ -125,3 +125,7 @@ class Dispute(
         get() = resolutionWire?.let { DisputeResolution.fromWire(it) }
         set(value) { resolutionWire = value?.wire }
 }
+
+private val UNSETTLED_REFUND_STATUSES = setOf("requesting", "pending", "processing", "manual_review")
+
+fun Dispute.refundNeedsReconciliation(): Boolean = refundStatus in UNSETTLED_REFUND_STATUSES

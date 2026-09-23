@@ -5,6 +5,7 @@ import { formatPrice } from "@/lib/utils";
 
 interface AdminPayoutBulkApproveModalProps {
   open: boolean;
+  submitting?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
   count: number;
@@ -12,11 +13,11 @@ interface AdminPayoutBulkApproveModalProps {
 }
 
 // Bulk-approve confirmation. No note field — approval is a positive
-// action that doesn't need explanation. The mock loop just transitions
-// each cycle's status; Phase F backend will atomically batch the same set
-// of payout-id mutations.
+// action that doesn't need explanation. Per-cycle outcomes come from the
+// backend; a successful first approval can still require a second admin.
 export function AdminPayoutBulkApproveModal({
   open,
+  submitting = false,
   onCancel,
   onConfirm,
   count,
@@ -25,6 +26,7 @@ export function AdminPayoutBulkApproveModal({
   return (
     <AdminConfirmModal
       open={open}
+      submitting={submitting}
       onClose={onCancel}
       onConfirm={onConfirm}
       title="Approve payouts"

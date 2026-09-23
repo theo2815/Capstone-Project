@@ -1,5 +1,6 @@
 package com.quickpitik.controller
 
+import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.earnings.EarningsOverviewDto
 import com.quickpitik.dto.earnings.PayoutBalanceDto
@@ -75,10 +76,13 @@ class MePhotographerEarningsController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @RequestParam(required = false) cycleId: String?,
         @RequestParam(required = false) status: String?,
-    ): List<PayoutReportDto> = payoutReportService.list(
+        @RequestParam(required = false) offset: Int?,
+        @RequestParam(required = false) limit: Int?,
+    ): PaginatedResponse<PayoutReportDto> = payoutReportService.list(
         photographerId = principal.userId,
         cycleId = cycleId?.takeIf { it.isNotBlank() },
         statusWire = status?.takeIf { it.isNotBlank() },
+        params = PaginationParams.of(offset, limit),
     )
 
     // ─── Photographer-initiated payout requests ────────────────────────

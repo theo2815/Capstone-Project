@@ -4,7 +4,8 @@ import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { Slab } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
-import { useAdminDisputeView } from "@/lib/admin-dispute-view";
+import { useAdminDisputeView } from "@/hooks/use-admin-dispute-view";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { AdminDisputeActionAside } from "@/components/admin/admin-dispute-action-aside";
 import { AdminDisputeActivityList } from "@/components/admin/admin-dispute-activity-list";
 import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
@@ -13,7 +14,6 @@ import {
   DISPUTE_RESOLUTION_LABEL,
   type DisputeStatus,
 } from "@/lib/admin-disputes";
-import { getEventById } from "@/lib/event-catalog";
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
@@ -47,20 +47,26 @@ const PAYMENT_LABEL: Record<string, string> = {
   grabpay: "GrabPay",
 };
 
-// Phase 2b — dispute detail page. Mirrors the photographer-detail
-// layout: hero + 5 content slabs on the left, sticky action aside on
-// lg right column. Activity slab pulls from useAdminDisputeStore.log
-// via <AdminDisputeActivityList>.
+// Queue and detail share backend-confirmed dispute records and activity.
 export default function AdminDisputeDetailPage() {
   const params = useParams<{ id: string }>();
   const disputeId = params.id;
-  const view = useAdminDisputeView(disputeId);
+  const query = useAdminDisputeView(disputeId);
 
-  if (!view) notFound();
+  if (query.isPending) return <p role="status">Loading dispute…</p>;
+  if (query.isError) return (
+    <div role="alert" className="space-y-4">
+      <BackLink />
+      <p>Couldn&apos;t load this dispute.</p>
+      <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void query.refetch()}>
+        Try again
+      </button>
+    </div>
+  );
+  if (!query.data) notFound();
 
-  const { dispute, photographerName, decisions } = view;
-  const event = getEventById(dispute.eventId);
-  const eventName = event?.name ?? `Event ${dispute.eventId}`;
+  const { dispute, photographerName } = query.data;
+  const eventName = dispute.eventName ?? `Event ${dispute.eventId}`;
   const cover = syntheticCoverGradient(dispute.id);
   const paymentLabel =
     PAYMENT_LABEL[dispute.orderSnapshot.paymentMethod] ??
@@ -171,7 +177,7 @@ export default function AdminDisputeDetailPage() {
           </Slab>
 
           <Slab id="activity" number="05" title="Activity" caption="Decision log">
-            {dispute.status !== "open" && decisions.length === 0 && (
+            {(dispute.status === "resolved" || dispute.status === "denied") && !dispute.activity?.length && (
               <ResolutionNote
                 resolution={dispute.resolution}
                 refundAmount={dispute.refundAmount}
@@ -179,7 +185,6 @@ export default function AdminDisputeDetailPage() {
               />
             )}
             <AdminDisputeActivityList
-              disputeId={dispute.id}
               activity={dispute.activity}
             />
           </Slab>

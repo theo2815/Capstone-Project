@@ -8,8 +8,10 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.PasswordValidator
-import com.quickpitik.service.RefreshTokenService
+import com.quickpitik.service.auth.LoginAttemptService
+import com.quickpitik.service.auth.PasswordValidator
+import com.quickpitik.service.auth.RefreshTokenService
+import com.quickpitik.service.auth.throwAccountLocked
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -35,6 +37,7 @@ class ProfileService(
     private val passwordEncoder: PasswordEncoder,
     private val refreshTokenService: RefreshTokenService,
     private val userDtoMapper: UserDtoMapper,
+    private val loginAttemptService: LoginAttemptService,
 ) {
     fun updateName(userId: UUID, request: ProfileUpdateRequest): UserDto {
         val name = request.name.trim()
@@ -72,7 +75,10 @@ class ProfileService(
                 message = "Enter your current password or verify your email through password reset",
             )
         }
-        if (!passwordEncoder.matches(request.currentPassword, user.passwordHash)) {
+        val passwordMatches = passwordEncoder.matches(request.currentPassword, user.passwordHash)
+        loginAttemptService.lockRemaining(user)?.let(::throwAccountLocked)
+        if (!passwordMatches) {
+            loginAttemptService.recordFailure(user.id)
             throw UnauthorizedException(
                 code = ErrorCodes.INVALID_CREDENTIALS,
                 message = "Current password is incorrect",

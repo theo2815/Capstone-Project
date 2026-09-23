@@ -83,7 +83,7 @@ class CameraConnectionManager(context: Context) {
             ?: devices.filter(::isCamera).sortedBy { it.deviceName }.firstOrNull()
         if (camera == null) {
             clearSelection()
-            _state.value = if (devices.any { it.vendorId in setOf(0x04a9, 0x04b0, 0x054c, 0x04cb, 0x04da) })
+            _state.value = if (devices.any { it.vendorId in UsbPtpInterfaces.cameraVendors })
                 CameraConnectionState.Unavailable("The attached device has no usable PTP USB interface. Select PTP/MTP or a supported PC tether mode; storage and webcam modes cannot transfer photos here.")
                 else CameraConnectionState.Disconnected
             return

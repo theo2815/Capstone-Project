@@ -20,7 +20,7 @@ import type { PaginatedResponse } from "@/types/api";
 //        → PaginatedResponse<PerEventEarning>
 //   GET  /api/v1/me/photographer/payouts?offset=&limit=                  → PaginatedResponse<PhotographerPayout>
 //   POST /api/v1/me/photographer/payouts/{id}/report { reason, note? }   → PayoutReport
-//   GET  /api/v1/me/photographer/payouts/reports?cycleId=&status=        → PayoutReport[]
+//   GET  /api/v1/me/photographer/payouts/reports?cycleId=&status=&offset=&limit= → PaginatedResponse<PayoutReport>
 //   GET  /api/v1/me/photographer/billing/transactions?offset=&limit=
 //        → PaginatedResponse<PhotographerTransaction> & { monthTotals: Record<string, number> }
 //
@@ -38,10 +38,10 @@ export const BE_MAX_LIMIT = 200;
 
 // ───────────────────────────────────────────── Earnings overview
 
-export async function fetchPhotographerEarnings(): Promise<
+export async function fetchPhotographerEarnings(signal?: AbortSignal): Promise<
   PhotographerEarnings | null
 > {
-  return api.get<PhotographerEarnings>("/me/photographer/earnings");
+  return api.get<PhotographerEarnings>("/me/photographer/earnings", { signal });
 }
 
 export interface PerEventEarning {
@@ -63,6 +63,7 @@ export interface PerEventEarningsArgs {
 // terminal label to hedge with "the 200 most recent".
 export async function fetchPerEventEarnings(
   args: PerEventEarningsArgs = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<PerEventEarning>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
@@ -72,6 +73,7 @@ export async function fetchPerEventEarnings(
   p.set("limit", String(args.limit ?? BE_MAX_LIMIT));
   return api.get<PaginatedResponse<PerEventEarning>>(
     `/me/photographer/earnings/per-event?${p.toString()}`,
+    { signal },
   );
 }
 
@@ -80,6 +82,7 @@ export async function fetchPerEventEarnings(
 // Envelope, not just `items` — same reason as fetchPerEventEarnings above.
 export async function fetchPhotographerPayouts(
   args: { offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<PhotographerPayout>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
@@ -88,6 +91,7 @@ export async function fetchPhotographerPayouts(
   p.set("limit", String(args.limit ?? BE_MAX_LIMIT));
   return api.get<PaginatedResponse<PhotographerPayout>>(
     `/me/photographer/payouts?${p.toString()}`,
+    { signal },
   );
 }
 
@@ -113,13 +117,15 @@ export interface PhotographerPayoutReportsArgs {
 
 export async function fetchPhotographerPayoutReports(
   args: PhotographerPayoutReportsArgs = {},
-): Promise<PayoutReport[] | null> {
+): Promise<PayoutReport[]> {
   const p = new URLSearchParams();
   if (args.cycleId) p.set("cycleId", args.cycleId);
   if (args.status) p.set("status", args.status);
-  return api.get<PayoutReport[]>(
+  // First page only (backend default 50) — reports are rare per photographer.
+  const res = await api.get<PaginatedResponse<PayoutReport>>(
     `/me/photographer/payouts/reports?${p.toString()}`,
   );
+  return res.items;
 }
 
 // ───────────────────────────────────────────── Payout requests
@@ -154,8 +160,8 @@ export interface PayoutBalanceResponse {
   primaryAccount: PayoutBalancePrimaryAccount | null;
 }
 
-export async function fetchPhotographerPayoutBalance(): Promise<PayoutBalanceResponse | null> {
-  return api.get<PayoutBalanceResponse>("/me/photographer/payouts/balance");
+export async function fetchPhotographerPayoutBalance(signal?: AbortSignal): Promise<PayoutBalanceResponse | null> {
+  return api.get<PayoutBalanceResponse>("/me/photographer/payouts/balance", { signal });
 }
 
 export async function requestPhotographerPayout(): Promise<PhotographerPayout> {
@@ -180,6 +186,7 @@ export interface TransactionsResponse {
 
 export async function fetchPhotographerTransactions(
   args: { offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
 ): Promise<TransactionsResponse> {
   const offset = args.offset ?? 0;
   // Pre-fetch up to BE MAX_LIMIT (200) so the Hybrid Load-More UI has rows
@@ -194,5 +201,6 @@ export async function fetchPhotographerTransactions(
   p.set("limit", String(limit));
   return api.get<TransactionsResponse>(
     `/me/photographer/billing/transactions?${p.toString()}`,
+    { signal },
   );
 }

@@ -152,7 +152,7 @@ object PhotoDownloader {
     }
 
     // filename*=UTF-8''… (RFC 5987) preferred; falls back to filename="…".
-    private fun parseContentDispositionFilename(disposition: String?): String? {
+    internal fun parseContentDispositionFilename(disposition: String?): String? {
         if (disposition.isNullOrBlank()) return null
         Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE).find(disposition)?.let { m ->
             return runCatching { java.net.URLDecoder.decode(m.groupValues[1].trim(), "UTF-8") }.getOrNull()

@@ -6,6 +6,8 @@ import com.quickpitik.mobile.data.remote.EventDetailDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerProfileDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.apiCall
+import com.quickpitik.mobile.data.remote.uiMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -59,32 +61,24 @@ class PublicPhotographerViewModel : ViewModel() {
     fun fetchPublicProfile(handle: String) {
         viewModelScope.launch {
             _publicProfileState.value = PublicProfileState.Loading
-            try {
-                val response = RetrofitClient.apiService.getPublicPhotographerProfile(handle)
-                if (response.success && response.data != null) {
-                    _publicProfileState.value = PublicProfileState.Success(response.data)
-                } else {
-                    _publicProfileState.value = PublicProfileState.Error(response.error ?: "Failed to load profile.")
-                }
-            } catch (e: Exception) {
-                _publicProfileState.value = PublicProfileState.Error(RetrofitClient.parseError(e))
-            }
+            apiCall("Failed to load profile.") {
+                RetrofitClient.apiService.getPublicPhotographerProfile(handle)
+            }.fold(
+                onSuccess = { _publicProfileState.value = PublicProfileState.Success(it) },
+                onFailure = { _publicProfileState.value = PublicProfileState.Error(it.uiMessage) },
+            )
         }
     }
 
     fun fetchProfileEventPhotos(handle: String, slug: String) {
         viewModelScope.launch {
             _profileEventPhotosState.value = ProfileEventPhotosState.Loading
-            try {
-                val response = RetrofitClient.apiService.getPublicPhotographerEventPhotos(handle, slug)
-                if (response.success && response.data != null) {
-                    _profileEventPhotosState.value = ProfileEventPhotosState.Success(response.data.items)
-                } else {
-                    _profileEventPhotosState.value = ProfileEventPhotosState.Error(response.error ?: "Failed to load photos.")
-                }
-            } catch (e: Exception) {
-                _profileEventPhotosState.value = ProfileEventPhotosState.Error(RetrofitClient.parseError(e))
-            }
+            apiCall("Failed to load photos.") {
+                RetrofitClient.apiService.getPublicPhotographerEventPhotos(handle, slug)
+            }.fold(
+                onSuccess = { _profileEventPhotosState.value = ProfileEventPhotosState.Success(it.items) },
+                onFailure = { _profileEventPhotosState.value = ProfileEventPhotosState.Error(it.uiMessage) },
+            )
         }
     }
 }

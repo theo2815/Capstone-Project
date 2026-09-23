@@ -2,6 +2,7 @@ package com.quickpitik.service.events
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -49,6 +50,13 @@ class EventCoverService(
             throw ValidationException(
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
                 message = "cover must be jpeg, png, or webp",
+                field = "cover",
+            )
+        }
+        if (ImagePixelGuard.exceedsPixelBudget(file)) {
+            throw ValidationException(
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Image dimensions exceed the supported maximum.",
                 field = "cover",
             )
         }

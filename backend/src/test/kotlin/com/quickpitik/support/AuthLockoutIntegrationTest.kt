@@ -3,14 +3,22 @@ package com.quickpitik.support
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.RegisterRequest
+import com.quickpitik.entity.AdminMfa
 import com.quickpitik.entity.Role
+import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
+import com.quickpitik.repository.AdminMfaRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.AuthService
+import com.quickpitik.service.admin.MfaSecretCipher
+import com.quickpitik.service.admin.TotpService
+import com.quickpitik.service.auth.AuthService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.security.authentication.BadCredentialsException
+import org.springframework.security.crypto.password.PasswordEncoder
+import java.time.Duration
 import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -40,6 +48,18 @@ class AuthLockoutIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var userRepository: UserRepository
+
+    @Autowired
+    private lateinit var adminMfaRepository: AdminMfaRepository
+
+    @Autowired
+    private lateinit var mfaSecretCipher: MfaSecretCipher
+
+    @Autowired
+    private lateinit var totpService: TotpService
+
+    @Autowired
+    private lateinit var passwordEncoder: PasswordEncoder
 
     private lateinit var email: String
     private val password = "correct-horse-battery-staple-42"
@@ -110,6 +130,47 @@ class AuthLockoutIntegrationTest : PostgresIntegrationTest() {
         authService.login(LoginRequest(email = email, password = password))
 
         assertNull(reload().lockedUntil, "a successful login should clear the stale lock")
+    }
+
+    @Test
+    fun `MFA failures persist without deadlocking and a new challenge does not clear them`() {
+        assertTimeoutPreemptively(Duration.ofSeconds(20)) {
+            val adminEmail = "mfa-lockout-${UUID.randomUUID()}@test.local"
+            val admin = userRepository.saveAndFlush(
+                User(
+                    email = adminEmail,
+                    passwordHash = passwordEncoder.encode(password),
+                    name = "MFA Lockout Test",
+                    role = Role.ADMIN,
+                    emailVerifiedAt = OffsetDateTime.now(),
+                ),
+            )
+            val secret = totpService.randomSecret()
+            adminMfaRepository.saveAndFlush(
+                AdminMfa(userId = admin.id, secretEnc = mfaSecretCipher.encrypt(secret), enabled = true),
+            )
+            var challenge = requireNotNull(
+                authService.login(LoginRequest(email = adminEmail, password = password)).mfaToken,
+            )
+
+            repeat(4) {
+                val ex = assertFailsWith<ApiException> { authService.verifyMfa(challenge, "wrong-code") }
+                assertEquals(ErrorCodes.INVALID_MFA_CODE, ex.code)
+            }
+            assertEquals(4, requireNotNull(userRepository.findByEmail(adminEmail)).failedLoginAttempts)
+
+            challenge = requireNotNull(
+                authService.login(LoginRequest(email = adminEmail, password = password)).mfaToken,
+            )
+            assertEquals(4, requireNotNull(userRepository.findByEmail(adminEmail)).failedLoginAttempts)
+
+            val fifth = assertFailsWith<ApiException> { authService.verifyMfa(challenge, "wrong-code") }
+            assertEquals(ErrorCodes.INVALID_MFA_CODE, fifth.code)
+            assertNotNull(requireNotNull(userRepository.findByEmail(adminEmail)).lockedUntil)
+
+            val sixth = assertFailsWith<ApiException> { authService.verifyMfa(challenge, "wrong-code") }
+            assertEquals(ErrorCodes.ACCOUNT_LOCKED, sixth.code)
+        }
     }
 
     // ─── helpers ──────────────────────────────────────────────────────────

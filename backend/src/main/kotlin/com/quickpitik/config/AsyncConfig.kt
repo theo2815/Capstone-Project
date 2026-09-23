@@ -6,17 +6,21 @@ import org.springframework.core.task.TaskExecutor
 import org.springframework.scheduling.annotation.EnableAsync
 import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
+import java.time.Clock
 
 @Configuration
 @EnableAsync
 @EnableScheduling
 class AsyncConfig {
 
+    @Bean
+    fun clock(): Clock = Clock.systemUTC()
+
     // AI indexing (Rekognition / ai-api): ~9 s of pool time per photo.
     @Bean(name = ["imageProcessing"])
     fun imageProcessingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
         corePoolSize = 4
-        maxPoolSize = 8
+        maxPoolSize = corePoolSize
         // A race burst (1,000 frames in minutes) used to overflow 200 and fall
         // back to the 60 s sweep. Tasks are a photo id each — cheap to hold.
         queueCapacity = 2000
@@ -31,10 +35,27 @@ class AsyncConfig {
     // LIVE for runners (2026-09-02 scale review).
     @Bean(name = ["watermarkProcessing"])
     fun watermarkProcessingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
-        corePoolSize = 4
-        maxPoolSize = 8
+        // 2 until SubsampledDecode (P0-6) + the 2 GB limit (OPS-2) land, then back to 4
+        corePoolSize = 2
+        maxPoolSize = 2
         queueCapacity = 2000
         setThreadNamePrefix("watermark-")
+        setWaitForTasksToCompleteOnShutdown(true)
+        setAwaitTerminationSeconds(30)
+        initialize()
+    }
+
+    // Email (Resend) gets its own pool for the same reason, one failure mode
+    // further out: a Resend outage costs 3 attempts with sleeps per send, so on
+    // the shared pool a race-finish burst of receipts could occupy every
+    // indexing thread until it cleared (2026-09-11 architecture audit, P-4).
+    // Smaller than the image pools — mail volume is per order, not per photo.
+    @Bean(name = ["emailSending"])
+    fun emailSendingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
+        corePoolSize = 2
+        maxPoolSize = corePoolSize
+        queueCapacity = 1000
+        setThreadNamePrefix("email-")
         setWaitForTasksToCompleteOnShutdown(true)
         setAwaitTerminationSeconds(30)
         initialize()

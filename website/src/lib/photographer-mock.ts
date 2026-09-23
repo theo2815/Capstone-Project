@@ -110,7 +110,7 @@ export const PHOTOGRAPHER_PIPELINE: PhotographerPipeline = {
   lastUploadDisplay: null,
   lastSaleDisplay: null,
 };
-// The photographer's covered events — a subset of EVENT_CATALOG (most events
+// The photographer's covered events — a subset of the event catalog (most events
 // in the catalog are organized by other photographers / organizers in real
 // data). Listed newest-first by date.
 export const PHOTOGRAPHER_EVENTS: ReadonlyArray<PhotographerEventSummary> = [];
@@ -133,7 +133,7 @@ export function getPhotographerEventById(
 // can manually "hide" individual photos from the public gallery.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type PhotoStatus = "live" | "hidden";
+export type PhotoStatus = "live" | "hidden" | "processing";
 
 export interface PhotographerLibraryPhoto {
   id: string;

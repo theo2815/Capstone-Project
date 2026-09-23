@@ -1,6 +1,6 @@
 "use client";
 
-import type { EventState } from "@/app/events/events-browser";
+import type { EventState } from "@/types/event";
 import {
   Dropdown,
   DropdownItem,

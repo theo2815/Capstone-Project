@@ -250,11 +250,11 @@ class PhotoUploadServiceTest {
     }
 
     @Test
-    fun `direct commit refuses incomplete or oversized stored bytes before registering a photo`() {
+    fun `direct commit deletes rejected stored bytes before registering a photo`() {
         stubValidationsPass()
         val id = UUID.randomUUID()
         val key = "events/$eventId/photos/$id/original.jpg"
-        for (size in listOf(0L, 500L, 26L * 1024 * 1024)) {
+        for (size in listOf(0L, 500L, 60L * 1024 * 1024)) {
             Mockito.`when`(storageService.metadata(key)).thenReturn(StoredObject(key, size, "image/jpeg"))
             val error = assertFailsWith<ApiException> {
                 service(AiApiProperties(enabled = false)).commitDirectUpload(
@@ -264,7 +264,7 @@ class PhotoUploadServiceTest {
             assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, error.code)
         }
         Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
-        Mockito.verify(storageService, Mockito.never()).delete(anyArg())
+        Mockito.verify(storageService, Mockito.times(3)).delete(key)
     }
 
     @Test

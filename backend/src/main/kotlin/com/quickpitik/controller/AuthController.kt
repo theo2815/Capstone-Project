@@ -16,10 +16,10 @@ import com.quickpitik.dto.auth.VerifyResetOtpRequest
 import com.quickpitik.dto.auth.VerifyResetOtpResponse
 import com.quickpitik.dto.profile.EmailChangeConfirmRequest
 import com.quickpitik.security.AuthPrincipal
-import com.quickpitik.service.AuthService
-import com.quickpitik.service.EmailVerificationService
-import com.quickpitik.service.GoogleAuthService
-import com.quickpitik.service.PasswordResetService
+import com.quickpitik.service.auth.AuthService
+import com.quickpitik.service.auth.EmailVerificationService
+import com.quickpitik.service.auth.GoogleAuthService
+import com.quickpitik.service.auth.PasswordResetService
 import com.quickpitik.service.profile.EmailChangeService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter

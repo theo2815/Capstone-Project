@@ -38,10 +38,7 @@ class PaymongoWebhookService(
         return when (type) {
             "checkout_session.payment.paid" -> settleCheckoutSession(
                 checkoutSessionId = resource.id,
-                providerPaymentId = resource.attributes.payments
-                    .firstOrNull { it.attributes.status.equals("paid", ignoreCase = true) }
-                    ?.id
-                    ?: resource.attributes.payments.firstOrNull()?.id,
+                providerPaymentId = resource.attributes.payments.paidPaymentId(),
                 metadata = resource.attributes.metadata,
             )
             "payment.paid" -> settlePaymentIntent(

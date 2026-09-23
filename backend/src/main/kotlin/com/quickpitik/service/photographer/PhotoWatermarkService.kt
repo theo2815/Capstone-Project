@@ -1,14 +1,12 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.StorageProperties
-import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.WatermarkPolicy
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.image.PerceptualHash
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.PhotoPublishedEvent
 import io.micrometer.core.instrument.MeterRegistry
@@ -17,9 +15,7 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
-import java.io.ByteArrayInputStream
 import java.util.UUID
-import javax.imageio.ImageIO
 
 // Generates the watermarked derivative for one uploaded photo and flips it
 // PROCESSING → LIVE. Runs OFF the upload request (PhotoWatermarkTrigger), so
@@ -202,25 +198,6 @@ class PhotoWatermarkService(
             }
         }
         meterRegistry.counter("qp.watermark.outcome", "outcome", "live").increment()
-    }
-
-    // Registers the fingerprint for a LIVE preview that predates the phash
-    // column (V42). Driven by PhotoWatermarkTrigger.backfillPhash in bounded
-    // batches; any failure just leaves the row for the next sweep.
-    // ponytail: a row whose watermark object is gone retries every sweep; bounded by the batch.
-    fun backfillPhash(photo: Photo) {
-        val key = photo.watermarkS3Key ?: return
-        try {
-            val preview = ImageIO.read(ByteArrayInputStream(storageService.getBytes(key)))
-            if (preview == null) {
-                log.warn("Watermark object {} for photo {} is not decodable; phash left null", key, photo.id)
-                return
-            }
-            val phash = PerceptualHash.of(preview)
-            transactionTemplate.execute { photoRepository.setPhash(photo.id, phash) }
-        } catch (ex: Exception) {
-            log.warn("phash backfill failed for photo {}: {}", photo.id, ex.message)
-        }
     }
 
     private fun settleSemanticFailure(photoId: UUID, attemptsBefore: Int, reason: String) {

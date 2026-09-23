@@ -3,6 +3,7 @@ package com.quickpitik.mobile.data.remote
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.support.pointAppAt
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
@@ -20,7 +21,7 @@ class SessionAuthInterceptorTest {
         session.saveSession("token-a", "PHOTOGRAPHER", "A", "a@example.com", refreshToken = "refresh-a")
         MockWebServer().use { server ->
             server.start()
-            RetrofitClient.setBaseUrl(server.url("/").toString())
+            pointAppAt(server.url("/").toString())
             try {
                 for (code in listOf(429, 500, 503)) {
                     server.enqueue(MockResponse().setResponseCode(code))

@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.common.toCentavos
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.PublicProperties
@@ -45,7 +46,6 @@ import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerCoupon
-import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.UnauthorizedException
@@ -120,18 +120,20 @@ class OrderService(
         }
 
         val primary = pickPrimary(reservation.orders)
+        val checkoutTotalAmount = reservation.orders.fold(BigDecimal.ZERO) { sum, order -> sum + order.totalPhp }
         if (primary.status in SETTLED_ORDER_STATUSES) {
-            return toOrderResponse(primary)
+            clearCartBestEffort(userId, request.items)
+            return toOrderResponse(primary, checkoutTotalAmount)
         }
         if (primary.status == OrderStatus.EXPIRED) {
             throw checkoutConflict("This checkout expired. Start again with a new Idempotency-Key.")
         }
 
         if (paymentMethod == PaymentMethod.QRPH) {
-            return createQrPhPayment(reservation, primary, recipientEmail, userId, request.items)
+            return createQrPhPayment(reservation, primary, checkoutTotalAmount, recipientEmail, userId, request.items)
         }
 
-        resumeCheckoutUrl(primary)?.let { return toOrderResponse(primary, redirectUrl = it) }
+        resumeCheckoutUrl(primary)?.let { return toOrderResponse(primary, checkoutTotalAmount, redirectUrl = it) }
 
         // PayMongo forgets idempotency results after 24 hours. Once our
         // shorter checkout window has elapsed, an unlinked provider outcome
@@ -185,7 +187,7 @@ class OrderService(
             )
         }
         clearCartBestEffort(userId, request.items)
-        return toOrderResponse(primary, redirectUrl = checkoutUrl)
+        return toOrderResponse(primary, checkoutTotalAmount, redirectUrl = checkoutUrl)
     }
 
     private fun reserveCheckout(
@@ -407,6 +409,7 @@ class OrderService(
     private fun createQrPhPayment(
         reservation: CheckoutReservation,
         primary: Order,
+        checkoutTotalAmount: BigDecimal,
         recipientEmail: String,
         userId: UUID?,
         items: List<CreateOrderItem>,
@@ -420,9 +423,7 @@ class OrderService(
                     PaymongoPaymentIntentRequest(
                         PaymongoPaymentIntentRequestEnvelope(
                             PaymongoPaymentIntentRequestAttributes(
-                                amount = reservation.orders.fold(BigDecimal.ZERO) { sum, order ->
-                                    sum + order.totalPhp
-                                }.multiply(BigDecimal(100)).longValueExact(),
+                                amount = checkoutTotalAmount.toCentavos(),
                                 description = buildSessionDescription(
                                     reservation.items.size,
                                     reservation.events.values.map { it.name },
@@ -482,11 +483,11 @@ class OrderService(
             linkQrPhIntent(reservation, intent)
             paymongoWebhookService.settlePaymentIntent(
                 intent.data.id,
-                intent.data.attributes.payments.firstOrNull()?.id,
+                intent.data.attributes.payments.paidPaymentId(),
                 intent.data.attributes.metadata,
             )
             clearCartBestEffort(userId, items)
-            return toOrderResponse(orderRepository.findById(primary.id).orElse(primary))
+            return toOrderResponse(orderRepository.findById(primary.id).orElse(primary), checkoutTotalAmount)
         }
 
         val imageUrl = intent.data.attributes.nextAction?.code?.imageUrl.orEmpty()
@@ -509,6 +510,7 @@ class OrderService(
         clearCartBestEffort(userId, items)
         return toOrderResponse(
             primary,
+            checkoutTotalAmount,
             qrPh = QrPhPaymentResponse(
                 imageUrl = imageUrl,
                 expiresAt = expiresAt,
@@ -701,7 +703,7 @@ class OrderService(
                     field = "items",
                 )
             }
-            if (photo.status != PhotoStatus.LIVE || photo.deletedAt != null) {
+            if (!photo.isSellable) {
                 // A trashed photo (deleted_at set) can't be freshly purchased,
                 // even if it lingered in a cart from before it was trashed.
                 // Existing orders/grants are untouched.
@@ -722,8 +724,8 @@ class OrderService(
         if (events.size != eventIds.size) {
             throw NotFoundException(message = "Event not found", code = ErrorCodes.EVENT_NOT_FOUND)
         }
-        events.values.firstOrNull { it.status == EventStatus.ARCHIVED }?.let { archived ->
-            throw ConflictException(message = "Event ${archived.slug} is archived", code = ErrorCodes.EVENT_ARCHIVED)
+        events.values.firstOrNull { it.status == EventStatus.ARCHIVED || it.status == EventStatus.DRAFT }?.let { event ->
+            throw ConflictException(message = "Event ${event.slug} is not published", code = ErrorCodes.EVENT_ARCHIVED)
         }
         return events
     }
@@ -737,6 +739,7 @@ class OrderService(
 
     private fun toOrderResponse(
         order: Order,
+        checkoutTotalAmount: BigDecimal,
         redirectUrl: String? = null,
         qrPh: QrPhPaymentResponse? = null,
     ): OrderResponse {
@@ -756,6 +759,7 @@ class OrderService(
                 )
             },
             totalAmount = order.totalPhp,
+            checkoutTotalAmount = checkoutTotalAmount,
             paymentMethod = order.paymentMethodWire,
             createdAt = order.createdAt,
             redirectUrl = redirectUrl,
@@ -779,7 +783,7 @@ class OrderService(
         val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber?.let { "BIB $it" } ?: "Untagged"
         PaymongoLineItem(
             name = "Race photo - $bib".take(120),
-            amount = item.pricePhpAtPurchase.subtract(item.discountPhp).multiply(BigDecimal(100)).toLong(),
+            amount = item.pricePhpAtPurchase.subtract(item.discountPhp).toCentavos(),
             description = events[photo.eventId]?.name?.take(120),
         )
     }

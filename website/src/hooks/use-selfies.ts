@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { fetchSelfies } from "@/lib/api-selfies";
-import { useAuthStore } from "@/store/auth-store";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import type { SelfieRef } from "@/store/user-media-store";
 
 // Gated on auth: `GET /me/selfies` is auth-required, so firing it for a
@@ -15,17 +15,17 @@ export function useSelfiesList(): {
   isLoading: boolean;
   error: unknown;
 } {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const session = usePrivateQuerySession();
   const query = useQuery<SelfieRef[]>({
-    queryKey: ["me", "selfies"],
-    queryFn: () => fetchSelfies(),
+    queryKey: ["me", "selfies", ...session.key],
+    queryFn: ({ signal }) => fetchSelfies(signal),
     staleTime: 60_000,
-    enabled: isAuthenticated,
+    enabled: session.enabled,
   });
 
   return {
     selfies: query.data ?? [],
-    isLoading: query.isPending && isAuthenticated,
+    isLoading: query.isPending && session.enabled,
     error: query.error,
   };
 }

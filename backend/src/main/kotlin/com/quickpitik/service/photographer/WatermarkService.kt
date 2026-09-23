@@ -3,6 +3,7 @@ package com.quickpitik.service.photographer
 import com.quickpitik.service.image.ExifOrientation
 import com.quickpitik.service.image.JpegXmp
 import com.quickpitik.service.image.PerceptualHash
+import com.quickpitik.service.image.SubsampledDecode
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
@@ -122,10 +123,9 @@ class WatermarkService(
         platformMark: Boolean,
         placement: WatermarkPlacement = WatermarkPlacement.DEFAULT,
     ): MarkedPreview {
-        val source = ImageIO.read(ByteArrayInputStream(input))
+        val source = SubsampledDecode.readForLongEdge(input, MAX_LONG_EDGE)
             ?: throw IllegalArgumentException("Unreadable image bytes")
-        val upright = ExifOrientation.apply(source, ExifOrientation.read(input))
-        val target = scaleToLongEdge(upright, MAX_LONG_EDGE)
+        val target = ExifOrientation.apply(scaleToLongEdge(source, MAX_LONG_EDGE), ExifOrientation.read(input))
         val watermark = watermarkImage?.let {
             ImageIO.read(ByteArrayInputStream(it))
                 ?: throw IllegalArgumentException("Unreadable watermark image bytes")

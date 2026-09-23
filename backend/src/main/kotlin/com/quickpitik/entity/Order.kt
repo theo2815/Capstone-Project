@@ -64,10 +64,13 @@ class Order(
     @Column(name = "token_expires_at", nullable = false)
     var tokenExpiresAt: OffsetDateTime = OffsetDateTime.now().plusDays(90),
 
-    // Stamped after the Resend receipt fires. Idempotency guard against
-    // PayMongo's retried webhook deliveries — handler checks NULL before send.
+    // Claim timestamp set before Resend. Delivery is recorded separately so a
+    // process death between claim and send can be recovered by the stale sweep.
     @Column(name = "email_sent_at")
     var emailSentAt: OffsetDateTime? = null,
+
+    @Column(name = "receipt_delivered_at")
+    var receiptDeliveredAt: OffsetDateTime? = null,
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),

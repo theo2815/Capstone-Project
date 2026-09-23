@@ -1,5 +1,7 @@
 "use client";
 
+import { captureAuthSession } from "@/lib/auth-session";
+import type { User } from "@/types/user";
 import Link from "next/link";
 import { useState, type ChangeEvent } from "react";
 import { useAuth } from "@/hooks/use-auth";
@@ -22,6 +24,11 @@ const PREVIEW_PX = 256;
 
 export function AvatarSlab() {
   const { user } = useAuth();
+  const sessionVersion = useAuthStore((s) => s.sessionVersion);
+  return user ? <SessionAvatarSlab key={sessionVersion} user={user} /> : null;
+}
+
+function SessionAvatarSlab({ user }: { user: User }) {
   const setUser = useAuthStore((s) => s.setUser);
   const storeAvatar = useUserMediaStore((s) => s.avatar);
   const setAvatar = useUserMediaStore((s) => s.setAvatar);
@@ -36,14 +43,13 @@ export function AvatarSlab() {
     previewUrl: string;
   } | null>(null);
 
-  if (!user) return null;
-
   const hasAvatar = !!user.avatarUrl;
 
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (!file || busy) return;
+    const isCurrent = captureAuthSession();
 
     const validationError = validateImageFile(file);
     if (validationError) {
@@ -55,17 +61,20 @@ export function AvatarSlab() {
     setError(null);
     try {
       const previewUrl = await squareCropToDataUrl(file, PREVIEW_PX);
+      if (!isCurrent()) return;
       setPending({ file, previewUrl });
     } catch {
+      if (!isCurrent()) return;
       setPending(null);
       setError("Could not read this image. Try another.");
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   async function handleConfirm() {
-    if (!pending) return;
+    if (!pending || busy) return;
+    const isCurrent = captureAuthSession();
     setBusy(true);
     setError(null);
     try {
@@ -73,36 +82,44 @@ export function AvatarSlab() {
       // authoritative 512x512 crop and sending the downscale would ship a
       // visibly softer avatar.
       const updated = await uploadAvatar(pending.file);
+      if (!isCurrent()) return;
       setUser(updated);
       if (storeAvatar) setAvatar(null);
       setPending(null);
       showToast({ kind: "success", message: "Profile picture updated." });
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError) {
         setError(err.errors[0]?.message ?? "Could not save the picture.");
       } else {
         setError("Could not process this image. Try another.");
       }
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   async function handleRemove() {
+    if (busy) return;
+    const isCurrent = captureAuthSession();
+    setBusy(true);
     setError(null);
     try {
       const updated = await deleteAvatar();
+      if (!isCurrent()) return;
       setUser(updated);
       if (storeAvatar) setAvatar(null);
+      showToast({ kind: "success", message: "Profile picture removed." });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(
         err instanceof ApiError
           ? (err.errors[0]?.message ?? "Could not remove the picture.")
           : "Could not remove the picture. Try again.",
       );
-      return;
+    } finally {
+      if (isCurrent()) setBusy(false);
     }
-    showToast({ kind: "success", message: "Profile picture removed." });
   }
 
   return (

@@ -1,4 +1,3 @@
-import type { DecisionLogEntry } from "@/store/admin-user-store";
 
 // Daily-activity series for /admin Overview's 30-day trend chart.
 // Backend serves both via `/admin/kpis/trend?days=30`. These helpers return
@@ -45,31 +44,9 @@ export function getDailyUploads30d(): DailyMetric[] {
   return emptySeries();
 }
 
-// 30-day seed for decisions. Live admin actions get merged in via
-// `mergeDecisionsWithLog` so the chart reflects the current session.
+// Zero-filled chart skeleton while the backend trend loads.
 export function getDailyDecisionsSeed30d(): DailyMetric[] {
   return emptySeries();
-}
-
-// Merge live decision log entries into a 30-day seed. Each entry that falls
-// inside the window adds 1 to its day's amount. Decisions older than the
-// window are dropped silently.
-export function mergeDecisionsWithLog(
-  seed: ReadonlyArray<DailyMetric>,
-  log: ReadonlyArray<DecisionLogEntry>,
-): DailyMetric[] {
-  if (seed.length === 0) return [];
-  const byDate = new Map<string, number>();
-  for (const day of seed) byDate.set(day.date, day.amount);
-  for (const entry of log) {
-    const iso = entry.decidedAt.slice(0, 10);
-    if (!byDate.has(iso)) continue;
-    byDate.set(iso, (byDate.get(iso) ?? 0) + 1);
-  }
-  return seed.map((day) => ({
-    date: day.date,
-    amount: byDate.get(day.date) ?? day.amount,
-  }));
 }
 
 // Sum helper — used by the chart caption.

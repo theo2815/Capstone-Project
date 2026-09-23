@@ -45,15 +45,26 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
     )
     fun sumLifetime(@Param("photographerId") photographerId: UUID): BigDecimal
 
-    // Withdrawable ("cleared") kept amount: non-refund sales that have aged past
-    // the clearing cutoff, PLUS all refund rows (refunds bite immediately — we
-    // never wait to claw back money that's been returned). Drives the payout
-    // available balance. COALESCE keeps it non-null.
+    // Withdrawable ("cleared") kept amount: undisputed sales that have aged
+    // past the clearing cutoff, PLUS all refund rows (refunds bite immediately
+    // — we never wait to claw back money that's been returned). Drives the
+    // payout available balance. COALESCE keeps it non-null.
     @Query(
         """
         SELECT COALESCE(SUM(t.amountKeptPhp), 0) FROM Transaction t
         WHERE t.photographerId = :photographerId
-          AND ((t.isRefund = false AND t.paidAt <= :cutoff) OR t.isRefund = true)
+          AND (
+            t.isRefund = true OR (
+              t.isRefund = false
+              AND t.paidAt <= :cutoff
+              AND NOT EXISTS (
+                SELECT d.id FROM Dispute d
+                WHERE d.orderId = t.orderId
+                  AND d.photoId = t.photoId
+                  AND d.statusWire IN ('open', 'escalated')
+              )
+            )
+          )
         """,
     )
     fun sumCleared(
@@ -120,8 +131,8 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
     ): BigDecimal
 
     // Coupon discounts in the window (V45), net of refunds like kept. Added
-    // back to kept before dividing by the keep rate, or the reconstructed
-    // gross — and with it the platform fee — under-reports by the discount.
+    // back to kept before subtracting from list gross, or the platform fee
+    // over-reports by the discount.
     @Query(
         """
         SELECT COALESCE(SUM(t.discountPhp), 0) FROM Transaction t
@@ -129,6 +140,33 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
         """,
     )
     fun sumDiscountsInWindow(
+        @Param("from") from: OffsetDateTime,
+        @Param("to") to: OffsetDateTime,
+    ): BigDecimal
+
+    // GMV at the list price buyers were charged from (M-16), not kept / keep
+    // rate — the rate is live config and would restate history. A refund row
+    // takes back the share of the list price it reversed: its (kept + discount)
+    // over its sale's. A refund row with no sale row (refund_of NULL) adds
+    // nothing here, as its sale never added either.
+    // ponytail: such a row still lowers the kept sum, so platform revenue
+    // over-reports by its reversal; exclude it from the kept/discount sums too
+    // if `is_refund AND refund_of IS NULL` rows ever exist in prod.
+    @Query(
+        value = """
+        SELECT ROUND(COALESCE(SUM(oi.price_php_at_purchase * CASE
+                   WHEN t.is_refund = false THEN 1
+                   ELSE (t.amount_kept_php + t.discount_php)
+                        / NULLIF(s.amount_kept_php + s.discount_php, 0)
+               END), 0), 2)
+        FROM transactions t
+        JOIN order_items oi ON oi.order_id = t.order_id AND oi.photo_id = t.photo_id
+        LEFT JOIN transactions s ON s.id = t.refund_of
+        WHERE t.paid_at >= :from AND t.paid_at < :to
+        """,
+        nativeQuery = true,
+    )
+    fun sumListGrossInWindow(
         @Param("from") from: OffsetDateTime,
         @Param("to") to: OffsetDateTime,
     ): BigDecimal
@@ -154,21 +192,6 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
         @Param("from") from: OffsetDateTime,
         @Param("to") to: OffsetDateTime,
     ): List<Array<Any>>
-
-    // Refund total in a window — only the negative-amount refund rows. The
-    // sum is positive (we negate the negatives) so the FE can render it as
-    // a peso amount without sign juggling.
-    @Query(
-        """
-        SELECT COALESCE(-SUM(t.amountKeptPhp), 0) FROM Transaction t
-        WHERE t.isRefund = true
-          AND t.paidAt >= :from AND t.paidAt < :to
-        """,
-    )
-    fun sumRefundsInWindow(
-        @Param("from") from: OffsetDateTime,
-        @Param("to") to: OffsetDateTime,
-    ): BigDecimal
 
     @Query(
         """

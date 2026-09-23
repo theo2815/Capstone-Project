@@ -7,7 +7,7 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
 import { AdminPhotographerCard } from "@/components/admin/admin-photographer-card";
 import { type AdminUserRow } from "@/lib/admin-user-registry";
-import { useAdminUsersData } from "@/lib/admin-users-data";
+import { useAdminUsers, EMPTY_ADMIN_USERS } from "@/hooks/use-admin-users";
 import { ROUTES } from "@/lib/constants";
 import {
   useQueueKeyboardNav,
@@ -19,12 +19,12 @@ import { PAGE_SIZE } from "@/lib/pagination-config";
 // Incomplete / Suspended) of <AdminPhotographerCard>s. Search box filters
 // across all slabs. Click any row to land on /admin/photographers/[handle].
 //
-// Demo loop: admin actions on the detail page write to admin-user-store
-// overrides → this directory rebuilds the merged seed and rows migrate
-// between slabs without a refresh.
-
+// Directory rows and verification status share the admin user Query cache.
 export default function AdminPhotographersPage() {
-  const { rows: effective, loading, error, refetch } = useAdminUsersData();
+  const users = useAdminUsers();
+  const effective = users.data ?? EMPTY_ADMIN_USERS;
+  const { isPending: loading, refetch } = users;
+  const error = users.error?.message;
   const [query, setQuery] = useState("");
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement | null>(null);

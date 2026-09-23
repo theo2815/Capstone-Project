@@ -2,6 +2,8 @@ package com.quickpitik.service.admin
 
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Event
@@ -11,6 +13,7 @@ import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.WatermarkPolicy
 import com.quickpitik.exception.ConflictException
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
@@ -19,17 +22,26 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.storage.StorageService
+import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.aop.framework.ProxyFactory
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
+import org.springframework.transaction.interceptor.TransactionInterceptor
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 // Admin review of photographer-owned events (V46). One approve + one reject
 // endpoint serve both queue states: an initial submission (PENDING, DRAFT)
@@ -42,6 +54,10 @@ class AdminEventServiceReviewTest {
     private lateinit var decisions: AdminDecisionLogService
     private lateinit var service: AdminEventService
     private val pushed = mutableListOf<PhotographerMessageKind>()
+    private val transactions = testTransactionTemplate()
+    private lateinit var covers: EventCoverService
+    private lateinit var provider: FaceBibProvider
+    private lateinit var aiProperties: AiApiProperties
 
     @BeforeEach
     fun setUp() {
@@ -55,17 +71,27 @@ class AdminEventServiceReviewTest {
             pushed += inv.getArgument<PhotographerMessageKind>(1)
             null
         }
-        service = AdminEventService(
+        covers = Mockito.mock(EventCoverService::class.java)
+        provider = Mockito.mock(FaceBibProvider::class.java)
+        aiProperties = Mockito.mock(AiApiProperties::class.java)
+        val target = AdminEventService(
             eventRepository,
             photoRepository,
             decisions,
-            Mockito.mock(EventDtoMapper::class.java),
-            Mockito.mock(EventCoverService::class.java),
-            Mockito.mock(FaceBibProvider::class.java),
-            AiApiProperties(enabled = false),
+            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties()),
+            covers,
+            provider,
+            aiProperties,
             Mockito.mock(PhotographerSettingsRepository::class.java),
             Mockito.mock(UserRepository::class.java),
+            transactions,
         )
+        service = ProxyFactory(target).apply {
+            addAdvice(TransactionInterceptor().apply {
+                transactionManager = transactions.transactionManager
+                transactionAttributeSource = AnnotationTransactionAttributeSource()
+            })
+        }.proxy as AdminEventService
     }
 
     @Test
@@ -212,6 +238,179 @@ class AdminEventServiceReviewTest {
         assertEquals(2, page.total)
         Mockito.verify(eventRepository, Mockito.never()).pageForAdmin(anyArg(), anyArg(), anyArg(), anyArg())
     }
+
+    @Test
+    fun `create uploads before opening the event and audit transaction`() {
+        var uploadedId: UUID? = null
+        Mockito.`when`(covers.upload(anyArg(), anyArg(), anyArg())).thenAnswer {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            Mockito.verify(eventRepository, Mockito.never()).save(anyArg())
+            uploadedId = it.getArgument(0)
+            "new-cover"
+        }
+        assertWritesTransactional()
+
+        val result = service.create(adminId, createRequest(), cover())
+
+        assertEquals(uploadedId, result.id)
+        Mockito.verify(eventRepository).save(anyArg())
+        Mockito.verify(decisions).logEventDecision(eqArg(adminId), eqArg(result.id), eqArg("event_created"), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `update uploads outside the transaction and deletes the old cover only after commit`() {
+        val event = live().apply { coverS3Key = "old-cover" }
+        var committed = false
+        var deleted = false
+        Mockito.`when`(covers.upload(eqArg(event.id), anyArg(), anyArg())).thenAnswer {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            "new-cover"
+        }
+        assertWritesTransactional { committed = true }
+        Mockito.doAnswer {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            assertTrue(committed)
+            deleted = true
+            null
+        }.`when`(covers).delete("old-cover")
+
+        val result = service.update(
+            adminId, event.id, UpdateAdminEventRequest(pricePerPhoto = BigDecimal("200")), cover(), removeCover = true,
+        )
+
+        assertTrue(deleted)
+        assertEquals("new-cover", event.coverS3Key)
+        assertEquals(BigDecimal("200.00"), result.pricePerPhoto)
+        assertEquals("set", (result.adminOverrides.single()["before"] as Map<*, *>)["cover"])
+        assertEquals("set", (result.adminOverrides.single()["after"] as Map<*, *>)["cover"])
+        Mockito.verify(photoRepository).updatePriceByEventId(event.id, BigDecimal("200.00"))
+    }
+
+    @Test
+    fun `removing a cover waits for commit and records the override`() {
+        val event = live().apply { coverS3Key = "old-cover" }
+        var committed = false
+        assertWritesTransactional { committed = true }
+        Mockito.doAnswer {
+            assertTrue(committed)
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            null
+        }.`when`(covers).delete("old-cover")
+
+        val result = service.update(adminId, event.id, UpdateAdminEventRequest(), removeCover = true)
+
+        assertNull(event.coverS3Key)
+        assertEquals("none", (result.adminOverrides.single()["after"] as Map<*, *>)["cover"])
+        Mockito.verify(covers).delete("old-cover")
+    }
+
+    @Test
+    fun `failed cover upload does not persist a new event or audit`() {
+        Mockito.`when`(covers.upload(anyArg(), anyArg(), anyArg())).thenThrow(IllegalArgumentException("bad cover"))
+
+        assertFailsWith<IllegalArgumentException> { service.create(adminId, createRequest(), cover()) }
+
+        Mockito.verify(eventRepository, Mockito.never()).save(anyArg())
+        Mockito.verifyNoInteractions(decisions)
+    }
+
+    @Test
+    fun `failed update audit preserves the old cover object`() {
+        val event = live().apply { coverS3Key = "old-cover" }
+        Mockito.`when`(covers.upload(eqArg(event.id), anyArg(), anyArg())).thenReturn("new-cover")
+        Mockito.`when`(decisions.logEventDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenThrow(IllegalStateException("audit unavailable"))
+
+        assertFailsWith<IllegalStateException> {
+            service.update(adminId, event.id, UpdateAdminEventRequest(), cover())
+        }
+
+        Mockito.verify(covers, Mockito.never()).delete("old-cover")
+    }
+
+    @Test
+    fun `delete commits its audit before best effort provider erasure`() {
+        val event = live()
+        var committed = false
+        var providerWasTransactional: Boolean? = null
+        var providerSawCommit = false
+        Mockito.`when`(aiProperties.enabled).thenReturn(true)
+        assertWritesTransactional { committed = true }
+        Mockito.doAnswer {
+            providerWasTransactional = TransactionSynchronizationManager.isActualTransactionActive()
+            providerSawCommit = committed
+            throw IllegalStateException("provider unavailable")
+        }.`when`(provider).deleteFacesByEvent(event.id)
+
+        assertTrue(service.delete(adminId, event.id).removed)
+
+        assertEquals(false, providerWasTransactional)
+        assertTrue(providerSawCommit)
+        assertNotNull(event.deletedAt)
+        assertFalse(service.delete(adminId, event.id).removed)
+        assertFalse(service.delete(adminId, UUID.randomUUID()).removed)
+        Mockito.verify(provider).deleteFacesByEvent(event.id)
+    }
+
+    @Test
+    fun `failed delete audit never erases provider faces`() {
+        val event = live()
+        Mockito.`when`(aiProperties.enabled).thenReturn(true)
+        Mockito.`when`(decisions.logEventDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenThrow(IllegalStateException("audit unavailable"))
+
+        assertFailsWith<IllegalStateException> { service.delete(adminId, event.id) }
+
+        Mockito.verifyNoInteractions(provider)
+    }
+
+    @Test
+    fun `invalid updates are rejected before uploading a cover`() {
+        val paid = live()
+        assertFailsWith<NotFoundException> {
+            service.update(adminId, UUID.randomUUID(), UpdateAdminEventRequest(), cover())
+        }
+        assertFailsWith<ValidationException> {
+            service.update(adminId, paid.id, UpdateAdminEventRequest(date = "invalid"), cover())
+        }
+        assertFailsWith<ValidationException> {
+            service.update(adminId, paid.id, UpdateAdminEventRequest(pricePerPhoto = BigDecimal.ZERO), cover())
+        }
+        val free = live().apply { pricingMode = EventPricingMode.FREE }
+        assertFailsWith<ValidationException> {
+            service.update(adminId, free.id, UpdateAdminEventRequest(pricePerPhoto = BigDecimal("100")), cover())
+        }
+        Mockito.verifyNoInteractions(covers)
+    }
+
+    @Test
+    fun `delete skips provider erasure while AI is disabled`() {
+        val event = live()
+
+        assertTrue(service.delete(adminId, event.id).removed)
+
+        Mockito.verifyNoInteractions(provider)
+    }
+
+    private fun assertWritesTransactional(onCommit: () -> Unit = {}) {
+        Mockito.`when`(eventRepository.save(anyArg())).thenAnswer {
+            assertTrue(TransactionSynchronizationManager.isActualTransactionActive())
+            TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                override fun afterCommit() = onCommit()
+            })
+            it.arguments[0]
+        }
+        Mockito.`when`(decisions.logEventDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer {
+            assertTrue(TransactionSynchronizationManager.isActualTransactionActive())
+            AdminDecisionLog(adminId = adminId, targetEventId = it.getArgument(1), decision = it.getArgument(2))
+        }
+    }
+
+    private fun createRequest() = CreateAdminEventRequest(
+        title = "Fun Run", date = "2026-10-10", location = "Cebu", pricePerPhoto = BigDecimal("150"),
+    )
+
+    private fun cover() = AdminEventService.CoverUpload(byteArrayOf(1), "image/jpeg")
 
     private fun submitted(): Event = event(EventStatus.DRAFT, EventReviewStatus.PENDING)
     private fun live(): Event = event(EventStatus.ACTIVE, EventReviewStatus.APPROVED)

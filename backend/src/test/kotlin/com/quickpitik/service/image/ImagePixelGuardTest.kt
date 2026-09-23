@@ -7,10 +7,18 @@ import javax.imageio.ImageIO
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-// Header-only decompression-bomb gate. The budget is parameterized so the
-// "over budget" case uses a real 100×100 PNG against a tiny cap instead of a
-// multi-hundred-MB fixture.
+// Header-only decompression-bomb gate. The over-budget case uses a
+// header-only production-cap fixture without allocating the declared raster.
 class ImagePixelGuardTest {
+
+    companion object {
+        // 10,000 × 8,001 = 80,010,000 pixels, above MAX_PIXELS, without
+        // allocating the declared raster.
+        fun overBudgetPngHeader(): ByteArray = byteArrayOf(
+            -119, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82,
+            0, 0, 39, 16, 0, 0, 31, 65, 8, 6, 0, 0, 0, -26, 16, 82, 64,
+        )
+    }
 
     private fun png(width: Int, height: Int): ByteArray {
         val out = ByteArrayOutputStream()
@@ -25,7 +33,7 @@ class ImagePixelGuardTest {
 
     @Test
     fun `declared dimensions over budget are rejected without a full decode`() {
-        assertTrue(ImagePixelGuard.exceedsPixelBudget(png(100, 100), maxPixels = 9_999))
+        assertTrue(ImagePixelGuard.exceedsPixelBudget(overBudgetPngHeader()))
     }
 
     @Test

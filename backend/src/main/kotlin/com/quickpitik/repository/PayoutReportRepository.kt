@@ -34,12 +34,19 @@ interface PayoutReportRepository : JpaRepository<PayoutReport, UUID> {
           AND (:statusWire IS NULL OR r.statusWire = :statusWire)
         ORDER BY r.openedAt DESC, r.id ASC
         """,
+        countQuery = """
+        SELECT COUNT(r) FROM PayoutReport r
+        WHERE r.photographerId = :photographerId
+          AND (:cycleId IS NULL OR r.payoutId = :cycleId)
+          AND (:statusWire IS NULL OR r.statusWire = :statusWire)
+        """,
     )
     fun findForPhotographer(
         @Param("photographerId") photographerId: UUID,
         @Param("cycleId") cycleId: String?,
         @Param("statusWire") statusWire: String?,
-    ): List<PayoutReport>
+        pageable: Pageable,
+    ): Page<PayoutReport>
 
     // Admin queue list — across all photographers, optional status filter.
     @Query(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
@@ -18,11 +18,8 @@ import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { PayoutAccountCard } from "@/components/admin/payout-account-card";
 import { ReadyToSendCard } from "@/components/admin/ready-to-send-card";
 import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
-import {
-  useAdminPayoutStore,
-  mergePayoutsWithOverrides,
-} from "@/store/admin-payout-store";
-import { useAdminPayouts, usePayoutActions, EMPTY_PAYOUTS } from "@/hooks/use-admin-data";
+import { useAdminPayouts, usePayoutActions, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -99,9 +96,22 @@ function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
 // drawer-footer triggers, and the bulk bar — single source of truth.
 
 export function PayoutsQueue() {
-  const overrides = useAdminPayoutStore((s) => s.overrides);
   const { approve, hold, markPaid, reject, markProcessing, markFailed, markReturned, bulkApprove, bulkHold } = usePayoutActions();
   const { showToast } = useToast();
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+
+  async function runAction(action: () => Promise<boolean>): Promise<boolean> {
+    if (submittingRef.current) return false;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      return await action();
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
@@ -117,11 +127,8 @@ export function PayoutsQueue() {
   const [rowId, setRowId] = useUrlState<string>("row", "");
 
   // Canonical server rows drive every status and available action.
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
-  const effective = useMemo(
-    () => mergePayoutsWithOverrides(serverPayouts, overrides),
-    [serverPayouts, overrides],
-  );
+  const query = useAdminPayouts();
+  const effective = query.data ?? EMPTY_PAYOUTS;
 
   const byId = useMemo(() => {
     const map = new Map<string, AdminPayoutCycle>();
@@ -135,8 +142,8 @@ export function PayoutsQueue() {
   }, [rowId, byId]);
 
   useEffect(() => {
-    if (rowId && !openRow) setRowId("");
-  }, [rowId, openRow, setRowId]);
+    if (query.isSuccess && !query.isFetching && rowId && !openRow) setRowId("");
+  }, [query.isSuccess, query.isFetching, rowId, openRow, setRowId]);
 
   useEffect(() => {
     setSelected((prev) => {
@@ -155,6 +162,7 @@ export function PayoutsQueue() {
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       if (
+        submitting ||
         bulkApproveOpen ||
         holdTarget !== null ||
         markPaidTarget !== null ||
@@ -169,6 +177,7 @@ export function PayoutsQueue() {
     return () => document.removeEventListener("keydown", onKey);
   }, [
     selected,
+    submitting,
     bulkApproveOpen,
     holdTarget,
     markPaidTarget,
@@ -249,6 +258,7 @@ export function PayoutsQueue() {
 
   const selectionActive = selected.size > 0;
   const drawerEscDisabled =
+    submitting ||
     bulkApproveOpen ||
     holdTarget !== null ||
     markPaidTarget !== null ||
@@ -309,6 +319,7 @@ export function PayoutsQueue() {
   }, [rowId, setFocusedId]);
 
   function toggleSelect(id: string) {
+    if (submittingRef.current) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -318,22 +329,25 @@ export function PayoutsQueue() {
   }
 
   function clearSelection() {
+    if (submittingRef.current) return;
     setSelected(new Set());
   }
 
   function handleRowActivate(id: string) {
+    if (submittingRef.current) return;
     setFocusedId(id);
     if (selectionActive) toggleSelect(id);
     else setRowId(id);
   }
 
   function handleOpenDrawer(id: string) {
+    if (submittingRef.current) return;
     setFocusedId(id);
     setRowId(id);
   }
 
   async function handleSingleApprove(cycle: AdminPayoutCycle) {
-    const ok = await approve(cycle.id);
+    const ok = await runAction(() => approve(cycle.id));
     if (ok) showToast({ kind: "success", message: `Approval recorded · ${cycle.id}` });
   }
   function handleSingleHoldRequest(cycle: AdminPayoutCycle) {
@@ -350,7 +364,7 @@ export function PayoutsQueue() {
   async function handleDrawerApprove() {
     if (!openRow) return;
     const id = openRow.id;
-    const ok = await approve(id);
+    const ok = await runAction(() => approve(id));
     if (ok) {
       showToast({ kind: "success", message: `Approval recorded · ${id}` });
       setRowId("");
@@ -372,7 +386,7 @@ export function PayoutsQueue() {
   // mark-processing takes no reason — fire directly. The drawer stays open
   // (a processing cycle is still actionable: mark paid / mark failed).
   async function runMarkProcessing(id: string) {
-    const ok = await markProcessing(id);
+    const ok = await runAction(() => markProcessing(id));
     if (ok) showToast({ kind: "success", message: `Processing · ${id}` });
   }
   function handleSingleMarkProcessing(cycle: AdminPayoutCycle) {
@@ -397,11 +411,11 @@ export function PayoutsQueue() {
   async function handleReasonSubmit(reason: string) {
     if (!reasonTarget) return;
     const { kind, cycle } = reasonTarget;
-    setReasonTarget(null);
     const fn =
       kind === "reject" ? reject : kind === "failed" ? markFailed : markReturned;
-    const ok = await fn(cycle.id, reason);
+    const ok = await runAction(() => fn(cycle.id, reason));
     if (ok) {
+      setReasonTarget(null);
       const label =
         kind === "reject"
           ? "Rejected"
@@ -419,10 +433,10 @@ export function PayoutsQueue() {
 
   async function handleBulkApproveConfirm() {
     const ids = Array.from(selected);
-    setBulkApproveOpen(false);
-    clearSelection();
-    const ok = await bulkApprove(ids);
+    const ok = await runAction(() => bulkApprove(ids, (failedIds) => setSelected(new Set(failedIds))));
     if (ok) {
+      setBulkApproveOpen(false);
+      clearSelection();
       showToast({
         kind: "success",
         message: `Approvals recorded · ${ids.length} payouts`,
@@ -441,10 +455,10 @@ export function PayoutsQueue() {
   async function handleHoldSubmit(reason: string) {
     if (!holdTarget) return;
     const target = holdTarget;
-    setHoldTarget(null);
     if (target.kind === "single") {
-      const ok = await hold(target.payoutId, reason);
+      const ok = await runAction(() => hold(target.payoutId, reason));
       if (ok) {
+        setHoldTarget(null);
         showToast({
           kind: "info",
           message: `Held · ${target.payoutId}`,
@@ -454,9 +468,16 @@ export function PayoutsQueue() {
         if (openRow && openRow.id === target.payoutId) setRowId("");
       }
     } else {
-      clearSelection();
-      const ok = await bulkHold(target.payoutIds, reason);
+      const ok = await runAction(() => bulkHold(target.payoutIds, reason, (failedIds) => {
+        setSelected(new Set(failedIds));
+        setHoldTarget({
+          kind: "bulk", payoutIds: failedIds,
+          totalAmount: failedIds.reduce((total, id) => total + (byId.get(id)?.amount ?? 0), 0),
+        });
+      }));
       if (ok) {
+        setHoldTarget(null);
+        clearSelection();
         showToast({
           kind: "info",
           message: `Held · ${target.payoutIds.length} payouts`,
@@ -468,9 +489,9 @@ export function PayoutsQueue() {
   async function handleMarkPaidSubmit(reference: string) {
     if (!markPaidTarget) return;
     const target = markPaidTarget;
-    setMarkPaidTarget(null);
-    const ok = await markPaid(target.id, reference);
+    const ok = await runAction(() => markPaid(target.id, reference));
     if (ok) {
+      setMarkPaidTarget(null);
       showToast({
         kind: "success",
         message: `Paid · ${target.id}`,
@@ -497,8 +518,20 @@ export function PayoutsQueue() {
       : {},
   });
 
+  if (query.isPending) {
+    return <p role="status" className="font-sans text-sm text-slate">Loading payouts…</p>;
+  }
+
   return (
     <>
+      {query.isError && (
+        <div role="alert" className="space-y-3">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load payouts. Please try again.</p>
+          <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
+            Retry
+          </button>
+        </div>
+      )}
       <PayoutSlab
         id="pending"
         number="01"
@@ -509,6 +542,7 @@ export function PayoutsQueue() {
         empty="No payouts pending review."
         selected={selected}
         selectionActive={selectionActive}
+        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -528,6 +562,7 @@ export function PayoutsQueue() {
         empty="No payouts in progress."
         selected={selected}
         selectionActive={selectionActive}
+        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -554,6 +589,7 @@ export function PayoutsQueue() {
         empty="No held payouts."
         selected={selected}
         selectionActive={selectionActive}
+        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -580,6 +616,7 @@ export function PayoutsQueue() {
         empty="No paid payouts yet."
         selected={selected}
         selectionActive={selectionActive}
+        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -606,6 +643,7 @@ export function PayoutsQueue() {
         empty="No closed payouts."
         selected={selected}
         selectionActive={selectionActive}
+        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -627,6 +665,7 @@ export function PayoutsQueue() {
         count={selected.size}
         totalAmount={totalSelected}
         approveDisabled={approveDisabled}
+        submitting={submitting}
         approveDisabledReason={approveDisabledReason}
         onApprove={() => setBulkApproveOpen(true)}
         onHold={handleBulkHoldRequest}
@@ -635,6 +674,7 @@ export function PayoutsQueue() {
 
       <AdminPayoutBulkApproveModal
         open={bulkApproveOpen}
+        submitting={submitting}
         onCancel={() => setBulkApproveOpen(false)}
         onConfirm={handleBulkApproveConfirm}
         count={selected.size}
@@ -643,6 +683,7 @@ export function PayoutsQueue() {
       {holdTarget && (
         <AdminPayoutHoldModal
           open={true}
+          submitting={submitting}
           onClose={() => setHoldTarget(null)}
           onSubmit={handleHoldSubmit}
           payoutIds={
@@ -660,6 +701,7 @@ export function PayoutsQueue() {
       {markPaidTarget && (
         <AdminPayoutMarkPaidModal
           open={true}
+          submitting={submitting}
           onClose={() => setMarkPaidTarget(null)}
           onSubmit={handleMarkPaidSubmit}
           cycle={markPaidTarget}
@@ -668,6 +710,7 @@ export function PayoutsQueue() {
       {reasonTarget && (
         <AdminPayoutReasonModal
           open={true}
+          submitting={submitting}
           kind={reasonTarget.kind}
           payoutId={reasonTarget.cycle.id}
           amount={reasonTarget.cycle.amount}
@@ -679,7 +722,7 @@ export function PayoutsQueue() {
       {openRow && (
         <AdminDetailDrawer
           open={true}
-          onClose={() => setRowId("")}
+          onClose={() => { if (!submittingRef.current) setRowId(""); }}
           escDisabled={drawerEscDisabled}
           kicker={`Payout · ${openRow.id}`}
           title={openRow.brandName ?? openRow.photographerName}
@@ -693,6 +736,7 @@ export function PayoutsQueue() {
           actions={
             <PayoutDrawerActions
               cycle={openRow}
+              submitting={submitting}
               onApprove={handleDrawerApprove}
               onHold={handleDrawerHoldRequest}
               onMarkPaid={handleDrawerMarkPaidRequest}
@@ -710,30 +754,6 @@ export function PayoutsQueue() {
   );
 }
 
-export function usePendingPayoutsCount(): number {
-  const overrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
-  return useMemo(
-    () =>
-      mergePayoutsWithOverrides(serverPayouts, overrides).filter(
-        (c) => c.status === "pending_review",
-      ).length,
-    [serverPayouts, overrides],
-  );
-}
-
-export function usePendingPayoutsTotal(): number {
-  const overrides = useAdminPayoutStore((s) => s.overrides);
-  const serverPayouts = useAdminPayouts() ?? EMPTY_PAYOUTS;
-  return useMemo(
-    () =>
-      mergePayoutsWithOverrides(serverPayouts, overrides)
-        .filter((c) => c.status === "pending_review")
-        .reduce((acc, c) => acc + c.amount, 0),
-    [serverPayouts, overrides],
-  );
-}
-
 function PayoutSlab({
   id,
   number,
@@ -744,6 +764,7 @@ function PayoutSlab({
   empty,
   selected,
   selectionActive,
+  submitting,
   focusedId,
   toggleSelect,
   onActivate,
@@ -763,6 +784,7 @@ function PayoutSlab({
   empty: string;
   selected: Set<string>;
   selectionActive: boolean;
+  submitting: boolean;
   focusedId: string | null;
   toggleSelect: (id: string) => void;
   onActivate: (id: string) => void;
@@ -798,6 +820,7 @@ function PayoutSlab({
                   cycle={row}
                   selected={selected.has(row.id)}
                   selectionActive={selectionActive}
+                  submitting={submitting}
                   focused={focusedId === row.id}
                   onToggleSelect={() => toggleSelect(row.id)}
                   onActivate={() => onActivate(row.id)}
@@ -849,6 +872,7 @@ function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
 //   paid           → Mark returned               failed/returned/rejected/cancelled → none
 function PayoutDrawerActions({
   cycle,
+  submitting,
   onApprove,
   onHold,
   onMarkPaid,
@@ -858,6 +882,7 @@ function PayoutDrawerActions({
   onMarkReturned,
 }: {
   cycle: AdminPayoutCycle;
+  submitting: boolean;
   onApprove: () => void;
   onHold: () => void;
   onMarkPaid: () => void;
@@ -867,11 +892,11 @@ function PayoutDrawerActions({
   onMarkReturned: () => void;
 }) {
   const PILL =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2";
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
   const PRIMARY =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2";
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
   const GHOST =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2";
+    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
 
   const s = cycle.status;
 
@@ -885,7 +910,7 @@ function PayoutDrawerActions({
   }
   if (s === "paid") {
     return (
-      <button type="button" onClick={onMarkReturned} className={PILL}>
+      <button type="button" disabled={submitting} onClick={onMarkReturned} className={PILL}>
         Mark returned…
       </button>
     );
@@ -894,32 +919,32 @@ function PayoutDrawerActions({
   return (
     <>
       {(s === "pending_review" || s === "approved" || s === "processing") && (
-        <button type="button" onClick={onHold} className={GHOST}>
+        <button type="button" disabled={submitting} onClick={onHold} className={GHOST}>
           Hold…
         </button>
       )}
       {(s === "pending_review" || s === "approved" || s === "held") && (
-        <button type="button" onClick={onReject} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onReject} className={PILL}>
           Reject…
         </button>
       )}
       {s === "approved" && (
-        <button type="button" onClick={onMarkProcessing} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onMarkProcessing} className={PILL}>
           Mark processing
         </button>
       )}
       {s === "processing" && (
-        <button type="button" onClick={onMarkFailed} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onMarkFailed} className={PILL}>
           Mark failed…
         </button>
       )}
       {(s === "approved" || s === "processing") && (
-        <button type="button" onClick={onMarkPaid} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onMarkPaid} className={PILL}>
           Mark paid…
         </button>
       )}
       {(s === "pending_review" || s === "held") && (
-        <button type="button" onClick={onApprove} className={PRIMARY}>
+        <button type="button" disabled={submitting} onClick={onApprove} className={PRIMARY}>
           Approve
         </button>
       )}

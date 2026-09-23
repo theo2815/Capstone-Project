@@ -2,9 +2,8 @@
 
 import {
   PayoutsQueue,
-  usePendingPayoutsCount,
-  usePendingPayoutsTotal,
 } from "@/components/admin/payouts-queue";
+import { usePendingPayoutsCount, usePendingPayoutsTotal } from "@/hooks/use-admin-payouts";
 import { PayoutReportsSection } from "@/components/admin/payout-reports-section";
 import { Kicker } from "@/components/ui/kicker";
 import { formatPrice } from "@/lib/utils";

@@ -1,0 +1,53 @@
+name: backend-tests
+
+on:
+  push:
+    branches: [dev-main, main]
+    paths: ['backend/**', '.github/workflows/backend-tests.yml']
+  pull_request:
+    paths: ['backend/**', '.github/workflows/backend-tests.yml']
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      # Docker-free by contract (backend/AGENTS.md): everything needing Postgres is
+      # tagged "integration" and excluded here. Same command the module docs record
+      # by hand; this is the first time anything runs it unattended.
+      - run: ./gradlew test --console=plain --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: backend-unit-test-report
+          path: backend/build/reports/tests/test
+
+  integration:
+    # ubuntu-latest ships a Docker daemon; Testcontainers starts postgres:16-alpine.
+    # Budget ~35 s for PhotoBundleHttpIntegrationTest's deliberate streaming-timeout
+    # sleep. The two Rekognition smoke classes self-skip without AWS credentials.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew integrationTest --console=plain --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: backend-integration-test-report
+          path: backend/build/reports/tests/integrationTest

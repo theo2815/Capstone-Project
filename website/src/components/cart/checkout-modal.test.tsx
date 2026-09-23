@@ -3,9 +3,11 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckoutModal } from "@/components/cart/checkout-modal";
+import { FloatingCart } from "@/components/cart/floating-cart";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { useConfirmationStore } from "@/store/confirmation-store";
+import { useUiStore } from "@/store/ui-store";
 import {
   usePendingPaymentStore,
   type PendingPayment,
@@ -21,6 +23,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 vi.mock("next/navigation", () => ({
   usePathname: () => "/events/race",
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 const ORDER_ID = "11111111-2222-4333-8444-555555555555";
@@ -55,6 +58,7 @@ function pendingRecord(overrides: Partial<PendingPayment> = {}): PendingPayment 
     testUrl: null as string | null,
     email: "runner@example.com",
     total: 125,
+    totalSource: "checkout",
     itemCount: 1,
     paidClaimedAt: null as string | null,
   };
@@ -99,6 +103,7 @@ describe("CheckoutModal QRPH", () => {
       status: "PENDING",
       items: [],
       totalAmount: 125,
+      checkoutTotalAmount: 125,
       paymentMethod: "qrph",
       createdAt: "2026-09-04T12:00:00Z",
       qrPh: { imageUrl: "data:image/png;base64,cXJwaA==", expiresAt: expiresAt(), returnToken: "return-token" },
@@ -174,6 +179,7 @@ describe("CheckoutModal QRPH", () => {
       status: "PENDING",
       items: [],
       totalAmount: 106.25,
+      checkoutTotalAmount: 106.25,
       paymentMethod: "qrph",
       createdAt: "2026-09-04T12:00:00Z",
       qrPh: { imageUrl: "data:image/png;base64,cXJwaA==", expiresAt: expiresAt(), returnToken: "return-token" },
@@ -233,6 +239,7 @@ describe("CheckoutModal QRPH", () => {
             status: "FULFILLED",
             items: [],
             totalAmount: 0,
+            checkoutTotalAmount: 0,
             paymentMethod: "qrph",
             createdAt: "2026-09-04T12:00:00Z",
             returnToken: "return-token",
@@ -391,6 +398,7 @@ describe("CheckoutModal QRPH", () => {
       status: "PENDING",
       items: [],
       totalAmount: 125,
+      checkoutTotalAmount: 125,
       paymentMethod: "qrph",
       createdAt: "2026-09-04T12:00:00Z",
       qrPh: { imageUrl: "data:image/png;base64,cXJwaA==", expiresAt: expiresAt(), returnToken: "return-token" },
@@ -418,7 +426,7 @@ describe("CheckoutModal QRPH", () => {
   });
 
   it("cancels a signed-in record through the /me route", async () => {
-    usePendingPaymentStore.setState({ pending: pendingRecord({ returnToken: null }) });
+    usePendingPaymentStore.setState({ pending: pendingRecord({ returnToken: null, totalSource: undefined }) });
     postRoutes({ id: ORDER_ID, status: "EXPIRED", paidAt: null });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderModal();
@@ -459,6 +467,33 @@ describe("CheckoutModal QRPH", () => {
     expect(http.post).not.toHaveBeenCalled();
     await waitFor(() => expect(http.get).toHaveBeenCalledWith(STATUS_PATH));
     expect(screen.getByText(/Ref 11111111/)).toBeInTheDocument();
+  });
+
+  it("keeps a legacy pending QR recoverable without showing its old amount", async () => {
+    usePendingPaymentStore.setState({ pending: pendingRecord({ totalSource: undefined }) });
+    renderModal();
+
+    expect(await screen.findByRole("img", { name: /QR Ph payment code/ })).toBeInTheDocument();
+    expect(screen.getByText(/Amount unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText("₱125.00")).not.toBeInTheDocument();
+    expect(http.post).not.toHaveBeenCalledWith("/orders", expect.anything(), expect.anything());
+    await waitFor(() => expect(http.get).toHaveBeenCalledWith(STATUS_PATH));
+
+    http.get.mockResolvedValue(fulfilledStatus);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(screen.getByRole("button", { name: "I’ve paid" }));
+    expect(await screen.findByText("All yours.")).toBeInTheDocument();
+    expect(screen.getByText(/Amount unavailable · View receipt/)).toBeInTheDocument();
+  });
+
+  it("does not show a legacy amount on the floating checkout pill", async () => {
+    usePendingPaymentStore.setState({ pending: pendingRecord({ totalSource: undefined }) });
+    useUiStore.setState({ checkoutOpen: false, cartOpen: false });
+    render(<QueryClientProvider client={new QueryClient()}><FloatingCart /></QueryClientProvider>);
+
+    const pill = await screen.findByRole("button", { name: /Open checkout/ });
+    expect(pill).toHaveAccessibleName(/Amount unavailable/);
+    expect(pill).not.toHaveAccessibleName(/125/);
   });
 
   it("picks the endpoint from the record's token, not from auth state", async () => {

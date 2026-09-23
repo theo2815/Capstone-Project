@@ -125,9 +125,7 @@ class SessionManager private constructor(context: Context) {
 
         fun getInstance(context: Context): SessionManager {
             return INSTANCE ?: synchronized(this) {
-                val instance = SessionManager(context.applicationContext)
-                INSTANCE = instance
-                instance
+                INSTANCE ?: SessionManager(context.applicationContext).also { INSTANCE = it }
             }
         }
     }
@@ -223,9 +221,14 @@ class SessionManager private constructor(context: Context) {
         accessTokens.clear()
         memoryAccessToken = null
         memoryRefreshToken = null
-        appContext.getSharedPreferences("quickpitik_tether", Context.MODE_PRIVATE).edit()
-            .remove("watch_active_event").remove("watch_owner").remove("watch_event_snapshot").apply()
-        appContext.stopService(android.content.Intent(appContext, com.quickpitik.mobile.service.TetherIngestService::class.java))
+        // Before the two calls below, which reach outside this class: if either
+        // throws, the credentials must already be off the disk.
         prefs.edit().clear().apply()
+        TetherWatchPrefs(appContext).clear()
+        // A credential store reaching into service/ is the wrong shape, but a
+        // signed-out phone must not keep ingesting to the old account and this
+        // is the one call that stops it. A SessionEvents-driven stop would put
+        // the responsibility back in the tether layer; not worth the churn yet.
+        appContext.stopService(android.content.Intent(appContext, com.quickpitik.mobile.service.TetherIngestService::class.java))
     }
 }

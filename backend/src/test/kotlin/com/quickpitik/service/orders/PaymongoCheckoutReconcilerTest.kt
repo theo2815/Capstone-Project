@@ -7,6 +7,7 @@ import com.quickpitik.dto.orders.PaymongoCheckoutSessionResponseEnvelope
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponse
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseAttributes
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseEnvelope
+import com.quickpitik.dto.orders.PaymongoPaymentAttributes
 import com.quickpitik.dto.orders.PaymongoPaymentResource
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderStatus
@@ -89,6 +90,71 @@ class PaymongoCheckoutReconcilerTest {
     }
 
     @Test
+    fun `stale checkout paid while expiring is settled instead of locally expired`() {
+        val order = Order(
+            eventId = UUID.randomUUID(),
+            recipientEmail = "runner@example.com",
+            paymentMethodWire = PaymentMethod.GCASH.wire,
+            totalPhp = BigDecimal("125.00"),
+        )
+        val payment = Payment(
+            orderId = order.id,
+            provider = "paymongo",
+            providerRef = "cs_test",
+            amountPhp = order.totalPhp,
+        )
+        val client = Mockito.mock(PaymongoClient::class.java)
+        val payments = Mockito.mock(PaymentRepository::class.java)
+        val orders = Mockito.mock(OrderRepository::class.java)
+        val webhooks = Mockito.mock(PaymongoWebhookService::class.java)
+        Mockito.`when`(
+            payments.findByProviderAndStatusAndProviderRefStartingWithOrderByCreatedAtAsc(
+                eqArg("paymongo"),
+                eqArg(PaymentStatus.PENDING),
+                eqArg("pi_"),
+                anyArg(),
+            ),
+        ).thenReturn(emptyList())
+        Mockito.`when`(
+            payments.findByProviderAndStatusAndProviderRefIsNotNullAndCreatedAtBeforeOrderByCreatedAtAsc(
+                eqArg("paymongo"),
+                eqArg(PaymentStatus.PENDING),
+                anyArg(),
+                anyArg(),
+            ),
+        ).thenReturn(listOf(payment))
+        Mockito.`when`(payments.findAllByOrderIdInForUpdate(anyArg())).thenReturn(listOf(payment))
+        Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
+        Mockito.`when`(client.retrieveCheckoutSession("cs_test")).thenReturn(checkout("active"))
+        Mockito.`when`(client.expireCheckoutSession("cs_test")).thenReturn(
+            PaymongoCheckoutSessionResponse(PaymongoCheckoutSessionResponseEnvelope(
+                id = "cs_test",
+                attributes = PaymongoCheckoutSessionResponseAttributes(
+                    status = "expired",
+                    payments = listOf(PaymongoPaymentResource(
+                        id = "pay_late",
+                        attributes = com.quickpitik.dto.orders.PaymongoPaymentAttributes(status = "paid"),
+                    )),
+                ),
+            )),
+        )
+        val reconciler = PaymongoCheckoutReconciler(
+            PaymongoProperties(),
+            client,
+            webhooks,
+            payments,
+            orders,
+            testTransactionTemplate(), Mockito.mock(OrderItemRepository::class.java),
+        )
+
+        reconciler.reconcile()
+
+        assertEquals(PaymentStatus.PENDING, payment.status)
+        assertEquals(OrderStatus.PENDING, order.status)
+        Mockito.verify(webhooks).settleCheckoutSession("cs_test", "pay_late")
+    }
+
+    @Test
     fun `reconcileOrder hands a succeeded intent to settlement outside the database transaction`() {
         val order = qrphOrder()
         val payment = Payment(orderId = order.id, provider = "paymongo", providerRef = "pi_test", amountPhp = order.totalPhp)
@@ -101,7 +167,7 @@ class PaymongoCheckoutReconcilerTest {
         var providerCallWasTransactional = true
         Mockito.`when`(client.retrievePaymentIntent("pi_test")).thenAnswer {
             providerCallWasTransactional = TransactionSynchronizationManager.isActualTransactionActive()
-            intent("succeeded")
+            intent("succeeded", failedThenPaid())
         }
         val reconciler = PaymongoCheckoutReconciler(PaymongoProperties(), client, webhooks, payments, orders, testTransactionTemplate(), Mockito.mock(OrderItemRepository::class.java))
 
@@ -273,7 +339,7 @@ class PaymongoCheckoutReconcilerTest {
     @Test
     fun `purge hands a late successful payment to settlement and keeps its photos`() {
         val fixture = expiredReservation("pi_test")
-        Mockito.`when`(fixture.client.retrievePaymentIntent("pi_test")).thenReturn(intent("succeeded"))
+        Mockito.`when`(fixture.client.retrievePaymentIntent("pi_test")).thenReturn(intent("succeeded", failedThenPaid()))
 
         assertFalse(fixture.reconciler.releaseExpiredPhotoReservations(fixture.photoId))
 
@@ -340,14 +406,26 @@ class PaymongoCheckoutReconcilerTest {
         totalPhp = BigDecimal("125.00"),
     )
 
-    private fun intent(status: String) = PaymongoPaymentIntentResponse(
+    private fun intent(
+        status: String,
+        payments: List<PaymongoPaymentResource> = if (status == "succeeded") {
+            listOf(PaymongoPaymentResource(id = "pay_test", attributes = PaymongoPaymentAttributes(status = "paid")))
+        } else {
+            emptyList()
+        },
+    ) = PaymongoPaymentIntentResponse(
         PaymongoPaymentIntentResponseEnvelope(
             id = "pi_test",
             attributes = PaymongoPaymentIntentResponseAttributes(
                 status = status,
-                payments = if (status == "succeeded") listOf(PaymongoPaymentResource(id = "pay_test")) else emptyList(),
+                payments = payments,
             ),
         ),
+    )
+
+    private fun failedThenPaid() = listOf(
+        PaymongoPaymentResource(id = "pay_failed", attributes = PaymongoPaymentAttributes(status = "failed")),
+        PaymongoPaymentResource(id = "pay_test", attributes = PaymongoPaymentAttributes(status = "paid")),
     )
 
     private fun checkout(status: String) = PaymongoCheckoutSessionResponse(

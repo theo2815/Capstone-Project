@@ -5,9 +5,13 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.quickpitik.mobile.data.local.AppDatabase
+import com.quickpitik.mobile.data.local.AppDatabase.Companion.DB_NAME
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.support.forgetRoomSingleton
+import com.quickpitik.mobile.support.pointAppAt
+import com.quickpitik.mobile.worker.PhotoUploadWorker.Companion.MAX_RETRIES
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.*
 import okhttp3.mockwebserver.MockResponse
@@ -51,7 +55,7 @@ class PhotoUploadWorkerTest {
         // connection — "Illegal connection pointer". Clearing the static and
         // deleting the file gives each method a genuinely fresh database, which
         // also removes any need to clear rows.
-        clearDatabaseSingleton()
+        forgetRoomSingleton()
         context.deleteDatabase(DB_NAME)
         db = AppDatabase.getDatabase(context)
         session = SessionManager.getInstance(context)
@@ -61,7 +65,7 @@ class PhotoUploadWorkerTest {
     @After
     fun tearDown() {
         db.close()
-        clearDatabaseSingleton()
+        forgetRoomSingleton()
         server?.shutdown()
         server = null
         // RetrofitClient is an object, so a URL left pointing at a shut-down
@@ -87,7 +91,7 @@ class PhotoUploadWorkerTest {
             }
             start()
             server = this
-            RetrofitClient.setBaseUrl(url("/").toString())
+            pointAppAt(url("/").toString())
         }
 
     /**
@@ -117,7 +121,7 @@ class PhotoUploadWorkerTest {
             }
             start()
             server = this
-            RetrofitClient.setBaseUrl(url("/").toString())
+            pointAppAt(url("/").toString())
         }
 
     /** A real file on disk — the worker bails before the network without one. */
@@ -142,19 +146,6 @@ class PhotoUploadWorkerTest {
         .setResponseCode(500)
         .setHeader("Content-Type", "application/json")
         .setBody("""{"success":false,"errors":[{"code":"INTERNAL_ERROR","message":"Boom."}]}""")
-
-    /**
-     * Resets `AppDatabase.INSTANCE`. Reflection because the field is private and
-     * the alternative — adding a test-only reset hook — would be a production
-     * change made purely to serve a test. Kotlin lowers a companion-object
-     * backing field to a static on the enclosing class, hence the lookup here.
-     */
-    private fun clearDatabaseSingleton() {
-        AppDatabase::class.java.getDeclaredField("INSTANCE").apply {
-            isAccessible = true
-            set(null, null)
-        }
-    }
 
     private suspend fun enqueue(
         filePath: String = "/definitely/not/a/real/file.jpg",
@@ -311,7 +302,7 @@ class PhotoUploadWorkerTest {
         assertEquals("p-1", db.uploadQueueDao().getRecordById(id)?.directPhotoId)
         assertTrue(bytes.contentEquals(original.readBytes()))
         db.close()
-        clearDatabaseSingleton()
+        forgetRoomSingleton()
         db = AppDatabase.getDatabase(context)
         assertTrue(runWorker() is ListenableWorker.Result.Success)
         assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
@@ -557,11 +548,5 @@ class PhotoUploadWorkerTest {
 
     private companion object {
         const val EVENT = "11111111-1111-1111-1111-111111111111"
-
-        // Mirrors PhotoUploadWorker's private MAX_RETRIES.
-        const val MAX_RETRIES = 5
-
-        // Mirrors the name AppDatabase passes to Room.databaseBuilder.
-        const val DB_NAME = "quickpitik_db"
     }
 }

@@ -108,6 +108,34 @@ class JwtAuthenticationFilterTest {
         Mockito.verifyNoInteractions(chain)
     }
 
+    // An mfaPending token (first factor only) and a stepUp token (re-auth
+    // proof) carry a valid signature and subject but are not access tokens.
+    // Presented as a bearer they must 401 — neither reach a route nor fall
+    // through as a guest (2026-09-11 test-suite audit: the guard had no test).
+    @Test
+    fun `an mfaPending token is not a bearer`() {
+        assertRejectedBeforeTheChain(provider.createMfaPendingToken(newUser().id))
+    }
+
+    @Test
+    fun `a stepUp token is not a bearer`() {
+        assertRejectedBeforeTheChain(provider.createStepUpToken(newUser().id))
+    }
+
+    private fun assertRejectedBeforeTheChain(token: String) {
+        val request = MockHttpServletRequest()
+        request.addHeader("Authorization", "Bearer $token")
+        val response = MockHttpServletResponse()
+        val chain = Mockito.mock(FilterChain::class.java)
+
+        filter.doFilter(request, response, chain)
+
+        assertEquals(401, response.status)
+        assertTrue(response.contentAsString.contains("UNAUTHORIZED"))
+        Mockito.verifyNoInteractions(chain)
+        assertNull(SecurityContextHolder.getContext().authentication)
+    }
+
     // Anything the filter doesn't explicitly classify must fail loudly — a
     // swallowed exception would continue the chain unauthenticated, which on
     // public routes recreates the guest downgrade.

@@ -15,7 +15,7 @@ import type { EffectivePhotographerSettings } from "@/lib/admin-photographer-vie
 import { ROUTES } from "@/lib/constants";
 import { safeHttpUrl } from "@/lib/utils";
 import { formatLongDate, formatMemberSince } from "@/lib/format";
-import { useEventCatalog } from "@/lib/event-catalog";
+import { useAdminEvents, EMPTY_ADMIN_EVENTS } from "@/hooks/use-admin-events";
 import {
   BRAND_COLOR_HEX,
   BRAND_COLOR_LABEL,
@@ -48,19 +48,15 @@ const STATUS_LABEL = {
 
 const PUBLIC_URL_PREFIX = "quickpitik.com";
 
-// Phase 2a admin photographer detail. Hero + 8 content slabs (completeness,
-// about, public URL, watermark, socials, payouts, events covered, activity)
-// + sticky-on-lg <AdminActionAside>. Reads via useAdminPhotographerView()
-// so admin store overrides + live settings flow through to the visible
-// state without a refresh. Non-session photographers (anyone other than
-// the logged-in user) read full settings from the admin seed module so
-// admin can verify cover/watermark/region/socials/payouts in one place.
 export default function AdminPhotographerDetailPage() {
   const params = useParams<{ handle: string }>();
   const raw = Array.isArray(params.handle) ? params.handle[0] : params.handle;
   const handle = (raw ?? "").trim().toLowerCase();
-  const view = useAdminPhotographerView(handle);
-  const catalog = useEventCatalog();
+  const { view, loading, error, refetch } = useAdminPhotographerView(handle);
+  const catalog = useAdminEvents().data ?? EMPTY_ADMIN_EVENTS;
+
+  if (loading && !view) return <p role="status">Loading photographer…</p>;
+  if (error) return <div role="alert">Couldn&apos;t load photographer. <button onClick={() => void refetch()}>Try again</button></div>;
 
   if (!view) {
     notFound();
@@ -113,7 +109,7 @@ export default function AdminPhotographerDetailPage() {
       />
 
       <div className="mt-10 lg:mt-14 grid lg:grid-cols-[1fr_18rem] lg:gap-12 lg:items-start">
-        <div>
+        <div className="min-w-0">
           <CompletenessSlab
             snapshot={row.settingsSnapshot}
             effective={effectiveSettings}

@@ -59,7 +59,11 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.EarningsOverviewDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
+import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
+import com.quickpitik.mobile.data.remote.VerificationSubmitResponseDto
+import com.quickpitik.mobile.ui.common.formatManila
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -95,6 +99,8 @@ internal data class SetupStep(
 @Composable
 fun PhotographerOverviewScreen(
     viewModel: PhotographerDashboardViewModel,
+    settingsViewModel: StudioSettingsViewModel,
+    earningsViewModel: StudioEarningsViewModel,
     onNavigateToSettings: () -> Unit,
     // Studio ROUTE name (e.g. "studio/capture") — the tabs are NavHost routes
     // now, and MainActivity's studioNavigate owns the per-tab refresh.
@@ -103,7 +109,7 @@ fun PhotographerOverviewScreen(
 ) {
     val verificationState by viewModel.verificationState.collectAsState()
     val eventsState by viewModel.eventsState.collectAsState()
-    val earningsUiState by viewModel.earningsUiState.collectAsState()
+    val earningsUiState by earningsViewModel.earningsUiState.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val context = LocalContext.current
     val sessionManager = remember { SessionManager.getInstance(context) }
@@ -115,12 +121,14 @@ fun PhotographerOverviewScreen(
     // and contributes to a cold-start I/O storm (see 2026-05-27 home redesign).
 
     val latestMessage = remember(messages) { messages.maxByOrNull { it.createdAt } }
-    val currentStatus = (verificationState as? VerificationUiState.Success)
-        ?.verification?.status?.lowercase() ?: "incomplete"
-    val isRejected = (currentStatus == "incomplete" || currentStatus == "rejected") &&
-        (latestMessage?.kind == "verification_rejected")
-    val rejectionReason = if (isRejected) latestMessage?.body else null
-    val isApproved = currentStatus == "approved"
+    val summary = verificationSummary(
+        (verificationState as? VerificationUiState.Success)?.verification,
+        latestMessage,
+    )
+    val currentStatus = summary.status
+    val isRejected = summary.isRejected
+    val rejectionReason = summary.rejectionReason
+    val isApproved = summary.isApproved
 
     val events = remember(eventsState) {
         when (val state = eventsState) {
@@ -131,21 +139,7 @@ fun PhotographerOverviewScreen(
     val earnings = (earningsUiState as? EarningsUiState.Success)?.overview
     val transactions = (earningsUiState as? EarningsUiState.Success)?.transactions ?: emptyList()
 
-    val verification = (verificationState as? VerificationUiState.Success)?.verification
-    // The setup checklist keys off the backend's stable missingCodes. Guard the
-    // fallback against version skew: if a response arrives on a non-complete
-    // status but WITHOUT codes, don't null-coalesce to an empty list — that
-    // would mark every step done (100% for a blank profile). A completed
-    // profile (approved) and a just-submitted one (pending) legitimately omit
-    // codes, so those stay empty; a still-loading state (null verification)
-    // also stays empty and the chip shows its loading copy.
-    val reportedCodes = verification?.missingCodes
-    val missingCodes: List<String> = when {
-        reportedCodes != null -> reportedCodes
-        verification == null || currentStatus == "approved" || currentStatus == "pending" -> emptyList()
-        else -> SETUP_CODES_ALL
-    }
-    val setupItems = buildSetupItems(missingCodes)
+    val setupItems = buildSetupItems(summary.missingCodes)
     val completedCount = setupItems.count { it.isCompleted }
 
     val chipTone = when {
@@ -286,7 +280,7 @@ fun PhotographerOverviewScreen(
                 is EarningsUiState.Error -> ErrorView(
                     message = (earningsUiState as EarningsUiState.Error).message,
                     title = "Couldn't load your studio stats",
-                    onRetry = { viewModel.fetchEarningsAndTransactions() },
+                    onRetry = { earningsViewModel.fetchEarningsAndTransactions() },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 is EarningsUiState.Loading -> LoadingSkeleton(
@@ -312,18 +306,63 @@ fun PhotographerOverviewScreen(
                 onRefresh = {
                     viewModel.fetchVerificationStatus()
                     viewModel.fetchEvents()
-                    viewModel.fetchEarningsAndTransactions()
+                    earningsViewModel.fetchEarningsAndTransactions()
                     viewModel.fetchMessages()
-                    viewModel.fetchSettings()
+                    settingsViewModel.fetchSettings()
                 },
             )
         }
     }
 }
 
+/**
+ * Everything the Overview reads off the verification state, in one place: the
+ * status, the two booleans the screen branches on, the rejection copy and the
+ * requirement codes the checklist is keyed on. A null [verification] is a
+ * still-loading (or failed) state, which reads as "incomplete".
+ */
+internal data class VerificationSummary(
+    val status: String,
+    val isApproved: Boolean,
+    val isRejected: Boolean,
+    val rejectionReason: String?,
+    val missingCodes: List<String>,
+)
+
+internal fun verificationSummary(
+    verification: VerificationSubmitResponseDto?,
+    latestMessage: PhotographerMessageDto?,
+): VerificationSummary {
+    val status = verification?.status?.lowercase() ?: "incomplete"
+    // A rejection the photographer can act on: the studio is not live AND the
+    // newest inbox message says why. The message carries the reason; the status
+    // alone never does.
+    val isRejected = (status == "incomplete" || status == "rejected") &&
+        latestMessage?.kind == "verification_rejected"
+    // The setup checklist keys off the backend's stable missingCodes. Guard the
+    // fallback against version skew: if a response arrives on a non-complete
+    // status but WITHOUT codes, don't null-coalesce to an empty list — that
+    // would mark every step done (100% for a blank profile). A completed
+    // profile (approved) and a just-submitted one (pending) legitimately omit
+    // codes, so those stay empty; a still-loading state (null verification)
+    // also stays empty and the chip shows its loading copy.
+    val reportedCodes = verification?.missingCodes
+    return VerificationSummary(
+        status = status,
+        isApproved = status == "approved",
+        isRejected = isRejected,
+        rejectionReason = if (isRejected) latestMessage?.body else null,
+        missingCodes = when {
+            reportedCodes != null -> reportedCodes
+            verification == null || status == "approved" || status == "pending" -> emptyList()
+            else -> SETUP_CODES_ALL
+        },
+    )
+}
+
 // The 8 stable requirement codes (VerificationSubmitResponseDto.missingCodes),
 // used as the "nothing done yet" fallback when a non-complete status returns
-// without codes (version skew) — see the checklist guard in the screen body.
+// without codes (version skew) — see the guard in verificationSummary above.
 internal val SETUP_CODES_ALL = listOf(
     "PROFILE_PHOTO", "COVER_PHOTO", "BRAND_NAME", "WATERMARK",
     "PAYOUT_ACCOUNT", "PUBLIC_HANDLE", "REGION", "SOCIAL_LINK",
@@ -399,7 +438,7 @@ private fun ApprovedHomeBody(
                 Kicker(text = "This week", color = SlateSoft)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "₱${String.format("%,.0f", thisWeek)}",
+                    text = peso(thisWeek, 0),
                     style = NumeralStyle.copy(fontSize = 24.sp),
                     color = Ink,
                 )
@@ -504,13 +543,13 @@ private fun ApprovedHomeBody(
             )
             MetricTile(
                 kicker = "This month",
-                value = "₱${String.format("%,.0f", earnings?.thisMonth ?: 0.0)}",
+                value = peso(earnings?.thisMonth ?: 0.0, 0),
                 hint = "earned",
                 modifier = Modifier.weight(1f),
             )
             MetricTile(
                 kicker = "Lifetime",
-                value = "₱${String.format("%,.0f", earnings?.lifetimeKept ?: 0.0)}",
+                value = peso(earnings?.lifetimeKept ?: 0.0, 0),
                 hint = "kept",
                 modifier = Modifier.weight(1f),
             )
@@ -542,7 +581,7 @@ private fun ApprovedHomeBody(
                 ) {
                     StatusChip(text = line, tone = tone)
                     Text(
-                        text = "₱%,.2f".format(open?.amount ?: balance.unpaidBalance),
+                        text = peso(open?.amount ?: balance.unpaidBalance),
                         style = NumeralStyle.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
                         color = Ink,
                     )
@@ -596,13 +635,13 @@ private fun ApprovedHomeBody(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = formatPaidAt(tx.paidAt),
+                                text = formatManila(tx.paidAt, "MMM d")?.uppercase() ?: tx.paidAt,
                                 color = SlateSoft,
                                 fontSize = 11.sp,
                             )
                         }
                         Text(
-                            text = "₱${String.format("%,.0f", tx.amountKept)}",
+                            text = peso(tx.amountKept, 0),
                             color = Ink,
                             style = NumeralStyle.copy(fontSize = 16.sp),
                         )
@@ -641,20 +680,6 @@ private fun MetricTile(
             color = SlateSoft,
             fontSize = 10.sp,
         )
-    }
-}
-
-private fun formatPaidAt(iso: String): String {
-    return try {
-        val parts = iso.substring(0, 10).split("-")
-        val months = listOf(
-            "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-        )
-        val month = months[parts[1].toInt() - 1]
-        "$month ${parts[2].toInt()}"
-    } catch (e: Exception) {
-        iso
     }
 }
 

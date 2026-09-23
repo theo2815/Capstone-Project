@@ -124,6 +124,19 @@ class SonyPtpCameraTest {
         assertThrows(PtpException::class.java) { SonyPtpData.extension(extension(300) + byteArrayOf(0)) }
     }
 
+    @Test fun `protocol 2 enumerations carry no second value list`() {
+        val enum = bytes {
+            putShort(SonyPtpCamera.DESTINATION.toShort()); putShort(4); put(1); put(1)
+            putShort(0x11); putShort(0x11); put(2)
+            putShort(2); putShort(1); putShort(0x11)
+        }
+        val properties = bytes { putInt(2); putInt(0); put(enum); put(descriptor(SonyPtpCamera.OBJECT_IN_MEMORY, 0x8001)) }
+        val parsed = SonyPtpData.properties(properties, 200)
+        assertEquals(0x11L, parsed[SonyPtpCamera.DESTINATION]?.value)
+        assertEquals(0x8001L, parsed[SonyPtpCamera.OBJECT_IN_MEMORY]?.value)
+        assertThrows(PtpException::class.java) { SonyPtpData.properties(properties, 300) }
+    }
+
     @Test fun `non-scalar properties do not desynchronize following scalar descriptors`() {
         val data = bytes {
             putInt(3); putInt(0)

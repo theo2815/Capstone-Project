@@ -9,6 +9,7 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.dto.photos.toDto
+import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.NotFoundException
@@ -165,7 +166,7 @@ class PhotoService(
     }
 
     private fun resolveThumbnailUrl(photo: Photo): String? {
-        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
+        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: return null
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 
@@ -185,9 +186,11 @@ class PhotoService(
     // paid event's originals can't be probed by id.
     fun freeDownload(eventId: UUID, photoId: UUID): FreeDownload {
         val event = eventRepository.findById(eventId).orElse(null)
-        if (event == null || !event.isFree) throw photoNotFound()
+        if (event == null || !event.isFree || event.status == EventStatus.DRAFT || event.status == EventStatus.ARCHIVED) {
+            throw photoNotFound()
+        }
         val photo = photoRepository.findById(photoId).orElse(null)
-        if (photo == null || photo.eventId != eventId || photo.status != PhotoStatus.LIVE || photo.deletedAt != null) {
+        if (photo == null || photo.eventId != eventId || !photo.isSellable) {
             throw photoNotFound()
         }
         return FreeDownload(s3Key = photo.s3Key, filename = PhotoFilenames.downloadFilenameOf(photo))
@@ -206,6 +209,6 @@ class PhotoService(
 
     private fun normalizeBib(raw: String?): String {
         if (raw.isNullOrBlank()) return ""
-        return raw.removePrefix("B-").removePrefix("b-").trim().uppercase()
+        return raw.removePrefix("B-").removePrefix("b-").trim().uppercase().filter { it.isLetterOrDigit() }
     }
 }

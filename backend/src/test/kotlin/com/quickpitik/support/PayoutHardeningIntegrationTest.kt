@@ -2,6 +2,7 @@ package com.quickpitik.support
 
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.CorsConfig
+import com.quickpitik.dto.admin.BulkPayoutsRequest
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.dto.orders.*
 import com.quickpitik.entity.*
@@ -26,6 +27,8 @@ import kotlin.test.*
 
 class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var cycles: PayoutCycleRepository
+    @Autowired lateinit var payoutStatusHistory: PayoutStatusHistoryRepository
+    @Autowired lateinit var adminDecisions: AdminDecisionLogRepository
     @Autowired lateinit var users: UserRepository
     @Autowired lateinit var admin: AdminPayoutService
     @Autowired lateinit var requests: PayoutRequestService
@@ -43,8 +46,8 @@ class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var recoveryCodes: AdminMfaRecoveryCodeRepository
     @Autowired lateinit var dataSource: javax.sql.DataSource
     @Autowired lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
-    @Autowired lateinit var auth: com.quickpitik.service.AuthService
-    @Autowired lateinit var refreshTokens: com.quickpitik.service.RefreshTokenService
+    @Autowired lateinit var auth: com.quickpitik.service.auth.AuthService
+    @Autowired lateinit var refreshTokens: com.quickpitik.service.auth.RefreshTokenService
     @Autowired lateinit var passwords: org.springframework.security.crypto.password.PasswordEncoder
     @Autowired lateinit var payoutAccounts: com.quickpitik.service.photographer.PayoutAccountService
     @Autowired lateinit var storage: com.quickpitik.service.storage.StorageService
@@ -58,6 +61,32 @@ class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
         id = "PAY-REVIEW-${UUID.randomUUID()}", photographerId = user(Role.PHOTOGRAPHER).id,
         weekOf = LocalDate.now(), amountPhp = BigDecimal("1000"), statusWire = status.wire,
     ))
+
+    @Test fun `bulk hold refuses an already-held cycle without dirty-flushing its reason`() {
+        val c = cycle(PayoutCycleStatus.HELD)
+        c.holdReason = "original reason"
+        cycles.saveAndFlush(c)
+        val historyBefore = payoutStatusHistory.findByPayoutCycleIdOrderByCreatedAtAsc(c.id).size
+        val decisionsBefore = adminDecisions.findAll().count { it.targetPayoutId == c.id }
+
+        val result = admin.bulk(
+            user(Role.ADMIN).id,
+            "bulk-hold-${UUID.randomUUID()}",
+            BulkPayoutsRequest(ids = listOf(c.id), action = "hold", reason = "different reason"),
+        )
+
+        assertFalse(result.results.single().ok)
+        val persisted = requireNotNull(TransactionTemplate(txManager).execute {
+            Triple(
+                cycles.findById(c.id).get().holdReason,
+                payoutStatusHistory.findByPayoutCycleIdOrderByCreatedAtAsc(c.id).size,
+                adminDecisions.findAll().count { it.targetPayoutId == c.id },
+            )
+        })
+        assertEquals("original reason", persisted.first)
+        assertEquals(historyBefore, persisted.second)
+        assertEquals(decisionsBefore, persisted.third)
+    }
 
     @Test fun `CORS accepts the header required by step-up`() {
         val source = CorsConfig("https://quickpitik.com").corsConfigurationSource()
@@ -85,6 +114,26 @@ class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
 
     @Test fun `migration preserves legacy approvals as a payable explicit state`() {
         val c = cycle(PayoutCycleStatus.PENDING)
+        val event = events.saveAndFlush(Event(
+            slug = "review-${UUID.randomUUID()}", name = "Review", date = LocalDate.now(),
+            location = "Cebu", status = EventStatus.ACTIVE,
+        ))
+        val photo = photos.saveAndFlush(Photo(
+            eventId = event.id, photographerId = c.photographerId,
+            s3Key = "review/${UUID.randomUUID()}", pricePhp = c.amountPhp,
+        ))
+        val order = orders.saveAndFlush(Order(
+            eventId = event.id, recipientEmail = "review@test.local",
+            paymentMethodWire = "gcash", status = OrderStatus.PAID, totalPhp = c.amountPhp,
+        ))
+        transactions.saveAndFlush(Transaction(
+            paidAt = OffsetDateTime.now().minusDays(10),
+            photographerId = c.photographerId,
+            eventId = event.id,
+            photoId = photo.id,
+            orderId = order.id,
+            amountKeptPhp = c.amountPhp,
+        ))
         c.settledAt = OffsetDateTime.now().minusDays(1)
         cycles.saveAndFlush(c)
         val migration = org.springframework.core.io.ClassPathResource("db/migration/V61__payout_review_integrity.sql")
@@ -273,7 +322,7 @@ class PayoutHardeningIntegrationTest : PostgresIntegrationTest() {
         val token = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("test-only")
             .header("alg", "RS256").subject(a.googleSub).claim("email", a.email).claim("email_verified", true).build()
         org.mockito.Mockito.`when`(decoder.decode("test-only")).thenReturn(token)
-        val google = com.quickpitik.service.GoogleAuthService(users, passwords, refreshTokens, auth, decoder,
+        val google = com.quickpitik.service.auth.GoogleAuthService(users, passwords, refreshTokens, auth, decoder,
             com.quickpitik.config.GoogleAuthProperties(clientId = "review"))
         val result = google.login(com.quickpitik.dto.auth.GoogleLoginRequest("test-only"))
         assertTrue(result.mfaRequired)

@@ -88,6 +88,13 @@ import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.QpWebSocket
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.WsState
+import com.quickpitik.mobile.ui.common.EventState
+import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.PhotoPreviewMode
+import com.quickpitik.mobile.ui.common.count
+import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.peso
+import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -320,8 +327,8 @@ fun RunnerGalleryScreen(
     }
 
     val submitBib = {
-        val clean = bibInput.trim().uppercase()
-        if (clean.isNotEmpty()) {
+        val clean = normalizeBib(bibInput)
+        if (clean != null) {
             bibInput = clean
             submittedBib = clean
             showFindSheet = false
@@ -461,7 +468,7 @@ fun RunnerGalleryScreen(
                             },
                             alertCard = if (isTrueRunner) photoAlertCard else null,
                             browseLabel = if (event.photoCount == 0) "Browse all photos"
-                            else "Browse all ${"%,d".format(event.photoCount)} photos",
+                            else "Browse all ${count(event.photoCount)} photos",
                             onBrowseAll = browseAll,
                             aboutStrip = {
                                 AboutStrip(
@@ -873,8 +880,8 @@ private fun BrowseScreen(
                             PrimaryCta(
                                 text = when {
                                     allInCart -> "Added · ${paidPhotos.size} in cart ✓"
-                                    paidPhotos.size == 1 -> "Buy 1 · ₱${"%,.0f".format(bulkTotal)} →"
-                                    else -> "Buy all ${paidPhotos.size} · ₱${"%,.0f".format(bulkTotal)} →"
+                                    paidPhotos.size == 1 -> "Buy 1 · ${peso(bulkTotal, 0)} →"
+                                    else -> "Buy all ${paidPhotos.size} · ${peso(bulkTotal, 0)} →"
                                 },
                                 enabled = !allInCart,
                                 onClick = { onBuyAll(paidPhotos) },
@@ -967,13 +974,13 @@ private fun BrowseHeader(
                 anyFilter && photoCount == 0 -> append("No matches yet.")
                 anyFilter -> {
                     append("We found ")
-                    withStyle(SpanStyle(color = Fresh)) { append("%,d".format(total)) }
+                    withStyle(SpanStyle(color = Fresh)) { append(count(total)) }
                     append(
                         if (isFaceFilter) (if (total == 1L) " match." else " matches.")
                         else (if (total == 1L) " photo." else " photos.")
                     )
                 }
-                else -> append("Browse ${"%,d".format(total)} photos.")
+                else -> append("Browse ${count(total)} photos.")
             }
         }
         HeroText(hero, modifier = Modifier.padding(start = 12.dp))
@@ -1056,7 +1063,7 @@ private fun FindPhotosBar(
         when {
             filtered -> GhostCta(text = "Clear", onClick = onClearFilter)
             hasLibrary -> GhostCta(text = "My photos", onClick = onMyPhotos)
-            else -> Kicker("${"%,d".format(photoCount)} photos", color = SlateSoft)
+            else -> Kicker("${count(photoCount)} photos", color = SlateSoft)
         }
     }
 }
@@ -1210,9 +1217,9 @@ private fun LoadMoreFooter(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (remaining == 0L) {
-            Kicker("All ${"%,d".format(total)} loaded", color = SlateSoft)
+            Kicker("All ${count(total)} loaded", color = SlateSoft)
         } else {
-            Kicker("Showing ${"%,d".format(shown)} of ${"%,d".format(total)}$suffix")
+            Kicker("Showing ${count(shown)} of ${count(total)}$suffix")
             Spacer(Modifier.height(12.dp))
             Surface(
                 shape = PillShape,
@@ -1439,3 +1446,6 @@ private fun PhotoGridSkeleton() {
         }
     }
 }
+
+/** The one place a typed bib is normalised: trimmed, upper-cased ("b-4082" → "B-4082"), empty = no search. */
+internal fun normalizeBib(raw: String): String? = raw.trim().uppercase().ifEmpty { null }

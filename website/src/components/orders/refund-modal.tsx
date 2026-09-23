@@ -18,7 +18,7 @@ import {
 } from "@/lib/admin-disputes";
 import { REFUND_PROCESSING_DAYS } from "@/lib/refund-policy";
 import { useToast } from "@/hooks/use-toast";
-import type { MockOrder } from "@/store/orders-store";
+import type { OrderSummary } from "@/types/order";
 import type { RunnerDispute, RunnerDisputeStatus } from "@/lib/api-orders";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice, cn } from "@/lib/utils";
@@ -44,7 +44,7 @@ type RefundModalProps =
       mode: "request";
       isOpen: boolean;
       onClose: () => void;
-      order: MockOrder;
+      order: OrderSummary;
       eventName: string;
     };
 
@@ -80,7 +80,7 @@ export function RefundModal(props: RefundModalProps) {
 interface RequestProps {
   isOpen: boolean;
   onClose: () => void;
-  order: MockOrder;
+  order: OrderSummary;
   eventName: string;
 }
 

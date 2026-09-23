@@ -3,6 +3,7 @@ package com.quickpitik.security
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.common.ApiError
 import com.quickpitik.common.ApiResponse
+import com.quickpitik.common.ErrorCodes
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.MediaType
@@ -23,7 +24,7 @@ class JsonAuthenticationEntryPoint(
         response.status = HttpServletResponse.SC_UNAUTHORIZED
         objectMapper.writeValue(
             response.outputStream,
-            ApiResponse.failure(ApiError(code = "UNAUTHORIZED", message = "Authentication required")),
+            ApiResponse.failure(ApiError(code = ErrorCodes.UNAUTHORIZED, message = "Authentication required")),
         )
     }
 }

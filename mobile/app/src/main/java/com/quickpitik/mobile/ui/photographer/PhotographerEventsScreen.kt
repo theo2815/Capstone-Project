@@ -34,11 +34,12 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
-import com.quickpitik.mobile.ui.runner.EventState
-import com.quickpitik.mobile.ui.runner.deriveEventState
-import com.quickpitik.mobile.ui.runner.deriveEventDisplayState
-import com.quickpitik.mobile.ui.runner.eventDateLabel
-import com.quickpitik.mobile.ui.runner.extractCity
+import com.quickpitik.mobile.ui.common.EventState
+import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.deriveEventDisplayState
+import com.quickpitik.mobile.ui.common.eventDateLabel
+import com.quickpitik.mobile.ui.common.extractCity
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -57,6 +58,19 @@ private enum class StatusFilter(val label: String, val tone: StatusTone) {
 // these as two sections; on a phone one bucket shows at a time.
 private enum class OwnerTab(val label: String) { MINE("My events"), ADMIN("Admin events") }
 
+/**
+ * The one place the roster's search box filters: on the event name, trimmed and
+ * case-insensitive; a blank box shows everything. Web EventFilterBar parity —
+ * the date dropdown is the status chips here, so the name is all that is matched.
+ */
+internal fun filterEventsByName(
+    events: List<PhotographerEventSummaryDto>,
+    query: String,
+): List<PhotographerEventSummaryDto> {
+    val q = query.trim()
+    return if (q.isEmpty()) events else events.filter { it.name.contains(q, ignoreCase = true) }
+}
+
 private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDate.now()): StatusFilter =
     when (deriveEventState(date, today)) {
         EventState.LIVE -> StatusFilter.LIVE
@@ -68,6 +82,7 @@ private fun PhotographerEventSummaryDto.filterBucket(today: LocalDate = LocalDat
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun PhotographerEventsScreen(
     viewModel: PhotographerDashboardViewModel,
+    tetherViewModel: TetherViewModel,
     modifier: Modifier = Modifier,
     onOpenShare: (PhotographerEventSummaryDto) -> Unit = {},
     onSyncEvent: (PhotographerEventSummaryDto) -> Unit = {},
@@ -76,7 +91,7 @@ fun PhotographerEventsScreen(
 ) {
     val eventsState by viewModel.eventsState.collectAsState()
     val publicEventsState by viewModel.publicEventsState.collectAsState()
-    val activeEvent by viewModel.activeEvent.collectAsState()
+    val activeEvent by tetherViewModel.activeEvent.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
     // Railguard gate comes from the shared VM flag (fail-open, one definition for
@@ -212,11 +227,7 @@ fun PhotographerEventsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            val filteredAll = remember(scoped, nameQuery) {
-                val q = nameQuery.trim()
-                if (q.isEmpty()) scoped
-                else scoped.filter { it.name.contains(q, ignoreCase = true) }
-            }
+            val filteredAll = remember(scoped, nameQuery) { filterEventsByName(scoped, nameQuery) }
             val buckets = remember(filteredAll, today) { filteredAll.groupBy { it.filterBucket(today) } }
             val liveCount = buckets[StatusFilter.LIVE]?.size ?: 0
             val upcomingCount = buckets[StatusFilter.UPCOMING]?.size ?: 0
@@ -507,7 +518,7 @@ private fun LiveEventCard(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "₱%,.2f earned".format(event.revenueKept),
+                text = "${peso(event.revenueKept)} earned",
                 style = NumeralStyle.copy(fontSize = 16.sp),
                 color = Ink,
             )

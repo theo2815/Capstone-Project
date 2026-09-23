@@ -42,6 +42,7 @@ const COPY: Record<
 
 export function AdminPayoutReasonModal({
   open,
+  submitting = false,
   kind,
   payoutId,
   amount,
@@ -49,6 +50,7 @@ export function AdminPayoutReasonModal({
   onSubmit,
 }: {
   open: boolean;
+  submitting?: boolean;
   kind: PayoutReasonKind;
   payoutId: string;
   amount: number;
@@ -67,12 +69,12 @@ export function AdminPayoutReasonModal({
   function handleSubmit() {
     if (trimmed.length === 0) return;
     onSubmit(trimmed);
-    setReason("");
   }
 
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={close}
       onSubmit={handleSubmit}
       title={`${copy.title} · ${payoutId}`}

@@ -1,3 +1,4 @@
+import { captureAuthSession } from "@/lib/auth-session";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { CartItem } from "@/types/order";
@@ -45,8 +46,10 @@ export const useCartStore = create<CartState>()(
           return { items: [...state.items, item] };
         });
         if (added && get().syncEnabled) {
+          const isCurrent = captureAuthSession();
           postCartItem(item)
             .then((canonical) => {
+              if (!isCurrent()) return;
               // Server-wins on price (Q-003). Patch the local row if the
               // returned price differs — keeps checkout total honest.
               if (canonical && canonical.price !== item.price) {
@@ -58,6 +61,7 @@ export const useCartStore = create<CartState>()(
               }
             })
             .catch(() => {
+            if (!isCurrent()) return;
               // Revert optimistic add on failure.
               set((state) => ({
                 items: state.items.filter((i) => i.photoId !== item.photoId),
@@ -75,8 +79,10 @@ export const useCartStore = create<CartState>()(
           return { items: state.items.filter((i) => i.photoId !== photoId) };
         });
         if (removed && get().syncEnabled) {
+          const isCurrent = captureAuthSession();
           const reverted = removed;
           deleteCartItem(photoId).catch(() => {
+            if (!isCurrent()) return;
             // Revert optimistic delete on failure.
             set((state) => ({ items: [...state.items, reverted] }));
           });

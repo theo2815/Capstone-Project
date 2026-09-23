@@ -112,8 +112,8 @@ import kotlin.math.roundToInt
 // PH regions/provinces come from the backend (`GET /api/v1/regions`), not from
 // this file. A hardcoded 75-line copy lived here until 2026-08-16 while the
 // website carried a third copy of its own, so a region added backend-side
-// reached neither client. The list arrives via PhotographerDashboardViewModel
-// .regions as List<RegionDto> — see that DTO for the wire shape.
+// reached neither client. The list arrives via StudioSettingsViewModel.regions
+// as List<RegionDto> — see that DTO for the wire shape.
 
 // ─── Platform + payout constants (website parity) ────────────────────────────
 
@@ -146,7 +146,7 @@ private val SOCIAL_URL_PATTERN = mapOf(
     "website" to Regex("^https?://[^\\s/]+\\.[^\\s/]+", RegexOption.IGNORE_CASE),
 )
 
-private fun validateSocialUrl(platform: String, url: String): String? {
+internal fun validateSocialUrl(platform: String, url: String): String? {
     val trimmed = url.trim()
     if (trimmed.isEmpty()) return "Add a URL or remove this row."
     if (trimmed.length > 2048) return "URL is at most 2048 characters."
@@ -168,7 +168,7 @@ private val PAYOUT_METHOD_LABEL = mapOf(
     "gotyme" to "GoTyme Bank",
 )
 
-private fun formatPayoutNumber(method: String, raw: String): String {
+internal fun formatPayoutNumber(method: String, raw: String): String {
     val digits = raw.filter { it.isDigit() }
     if (method == "gotyme") {
         val trimmed = digits.take(16)
@@ -182,7 +182,7 @@ private fun formatPayoutNumber(method: String, raw: String): String {
     }
 }
 
-private fun validatePayoutNumber(method: String, raw: String): String? {
+internal fun validatePayoutNumber(method: String, raw: String): String? {
     val d = raw.filter { it.isDigit() }
     if (method == "gcash" || method == "maya") {
         if (d.isEmpty()) return null
@@ -218,18 +218,20 @@ private sealed class PayoutSheetMode {
 @Composable
 fun PhotographerSettingsScreen(
     viewModel: PhotographerDashboardViewModel,
+    settingsViewModel: StudioSettingsViewModel,
     onLogout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val verificationState by viewModel.verificationState.collectAsState()
-    val brandSettings by viewModel.brandSettings.collectAsState()
-    val payoutAccounts by viewModel.payoutAccounts.collectAsState()
-    val socials by viewModel.socials.collectAsState()
-    val regions by viewModel.regions.collectAsState()
-    val isSaving by viewModel.isSavingSettings.collectAsState()
-    val actionMessage by viewModel.settingsActionState.collectAsState()
-    val settingsLoadError by viewModel.settingsLoadError.collectAsState()
+    val verificationAction by viewModel.verificationActionState.collectAsState()
+    val brandSettings by settingsViewModel.brandSettings.collectAsState()
+    val payoutAccounts by settingsViewModel.payoutAccounts.collectAsState()
+    val socials by settingsViewModel.socials.collectAsState()
+    val regions by settingsViewModel.regions.collectAsState()
+    val isSaving by settingsViewModel.isSavingSettings.collectAsState()
+    val actionState by settingsViewModel.actionState.collectAsState()
+    val settingsLoadError by settingsViewModel.settingsLoadError.collectAsState()
 
     // Hydration gate: with no cached brand payload and a failed fetch, the
     // form would render EMPTY but editable — and Save would overwrite real
@@ -242,7 +244,7 @@ fun PhotographerSettingsScreen(
             ErrorView(
                 message = settingsLoadError ?: "",
                 title = "Couldn't load your settings",
-                onRetry = { viewModel.fetchSettings() },
+                onRetry = { settingsViewModel.fetchSettings() },
             )
         }
         return
@@ -280,16 +282,25 @@ fun PhotographerSettingsScreen(
         uri?.let { watermarkUri = it.toString() }
     }
 
-    LaunchedEffect(actionMessage) {
-        actionMessage?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-            if (it.startsWith("Success")) {
-                avatarUri = null
-                coverUri = null
-                watermarkUri = null
-            }
-            viewModel.clearSettingsActionState()
+    LaunchedEffect(actionState) {
+        val message = actionState.message ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        // A landed save has uploaded the picks; drop them so a second Save
+        // doesn't re-send the same bytes.
+        if (actionState is ActionState.Done) {
+            avatarUri = null
+            coverUri = null
+            watermarkUri = null
         }
+        settingsViewModel.clearActionState()
+    }
+
+    // Submit / Withdraw report on the dashboard VM's channel — it owns the
+    // verification status those two change.
+    LaunchedEffect(verificationAction) {
+        val message = verificationAction.message ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        viewModel.clearVerificationActionState()
     }
 
     // Hydrate ONCE per screen mount. The old per-field `if (x.isEmpty())`
@@ -534,7 +545,7 @@ fun PhotographerSettingsScreen(
                 onAdd = { payoutSheetMode = PayoutSheetMode.Add },
                 onEdit = { payoutSheetMode = PayoutSheetMode.Edit(it) },
                 onAskDelete = { payoutRowToDelete = it },
-                onSetPrimary = { viewModel.setPrimaryPayoutAccount(it.id) },
+                onSetPrimary = { settingsViewModel.setPrimaryPayoutAccount(it.id) },
                 showValidation = hasAttemptedSubmit,
             )
         }
@@ -543,7 +554,7 @@ fun PhotographerSettingsScreen(
             BottomActions(
                 isSaving = isSaving,
                 onSave = {
-                    viewModel.saveSettings(
+                    settingsViewModel.saveSettings(
                         brandName = brandName,
                         bio = bio,
                         gcashName = "",
@@ -557,6 +568,9 @@ fun PhotographerSettingsScreen(
                         watermarkUri = watermarkUri,
                         brandColor = brandColor,
                         watermarkPlacement = watermarkPlacement,
+                        // A completed brand/handle/region/payout step can
+                        // finish the verification checklist.
+                        onSaved = viewModel::fetchVerificationStatus,
                     )
                 },
                 onSignOut = onLogout,
@@ -571,8 +585,8 @@ fun PhotographerSettingsScreen(
             onDismiss = { socialSheetMode = null },
             onConfirm = { platform, url ->
                 when (mode) {
-                    is SocialSheetMode.Add -> viewModel.addSocialAccount(platform, url)
-                    is SocialSheetMode.Edit -> viewModel.updateSocialAccount(mode.link.id, url)
+                    is SocialSheetMode.Add -> settingsViewModel.addSocialAccount(platform, url)
+                    is SocialSheetMode.Edit -> settingsViewModel.updateSocialAccount(mode.link.id, url)
                 }
                 socialSheetMode = null
             },
@@ -585,9 +599,9 @@ fun PhotographerSettingsScreen(
             onDismiss = { payoutSheetMode = null },
             onConfirm = { method, accountName, accountNumber, qrUri ->
                 when (mode) {
-                    is PayoutSheetMode.Add -> viewModel.addPayoutAccount(method, accountName, accountNumber, qrUri)
+                    is PayoutSheetMode.Add -> settingsViewModel.addPayoutAccount(method, accountName, accountNumber, qrUri)
                     is PayoutSheetMode.Edit ->
-                        viewModel.updatePayoutAccount(mode.account.id, accountName, accountNumber, qrUri)
+                        settingsViewModel.updatePayoutAccount(mode.account.id, accountName, accountNumber, qrUri)
                 }
                 payoutSheetMode = null
             },
@@ -602,7 +616,7 @@ fun PhotographerSettingsScreen(
             text = { Text("This will remove the link from your public profile.", color = Slate, style = Typography.bodyMedium) },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteSocialAccount(link.id)
+                    settingsViewModel.deleteSocialAccount(link.id)
                     socialRowToDelete = null
                 }) { Text("REMOVE", color = ErrorRed, fontWeight = FontWeight.SemiBold) }
             },
@@ -628,7 +642,7 @@ fun PhotographerSettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deletePayoutAccount(account.id)
+                    settingsViewModel.deletePayoutAccount(account.id)
                     payoutRowToDelete = null
                 }) { Text("REMOVE", color = ErrorRed, fontWeight = FontWeight.SemiBold) }
             },

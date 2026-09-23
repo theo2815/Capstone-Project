@@ -95,7 +95,7 @@ class CommerceContractTest {
                 """{"success":true,"data":{
                     "id":"o1","status":"FULFILLED",
                     "items":[{"photoId":"p1","price":0.0,"downloadUrl":"http://clean/p1"}],
-                    "totalAmount":0.0,"paymentMethod":"gcash","createdAt":"2026-09-06T00:00:00Z",
+                    "totalAmount":0.0,"checkoutTotalAmount":0.0,"paymentMethod":"gcash","createdAt":"2026-09-06T00:00:00Z",
                     "returnToken":"tok123"}}""",
             ),
         )
@@ -110,6 +110,7 @@ class CommerceContractTest {
             ),
         ).data!!
         assertEquals("FULFILLED", order.status)
+        assertEquals(0.0, order.totalAmount, 0.0001)
         assertEquals("tok123", order.returnToken)
         assertNull(order.redirectUrl)
     }

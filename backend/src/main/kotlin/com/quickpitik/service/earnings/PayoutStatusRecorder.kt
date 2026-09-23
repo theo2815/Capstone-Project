@@ -4,6 +4,8 @@ import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.PayoutStatusHistory
 import com.quickpitik.repository.PayoutStatusHistoryRepository
 import org.springframework.stereotype.Component
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
 
 // Single writer for the payout lifecycle audit trail. Both the photographer
@@ -14,6 +16,7 @@ import java.util.UUID
 class PayoutStatusRecorder(
     private val payoutStatusHistoryRepository: PayoutStatusHistoryRepository,
 ) {
+    @Transactional(propagation = Propagation.MANDATORY)
     fun record(
         cycleId: String,
         from: PayoutCycleStatus?,

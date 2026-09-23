@@ -42,6 +42,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.remote.RunnerMessageDto
+import com.quickpitik.mobile.ui.common.formatInboxDate
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
@@ -295,7 +296,7 @@ private fun RunnerMessageRow(
                 )
             }
             Text(
-                text = formatRunnerInboxDate(message.createdAt),
+                text = formatInboxDate(message.createdAt),
                 style = Typography.labelMedium,
                 color = SlateSoft,
             )
@@ -342,6 +343,8 @@ private fun RunnerMessageRow(
 }
 
 // All six backend RunnerMessageKind wire values (entity/RunnerMessage.kt).
+// Runner copy from the website's runner-messages.ts; the photographer inbox
+// (StudioShell) words the refund kinds differently on purpose, as the web does.
 private fun runnerMessageKindLabel(kind: String): String = when (kind) {
     "dispute_resolved" -> "Refund approved"
     "dispute_denied" -> "Refund declined"
@@ -360,21 +363,6 @@ private fun runnerMessageKindTone(kind: String): Color = when (kind) {
     "account_suspended" -> ErrorRed
     "admin_message" -> Ink
     else -> Slate
-}
-
-// "AUG 14, 2026" — the year matters: refund messages stay in the inbox for
-// months, and the website's rows carry it (formatLongDate parity).
-private fun formatRunnerInboxDate(iso: String): String {
-    return try {
-        val parts = iso.substring(0, 10).split("-")
-        val months = listOf(
-            "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-        )
-        "${months[parts[1].toInt() - 1]} ${parts[2].toInt()}, ${parts[0]}"
-    } catch (e: Exception) {
-        iso
-    }
 }
 
 @Preview(showBackground = true)

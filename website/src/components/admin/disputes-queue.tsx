@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
@@ -17,11 +18,7 @@ import { AdminResolveDisputeModal } from "@/components/admin/admin-resolve-dispu
 import { AdminRefundConfirmModal } from "@/components/admin/admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "@/components/admin/admin-deny-dispute-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
-import {
-  useAdminDisputeStore,
-  mergeDisputesWithOverrides,
-} from "@/store/admin-dispute-store";
-import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-data";
+import { useAdminDisputes, useDisputeActions, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
@@ -35,8 +32,6 @@ import {
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
-
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STATUS_LABEL: Record<DisputeStatus, string> = {
   open: "Open",
@@ -85,25 +80,18 @@ interface PendingResolve {
 // can stand down via escDisabled while any modal is on top.
 
 export function DisputesQueue() {
-  const overrides = useAdminDisputeStore((s) => s.overrides);
-  const submissions = useAdminDisputeStore((s) => s.submissions);
-  const resolve = useAdminDisputeStore((s) => s.resolve);
-  const deny = useAdminDisputeStore((s) => s.deny);
-  const escalate = useAdminDisputeStore((s) => s.escalate);
-  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
+  const { resolve, deny, escalate } = useDisputeActions();
+  const query = useAdminDisputes();
+  const effective = query.data ?? EMPTY_DISPUTES;
   const { showToast } = useToast();
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
+  const [submitting, setSubmitting] = useState(false);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [denyOpen, setDenyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
   const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(
     null,
-  );
-
-  const effective = useMemo(
-    () => mergeDisputesWithOverrides(serverDisputes, overrides, submissions),
-    [serverDisputes, overrides, submissions],
   );
 
   const byId = useMemo(() => {
@@ -118,8 +106,8 @@ export function DisputesQueue() {
   }, [rowId, byId]);
 
   useEffect(() => {
-    if (rowId && !openRow) setRowId("");
-  }, [rowId, openRow, setRowId]);
+    if (query.isSuccess && !query.isFetching && rowId && !openRow) setRowId("");
+  }, [query.isSuccess, query.isFetching, rowId, openRow, setRowId]);
 
   const open = useMemo(
     () =>
@@ -209,14 +197,17 @@ export function DisputesQueue() {
     setRowId(id);
   }
 
-  function handleContinueResolve(args: PendingResolve) {
-    if (!openRow) return;
+  async function handleContinueResolve(args: PendingResolve) {
+    if (!openRow || submitting) return;
     if (args.resolution === "deny") {
-      resolve(openRow.id, {
+      setSubmitting(true);
+      const ok = await resolve(openRow.id, {
         resolution: "deny",
         refundAmount: null,
         reason: args.note,
       });
+      setSubmitting(false);
+      if (!ok) return;
       setResolveOpen(false);
       showToast({
         kind: "info",
@@ -227,35 +218,60 @@ export function DisputesQueue() {
     setPendingResolve(args);
   }
 
-  function handleConfirmRefund() {
-    if (!openRow || !pendingResolve) return;
-    resolve(openRow.id, {
+  async function handleConfirmRefund() {
+    if (!openRow || !pendingResolve || submitting) return;
+    setSubmitting(true);
+    const confirmed = await resolve(openRow.id, {
       resolution: pendingResolve.resolution,
       refundAmount: pendingResolve.refundAmount,
       reason: pendingResolve.note,
     });
+    setSubmitting(false);
+    if (!confirmed) return;
     setPendingResolve(null);
     setResolveOpen(false);
-    showToast({ kind: "success", message: `Refunded · ${openRow.id}` });
+    const refunded = confirmed.status === "resolved" && confirmed.refundAmount !== null;
+    showToast({
+      kind: refunded ? "success" : "info",
+      message: refunded
+        ? `Refunded · ${confirmed.id} · ${formatPrice(confirmed.refundAmount!)}`
+        : `Refund requested · ${confirmed.id}`,
+    });
   }
 
   function handleCancelRefund() {
     setPendingResolve(null);
   }
 
-  function handleDeny(reason: string) {
-    if (!openRow) return;
-    deny(openRow.id, reason);
+  async function handleDeny(reason: string) {
+    if (!openRow || submitting) return;
+    setSubmitting(true);
+    const ok = await deny(openRow.id, reason);
+    setSubmitting(false);
+    if (!ok) return;
     setDenyOpen(false);
     showToast({ kind: "info", message: `Denied · ${openRow.id}` });
   }
 
-  function handleEscalate(note: string | null) {
-    if (!openRow) return;
-    escalate(openRow.id, note);
+  async function handleEscalate(note: string | null) {
+    if (!openRow || submitting) return;
+    setSubmitting(true);
+    const ok = await escalate(openRow.id, note);
+    setSubmitting(false);
+    if (!ok) return;
     setEscalateOpen(false);
     showToast({ kind: "info", message: `Escalated · ${openRow.id}` });
   }
+
+  if (query.isPending) return <p role="status" className="py-6">Loading disputes…</p>;
+  if (query.isError && !query.data) return (
+    <div role="alert" className="space-y-4 py-6">
+      <p>Couldn&apos;t load disputes.</p>
+      <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void query.refetch()}>
+        Try again
+      </button>
+    </div>
+  );
 
   return (
     <>
@@ -348,6 +364,7 @@ export function DisputesQueue() {
           actions={
             <DisputeDrawerActions
               dispute={openRow}
+              submitting={submitting}
               onResolve={() => setResolveOpen(true)}
               onDeny={() => setDenyOpen(true)}
               onEscalate={() => setEscalateOpen(true)}
@@ -361,6 +378,7 @@ export function DisputesQueue() {
       {openRow && (
         <>
           <AdminResolveDisputeModal
+            submitting={submitting}
             open={resolveOpen}
             escDisabled={pendingResolve !== null}
             onClose={() => {
@@ -370,11 +388,13 @@ export function DisputesQueue() {
             onContinue={handleContinueResolve}
             disputeId={openRow.id}
             orderTotal={openRow.orderSnapshot.total}
+            itemChargeAmount={openRow.itemChargeAmount}
           />
           {pendingResolve &&
             pendingResolve.resolution !== "deny" &&
             pendingResolve.refundAmount !== null && (
               <AdminRefundConfirmModal
+                submitting={submitting}
                 open={true}
                 onCancel={handleCancelRefund}
                 onConfirm={handleConfirmRefund}
@@ -384,12 +404,14 @@ export function DisputesQueue() {
               />
             )}
           <AdminDenyDisputeModal
+            submitting={submitting}
             open={denyOpen}
             onClose={() => setDenyOpen(false)}
             onSubmit={handleDeny}
             disputeId={openRow.id}
           />
           <AdminEscalateModal
+            submitting={submitting}
             open={escalateOpen}
             onClose={() => setEscalateOpen(false)}
             onSubmit={handleEscalate}
@@ -400,35 +422,6 @@ export function DisputesQueue() {
       )}
     </>
   );
-}
-
-export function useOpenDisputesCount(): number {
-  const overrides = useAdminDisputeStore((s) => s.overrides);
-  const submissions = useAdminDisputeStore((s) => s.submissions);
-  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
-  return useMemo(
-    () =>
-      mergeDisputesWithOverrides(serverDisputes, overrides, submissions).filter(
-        (d) => d.status === "open",
-      ).length,
-    [serverDisputes, overrides, submissions],
-  );
-}
-
-export function useRefundedThisWeekTotal(): number {
-  const overrides = useAdminDisputeStore((s) => s.overrides);
-  const submissions = useAdminDisputeStore((s) => s.submissions);
-  const serverDisputes = useAdminDisputes() ?? EMPTY_DISPUTES;
-  return useMemo(() => {
-    const cutoff = Date.now() - SEVEN_DAYS_MS;
-    return mergeDisputesWithOverrides(serverDisputes, overrides, submissions)
-      .filter((d) => {
-        if (d.status !== "resolved" || d.refundAmount === null) return false;
-        const t = new Date(d.resolvedAt ?? "").getTime();
-        return Number.isFinite(t) && t >= cutoff;
-      })
-      .reduce((acc, d) => acc + (d.refundAmount ?? 0), 0);
-  }, [serverDisputes, overrides, submissions]);
 }
 
 function DisputeSlab({
@@ -512,11 +505,13 @@ function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
 
 function DisputeDrawerActions({
   dispute,
+  submitting,
   onResolve,
   onDeny,
   onEscalate,
 }: {
   dispute: Dispute;
+  submitting: boolean;
   onResolve: () => void;
   onDeny: () => void;
   onEscalate: () => void;
@@ -528,7 +523,9 @@ function DisputeDrawerActions({
   if (!isOpen && !escalateAllowed) {
     return (
       <p className="font-sans text-sm text-slate-soft">
-        This dispute is closed. No further actions are available.
+        {dispute.refundStatus === "manual_review"
+          ? "Review the payment in PayMongo before another refund attempt."
+          : "This dispute is closed. No further actions are available."}
       </p>
     );
   }
@@ -539,7 +536,8 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onEscalate}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+          disabled={submitting}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Escalate…
         </button>
@@ -548,7 +546,8 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onDeny}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
+          disabled={submitting}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Deny…
         </button>
@@ -557,7 +556,8 @@ function DisputeDrawerActions({
         <button
           type="button"
           onClick={onResolve}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          disabled={submitting}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Resolve…
         </button>
@@ -683,7 +683,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         <Kicker as="p" tone="soft" className="mb-3">
           Activity
         </Kicker>
-        {dispute.status !== "open" &&
+        {(dispute.status === "resolved" || dispute.status === "denied") &&
           (dispute.activity ?? []).length === 0 && (
             <ResolutionNote
               resolution={dispute.resolution}
@@ -692,7 +692,6 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
             />
           )}
         <AdminDisputeActivityList
-          disputeId={dispute.id}
           activity={dispute.activity}
         />
       </section>

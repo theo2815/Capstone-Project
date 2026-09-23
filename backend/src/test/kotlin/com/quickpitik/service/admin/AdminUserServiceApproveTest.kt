@@ -17,7 +17,7 @@ import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.RefreshTokenService
+import com.quickpitik.service.auth.RefreshTokenService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
@@ -148,5 +148,28 @@ class AdminUserServiceApproveTest {
         service().approve(adminId, photographerId)
 
         assertEquals(VerificationStatus.APPROVED, s.verificationStatus)
+    }
+
+    // P1.6 — the admin review pane is a READ. requirePhotographerSettings used to
+    // lazy-create the settings row here under readOnly = true, where the INSERT is
+    // never flushed: a wasted SELECT per call and the exact pitfall logged in vault
+    // backend/notes/jpa-pitfalls.md (2026-05-25).
+    @Test
+    fun `photographerSettings renders defaults without creating a settings row`() {
+        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(photographer()))
+        Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
+        Mockito.`when`(socialLinkRepository.findAllByUserIdOrderByCreatedAtAsc(photographerId)).thenReturn(emptyList())
+        Mockito.`when`(payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(photographerId)).thenReturn(emptyList())
+        // Stubbed so a regressed build reaches the verify below instead of NPEing on
+        // an unstubbed save() — the failure must name the persist, not a null.
+        Mockito.`when`(photographerSettingsRepository.save(anyArg())).thenAnswer { it.arguments[0] }
+
+        val dto = service().photographerSettings(photographerId)
+
+        Mockito.verify(photographerSettingsRepository, Mockito.never()).save(anyArg())
+        // The pane still renders: the caller gets an unsaved row carrying the defaults.
+        assertEquals(photographerId.toString(), dto.userId)
+        assertEquals("none", dto.brandColor)
+        assertEquals("", dto.bio)
     }
 }

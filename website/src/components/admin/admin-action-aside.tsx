@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useAdminUserStore } from "@/store/admin-user-store";
+import { useRef, useState } from "react";
+import { useAdminUserActions } from "@/hooks/use-admin-users";
 import { useToast } from "@/hooks/use-toast";
 import { sendAdminMessage } from "@/lib/api-admin";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
@@ -32,11 +32,15 @@ interface AdminActionAsideProps {
 // opens; restorative/neutral actions stay secondary/ghost.
 export function AdminActionAside({ row }: AdminActionAsideProps) {
   const { showToast } = useToast();
-  const approve = useAdminUserStore((s) => s.approve);
-  const reject = useAdminUserStore((s) => s.reject);
-  const suspend = useAdminUserStore((s) => s.suspend);
-  const unsuspend = useAdminUserStore((s) => s.unsuspend);
-  const resetVerification = useAdminUserStore((s) => s.resetVerification);
+  const { approve, reject, suspend, unsuspend, resetVerification } = useAdminUserActions();
+  const busy = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  async function run(action: () => Promise<boolean>) {
+    if (busy.current) return false;
+    busy.current = true; setSubmitting(true);
+    try { return await action(); }
+    finally { busy.current = false; setSubmitting(false); }
+  }
 
   const [rejectOpen, setRejectOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
@@ -48,45 +52,40 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   const isIncomplete = row.verificationStatus === "incomplete";
   const displayName = row.brandName ?? row.name;
 
-  // Each handler awaits the store and only fires the success toast on BE
-  // success — the photographer notification is fired inside the store
-  // action, so we never get a "you're approved!" inbox row on a failed
-  // approve. The store also surfaces its own error toast on failure, so
-  // the caller need not handle the false branch.
   async function handleApprove() {
-    const ok = await approve(row.userId);
+    const ok = await run(() => approve(row.userId));
     if (ok) {
       showToast({ kind: "success", message: `Approved · ${displayName}` });
     }
   }
 
   async function handleReject(reason: string) {
-    const ok = await reject(row.userId, reason);
-    setRejectOpen(false);
+    const ok = await run(() => reject(row.userId, reason));
     if (ok) {
+      setRejectOpen(false);
       showToast({ kind: "info", message: `Sent back · ${displayName}` });
     }
   }
 
   async function handleSuspend(reason: string) {
-    const ok = await suspend(row.userId, reason);
-    setSuspendOpen(false);
+    const ok = await run(() => suspend(row.userId, reason));
     if (ok) {
+      setSuspendOpen(false);
       showToast({ kind: "info", message: `Suspended · ${displayName}` });
     }
   }
 
   async function handleUnsuspend() {
-    const ok = await unsuspend(row.userId);
+    const ok = await run(() => unsuspend(row.userId));
     if (ok) {
       showToast({ kind: "success", message: `Unsuspended · ${displayName}` });
     }
   }
 
   async function handleReset(reason: string) {
-    setResetOpen(false);
-    const ok = await resetVerification(row.userId, reason);
+    const ok = await run(() => resetVerification(row.userId, reason));
     if (ok) {
+      setResetOpen(false);
       showToast({
         kind: "info",
         message: `Verification reset · ${displayName}`,
@@ -124,6 +123,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
           <>
             <button
               type="button"
+              disabled={submitting}
               onClick={handleApprove}
               className={primaryFreshBtn}
             >
@@ -131,6 +131,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
             </button>
             <button
               type="button"
+              disabled={submitting}
               onClick={() => setRejectOpen(true)}
               className={dangerBtn}
             >
@@ -142,6 +143,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         {!isSuspended ? (
           <button
             type="button"
+            disabled={submitting}
             onClick={() => setSuspendOpen(true)}
             className={dangerBtn}
           >
@@ -150,6 +152,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         ) : (
           <button
             type="button"
+            disabled={submitting}
             onClick={handleUnsuspend}
             className={secondaryBtn}
           >
@@ -160,6 +163,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         {!isIncomplete && (
           <button
             type="button"
+            disabled={submitting}
             onClick={() => setResetOpen(true)}
             className={secondaryBtn}
           >
@@ -169,6 +173,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
         <button
           type="button"
+          disabled={submitting}
           onClick={() => setMessageOpen(true)}
           className={tertiaryBtn}
         >
@@ -188,18 +193,22 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
       )}
 
       <AdminRejectModal
+
+        submitting={submitting}
         open={rejectOpen}
         onClose={() => setRejectOpen(false)}
         onSubmit={handleReject}
         photographerName={displayName}
       />
       <AdminResetVerificationModal
+        submitting={submitting}
         open={resetOpen}
         onClose={() => setResetOpen(false)}
         onSubmit={handleReset}
         photographerName={displayName}
       />
       <AdminSuspendModal
+        submitting={submitting}
         open={suspendOpen}
         onClose={() => setSuspendOpen(false)}
         onSubmit={handleSuspend}

@@ -1,13 +1,5 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
+import nextTypeScript from "eslint-config-next/typescript";
 
 const READABILITY_FLOOR_MESSAGE =
   "text-[9px], text-[10px], and text-[11px] are below the Quiet Studio comfort floor (12px). " +
@@ -21,7 +13,8 @@ const TEXT_XS_BODY_FLOOR_MESSAGE =
   "See QuickPitik Vault/website/notes/ui-pitfalls.md (2026-05-07 floor-bump cont. 6).";
 
 const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextCoreWebVitals,
+  ...nextTypeScript,
   {
     ignores: [
       "node_modules/**",
@@ -32,7 +25,24 @@ const eslintConfig = [
     ],
   },
   {
+    files: ["src/{components,hooks,lib,store,types}/**/*.{ts,tsx}"],
     rules: {
+      "no-restricted-imports": ["error", {
+        patterns: [{
+          group: ["@/app/**", "**/app/**"],
+          message: "Reusable modules must not import routes. Move shared contracts into their domain or types/.",
+        }],
+      }],
+    },
+  },
+  {
+    rules: {
+      // ponytail: Next 16 enables React Compiler rules that flag 72 existing
+      // sites; migrate those behaviors in a dedicated React refactor.
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/refs": "off",
+      "react-hooks/set-state-in-effect": "off",
       // Severity is "warn" during the gradual readability migration so the
       // backlog of legacy text-[10px] / text-xs usages stays visible in PR
       // review without blocking builds. Promote to "error" once the backlog

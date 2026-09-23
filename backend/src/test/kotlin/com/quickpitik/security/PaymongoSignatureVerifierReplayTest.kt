@@ -32,6 +32,11 @@ class PaymongoSignatureVerifierReplayTest {
     }
 
     @Test
+    fun `a live delivery with empty test signature and valid live signature is accepted`() {
+        verifier.verify(signedRequest(atEpochSeconds = now(), liveMode = true))
+    }
+
+    @Test
     fun `a replay from an hour ago is rejected despite a valid signature`() {
         assertThrows<UnauthorizedException> {
             verifier.verify(signedRequest(atEpochSeconds = now() - 3600))
@@ -71,9 +76,8 @@ class PaymongoSignatureVerifierReplayTest {
 
     private fun now(): Long = Instant.now().epochSecond
 
-    // Builds a request whose `te=` digest genuinely matches `${t}.${body}`, so
-    // the only thing under test is the replay window.
-    private fun signedRequest(atEpochSeconds: Long?, rawTimestamp: String? = null): HttpServletRequest {
+    // Builds a request whose digest genuinely matches `${t}.${body}`.
+    private fun signedRequest(atEpochSeconds: Long?, rawTimestamp: String? = null, liveMode: Boolean = false): HttpServletRequest {
         val t = rawTimestamp ?: atEpochSeconds.toString()
         val payload = "$t.".toByteArray(StandardCharsets.UTF_8) + body
         val mac = Mac.getInstance("HmacSHA256").apply {
@@ -83,7 +87,7 @@ class PaymongoSignatureVerifierReplayTest {
 
         val mock = MockHttpServletRequest("POST", "/api/v1/payments/webhook/paymongo").apply {
             setContent(body)
-            addHeader(PaymongoSignatureVerifier.HEADER, "t=$t,te=$signature")
+            addHeader(PaymongoSignatureVerifier.HEADER, if (liveMode) "t=$t,te=,li=$signature" else "t=$t,te=$signature")
         }
         val wrapped = ContentCachingRequestWrapper(mock, 64 * 1024)
         wrapped.inputStream.readAllBytes()

@@ -1,6 +1,9 @@
 package com.quickpitik.service.earnings
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.earnings.PayoutReportDto
 import com.quickpitik.dto.earnings.SubmitPayoutReportRequest
 import com.quickpitik.dto.earnings.toDto
@@ -101,7 +104,8 @@ class PayoutReportService(
         photographerId: UUID,
         cycleId: String?,
         statusWire: String?,
-    ): List<PayoutReportDto> {
+        params: PaginationParams,
+    ): PaginatedResponse<PayoutReportDto> {
         // Validate the status filter early so a typo in the FE returns a clean
         // 400 envelope instead of a 500 from the entity-side fromWire throw.
         if (statusWire != null) {
@@ -116,15 +120,16 @@ class PayoutReportService(
             }
         }
 
-        val rows = payoutReportRepository.findForPhotographer(
+        val page = payoutReportRepository.findForPhotographer(
             photographerId = photographerId,
             cycleId = cycleId,
             statusWire = statusWire,
+            pageable = OffsetLimitPageable(params),
         )
-        if (rows.isEmpty()) return emptyList()
+        if (page.isEmpty) return PaginatedResponse.empty(params)
         val name = lookupName(photographerId)
         val handle = lookupHandle(photographerId)
-        return rows.map { it.toDto(photographerName = name, handle = handle) }
+        return PaginatedResponse.of(page.content.map { it.toDto(photographerName = name, handle = handle) }, page.totalElements, params)
     }
 
     private fun lookupName(photographerId: UUID): String =

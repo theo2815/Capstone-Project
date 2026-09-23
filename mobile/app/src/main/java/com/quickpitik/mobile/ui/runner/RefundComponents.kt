@@ -53,6 +53,8 @@ import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.RunnerDisputeDto
+import com.quickpitik.mobile.ui.common.formatManila
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.BadgeShape
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -68,7 +70,6 @@ import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.SuccessGreen
 import com.quickpitik.mobile.ui.theme.Typography
-import java.util.Locale
 
 // ── Refund domain helpers (port of website src/lib/refund-helpers.ts) ────────
 
@@ -89,7 +90,7 @@ fun refundReasonLabel(code: String): String =
 // cockpit; the website also reuses it inside the request modal.
 
 private const val REFUND_PROCESSING_DAYS = 3
-private const val REFUND_ELIGIBILITY_DAYS = 30
+private const val REFUND_ELIGIBILITY_DAYS = 7
 
 val REFUND_POLICY_BULLETS: List<Pair<String, String>> = listOf(
     "Eligibility" to
@@ -101,7 +102,7 @@ val REFUND_POLICY_BULLETS: List<Pair<String, String>> = listOf(
     "Where the money goes" to
         "Approved refunds return to your original payment method. GCash and Maya land within 24 hours; cards take 5–7 business days depending on the bank.",
     "What we don't refund" to
-        "Photos you've already downloaded and kept past the eligibility window, change-of-mind after 30 days, or photos that match your bib and selfie correctly.",
+        "Photos you've already downloaded and kept past the eligibility window, change-of-mind after $REFUND_ELIGIBILITY_DAYS days, or photos that match your bib and selfie correctly.",
 )
 
 // Read-only policy disclosure — port of the website's RefundModal mode="policy",
@@ -222,7 +223,7 @@ fun RefundStatusChip(rollup: RefundRollup, photoCount: Int) {
     val (tone, label) = when (rollup.kind) {
         "pending" -> Slate to "Refund pending · ${rollup.totalDisputed} of $photoCount"
         "partial" -> Slate to "Refund in review · ${rollup.totalDisputed} of $photoCount"
-        "approved" -> Fresh to "Refund approved · ₱${formatPeso(rollup.refundAmount)}"
+        "approved" -> Fresh to "Refund approved · ${peso(rollup.refundAmount, 0)}"
         "rejected" -> ErrorRed to "Refund declined"
         else -> Slate to "Refund updated"
     }
@@ -242,11 +243,6 @@ fun RefundStatusChip(rollup: RefundRollup, photoCount: Int) {
         }
     }
 }
-
-// Whole-peso formatting with thousands separators, matching the website's
-// toLocaleString with no decimals on order totals.
-private fun formatPeso(amount: Double): String =
-    String.format(Locale.US, "%,.0f", amount)
 
 // Can submit a new request once the order has no disputes, or every dispute was
 // denied — and at least one photo is still eligible.
@@ -270,14 +266,8 @@ private fun refundChipLabel(status: String): String = when (status) {
     else -> "in flight"
 }
 
-// Dependency-free ISO formatter — "2026-05-25T14:30:00+08:00" -> "2026-05-25 · 14:30".
-private fun formatDisputeTimestamp(iso: String): String = try {
-    val datePart = iso.substringBefore("T")
-    val timePart = iso.substringAfter("T", "").take(5)
-    if (timePart.length == 5) "$datePart · $timePart" else datePart
-} catch (e: Exception) {
-    iso
-}
+// "2026-05-25 · 14:30" on Manila's clock.
+private fun formatDisputeTimestamp(iso: String): String = formatManila(iso, "yyyy-MM-dd · HH:mm") ?: iso
 
 private data class StatusBadge(val color: Color, val label: String)
 
@@ -442,7 +432,7 @@ private fun RefundTimelineRow(dispute: RunnerDisputeDto) {
                 if (dispute.status == "resolved" && dispute.refundAmount != null) {
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = String.format("· ₱%,.2f refunded", dispute.refundAmount),
+                        text = "· ${peso(dispute.refundAmount)} refunded",
                         style = Typography.labelSmall,
                         color = Ink
                     )
@@ -554,7 +544,7 @@ fun RefundRequestDialog(
                         Text("REQUEST A REFUND", style = Typography.labelSmall, color = Slate)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = String.format("₱%,.2f", order.total) +
+                            text = peso(order.total) +
                                 " paid for ${order.photoIds.size} photo${if (order.photoIds.size == 1) "" else "s"}" +
                                 (order.eventName?.let { " from $it" } ?: "") + ".",
                             style = Typography.bodyMedium,

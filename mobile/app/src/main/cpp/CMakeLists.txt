@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(fujisdk)
+add_library(fujisdk SHARED fuji_sdk.cpp)
+target_include_directories(fujisdk PRIVATE ${FUJI_SDK_DIR}/HEADERS)
+find_library(log-lib log)
+target_link_libraries(fujisdk ${log-lib} ${CMAKE_DL_LIBS})

@@ -1,11 +1,16 @@
 package com.quickpitik.service.photos
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.dto.ai.FaceMatch
 import com.quickpitik.dto.ai.FacesSearchResult
 import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.entity.UserSelfie
+import com.quickpitik.exception.NotFoundException
+import com.quickpitik.repository.UserSelfieRepository
+import com.quickpitik.service.storage.StorageService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiApiException
@@ -31,8 +36,11 @@ class PhotoSearchServiceTest {
 
     private lateinit var aiApiClient: AiApiClient
     private lateinit var photoService: PhotoService
+    private lateinit var userSelfieRepository: UserSelfieRepository
+    private lateinit var storageService: StorageService
 
     private val eventId: UUID = UUID.randomUUID()
+    private val userId: UUID = UUID.randomUUID()
     private val pagination = PaginationParams.of(0, 20)
     private val selfie = byteArrayOf(1, 2, 3)
 
@@ -40,6 +48,8 @@ class PhotoSearchServiceTest {
     fun setUp() {
         aiApiClient = Mockito.mock(AiApiClient::class.java)
         photoService = Mockito.mock(PhotoService::class.java)
+        userSelfieRepository = Mockito.mock(UserSelfieRepository::class.java)
+        storageService = Mockito.mock(StorageService::class.java)
     }
 
     // ─── E2: threshold is re-checked server-side ──────────────────────────
@@ -110,6 +120,22 @@ class PhotoSearchServiceTest {
         assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.status)
         assertEquals("NO_FACES", ex.aiCode)
         Mockito.verify(photoService, Mockito.never()).listForEvent(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `with the fallback on a rejected selfie still propagates 422`() {
+        val service = service(fallback = true)
+        whenFacesSearch().thenThrow(AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, "NO_FACES", "no faces"))
+        Mockito.`when`(photoService.listForEvent(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(PaginatedResponse(emptyList<PhotoDto>(), 7L, 0, 20))
+
+        val ex = assertFailsWith<AiApiException> {
+            service.searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination)
+        }
+
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.status)
+        assertEquals("NO_FACES", ex.aiCode)
+        Mockito.verifyNoInteractions(photoService)
     }
 
     @Test
@@ -210,6 +236,72 @@ class PhotoSearchServiceTest {
             .findByEventAndPersonIds(anyArg(), anyArg(), anyArg(), anyArg())
     }
 
+    // ─── Stored-selfie entry point (moved out of EventPhotoController 2026-09-12) ─
+
+    @Test
+    fun `all-selfies search with an empty library is a 404`() {
+        val service = service()
+        Mockito.`when`(userSelfieRepository.findByUserIdOrderByUploadedAtDesc(userId)).thenReturn(emptyList())
+
+        val ex = assertFailsWith<NotFoundException> {
+            service.searchWithStoredSelfie(userId, eventId, null, allSelfies = true, pagination = pagination)
+        }
+
+        assertEquals(ErrorCodes.SELFIE_NOT_FOUND, ex.code)
+        // Both SELFIE_NOT_FOUND branches share the code; the message is what
+        // separates "no selfies saved" from "the bytes went missing".
+        assertEquals("Selfie not found", ex.message)
+        assertTrue(Mockito.mockingDetails(aiApiClient).invocations.isEmpty())
+    }
+
+    @Test
+    fun `all-selfies search whose every object is gone is a 404, not a 500`() {
+        val service = service()
+        Mockito.`when`(userSelfieRepository.findByUserIdOrderByUploadedAtDesc(userId))
+            .thenReturn(listOf(selfieRow("s1.jpg"), selfieRow("s2.jpg")))
+        Mockito.`when`(storageService.getBytes(anyArg())).thenThrow(IllegalStateException("object missing"))
+
+        val ex = assertFailsWith<NotFoundException> {
+            service.searchWithStoredSelfie(userId, eventId, null, allSelfies = true, pagination = pagination)
+        }
+
+        assertEquals(ErrorCodes.SELFIE_NOT_FOUND, ex.code)
+        assertEquals("Selfie file is no longer available", ex.message)
+        assertTrue(Mockito.mockingDetails(aiApiClient).invocations.isEmpty())
+    }
+
+    @Test
+    fun `a single stored selfie whose bytes are gone is a 404, not a 500`() {
+        val service = service()
+        val row = selfieRow("s.jpg")
+        Mockito.`when`(userSelfieRepository.findByIdAndUserId(row.id, userId)).thenReturn(row)
+        Mockito.`when`(storageService.getBytes(row.s3Key)).thenThrow(IllegalStateException("object missing"))
+
+        val ex = assertFailsWith<NotFoundException> {
+            service.searchWithStoredSelfie(userId, eventId, row.id, allSelfies = false, pagination = pagination)
+        }
+
+        assertEquals(ErrorCodes.SELFIE_NOT_FOUND, ex.code)
+        assertEquals("Selfie file is no longer available", ex.message)
+        assertTrue(Mockito.mockingDetails(aiApiClient).invocations.isEmpty())
+    }
+
+    @Test
+    fun `the all-selfies library is capped at five samples`() {
+        val service = service()
+        // Seven saved selfies must not become seven AI calls (one per sample).
+        Mockito.`when`(userSelfieRepository.findByUserIdOrderByUploadedAtDesc(userId))
+            .thenReturn((1..7).map { selfieRow("s$it.jpg") })
+        Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(selfie)
+        stubSearch()
+
+        service.searchWithStoredSelfie(userId, eventId, null, allSelfies = true, pagination = pagination)
+
+        Mockito.verify(aiApiClient, Mockito.times(5)).facesSearch(
+            anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyDouble(), Mockito.anyInt(),
+        )
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     private fun service(enabled: Boolean = true, fallback: Boolean = false): PhotoSearchService =
@@ -217,6 +309,8 @@ class PhotoSearchServiceTest {
             aiApiClient,
             AiApiProperties(enabled = enabled, searchFallbackOnError = fallback),
             photoService,
+            userSelfieRepository,
+            storageService,
             SimpleMeterRegistry(),
         )
 
@@ -241,6 +335,8 @@ class PhotoSearchServiceTest {
         Mockito.`when`(photoService.findByEventAndPersonIds(anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(PaginatedResponse(emptyList<PhotoDto>(), 1L, 0, 20))
     }
+
+    private fun selfieRow(key: String = "s.jpg") = UserSelfie(userId = userId, s3Key = "selfies/$userId/$key")
 
     private fun <T> anyArg(): T = Mockito.any()
 

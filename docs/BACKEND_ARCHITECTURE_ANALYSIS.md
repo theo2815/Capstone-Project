@@ -372,7 +372,11 @@ succeeds, so retry and Cancel retain the saved placement.
 **Photographer photo management — website/mobile integration:**
 `GET /api/v1/me/photographer/events/{id}/photos?deleted=true` lists trash using
 the same `items`, `offset`, `limit`, and `total` pagination envelope as the active
-library. Both clients must request additional server pages. Covered events stay
+library. Photo `status` preserves `processing`, `live`, or `hidden`; website and
+mobile show a Processing badge while watermark preparation is incomplete.
+Processing photos remain in the owner's library but are not runner-visible or
+sellable. The multipart/direct upload response also uses `processing` until ready.
+Both clients must request additional server pages. Covered events stay
 reachable with `withUploads=false`, including when their active count is zero.
 
 The `photos/trash` and `photos/restore` actions return the actual `affected`
@@ -454,6 +458,7 @@ sequenceDiagram
 ```
 
 - **Guest Purchases & Capability Tokens:** Unregistered users can purchase photos. Full order details and downloads are secured via cryptographically signed tokens ([OrderAccessTokenService.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/orders/OrderAccessTokenService.kt)), eliminating the need for mandatory pre-checkout account creation.
+- **Checkout amount:** `POST /orders` keeps `totalAmount` scoped to the returned primary order and adds `checkoutTotalAmount`, the sum of all persisted event orders in that checkout. Website QR and receipt snapshots use the latter; older pending records without its provenance keep status and cancellation recovery but show an unavailable amount. Mobile ignores the additive field until it needs a checkout-wide total. Deploy the backend field before the updated website.
 - **On-the-Fly Bundle Streaming:** [OrderBundleService.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/orders/OrderBundleService.kt) streams high-resolution unwatermarked photos into a single ZIP archive over the HTTP connection without buffering entire multi-gigabyte files in server memory.
 - **Mobile Bridge:** [MobileReturnController.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/controller/MobileReturnController.kt) serves HTML redirection bridges that invoke `quickpitik://` deep links to return the runner to the Android app upon PayMongo checkout completion.
 
@@ -485,6 +490,7 @@ Transfer callbacks are recorded as processed only after an outcome is applied or
 ### 7.7. Admin Operations & Governance
 Admins have access to governance surfaces protected by `@PreAuthorize("hasRole('ADMIN')")`:
 - **Dispute Resolution:** Arbitrate customer disputes and issue PayMongo automated refunds via [PaymongoRefundService.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/orders/PaymongoRefundService.kt).
+- **Admin dispute amount contract:** Admin dispute list and action responses add `itemChargeAmount`, the disputed order item's historical `pricePhpAtPurchase - discountPhp` (null if the item is missing). `orderSnapshot.total` remains the whole order. Deploy this backend field before the website uses it to display full refunds and bound partial refunds. A successful resolve request may still return `open` or `escalated`; only a provider-confirmed `resolved` response means funds were refunded. These responses also include nullable `refundStatus`; only `manual_review` tells admins to reconcile the payment in PayMongo before another refund attempt.
 - **Audit Logging:** [AdminDecisionLogService.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/admin/AdminDecisionLogService.kt) tracks all admin actions (actor, action, target, metadata diff) for compliance and auditing.
 - **KPI Dashboards:** Real-time financial and operational metrics (gross volume, net platform revenue, pending verifications, active uploaders) served via [AdminKpisController.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/controller/AdminKpisController.kt).
 

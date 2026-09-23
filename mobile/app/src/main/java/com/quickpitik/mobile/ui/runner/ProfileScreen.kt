@@ -40,7 +40,34 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.*
-import com.quickpitik.mobile.ui.theme.*
+import com.quickpitik.mobile.ui.common.EventState
+import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.eventDateLabel
+import com.quickpitik.mobile.ui.common.extractCity
+import com.quickpitik.mobile.ui.common.peso
+import com.quickpitik.mobile.ui.theme.ArrowLabel
+import com.quickpitik.mobile.ui.theme.BadgeShape
+import com.quickpitik.mobile.ui.theme.Bone
+import com.quickpitik.mobile.ui.theme.BoneDeep
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.ErrorView
+import com.quickpitik.mobile.ui.theme.FieldShape
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.GhostCta
+import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.Kicker
+import com.quickpitik.mobile.ui.theme.Line
+import com.quickpitik.mobile.ui.theme.LoadingSkeleton
+import com.quickpitik.mobile.ui.theme.NumeralStyle
+import com.quickpitik.mobile.ui.theme.PrimaryCta
+import com.quickpitik.mobile.ui.theme.QpCard
+import com.quickpitik.mobile.ui.theme.QpCardShape
+import com.quickpitik.mobile.ui.theme.QpHaptic
+import com.quickpitik.mobile.ui.theme.Slate
+import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.TileShape
+import com.quickpitik.mobile.ui.theme.Typography
+import com.quickpitik.mobile.ui.theme.rememberQpHaptic
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -710,7 +737,7 @@ fun SelfieCard(
 // One de-duplicated race-log row: an event the runner saved, bought photos from,
 // or both. Photo counts + spend come from the purchased side; the saved-only side
 // contributes the bookmark + an Unsave affordance when the race is still upcoming.
-private data class RaceLogEntry(
+internal data class RaceLogEntry(
     val eventId: String,
     val eventName: String,
     val eventSlug: String?,
@@ -726,7 +753,7 @@ private data class RaceLogEntry(
 // saved ∪ purchased, keyed by eventId. Photos-bought and spend are summed across a
 // runner's orders for the same event; saved flags the bookmark. Sorted newest-first
 // by event date (nulls last). Mirrors the website's race-log derivation.
-private fun buildRaceLog(
+internal fun buildRaceLog(
     saved: List<SavedEventSummaryDto>,
     orders: List<OrderListItemDto>,
     eventCatalog: Map<String, EventDto> = emptyMap()
@@ -894,7 +921,7 @@ private fun RaceLogRow(
                                 )
                             }
                             Text(
-                                text = "₱%,.2f".format(entry.totalSpent),
+                                text = peso(entry.totalSpent),
                                 style = NumeralStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
                                 color = Ink,
                             )

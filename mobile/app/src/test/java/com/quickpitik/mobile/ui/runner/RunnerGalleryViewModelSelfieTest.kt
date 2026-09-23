@@ -4,22 +4,18 @@ import android.app.Application
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
-import com.quickpitik.mobile.data.remote.RetrofitClient
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withTimeout
+import com.quickpitik.mobile.support.MainDispatcherRule
+import com.quickpitik.mobile.support.MockBackend
+import com.quickpitik.mobile.support.awaitFirst
+import com.quickpitik.mobile.support.ok
+import com.quickpitik.mobile.support.signInAs
 import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -32,51 +28,28 @@ import java.io.ByteArrayInputStream
  * and no auto-register (website parity: the runner still taps "Notify me").
  * Same MockWebServer harness as [com.quickpitik.mobile.ui.auth.AuthViewModelGoogleTest].
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class RunnerGalleryViewModelSelfieTest {
 
+    @get:Rule val main = MainDispatcherRule()
+    @get:Rule val backend = MockBackend()
+
     private lateinit var application: Application
     private lateinit var session: SessionManager
-    private var server: MockWebServer? = null
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
         application = ApplicationProvider.getApplicationContext()
-        session = SessionManager.getInstance(application)
-        session.clearSession()
-        session.saveSession("t", "RUNNER", "Juan", "juan@x.com")
+        session = signInAs("RUNNER")
     }
 
     @After
     fun tearDown() {
-        server?.shutdown()
-        server = null
-        RetrofitClient.resetBaseUrl()
         session.clearSession()
-        Dispatchers.resetMain()
     }
-
-    private fun startServer(vararg responses: MockResponse): MockWebServer =
-        MockWebServer().apply {
-            responses.forEach { enqueue(it) }
-            start()
-            server = this
-            RetrofitClient.setBaseUrl(url("/").toString())
-        }
-
-    private fun ok(data: String) = MockResponse().setBody("""{"success":true,"data":$data}""")
 
     private val selfieJson =
         """{"id":"s1","dataUrl":"","uploadedAt":"","isPrimary":true,"qualityScore":0,"qualityTestStatus":"untested"}"""
-
-    private fun awaitAlert(
-        viewModel: RunnerGalleryViewModel,
-        accept: (PhotoAlertUiState) -> Boolean,
-    ): PhotoAlertUiState = runBlocking {
-        withTimeout(5_000) { viewModel.photoAlert.first(accept) }
-    }
 
     private fun pickedSelfie(): Uri {
         val uri = Uri.parse("content://test/selfie.jpg")
@@ -87,7 +60,7 @@ class RunnerGalleryViewModelSelfieTest {
 
     @Test
     fun addingASelfieFlipsTheCardToReadyWithoutRegistering() {
-        val server = startServer(
+        val server = backend.enqueue(
             ok("[]"),                                    // GET selfies → NeedsSelfie
             ok(selfieJson),                              // POST selfies
             ok("[$selfieJson]"),                         // GET selfies (refresh)
@@ -95,11 +68,11 @@ class RunnerGalleryViewModelSelfieTest {
         )
         val viewModel = RunnerGalleryViewModel(application)
         viewModel.loadGalleryMetadata("ev")
-        awaitAlert(viewModel) { it is PhotoAlertUiState.NeedsSelfie }
+        viewModel.photoAlert.awaitFirst { it is PhotoAlertUiState.NeedsSelfie }
 
         viewModel.addSelfieToLibrary(pickedSelfie())
 
-        val state = awaitAlert(viewModel) {
+        val state = viewModel.photoAlert.awaitFirst {
             it is PhotoAlertUiState.Ready || (it as? PhotoAlertUiState.NeedsSelfie)?.message != null
         }
         assertEquals(PhotoAlertUiState.Ready(registered = false), state)
@@ -120,7 +93,7 @@ class RunnerGalleryViewModelSelfieTest {
 
     @Test
     fun failedUploadStaysOnTheCardWithAMessage() {
-        startServer(
+        backend.enqueue(
             ok("[]"),
             MockResponse().setResponseCode(422).setBody(
                 """{"success":false,"errors":[{"code":"SELFIE_REJECTED","message":"No face found"}]}"""
@@ -128,11 +101,11 @@ class RunnerGalleryViewModelSelfieTest {
         )
         val viewModel = RunnerGalleryViewModel(application)
         viewModel.loadGalleryMetadata("ev")
-        awaitAlert(viewModel) { it is PhotoAlertUiState.NeedsSelfie }
+        viewModel.photoAlert.awaitFirst { it is PhotoAlertUiState.NeedsSelfie }
 
         viewModel.addSelfieToLibrary(pickedSelfie())
 
-        val state = awaitAlert(viewModel) {
+        val state = viewModel.photoAlert.awaitFirst {
             it is PhotoAlertUiState.Ready || (it as? PhotoAlertUiState.NeedsSelfie)?.message != null
         }
         assertTrue("expected NeedsSelfie, got $state", state is PhotoAlertUiState.NeedsSelfie)

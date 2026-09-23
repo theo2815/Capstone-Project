@@ -91,7 +91,7 @@ export type UploadedPhotoAiDetectionStatus =
 
 export interface UploadedPhoto {
   id: string;
-  status: "live";
+  status: "live" | "processing";
   uploadedAt: string;
   thumbnailUrl: string;
   span: "default" | "wide";
@@ -106,6 +106,7 @@ export interface PhotographerEventListArgs {
 
 export async function fetchPhotographerEvents(
   args: PhotographerEventListArgs = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<PhotographerEventSummary>> {
   const p = new URLSearchParams();
   if (args.withUploads) p.set("withUploads", "true");
@@ -116,14 +117,17 @@ export async function fetchPhotographerEvents(
   p.set("limit", String(args.limit ?? 200));
   return api.get<PaginatedResponse<PhotographerEventSummary>>(
     `/me/photographer/events?${p.toString()}`,
+    { signal },
   );
 }
 
 export async function fetchPhotographerEventDetail(
   eventId: string,
+  signal?: AbortSignal,
 ): Promise<PhotographerEventDetail | null> {
   return api.get<PhotographerEventDetail>(
     `/me/photographer/events/${encodeURIComponent(eventId)}`,
+    { signal },
   );
 }
 
@@ -138,6 +142,7 @@ export interface PhotographerEventPhotosArgs {
 export async function fetchPhotographerEventPhotos(
   eventId: string,
   args: PhotographerEventPhotosArgs = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<PhotographerLibraryPhoto>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
@@ -146,6 +151,7 @@ export async function fetchPhotographerEventPhotos(
   if (args.deleted) p.set("deleted", "true");
   return api.get<PaginatedResponse<PhotographerLibraryPhoto>>(
     `/me/photographer/events/${encodeURIComponent(eventId)}/photos?${p.toString()}`,
+    { signal },
   );
 }
 

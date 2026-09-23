@@ -1,7 +1,7 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
-import com.quickpitik.config.PlatformProperties
+import com.quickpitik.common.toCentavos
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundRequestAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequestEnvelope
@@ -13,7 +13,6 @@ import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.RunnerMessageKind
-import com.quickpitik.entity.Transaction
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -23,15 +22,15 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.service.admin.AdminDecisionLogService
+import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.runner.RunnerMessagesService
 import org.slf4j.LoggerFactory
-import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.web.client.RestClientResponseException
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Duration
@@ -46,8 +45,7 @@ class PaymongoRefundService(
     private val paymentRepository: PaymentRepository,
     private val downloadGrantRepository: DownloadGrantRepository,
     private val photoRepository: PhotoRepository,
-    private val transactionRepository: TransactionRepository,
-    private val platformProperties: PlatformProperties,
+    private val transactionMintingService: TransactionMintingService,
     private val paymongoClient: PaymongoClient,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val runnerMessagesService: RunnerMessagesService,
@@ -73,6 +71,8 @@ class PaymongoRefundService(
         transactionTemplate.execute {
             val dispute = disputeRepository.findByProviderRefundId(providerRefundId) ?: return@execute false
             val locked = disputeRepository.findByIdForUpdate(dispute.id) ?: return@execute false
+            if (locked.providerRefundId != providerRefundId) return@execute false
+            if (isCompletedRefund(locked)) return@execute true
             locked.refundStatus = status.lowercase()
             disputeRepository.save(locked)
             if (locked.refundStatus == SUCCEEDED) completeSucceededRefund(locked)
@@ -99,7 +99,11 @@ class PaymongoRefundService(
     ): PreparedRefund {
         val dispute = disputeRepository.findByIdForUpdate(disputeId)
             ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
-        if (dispute.refundStatus == SUCCEEDED && dispute.status == DisputeStatus.RESOLVED) {
+        if (isCompletedRefund(dispute)) {
+            if (dispute.refundStatus != SUCCEEDED) {
+                dispute.refundStatus = SUCCEEDED
+                disputeRepository.save(dispute)
+            }
             return snapshotOf(dispute, completed = true)
         }
         if (dispute.refundStatus == MANUAL_REVIEW) {
@@ -124,8 +128,8 @@ class PaymongoRefundService(
         val payment = paymentRepository.findByOrderId(dispute.orderId)
             .firstOrNull { it.provider == PAYMONGO && it.status == PaymentStatus.SUCCEEDED }
             ?: throw checkoutConflict("The order has no settled PayMongo payment to refund.")
-        val sessionId = payment.providerRef
-            ?: throw checkoutConflict("The settled payment has no PayMongo Checkout Session ID.")
+        val providerRef = payment.providerRef
+            ?: throw checkoutConflict("The settled payment has no PayMongo reference.")
 
         val now = OffsetDateTime.now()
         dispute.resolution = resolution
@@ -139,7 +143,7 @@ class PaymongoRefundService(
         return PreparedRefund(
             disputeId = dispute.id,
             paymentId = payment.providerPaymentId,
-            checkoutSessionId = sessionId,
+            providerRef = providerRef,
             amount = amount,
             requestedAt = now,
             providerRefundId = null,
@@ -159,8 +163,8 @@ class PaymongoRefundService(
         return PreparedRefund(
             disputeId = dispute.id,
             paymentId = payment.providerPaymentId,
-            checkoutSessionId = payment.providerRef
-                ?: throw checkoutConflict("The payment has no Checkout Session ID."),
+            providerRef = payment.providerRef
+                ?: throw checkoutConflict("The payment has no PayMongo reference."),
             amount = dispute.refundAmountPhp
                 ?: throw checkoutConflict("The refund has no amount."),
             requestedAt = dispute.refundRequestedAt ?: dispute.openedAt,
@@ -173,15 +177,7 @@ class PaymongoRefundService(
         if (prepared.providerRefundId == null &&
             OffsetDateTime.now().isAfter(prepared.requestedAt.plus(PROVIDER_RETRY_WINDOW))
         ) {
-            transactionTemplate.executeWithoutResult {
-                val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId)
-                    ?: return@executeWithoutResult
-                if (dispute.providerRefundId == null && dispute.refundStatus in IN_FLIGHT_STATUSES) {
-                    dispute.refundStatus = MANUAL_REVIEW
-                    dispute.status = DisputeStatus.ESCALATED
-                    disputeRepository.save(dispute)
-                }
-            }
+            markManualReview(prepared)
             log.error("Refund {} has an unknown provider outcome and requires manual reconciliation", prepared.disputeId)
             if (reportFailure) {
                 throw checkoutConflict("Refund outcome is unknown. Reconcile it in PayMongo before retrying.")
@@ -189,13 +185,17 @@ class PaymongoRefundService(
             return
         }
         try {
-            val paymentId = prepared.paymentId ?: recoverPaymentId(prepared)
+            val paymentId = if (prepared.providerRef.startsWith("pi_")) {
+                recoverPaymentId(prepared)
+            } else {
+                prepared.paymentId ?: recoverPaymentId(prepared)
+            }
             val response = prepared.providerRefundId?.let(paymongoClient::retrieveRefund)
                 ?: paymongoClient.createRefund(
                     request = PaymongoRefundRequest(
                         PaymongoRefundRequestEnvelope(
                             PaymongoRefundRequestAttributes(
-                                amount = prepared.amount.movePointRight(2).longValueExact(),
+                                amount = prepared.amount.toCentavos(),
                                 paymentId = paymentId,
                                 notes = "QuickPitik dispute ${prepared.disputeId}".take(255),
                             ),
@@ -206,6 +206,15 @@ class PaymongoRefundService(
             val status = response.data.attributes.status.lowercase()
             transactionTemplate.executeWithoutResult {
                 val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId) ?: return@executeWithoutResult
+                if (isCompletedRefund(dispute) || dispute.refundRequestedAt != prepared.requestedAt) {
+                    return@executeWithoutResult
+                }
+                if (dispute.providerRefundId != null &&
+                    response.data.id.isNotBlank() &&
+                    dispute.providerRefundId != response.data.id
+                ) {
+                    return@executeWithoutResult
+                }
                 dispute.providerRefundId = response.data.id.ifBlank { dispute.providerRefundId }
                 dispute.refundStatus = status.ifBlank { REQUESTING }
                 disputeRepository.save(dispute)
@@ -217,6 +226,17 @@ class PaymongoRefundService(
         } catch (ex: ConflictException) {
             throw ex
         } catch (ex: Exception) {
+            if (ex is RestClientResponseException && ex.statusCode.value() == 400) {
+                markManualReview(prepared)
+                log.error("PayMongo rejected refund {}: {}", prepared.disputeId, ex.responseBodyAsString)
+                if (reportFailure) {
+                    throw ConflictException(
+                        message = "PayMongo rejected this refund. Review the payment manually.",
+                        code = ErrorCodes.PAYMENT_FAILED,
+                    )
+                }
+                return
+            }
             log.warn("PayMongo refund {} deferred: {}", prepared.disputeId, ex.message)
             if (reportFailure) {
                 throw ConflictException(
@@ -227,21 +247,40 @@ class PaymongoRefundService(
         }
     }
 
-    private fun recoverPaymentId(prepared: PreparedRefund): String {
-        val checkout = paymongoClient.retrieveCheckoutSession(prepared.checkoutSessionId)
-        val paymentId = checkout.data.attributes.payments
-            .firstOrNull { it.attributes.status.equals("paid", ignoreCase = true) }
-            ?.id
-            ?.takeIf { it.isNotBlank() }
-            ?: throw checkoutConflict("PayMongo Checkout Session has no paid payment resource.")
+    private fun markManualReview(prepared: PreparedRefund) {
         transactionTemplate.executeWithoutResult {
-            paymentRepository.findAllByProviderAndProviderRefForUpdate(PAYMONGO, prepared.checkoutSessionId)
+            val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId) ?: return@executeWithoutResult
+            if (!isCompletedRefund(dispute) &&
+                dispute.refundRequestedAt == prepared.requestedAt &&
+                dispute.providerRefundId == prepared.providerRefundId &&
+                dispute.refundStatus in IN_FLIGHT_STATUSES
+            ) {
+                dispute.refundStatus = MANUAL_REVIEW
+                dispute.status = DisputeStatus.ESCALATED
+                disputeRepository.save(dispute)
+            }
+        }
+    }
+
+    private fun recoverPaymentId(prepared: PreparedRefund): String {
+        val paymentId = if (prepared.providerRef.startsWith("pi_")) {
+            val intent = paymongoClient.retrievePaymentIntent(prepared.providerRef)
+            intent.data.attributes.payments.takeIf { intent.data.attributes.status == "succeeded" }
+                ?.paidPaymentId()
+        } else {
+            paymongoClient.retrieveCheckoutSession(prepared.providerRef).data.attributes.payments.paidPaymentId()
+        }
+        val paidPaymentId = paymentId
+            ?.takeIf { it.isNotBlank() }
+            ?: throw checkoutConflict("PayMongo payment has no paid payment resource.")
+        transactionTemplate.executeWithoutResult {
+            paymentRepository.findAllByProviderAndProviderRefForUpdate(PAYMONGO, prepared.providerRef)
                 .forEach { payment ->
-                    payment.providerPaymentId = paymentId
+                    payment.providerPaymentId = paidPaymentId
                     paymentRepository.save(payment)
                 }
         }
-        return paymentId
+        return paidPaymentId
     }
 
     private fun completeSucceededRefund(dispute: Dispute) {
@@ -257,16 +296,16 @@ class PaymongoRefundService(
         disputeRepository.save(dispute)
 
         val photo = photoRepository.findById(dispute.photoId).orElse(null)
-        photo?.photographerId?.let { mintRefundTransaction(dispute, it, refundAmount) }
+        photo?.photographerId?.let { transactionMintingService.mintRefund(dispute, refundAmount, it) }
 
         if (resolution == DisputeResolution.REFUND_FULL) {
             downloadGrantRepository.deleteById(DownloadGrantId(dispute.orderId, dispute.photoId))
         }
-        updateOrderRefundStatus(dispute.orderId)
+        updateOrderSettlementStatus(dispute.orderId)
         publishOutcome(dispute, resolution, refundAmount, photo?.photographerId)
     }
 
-    private fun updateOrderRefundStatus(orderId: UUID) {
+    private fun updateOrderSettlementStatus(orderId: UUID) {
         val order = orderRepository.findByIdForUpdate(orderId) ?: return
         val photoIds = orderItemRepository.findByIdOrderId(orderId).map { it.id.photoId }.toSet()
         val fullyRefunded = disputeRepository.findByOrderId(orderId)
@@ -275,8 +314,10 @@ class PaymongoRefundService(
             .toSet()
         order.status = if (photoIds.isNotEmpty() && fullyRefunded.containsAll(photoIds)) {
             OrderStatus.REFUNDED
-        } else {
+        } else if (order.status == OrderStatus.REFUNDED) {
             OrderStatus.FULFILLED
+        } else {
+            order.status
         }
         orderRepository.save(order)
     }
@@ -320,68 +361,6 @@ class PaymongoRefundService(
         }
     }
 
-    private fun mintRefundTransaction(dispute: Dispute, photographerId: UUID, amount: BigDecimal) {
-        val existing = transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(
-            dispute.orderId,
-            dispute.photoId,
-            true,
-        )
-        if (existing != null) return
-        val original = transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(
-            dispute.orderId,
-            dispute.photoId,
-            false,
-        )
-        val order = orderRepository.findById(dispute.orderId).orElse(null) ?: return
-        val (keptReversal, discountReversal) = refundLedgerSplit(dispute, original, amount)
-        try {
-            transactionRepository.save(
-                Transaction(
-                    paidAt = order.paidAt ?: order.createdAt,
-                    photographerId = photographerId,
-                    eventId = order.eventId,
-                    photoId = dispute.photoId,
-                    orderId = order.id,
-                    buyerId = order.userId,
-                    buyerDisplayName = original?.buyerDisplayName ?: "",
-                    amountKeptPhp = keptReversal,
-                    discountPhp = discountReversal,
-                    isRefund = true,
-                    refundOf = original?.id,
-                ),
-            )
-        } catch (_: DataIntegrityViolationException) {
-            // Concurrent reconciliation already minted the unique refund row.
-        }
-    }
-
-    // What comes back off the ledger, as (kept, discount) negatives. With the
-    // original sale row in hand the reversal is exact: a full refund negates
-    // it outright, a partial refund scales both figures by the fraction of the
-    // charged price returned. Rows without a sale row (pre-V9 legacy) keep the
-    // old keepRate estimate.
-    private fun refundLedgerSplit(
-        dispute: Dispute,
-        original: Transaction?,
-        amount: BigDecimal,
-    ): Pair<BigDecimal, BigDecimal> {
-        val legacy = amount.multiply(platformProperties.photographerKeepRate)
-            .setScale(2, RoundingMode.HALF_UP)
-            .negate() to BigDecimal.ZERO
-        if (original == null) return legacy
-        if (dispute.resolution == DisputeResolution.REFUND_FULL) {
-            return original.amountKeptPhp.negate() to original.discountPhp.negate()
-        }
-        val charged = orderItemRepository.findByIdOrderId(dispute.orderId)
-            .firstOrNull { it.id.photoId == dispute.photoId }
-            ?.let { it.pricePhpAtPurchase.subtract(it.discountPhp) }
-            ?.takeIf { it.signum() > 0 }
-            ?: return legacy
-        val fraction = amount.divide(charged, 10, RoundingMode.HALF_UP)
-        return original.amountKeptPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate() to
-            original.discountPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate()
-    }
-
     private fun validatePartialAmount(requested: BigDecimal?, fullPrice: BigDecimal): BigDecimal {
         val amount = requested ?: throw ValidationException(
             message = "refundAmount is required for partial refunds",
@@ -407,10 +386,13 @@ class PaymongoRefundService(
     private fun checkoutConflict(message: String): ConflictException =
         ConflictException(message = message, code = ErrorCodes.CONFLICT)
 
+    private fun isCompletedRefund(dispute: Dispute): Boolean =
+        dispute.status == DisputeStatus.RESOLVED && dispute.refundedAt != null
+
     private data class PreparedRefund(
         val disputeId: UUID,
         val paymentId: String?,
-        val checkoutSessionId: String,
+        val providerRef: String,
         val amount: BigDecimal,
         val requestedAt: OffsetDateTime,
         val providerRefundId: String?,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import {
   AdminFormSection,
@@ -10,6 +10,7 @@ import {
 
 interface AdminRejectModalProps {
   open: boolean;
+  submitting?: boolean;
   onClose: () => void;
   onSubmit: (reason: string) => void;
   photographerName: string;
@@ -27,9 +28,10 @@ const REJECTION_REASONS: ReadonlyArray<{ value: string; label: string }> = [
 // Shared reject-with-reason modal. Used from /admin/verifications row
 // actions and from /admin/photographers/[handle] action aside. Composes
 // label + optional 280-char note into the reason string passed to
-// useAdminUserStore.reject(userId, reason).
+// useAdminUserActions().reject(userId, reason).
 export function AdminRejectModal({
   open,
+  submitting = false,
   onClose,
   onSubmit,
   photographerName,
@@ -39,20 +41,24 @@ export function AdminRejectModal({
   );
   const [note, setNote] = useState("");
 
+  useEffect(() => {
+    if (!open) { setNote(""); setSelectedReason(REJECTION_REASONS[0]!.value); }
+  }, [open]);
+
   function handleSubmit() {
+    if (submitting) return;
     const label =
       REJECTION_REASONS.find((r) => r.value === selectedReason)?.label ??
       selectedReason;
     const composed =
       note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
     onSubmit(composed);
-    setNote("");
-    setSelectedReason(REJECTION_REASONS[0]!.value);
   }
 
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Send back for fixes"

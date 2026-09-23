@@ -9,11 +9,14 @@ import type { PhotographerMessage } from "@/lib/photographer-messages";
 // Body is a bare array (mobile parity); the true un-removed total rides the
 // X-Total-Count header. `total` is null if the header is absent (older BE).
 export async function fetchMyPhotographerMessages(
-  limit?: number,
+  limit = 100,
+  offset = 0,
+  signal?: AbortSignal,
 ): Promise<{ messages: PhotographerMessage[]; total: number | null }> {
-  const qs = limit != null ? `?limit=${limit}` : "";
+  const qs = `?limit=${limit}&offset=${offset}`;
   const { data, total } = await api.getWithTotal<PhotographerMessage[]>(
     `/me/photographer/messages${qs}`,
+    signal,
   );
   return { messages: data, total };
 }

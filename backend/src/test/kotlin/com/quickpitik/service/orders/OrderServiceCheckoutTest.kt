@@ -16,9 +16,11 @@ import com.quickpitik.dto.orders.PaymongoPaymentIntentRequest
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponse
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseAttributes
 import com.quickpitik.dto.orders.PaymongoPaymentIntentResponseEnvelope
+import com.quickpitik.dto.orders.PaymongoPaymentAttributes
 import com.quickpitik.dto.orders.PaymongoPaymentMethodResponse
 import com.quickpitik.dto.orders.PaymongoPaymentMethodResponseEnvelope
 import com.quickpitik.dto.orders.PaymongoPaymentMethodRequest
+import com.quickpitik.dto.orders.PaymongoPaymentResource
 import com.quickpitik.dto.orders.PaymongoQrCode
 import com.quickpitik.entity.DownloadGrant
 import com.quickpitik.entity.DownloadGrantId
@@ -33,6 +35,8 @@ import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
+import com.quickpitik.entity.Role
+import com.quickpitik.entity.User
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -93,6 +97,8 @@ class OrderServiceCheckoutTest {
     private lateinit var paymongoClient: PaymongoClient
     private lateinit var couponRepository: PhotographerCouponRepository
     private lateinit var eventRepository: EventRepository
+    private lateinit var userRepository: UserRepository
+    private lateinit var cartItemRepository: CartItemRepository
     private lateinit var service: OrderService
     private lateinit var checkoutReconciler: PaymongoCheckoutReconciler
     private lateinit var webhookService: PaymongoWebhookService
@@ -115,6 +121,8 @@ class OrderServiceCheckoutTest {
         downloadGrants = Mockito.mock(DownloadGrantRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
+        userRepository = Mockito.mock(UserRepository::class.java)
+        cartItemRepository = Mockito.mock(CartItemRepository::class.java)
         checkoutReconciler = Mockito.mock(PaymongoCheckoutReconciler::class.java)
         webhookService = Mockito.mock(PaymongoWebhookService::class.java)
 
@@ -152,15 +160,18 @@ class OrderServiceCheckoutTest {
         service = newService()
     }
 
-    private fun newService(paymongo: PaymongoProperties = PaymongoProperties()): OrderService = OrderService(
+    private fun newService(
+        paymongo: PaymongoProperties = PaymongoProperties(),
+        platform: PlatformProperties = this.platform,
+    ): OrderService = OrderService(
             orderRepository,
             orderItemRepository,
             paymentRepository,
             downloadGrants,
             photoRepository,
             eventRepository,
-            Mockito.mock(UserRepository::class.java),
-            Mockito.mock(CartItemRepository::class.java),
+            userRepository,
+            cartItemRepository,
             storageService,
             StorageProperties(),
             paymongoClient,
@@ -297,12 +308,115 @@ class OrderServiceCheckoutTest {
         assertFalse(providerRequest!!.data.attributes.metadata.containsValue(key))
         assertEquals("cs_test", savedPayments.single().providerRef)
         assertEquals("https://pay.test/cs_test", response.redirectUrl)
+        assertEquals(response.totalAmount, response.checkoutTotalAmount)
         Mockito.verify(orderRepository)
             .findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key)
     }
 
     @Test
-    fun `qrph checkout returns the generated QR and links its Payment Intent`() {
+    fun `multi-event checkout response includes the persisted provider total`() {
+        val otherEventId = UUID.randomUUID()
+        val otherEvent = Event(
+            id = otherEventId,
+            slug = "other-event",
+            name = "Other Event",
+            date = LocalDate.of(2026, 9, 1),
+            location = "Cebu City",
+            status = EventStatus.ACTIVE,
+        )
+        val other = Photo(eventId = otherEventId, s3Key = "photos/other.jpg", pricePhp = BigDecimal("250.00"))
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo, other))
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo, other))
+        Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(event, otherEvent))
+        stubProvider()
+
+        val response = service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, otherEventId))),
+            key,
+        )
+
+        assertEquals(BigDecimal("125.00"), response.totalAmount)
+        assertEquals(BigDecimal("375.00"), response.checkoutTotalAmount)
+        assertEquals(37500L, lastProviderRequest!!.data.attributes.lineItems.sumOf { it.amount })
+        assertEquals(BigDecimal("375.00"), savedOrders.fold(BigDecimal.ZERO) { sum, order -> sum + order.totalPhp })
+
+        Mockito.`when`(
+            orderRepository.findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key),
+        ).thenAnswer { savedOrders.toList() }
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenAnswer { savedItems.toList() }
+        Mockito.`when`(paymentRepository.findByOrderId(anyArg())).thenAnswer { call ->
+            savedPayments.filter { it.orderId == call.getArgument<UUID>(0) }
+        }
+        Mockito.`when`(paymongoClient.retrieveCheckoutSession("cs_test")).thenReturn(
+            PaymongoCheckoutSessionResponse(
+                PaymongoCheckoutSessionResponseEnvelope(
+                    id = "cs_test",
+                    attributes = PaymongoCheckoutSessionResponseAttributes(checkoutUrl = "https://pay.test/cs_test"),
+                ),
+            ),
+        )
+        val replay = service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, otherEventId))),
+            key,
+        )
+        assertEquals("https://pay.test/cs_test", replay.redirectUrl)
+        assertEquals(BigDecimal("375.00"), replay.checkoutTotalAmount)
+
+        savedOrders.forEach { it.status = OrderStatus.FULFILLED }
+        val settled = service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, otherEventId))),
+            key,
+        )
+        assertEquals(OrderStatus.FULFILLED, settled.status)
+        assertEquals(BigDecimal("125.00"), settled.totalAmount)
+        assertEquals(BigDecimal("375.00"), settled.checkoutTotalAmount)
+    }
+
+    // M-13: the bundle link (BUNDLE token, and the signed-in per-photo download
+    // built from it) must not die before the one-year download grant. Binds the
+    // shipped application.yml so the production default is what is tested.
+    @Test
+    fun `a new order's bundle link lasts as long as its one-year download grant`() {
+        val environment = org.springframework.mock.env.MockEnvironment()
+        org.springframework.boot.env.YamlPropertySourceLoader()
+            .load("application", org.springframework.core.io.ClassPathResource("application.yml"))
+            .forEach { environment.propertySources.addLast(it) }
+        val shipped = org.springframework.boot.context.properties.bind.Binder.get(environment)
+            .bindOrCreate("app.platform", PlatformProperties::class.java)
+        Mockito.`when`(paymongoClient.createCheckoutSession(anyArg(), anyArg())).thenReturn(
+            PaymongoCheckoutSessionResponse(
+                PaymongoCheckoutSessionResponseEnvelope(
+                    id = "cs_test",
+                    attributes = PaymongoCheckoutSessionResponseAttributes(checkoutUrl = "https://pay.test/cs_test"),
+                ),
+            ),
+        )
+
+        newService(platform = shipped).create(null, request(), key)
+
+        val grantEnds = OffsetDateTime.now().plusYears(1).minusMinutes(1)
+        val tokenEnds = savedOrders.single().tokenExpiresAt
+        assertFalse(tokenEnds.isBefore(grantEnds), "bundle link ends $tokenEnds, before the grant ($grantEnds)")
+    }
+
+    @Test
+    fun `multi-event qrph checkout returns the aggregate amount and links its Payment Intent`() {
+        val otherEventId = UUID.randomUUID()
+        val otherEvent = Event(
+            id = otherEventId,
+            slug = "other-event",
+            name = "Other Event",
+            date = LocalDate.of(2026, 9, 1),
+            location = "Cebu City",
+            status = EventStatus.ACTIVE,
+        )
+        val other = Photo(eventId = otherEventId, s3Key = "photos/other.jpg", pricePhp = BigDecimal("250.00"))
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo, other))
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo, other))
+        Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(event, otherEvent))
         var intentRequest: PaymongoPaymentIntentRequest? = null
         var methodRequest: PaymongoPaymentMethodRequest? = null
         Mockito.`when`(paymentRepository.findByOrderId(anyArg())).thenAnswer { call ->
@@ -337,15 +451,83 @@ class OrderServiceCheckoutTest {
             ),
         )
 
-        val response = service.create(null, request(paymentMethod = "qrph"), key)
+        val response = service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, otherEventId)), paymentMethod = "qrph"),
+            key,
+        )
 
         assertEquals(listOf("qrph"), intentRequest!!.data.attributes.paymentMethodAllowed)
-        assertEquals(12500L, intentRequest!!.data.attributes.amount)
+        assertEquals(37500L, intentRequest!!.data.attributes.amount)
+        assertEquals(BigDecimal("125.00"), response.totalAmount)
+        assertEquals(BigDecimal("375.00"), response.checkoutTotalAmount)
         assertEquals("runner", methodRequest!!.data.attributes.billing?.name)
         assertEquals("data:image/png;base64,qr", response.qrPh?.imageUrl)
-        assertEquals("pi_test", savedPayments.single().providerRef)
+        assertTrue(savedPayments.all { it.providerRef == "pi_test" })
         assertEquals(null, response.redirectUrl)
         Mockito.verify(paymongoClient, Mockito.never()).createCheckoutSession(anyArg(), anyArg())
+
+        Mockito.`when`(
+            orderRepository.findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key),
+        ).thenAnswer { savedOrders.toList() }
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenAnswer { savedItems.toList() }
+        Mockito.`when`(paymongoClient.retrievePaymentIntent("pi_test")).thenReturn(
+            PaymongoPaymentIntentResponse(
+                PaymongoPaymentIntentResponseEnvelope(
+                    id = "pi_test",
+                    attributes = PaymongoPaymentIntentResponseAttributes(
+                        status = "awaiting_next_action",
+                        nextAction = PaymongoNextAction(PaymongoQrCode("data:image/png;base64,qr")),
+                        updatedAt = OffsetDateTime.now().toEpochSecond(),
+                    ),
+                ),
+            ),
+        )
+        val replay = service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, otherEventId)), paymentMethod = "qrph"),
+            key,
+        )
+        assertEquals(BigDecimal("125.00"), replay.totalAmount)
+        assertEquals(BigDecimal("375.00"), replay.checkoutTotalAmount)
+        assertEquals(response.qrPh?.imageUrl, replay.qrPh?.imageUrl)
+        Mockito.verify(paymongoClient, Mockito.times(1)).createPaymentIntent(anyArg(), anyArg())
+
+        savedOrders.clear(); savedItems.clear(); savedPayments.clear()
+        Mockito.`when`(paymongoClient.createPaymentIntent(anyArg(), anyArg())).thenReturn(
+            PaymongoPaymentIntentResponse(
+                PaymongoPaymentIntentResponseEnvelope(
+                    id = "pi_test",
+                    attributes = PaymongoPaymentIntentResponseAttributes(
+                        status = "succeeded",
+                        payments = listOf(
+                            PaymongoPaymentResource(
+                                id = "pay_failed",
+                                attributes = PaymongoPaymentAttributes(status = "failed"),
+                            ),
+                            PaymongoPaymentResource(
+                                id = "pay_paid",
+                                attributes = PaymongoPaymentAttributes(status = "paid"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        Mockito.`when`(webhookService.settlePaymentIntent("pi_test", "pay_paid", null)).thenAnswer {
+            savedOrders.forEach { it.status = OrderStatus.FULFILLED }
+            emptyMap<String, Any?>()
+        }
+        val settled = service.create(
+            null,
+            request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, otherEventId)), paymentMethod = "qrph"),
+            key,
+        )
+        assertEquals(OrderStatus.FULFILLED, settled.status)
+        assertEquals(BigDecimal("125.00"), settled.totalAmount)
+        assertEquals(BigDecimal("375.00"), settled.checkoutTotalAmount)
+        assertEquals(null, settled.qrPh)
+        Mockito.verify(webhookService).settlePaymentIntent("pi_test", "pay_paid", null)
     }
 
     @Test
@@ -475,6 +657,20 @@ class OrderServiceCheckoutTest {
 
         assertEquals(0, savedOrders.size)
         Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    @Test
+    fun `draft and archived events are rejected before reserving a checkout`() {
+        stubProvider()
+        for (status in listOf(EventStatus.DRAFT, EventStatus.ARCHIVED)) {
+            event.status = status
+
+            val ex = assertFailsWith<ConflictException> { service.create(null, request(), key) }
+
+            assertEquals(ErrorCodes.EVENT_ARCHIVED, ex.code)
+            assertTrue(savedOrders.isEmpty())
+            Mockito.verifyNoInteractions(paymentRepository, paymongoClient, cartItemRepository)
+        }
     }
 
     @Test
@@ -685,6 +881,7 @@ class OrderServiceCheckoutTest {
 
         assertEquals(listOf(10625L), lastProviderRequest!!.data.attributes.lineItems.map { it.amount })
         assertEquals("https://pay.test/cs_test", response.redirectUrl)
+        assertEquals(BigDecimal("106.25"), response.checkoutTotalAmount)
     }
 
     // Auto-apply (2026-09-05). Cart: A1, A2 (photographer A, live coupon),
@@ -784,8 +981,39 @@ class OrderServiceCheckoutTest {
         Mockito.verify(webhookService).settleFree(listOf(order.id))
         assertEquals(OrderStatus.FULFILLED, response.status)
         assertEquals(0, response.totalAmount.signum())
+        assertEquals(0, response.checkoutTotalAmount.signum())
         assertEquals(null, response.qrPh)
         assertFalse(response.returnToken.isNullOrBlank())
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    @Test
+    fun `a signed-in giveaway checkout clears its cart item after settlement`() {
+        val user = User(email = email, passwordHash = "unused", name = "Runner", role = Role.RUNNER)
+        Mockito.`when`(userRepository.findById(user.id)).thenReturn(Optional.of(user))
+        val owner = UUID.randomUUID()
+        photo.photographerId = owner
+        val giveaway = PhotographerCoupon(eventId = eventId, photographerId = owner, code = "FREE100", percentOff = 100)
+        Mockito.`when`(couponRepository.findActiveByEventIdInForUpdate(setOf(eventId))).thenReturn(listOf(giveaway))
+        Mockito.doAnswer {
+            savedOrders.forEach { it.status = OrderStatus.FULFILLED }
+            null
+        }.`when`(webhookService).settleFree(anyArg())
+        var statusAtCartClear: OrderStatus? = null
+        var cartClearWasTransactional: Boolean? = null
+        Mockito.`when`(cartItemRepository.deleteByUserIdAndPhotoId(user.id, photo.id)).thenAnswer {
+            statusAtCartClear = savedOrders.single().status
+            cartClearWasTransactional = TransactionSynchronizationManager.isActualTransactionActive()
+            1
+        }
+
+        val response = service.create(user.id, request(paymentMethod = "qrph"), key)
+
+        assertEquals(OrderStatus.FULFILLED, response.status)
+        assertEquals(OrderStatus.FULFILLED, statusAtCartClear)
+        assertEquals(false, cartClearWasTransactional)
+        Mockito.verify(cartItemRepository).deleteByUserIdAndPhotoId(user.id, photo.id)
+        Mockito.verifyNoMoreInteractions(cartItemRepository)
         Mockito.verifyNoInteractions(paymongoClient)
     }
 
@@ -836,12 +1064,14 @@ class OrderServiceCheckoutTest {
             .thenReturn(listOf(giveaway))
         stubProvider()
 
-        service.create(
+        val response = service.create(
             null,
             request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, otherEventId))),
             key,
         )
 
+        assertEquals(0, response.totalAmount.signum())
+        assertEquals(BigDecimal("150.00"), response.checkoutTotalAmount)
         assertEquals(setOf(0, 1), savedOrders.map { it.totalPhp.signum() }.toSet())
         assertTrue(savedOrders.all { it.status == OrderStatus.PENDING })
         Mockito.verify(webhookService, Mockito.never()).settleFree(anyArg())
@@ -869,6 +1099,7 @@ class OrderServiceCheckoutTest {
 
         assertEquals(existing.id, response.id)
         assertEquals(OrderStatus.FULFILLED, response.status)
+        assertEquals(0, response.checkoutTotalAmount.signum())
         assertFalse(response.returnToken.isNullOrBlank())
         Mockito.verify(webhookService, Mockito.never()).settleFree(anyArg())
         Mockito.verifyNoInteractions(paymongoClient)

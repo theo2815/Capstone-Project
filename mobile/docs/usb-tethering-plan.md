@@ -2,6 +2,177 @@
 
 Scope: Android USB ingestion into the existing Room/WorkManager/backend pipeline. Preserve physical-shutter Canon capture and on-card originals. Wi-Fi, remote shutter/live view, multi-camera operation, and RAW cloud processing are outside this increment. This repository has no iOS app; this work adds no iPhone USB implementation.
 
+## Fujifilm SDK is explicit opt-in and fail-closed — 2026-09-22
+
+Fujifilm Camera Control SDK capture is compiled only with
+`-PQP_ENABLE_FUJI_SDK=true`; `mobile/gradle.properties` defaults it to `false`.
+Local `fuji-sdk/` file presence is never permission to enable it. An opt-in build
+fails during Gradle configuration unless `HEADERS/XAPI.H` and
+`Android/arm64-v8a/XAPI.so` are present. The same final Boolean controls
+`BuildConfig.FUJI_SDK`, JNI packaging and the external native build.
+
+The SDK path starts only in still mode with verified RAW+JPEG card recording and
+an empty, readable SDK buffer. OFF, RAW-only, JPEG-only, unknown, busy and old-buffer
+states stop without reading or deleting a frame. Recording mode is rechecked before
+polling and immediately before a consuming JPEG read. Only recognized RAW/HEIF
+companions may be discarded, and only while the session remains in verified
+RAW+JPEG mode; unknown formats are preserved. Changing the mode after buffered shots
+exist is not treated as a backup for those shots.
+
+SDK-enabled distribution remains blocked on the body-specific hardware matrix below:
+the exact artifact must prove that every consumed JPEG and discarded companion has a
+durable card copy through storage-full, disconnect and mode-change failures. Until
+then, release artifacts stay SDK-disabled and Fujifilm uses the existing PTP fallback.
+
+## Target camera list classified — 2026-09-11 (phase 4)
+
+The per-model matrix for the Canon, Nikon and Sony target list lives in
+[`usb-camera-compatibility.md`](usb-camera-compatibility.md) (Verified / Implemented /
+Partial / Unavailable, one home for that fact). Code changes behind it, all from
+libgphoto2's ptp2 table: the Canon 64-bit object-added event codes are now 0xC1A7 and
+0xC1B6 (0xC191 was a cancel event), seven 2016-era EOS bodies skip `CloseSession`
+(`PTP_DONT_CLOSE_SESSION`), the PowerShot/IXUS remote-mode rule applies only when
+`RemoteReleaseOn` is advertised (libgphoto2 `is_canon_eos_m`), and Canon bodies without
+the EOS extension get `CanonBasicPtpCamera`: import works, live start stops with
+guidance instead of scanning a locked body. Validation: `testDebugUnitTest` 158/158,
+compileDebugKotlin clean, no device attached.
+
+## Manufacturer specifications checked — 2026-09-11 (phase 3)
+
+Two official packages (kept outside the repo, reference only, nothing bundled):
+Sony *Camera Remote Command 2.02.00* (Camera Control PTP 2 and PTP 3 References plus
+Linux/Windows example source, from Sony's Camera Remote Command page) and Nikon
+*Remote SDK 2.0.0* (S-SDKZ-200BF), whose `Command/English` folder holds the "USB Still
+Image Capture Device MTP Specifications" for 15 Z bodies (Z30, Z50, Z50II, Z5, Z5II, Z6,
+Z6II, Z6III, Z7, Z7II, Z8, Z9, Zf, Zfc, ZR). Neither SDK runs on Android; the documents
+are what matter.
+
+**Sony, confirmed against the reference and example parser:** operations 0x9201 /
+0x9202 / 0x9209, shot handle 0xFFFFC001, Shooting File Info 0xD215 (high bit plus the
+number of buffered images), Still Image Save Destination 0xD222 (0x0001 host, 0x0010
+card, 0x0011 both), Position Key 0xD25A (0x00 camera priority, 0x01 PC Remote priority,
+reset to 0x00 at session close). Our second `GetExtDeviceInfo` parameter is the spec's
+"device property option" flag. PTP 3 is 2020 and newer bodies, PTP 2 the older ones,
+matching the 300-then-200 negotiation. One parser change: PTP 3 always carries a second
+value list after an enumeration form and PTP 2 never does, so `SonyPtpData` now takes
+the negotiated version instead of guessing from the next word. Later options the spec
+documents: Content Transfer Mode and "Remote Control with Transfer Mode" read the card
+without changing the USB menu on supporting bodies.
+
+**Nikon, confirmed for all 15 Z specs:** the camera connects in "PC camera mode" with
+body dials, buttons and shutter active; "remote mode" (body controls ignored) is entered
+only by `ChangeCameraMode` or control commands, which we never send. Shots go to the
+card by default and `RecordingMedia` must not be changed unless the host handles RAM
+transfers. Events come from the interrupt pipe or `GetEventEx` and the host must use only
+one; the Nikon adapter now polls the vendor queue alone when it is advertised. Playback
+on the body is disabled while connected, and a card swapped mid-connection is not seen
+until a replug (both now in the guidance copy).
+
+Validation (2026-09-11, phase 3): `.\gradlew.bat --offline testDebugUnitTest compileDebugKotlin --console=plain`
+from `mobile/` — BUILD SUCCESSFUL, **155 tests, 0 failures/errors/skips** (153 + 2). Still no device attached.
+
+## Model-agnostic compatibility layer — 2026-09-11 (phase 2)
+
+Goal: support bodies we cannot test by building on standards and documented vendor
+behaviour, and make a new model a table row rather than a core change. Every
+behaviour below that is not hardware-verified is logged at watch start as
+"Assumed, not verified on this body: …" so the capture log separates the two.
+
+**Detection.** Class 6 (still image) with a bulk pair stays first. New fallback: a
+vendor-specific (0xFF) interface with a bulk pair is accepted when the VID is a known
+camera maker (`UsbPtpInterfaces.cameraVendors`) or the product/interface name says
+PTP/MTP. Assumption: no confirmed body needs this today; it exists so such a body
+is not rejected at the descriptor. Mass storage (8) and UVC (14) are still refused
+with guidance.
+
+**Session ladder (`CameraDrivers.open()`), the same for every body.** Identify →
+adapter chosen from advertised operations, never the VID alone → `startSession()`
+(vendor PC-link setup) → `startLive()` if watching → capabilities re-read after setup
+(the op set can change, libgphoto2: EOS M2). A clean vendor rejection degrades to
+standard PTP with a logged warning, except where the adapter declares that shooting
+depends on the setup (Canon remote mode, Sony PC Remote): those stop with guidance
+rather than silently locking the shutter. Unknown-length data phases are accepted for
+every vendor, bounded by ObjectInfo size and the transfer limit.
+
+**Quirk table (`CameraQuirks.kt`).** Demonstrated exceptions only, matched by VID:PID
+or model regex, first match wins: EOS R6/R10 (vendor events off), R10 (warm-up),
+EOS M / PowerShot SX remote mode 0x15 and SX720/SX600 0x11 (libgphoto2 values,
+untested here), M6 Mark II regular, Nikon 1 (vendor events off). Unlisted bodies get
+defaults plus the adaptive checks.
+
+**Adapters.** Canon (remote mode from the table, left on at close), Nikon (GetEventEx →
+GetEvent, no control-mode writes), Sony (read-only SDIO, refuses without PC+Camera
+and Camera priority), **Fujifilm** (new: accepts the Fuji ObjectAdded code; reads
+Priority Mode and, only if it says USB, sets it back to Camera — the libgphoto2 fix
+for gphoto2 #570's locked X-T3 shutter; nothing is written otherwise), **Panasonic**
+(new: accepts the LUMIX card and SDRAM ObjectAdded codes), generic for everything else
+(Olympus/OM, Pentax/Ricoh, Leica, Sigma, GoPro, phones) with per-VID guidance.
+
+**Adaptive event sources (live loop).** The 3-second card scan remains the ground truth.
+A vendor/interrupt event source is disabled for the attachment when it errors (as
+before) and now also when it proves unproductive: ten card-detected new JPEGs with
+zero announced by events. This replaces per-model allowlisting for bodies we have not
+seen; the R6/R10 rows stay because their evidence is measured.
+
+**Deliberately not done.** USB mass-storage import (Panasonic PC(Storage), old Nikon
+Mass Storage): needs a Storage Access Framework picker, a UI increment. Sony priority
+or save-destination writes: they would take controls away from the body. Canon capture
+destination, Nikon ApplicationMode, Fuji PC Mode 0xD38C: all host-control switches.
+EOS M values are table rows, not tested code paths.
+
+Validation (2026-09-11, phase 2): from `mobile/`, `.\gradlew.bat --offline testDebugUnitTest compileDebugKotlin --console=plain` —
+BUILD SUCCESSFUL, **153 tests, 0 failures/errors/skips** (148 + 5 new: quirk table and EOS M value, Fuji priority guard,
+vendor event acceptance, vendor-class interface fallback, adaptive event disablement). No device attached; every
+non-Canon adapter and the fallback are software-verified only.
+
+## Canon remote mode is session-wide and left on at close — 2026-09-11
+
+**Symptom:** the body sits on its "PC connection" screen with the shutter dead during
+card browse/import, and again after Stop until it is unplugged. **Cause:** a bare PTP
+session, or remote mode 0, is that locked state on EOS bodies; only remote mode 1 keeps
+the display and shutter live (R6 2026-05-26 vs 2026-09-02, R10 2026-09-04). libgphoto2
+(`camlibs/ptp2/library.c` `camera_init`; `config.c` `camera_unprepare_canon_eos_capture`)
+sends `SetRemoteMode(1)` for every EOS it opens, even for file listing, and on exit
+sends mode 0 ("resets the camera state") then mode 1 ("enables camera display"). Our
+driver only entered mode 1 for live capture and ended every close on mode 0.
+
+**Change (`CameraDriver.kt`):** `startSession()` runs for every open and sends
+`SetRemoteMode(1)` on Canon; `startLive()` adds only `SetEventMode(1)`; close sends
+`SetEventMode(0)`, `SetRemoteMode(0)`, `SetRemoteMode(1)`, `CloseSession`. The R10
+warm-up now also runs before browse/import, because those sessions send a vendor op
+too. A clean `Operation_Not_Supported` on `SetRemoteMode` keeps browse/import in the
+bare session as before; live still stops with guidance. No other brand path changed:
+the app writes no mode/priority property on any body.
+
+**Brand matrix (USB, Android host, no root, no SDK).** The lock is decided by the USB
+mode chosen on the camera; the host can neither switch it nor talk to a transfer-only mode.
+
+| Brand | Mode that keeps the body shootable | Transfer-only modes (locked by firmware) | Host must not send |
+|---|---|---|---|
+| Canon EOS | PTP with remote mode 1 held; shots to card; host polls the card (`EOS_GetEvent` reports 0/111 body shots on R6) | Bare session / remote mode 0 | `CaptureDestination=host` (Busy until Live View), `RemoteRelease*`, `UILock`, `SetModeDialDisable` |
+| Nikon | MTP/PTP, plain session = Nikon's "PC camera mode" with body controls active (Nikon USB/MTP specs, all 15 Z bodies; gphoto2 tethered capture on DSLRs) | none known; hardware pass pending | `ChangeCameraMode(1)`, `ApplicationMode 0xD1F0=1` (hides the filesystem), `RecordingMedia` |
+| Sony | PC Remote with Save Destination 0x0011 and Position Key `0xD25A` = 0x00 camera priority (Sony Camera Control PTP 2/3 Reference); frames at handle `0xFFFFC001` | MTP and Mass Storage (different PID per mode) | `PositionKey=1`, save-dest or exposure writes |
+| Fujifilm | USB TETHER SHOOTING AUTO (saves to card and pushes); shutter stays on the body | USB CARD READER; FIXED never writes the card | `PriorityMode 0xD207=2` and PC Mode `0xD38C=1` (gphoto2 #570 is exactly that lock) |
+| Panasonic | PC(Tether), body-shutter push unproven; no Android app supports it | PC(Storage) is mass storage (class 8, not probed) | `SetCaptureTarget`, `InitiateCapture` |
+
+Android notes: `MtpDevice` has `readEvent()` (API 24+) but no vendor-opcode API and
+cannot share the interface with a raw connection, so the raw bulk path stays. Canon's
+Content Transfer Professional does this same body-shoot → USB → Android delivery on
+R-series bodies with `Photo Import/Remote Control`, so the workflow has an official precedent.
+
+**Hardware gate (R6 and R10, before any "device-verified" claim or copy change):**
+browse the card and press the shutter mid-browse (must fire); Start → shoot → Stop →
+press the shutter without unplugging (must fire, normal screen); Start again without a
+replug (first frame must arrive); R10 first browse after attach (warm-up now covers it).
+If a restart after Stop fails only because of the final mode 1, revert that one line.
+R6 (firmware 1.5.2, OPPO CPH2375, Android 13) passed all four steps on 2026-09-11 with
+53/53 frames uploaded; R10 pending, so the guidance copy stays until it passes.
+EOS M / PowerShot bodies use remote mode `0x15` in libgphoto2 and are untested here.
+
+Validation (2026-09-11): from `mobile/`, `.\gradlew.bat --offline testDebugUnitTest compileDebugKotlin --console=plain` —
+BUILD SUCCESSFUL, **148 tests, 0 failures/errors/skips** (146 existing + 2 new scripted-PTP
+cases). ADB listed no device; nothing above is hardware-certified until the gate is run.
+
 ## Phone storage management — 2026-09-09
 
 **Recommendation implemented:** monitor the internal tether spool, keep originals
@@ -203,7 +374,7 @@ This section supersedes the foundation's vendor-expansion deferral below. It was
 
 ### Findings and architecture decision
 
-The active flow is `CameraConnectionManager -> foreground service/coordinator -> CameraDrivers -> PtpSession/PtpWire -> CameraTransferStore -> Room -> WorkManager`. Browse and import use the same driver/session factory. The unused EOS remote-shutter and card-poll controllers are historical experiments, not alternate production backends. Keep the service, durable spool, account/event boundaries and existing backend JPEG contract.
+The active flow is `CameraConnectionManager -> foreground service/coordinator -> CameraDrivers -> PtpSession/PtpWire -> CameraTransferStore -> Room -> WorkManager`. Browse and import use the same driver/session factory. The unused EOS remote-shutter and card-poll controllers were deleted 2026-09-11; the EOS event parser survives as `data/usb/ptp/EosEvents.kt`, used by `CameraDriver`. Keep the service, durable spool, account/event boundaries and existing backend JPEG contract.
 
 Use Android USB Host with standard PTP/MTP object access as the broad import baseline, capability-negotiated vendor adapters for live capture, and standard interrupt events plus periodic card reconciliation. Import, physical-shutter operation, transient host transfers and remote control are separate capabilities. A USB VID or a vendor-extension ID is insufficient proof of any of them. Do not require a model allowlist for standard PTP; use model quirks only for demonstrated exceptions.
 
@@ -238,7 +409,7 @@ Standards/API references: [USB still-image transport definition and errata](http
 | Canon EOS DSLR/mirrorless | Standard PTP if advertised | Existing EOS mode plus card reconciliation; interrupt/vendor events where usable | R6/R10 history must be recertified; R10 warm-up stays narrow. Older PowerShot/EOS proprietary protocols are not automatically covered. Host-only EOS capture is not enabled. |
 | Nikon DSLR/Z / older PTP | Standard PTP, healthy card slots | Standard events, advertised Nikon event polling, card reconciliation without PC-control mode writes | Nikon 1 vendor events can break sessions and are excluded. Storage-less SDRAM capture and shutter-unlocking behavior are not universally supported. |
 | Sony Alpha / compatible SDIO generations | MTP/PTP in transfer mode | Negotiated SDIO PC Remote, property polling and sequential temporary JPEG objects with camera+host destination | Some older bodies lack these operations or simultaneous saving; QX/legacy DSLR protocols differ. PTP 2 remains a fallback, not the preferred protocol (Sony warns about future support). Body/firmware/mode testing required. |
-| Fujifilm X/GFX / older FinePix | USB CARD READER mode when it exposes PTP/MTP (some modes/devices are mass storage) | Generic accessible card objects/events only | USB TETHER may be host-only and may not save to the card. Do not force undocumented PCMode/control transitions. Official Android SDK is a viable licensed extension, not integrated or claimed supported here. |
+| Fujifilm X/GFX / older FinePix | USB CARD READER mode when it exposes PTP/MTP (some modes/devices are mass storage) | Default: generic accessible card objects/events. Explicit SDK opt-in: supported X/GFX modules only, guarded as described above. | SDK capture is implemented but disabled for distributed artifacts pending the hardware gate. Unsupported modules fall back to PTP; no body is newly certified here. |
 | Panasonic LUMIX | PTP/MTP mode when advertised | Standard/card-arrival events plus card reconciliation in a mode permitting shooting | PC(Storage) may be mass storage; PC(Tether) and models vary. Proprietary SDRAM/object acknowledgement flow and desktop SDK integration are not implemented. |
 
 ### Physical acceptance matrix
@@ -315,9 +486,9 @@ Record exact body, firmware, camera USB/save mode, phone/Android version and cab
 
 Evaluate a pinned libgphoto2/libusb Android backend before building more vendor stacks. Gate adoption on an unrooted-phone proof of permission/FD ownership, identification, exact file transfer, physical-shutter operation, card backup, cancellation/reconnection, ABI packaging and component licensing. Sony's published Camera Remote Command is a targeted alternative. Manufacturer support remains model/firmware/mode specific.
 
-Follow-up order: (1) recertify R6/R10; (2) test the implemented Nikon events and Sony protocol 2/3 buffer paths; (3) build and validate a native backend for missing proprietary protocols, or a licensed Fujifilm Android SDK adapter; (4) expand the measured matrix to Fujifilm, Panasonic, Olympus/OM System, Leica and further models. Expose verified import/live capabilities per model rather than declaring whole brands supported. Buffer tuning, ledger retention and diagnostic export follow hardware measurements.
+Follow-up order: (1) recertify R6/R10; (2) test the implemented Nikon events and Sony protocol 2/3 buffer paths; (3) hardware-certify the default-disabled Fujifilm SDK adapter before any distributed opt-in; (4) build and validate a native backend for other missing proprietary protocols; (5) expand the measured matrix to Fujifilm, Panasonic, Olympus/OM System, Leica and further models. Expose verified import/live capabilities per model rather than declaring whole brands supported. Buffer tuning, ledger retention and diagnostic export follow hardware measurements.
 
-Manufacturer references correcting the historical vault: [Canon SDK platforms](https://www.usa.canon.com/support/sdk), [Nikon SDK updates](https://sdk.nikonimaging.com/information/en/), [Fujifilm Android SDK](https://www.fujifilm-x.com/global/camera-control-sdk/), [Fujifilm individual distribution agreement](https://www.fujifilm-x.com/global/camera-control-sdk/agreement/), [Sony command protocol and PTP 2 notice](https://support.d-imaging.sony.co.jp/app/cameraremotecommand/en/index.html), [Panasonic Windows SDK](https://av.jpn.support.panasonic.com/support/global/cs/soft/tool/sdk.html). No manufacturer agreement was accepted and no proprietary SDK was downloaded or bundled.
+Manufacturer references correcting the historical vault: [Canon SDK platforms](https://www.usa.canon.com/support/sdk), [Nikon SDK updates](https://sdk.nikonimaging.com/information/en/), [Fujifilm Android SDK](https://www.fujifilm-x.com/global/camera-control-sdk/), [Fujifilm individual distribution agreement](https://www.fujifilm-x.com/global/camera-control-sdk/agreement/), [Sony command protocol and PTP 2 notice](https://support.d-imaging.sony.co.jp/app/cameraremotecommand/en/index.html), [Panasonic Windows SDK](https://av.jpn.support.panasonic.com/support/global/cs/soft/tool/sdk.html). Proprietary Fujifilm files remain gitignored and optional; their local presence does not enable or certify a build.
 
 Camera setup references: [Sony PC+Camera destination](https://helpguide.sony.net/ilc/1640/v1/en/contents/TP0001306054.html), [Fujifilm X-T3 USB modes and card-saving warning](https://fujifilm-dsc.com/en/manual/x-t3/connections/computer/index.html), [Nikon MTP/PTP USB setting](https://onlinemanual.nikonimglib.com/z6III/en/nwm_usb_data_connection_365.html), [Panasonic USB mode settings](https://eww.pavc.panasonic.co.jp/dscoi/DC-S5M2X/html/DC-S5M2X_DVQP2992_eng/0125.html).
 

@@ -57,10 +57,11 @@ import com.quickpitik.mobile.data.remote.EventDto
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerEventCoverageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.count
+import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.runner.CartViewModel
-import com.quickpitik.mobile.ui.runner.PhotoPreview
 import com.quickpitik.mobile.ui.runner.rememberIsTrueRunner
-import com.quickpitik.mobile.ui.runner.toPreviewData
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.SecureScreen
@@ -190,7 +191,7 @@ fun PhotographerPublicProfileScreen(
                             label = "Events",
                         )
                         StatNumber(
-                            value = "%,d".format(coveredEvents.sumOf { it.photoCount }),
+                            value = count(coveredEvents.sumOf { it.photoCount }),
                             label = "Photos",
                         )
                         StatNumber(
@@ -488,7 +489,7 @@ private fun ProfileEventGalleryView(
                 photos = previewPhotos,
                 currentIndex = currentIndex,
                 commerceEnabled = commerce,
-                mode = if (cartViewModel == null) com.quickpitik.mobile.ui.runner.PhotoPreviewMode.OwnerReview else com.quickpitik.mobile.ui.runner.PhotoPreviewMode.Browse,
+                mode = if (cartViewModel == null) com.quickpitik.mobile.ui.common.PhotoPreviewMode.OwnerReview else com.quickpitik.mobile.ui.common.PhotoPreviewMode.Browse,
                 isInCart = { data -> cartItems.any { it.photoId == data.id } },
                 onToggleCart = onToggleCart@{ data ->
                     val cart = cartViewModel ?: return@onToggleCart

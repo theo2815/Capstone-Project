@@ -31,10 +31,14 @@ import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
 import jakarta.validation.Valid
+import org.springframework.beans.propertyeditors.StringTrimmerEditor
 import org.springframework.http.MediaType
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.web.bind.WebDataBinder
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.InitBinder
+import org.springframework.web.bind.annotation.ModelAttribute
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -44,7 +48,6 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
-import java.math.BigDecimal
 import java.util.UUID
 
 @RestController
@@ -59,97 +62,44 @@ class MePhotographerController(
     private val rateLimiter: RateLimiter,
 ) {
     // ── Photographer-owned events (V46) ───────────────────────────────────
-    // multipart/form-data like the admin create: text fields as @RequestParam,
-    // the optional `cover` part carries the image bytes.
+    // multipart/form-data like the admin create: the text parts bind onto the
+    // request DTO, the optional `cover` part carries the image bytes.
     @PostMapping(value = ["/events"], consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun createEvent(
         @AuthenticationPrincipal principal: AuthPrincipal,
-        @RequestParam("title") title: String,
-        @RequestParam("date") date: String,
-        @RequestParam("location") location: String,
-        @RequestParam("organizerName", required = false) organizerName: String?,
-        @RequestParam("description", required = false) description: String?,
-        @RequestParam("visibility", required = false) visibility: String?,
-        @RequestParam("pricingMode", required = false) pricingMode: String?,
-        @RequestParam("pricePerPhoto", required = false) pricePerPhoto: String?,
-        @RequestParam("watermarkPolicy", required = false) watermarkPolicy: String?,
+        @Valid @ModelAttribute("form") form: CreateMyEventRequest,
         @RequestPart("cover", required = false) cover: MultipartFile?,
     ): PhotographerEventDetailDto {
         rateLimiter.acquireOrThrow(
             policy = Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD,
             key = principal.userId.toString(),
         )
-        val req = CreateMyEventRequest(
-            title = title.trim(),
-            date = date.trim(),
-            location = location.trim(),
-            organizerName = organizerName?.trim()?.takeIf { it.isNotEmpty() },
-            description = description?.trim()?.takeIf { it.isNotEmpty() },
-            visibility = visibility?.trim()?.takeIf { it.isNotEmpty() } ?: "public",
-            pricingMode = pricingMode?.trim()?.takeIf { it.isNotEmpty() } ?: "paid",
-            pricePerPhoto = parsePrice(pricePerPhoto),
-            watermarkPolicy = watermarkPolicy?.trim()?.takeIf { it.isNotEmpty() },
-        )
-        if (req.title.isBlank()) {
-            throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "title is required", field = "title")
-        }
-        if (req.date.isBlank()) {
-            throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "date is required", field = "date")
-        }
-        if (req.location.isBlank()) {
-            throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "location is required", field = "location")
-        }
-        return photographerOwnedEventService.create(principal.userId, req, coverOf(cover))
+        return photographerOwnedEventService.create(principal.userId, form, coverOf(cover))
     }
 
     @PatchMapping(value = ["/events/{eventId}"], consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun updateEvent(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
-        @RequestParam(required = false) title: String?,
-        @RequestParam(required = false) date: String?,
-        @RequestParam(required = false) location: String?,
-        @RequestParam(required = false) organizerName: String?,
-        @RequestParam(required = false) description: String?,
-        @RequestParam(required = false) visibility: String?,
-        @RequestParam(required = false) pricingMode: String?,
-        @RequestParam(required = false) pricePerPhoto: String?,
-        @RequestParam(required = false) watermarkPolicy: String?,
-        @RequestParam(required = false) withdrawPendingChange: Boolean?,
+        @Valid @ModelAttribute("form") form: UpdateMyEventRequest,
         @RequestPart("cover", required = false) cover: MultipartFile?,
-    ): PhotographerEventDetailDto {
-        val req = UpdateMyEventRequest(
-            title = title?.trim()?.takeIf { it.isNotEmpty() },
-            date = date?.trim()?.takeIf { it.isNotEmpty() },
-            location = location?.trim()?.takeIf { it.isNotEmpty() },
-            organizerName = organizerName?.trim()?.takeIf { it.isNotEmpty() },
-            description = description?.trim()?.takeIf { it.isNotEmpty() },
-            visibility = visibility?.trim()?.takeIf { it.isNotEmpty() },
-            pricingMode = pricingMode?.trim()?.takeIf { it.isNotEmpty() },
-            pricePerPhoto = parsePrice(pricePerPhoto),
-            watermarkPolicy = watermarkPolicy?.trim()?.takeIf { it.isNotEmpty() },
-            withdrawPendingChange = withdrawPendingChange == true,
-        )
-        return photographerOwnedEventService.update(principal.userId, eventId, req, coverOf(cover))
+    ): PhotographerEventDetailDto =
+        photographerOwnedEventService.update(principal.userId, eventId, form, coverOf(cover))
+
+    // FormData sends every field as a string and an untouched input as "", so
+    // blank has to read as "absent": the trimmer nulls it, which puts a create
+    // back on the DTO default and leaves a patch field unchanged. Scoped by the
+    // `form` attribute name to the two event forms. Numbers convert themselves
+    // - a non-numeric price is a field error, not a 500.
+    @InitBinder("form")
+    fun trimEventForm(binder: WebDataBinder) {
+        binder.registerCustomEditor(String::class.java, StringTrimmerEditor(true))
     }
 
     private fun coverOf(cover: MultipartFile?): AdminEventService.CoverUpload? =
         cover?.takeUnless { it.isEmpty }?.let {
             AdminEventService.CoverUpload(bytes = it.bytes, contentType = it.contentType)
         }
-
-    // FormData round-trips numbers as strings; blank = not supplied.
-    private fun parsePrice(raw: String?): BigDecimal? {
-        val trimmed = raw?.trim().orEmpty()
-        if (trimmed.isEmpty()) return null
-        return runCatching { BigDecimal(trimmed) }.getOrElse {
-            throw ValidationException(
-                code = ErrorCodes.VALIDATION_ERROR,
-                message = "pricePerPhoto must be a number",
-                field = "pricePerPhoto",
-            )
-        }
-    }
 
     @GetMapping("/events")
     fun listEvents(
@@ -221,22 +171,26 @@ class MePhotographerController(
         )
     }
 
-    // Direct-to-storage upload, step 1 of 2 (2026-09-02). Cheap: gates + dedup
-    // + a presign, no bytes. The rate-limited step is the commit, where the
-    // photo actually becomes a row — same policy as the multipart upload.
+    // Direct-to-storage upload, step 1 of 2 (2026-09-02). Gates + dedup + a
+    // presign, no bytes. Begin and commit share the multipart upload policy.
     @PostMapping("/events/{eventId}/photos/direct")
     fun beginDirectUpload(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: DirectUploadBeginRequest,
-    ): DirectUploadBeginResponse =
-        photoUploadService.beginDirectUpload(
+    ): DirectUploadBeginResponse {
+        rateLimiter.acquireOrThrow(
+            policy = Bucket4jRateLimiter.POLICY_PHOTOGRAPHER_UPLOAD,
+            key = principal.userId.toString(),
+        )
+        return photoUploadService.beginDirectUpload(
             photographerId = principal.userId,
             eventId = eventId,
             contentHash = body.contentHash,
             contentType = body.contentType,
             sizeBytes = body.sizeBytes,
         )
+    }
 
     // Direct-to-storage upload, step 2 of 2: the object is in storage; register it.
     @PostMapping("/events/{eventId}/photos/direct/commit")

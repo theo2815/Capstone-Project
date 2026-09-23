@@ -52,3 +52,7 @@ export interface EventFilter {
   page?: number;
   pageSize?: number;
 }
+
+// Shared event-list presentation fields, derived from the backend event.
+export type EventState = "upcoming" | "live" | "open" | "past";
+export type ListEvent = Event & { state: EventState; city: string };

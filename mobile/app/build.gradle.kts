@@ -6,6 +6,18 @@ plugins {
     kotlin("kapt")
 }
 
+// Fujifilm SDK capture is opt-in even on machines that copied the proprietary files.
+val fujiSdkDir = rootProject.file("fuji-sdk")
+val fujiSdk = providers.gradleProperty("QP_ENABLE_FUJI_SDK").getOrElse("false").toBooleanStrictOrNull()
+    ?: throw GradleException("QP_ENABLE_FUJI_SDK must be true or false.")
+if (fujiSdk) {
+    val missing = listOf("HEADERS/XAPI.H", "Android/arm64-v8a/XAPI.so")
+        .filterNot { fujiSdkDir.resolve(it).isFile }
+    if (missing.isNotEmpty()) throw GradleException(
+        "QP_ENABLE_FUJI_SDK=true requires these files under mobile/fuji-sdk: ${missing.joinToString()}"
+    )
+}
+
 android {
     namespace = "com.quickpitik.mobile"
     compileSdk = 34
@@ -14,10 +26,9 @@ android {
         applicationId = "com.quickpitik.mobile"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
+        versionCode = 2
         versionName = "1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -30,6 +41,17 @@ android {
             "GOOGLE_SERVER_CLIENT_ID",
             "\"${project.findProperty("QP_GOOGLE_SERVER_CLIENT_ID") ?: ""}\"",
         )
+        buildConfigField("boolean", "FUJI_SDK", fujiSdk.toString())
+        if (fujiSdk) {
+            ndk { abiFilters += "arm64-v8a" }
+            externalNativeBuild { cmake { arguments += "-DFUJI_SDK_DIR=${fujiSdkDir.absoluteFile.invariantSeparatorsPath}" } }
+        }
+    }
+
+    if (fujiSdk) {
+        ndkVersion = "27.2.12479018"
+        externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt") } }
+        sourceSets["main"].jniLibs.srcDir(fujiSdkDir.resolve("Android"))
     }
 
     // Release signing from a gitignored mobile/keystore.properties:
@@ -149,10 +171,6 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.ui.test.junit4)
     testImplementation(libs.mockwebserver)
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }

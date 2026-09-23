@@ -1,6 +1,7 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.RefundDisputeDto
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.dto.orders.RefundResponse
@@ -8,6 +9,8 @@ import com.quickpitik.dto.orders.RunnerDisputeDto
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeReason
 import com.quickpitik.entity.DisputeStatus
+import com.quickpitik.entity.OrderStatus
+import com.quickpitik.entity.refundNeedsReconciliation
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -16,12 +19,15 @@ import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
+import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.UserRepository
 import com.quickpitik.websocket.AdminInboxEvent
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -33,6 +39,10 @@ class RefundService(
     private val disputeRepository: DisputeRepository,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val eventPublisher: ApplicationEventPublisher,
+    private val platformProperties: PlatformProperties,
+    private val photoRepository: PhotoRepository,
+    private val userRepository: UserRepository,
+    private val clock: Clock,
 ) {
     /**
      * POST /api/v1/me/orders/{id}/refund.
@@ -60,13 +70,19 @@ class RefundService(
         if (order.userId != userId) {
             throw NotFoundException(code = ErrorCodes.ORDER_NOT_FOUND, message = "Order not found")
         }
-
+        if (order.status != OrderStatus.PAID && order.status != OrderStatus.FULFILLED) {
+            throw ConflictException(
+                code = ErrorCodes.CONFLICT,
+                message = "Only paid or fulfilled orders can request a refund",
+            )
+        }
         val reason = DisputeReason.fromWire(request.reason)
         val note = request.note.trim()
 
         val orderItems = orderItemRepository.findByIdOrderId(orderId)
         val orderPhotoIds = orderItems.map { it.id.photoId }.toSet()
-        val invalid = request.photoIds.toSet() - orderPhotoIds
+        val requestedPhotoIds = request.photoIds.distinct()
+        val invalid = requestedPhotoIds.toSet() - orderPhotoIds
         if (invalid.isNotEmpty()) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
@@ -75,12 +91,28 @@ class RefundService(
             )
         }
 
-        val now = OffsetDateTime.now()
+        photoRepository.findAllById(requestedPhotoIds)
+            .mapNotNull { it.photographerId }
+            .distinct()
+            .sorted()
+            .forEach { userRepository.lockById(it) }
+
+        // Read the cutoff only after the photographer locks. A request that
+        // waited behind payout authorization cannot inherit an earlier time.
+        val now = OffsetDateTime.now(clock)
+        val window = platformProperties.payoutClearingWindow
+        if (!(order.paidAt ?: order.createdAt).plus(window).isAfter(now)) {
+            throw ConflictException(
+                code = ErrorCodes.CONFLICT,
+                message = "Refund requests close ${window.toDays()} days after purchase",
+            )
+        }
+
         val refundedPhotoIds = disputeRepository.findByOrderId(orderId)
             .filter { it.refundStatus == "succeeded" }
             .mapTo(mutableSetOf()) { it.photoId }
         val createdDisputes = mutableListOf<Dispute>()
-        for (photoId in request.photoIds.distinct()) {
+        for (photoId in requestedPhotoIds) {
             if (photoId in refundedPhotoIds) {
                 throw ConflictException(
                     code = ErrorCodes.CONFLICT,
@@ -172,12 +204,18 @@ class RefundService(
      *     disappears from the open filter.
      */
     fun withdraw(userId: UUID, disputeId: UUID): RunnerDisputeDto {
-        val dispute = disputeRepository.findById(disputeId).orElseThrow {
+        val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: throw
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
-        }
         if (dispute.runnerId != userId) {
             // Anti-IDOR — never reveal that the dispute exists for another user.
             throw NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+        }
+        if (dispute.refundNeedsReconciliation()) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "Refund is in progress or requires manual reconciliation",
+            )
         }
         if (dispute.status != DisputeStatus.OPEN) {
             throw ApiException(

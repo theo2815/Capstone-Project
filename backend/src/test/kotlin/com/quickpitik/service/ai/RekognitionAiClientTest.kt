@@ -30,14 +30,20 @@ import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageReque
 import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageResponse
 import software.amazon.awssdk.services.rekognition.model.TextDetection
 import software.amazon.awssdk.services.rekognition.model.TextTypes
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.util.UUID
+import javax.imageio.IIOImage
+import javax.imageio.ImageIO
+import javax.imageio.ImageWriteParam
 
 // Unit tests for the Rekognition → DTO mapping. No AWS network: RekognitionClient
 // is mocked. Small byte arrays skip the downscaler (passthrough under 4.5 MB).
 class RekognitionAiClientTest {
     private lateinit var rek: RekognitionClient
     private lateinit var client: RekognitionAiClient
-    private val props = RekognitionProperties()
+    private val props = RekognitionProperties(maxImageDimension = 1024)
     private val eventId: UUID = UUID.randomUUID()
     private val photoId: UUID = UUID.randomUUID()
     private val bytes = ByteArray(1024) { 1 }
@@ -69,6 +75,24 @@ class RekognitionAiClientTest {
             client.facesEnroll(bytes, "image/jpeg", "x.jpg", photoId.toString(), null, eventId)
         }
         assertEquals("NO_FACES", ex.aiCode)
+    }
+
+    @Test
+    fun `oversized images are sent at the configured maximum dimension`() {
+        `when`(rek.indexFaces(any(IndexFacesRequest::class.java))).thenReturn(
+            IndexFacesResponse.builder().faceRecords(FaceRecord.builder().face(Face.builder().faceId("f1").build()).build()).build(),
+        )
+        val original = noisyJpeg(2400, 1800)
+        assertTrue(original.size > 4_500_000, "fixture must exceed the inline-safe byte limit")
+
+        client.facesEnroll(original, "image/jpeg", "$photoId.jpg", photoId.toString(), null, eventId)
+
+        val captor = ArgumentCaptor.forClass(IndexFacesRequest::class.java)
+        verify(rek).indexFaces(captor.capture())
+        val sent = ImageIO.read(ByteArrayInputStream(captor.value.image().bytes().asByteArray()))
+        assertEquals(props.maxImageDimension, maxOf(sent.width, sent.height))
+        val stripeBrightness = (0 until sent.width).map { sent.getRGB(it, 100) and 0xFF }.average()
+        assertTrue(stripeBrightness > 240, "source subsampling should preserve the even-pixel white stripe phase")
     }
 
     @Test
@@ -137,5 +161,32 @@ class RekognitionAiClientTest {
         val cap = ArgumentCaptor.forClass(DeleteCollectionRequest::class.java)
         verify(rek).deleteCollection(cap.capture())
         assertEquals("qp-event-$eventId", cap.value.collectionId())
+    }
+
+    private fun noisyJpeg(width: Int, height: Int): ByteArray {
+        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+        var state = 7
+        for (y in 0 until height) for (x in 0 until width) {
+            if (y < 400) {
+                image.setRGB(x, y, if (x % 2 == 0) 0xFFFFFF else 0)
+            } else {
+                state = state * 1_103_515_245 + 12_345
+                image.setRGB(x, y, state)
+            }
+        }
+        val writer = ImageIO.getImageWritersByFormatName("jpeg").next()
+        val output = ByteArrayOutputStream()
+        try {
+            ImageIO.createImageOutputStream(output).use { stream ->
+                writer.output = stream
+                writer.write(null, IIOImage(image, null, null), writer.defaultWriteParam.apply {
+                    compressionMode = ImageWriteParam.MODE_EXPLICIT
+                    compressionQuality = 1f
+                })
+            }
+        } finally {
+            writer.dispose()
+        }
+        return output.toByteArray()
     }
 }

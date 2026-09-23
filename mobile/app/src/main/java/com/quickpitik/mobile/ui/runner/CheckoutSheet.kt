@@ -57,6 +57,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.ui.auth.validateEmail
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
@@ -133,7 +134,7 @@ fun CheckoutSheet(
     // field): a PENDING order must never be misread as settled.
     LaunchedEffect(checkoutState) {
         val order = (checkoutState as? CheckoutState.Success)?.order ?: return@LaunchedEffect
-        if (order.status.uppercase() in setOf("PAID", "FULFILLED")) {
+        if (isSettledOrderStatus(order.status)) {
             onCheckoutSuccess(order)
             cartViewModel.resetCheckoutState()
         }
@@ -452,7 +453,7 @@ fun CheckoutSheet(
                                 color = Slate,
                             )
                             Text(
-                                text = "−₱${"%,.2f".format(discount)}",
+                                text = "−${peso(discount)}",
                                 style = NumeralStyle.copy(fontSize = 14.sp),
                                 color = Slate,
                             )
@@ -466,7 +467,7 @@ fun CheckoutSheet(
                     ) {
                         Kicker("Total")
                         Text(
-                            text = "₱${"%,.2f".format(net)}",
+                            text = peso(net),
                             style = NumeralStyle.copy(fontSize = 28.sp),
                             color = Ink,
                         )

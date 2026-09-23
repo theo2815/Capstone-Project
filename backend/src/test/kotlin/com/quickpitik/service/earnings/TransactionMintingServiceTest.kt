@@ -1,6 +1,8 @@
 package com.quickpitik.service.earnings
 
 import com.quickpitik.config.PlatformProperties
+import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
@@ -38,6 +40,8 @@ class TransactionMintingServiceTest {
     private val minted = mutableListOf<Transaction>()
 
     private lateinit var orderItemRepository: OrderItemRepository
+    private lateinit var transactionRepository: TransactionRepository
+    private lateinit var eventPhotographerRepository: EventPhotographerRepository
     private lateinit var service: TransactionMintingService
 
     @BeforeEach
@@ -45,15 +49,13 @@ class TransactionMintingServiceTest {
         val orderRepository = Mockito.mock(OrderRepository::class.java)
         orderItemRepository = Mockito.mock(OrderItemRepository::class.java)
         val photoRepository = Mockito.mock(PhotoRepository::class.java)
-        val transactionRepository = Mockito.mock(TransactionRepository::class.java)
-        val eventPhotographerRepository = Mockito.mock(EventPhotographerRepository::class.java)
+        transactionRepository = Mockito.mock(TransactionRepository::class.java)
+        eventPhotographerRepository = Mockito.mock(EventPhotographerRepository::class.java)
         Mockito.`when`(orderRepository.findById(order.id)).thenReturn(Optional.of(order))
         Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo))
         Mockito.`when`(transactionRepository.save(anyArg())).thenAnswer { call ->
             (call.arguments[0] as Transaction).also { minted += it }
         }
-        Mockito.`when`(eventPhotographerRepository.findById(anyArg())).thenReturn(Optional.empty())
-        Mockito.`when`(eventPhotographerRepository.save(anyArg())).thenAnswer { it.arguments[0] }
         service = TransactionMintingService(
             orderRepository,
             orderItemRepository,
@@ -74,6 +76,8 @@ class TransactionMintingServiceTest {
         val row = minted.single()
         assertEquals(BigDecimal("90.00"), row.amountKeptPhp)
         assertEquals(BigDecimal("22.50"), row.discountPhp)
+        Mockito.verify(eventPhotographerRepository)
+            .adjustSalesCounters(eventId, photographerId, 1, BigDecimal("90.00"))
         // Runner paid 127.50; platform fee = paid − kept = 37.50 = 25% of the list price.
         assertEquals(BigDecimal("37.50"), BigDecimal("127.50").subtract(row.amountKeptPhp))
     }
@@ -98,6 +102,85 @@ class TransactionMintingServiceTest {
         service.mintForPaidOrder(order.id)
 
         assertTrue(minted.isEmpty())
+        Mockito.verifyNoInteractions(eventPhotographerRepository)
+    }
+
+    @Test
+    fun `an existing sale row does not increment event counters again`() {
+        stubItems(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("150.00")))
+        stubSaleRow(kept = BigDecimal("112.50"), discount = BigDecimal.ZERO)
+
+        service.mintForPaidOrder(order.id)
+
+        assertTrue(minted.isEmpty())
+        Mockito.verifyNoInteractions(eventPhotographerRepository)
+    }
+
+    // Refund rows are minted here too - one writer for the ledger. A full
+    // refund negates the sale row outright; a partial scales both figures by
+    // the fraction of the charged price returned.
+    @Test
+    fun `a full refund negates the sale row exactly`() {
+        val original = stubSaleRow(kept = BigDecimal("90.00"), discount = BigDecimal("22.50"))
+        val dispute = disputeResolvedAs(DisputeResolution.REFUND_FULL)
+
+        service.mintRefund(dispute, BigDecimal("127.50"), photographerId)
+
+        val refund = minted.single()
+        assertEquals(BigDecimal("-90.00"), refund.amountKeptPhp)
+        assertEquals(BigDecimal("-22.50"), refund.discountPhp)
+        assertEquals(original.id, refund.refundOf)
+        assertTrue(refund.isRefund)
+        Mockito.verify(eventPhotographerRepository)
+            .adjustSalesCounters(eventId, photographerId, -1, BigDecimal("-90.00"))
+    }
+
+    @Test
+    fun `a partial refund scales kept and discount by the fraction returned`() {
+        stubSaleRow(kept = BigDecimal("90.00"), discount = BigDecimal("22.50"))
+        // Charged = 150.00 list - 22.50 coupon = 127.50; half of it comes back.
+        stubItems(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("150.00"), discountPhp = BigDecimal("22.50")))
+        val dispute = disputeResolvedAs(DisputeResolution.REFUND_PARTIAL)
+
+        service.mintRefund(dispute, BigDecimal("63.75"), photographerId)
+
+        val refund = minted.single()
+        assertEquals(BigDecimal("-45.00"), refund.amountKeptPhp)
+        assertEquals(BigDecimal("-11.25"), refund.discountPhp)
+        Mockito.verify(eventPhotographerRepository)
+            .adjustSalesCounters(eventId, photographerId, 0, BigDecimal("-45.00"))
+    }
+
+    @Test
+    fun `a legacy refund without a sale row keeps the old keep-rate estimate`() {
+        val dispute = disputeResolvedAs(DisputeResolution.REFUND_FULL)
+
+        service.mintRefund(dispute, BigDecimal("94.06"), photographerId)
+
+        val refund = minted.single()
+        assertEquals(BigDecimal("-70.55"), refund.amountKeptPhp)
+        assertEquals(BigDecimal.ZERO, refund.discountPhp)
+        Mockito.verify(eventPhotographerRepository)
+            .adjustSalesCounters(eventId, photographerId, -1, BigDecimal("-70.55"))
+    }
+
+    private fun disputeResolvedAs(resolution: DisputeResolution): Dispute =
+        Dispute(orderId = order.id, photoId = photo.id, reasonWire = "other")
+            .also { it.resolution = resolution }
+
+    private fun stubSaleRow(kept: BigDecimal, discount: BigDecimal): Transaction {
+        val original = Transaction(
+            paidAt = order.createdAt,
+            photographerId = photographerId,
+            eventId = eventId,
+            photoId = photo.id,
+            orderId = order.id,
+            amountKeptPhp = kept,
+            discountPhp = discount,
+        )
+        Mockito.`when`(transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(order.id, photo.id, false))
+            .thenReturn(original)
+        return original
     }
 
     private fun stubItems(vararg items: OrderItem) {

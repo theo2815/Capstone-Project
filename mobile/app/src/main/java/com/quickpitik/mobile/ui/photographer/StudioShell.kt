@@ -91,6 +91,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.common.formatInboxDate
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.BrandLogo
@@ -158,19 +159,21 @@ fun StudioTheme(content: @Composable () -> Unit) {
 @Composable
 fun StudioTabScaffold(
     viewModel: PhotographerDashboardViewModel,
+    settingsViewModel: StudioSettingsViewModel,
+    tetherViewModel: TetherViewModel,
     onLogout: () -> Unit,
     onPreviewProfile: () -> Unit,
     onSwitchToRunner: () -> Unit,
     content: @Composable () -> Unit,
 ) {
     val messages by viewModel.messages.collectAsState()
-    val brandSettings by viewModel.brandSettings.collectAsState()
+    val brandSettings by settingsViewModel.brandSettings.collectAsState()
     // Drives the cross-tab GlobalUploadBanner — surfaces sync progress so the
     // photographer doesn't lose track of in-flight uploads after dismissing
     // the import sheet. The Sync queue card on the Capture tab remains the
     // detailed view; this is the persistent ambient status.
-    val queueStats by viewModel.queueStats.collectAsState()
-    val watchState by viewModel.shutterWatchState.collectAsState()
+    val queueStats by tetherViewModel.queueStats.collectAsState()
+    val watchState by tetherViewModel.shutterWatchState.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
     // Railguard gate comes from the shared VM flag (fail-open, one definition for
@@ -965,6 +968,8 @@ private fun InboxRow(
     }
 }
 
+// Photographer copy from the website's photographer-messages.ts; the runner
+// inbox (RunnerInboxSheet) words the refund kinds differently on purpose.
 private fun messageKindLabel(kind: String): String = when (kind) {
     "verification_approved" -> "Verification approved"
     "verification_rejected" -> "Verification needs changes"
@@ -982,19 +987,6 @@ private fun messageKindLabel(kind: String): String = when (kind) {
     "payout_report_resolved" -> "Report resolved"
     "admin_message" -> "Message from admin"
     else -> kind.replace('_', ' ').replaceFirstChar { it.uppercase() }
-}
-
-// "AUG 14, 2026" — the year matters on messages that live for months
-// (web formatLongDate parity, same as the runner inbox).
-private fun formatInboxDate(iso: String): String {
-    return try {
-        val parts = iso.substring(0, 10).split("-")
-        val months = listOf(
-            "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-        )
-        "${months[parts[1].toInt() - 1]} ${parts[2].toInt()}, ${parts[0]}"
-    } catch (e: Exception) { iso }
 }
 
 @Composable

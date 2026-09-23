@@ -235,12 +235,12 @@ export function FlagsQueue() {
 
   async function runDrawerAction(
     verb: "hide" | "dismiss" | "escalate",
-    action: (id: string) => Promise<void>,
+    action: (id: string) => Promise<boolean>,
   ) {
     if (!openRow) return;
     const id = openRow.id;
     try {
-      await action(id);
+      if (!(await action(id))) return;
       showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${id}` });
       setRowId("");
     } catch {

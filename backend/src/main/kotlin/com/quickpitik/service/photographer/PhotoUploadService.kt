@@ -208,6 +208,7 @@ class PhotoUploadService(
         if (stored.sizeBytes !in 1..MAX_DIRECT_UPLOAD_BYTES || stored.contentType.lowercase() !in ALLOWED_CONTENT_TYPES ||
             (sizeBytes != null && stored.sizeBytes != sizeBytes) ||
             (contentType != null && !stored.contentType.equals(contentType, ignoreCase = true))) {
+            runCatching { storageService.delete(key) }
             throw ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
                 "The stored image size or type does not match the upload. Retry with a supported original image.")
         }

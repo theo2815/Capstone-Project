@@ -1,21 +1,28 @@
 package com.quickpitik.service.profile
 
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.AuthLockoutProperties
 import com.quickpitik.dto.profile.PasswordChangeRequest
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.RefreshTokenService
+import com.quickpitik.service.auth.LoginAttemptService
+import com.quickpitik.service.auth.RefreshTokenService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
+import org.springframework.http.HttpStatus
 import org.springframework.security.crypto.password.PasswordEncoder
+import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 class ProfileServiceTest {
 
@@ -39,6 +46,7 @@ class ProfileServiceTest {
         passwordEncoder,
         refreshTokenService,
         userDtoMapper,
+        LoginAttemptService(userRepository, AuthLockoutProperties()),
     )
 
     private fun stubUser(googleSub: String? = null, passwordHash: String = "old-hash"): User {
@@ -71,6 +79,47 @@ class ProfileServiceTest {
         assertThrows<UnauthorizedException> {
             service().changePassword(userId, PasswordChangeRequest(currentPassword = "wrong-password", newPassword = "NewPassword123!"))
         }
+    }
+
+    @Test
+    fun `the sixth wrong current password is rejected as account locked`() {
+        val user = stubUser()
+        repeat(5) {
+            assertThrows<UnauthorizedException> {
+                service().changePassword(
+                    userId,
+                    PasswordChangeRequest(currentPassword = "wrong-password", newPassword = "NewPassword123!"),
+                )
+            }
+        }
+
+        val ex = assertThrows<ApiException> {
+            service().changePassword(
+                userId,
+                PasswordChangeRequest(currentPassword = "wrong-password", newPassword = "NewPassword123!"),
+            )
+        }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, ex.status)
+        assertNotNull(user.lockedUntil)
+        assertEquals(0, user.failedLoginAttempts)
+    }
+
+    @Test
+    fun `a locked account rejects the correct current password after comparing it`() {
+        stubUser().lockedUntil = OffsetDateTime.now().plusMinutes(15)
+        Mockito.`when`(passwordEncoder.matches("correct-password", "old-hash")).thenReturn(true)
+
+        val ex = assertThrows<ApiException> {
+            service().changePassword(
+                userId,
+                PasswordChangeRequest(currentPassword = "correct-password", newPassword = "NewPassword123!"),
+            )
+        }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        Mockito.verify(passwordEncoder).matches("correct-password", "old-hash")
     }
 
     @Test

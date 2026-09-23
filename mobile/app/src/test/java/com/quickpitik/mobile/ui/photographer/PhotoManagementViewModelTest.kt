@@ -5,15 +5,11 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.google.gson.Gson
 import com.quickpitik.mobile.data.local.SessionManager
-import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.remote.RetrofitClient
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.quickpitik.mobile.support.MainDispatcherRule
+import com.quickpitik.mobile.support.pointAppAt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -22,18 +18,18 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
 class PhotoManagementViewModelTest {
+    @get:Rule val main = MainDispatcherRule()
+
     private lateinit var application: Application
     private lateinit var session: SessionManager
     private val server = MockWebServer()
@@ -43,7 +39,6 @@ class PhotoManagementViewModelTest {
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
         application = ApplicationProvider.getApplicationContext()
         session = SessionManager.getInstance(application)
         session.clearSession()
@@ -52,17 +47,17 @@ class PhotoManagementViewModelTest {
             override fun dispatch(request: RecordedRequest) = respond(request)
         }
         server.start()
-        RetrofitClient.setBaseUrl(server.url("/").toString())
+        pointAppAt(server.url("/").toString())
     }
 
     @After
     fun tearDown() {
+        // No Room teardown: model() builds PhotographerDashboardViewModel, which
+        // has held no AppDatabase reference since the split (ce17a518).
         viewModels.clear()
-        AppDatabase.getDatabase(application).close()
         server.shutdown()
         RetrofitClient.resetBaseUrl()
         session.clearSession()
-        Dispatchers.resetMain()
     }
 
     @Test

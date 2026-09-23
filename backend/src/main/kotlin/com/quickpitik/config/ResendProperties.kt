@@ -22,4 +22,5 @@ data class ResendProperties(
     val baseUrl: String = "https://api.resend.com",
     val connectTimeout: Duration = Duration.ofSeconds(5),
     val readTimeout: Duration = Duration.ofSeconds(15),
+    val receiptSweepIntervalMs: Long = 900_000,
 )

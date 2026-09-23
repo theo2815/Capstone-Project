@@ -28,6 +28,8 @@ import java.io.OutputStream
 class UsbCardImportController(
     private val manager: UsbManager,
     private val deviceProvider: () -> UsbDevice?,
+    // Test seam, same shape as UsbEventCaptureController's: production opens the real body.
+    private val openCamera: suspend (UsbDevice) -> GenericPtpCamera = { CameraDrivers.open(manager, it) },
 ) {
     /**
      * Streamed lifecycle of an import run. Per-handle Set-of-Long tallies (not
@@ -88,7 +90,7 @@ class UsbCardImportController(
             return
         }
 
-        val camera = try { CameraDrivers.open(manager, device) }
+        val camera = try { openCamera(device) }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { emit(Progress.Failed(e.message ?: MSG_OPEN_FAILED)); return }
         val session = camera.session

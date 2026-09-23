@@ -6,7 +6,9 @@ import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import java.time.Clock
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.time.ZoneId
 
 // Date-based sweep for the "your photos are ready" email. Events are
@@ -17,23 +19,27 @@ import java.time.ZoneId
 // Mirrors PhotoIndexingTrigger.reconcile — synchronous per-tick loop, gated on
 // aiApiProperties.enabled, bounded batch. fixedDelay waits for a tick to finish
 // before starting the next, so a slow provider can't overlap runs. Single-instance
-// assumption like the other sweeps; the claimNotify conditional UPDATE keeps the
-// send single even if two instances ever sweep at once.
+// assumption like the other sweeps; across instances, the conditional claim
+// permits one active lease at a time. Expiry recovery is intentionally
+// at-least-once, so a stalled old worker and its retry may both deliver.
 @Component
 class EventPhotosReadySweep(
     private val alertRepository: EventPhotoAlertRepository,
     private val notifier: EventPhotosReadyNotifier,
     private val aiApiProperties: AiApiProperties,
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Scheduled(fixedDelayString = "\${app.ai-api.photos-ready-sweep-interval-ms:3600000}")
     fun sweep() {
         if (!aiApiProperties.enabled) return // no AI = no possible match; no-op like the other sweeps
-        val today = LocalDate.now(PH_ZONE)
+        val now = clock.postgresTimestamp()
+        val today = LocalDate.now(clock.withZone(PH_ZONE))
         val pending = alertRepository.findPendingInWindow(
             today = today,
             windowStart = today.minusDays(UPLOAD_WINDOW_DAYS + POST_WINDOW_CHECK_DAYS),
+            claimExpiredBefore = now.minus(aiApiProperties.photosReadyClaimTtl).truncatedTo(ChronoUnit.MICROS),
             pageable = PageRequest.of(0, BATCH),
         )
         if (pending.isEmpty()) return

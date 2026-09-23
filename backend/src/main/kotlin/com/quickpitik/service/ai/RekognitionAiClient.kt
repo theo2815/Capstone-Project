@@ -10,6 +10,7 @@ import com.quickpitik.dto.ai.FacesDetectResult
 import com.quickpitik.dto.ai.FacesEnrollResult
 import com.quickpitik.dto.ai.FacesSearchResult
 import com.quickpitik.service.image.ExifOrientation
+import com.quickpitik.service.image.SubsampledDecode
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Primary
@@ -34,7 +35,6 @@ import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageReque
 import software.amazon.awssdk.services.rekognition.model.TextTypes
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -238,7 +238,7 @@ class RekognitionAiClient(
     // decoded, uprighted, downscaled to maxImageDimension, and re-encoded as JPEG.
     private fun toInlineBytes(file: ByteArray): ByteArray {
         if (file.size <= INLINE_SAFE_BYTES) return file
-        val source = ImageIO.read(ByteArrayInputStream(file)) ?: return file
+        val source = SubsampledDecode.readForLongEdge(file, props.maxImageDimension) ?: return file
         val upright = ExifOrientation.apply(source, ExifOrientation.read(file))
         val longest = maxOf(upright.width, upright.height)
         val ratio = if (longest > props.maxImageDimension) props.maxImageDimension.toDouble() / longest else 1.0

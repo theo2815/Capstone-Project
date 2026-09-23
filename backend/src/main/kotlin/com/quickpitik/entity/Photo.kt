@@ -10,6 +10,7 @@ import jakarta.persistence.FetchType
 import jakarta.persistence.Id
 import jakarta.persistence.JoinColumn
 import jakarta.persistence.Table
+import org.hibernate.annotations.DynamicUpdate
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 import java.math.BigDecimal
@@ -18,6 +19,7 @@ import java.util.UUID
 
 @Entity
 @Table(name = "photos")
+@DynamicUpdate
 class Photo(
     @Id
     @Column(nullable = false, updatable = false)
@@ -151,6 +153,14 @@ class Photo(
     )
     var facePersons: MutableSet<PhotoFacePersonEmbed> = mutableSetOf(),
 ) {
+    // "LIVE and not trashed" — the visible/sellable predicate that cart,
+    // checkout, coupons and the free-download route each gated on separately.
+    // Computed, no backing field, so Hibernate (field access here, as with
+    // `span`) never sees it. PhotoRepository's JPQL/native copies of the same
+    // predicate carry a `= Photo.isSellable` marker; change them together.
+    val isSellable: Boolean
+        get() = status == PhotoStatus.LIVE && deletedAt == null
+
     var span: PhotoSpan
         get() = PhotoSpan.fromWire(spanWire)
         set(value) {

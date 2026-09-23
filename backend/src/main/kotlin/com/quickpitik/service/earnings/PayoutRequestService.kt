@@ -22,6 +22,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -55,8 +56,10 @@ class PayoutRequestService(
     private val payoutAccountRepository: PayoutAccountRepository,
     private val payoutAccountAuditRepository: PayoutAccountAuditRepository,
     private val payoutStatusRecorder: PayoutStatusRecorder,
+    private val payoutCycleTransitions: PayoutCycleTransitions,
     private val platformProperties: PlatformProperties,
     private val userRepository: UserRepository,
+    private val clock: Clock,
 ) {
 
     @Transactional(readOnly = true)
@@ -225,15 +228,21 @@ class PayoutRequestService(
         // Soft-cancel: keep the row for the audit trail (was a hard delete, which
         // destroyed the history). CANCELLED is terminal + not "open", so it releases
         // the reservation and frees the photographer to request again.
-        cycle.status = PayoutCycleStatus.CANCELLED
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(
-            cycleId = cycle.id,
-            from = PayoutCycleStatus.HELD,
-            to = PayoutCycleStatus.CANCELLED,
-            actorType = "photographer",
-            actorId = photographerId,
-        )
+        payoutCycleTransitions.apply(cycle, PayoutTransition.PhotographerCancel, photographerId)
+    }
+
+    fun assertCovered(cycle: PayoutCycle) {
+        val cutoff = OffsetDateTime.now(clock).minus(platformProperties.payoutClearingWindow)
+        val net = transactionRepository.sumCleared(cycle.photographerId, cutoff)
+            .subtract(payoutCycleRepository.sumPaidByPhotographer(cycle.photographerId))
+            .subtract(payoutCycleRepository.sumReservedByPhotographer(cycle.photographerId))
+        if (net < BigDecimal.ZERO) {
+            throw ApiException(
+                HttpStatus.CONFLICT,
+                ErrorCodes.PAYOUT_NOT_COVERED,
+                "Refunds since this request lowered the balance by ₱${net.negate()}. Reject or hold it so the photographer can re-request.",
+            )
+        }
     }
 
     private data class Balances(
@@ -254,12 +263,12 @@ class PayoutRequestService(
      * non-negative floor stops a refund-after-payout from showing (or paying) a
      * negative balance.
      *
-     * NOTE: read here WITHOUT a lock — Phase 2 adds the pessimistic lock + the
-     * partial unique index that make concurrent requests safe. This method is the
-     * amount source of truth; the client never supplies the amount.
+     * request() and payout authorization call this under the photographer lock;
+     * getBalance() is an informational snapshot. This method is the amount
+     * source of truth; the client never supplies the amount.
      */
     private fun computeBalances(photographerId: UUID): Balances {
-        val cutoff = OffsetDateTime.now().minus(platformProperties.payoutClearingWindow)
+        val cutoff = OffsetDateTime.now(clock).minus(platformProperties.payoutClearingWindow)
         val cleared = transactionRepository.sumCleared(photographerId, cutoff)
         val lifetime = transactionRepository.sumLifetime(photographerId)
         val paid = payoutCycleRepository.sumPaidByPhotographer(photographerId)

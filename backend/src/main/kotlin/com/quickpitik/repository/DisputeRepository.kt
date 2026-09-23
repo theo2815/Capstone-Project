@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.UUID
 
 interface DisputeRepository : JpaRepository<Dispute, UUID> {
@@ -42,6 +44,30 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
     ): Dispute?
 
     fun countByStatusWire(statusWire: String): Long
+
+    @Query(
+        """
+        SELECT COALESCE(SUM(d.refundAmountPhp), 0) FROM Dispute d
+        WHERE d.refundStatus = 'succeeded'
+          AND d.refundedAt >= :from AND d.refundedAt < :to
+        """,
+    )
+    fun sumSucceededRefundsInWindow(
+        @Param("from") from: OffsetDateTime,
+        @Param("to") to: OffsetDateTime,
+    ): BigDecimal
+
+    @Query(
+        value = """
+        SELECT o.event_id, COALESCE(SUM(d.refund_amount_php), 0)
+        FROM disputes d
+        JOIN orders o ON o.id = d.order_id
+        WHERE d.refund_status = 'succeeded'
+        GROUP BY o.event_id
+        """,
+        nativeQuery = true,
+    )
+    fun sumSucceededRefundsByEvent(): List<Array<Any>>
 
     @Query(
         """

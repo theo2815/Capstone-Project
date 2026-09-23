@@ -48,9 +48,9 @@ fun EventCouponSheet(
     var active by remember(loaded) { mutableStateOf(loaded?.active ?: true) }
     var usageLimit by remember(loaded) { mutableStateOf(loaded?.usageLimit?.toString() ?: "") }
 
-    val codeValid = Regex("^[A-Z0-9]{4,16}$").matches(code)
+    val codeValid = isValidCouponCode(code)
     val pct = percent.trim().toIntOrNull()
-    val pctValid = pct != null && (pct in 1..50 || pct == 100)
+    val pctValid = isValidCouponPercent(pct)
     val canSave = codeValid && pctValid
 
     ModalBottomSheet(
@@ -167,3 +167,9 @@ private fun FieldError(text: String) {
     Spacer(Modifier.height(6.dp))
     Text(text, style = Typography.bodySmall, color = ErrorRed)
 }
+
+internal fun isValidCouponCode(code: String): Boolean = Regex("^[A-Z0-9]{4,16}$").matches(code)
+
+// ponytail: 50 mirrors the backend default COUPON_MAX_PERCENT (no platform-fees
+// fetch to read a raised cap); 100 is the giveaway on an event you created.
+internal fun isValidCouponPercent(percent: Int?): Boolean = percent != null && (percent in 1..50 || percent == 100)

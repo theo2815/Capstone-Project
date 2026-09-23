@@ -23,7 +23,7 @@ export function useAuth() {
     isLoading,
     pendingOAuth,
     pendingMfa,
-    setUser,
+    startSession,
     setPendingOAuth,
     setPendingMfa,
     logout: clearUser,
@@ -48,10 +48,10 @@ export function useAuth() {
       queryClient.clear();
       restoreGuestBuffer();
       setTokens(data.accessToken, data.refreshToken);
-      setUser(data.user);
+      startSession(data.user);
       return data.user;
     },
-    [setUser, queryClient],
+    [startSession, queryClient],
   );
 
   // Password and Google first factors share the same in-memory MFA challenge.

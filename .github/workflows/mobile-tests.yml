@@ -1,0 +1,36 @@
+name: mobile-tests
+
+on:
+  push:
+    branches: [dev-main, main]
+    paths: ['mobile/**', '.github/workflows/mobile-tests.yml']
+  pull_request:
+    paths: ['mobile/**', '.github/workflows/mobile-tests.yml']
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          # The action's default is "tools platform-tools"; the obsolete `tools`
+          # package left Google's SDK repo on 2026-09-17 and hard-fails the step.
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      # The JVM suite (Robolectric + MockWebServer, no device) plus the release
+      # compile: a release-only break must not pass CI. Both were hand-run per
+      # phase; the instrumented variant is deliberately not built.
+      - run: ./gradlew testDebugUnitTest compileReleaseKotlin --console=plain --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: mobile-unit-test-report
+          path: mobile/app/build/reports/tests/testDebugUnitTest

@@ -17,8 +17,8 @@ class UsbEventCaptureController(
     private val deviceProvider: () -> UsbDevice?,
     private val store: CameraTransferStore,
     private val awaitDevice: suspend (Long) -> Unit = { delay(it) },
-    private val openCamera: suspend (UsbDevice, Boolean) -> GenericPtpCamera = { device, warm ->
-        CameraDrivers.open(manager, device, live = true, warmUp = warm)
+    private val openCamera: suspend (UsbDevice, Boolean) -> LiveCamera = { device, warm ->
+        CameraDrivers.openLive(manager, device, warm)
     },
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
@@ -65,6 +65,8 @@ class UsbEventCaptureController(
                     onLog("${camera.info.manufacturer} ${camera.info.model} (${camera.info.deviceVersion})")
                     onLog(camera.capabilities.physicalShutter)
                     onLog(CameraDrivers.usbGuidance(device.vendorId))
+                    camera.capabilities.assumptions.forEach { onLog("Assumed, not verified on this body: $it") }
+                    camera.setupWarning?.let(onLog)
                     if (camera.capabilities.transientObjects) {
                         watchTransient(camera, owner, eventId, isOwnerActive, onLog,
                             onReady = { if (!started) { started = true; onStarted() }; onReconnecting(false); healthy() },
@@ -79,15 +81,19 @@ class UsbEventCaptureController(
                     var lastMetadataCheck = nowMs()
                     var firstScan = true
                     var eventPolling = camera.capabilities.eventPolling && camera.cameraKey !in disabledEvents
+                    var eventHits = 0
+                    var eventMisses = 0
                     var formatMessage: String? = null
                     while (currentCoroutineContext().isActive) {
                         if (!isOwnerActive()) throw PtpException("Account changed. Start a new shoot after signing in.")
                         val handles = (camera.handles() + eventHandles).distinct().toMutableList()
                         val refresh = linkedSetOf<Long>()
+                        var announced: List<Long> = emptyList()
                         if (eventPolling) {
                             try {
                                 // Events prioritize metadata refresh, including reused handles; scans repair lost events.
-                                refresh.addAll(camera.events())
+                                announced = camera.events()
+                                refresh.addAll(announced)
                             } catch (e: PtpResponseException) {
                                 if (e.code != Ptp.RC_OPERATION_NOT_SUPPORTED) throw e
                                 eventPolling = false
@@ -95,7 +101,7 @@ class UsbEventCaptureController(
                             } catch (e: CancellationException) { throw e }
                             catch (e: PtpException) {
                                 disabledEvents.add(camera.cameraKey)
-                                if (!camera.session.isUsable) throw e
+                                if (!camera.isUsable) throw e
                                 eventPolling = false
                                 onLog("Camera event data could not be read; continuing card reconciliation.")
                             }
@@ -126,12 +132,23 @@ class UsbEventCaptureController(
                                 handles.add(handle)
                                 eventHandles.add(handle)
                             }
-                            if (handle in freshHandles && !info.isAssociation) { if (info.isJpeg) newJpeg = true else newRaw = true }
+                            if (handle in freshHandles && !info.isAssociation) {
+                                if (info.isJpeg) {
+                                    newJpeg = true
+                                    if (eventPolling && !firstScan) { if (handle in announced) eventHits++ else eventMisses++ }
+                                } else newRaw = true
+                            }
                             val updated = store.transfer(owner, eventId, camera.cameraKey, handle, info)
                             if (cache[handle]?.key != updated.key) changed.add(updated)
                             cache[handle] = updated
                         }
                         cache.keys.retainAll(handles.toSet())
+                        if (eventPolling && eventHits == 0 && eventMisses >= 10) {
+                            // ponytail: fixed 10-shot probation; make it per-model if a body proves to report events late.
+                            eventPolling = false
+                            disabledEvents.add(camera.cameraKey)
+                            onLog("Camera events reported none of the last 10 new photos; relying on card scans for this camera.")
+                        }
                         val firstBaseline = firstScan && store.dao.baselineExists(scope) == 0
                         val rows = if (firstScan || changed.isNotEmpty()) store.reconcile(scope, changed, pendingOnly = true)
                             else store.dao.pendingForScope(scope)
@@ -175,7 +192,7 @@ class UsbEventCaptureController(
                                 if (store.dao.get(record.key)?.attempts == record.attempts)
                                     store.fail(record, e.message ?: "Camera transfer failed.")
                                 onLog("${record.filename}: ${e.message}; retained for retry.")
-                                if (!camera.session.isUsable) throw e
+                                if (!camera.isUsable) throw e
                             }
                             if (nowMs() - lastKeepAlive >= 30_000) { camera.keepAlive(); lastKeepAlive = nowMs() }
                         }
@@ -203,7 +220,7 @@ class UsbEventCaptureController(
     }
 
     private suspend fun watchTransient(
-        camera: GenericPtpCamera, owner: String, event: String, isOwnerActive: () -> Boolean,
+        camera: LiveCamera, owner: String, event: String, isOwnerActive: () -> Boolean,
         onLog: (String) -> Unit, onReady: () -> Unit, onPaused: (String?) -> Unit, onCapture: (String) -> Unit,
     ) {
         onLog("Reading camera + PC JPEG copies. Interrupted buffer transfers require card import.")

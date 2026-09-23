@@ -8,11 +8,11 @@ import com.quickpitik.entity.EventStatus
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
-import com.quickpitik.repository.EventRepository
-import com.quickpitik.repository.UserSelfieRepository
+import com.quickpitik.service.events.EventService
 import com.quickpitik.service.photos.PhotoSearchService
 import com.quickpitik.service.photos.PhotoService
 import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.image.ImagePixelGuardTest.Companion.overBudgetPngHeader
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -33,7 +33,7 @@ import kotlin.test.assertFailsWith
 // selfie already cleared in SelfieService.upload.
 class EventPhotoSearchGateTest {
 
-    private lateinit var eventRepository: EventRepository
+    private lateinit var eventService: EventService
     private lateinit var photoSearchService: PhotoSearchService
     private lateinit var controller: EventPhotoController
 
@@ -41,9 +41,9 @@ class EventPhotoSearchGateTest {
 
     @BeforeEach
     fun setUp() {
-        eventRepository = Mockito.mock(EventRepository::class.java)
+        eventService = Mockito.mock(EventService::class.java)
         photoSearchService = Mockito.mock(PhotoSearchService::class.java)
-        Mockito.`when`(eventRepository.findPublicBySlug(slug)).thenReturn(
+        Mockito.`when`(eventService.requirePublicBySlug(slug)).thenReturn(
             Event(
                 slug = slug,
                 name = "Cebu Marathon",
@@ -59,10 +59,9 @@ class EventPhotoSearchGateTest {
         ).thenReturn(PaginatedResponse(emptyList<PhotoDto>(), 0L, 0, 20))
 
         controller = EventPhotoController(
-            eventRepository,
+            eventService,
             Mockito.mock(PhotoService::class.java),
             photoSearchService,
-            Mockito.mock(UserSelfieRepository::class.java),
             Mockito.mock(StorageService::class.java),
             allowAll,
         )
@@ -112,6 +111,18 @@ class EventPhotoSearchGateTest {
         }
 
         assertEquals(ErrorCodes.VALIDATION_ERROR, ex.code)
+        verifyNoSearch()
+    }
+
+    @Test
+    fun `selfie dimensions over 80MP are rejected before face search`() {
+        val ex = assertFailsWith<ValidationException> {
+            search(MockMultipartFile("selfie", "selfie.png", "image/png", overBudgetPngHeader()))
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("Image dimensions exceed the supported maximum.", ex.message)
+        assertEquals("selfie", ex.field)
         verifyNoSearch()
     }
 

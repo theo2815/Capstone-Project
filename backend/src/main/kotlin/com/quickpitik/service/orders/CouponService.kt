@@ -12,7 +12,6 @@ import com.quickpitik.dto.photos.CouponQuote
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventPhotographerId
 import com.quickpitik.entity.Photo
-import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.entity.OrderStatus
 import com.quickpitik.exception.ConflictException
@@ -217,7 +216,7 @@ class CouponService(
     fun preview(req: CouponPreviewRequest): CouponPreviewDto {
         val manual = req.code?.takeIf { it.isNotBlank() }?.let(::resolveForCheckout)
         val photos = photoRepository.findAllById(req.photoIds.distinct())
-            .filter { it.status == PhotoStatus.LIVE && it.deletedAt == null }
+            .filter { it.isSellable }
         // Read-only quote: no lock, and findLiveForEvent already filters
         // active / expiry / usage-limit.
         val auto = autoFor(photos) { eventIds ->

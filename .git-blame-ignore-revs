@@ -1,0 +1,8 @@
+# Commits git blame should skip: whitespace only, no authorship.
+# GitHub honours this file; locally: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# chore(repo): renormalise PhotographerDashboardViewModel.kt from CRLF to LF
+691de33d3605bcdef1c1daa7e43d617a528e70bd
+
+# 07ba6393 is deliberately absent: it rewrote all 662 lines as a CRLF side effect,
+# but carries a real 18-line change that blame must keep attributing to it.

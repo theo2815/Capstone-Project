@@ -8,7 +8,6 @@ import com.quickpitik.entity.CartItemId
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
-import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -45,7 +44,7 @@ class CartService(
         // PROCESSING / HIDDEN photos are not sellable. 404 rather than a
         // dedicated code — a hidden photo must not be distinguishable from a
         // missing one.
-        if (photo.status != PhotoStatus.LIVE || photo.deletedAt != null) {
+        if (!photo.isSellable) {
             throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         }
         // Free events (V46): a ₱0 photo is downloaded from the gallery, never
@@ -125,7 +124,7 @@ class CartService(
         for ((photoId, eventId) in incoming) {
             val photo = photoLookup[photoId] ?: continue
             if (photo.eventId != eventId) continue
-            if (photo.status != PhotoStatus.LIVE || photo.deletedAt != null) continue
+            if (!photo.isSellable) continue
             // A free photo (V46) would 409 every checkout after login — skip.
             if (photo.pricePhp.signum() <= 0) continue
             val event = eventLookup[eventId] ?: continue
@@ -158,7 +157,7 @@ class CartService(
         val events = eventRepository.findAllById(eventIds).associateBy { it.id }
         return rows.mapNotNull { row ->
             val photo = photos[row.id.photoId] ?: return@mapNotNull null
-            if (photo.status != PhotoStatus.LIVE || photo.deletedAt != null) return@mapNotNull null
+            if (!photo.isSellable) return@mapNotNull null
             val event = events[row.eventId]
             row.toDto(photo, event)
         }

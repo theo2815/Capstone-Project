@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
@@ -12,14 +11,9 @@ import {
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
-import { useAdminEvents } from "@/hooks/use-admin-data";
+import { useAdminEvents, useAdminEventActions } from "@/hooks/use-admin-events";
 import { useToast } from "@/hooks/use-toast";
-import { ApiError } from "@/lib/api";
-import {
-  approveAdminEvent,
-  rejectAdminEvent,
-  type AdminEventRow,
-} from "@/lib/api-admin";
+import type { AdminEventRow } from "@/lib/api-admin";
 import { formatLongDate } from "@/lib/format";
 import { describePricing } from "@/lib/photographer-events";
 import { cn } from "@/lib/utils";
@@ -32,50 +26,47 @@ import { cn } from "@/lib/utils";
 // through the existing /admin/events board.
 
 export function EventRequestsQueue() {
-  const rows = useAdminEvents({ review: "queue" });
-  const queryClient = useQueryClient();
+  const query = useAdminEvents({ review: "queue" });
+  const rows = query.data;
+  const { approve, reject } = useAdminEventActions();
   const { showToast } = useToast();
   const [rejecting, setRejecting] = useState<AdminEventRow | null>(null);
   const [reason, setReason] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const busyRef = useRef(false);
 
-  async function run(row: AdminEventRow, action: () => Promise<unknown>, ok: string) {
+  async function run(row: AdminEventRow, action: () => Promise<boolean>, message: string) {
+    if (busyRef.current) return false;
+    busyRef.current = true;
     setBusyId(row.id);
     try {
-      await action();
-      showToast({ kind: "success", message: ok });
-    } catch (err) {
-      showToast({
-        kind: "error",
-        message:
-          err instanceof ApiError
-            ? (err.errors[0]?.message ?? err.message)
-            : "Couldn't update the event. Try again.",
-      });
+      const ok = await action();
+      if (ok) showToast({ kind: "success", message });
+      return ok;
+    } catch {
+      // The hook surfaces backend errors and reconciles conflicting reviews.
+      return false;
     } finally {
-      // Refetch on failure too: a 409 means another admin already decided
-      // this row, so it must leave the list; counts follow the queue.
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["admin", "events"] }),
-        queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] }),
-      ]);
+      busyRef.current = false;
       setBusyId(null);
     }
   }
 
-  function submitReject() {
+  async function submitReject() {
     const row = rejecting;
     const text = reason.trim();
     if (!row || !text) return;
-    setRejecting(null);
-    setReason("");
-    void run(
+    const ok = await run(
       row,
-      () => rejectAdminEvent(row.id, text),
+      () => reject(row.id, text),
       row.reviewStatus === "change_pending"
         ? `Change declined — ${row.name} keeps its current pricing.`
         : `${row.name} sent back to the photographer.`,
     );
+    if (ok) {
+      setRejecting(null);
+      setReason("");
+    }
   }
 
   const waiting = rows?.length ?? 0;
@@ -88,13 +79,19 @@ export function EventRequestsQueue() {
       caption="Photographer-owned events · new submissions and pricing changes"
       trailing={rows ? `${waiting} waiting` : undefined}
     >
-      {rows === null ? (
+      {query.isError && (
+        <div role="alert" className="space-y-3">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load event requests. Please try again.</p>
+          <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
+        </div>
+      )}
+      {query.isPending ? (
         <div className="space-y-4">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-28 w-full rounded-2xl" />
           ))}
         </div>
-      ) : rows.length === 0 ? (
+      ) : !rows ? null : rows.length === 0 ? (
         <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
           <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
             Nothing waiting.
@@ -109,11 +106,11 @@ export function EventRequestsQueue() {
             <RequestRow
               key={row.id}
               row={row}
-              busy={busyId === row.id}
+              busy={busyId !== null}
               onApprove={() =>
                 run(
                   row,
-                  () => approveAdminEvent(row.id),
+                  () => approve(row.id),
                   row.reviewStatus === "change_pending"
                     ? `Change applied to ${row.name}.`
                     : `${row.name} is live. Uploads are open.`,
@@ -145,6 +142,7 @@ export function EventRequestsQueue() {
         submitLabel={
           rejecting?.reviewStatus === "change_pending" ? "Decline" : "Send back"
         }
+        submitting={busyId !== null}
         submitDisabled={reason.trim().length === 0}
       >
         <AdminTextarea

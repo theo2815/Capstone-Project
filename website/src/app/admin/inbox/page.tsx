@@ -1,5 +1,7 @@
 "use client";
 
+import { usePendingVerificationsCount } from "@/hooks/use-admin-users";
+
 import { AdminKpiStrip } from "@/components/admin/admin-kpi-strip";
 import {
   AdminInboxFilterChips,
@@ -8,7 +10,6 @@ import {
 } from "@/components/admin/admin-inbox-filter-chips";
 import {
   VerificationsQueue,
-  usePendingVerificationsCount,
 } from "@/components/admin/verifications-queue";
 import { DisputesQueue } from "@/components/admin/disputes-queue";
 import { EventRequestsQueue } from "@/components/admin/event-requests-queue";

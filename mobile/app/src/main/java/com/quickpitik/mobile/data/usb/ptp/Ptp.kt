@@ -27,6 +27,8 @@ object Ptp {
     const val OP_GET_OBJECT = 0x1009
     const val OP_GET_THUMB = 0x100A      // small camera-rendered preview JPEG
     const val OP_INITIATE_CAPTURE = 0x100E
+    const val OP_GET_DEVICE_PROP_VALUE = 0x1015
+    const val OP_SET_DEVICE_PROP_VALUE = 0x1016
 
     // Standard event: a new object (photo) appeared on the device. Many cameras
     // push this on the interrupt endpoint; Canon EOS instead surfaces captures
@@ -35,6 +37,12 @@ object Ptp {
     const val OP_NIKON_GET_EVENT = 0x90C7
     const val OP_NIKON_GET_EVENT_EX = 0x941C
     const val EV_PANASONIC_OBJECT_ADDED = 0xC108
+    const val EV_PANASONIC_OBJECT_ADDED_SDRAM = 0xC109
+    const val EV_FUJI_OBJECT_ADDED = 0xC004
+    // Fujifilm device property deciding who owns the body's controls (libgphoto2 config.c fuji_prioritymode).
+    const val FUJI_DPC_PRIORITY_MODE = 0xD207
+    const val FUJI_PRIORITY_CAMERA = 1
+    const val FUJI_PRIORITY_USB = 2
 
     // ObjectInfo.ObjectFormat codes (standard PTP). The card-poll path enumerates
     // the card with GetObjectHandles, then reads each ObjectInfo to decide what to
@@ -71,7 +79,9 @@ object Ptp {
     // standard interrupt endpoint). These signal a freshly captured frame.
     const val EOS_EVENT_OBJECT_ADDED_EX = 0xC181
     const val EOS_EVENT_REQUEST_OBJECT_TRANSFER = 0xC186
-    const val EOS_EVENT_OBJECT_ADDED_EX64 = 0xC191
+    // 0xC191 is RequestCancelTransferDT in libgphoto2; the 64-bit arrivals are 0xC1A7 and its long-filename twin 0xC1B6.
+    const val EOS_EVENT_OBJECT_ADDED_EX64 = 0xC1A7
+    const val EOS_EVENT_OBJECT_ADDED_EX64_LFN = 0xC1B6
 
     // Response codes.
     const val RC_OK = 0x2001
@@ -87,12 +97,16 @@ object Ptp {
     private const val VENDOR_NIKON = 0x0AL
     private const val VENDOR_CANON = 0x0BL
     private const val VENDOR_SONY = 0x11L
+    private const val VENDOR_FUJI = 0x0EL
+    private const val VENDOR_PANASONIC = 0x1CL
 
     fun vendorName(id: Long): String = when (id) {
         VENDOR_MICROSOFT -> "Microsoft/MTP"
         VENDOR_NIKON -> "Nikon"
         VENDOR_CANON -> "Canon"
         VENDOR_SONY -> "Sony"
+        VENDOR_FUJI -> "Fujifilm"
+        VENDOR_PANASONIC -> "Panasonic"
         0L -> "none"
         else -> "unknown"
     }

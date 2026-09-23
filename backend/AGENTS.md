@@ -22,25 +22,49 @@ See root `AGENTS.md` for monorepo-wide rules and `docs/project-vision.md` for pr
 | Password hash | BCrypt (strength 12) |
 | DB | PostgreSQL 16 (Docker locally) |
 | Migrations | Flyway |
-| Storage | AWS S3 (Phase C onward) |
+| Storage | S3-compatible object storage (Cloudflare R2 in prod, AWS S3 SDK; local disk in dev) |
 
 ## Folder structure
 
-Layer-based packaging under `com.quickpitik`:
+Layer-based top level, **domain subpackages inside `service/` and `dto/`** — the domain subpackage is the unit of ownership. Route truth lives in vault `backend/api-surface.md`; do not list endpoints here.
 
 ```
-entity/         — JPA entities (User, Role enum, RefreshToken, PasswordResetToken)
-repository/     — Spring Data JPA interfaces
-dto/auth/       — Request/response DTOs (Bean Validation on inbound)
-service/        — Business logic (Auth, RefreshToken, PasswordReset, Email)
-controller/     — HTTP endpoints (AuthController)
-config/         — Spring @Configuration (Security, Cors, JwtProperties)
-security/       — JWT plumbing (TokenProvider, Filter, UserDetailsService, AuthPrincipal, OpaqueTokens)
-exception/      — Custom exceptions + GlobalExceptionHandler (@RestControllerAdvice)
-common/         — Cross-cutting (ApiResponse envelope, ResponseEnvelopeAdvice, BootstrapAdminRunner)
+com.quickpitik
+├── controller/          HTTP edge only: bind → @Valid → class-level @PreAuthorize → rateLimiter.acquireOrThrow → one service call.
+│                        Named by audience: Me* · Admin* · Public* · plain (guest/public routes, webhooks).
+├── service/<domain>/    ALL business rules. One domain owns each table (see Boundaries). Subpackages:
+│                        auth · events · photos · photographer · orders · earnings · disbursement · admin · profile · cart · runner
+│                        + adapters/helpers: ai · storage · email · image · ratelimit · reference. Nothing sits at service/ root.
+├── repository/          Spring Data + JPQL/native: predicates, ordering, locks, conditional bulk UPDATEs, projections. Flat.
+├── entity/              JPA state + tiny pure helpers (e.g. Photo.isSellable). Enums beside their entity. Flat.
+├── dto/<domain>/        Typed wire shapes + `Entity.toDto()` extension functions in the DTO file. Never Map<String, Any?>.
+├── config/              One @ConfigurationProperties class per `app.*` prefix + bean wiring (Security, Cors, RestClient, Async, WebSocket, OpenApi).
+├── security/            JWT filter/provider, AuthPrincipal, HMAC webhook verifiers, raw-body + download-disposition filters.
+├── websocket/           session registries, AFTER_COMMIT broadcasters, handshake interceptors.
+├── common/              ApiResponse envelope + advice, pagination, ErrorCodes, IdempotencyKey, startup runners, ProductionSecretsGuard.
+└── exception/           typed exceptions + GlobalExceptionHandler.
+src/main/resources/db/migration/   Flyway, append-only.  src/test/kotlin/…/support/   Postgres base + integration tests.
 ```
 
-Full structure (including future Phase B–G): vault `backend/notes/folder-structure.md`.
+Split a `service/<domain>` subpackage when it passes ~25 files (the 2026-05-05 "25 files in `service/`" trigger was answered 2026-09-11 — vault `backend/decisions.md`). No feature-first move: ownership is enforced by the rules below, not by folders.
+
+## Boundaries (binding for every agent)
+
+1. **Controllers do five things**: bind, `@Valid`, class-level `@PreAuthorize`, `rateLimiter.acquireOrThrow`, one service call. Never inject a repository; never read storage to feed logic (streaming an already-authorized key is fine); never branch on business state. Multipart forms bind to a `@Valid @ModelAttribute` DTO.
+2. **One rule, one home.** A predicate needed twice becomes a service method or an entity helper. Copying a check "to be safe" is the bug.
+3. **Table ownership — one writing service per table.** `transactions`, `payout_cycles`, `payout_status_history` → `service/earnings`. `orders`, `order_items`, `payments`, `download_grants` → `service/orders`. `photos.status` + watermark columns → conditional `UPDATE` only (watermark pipeline, admin flags). `photographer_settings.verification_status` → admin (column-disjoint, `@DynamicUpdate`); the rest of that row → `service/photographer`. Reading another domain's repository for hydration is fine; writing it is not.
+4. **Transactions.** Class-level `@Transactional` for plain CRUD. A method that calls PayMongo, Resend, ai-api/Rekognition, S3/R2, or decodes images must not hold a DB transaction — use the `TransactionTemplate` split (`OrderService.create`, `PhotoUploadService.persistNew`). `readOnly = true` only on methods that can never reach `save()` or a lazy-create (vault `backend/notes/jpa-pitfalls.md`).
+5. **Concurrent columns.** Rows the pipelines mutate (`photos`) change by conditional bulk `UPDATE … WHERE status = X`, never load-modify-`save()`. A multi-column row with concurrent writers carries `@DynamicUpdate`.
+6. **Side effects.** Publish an `ApplicationEvent` inside the transaction; consume with `@TransactionalEventListener(AFTER_COMMIT)`; `@Async` on the pool for that work class (`imageProcessing`, `watermarkProcessing`, `emailSending`) — outage-prone I/O never on the indexing pool; every async path has a bounded `@Scheduled` sweep with a config'd interval and a semantic-vs-transport retry budget.
+7. **Errors.** Throw `NotFound/Conflict/Unauthorized/ValidationException` or `ApiException(status, code)`; codes only from `ErrorCodes`; a provider failure on a user path is mapped, never left to the 500 catch-all; provider text never reaches the envelope.
+8. **Config.** Every `app.*` key belongs to a `@ConfigurationProperties` class in `config/`; no `@Value` outside `config/` and `ProductionSecretsGuard`; dev defaults in `application.yml`; prod placeholders fail closed.
+9. **Integrations.** Concrete `*Client` until a second implementation exists, then an interface named for the capability (`FaceBibProvider`, `StorageService`). Inject `RestClient` from `RestClientConfig`. Business limits live in properties + the calling service, not in the adapter.
+10. **Authorization.** Role = class-level `@PreAuthorize`; ownership = query-scoped lookup (`findByIdAndUserId`…), 404 on miss; guest = capability token service; sensitive = `StepUpService.enforce` in the controller; never trust a client-supplied owner id. New public/guest routes get a row in `SecurityMatrixIntegrationTest`.
+11. **Wire contract.** Typed DTOs only (webhook acks excepted); envelope is automatic; lists are `PaginatedResponse`; breaking changes go under `/api/v2`; update vault `api-surface.md` in the same commit.
+12. **Time & money.** New time-window logic takes a `Clock`; one zone constant. `BigDecimal` scale 2; `toCentavos()`; charged amount = `pricePhpAtPurchase − discountPhp`, computed once.
+13. **Repositories.** `@Query` carries predicates/ordering only; every new `@Query` gets a Postgres integration test.
+14. **Tests.** Plain `Mockito.mock` + constructor injection, backticked names, mirrored packages; every new service method gets a unit test; `gradlew test` stays Docker-free; `integrationTest` is never skipped because Docker is down.
+15. **Board.** Read vault `ACTIVE.md` first; a claimed lane's files are off-limits; claim your own.
 
 ## Module boundaries
 
@@ -122,6 +146,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `DB_USER` | `quickpitik` | — |
 | `DB_PASSWORD` | `quickpitik` | **MUST OVERRIDE** |
 | `JWT_SECRET` | dev-only string (insecure, marked) | **MUST OVERRIDE** — generate with `openssl rand -base64 64` |
+| `ORIGIN_SECRET` | *(blank)* | **MUST OVERRIDE** under `prod`; Cloudflare must overwrite `X-Origin-Secret` on every request to `api.quickpitik.com` with the same value. `/actuator/health` alone is exempt for Railway's direct health probe. Set the edge rule and Railway healthcheck before deploying the guarded backend. |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated list of frontend origins |
 | `ADMIN_BOOTSTRAP_EMAIL` | `admin@quickpitik.local` | Set per environment |
 | `ADMIN_BOOTSTRAP_PASSWORD` | `changeme123` | **MUST OVERRIDE** |
@@ -241,7 +266,7 @@ See vault `QuickPitik Vault/backend/`:
 - `index.md` — module overview
 - `tasks.md` — current todos
 - `decisions.md` — ADRs (folder structure, Phase A scope, deferral)
-- `notes/folder-structure.md` — full target structure for all phases
+- `notes/folder-structure.md` — stub; the live structure + boundary rules are in this file (above)
 
 ## Common issues
 

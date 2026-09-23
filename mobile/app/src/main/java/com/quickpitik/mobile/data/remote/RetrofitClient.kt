@@ -151,7 +151,7 @@ object RetrofitClient {
     // Checkout Session call in dev (sandbox latency hits 12-20s easily). The
     // SocketTimeoutException retry storm froze the checkout sheet for ~20s
     // before bubbling up an error. 60s lets the gateway respond cleanly.
-    private val okHttpClient by lazy {
+    internal val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .apply { if (BuildConfig.DEBUG) addInterceptor(loggingInterceptor) }
             .addInterceptor(SessionAuthInterceptor(SessionManager.getInstance(appContext)))

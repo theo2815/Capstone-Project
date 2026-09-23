@@ -115,7 +115,9 @@ export function FloatingCart() {
 
   const display = itemCount > 99 ? "99+" : String(itemCount);
   const showBadge = itemCount > 0;
-  const pillAmount = formatPrice(pending ? pending.total : total);
+  const pillAmount = pending
+    ? pending.totalSource === "checkout" ? formatPrice(pending.total) : "Amount unavailable"
+    : formatPrice(total);
   const pillLabel = pending
     ? `Payment pending · ${pillAmount}`
     : `${itemCount} ${itemCount === 1 ? "photo" : "photos"} · ${pillAmount}`;

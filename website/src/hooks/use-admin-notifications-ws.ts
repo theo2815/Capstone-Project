@@ -1,31 +1,27 @@
 "use client";
 
+import { captureAuthSession } from "@/lib/auth-session";
+import { useAuthStore } from "@/store/auth-store";
+
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth";
 import { buildWsUrl } from "@/lib/ws-url";
-import { useAdminUsersServerStore } from "@/lib/admin-users-data";
+import { adminUserKeys } from "@/hooks/use-admin-users";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 
 // WebSocket push for the admin queue. Subscribes to /ws/admin/notifications
 // (handshake gated on ADMIN role server-side) and reacts to every
 // AdminInboxEvent emitted by the BE:
 //
-//   - verification_submitted → invalidate useAdminUsersServerStore so the
-//     /admin/photographers and /admin/inbox queues pick up the new row on
-//     next read. Active subscribers already re-read via the useEffect
-//     keyed on `fetchedAt`, so this lands without page interaction.
+//   - verification_submitted → invalidate user queries and KPI counts.
 //
 //   - event_submitted       → invalidate ["admin","events"] + ["admin","kpis"]
 //   - event_change_requested  so the V46 event requests queue and its counts
 //                             refresh without a reload.
 //
-//   - dispute_filed         → no-op for now. The admin dispute store is
-//   - payout_report_filed     mock-fed in v1; Phase G migrates them onto
-//                             real BE fetchers and at that point this hook
-//                             becomes the invalidation dispatch site.
-//                             Logged at info so the BE push is visible in
-//                             DevTools even before the store is wired.
+//   - dispute_filed / payout_report_filed → invalidate the matching Query
+//     lists and KPI counts so incoming work is visible immediately.
 //
 // Reconnect policy mirrors usePhotographerNotificationsWs — indefinite
 // retry with 1s → 30s backoff.
@@ -46,12 +42,15 @@ interface AdminInboxFrame {
 
 export function useAdminNotificationsWs(enabled: boolean): void {
   const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const sessionVersion = useAuthStore((s) => s.sessionVersion);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptsRef = useRef(0);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || user?.role !== "ADMIN" || !useAuthStore.getState().isAuthenticated) return;
+    const isCurrent = captureAuthSession();
     let cancelled = false;
 
     function clearReconnectTimer() {
@@ -62,7 +61,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
     }
 
     function connect() {
-      if (cancelled) return;
+      if (cancelled || !isCurrent()) return;
       const url = buildWsUrl("/ws/admin/notifications");
       const token = getAccessToken();
       if (!token) return;
@@ -70,7 +69,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (cancelled) return;
+        if (cancelled || !isCurrent()) return;
         attemptsRef.current = 0;
         // Publish status so useAdminQueueRealtime can drop to the slow
         // 5-min heartbeat — the push channel is doing the heavy lifting.
@@ -78,17 +77,20 @@ export function useAdminNotificationsWs(enabled: boolean): void {
         // Reconnect grace — flush the user cache so any verification
         // submission that landed during the down window surfaces on the
         // next read by the queue page.
-        useAdminUsersServerStore.getState().invalidate();
-        void useAdminUsersServerStore.getState().refetch();
+        void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
+        void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
+        void queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
+        void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
       };
 
       ws.onmessage = (event) => {
+        if (cancelled || !isCurrent()) return;
         try {
           const data = JSON.parse(event.data) as AdminInboxFrame;
           switch (data.type) {
             case "verification_submitted":
-              useAdminUsersServerStore.getState().invalidate();
-              void useAdminUsersServerStore.getState().refetch();
+              void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
               break;
             case "event_submitted":
             case "event_change_requested":
@@ -96,14 +98,11 @@ export function useAdminNotificationsWs(enabled: boolean): void {
               void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
               break;
             case "dispute_filed":
+              void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
+              break;
             case "payout_report_filed":
-              // TODO(Phase G): invalidate admin-dispute-store /
-              // admin-payout-report-store once they migrate off mocks.
-              if (process.env.NODE_ENV !== "production") {
-                console.info(
-                  `[admin/ws] ${data.type} entity=${data.entityId} actor=${data.actorId}`,
-                );
-              }
+              void queryClient.invalidateQueries({ queryKey: ["admin", "payouts", "reports"] });
               break;
             default:
               // Unknown type — log and drop (dev only — entity/actor ids
@@ -118,7 +117,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       };
 
       ws.onclose = () => {
-        if (cancelled) return;
+        if (cancelled || !isCurrent()) return;
         wsRef.current = null;
         // Connection gone — flip to the aggressive 30-s polling cadence
         // until ws.onopen brings us back. Reconnect attempts continue in
@@ -149,5 +148,5 @@ export function useAdminNotificationsWs(enabled: boolean): void {
       // new WS connects.
       useAdminWsStatusStore.getState().setStatus("degraded");
     };
-  }, [enabled, queryClient]);
+  }, [enabled, queryClient, user?.id, user?.role, sessionVersion]);
 }

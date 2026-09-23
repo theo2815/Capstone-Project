@@ -50,6 +50,8 @@ data class AdminDisputeDto(
     val reportedAt: String,
     val resolvedAt: String?,
     val refundAmount: BigDecimal?,
+    val refundStatus: String?,
+    val itemChargeAmount: BigDecimal?,
     val resolution: String?,
     val orderSnapshot: DisputeOrderSnapshotDto,
     val photoSnapshot: DisputePhotoSnapshotDto,

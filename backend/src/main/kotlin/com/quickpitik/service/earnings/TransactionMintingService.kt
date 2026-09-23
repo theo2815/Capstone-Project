@@ -2,8 +2,8 @@ package com.quickpitik.service.earnings
 
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.earnings.privacyBuyerDisplay
-import com.quickpitik.entity.EventPhotographer
-import com.quickpitik.entity.EventPhotographerId
+import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.Transaction
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -24,8 +24,8 @@ import java.util.UUID
  * Mints one `transactions` row per order_item the moment an order reaches PAID,
  * keying off the photo's photographer_id. Splits PR 5's payment side from the
  * earnings ledger so OrderService stays focused on cart → order → grants and
- * the earnings rollups have a single source of truth (Q-E3 — refunds will be
- * minted from the same service later by admin's dispute-resolve flow).
+ * the earnings rollups have a single source of truth (Q-E3). Refund rows
+ * are minted here too, by mintRefund() — one writer for the whole ledger.
  *
  * Idempotency: the unique index on (order_id, photo_id, is_refund) means a
  * second mint pass for the same paid order is a clean no-op. Useful when
@@ -103,7 +103,12 @@ class TransactionMintingService(
                         isRefund = false,
                     ),
                 )
-                bumpEventPhotographer(order.eventId, photographerId, amountKept)
+                eventPhotographerRepository.adjustSalesCounters(
+                    order.eventId,
+                    photographerId,
+                    saleDelta = 1,
+                    keptDelta = amountKept,
+                )
             } catch (ex: DataIntegrityViolationException) {
                 // Concurrent mint hit the unique index — clean no-op.
                 log.debug("transaction already exists for order={} photo={}", orderId, item.id.photoId)
@@ -111,18 +116,78 @@ class TransactionMintingService(
         }
     }
 
-    private fun bumpEventPhotographer(eventId: UUID, photographerId: UUID, amount: BigDecimal) {
-        val key = EventPhotographerId(eventId = eventId, photographerId = photographerId)
-        val ep = eventPhotographerRepository.findById(key)
-            .orElseGet {
-                // PR 7 normally creates this row on first upload; lazily create
-                // it here too in case a sale lands before any upload was tracked
-                // (covered events where rows were imported by hand for testing).
-                EventPhotographer(id = key)
-            }
-        ep.salesCount = ep.salesCount + 1
-        ep.revenueKeptPhp = ep.revenueKeptPhp.add(amount)
-        eventPhotographerRepository.save(ep)
+    /**
+     * Reverses one sale row when a dispute refund settles. Same owner as the
+     * sale side so the ledger keeps a single writer; the unique index on
+     * (order_id, photo_id, is_refund) is the idempotency.
+     */
+    @Transactional(propagation = Propagation.REQUIRED)
+    fun mintRefund(dispute: Dispute, amount: BigDecimal, photographerId: UUID) {
+        val existing = transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(
+            dispute.orderId,
+            dispute.photoId,
+            true,
+        )
+        if (existing != null) return
+        val original = transactionRepository.findByOrderIdAndPhotoIdAndIsRefund(
+            dispute.orderId,
+            dispute.photoId,
+            false,
+        )
+        val order = orderRepository.findById(dispute.orderId).orElse(null) ?: return
+        val (keptReversal, discountReversal) = refundLedgerSplit(dispute, original, amount)
+        try {
+            transactionRepository.save(
+                Transaction(
+                    paidAt = order.paidAt ?: order.createdAt,
+                    photographerId = photographerId,
+                    eventId = order.eventId,
+                    photoId = dispute.photoId,
+                    orderId = order.id,
+                    buyerId = order.userId,
+                    buyerDisplayName = original?.buyerDisplayName ?: "",
+                    amountKeptPhp = keptReversal,
+                    discountPhp = discountReversal,
+                    isRefund = true,
+                    refundOf = original?.id,
+                ),
+            )
+            eventPhotographerRepository.adjustSalesCounters(
+                order.eventId,
+                photographerId,
+                saleDelta = if (dispute.resolution == DisputeResolution.REFUND_FULL) -1 else 0,
+                keptDelta = keptReversal,
+            )
+        } catch (_: DataIntegrityViolationException) {
+            // Concurrent reconciliation already minted the unique refund row.
+        }
+    }
+
+    // What comes back off the ledger, as (kept, discount) negatives. With the
+    // original sale row in hand the reversal is exact: a full refund negates
+    // it outright, a partial refund scales both figures by the fraction of the
+    // charged price returned. Rows without a sale row (pre-V9 legacy) keep the
+    // old keepRate estimate.
+    private fun refundLedgerSplit(
+        dispute: Dispute,
+        original: Transaction?,
+        amount: BigDecimal,
+    ): Pair<BigDecimal, BigDecimal> {
+        val legacy = amount.multiply(platformProperties.photographerKeepRate)
+            .setScale(2, RoundingMode.HALF_UP)
+            .negate() to BigDecimal.ZERO
+        if (original == null) return legacy
+        if (dispute.resolution == DisputeResolution.REFUND_FULL) {
+            return original.amountKeptPhp.negate() to original.discountPhp.negate()
+        }
+        val charged = orderItemRepository.findByIdOrderId(dispute.orderId)
+            .firstOrNull { it.id.photoId == dispute.photoId }
+            ?.let { it.pricePhpAtPurchase.subtract(it.discountPhp) }
+            ?.takeIf { it.signum() > 0 }
+            ?: return legacy
+        val fraction = amount.divide(charged, 10, RoundingMode.HALF_UP)
+        return original.amountKeptPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate() to
+            original.discountPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate()
     }
 
     private fun displayFromEmail(email: String): String {

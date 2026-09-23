@@ -88,12 +88,35 @@ interface OrderRepository : JpaRepository<Order, UUID> {
     @Query("UPDATE Order o SET o.emailSentAt = :now WHERE o.id = :orderId AND o.emailSentAt IS NULL")
     fun claimReceiptSend(@Param("orderId") orderId: UUID, @Param("now") now: OffsetDateTime): Int
 
-    // Give the claim back when the send itself failed, so a later webhook
-    // re-delivery or a manual reprocess can retry. Without this the atomic claim
-    // would convert every transient Resend failure into a permanently lost
-    // receipt — the opposite of the old behaviour, which deliberately left
-    // email_sent_at null on failure for exactly this reason.
     @Modifying
-    @Query("UPDATE Order o SET o.emailSentAt = NULL WHERE o.id = :orderId")
-    fun releaseReceiptSend(@Param("orderId") orderId: UUID): Int
+    @Query(
+        "UPDATE Order o SET o.receiptDeliveredAt = :deliveredAt " +
+            "WHERE o.id = :orderId AND o.receiptDeliveredAt IS NULL",
+    )
+    fun stampReceiptDelivered(
+        @Param("orderId") orderId: UUID,
+        @Param("deliveredAt") deliveredAt: OffsetDateTime,
+    ): Int
+
+    @Query(
+        "SELECT o.id FROM Order o " +
+            "WHERE o.emailSentAt < :cutoff AND o.receiptDeliveredAt IS NULL " +
+            "ORDER BY o.emailSentAt ASC",
+    )
+    fun findStaleReceiptClaimIds(
+        @Param("cutoff") cutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<UUID>
+
+    // A second app instance may have reclaimed the row after the sweep read
+    // it. Match the old timestamp and missing delivery stamp before releasing.
+    @Modifying
+    @Query(
+        "UPDATE Order o SET o.emailSentAt = NULL " +
+            "WHERE o.id = :orderId AND o.emailSentAt < :cutoff AND o.receiptDeliveredAt IS NULL",
+    )
+    fun releaseStaleReceiptSend(
+        @Param("orderId") orderId: UUID,
+        @Param("cutoff") cutoff: OffsetDateTime,
+    ): Int
 }

@@ -11,6 +11,7 @@ import { formatPrice } from "@/lib/utils";
 
 interface AdminPayoutHoldModalProps {
   open: boolean;
+  submitting?: boolean;
   onClose: () => void;
   onSubmit: (reason: string) => void;
   /** Cycle ids being held (1 for single-row, n for bulk). */
@@ -30,9 +31,10 @@ const HOLD_REASONS: ReadonlyArray<{ value: string; label: string }> = [
 
 // Hold-payout modal — used both for single-row and bulk hold actions.
 // Same shape as suspend/reject — radio + 280-char note composed into the
-// reason string passed to useAdminPayoutStore.hold or .bulkHold.
+// reason string passed to usePayoutActions().hold or .bulkHold.
 export function AdminPayoutHoldModal({
   open,
+  submitting = false,
   onClose,
   onSubmit,
   payoutIds,
@@ -53,13 +55,12 @@ export function AdminPayoutHoldModal({
     const composed =
       note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
     onSubmit(composed);
-    setNote("");
-    setSelectedReason(HOLD_REASONS[0]!.value);
   }
 
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Hold ${titleSuffix}`}

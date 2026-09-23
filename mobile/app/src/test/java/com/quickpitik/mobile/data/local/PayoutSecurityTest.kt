@@ -12,7 +12,7 @@ import java.time.Instant
 import java.util.TimeZone
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = android.app.Application::class)
+@Config(application = android.app.Application::class)
 class PayoutSecurityTest {
     @Test fun cooldownRespectsUtcAndOffsetTimestampsInCebu() {
         val original = TimeZone.getDefault()

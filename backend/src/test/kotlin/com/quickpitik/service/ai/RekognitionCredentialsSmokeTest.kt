@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.rekognition.RekognitionClient
 import software.amazon.awssdk.services.rekognition.model.CreateCollectionRequest
 import software.amazon.awssdk.services.rekognition.model.DeleteCollectionRequest
 import java.io.File
+import kotlin.test.assertTrue
 
 // Live smoke test — proves the AWS Rekognition credentials actually work end to
 // end (valid keys + region reachable + create/delete-collection allowed) by
@@ -48,8 +49,11 @@ class RekognitionCredentialsSmokeTest {
         val collectionId = "qp-smoke-test-${System.nanoTime()}"
         try {
             builder.build().use { rek ->
-                rek.createCollection(CreateCollectionRequest.builder().collectionId(collectionId).build())
+                // Asserted on the responses rather than a ListCollections call:
+                // the app never lists, so its IAM policy need not allow it.
+                val created = rek.createCollection(CreateCollectionRequest.builder().collectionId(collectionId).build())
                 rek.deleteCollection(DeleteCollectionRequest.builder().collectionId(collectionId).build())
+                assertTrue(created.collectionArn().endsWith("/$collectionId"), created.collectionArn())
             }
         } catch (ex: SdkClientException) {
             // Client-side: no credentials could be resolved, or no network — can't

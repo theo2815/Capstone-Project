@@ -60,6 +60,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.app.Application
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavBackStackEntry
@@ -95,9 +98,12 @@ import com.quickpitik.mobile.ui.photographer.PhotographerPublicProfileScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerSettingsScreen
 import com.quickpitik.mobile.ui.photographer.PublicPhotographerViewModel
 import com.quickpitik.mobile.ui.photographer.STUDIO_TAB_ROUTES
+import com.quickpitik.mobile.ui.photographer.StudioEarningsViewModel
 import com.quickpitik.mobile.ui.photographer.StudioInboxLifecycle
+import com.quickpitik.mobile.ui.photographer.StudioSettingsViewModel
 import com.quickpitik.mobile.ui.photographer.StudioTabScaffold
 import com.quickpitik.mobile.ui.photographer.StudioTheme
+import com.quickpitik.mobile.ui.photographer.TetherViewModel
 import com.quickpitik.mobile.ui.photographer.VerificationUiState
 import com.quickpitik.mobile.ui.runner.AccountSettingsScreen
 import com.quickpitik.mobile.ui.runner.CartViewModel
@@ -125,12 +131,14 @@ import com.quickpitik.mobile.ui.theme.Slate
 // role guard and, minus the receipt route, by the bottom-nav gate.
 // "photographer/{handle}" and the auth routes belong to NEITHER role set —
 // they are shared surfaces.
-private val RUNNER_ROUTES = setOf(
+// The receipt route carries the optional guest ?token=. One constant feeds both
+// the NavHost registration and this guard set so the two can never drift (F5:
+// the bare "orders/return/{orderId}" had once dropped out of the guard).
+internal const val RECEIPT_ROUTE_PATTERN = "orders/return/{orderId}?token={token}"
+
+internal val RUNNER_ROUTES = setOf(
     "events", "gallery", "profile", "settings", "verify",
-    // The receipt route carries the optional guest ?token=; the registered
-    // pattern (and thus currentRoute) includes it, so match it exactly (F5) —
-    // the bare "orders/return/{orderId}" had dropped out of the guard.
-    "orders?orderId={orderId}", "orders/return/{orderId}?token={token}",
+    "orders?orderId={orderId}", RECEIPT_ROUTE_PATTERN,
 )
 
 // Deep-link ids must be path/query-safe before being spliced into a route
@@ -140,7 +148,7 @@ private val DEEP_LINK_ID = Regex("^[A-Za-z0-9._-]{1,64}$")
 
 // Where the runner bottom nav shows: the tab surfaces + the orders list, but
 // NOT the modal PayMongo receipt ("orders/return/{orderId}").
-private val RUNNER_NAV_ROUTES = setOf(
+internal val RUNNER_NAV_ROUTES = setOf(
     "events", "gallery", "profile", "settings", "orders?orderId={orderId}",
 )
 
@@ -160,7 +168,22 @@ private val STUDIO_TAB_ORDER = listOf(
     "studio/settings",
 )
 
-private fun tabIndexForRoute(route: String?): Int {
+internal enum class BottomBar { None, Studio, Runner }
+
+/**
+ * Which floating nav a route carries. Studio tabs need the studio graph entry
+ * (the owner of the shared dashboard ViewModel) to exist; the runner set is
+ * exact route PATTERNS, never startsWith — "orders/return/{orderId}" is the
+ * modal PayMongo receipt and must stay bare (startsWith("orders") matched it
+ * once). Everything else — login, the receipt, a public profile — gets none.
+ */
+internal fun bottomBarFor(currentRoute: String?, hasStudioEntry: Boolean): BottomBar = when {
+    currentRoute in STUDIO_TAB_ROUTES && hasStudioEntry -> BottomBar.Studio
+    currentRoute in RUNNER_NAV_ROUTES -> BottomBar.Runner
+    else -> BottomBar.None
+}
+
+internal fun tabIndexForRoute(route: String?): Int {
     if (route == null) return -1
     val clean = route.substringBefore("?")
     val rIdx = RUNNER_TAB_ORDER.indexOfFirst { it.substringBefore("?") == clean }
@@ -170,7 +193,7 @@ private fun tabIndexForRoute(route: String?): Int {
     return -1
 }
 
-private fun arePeerTabs(fromRoute: String?, toRoute: String?): Boolean {
+internal fun arePeerTabs(fromRoute: String?, toRoute: String?): Boolean {
     if (fromRoute == null || toRoute == null) return false
     val f = fromRoute.substringBefore("?")
     val t = toRoute.substringBefore("?")
@@ -216,18 +239,11 @@ class MainActivity : ComponentActivity() {
                 val sessionManager = remember { SessionManager.getInstance(this@MainActivity) }
                 val startDestination = remember {
                     ViewMode.init(sessionManager)
-                    when {
-                        sessionManager.getAccessToken() == null -> "login"
-                        // A photographer who killed the app while in runner
-                        // view cold-starts back into runner view — starting in
-                        // studio with the flag still set would strand the flag,
-                        // because studio is legal for the true role and the
-                        // guard would never fire.
-                        isPhotographerRole(sessionManager.getUserRole()) &&
-                            sessionManager.isRunnerView() -> "runner"
-                        isPhotographerRole(sessionManager.getUserRole()) -> "studio"
-                        else -> "runner"
-                    }
+                    startDestinationFor(
+                        signedIn = sessionManager.getAccessToken() != null,
+                        photographer = isPhotographerRole(sessionManager.getUserRole()),
+                        runnerView = sessionManager.isRunnerView(),
+                    )
                 }
                 val runnerView by ViewMode.runnerView.collectAsState()
 
@@ -253,15 +269,11 @@ class MainActivity : ComponentActivity() {
 
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
-                // Exact route PATTERNS, not startsWith: "orders/return/{orderId}"
-                // is the modal PayMongo receipt and must NOT carry the
-                // persistent nav (startsWith("orders") used to match it).
-                val showRunnerBottomBar = currentRoute in RUNNER_NAV_ROUTES
 
                 // While any studio/* destination is on the stack this resolves
-                // the graph's back-stack entry — the owner of the ONE shared
-                // PhotographerDashboardViewModel. Null for runner sessions, so
-                // a runner never constructs the VM (and its init{} salvo).
+                // the graph's back-stack entry — the owner of the studio's four
+                // ViewModels. Null for runner sessions, so a runner constructs
+                // none of them, and none of their init salvos fire.
                 val studioEntry = remember(navBackStackEntry) {
                     runCatching { navController.getBackStackEntry("studio") }.getOrNull()
                 }
@@ -286,12 +298,13 @@ class MainActivity : ComponentActivity() {
                     val entry = runCatching {
                         navController.getBackStackEntry("studio")
                     }.getOrNull() ?: return@navigate
-                    val vm = ViewModelProvider(entry)[PhotographerDashboardViewModel::class.java]
+                    val owner = ViewModelProvider(entry)
+                    val vm = owner[PhotographerDashboardViewModel::class.java]
                     when (route) {
                         "studio/home" -> {
                             vm.fetchVerificationStatus()
                             vm.fetchEvents()
-                            vm.fetchEarningsAndTransactions()
+                            owner[StudioEarningsViewModel::class.java].fetchEarningsAndTransactions()
                             // REST hydration for the inbox — the WS push in the
                             // VM only refetches once the socket actually opens,
                             // and Overview derives the rejection banner from
@@ -305,19 +318,32 @@ class MainActivity : ComponentActivity() {
                             // mount-time LaunchedEffect).
                             vm.fetchPublicEvents()
                         }
-                        "studio/earnings" -> vm.fetchEarningsAndTransactions()
+                        "studio/earnings" ->
+                            owner[StudioEarningsViewModel::class.java].fetchEarningsAndTransactions()
                         "studio/settings" -> {
                             vm.fetchVerificationStatus()
-                            vm.fetchSettings()
+                            owner[StudioSettingsViewModel::class.java].fetchSettings()
                         }
                     }
                 }
 
-                // Inbox socket held once for the whole studio session — a
+                // The studio session's four ViewModels come up together here,
+                // outside the NavHost, exactly as the single ViewModel they
+                // were split from did: entering the studio on ANY route starts
+                // the same work. It matters for the two full-screen
+                // sub-surfaces (share, event form), which mount no tab chrome
+                // and so resolve none of these themselves — a back stack
+                // restored onto one of them would otherwise leave the tether's
+                // watch-resume waiting until the photographer pressed Back.
+                //
+                // The inbox socket is then held once for the whole session — a
                 // per-tab lifecycle would reconnect (and refetch) on every tab
                 // switch. See StudioInboxLifecycle.
                 if (studioEntry != null) {
                     val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
+                    viewModel<StudioSettingsViewModel>(studioEntry)
+                    viewModel<StudioEarningsViewModel>(studioEntry)
+                    studioTetherViewModel(navController, studioEntry)
                     StudioInboxLifecycle(studioVm)
                 }
 
@@ -335,14 +361,8 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(navBackStackEntry, runnerView) {
                     val route = navBackStackEntry?.destination?.route ?: return@LaunchedEffect
                     if (sessionManager.getAccessToken() == null) return@LaunchedEffect
-                    val photographer = isPhotographerRole(sessionManager.getUserRole())
-                    val effectiveRunner = !photographer || runnerView
-                    when {
-                        route in RUNNER_ROUTES && !effectiveRunner ->
-                            navController.navigate("studio") { launchSingleTop = true }
-                        route.startsWith("studio") && !photographer ->
-                            navController.navigate("runner") { launchSingleTop = true }
-                    }
+                    guardRedirect(isPhotographerRole(sessionManager.getUserRole()), runnerView, route)
+                        ?.let { navController.navigate(it) { launchSingleTop = true } }
                 }
 
                 // RunnerTopBar's "Switch to photographer" lands here — the bar
@@ -361,9 +381,9 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     containerColor = Bone,
                     bottomBar = {
-                        when {
-                            currentRoute in STUDIO_TAB_ROUTES && studioEntry != null -> {
-                                val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
+                        when (bottomBarFor(currentRoute, studioEntry != null)) {
+                            BottomBar.Studio -> studioEntry?.let { entry ->
+                                val studioVm: PhotographerDashboardViewModel = viewModel(entry)
                                 val verificationState by studioVm.verificationState.collectAsState()
                                 val showSettingsBadge = when (val s = verificationState) {
                                     is VerificationUiState.Success ->
@@ -376,7 +396,7 @@ class MainActivity : ComponentActivity() {
                                     onNavigate = studioNavigate,
                                 )
                             }
-                            showRunnerBottomBar -> RunnerFloatingBottomNav(
+                            BottomBar.Runner -> RunnerFloatingBottomNav(
                                 currentRoute = currentRoute,
                                 onNavigate = { route ->
                                     if (route == "events" && currentRoute == "gallery") {
@@ -398,6 +418,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             )
+                            BottomBar.None -> Unit
                         }
                     }
                 ) { innerPadding ->
@@ -567,26 +588,26 @@ class MainActivity : ComponentActivity() {
                             ) { backStackEntry ->
                                 val token = backStackEntry.arguments?.getString("token")
                                 VerifyEmailScreen(
+                                    // Its own AuthViewModel, scoped to this entry
+                                    // (not the shared authViewModel): one send per
+                                    // visit, the answer kept in the entry's saved
+                                    // state; a later tap of the link is a new visit.
+                                    viewModel = viewModel(backStackEntry),
                                     token = token,
-                                    // popUpTo(0): the deep link can arrive with
-                                    // any stack underneath (login OR a live
-                                    // runner/studio graph) — popping to a named
-                                    // route would silently no-op when it isn't
-                                    // on the stack and leave dead screens behind.
+                                    // Both exits go through leaveEmailLink. The
+                                    // deep link can arrive with any stack
+                                    // underneath (login OR a live runner/studio
+                                    // graph): signed in, they go back to it;
+                                    // signed out, popUpTo(0) clears to login —
+                                    // popping to a named route would silently
+                                    // no-op when it isn't on the stack.
                                     onNavigateToLogin = {
-                                        navController.navigate("login") {
-                                            popUpTo(0) { inclusive = true }
-                                            launchSingleTop = true
-                                        }
+                                        navController.leaveEmailLink(backStackEntry, signedIn = sessionManager.getAccessToken() != null)
                                     },
-                                    onNavigateToDashboard = { isPhotographer ->
+                                    // Only called signed in (the screen checks).
+                                    onNavigateToDashboard = {
                                         sessionNotice = null
-                                        val target = if (isPhotographer) "studio" else "runner"
-                                        if (!isPhotographer) cartViewModel.fetchCart()
-                                        navController.navigate(target) {
-                                            popUpTo(0) { inclusive = true }
-                                            launchSingleTop = true
-                                        }
+                                        navController.leaveEmailLink(backStackEntry, signedIn = true)
                                     }
                                 )
                             }
@@ -596,21 +617,23 @@ class MainActivity : ComponentActivity() {
                             ) { backStackEntry ->
                                 val token = backStackEntry.arguments?.getString("token")
                                 ConfirmEmailChangeScreen(
+                                    // Entry-scoped, same as verify-email above.
+                                    viewModel = viewModel(backStackEntry),
                                     token = token,
                                     onNavigateToLogin = {
-                                        // On success the screen cleared the
+                                        // On success confirmEmailChange cleared the
                                         // session — finish the logout the same
                                         // way forcedLogout does: cart + the
                                         // in-memory runner-view flag, which
-                                        // survives the prefs wipe.
-                                        if (sessionManager.getAccessToken() == null) {
+                                        // survives the prefs wipe. Still signed
+                                        // in means the link was refused (or the
+                                        // local wipe itself failed): go back.
+                                        val signedIn = sessionManager.getAccessToken() != null
+                                        if (!signedIn) {
                                             cartViewModel.clearCart()
                                             ViewMode.reset(sessionManager)
                                         }
-                                        navController.navigate("login") {
-                                            popUpTo(0) { inclusive = true }
-                                            launchSingleTop = true
-                                        }
+                                        navController.leaveEmailLink(backStackEntry, signedIn)
                                     }
                                 )
                             }
@@ -651,14 +674,19 @@ class MainActivity : ComponentActivity() {
                                 }
                                 composable("studio/home") { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val settingsVm = studioSettingsViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = settingsVm,
+                                        tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerOverviewScreen(
                                             viewModel = vm,
+                                            settingsViewModel = settingsVm,
+                                            earningsViewModel = studioEarningsViewModel(navController, entry),
                                             onNavigateToSettings = { studioNavigate("studio/settings") },
                                             onNavigateToTab = studioNavigate,
                                         )
@@ -666,30 +694,40 @@ class MainActivity : ComponentActivity() {
                                 }
                                 composable("studio/capture") { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val tetherVm = studioTetherViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = studioSettingsViewModel(navController, entry),
+                                        tetherViewModel = tetherVm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
-                                        PhotographerCaptureScreen(viewModel = vm)
+                                        PhotographerCaptureScreen(
+                                            viewModel = vm,
+                                            tetherViewModel = tetherVm,
+                                        )
                                     }
                                 }
                                 composable("studio/events") { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val tetherVm = studioTetherViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = studioSettingsViewModel(navController, entry),
+                                        tetherViewModel = tetherVm,
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerEventsScreen(
                                             viewModel = vm,
+                                            tetherViewModel = tetherVm,
                                             onOpenShare = { event ->
                                                 navController.navigate("studio/share/${event.id}")
                                             },
                                             onSyncEvent = { ev ->
-                                                vm.selectEvent(ev)
+                                                tetherVm.selectEvent(ev)
                                                 studioNavigate("studio/capture")
                                             },
                                             onCreateEvent = {
@@ -705,23 +743,32 @@ class MainActivity : ComponentActivity() {
                                     val vm = studioViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = studioSettingsViewModel(navController, entry),
+                                        tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
-                                        PhotographerEarningsScreen(viewModel = vm)
+                                        PhotographerEarningsScreen(
+                                            viewModel = vm,
+                                            earningsViewModel = studioEarningsViewModel(navController, entry),
+                                        )
                                     }
                                 }
                                 composable("studio/settings") { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val settingsVm = studioSettingsViewModel(navController, entry)
                                     StudioTabScaffold(
                                         viewModel = vm,
+                                        settingsViewModel = settingsVm,
+                                        tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
                                         PhotographerSettingsScreen(
                                             viewModel = vm,
+                                            settingsViewModel = settingsVm,
                                             onLogout = studioLogout,
                                         )
                                     }
@@ -771,16 +818,16 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 composable("studio/profile-preview") { entry ->
-                                    val vm = studioViewModel(navController, entry)
+                                    val settingsVm = studioSettingsViewModel(navController, entry)
                                     // Route-scoped on purpose: the same screen
                                     // serves a runner tapping a photo byline
                                     // via "photographer/{handle}".
                                     val publicVm: PublicPhotographerViewModel = viewModel()
-                                    val brandSettings by vm.brandSettings.collectAsState()
-                                    val isBrandSettingsLoading by vm.isFetchingBrandSettings.collectAsState()
-                                    val brandSettingsError by vm.settingsLoadError.collectAsState()
+                                    val brandSettings by settingsVm.brandSettings.collectAsState()
+                                    val isBrandSettingsLoading by settingsVm.isFetchingBrandSettings.collectAsState()
+                                    val brandSettingsError by settingsVm.settingsLoadError.collectAsState()
                                     LaunchedEffect(Unit) {
-                                        if (brandSettings == null) vm.fetchBrandSettings()
+                                        if (brandSettings == null) settingsVm.fetchBrandSettings()
                                     }
                                     StudioTheme {
                                         PhotographerPublicProfileScreen(
@@ -937,7 +984,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             composable(
-                                route = "orders/return/{orderId}?token={token}",
+                                route = RECEIPT_ROUTE_PATTERN,
                                 arguments = listOf(
                                     navArgument("orderId") { type = NavType.StringType },
                                     navArgument("token") {
@@ -986,12 +1033,7 @@ class MainActivity : ComponentActivity() {
                                 // has no PayMongo handoff — land on the receipt so the cart
                                 // clears and the downloads show, mirroring the deep-link
                                 // return. A null order is the PayMongo bail-back → orders list.
-                                val route = order?.let {
-                                    val id = Uri.encode(it.id)
-                                    it.returnToken?.takeIf { t -> t.isNotBlank() }
-                                        ?.let { t -> "orders/return/$id?token=${Uri.encode(t)}" }
-                                        ?: "orders/return/$id"
-                                } ?: "orders"
+                                val route = order?.let { receiptRoute(it.id, it.returnToken) } ?: "orders"
                                 navController.navigate(route) {
                                     popUpTo("events") { saveState = true }
                                     launchSingleTop = true
@@ -1011,52 +1053,25 @@ class MainActivity : ComponentActivity() {
         pickQuickpitikUri(intent)?.let { deepLinkUri = it }
     }
 
-    private fun pickQuickpitikUri(intent: Intent?): Uri? {
-        val data = intent?.data ?: return null
-        if (data.scheme.equals("quickpitik", ignoreCase = true)) return data
-        val path = data.path?.lowercase().orEmpty()
-        // startsWith, not ==: the manifest filter uses pathPrefix, so the OS
-        // also delivers "/verify-email/" — an exact match would drop it.
-        if ((data.scheme.equals("http", ignoreCase = true) || data.scheme.equals("https", ignoreCase = true)) &&
-            (path.startsWith("/verify-email") || path.startsWith("/confirm-email-change"))) {
-            return data
-        }
-        return null
-    }
-
-    // Maps:
-    //   quickpitik://orders/return?orderId=…&token=…  →  orders/return/{orderId}
-    //                                                    (the receipt screen)
-    //   quickpitik://cart?orderId=…                   →  re-open cart sheet
     private fun handleQuickpitikUri(
         uri: Uri,
         navController: NavController,
         cartViewModel: CartViewModel,
     ) {
-        // Host carries the route — Android parses "quickpitik://orders/return"
-        // as scheme=quickpitik, host=orders, path=/return.
-        val host = uri.host?.lowercase() ?: return
-        val path = uri.path?.lowercase().orEmpty()
-        // Email-token links are role-neutral auth surfaces — route them BEFORE
-        // the photographer guard below, or a photographer's own verification /
+        val target = deepLinkTarget(uri) ?: return
+        // Email-token links are role-neutral auth surfaces — routed BEFORE the
+        // photographer guard below, or a photographer's own verification /
         // email-change link would bounce to studio with the token unredeemed.
-        // startsWith mirrors the manifest's pathPrefix so a trailing slash
-        // still routes.
-        when {
-            host == "confirm-email-change" || path.startsWith("/confirm-email-change") -> {
-                val token = uri.getQueryParameter("token").orEmpty()
-                navController.navigate("confirm-email-change?token=$token") {
-                    launchSingleTop = true
-                }
+        when (target) {
+            is DeepLinkTarget.ConfirmEmail -> {
+                navController.navigate("confirm-email-change?token=${target.token}") { launchSingleTop = true }
                 return
             }
-            host == "verify-email" || path.startsWith("/verify-email") -> {
-                val token = uri.getQueryParameter("token").orEmpty()
-                navController.navigate("verify-email?token=$token") {
-                    launchSingleTop = true
-                }
+            is DeepLinkTarget.VerifyEmail -> {
+                navController.navigate("verify-email?token=${target.token}") { launchSingleTop = true }
                 return
             }
+            else -> Unit
         }
         // Every quickpitik:// target below is a runner surface. A photographer
         // token would 403 the cart fetch and land on screens with no way back,
@@ -1069,64 +1084,177 @@ class MainActivity : ComponentActivity() {
             navController.navigate("studio") { launchSingleTop = true }
             return
         }
-        when {
-            host == "orders" && path.startsWith("/return") -> {
-                val orderId = uri.getQueryParameter("orderId")
+        val overEvents: androidx.navigation.NavOptionsBuilder.() -> Unit = {
+            popUpTo("events") { saveState = true }
+            launchSingleTop = true
+        }
+        when (target) {
+            is DeepLinkTarget.OrderReturn -> {
                 cartViewModel.closeCartSheet()
                 cartViewModel.closeCheckoutSheet()
                 cartViewModel.resetCheckoutState()
-                // F6: validate the id and ENCODE both params before building the
-                // route — a malformed/hostile id falls back to the orders list
+                // F6: a malformed/hostile id falls back to the orders list
                 // instead of dead-ending or crashing route parsing.
-                if (orderId.isNullOrBlank() || !DEEP_LINK_ID.matches(orderId)) {
-                    cartViewModel.fetchCart()
-                    navController.navigate("orders") {
-                        popUpTo("events") { saveState = true }
-                        launchSingleTop = true
-                    }
-                } else {
-                    val token = uri.getQueryParameter("token")
-                    val encodedId = Uri.encode(orderId)
-                    val route = if (token.isNullOrBlank()) "orders/return/$encodedId"
-                        else "orders/return/$encodedId?token=${Uri.encode(token)}"
-                    navController.navigate(route) {
-                        popUpTo("events") { saveState = true }
-                        launchSingleTop = true
-                    }
-                }
-
+                val route = receiptRoute(target.orderId, target.token)
+                if (route == null) cartViewModel.fetchCart()
+                navController.navigate(route ?: "orders", overEvents)
             }
-            host == "orders" -> {
+            DeepLinkTarget.Orders -> {
                 cartViewModel.closeCartSheet()
                 cartViewModel.closeCheckoutSheet()
                 cartViewModel.resetCheckoutState()
                 cartViewModel.fetchCart()
-                navController.navigate("orders") {
-                    popUpTo("events") { saveState = true }
-                    launchSingleTop = true
-                }
+                navController.navigate("orders", overEvents)
             }
-            host == "cart" -> {
+            DeepLinkTarget.Cart -> {
                 cartViewModel.closeCheckoutSheet()
                 cartViewModel.resetCheckoutState()
                 cartViewModel.fetchCart()
                 cartViewModel.openCartSheet()
             }
+            else -> Unit
         }
     }
 }
 
-// The ONE shared studio VM, owned by the "studio" graph's back-stack entry —
-// every studio route resolves the same instance, and it is cleared (tether
-// teardown included) exactly when logout pops the graph. `remember(entry)`
-// because getBackStackEntry must not run on every recomposition.
+// Routing decisions lifted out of the Activity so they can be tested without a
+// NavHost: cold-start destination, the role guard, the deep-link mapping and
+// the receipt route. The Activity keeps only the side effects.
+
+/**
+ * A photographer who killed the app while in runner view cold-starts back into
+ * runner view — starting in studio with the flag still set would strand the
+ * flag, because studio is legal for the true role and the guard would never fire.
+ */
+internal fun startDestinationFor(signedIn: Boolean, photographer: Boolean, runnerView: Boolean): String = when {
+    !signedIn -> "login"
+    photographer && runnerView -> "runner"
+    photographer -> "studio"
+    else -> "runner"
+}
+
+/**
+ * Where the destination-change guard sends a wrong-role visitor, or null to let
+ * them through. Runner routes check the EFFECTIVE role (a photographer in runner
+ * view passes); studio routes check the TRUE role (a photographer in runner view
+ * may still deep-return to studio). Shared surfaces are in neither set.
+ */
+internal fun guardRedirect(photographer: Boolean, runnerView: Boolean, route: String): String? {
+    val effectiveRunner = !photographer || runnerView
+    return when {
+        route in RUNNER_ROUTES && !effectiveRunner -> "studio"
+        route.startsWith("studio") && !photographer -> "runner"
+        else -> null
+    }
+}
+
+/**
+ * The receipt route for an order id plus optional guest RETURN token, or null
+ * when the id is not route-safe (F6: the scheme-only deep-link filter is
+ * exported, so a hostile id must never be spliced into a route string).
+ */
+internal fun receiptRoute(orderId: String?, token: String?): String? {
+    if (orderId.isNullOrBlank() || !DEEP_LINK_ID.matches(orderId)) return null
+    val id = Uri.encode(orderId)
+    return if (token.isNullOrBlank()) "orders/return/$id" else "orders/return/$id?token=${Uri.encode(token)}"
+}
+
+internal sealed class DeepLinkTarget {
+    data class ConfirmEmail(val token: String) : DeepLinkTarget()
+    data class VerifyEmail(val token: String) : DeepLinkTarget()
+    data class OrderReturn(val orderId: String?, val token: String?) : DeepLinkTarget()
+    data object Orders : DeepLinkTarget()
+    data object Cart : DeepLinkTarget()
+}
+
+/**
+ * Only quickpitik:// links and the two https email-token paths the manifest
+ * filters on reach the app. startsWith, not ==: the manifest uses pathPrefix,
+ * so the OS also delivers "/verify-email/" — an exact match would drop it.
+ */
+internal fun pickQuickpitikUri(intent: Intent?): Uri? {
+    val data = intent?.data ?: return null
+    if (data.scheme.equals("quickpitik", ignoreCase = true)) return data
+    val path = data.path?.lowercase().orEmpty()
+    if ((data.scheme.equals("http", ignoreCase = true) || data.scheme.equals("https", ignoreCase = true)) &&
+        (path.startsWith("/verify-email") || path.startsWith("/confirm-email-change"))) {
+        return data
+    }
+    return null
+}
+
+/**
+ * Maps an accepted link to what the app should do. Host carries the route —
+ * Android parses "quickpitik://orders/return" as scheme=quickpitik, host=orders,
+ * path=/return. Null = nothing we handle.
+ */
+internal fun deepLinkTarget(uri: Uri): DeepLinkTarget? {
+    val host = uri.host?.lowercase() ?: return null
+    val path = uri.path?.lowercase().orEmpty()
+    return when {
+        host == "confirm-email-change" || path.startsWith("/confirm-email-change") ->
+            DeepLinkTarget.ConfirmEmail(uri.getQueryParameter("token").orEmpty())
+        host == "verify-email" || path.startsWith("/verify-email") ->
+            DeepLinkTarget.VerifyEmail(uri.getQueryParameter("token").orEmpty())
+        host == "orders" && path.startsWith("/return") ->
+            DeepLinkTarget.OrderReturn(uri.getQueryParameter("orderId"), uri.getQueryParameter("token"))
+        host == "orders" -> DeepLinkTarget.Orders
+        host == "cart" -> DeepLinkTarget.Cart
+        else -> null
+    }
+}
+
+// The "studio" graph's back-stack entry — the owner of every studio ViewModel.
+// They all resolve off this one entry, so they share a lifetime: created lazily
+// (a runner session constructs none of them, and none of their init salvos
+// fire) and cleared, tether teardown included, exactly when logout pops the
+// graph. `remember(entry)` because getBackStackEntry must not run on every
+// recomposition.
+@Composable
+private fun studioGraphEntry(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): NavBackStackEntry = remember(entry) { navController.getBackStackEntry("studio") }
+
 @Composable
 private fun studioViewModel(
     navController: NavHostController,
     entry: NavBackStackEntry,
-): PhotographerDashboardViewModel {
-    val graphEntry = remember(entry) { navController.getBackStackEntry("studio") }
-    return viewModel(graphEntry)
+): PhotographerDashboardViewModel = viewModel(studioGraphEntry(navController, entry))
+
+@Composable
+private fun studioSettingsViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): StudioSettingsViewModel = viewModel(studioGraphEntry(navController, entry))
+
+@Composable
+private fun studioEarningsViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): StudioEarningsViewModel = viewModel(studioGraphEntry(navController, entry))
+
+// The tether VM's one cross-concern read is the dashboard's event list, for
+// the after-process-death resume (see its KDoc). It is handed over here,
+// where both ViewModels already live on the same graph entry, rather than
+// being reached for from inside the tether VM. The factory only runs on the
+// first resolve; every later call returns that same instance.
+@Composable
+private fun studioTetherViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): TetherViewModel {
+    val graphEntry = studioGraphEntry(navController, entry)
+    val dashboard: PhotographerDashboardViewModel = viewModel(graphEntry)
+    val application = LocalContext.current.applicationContext as Application
+    val factory = remember(dashboard) {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                TetherViewModel(application, dashboard.eventsState) as T
+        }
+    }
+    return viewModel(graphEntry, factory = factory)
 }
 
 @Composable
@@ -1134,6 +1262,26 @@ private fun runnerGraphEntry(
     navController: NavHostController,
     entry: NavBackStackEntry,
 ): NavBackStackEntry = remember(entry) { navController.getBackStackEntry("runner") }
+
+/**
+ * Leaves an email-link screen. Signed in, the link opened over a live runner or
+ * studio graph: go back to it, as system Back would, since popUpTo(0) would take
+ * the studio graph down with it (GUARD RULE). An email route is never a start
+ * destination, so there is always something to go back to. Signed out, nothing
+ * underneath is worth keeping: clear to login. Only while [screen] is still on
+ * top, or a second tap during the exit animation pops what the first returned to.
+ */
+internal fun NavController.leaveEmailLink(screen: NavBackStackEntry, signedIn: Boolean) {
+    if (currentBackStackEntry?.id != screen.id) return
+    if (signedIn) {
+        popBackStack()
+    } else {
+        navigate("login") {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+}
 
 // ─── Floating-pill bottom nav for Runner ──────────────────────────────────────
 // Mirrors the Quiet Studio photographer floating pill nav format:

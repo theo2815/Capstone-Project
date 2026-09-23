@@ -1,7 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.EmailService
+import com.quickpitik.service.email.EmailService
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
@@ -20,7 +20,7 @@ class PayoutAccountChangedEmailListener(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    @Async("imageProcessing")
+    @Async("emailSending")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     fun onPayoutAccountChanged(event: PayoutAccountChangedEvent) {
         val user = userRepository.findById(event.userId).orElse(null)

@@ -22,7 +22,7 @@ import kotlin.math.abs
 //   Paymongo-Signature: t=<unix>,te=<test_sig>,li=<live_sig>
 //
 // Test-mode events populate `te=`; live-mode events populate `li=`. We
-// validate whichever is present — they're mutually exclusive in practice.
+// validate whichever is populated; live headers also include an empty `te=`.
 //
 // Anti-enumeration: every failure path (missing header, missing wrapper,
 // digest mismatch, bad timestamp) raises the SAME UnauthorizedException
@@ -67,7 +67,7 @@ class PaymongoSignatureVerifier(
 
         val parts = parseSignatureHeader(signatureHeader)
         val timestamp = parts["t"]
-        val provided = (parts["te"] ?: parts["li"])?.lowercase()
+        val provided = (parts["te"]?.takeIf { it.isNotEmpty() } ?: parts["li"])?.lowercase()
         if (timestamp.isNullOrEmpty() || provided.isNullOrEmpty()) {
             log.warn("PayMongo webhook rejected: signature header missing t / te / li")
             throw signatureFailure()

@@ -30,7 +30,7 @@ import java.util.zip.ZipOutputStream
  * top-level <a href> navigation, which carries no Authorization header. The
  * The purpose-bound capability is signed rather than stored; migrated V18
  * bearer links remain valid through a one-way hash. Both expire at
- * `orders.token_expires_at` (90 days by default).
+ * `orders.token_expires_at` (`app.platform.share-token-ttl`, 366 days by default).
  *
  * Split into two phases so the JPA transaction closes before the bytes start
  * streaming: `prepare()` runs inside @Transactional and resolves everything
@@ -135,25 +135,19 @@ class OrderBundleService(
     }
 
     private fun writeZipTo(spec: BundleSpec, out: OutputStream) {
-        ZipOutputStream(out).use { zip ->
+        // A failed read must abort, not finalize a valid partial ZIP.
+        val zip = object : ZipOutputStream(out) {
+            override fun close() { def.end() }
+        }
+        zip.use {
             spec.entries.forEach { entry ->
-                try {
-                    val bytes = storageService.getBytes(entry.s3Key)
-                    zip.putNextEntry(ZipEntry(entry.entryName))
-                    zip.write(bytes)
-                    zip.closeEntry()
-                } catch (ex: Exception) {
-                    // Per-photo failure is non-fatal — log and continue so
-                    // the rest of the order still bundles. A half-written
-                    // entry from a failed copy isn't closed here; the next
-                    // putNextEntry will roll over cleanly.
-                    log.warn(
-                        "Skipping {} in bundle {}: {}",
-                        entry.s3Key, spec.orderId, ex.message,
-                    )
-                }
+                val bytes = storageService.getBytes(entry.s3Key)
+                zip.putNextEntry(ZipEntry(entry.entryName))
+                zip.write(bytes)
+                zip.closeEntry()
             }
             zip.finish()
+            zip.flush()
         }
     }
 

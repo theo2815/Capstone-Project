@@ -12,8 +12,8 @@ data class PlatformProperties(
     // share. Whatever the value, the platform cut on a sale never moves.
     val couponMaxPercent: Int = 50,
     // Earnings become withdrawable only after this window elapses from the sale,
-    // so a refund/dispute in the meantime is absorbed before any payout. Align
-    // to the refund/dispute-eligibility window. Overridable: PAYOUT_CLEARING_WINDOW.
+    // and it is also the refund window: RefundService refuses requests past it,
+    // so a refund is always absorbed before any payout. Overridable: PAYOUT_CLEARING_WINDOW.
     val payoutClearingWindow: Duration = Duration.ofDays(7),
     // After ANY payout-account change (add/edit/set-primary/delete/QR), block new
     // payout requests for this long — a compromised account can't change the
@@ -29,6 +29,10 @@ data class PlatformProperties(
     // PAYOUT_DISBURSEMENT_PROVIDER. Keep "manual" until PayMongo KYB is approved
     // and the adapter is verified in a test-mode account (Phase 11).
     val disbursementProvider: String = "manual",
+    // Largest payout an automated (non-manual) transfer may carry. Default is the
+    // InstaPay ceiling; raise it only with a verified PESONet rail. Larger cycles
+    // are refused with a 409 and settled manually. Overridable: PAYOUT_MAX_PER_TRANSFER_PHP.
+    val payoutMaxPerTransferPhp: BigDecimal = BigDecimal("50000"),
     // Step-up re-auth master switch (like AI_API_ENABLED). OFF by default so the
     // shipped web + mobile clients — which don't yet send an X-Step-Up header —
     // keep working. Turn ON only once both clients do the /me/reauth flow; then
@@ -36,10 +40,12 @@ data class PlatformProperties(
     // Overridable: PAYOUT_STEP_UP_ENABLED.
     val payoutStepUpEnabled: Boolean = false,
     // Upper bound for emailed bundle capabilities and migrated legacy tokens.
-    // The user-facing "works for 90 days" copy is hardcoded to this default —
-    // if you change it, update the receipt email (OrderReceiptEmailService) and
-    // the website /orders/return page copy too.
-    val shareTokenTtl: Duration = Duration.ofDays(90),
+    // 366 days outlasts the download grant (the webhook services' plusYears(1),
+    // which spans 366 days across a leap day), so a bundle link never dies
+    // before the purchase. The user-facing "works for 1 year" copy is hardcoded
+    // to this default — if you change it, update the receipt email
+    // (OrderReceiptEmailService) and the website /orders/return page copy too.
+    val shareTokenTtl: Duration = Duration.ofDays(366),
     // Long enough for a 30-minute QRPH payment plus webhook/polling delay.
     val orderReturnTtl: Duration = Duration.ofMinutes(35),
     // Separate HMAC key for purpose-bound order return/download links.

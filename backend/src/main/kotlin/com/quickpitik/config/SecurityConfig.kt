@@ -3,8 +3,12 @@ package com.quickpitik.config
 import com.quickpitik.security.JsonAccessDeniedHandler
 import com.quickpitik.security.JsonAuthenticationEntryPoint
 import com.quickpitik.security.JwtAuthenticationFilter
+import com.quickpitik.security.OriginSecretFilter
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.env.Environment
+import org.springframework.core.env.Profiles
 import org.springframework.http.HttpMethod
 import org.springframework.security.authentication.AuthenticationManager
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration
@@ -19,6 +23,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter
 import org.springframework.security.web.util.matcher.RegexRequestMatcher
 import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.filter.CorsFilter
 
 @Configuration
 @EnableWebSecurity
@@ -28,6 +33,8 @@ class SecurityConfig(
     private val corsConfigurationSource: CorsConfigurationSource,
     private val authenticationEntryPoint: JsonAuthenticationEntryPoint,
     private val accessDeniedHandler: JsonAccessDeniedHandler,
+    private val environment: Environment,
+    @Value("\${app.security.origin-secret}") private val originSecret: String,
 ) {
     @Bean
     fun passwordEncoder(): PasswordEncoder = BCryptPasswordEncoder(12)
@@ -101,7 +108,16 @@ class SecurityConfig(
                 // the same content from a different origin and this rule is a
                 // no-op (no handler registered).
                 auth.requestMatchers(HttpMethod.GET, "/storage/**").permitAll()
-                auth.requestMatchers(HttpMethod.GET, "/api/v1/events", "/api/v1/events/**").permitAll()
+                // The four public event reads, listed by shape: a `/**` here also
+                // permitted the RUNNER-only `GET /events/{slug}/photo-alert`, which then
+                // answered an anonymous caller 403 instead of 401.
+                auth.requestMatchers(
+                    HttpMethod.GET,
+                    "/api/v1/events",
+                    "/api/v1/events/*",
+                    "/api/v1/events/*/photos",
+                    "/api/v1/events/*/photos/*/download",
+                ).permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
@@ -156,6 +172,10 @@ class SecurityConfig(
                 ex.accessDeniedHandler(accessDeniedHandler)
             }
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
+
+        if (environment.acceptsProfiles(Profiles.of("prod"))) {
+            http.addFilterBefore(OriginSecretFilter(originSecret), CorsFilter::class.java)
+        }
 
         return http.build()
     }

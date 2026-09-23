@@ -17,12 +17,12 @@ import type {
   PayoutReport,
   PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
-import type { ListEvent } from "@/app/events/events-browser";
+import type { ListEvent } from "@/types/event";
 import type {
   EventReviewStatus,
   PendingPricingChange,
 } from "@/lib/photographer-mock";
-import type { DecisionLogEntry } from "@/store/admin-user-store";
+import type { DecisionLogEntry } from "@/lib/admin-user-registry";
 import type { PaginatedResponse } from "@/types/api";
 import { safeUUID } from "@/lib/utils";
 
@@ -92,14 +92,15 @@ export interface AdminTrendPoint {
   payouts: number;
 }
 
-export async function fetchAdminKpis(): Promise<AdminKpis> {
-  return api.get<AdminKpis>("/admin/kpis");
+export async function fetchAdminKpis(signal?: AbortSignal): Promise<AdminKpis> {
+  return api.get<AdminKpis>("/admin/kpis", { signal });
 }
 
 export async function fetchAdminKpiTrend(
   days: number = 30,
+  signal?: AbortSignal,
 ): Promise<AdminTrendPoint[]> {
-  return api.get<AdminTrendPoint[]>(`/admin/kpis/trend?days=${days}`);
+  return api.get<AdminTrendPoint[]>(`/admin/kpis/trend?days=${days}`, { signal });
 }
 
 // ───────────────────────────────────────────── Users (verifications + photographers)
@@ -132,13 +133,25 @@ function buildUsersQs(args: AdminUserListArgs): string {
   return p.toString();
 }
 
+// Directory consumers filter locally, so load every unfiltered page. Explicit
+// pagination/filter callers retain the endpoint's page semantics.
 export async function fetchAdminUsers(
   args: AdminUserListArgs = {},
+  signal?: AbortSignal,
 ): Promise<AdminUserRow[]> {
-  const res = await api.get<PaginatedResponse<AdminUserRow>>(
-    `/admin/users?${buildUsersQs(args)}`,
-  );
-  return res.items;
+  const rows: AdminUserRow[] = [];
+  let offset = args.offset ?? 0;
+  const paged = args.offset !== undefined || args.limit !== undefined || args.status !== undefined;
+  while (true) {
+    signal?.throwIfAborted();
+    const page = await api.get<PaginatedResponse<AdminUserRow>>(
+      `/admin/users?${buildUsersQs({ ...args, offset })}`,
+    );
+    signal?.throwIfAborted();
+    rows.push(...page.items);
+    offset += page.items.length;
+    if (paged || page.items.length === 0 || offset >= page.total) return rows;
+  }
 }
 
 export async function fetchAdminUserDetail(
@@ -301,6 +314,23 @@ export async function fetchAdminDisputes(
   return res.items;
 }
 
+// The backend exposes a paginated list, but no GET /disputes/{id}.
+// Deep links must search beyond the first page before declaring a 404.
+export async function fetchAdminDispute(disputeId: string, signal?: AbortSignal): Promise<Dispute | null> {
+  let offset = 0;
+  while (true) {
+    signal?.throwIfAborted();
+    const page = await api.get<PaginatedResponse<Dispute>>(
+      `/admin/disputes?${buildDisputesQs({ offset })}`,
+    );
+    signal?.throwIfAborted();
+    const dispute = page.items.find((row) => row.id === disputeId);
+    if (dispute) return dispute;
+    offset += page.items.length;
+    if (page.items.length === 0 || offset >= page.total) return null;
+  }
+}
+
 export interface ResolveDisputeArgs {
   resolution: DisputeResolution;
   refundAmount: number | null;
@@ -357,9 +387,11 @@ function buildFlagsQs(args: AdminFlagListArgs): string {
 
 export function fetchAdminFlags(
   args: AdminFlagListArgs = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<Flag>> {
   return api.get<PaginatedResponse<Flag>>(
     `/admin/flags?${buildFlagsQs(args)}`,
+    { signal },
   );
 }
 
@@ -650,7 +682,7 @@ export interface CreateAdminEventArgs {
 
 export async function createAdminEvent(
   args: CreateAdminEventArgs,
-): Promise<ListEvent> {
+): Promise<AdminEventRow> {
   const form = new FormData();
   form.append("title", args.title);
   form.append("date", args.date);
@@ -661,7 +693,7 @@ export async function createAdminEvent(
   if (args.description !== undefined)
     form.append("description", args.description);
   if (args.cover) form.append("cover", args.cover);
-  return api.post<ListEvent>("/admin/events", form);
+  return api.post<AdminEventRow>("/admin/events", form);
 }
 
 export interface UpdateAdminEventPatch {
@@ -689,7 +721,7 @@ export interface UpdateAdminEventPatch {
 export async function updateAdminEvent(
   eventId: string,
   patch: UpdateAdminEventPatch,
-): Promise<ListEvent> {
+): Promise<AdminEventRow> {
   const form = new FormData();
   if (patch.title !== undefined) form.append("title", patch.title);
   if (patch.date !== undefined) form.append("date", patch.date);
@@ -703,7 +735,7 @@ export async function updateAdminEvent(
     form.append("description", patch.description);
   if (patch.cover) form.append("cover", patch.cover);
   if (patch.removeCover) form.append("removeCover", "true");
-  return api.fetch<ListEvent>(
+  return api.fetch<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}`,
     { method: "PATCH", body: form },
   );
@@ -732,8 +764,9 @@ export interface AdminSalesKpis {
 
 export async function fetchAdminSalesKpis(
   range: AdminSalesRange = "ytd",
+  signal?: AbortSignal,
 ): Promise<AdminSalesKpis> {
-  return api.get<AdminSalesKpis>(`/admin/sales/kpis?range=${range}`);
+  return api.get<AdminSalesKpis>(`/admin/sales/kpis?range=${range}`, { signal });
 }
 
 export interface AdminSalesEventRow {
@@ -758,6 +791,7 @@ export interface AdminSalesByEventArgs {
 
 export async function fetchAdminSalesByEvent(
   args: AdminSalesByEventArgs = {},
+  signal?: AbortSignal,
 ): Promise<AdminSalesEventRow[]> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
@@ -765,6 +799,7 @@ export async function fetchAdminSalesByEvent(
   if (args.order) p.set("order", args.order);
   const res = await api.get<PaginatedResponse<AdminSalesEventRow>>(
     `/admin/sales/by-event?${p.toString()}`,
+    { signal },
   );
   return res.items;
 }

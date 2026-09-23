@@ -64,9 +64,10 @@ import com.quickpitik.mobile.data.download.PhotoDownloader
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
-import com.quickpitik.mobile.ui.runner.PhotoPreview
-import com.quickpitik.mobile.ui.runner.PhotoPreviewData
-import com.quickpitik.mobile.ui.runner.PhotoPreviewMode
+import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.PhotoPreviewMode
+import com.quickpitik.mobile.ui.common.peso
+import com.quickpitik.mobile.ui.common.toOwnerPreviewData
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.BrandLogo
@@ -84,6 +85,8 @@ import com.quickpitik.mobile.ui.theme.QpCard
 import com.quickpitik.mobile.ui.theme.QpCardShape
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
+import com.quickpitik.mobile.ui.theme.StatusChip
+import com.quickpitik.mobile.ui.theme.StatusTone
 import com.quickpitik.mobile.ui.theme.StatNumber
 import com.quickpitik.mobile.ui.theme.SurfaceWhite
 import com.quickpitik.mobile.ui.theme.TileShape
@@ -92,15 +95,6 @@ import kotlinx.coroutines.launch
 import java.net.URLEncoder
 
 private enum class PhotoSection { Active, Deleted }
-
-private fun PhotographerLibraryPhotoDto.toOwnerPreviewData(eventName: String?): PhotoPreviewData =
-    PhotoPreviewData(
-        id = id,
-        price = 0.0,
-        imageUrl = resolveShareImageUrl(thumbnailUrl),
-        eventName = eventName,
-        salesCount = salesCount,
-    )
 
 // Focused share page — mobile mirror of website /dashboard/events/[id].
 // Layout: back → hero → public-gallery share band → stats → photo library.
@@ -300,7 +294,7 @@ fun PhotographerEventShareScreen(
                 ) {
                     StatNumber(value = "${event.photoCount}", label = "Photos")
                     StatNumber(value = "${event.salesCount}", label = "Sold")
-                    StatNumber(value = "₱%,.0f".format(event.revenueKept), label = "Kept", valueColor = Fresh)
+                    StatNumber(value = peso(event.revenueKept, 0), label = "Kept", valueColor = Fresh)
                 }
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -713,7 +707,7 @@ private fun DangerPill(text: String, enabled: Boolean, onClick: () -> Unit, modi
 }
 
 @Composable
-private fun SharePhotoTile(
+internal fun SharePhotoTile(
     photo: PhotographerLibraryPhotoDto,
     selecting: Boolean,
     selected: Boolean,
@@ -753,6 +747,13 @@ private fun SharePhotoTile(
                     Icon(Icons.Default.Check, contentDescription = null, tint = Bone, modifier = Modifier.size(18.dp))
                 }
             }
+        }
+        if (photo.status == "processing") {
+            StatusChip(
+                text = "Processing",
+                tone = StatusTone.Neutral,
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+            )
         }
         if (photo.salesCount > 0) {
             Box(

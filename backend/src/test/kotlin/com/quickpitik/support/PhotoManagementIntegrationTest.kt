@@ -209,6 +209,43 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertNotNull(fresh.deletionStartedAt)
     }
 
+    @Test fun `background indexing update cannot clobber a concurrent watermark publish`() {
+        photo.status = PhotoStatus.PROCESSING
+        photo.watermarkS3Key = null
+        photo.thumbnailS3Key = null
+        photo.publishedAt = null
+        photos.saveAndFlush(photo)
+        val separateTx = TransactionTemplate(tx.transactionManager!!).apply {
+            propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+        }
+
+        tx.executeWithoutResult {
+            val stale = photos.findById(photo.id).orElseThrow()
+            separateTx.execute {
+                assertEquals(1, photos.publishWatermarked(photo.id, "review/watermark.jpg", 1L, 2L, 3L))
+            }
+            stale.indexingStatus = IndexingStatus.SKIPPED
+            photos.saveAndFlush(stale)
+        }
+
+        val fresh = photos.findById(photo.id).orElseThrow()
+        assertEquals(IndexingStatus.SKIPPED, fresh.indexingStatus)
+        assertEquals(PhotoStatus.LIVE, fresh.status)
+        assertEquals("review/watermark.jpg", fresh.watermarkS3Key)
+    }
+
+    @Test fun `publishWatermarked only flips an eligible processing photo`() {
+        val processing = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/processing.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.PROCESSING))
+        val hidden = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/hidden.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.HIDDEN))
+        val trashed = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/trashed.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.PROCESSING, deletedAt = OffsetDateTime.now()))
+
+        assertEquals(1, inTx { photos.publishWatermarked(processing.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(photo.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(hidden.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(trashed.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(PhotoStatus.LIVE, photos.findById(processing.id).orElseThrow().status)
+    }
+
     @Test fun `purchased photos and existing grants survive permanent deletion requests`() {
         val order = orders.saveAndFlush(Order(eventId = event.id, recipientEmail = "buyer@test.local", paymentMethodWire = "gcash", status = OrderStatus.FULFILLED, totalPhp = photo.pricePhp))
         items.saveAndFlush(OrderItem(id = OrderItemId(order.id, photo.id), pricePhpAtPurchase = photo.pricePhp))
@@ -233,4 +270,71 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         Mockito.verifyNoInteractions(storage)
     }
 
+    // Face search reads through findByEventAndPersonIds, which is not one of the
+    // gallery queries the first test covers; its deleted_at filter lives only in
+    // JPQL (2026-09-11 test-suite audit).
+    @Test fun `face search never returns a trashed photo`() {
+        val personId = "person-${UUID.randomUUID()}"
+        photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = personId))
+        photos.saveAndFlush(photo)
+        val page = PageRequest.of(0, 20)
+        assertEquals(1L, photos.findByEventAndPersonIds(event.id, PhotoStatus.LIVE, listOf(personId), page).totalElements)
+        manager.trash(owner.id, event.id, listOf(photo.id))
+        assertEquals(0L, photos.findByEventAndPersonIds(event.id, PhotoStatus.LIVE, listOf(personId), page).totalElements)
+    }
+
+    // PhotoDto.cleanUrl is handed out for exactly the ids this query returns,
+    // and the grant's expiry is enforced only by its `grantedUntil > CURRENT_TIMESTAMP`.
+    @Test fun `an expired or foreign download grant hands out no clean url`() {
+        val buyer = users.save(User(email = "buyer-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Buyer", role = Role.RUNNER))
+        val stranger = users.save(User(email = "stranger-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Stranger", role = Role.RUNNER))
+        val order = orders.saveAndFlush(Order(userId = buyer.id, eventId = event.id, recipientEmail = buyer.email, paymentMethodWire = "gcash", status = OrderStatus.FULFILLED, totalPhp = photo.pricePhp))
+        val grant = grants.saveAndFlush(DownloadGrant(id = DownloadGrantId(order.id, photo.id), grantedUntil = OffsetDateTime.now().plusDays(1)))
+        assertEquals(listOf(photo.id), grants.findOwnedPhotoIdsByUserAndPhotoIds(buyer.id, listOf(photo.id)))
+        assertTrue(grants.findOwnedPhotoIdsByUserAndPhotoIds(stranger.id, listOf(photo.id)).isEmpty())
+        grant.grantedUntil = OffsetDateTime.now().minusMinutes(1)
+        grants.saveAndFlush(grant)
+        assertTrue(grants.findOwnedPhotoIdsByUserAndPhotoIds(buyer.id, listOf(photo.id)).isEmpty())
+    }
+
+    // Each conditional update gets its own transaction, as AdminFlagService's
+    // does: a @Modifying query without one throws, and reading inside the
+    // writing transaction answers from the persistence context, not Postgres.
+    private fun inTx(block: () -> Int): Int = tx.execute { block() }!!
+
+    // The flag queue's two conditional updates (P1.5). Mocks never parse JPQL,
+    // and a bulk SET binding an @Enumerated(STRING) column is exactly the shape
+    // that compiles clean and writes an ordinal at runtime.
+    @Test fun `flag hide and restore move a watermarked photo between HIDDEN and LIVE`() {
+        assertEquals(1, inTx { photos.hideForFlag(photo.id) })
+        assertEquals(PhotoStatus.HIDDEN, photos.findById(photo.id).get().status)
+        assertEquals(0, inTx { photos.hideForFlag(photo.id) }, "hiding an already-hidden photo must be a no-op")
+        assertEquals(1, inTx { photos.unhideForFlag(photo.id, PhotoStatus.LIVE) })
+        assertEquals(PhotoStatus.LIVE, photos.findById(photo.id).get().status)
+        assertEquals(0, inTx { photos.unhideForFlag(photo.id, PhotoStatus.LIVE) }, "restore must require HIDDEN")
+    }
+
+    // The invariant P1.5 exists for: a photo hidden before its watermark
+    // rendered has no derived asset, so LIVE would serve the clean original as
+    // the public thumbnail. It goes back to the sweep instead.
+    @Test fun `a photo hidden mid-pipeline restores to PROCESSING and re-enters the watermark backlog`() {
+        val pending = photos.saveAndFlush(
+            Photo(
+                eventId = event.id,
+                photographerId = owner.id,
+                s3Key = "review/${UUID.randomUUID()}/original.jpg",
+                pricePhp = BigDecimal("125"),
+                status = PhotoStatus.PROCESSING,
+                uploadedAt = OffsetDateTime.now().minusMinutes(10),
+                processingAttempts = 3,
+            ),
+        )
+        assertEquals(1, inTx { photos.hideForFlag(pending.id) }, "a PROCESSING photo must still be hideable")
+        assertEquals(1, inTx { photos.unhideForFlag(pending.id, PhotoStatus.PROCESSING) })
+        val restored = photos.findById(pending.id).get()
+        assertEquals(PhotoStatus.PROCESSING, restored.status)
+        assertEquals(0, restored.processingAttempts, "an exhausted budget would strand the row outside the sweep")
+        val backlog = photos.findWatermarkBacklog(3, OffsetDateTime.now(), PageRequest.of(0, 200)).map { it.id }
+        assertTrue(pending.id in backlog, "the sweep is what re-renders the preview after a restore")
+    }
 }

@@ -14,6 +14,7 @@ spring:
       # Boot default is 10. Raise via DB_POOL_SIZE if marathon-day upload
       # concurrency ever saturates it (watch hikaricp.connections.* metrics).
       maximum-pool-size: ${DB_POOL_SIZE:10}
+      leak-detection-threshold: 60000
   jpa:
     hibernate:
       ddl-auto: validate
@@ -36,7 +37,7 @@ spring:
     scheduling:
       # Boot default is 1 thread, which let a slow indexing reconcile sweep
       # starve the reaper / batch drain / poll / photos-ready sweeps.
-      pool-size: 4
+      pool-size: 6
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -75,6 +76,8 @@ jwt:
   refresh-token-ttl: P7D
 
 app:
+  security:
+    origin-secret: ${ORIGIN_SECRET:}
   # Externally-reachable URLs the BE needs to embed in artifacts whose request
   # context can't tell it about (e.g. the receipt email). When running ngrok
   # for cross-device download testing, set PUBLIC_API_BASE_URL alongside
@@ -175,6 +178,7 @@ app:
     # failures (bad image, 4xx) do, so an outage self-heals via the reconciler.
     max-indexing-attempts: ${AI_MAX_INDEXING_ATTEMPTS:5}
     reconcile-interval-ms: ${AI_RECONCILE_INTERVAL_MS:60000}
+    photos-ready-claim-ttl: ${AI_PHOTOS_READY_CLAIM_TTL:PT10M}
     # Phase C bulk indexing. PER_PHOTO (default) = Phase-B behaviour (one enroll
     # + one bib HTTP call per photo, off the upload request). BATCH stands that
     # down and drains PENDING photos per event into mega jobs + webhook/poll
@@ -286,8 +290,9 @@ app:
     # Largest photographer coupon (whole percent of the photographer's share).
     # The platform cut never moves, whatever this is set to.
     coupon-max-percent: ${COUPON_MAX_PERCENT:50}
-    # Earnings clear (become withdrawable) this long after the sale, so a refund
-    # in the window is absorbed before payout. Align to the refund window.
+    # Earnings clear (become withdrawable) this long after the sale. Also the
+    # refund window: requests past it are refused, so no refund follows a payout.
+    # Website copy mirrors it (website/src/lib/refund-policy.ts).
     payout-clearing-window: ${PAYOUT_CLEARING_WINDOW:P7D}
     # After any payout-account change, hold payout requests this long (anti-fraud:
     # a changed destination cannot be withdrawn to immediately).
@@ -296,8 +301,12 @@ app:
     payout-two-person-threshold-php: ${PAYOUT_TWO_PERSON_THRESHOLD_PHP:10000}
     payout-step-up-enabled: ${PAYOUT_STEP_UP_ENABLED:false}
     disbursement-provider: ${PAYOUT_DISBURSEMENT_PROVIDER:manual}
+    # Automated transfers above this are refused (409); InstaPay's ceiling by default.
+    payout-max-per-transfer-php: ${PAYOUT_MAX_PER_TRANSFER_PHP:50000}
     # Upper bound for emailed bundle capabilities and migrated legacy tokens.
-    share-token-ttl: ${SHARE_TOKEN_TTL:P90D}
+    # 366 days outlasts the one-year download grant (a leap year included), so a
+    # link never dies before the purchase.
+    share-token-ttl: ${SHARE_TOKEN_TTL:P366D}
     order-return-ttl: ${ORDER_RETURN_TOKEN_TTL:PT35M}
     order-capability-secret: ${ORDER_CAPABILITY_SECRET:dev-only-order-capability-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
   webhooks:
@@ -353,6 +362,7 @@ app:
       base-url: ${RESEND_BASE_URL:https://api.resend.com}
       connect-timeout: PT5S
       read-timeout: PT15S
+      receipt-sweep-interval-ms: ${RECEIPT_SWEEP_INTERVAL_MS:900000}
 
 # Actuator: /actuator/health is a public liveness probe; metrics + info need
 # an ADMIN bearer (SecurityConfig). Nothing else is exposed over the web.

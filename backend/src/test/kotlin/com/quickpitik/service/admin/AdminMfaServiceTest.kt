@@ -40,8 +40,8 @@ class AdminMfaServiceTest {
         Mockito.`when`(userRepository.findById(anyArg())).thenReturn(Optional.empty())
     }
 
-    private fun service() = AdminMfaService(
-        adminMfaRepository, adminMfaRecoveryCodeRepository, totpService, cipher, userRepository,
+    private fun service(secretCipher: MfaSecretCipher = cipher) = AdminMfaService(
+        adminMfaRepository, adminMfaRecoveryCodeRepository, totpService, secretCipher, userRepository,
     )
 
     private fun rowWith(secret: ByteArray, enabled: Boolean) =
@@ -112,6 +112,24 @@ class AdminMfaServiceTest {
 
         // 16 hex chars — not a 6-digit TOTP, so it falls through to the recovery path.
         assertTrue(service().verifyCode(userId, "abcdef0123456789"))
+        assertTrue(recovery.usedAt != null)
+    }
+
+    @Test
+    fun `verifyCode falls through to recovery when the totp key changed`() {
+        val oldCipher = MfaSecretCipher("secret-A")
+        val row = AdminMfa(
+            userId = userId,
+            secretEnc = oldCipher.encrypt(totpService.randomSecret()),
+            enabled = true,
+        )
+        Mockito.`when`(adminMfaRepository.findById(userId)).thenReturn(Optional.of(row))
+        val recovery = AdminMfaRecoveryCode(userId = userId, codeHash = "hash")
+        Mockito.`when`(adminMfaRecoveryCodeRepository.findByUserIdAndCodeHashAndUsedAtIsNull(anyArg(), anyArg()))
+            .thenReturn(recovery)
+        Mockito.`when`(adminMfaRecoveryCodeRepository.save(anyArg<AdminMfaRecoveryCode>())).thenAnswer { it.getArgument(0) }
+
+        assertTrue(service(MfaSecretCipher("secret-B")).verifyCode(userId, "abcdef0123456789"))
         assertTrue(recovery.usedAt != null)
     }
 }

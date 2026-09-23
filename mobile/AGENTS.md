@@ -50,6 +50,7 @@ An agent you delegate a mobile task to does **NOT** automatically inherit this f
 * **Build app:** `.\gradlew.bat assembleDebug` (from the `mobile/` directory)
 * **Clean cache:** `.\gradlew.bat clean`
 * **Check compile validity:** `.\gradlew.bat compileDebugKotlin`
+* **Run unit tests:** `.\gradlew.bat testDebugUnitTest` — JVM + Robolectric, no device; CI runs it plus `compileReleaseKotlin` (`.github/workflows/mobile-tests.yml`). **Debug variant only:** the MockWebServer seam `RetrofitClient.setBaseUrl` is a no-op in release builds, so every test that uses it goes through `support/TestHarness.kt`'s `pointAppAt`, which fails the test rather than letting it reach the production backend. Running `test` (all variants) therefore fails loudly by design — use `testDebugUnitTest`.
 * **Release APK:** `.\gradlew.bat assembleRelease` — signed only when `mobile/keystore.properties` (gitignored; keys `storeFile`/`storePassword`/`keyAlias`/`keyPassword`) exists; the keystore's SHA-1 must be an Android OAuth client in Google Cloud for Google sign-in to work on that build.
 ## 📱 Mobile-to-PC Backend Network Bridging Guide (ADB & Emulator)
 
@@ -131,7 +132,9 @@ graph TD
   * [UploadQueueDao.kt](app/src/main/java/com/quickpitik/mobile/data/local/UploadQueueDao.kt): DAO query declarations (INSERT, UPDATE, DELETE, status modification).
   * [AppDatabase.kt](app/src/main/java/com/quickpitik/mobile/data/local/AppDatabase.kt): Thread-safe Room Database singleton launcher.
   * [SessionManager.kt](app/src/main/java/com/quickpitik/mobile/data/local/SessionManager.kt): Thread-safe SharedPreference wrapper caching the user's JWT access token, email, name, and database role.
+  * [TetherWatchPrefs.kt](app/src/main/java/com/quickpitik/mobile/data/local/TetherWatchPrefs.kt): Shared preference owner for the tether-watch keys.
 * **Remote Integration (Retrofit HTTP):**
+  * [ApiResult.kt](app/src/main/java/com/quickpitik/mobile/data/remote/ApiResult.kt): Shared API envelope and error helpers.
   * [AuthDto.kt](app/src/main/java/com/quickpitik/mobile/data/remote/AuthDto.kt): JSON-serializable requests and response models.
   * [ApiResponseEnvelope.kt](app/src/main/java/com/quickpitik/mobile/data/remote/ApiResponseEnvelope.kt): Standard generic wrapper matching Spring Boot's envelope body adviser.
   * [QuickPitikApi.kt](app/src/main/java/com/quickpitik/mobile/data/remote/QuickPitikApi.kt): Retrofit interface mapping POST logins, POST registrations, Multipart S3 image uploads, selfie library management, and account settings.
@@ -143,6 +146,17 @@ graph TD
 ### 3. ViewModel Layer (State Holder)
 * [AuthViewModel.kt](app/src/main/java/com/quickpitik/mobile/ui/auth/AuthViewModel.kt): Coordinates async HTTP login/register routines under `viewModelScope`.
 * [ProfileViewModel.kt](app/src/main/java/com/quickpitik/mobile/ui/runner/ProfileViewModel.kt): Manages selfie library state flows, profile name editing validations, and password update logic.
+* [PhotographerDashboardViewModel.kt](app/src/main/java/com/quickpitik/mobile/ui/photographer/PhotographerDashboardViewModel.kt): Owns studio events, verification, coupons, inbox, and share photos.
+* [StudioSettingsViewModel.kt](app/src/main/java/com/quickpitik/mobile/ui/photographer/StudioSettingsViewModel.kt): Owns studio settings, socials, and payout accounts.
+* [StudioEarningsViewModel.kt](app/src/main/java/com/quickpitik/mobile/ui/photographer/StudioEarningsViewModel.kt): Owns earnings, balances, and payout actions.
+* [TetherViewModel.kt](app/src/main/java/com/quickpitik/mobile/ui/photographer/TetherViewModel.kt): Owns USB connection, capture, and upload-queue state.
+* **Shared UI helpers:** [ui/common/](app/src/main/java/com/quickpitik/mobile/ui/common/) holds cross-role UI logic, including [Format.kt](app/src/main/java/com/quickpitik/mobile/ui/common/Format.kt).
+
+**Three conventions this module holds to** (they replace a DI framework, and the studio ViewModels are the worked example):
+
+1. **A decision is a pure `internal` top-level function beside its consumer** — verb-named, a defaulted clock where it needs one, a named result type, constants hoisted with it (`queueProgress`, `verificationSummary`, `bottomBarFor`). It moves to `ui/common/` only when both roles share it. A decision inside a composable is a decision no test can reach.
+2. **A dependency a test must replace is a constructor parameter, defaulted only where meaningful; never a framework.** `TetherViewModel(application, dashboard.eventsState)` and the tether layer's `openCamera` lambda are the shape; there is no Hilt or Koin here and none is wanted.
+3. **One ViewModel per concern, all scoped to the same nav-graph entry.** The studio graph owns four (`PhotographerDashboardViewModel`, `StudioSettingsViewModel`, `StudioEarningsViewModel`, `TetherViewModel`); each `init` loads only its own routes, so its test stubs only those. Screens take the narrow ones they read. When two concerns must talk, the composition root (`MainActivity`, or the screen holding both) wires them — a ViewModel never reaches into another.
 
 ### 4. Background Sync Layer (WorkManager)
 * [PhotoUploadWorker.kt](app/src/main/java/com/quickpitik/mobile/worker/PhotoUploadWorker.kt): Background CoroutineWorker executing background sync for DSLRs.

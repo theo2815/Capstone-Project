@@ -10,6 +10,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
@@ -37,6 +38,7 @@ class AdminEventServiceReindexTest {
         AiApiProperties(),
         Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java),
         Mockito.mock(com.quickpitik.repository.UserRepository::class.java),
+        testTransactionTemplate(),
     )
 
     private val adminId = UUID.randomUUID()

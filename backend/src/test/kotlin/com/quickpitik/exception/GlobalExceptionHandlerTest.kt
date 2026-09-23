@@ -1,6 +1,7 @@
 package com.quickpitik.exception
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.exception.ApiException
 import com.quickpitik.service.ai.AiApiException
 import jakarta.validation.ConstraintViolationException
 import org.junit.jupiter.api.Test
@@ -9,13 +10,18 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.mock.http.MockHttpInputMessage
+import org.springframework.validation.BeanPropertyBindingResult
+import org.springframework.validation.FieldError
 import org.springframework.web.HttpRequestMethodNotSupportedException
+import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.multipart.support.MissingServletRequestPartException
 import org.springframework.web.servlet.resource.NoResourceFoundException
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class GlobalExceptionHandlerTest {
 
@@ -197,6 +203,49 @@ class GlobalExceptionHandlerTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
         assertEquals(ErrorCodes.VALIDATION_ERROR, response.body?.errors?.first()?.code)
+    }
+
+    // ─── 2026-09-11 test-suite audit: the three handlers every client leans
+    // on that had no test — the 500 catch-all, the Retry-After carrier, and
+    // @Valid body failures.
+
+    @Test
+    fun `the catch-all never echoes the exception message`() {
+        val response = handler.handleGeneric(RuntimeException("connection refused: db password is hunter2"))
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.statusCode)
+        assertEquals("INTERNAL_ERROR", response.body?.errors?.first()?.code)
+        assertEquals("Internal server error", response.body?.errors?.first()?.message)
+    }
+
+    // The only place ACCOUNT_LOCKED / RATE_LIMITED become a header the client
+    // can act on; every other test asserts the field on the exception.
+    @Test
+    fun `an ApiException with retryAfterSeconds carries a Retry-After header`() {
+        val limited = ApiException(HttpStatus.TOO_MANY_REQUESTS, ErrorCodes.RATE_LIMITED, "slow down", retryAfterSeconds = 7)
+        val plain = ApiException(HttpStatus.CONFLICT, "HANDLE_TAKEN", "taken")
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, handler.handleApi(limited).statusCode)
+        assertEquals("7", handler.handleApi(limited).headers.getFirst("Retry-After"))
+        assertNull(handler.handleApi(plain).headers.getFirst("Retry-After"))
+    }
+
+    @Test
+    fun `a @Valid body failure reports one error per field naming the field`() {
+        val binding = BeanPropertyBindingResult(Any(), "request")
+        binding.addError(FieldError("request", "email", "must be a valid email"))
+        binding.addError(FieldError("request", "password", "must not be blank"))
+        val ex = MethodArgumentNotValidException(
+            MethodParameter(javaClass.getDeclaredMethod("dummy", String::class.java), 0),
+            binding,
+        )
+
+        val response = handler.handleMethodArgNotValid(ex)
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        assertEquals(listOf("email", "password"), response.body?.errors?.map { it.field })
+        assertEquals(listOf("must be a valid email", "must not be blank"), response.body?.errors?.map { it.message })
+        assertTrue(response.body?.errors?.all { it.code == ErrorCodes.VALIDATION_ERROR } == true)
     }
 
     @Suppress("UNUSED_PARAMETER", "unused")

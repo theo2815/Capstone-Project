@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.quickpitik.mobile.data.remote.OrderResponse
+import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.Ink
@@ -167,7 +168,7 @@ fun FloatingCart(
                             color = Color.White.copy(alpha = 0.75f),
                         )
                         Text(
-                            text = "₱${"%,.2f".format(total)}",
+                            text = peso(total),
                             style = NumeralStyle.copy(fontSize = 13.sp),
                             color = Color.White,
                         )

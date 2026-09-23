@@ -24,6 +24,7 @@ import org.mockito.Mockito
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
@@ -69,8 +70,10 @@ class PayoutRequestServiceBalanceTest {
         payoutAccountRepository,
         payoutAccountAuditRepository,
         payoutStatusRecorder,
+        PayoutCycleTransitions(payoutCycleRepository, payoutStatusRecorder),
         platformProperties,
         Mockito.mock(UserRepository::class.java),
+        Clock.systemUTC(),
     )
 
     // Stub the four money sums; each test sets the numbers it cares about.
@@ -92,6 +95,30 @@ class PayoutRequestServiceBalanceTest {
 
     private fun assertAmount(expected: String, actual: BigDecimal) =
         assertEquals(0, BigDecimal(expected).compareTo(actual), "expected $expected but was $actual")
+
+    private fun cycle(amount: String) = PayoutCycle(
+        id = "PAY-JUANDC-001",
+        photographerId = photographerId,
+        weekOf = java.time.LocalDate.of(2026, 9, 1),
+        methodWire = "gcash",
+    ).apply { amountPhp = BigDecimal(amount) }
+
+    @Test
+    fun `coverage refuses a frozen payout when refunds make the net balance negative`() {
+        stubSums(cleared = "3000", lifetime = "3000", paid = "0", reserved = "12000")
+
+        val ex = assertFailsWith<ApiException> { service().assertCovered(cycle("12000")) }
+
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.PAYOUT_NOT_COVERED, ex.code)
+    }
+
+    @Test
+    fun `coverage allows a frozen payout when the net balance remains nonnegative`() {
+        stubSums(cleared = "12500", lifetime = "12500", paid = "0", reserved = "12000")
+
+        service().assertCovered(cycle("12000"))
+    }
 
     @Test
     fun `an account without a QR is incomplete and cannot request money`() {

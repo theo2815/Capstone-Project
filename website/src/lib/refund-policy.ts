@@ -4,7 +4,9 @@
 // Both consumers render <RefundPolicyContent />; this file owns the words.
 
 export const REFUND_PROCESSING_DAYS: number = 3;
-export const REFUND_ELIGIBILITY_DAYS: number = 30;
+// Mirrors the backend's app.platform.payout-clearing-window (P7D): requests
+// past it are refused, so a refund never follows a photographer payout.
+export const REFUND_ELIGIBILITY_DAYS: number = 7;
 
 export interface RefundPolicyBullet {
   kicker: string;
@@ -30,6 +32,6 @@ export const REFUND_POLICY_BULLETS: ReadonlyArray<RefundPolicyBullet> = [
   },
   {
     kicker: "What we don't refund",
-    body: "Photos you've already downloaded and kept past the eligibility window, change-of-mind after 30 days, or photos that match your bib and selfie correctly.",
+    body: `Photos you've already downloaded and kept past the eligibility window, change-of-mind after ${REFUND_ELIGIBILITY_DAYS} days, or photos that match your bib and selfie correctly.`,
   },
 ];

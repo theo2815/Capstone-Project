@@ -1,11 +1,7 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-
-// TODO(backend): swap localStorage persist for Spring Boot Phase F
-// (`/me/photographer/settings`). State shape mirrors the eventual API
-// contract — cover, brand, watermark are URL-bearing fields on the server.
-// Until then, data URLs are stored client-side which has a ~5 MB total
-// localStorage budget — `lib/image-utils.ts` downscales before writing.
+// Server-owned settings are cached by TanStack Query. This store is an
+// in-memory draft bridge for the Settings editor and cross-route readiness UI;
+// it must not persist server records across refreshes or account transitions.
 //
 // Backend ownership of new collections (added 2026-05-06 PM):
 // - region: read-write via `PUT /me/photographer/region`. The list of regions
@@ -195,6 +191,11 @@ export interface PhotographerSettings {
 }
 
 interface PhotographerSettingsState extends PhotographerSettings {
+  hydratedSessionVersion: number | null;
+  draftEditing: boolean;
+  draftEpoch: number;
+  beginDraft: () => number;
+  endDraft: (epoch: number) => void;
   setCover: (cover: CoverMedia | null) => void;
   setBrandName: (name: string) => void;
   setBrandColor: (color: BrandColor) => void;
@@ -255,9 +256,19 @@ function newId(): string {
 }
 
 export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
-  persist(
     (set, get) => ({
       ...SEED,
+      hydratedSessionVersion: null,
+      draftEditing: false,
+      draftEpoch: 0,
+      beginDraft: () => {
+        const draftEpoch = get().draftEpoch + 1;
+        set({ draftEditing: true, draftEpoch });
+        return draftEpoch;
+      },
+      endDraft: (epoch) => set((s) => s.draftEpoch === epoch
+        ? { draftEditing: false, draftEpoch: epoch + 1 }
+        : {}),
       setCover: (cover) => set({ cover }),
       setBrandName: (name) => set({ brandName: name }),
       setBrandColor: (color) => set({ brandColor: color }),
@@ -349,8 +360,11 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
         const m = get().verificationMissing;
         return m !== null && m.length === 0;
       },
-      reset: () => set(SEED),
+      reset: () => set((s) => ({
+        ...SEED,
+        hydratedSessionVersion: null,
+        draftEditing: false,
+        draftEpoch: s.draftEpoch + 1,
+      })),
     }),
-    { name: "quickpitik-photographer-settings" },
-  ),
 );

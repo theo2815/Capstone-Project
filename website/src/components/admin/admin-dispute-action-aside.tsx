@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useAdminDisputeStore } from "@/store/admin-dispute-store";
+import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
 import type { Dispute, DisputeResolution } from "@/lib/admin-disputes";
+import { formatPrice } from "@/lib/utils";
 import { AdminResolveDisputeModal } from "./admin-resolve-dispute-modal";
 import { AdminRefundConfirmModal } from "./admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "./admin-deny-dispute-modal";
@@ -43,10 +44,9 @@ export function AdminDisputeActionAside({
   runnerHandle,
 }: AdminDisputeActionAsideProps) {
   const { showToast } = useToast();
-  const resolve = useAdminDisputeStore((s) => s.resolve);
-  const deny = useAdminDisputeStore((s) => s.deny);
-  const escalate = useAdminDisputeStore((s) => s.escalate);
+  const { resolve, deny, escalate } = useDisputeActions();
 
+  const [submitting, setSubmitting] = useState(false);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [denyOpen, setDenyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
@@ -60,14 +60,18 @@ export function AdminDisputeActionAside({
   const isDenied = dispute.status === "denied";
   const escalateAllowed = isOpen || isDenied;
 
-  function handleContinueResolve(args: PendingResolve) {
+  async function handleContinueResolve(args: PendingResolve) {
+    if (submitting) return;
     if (args.resolution === "deny") {
       // Deny path inside Resolve modal — no stacked confirm.
-      resolve(dispute.id, {
+      setSubmitting(true);
+      const ok = await resolve(dispute.id, {
         resolution: "deny",
         refundAmount: null,
         reason: args.note,
       });
+      setSubmitting(false);
+      if (!ok) return;
       setResolveOpen(false);
       showToast({ kind: "info", message: `Closed without refund · ${dispute.id}` });
       return;
@@ -75,18 +79,24 @@ export function AdminDisputeActionAside({
     setPendingResolve(args);
   }
 
-  function handleConfirmRefund() {
-    if (!pendingResolve) return;
-    resolve(dispute.id, {
+  async function handleConfirmRefund() {
+    if (!pendingResolve || submitting) return;
+    setSubmitting(true);
+    const confirmed = await resolve(dispute.id, {
       resolution: pendingResolve.resolution,
       refundAmount: pendingResolve.refundAmount,
       reason: pendingResolve.note,
     });
+    setSubmitting(false);
+    if (!confirmed) return;
     setPendingResolve(null);
     setResolveOpen(false);
+    const refunded = confirmed.status === "resolved" && confirmed.refundAmount !== null;
     showToast({
-      kind: "success",
-      message: `Refunded · ${dispute.id}`,
+      kind: refunded ? "success" : "info",
+      message: refunded
+        ? `Refunded · ${confirmed.id} · ${formatPrice(confirmed.refundAmount!)}`
+        : `Refund requested · ${confirmed.id}`,
     });
   }
 
@@ -95,14 +105,22 @@ export function AdminDisputeActionAside({
     setPendingResolve(null);
   }
 
-  function handleDeny(reason: string) {
-    deny(dispute.id, reason);
+  async function handleDeny(reason: string) {
+    if (submitting) return;
+    setSubmitting(true);
+    const ok = await deny(dispute.id, reason);
+    setSubmitting(false);
+    if (!ok) return;
     setDenyOpen(false);
     showToast({ kind: "info", message: `Denied · ${dispute.id}` });
   }
 
-  function handleEscalate(note: string | null) {
-    escalate(dispute.id, note);
+  async function handleEscalate(note: string | null) {
+    if (submitting) return;
+    setSubmitting(true);
+    const ok = await escalate(dispute.id, note);
+    setSubmitting(false);
+    if (!ok) return;
     setEscalateOpen(false);
     showToast({ kind: "info", message: `Escalated · ${dispute.id}` });
   }
@@ -121,6 +139,7 @@ export function AdminDisputeActionAside({
             <button
               type="button"
               onClick={() => setResolveOpen(true)}
+              disabled={submitting}
               className={primaryFreshBtn}
             >
               Resolve…
@@ -128,6 +147,7 @@ export function AdminDisputeActionAside({
             <button
               type="button"
               onClick={() => setDenyOpen(true)}
+              disabled={submitting}
               className={dangerBtn}
             >
               Deny…
@@ -138,6 +158,7 @@ export function AdminDisputeActionAside({
           <button
             type="button"
             onClick={() => setEscalateOpen(true)}
+            disabled={submitting}
             className={isOpen ? tertiaryBtn : secondaryBtn}
           >
             Escalate…
@@ -145,12 +166,15 @@ export function AdminDisputeActionAside({
         )}
         {!isOpen && !isDenied && (
           <p className="font-sans text-sm text-slate-soft">
-            This dispute is closed. No further actions are available.
+            {dispute.refundStatus === "manual_review"
+              ? "Review the payment in PayMongo before another refund attempt."
+              : "This dispute is closed. No further actions are available."}
           </p>
         )}
       </div>
 
       <AdminResolveDisputeModal
+        submitting={submitting}
         open={resolveOpen}
         escDisabled={pendingResolve !== null}
         onClose={() => {
@@ -160,11 +184,13 @@ export function AdminDisputeActionAside({
         onContinue={handleContinueResolve}
         disputeId={dispute.id}
         orderTotal={dispute.orderSnapshot.total}
+        itemChargeAmount={dispute.itemChargeAmount}
       />
       {pendingResolve &&
         pendingResolve.resolution !== "deny" &&
         pendingResolve.refundAmount !== null && (
           <AdminRefundConfirmModal
+            submitting={submitting}
             open={true}
             onCancel={handleCancelRefund}
             onConfirm={handleConfirmRefund}
@@ -174,12 +200,14 @@ export function AdminDisputeActionAside({
           />
         )}
       <AdminDenyDisputeModal
+        submitting={submitting}
         open={denyOpen}
         onClose={() => setDenyOpen(false)}
         onSubmit={handleDeny}
         disputeId={dispute.id}
       />
       <AdminEscalateModal
+        submitting={submitting}
         open={escalateOpen}
         onClose={() => setEscalateOpen(false)}
         onSubmit={handleEscalate}

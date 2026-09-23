@@ -16,8 +16,9 @@ class ProductionSecretsGuardTest {
         resend: String = "re_real",
         adminPassword: String = "a-strong-operator-password",
         storage: String = "S3",
+        originSecret: String = "real-origin-secret",
     ) = ProductionSecretsGuard(
-        jwt, capability, seed, webhook, paymongoKey, paymongoWebhook, resend, adminPassword, storage,
+        jwt, capability, seed, webhook, paymongoKey, paymongoWebhook, resend, adminPassword, storage, originSecret,
     )
 
     @Test
@@ -38,5 +39,13 @@ class ProductionSecretsGuardTest {
         val expected = listOf("JWT_SECRET", "RESEND_API_KEY", "ADMIN_BOOTSTRAP_PASSWORD", "STORAGE_BACKEND")
         assertEquals(expected, expected.filter { it in ex.message.orEmpty() })
         assertEquals(false, "PAYMONGO_SECRET_KEY" in ex.message.orEmpty())
+    }
+
+    @Test
+    fun `rejects missing and dev origin secrets`() {
+        for (originSecret in listOf("", "dev-only-origin-secret")) {
+            val ex = assertThrows(IllegalStateException::class.java) { guard(originSecret = originSecret) }
+            assertEquals(true, "ORIGIN_SECRET" in ex.message.orEmpty())
+        }
     }
 }

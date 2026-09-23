@@ -1,26 +1,32 @@
 package com.quickpitik.service.profile
 
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.AuthLockoutProperties
 import com.quickpitik.dto.profile.EmailChangeRequest
 import com.quickpitik.entity.EmailChangeToken
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EmailChangeTokenRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.security.OpaqueTokens
-import com.quickpitik.service.EmailService
-import com.quickpitik.service.RefreshTokenService
+import com.quickpitik.service.auth.LoginAttemptService
+import com.quickpitik.service.auth.RefreshTokenService
+import com.quickpitik.service.email.EmailService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
+import org.springframework.http.HttpStatus
 import org.springframework.security.crypto.password.PasswordEncoder
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 // Backend half of the change-email gap the website agent filed (their side
 // closed 2026-08-14 by renaming the slab to "Sign-in email"; there was no
@@ -86,6 +92,34 @@ class EmailChangeServiceTest {
 
         Mockito.verify(emailService, Mockito.never()).sendEmailChangeConfirmation(anyArg(), anyArg())
         Mockito.verify(tokenRepository, Mockito.never()).save(anyArg())
+    }
+
+    @Test
+    fun `the sixth wrong current password is rejected as account locked`() {
+        val user = stubUser()
+        repeat(5) {
+            assertThrows<UnauthorizedException> { service().requestChange(userId, request()) }
+        }
+
+        val ex = assertThrows<ApiException> { service().requestChange(userId, request()) }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, ex.status)
+        Mockito.verify(emailService, Mockito.never()).sendEmailChangeConfirmation(anyArg(), anyArg())
+        assertNotNull(user.lockedUntil)
+        assertEquals(0, user.failedLoginAttempts)
+    }
+
+    @Test
+    fun `a locked account rejects the correct current password after comparing it`() {
+        stubUser().lockedUntil = OffsetDateTime.now().plusMinutes(15)
+        Mockito.`when`(passwordEncoder.matches("correct-horse", "hashed")).thenReturn(true)
+
+        val ex = assertThrows<ApiException> { service().requestChange(userId, request()) }
+
+        assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
+        Mockito.verify(passwordEncoder).matches("correct-horse", "hashed")
+        Mockito.verifyNoInteractions(emailService)
     }
 
     @Test
@@ -207,6 +241,7 @@ class EmailChangeServiceTest {
         passwordEncoder,
         emailService,
         refreshTokenService,
+        LoginAttemptService(userRepository, AuthLockoutProperties()),
     )
 
     private fun request(newEmail: String = this.newEmail) =

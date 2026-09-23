@@ -16,6 +16,7 @@ import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
@@ -169,6 +170,13 @@ class PayoutAccountService(
                 code = ErrorCodes.PAYLOAD_TOO_LARGE,
                 message = "QR upload must be ≤ 8 MB",
                 field = "file",
+            )
+        }
+        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
+            throw ValidationException(
+                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                message = "Image dimensions exceed the supported maximum.",
+                field = "qr",
             )
         }
         val processed = scaleToLongEdgePng(bytes, MAX_QR_LONG_EDGE)

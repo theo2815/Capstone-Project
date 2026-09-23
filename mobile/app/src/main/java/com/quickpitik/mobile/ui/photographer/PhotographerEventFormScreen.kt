@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.remote.PhotographerEventDetailDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
@@ -86,22 +87,14 @@ fun PhotographerEventFormScreen(
         if (uri != null) coverUri = uri
     }
 
-    val dateValid = Regex("""\d{4}-\d{2}-\d{2}""").matches(date)
-    val priceValue = price.trim().toDoubleOrNull()
-    val priceValid = pricingMode == "free" || (price.trim().isNotEmpty() && priceValue != null && priceValue > 0)
+    val dateValid = isValidEventDate(date)
+    val priceValid = isValidEventPrice(pricingMode, price)
     val submitting = formState is EventFormState.Submitting
     val canSubmit = title.isNotBlank() && location.isNotBlank() && dateValid && priceValid && !submitting
 
     // Trio the form would send, and whether it differs from what it prefilled from.
-    val trioPrice = if (pricingMode == "free") "0" else price.trim()
-    val trioWm = if (pricingMode == "free") watermark else "platform"
-    val basePricing = reqPricing ?: seed?.pricingMode
-    val basePrice = reqPrice ?: seed?.pricePerPhoto ?: 0.0
-    val baseWm = reqWm ?: seed?.watermarkPolicy ?: "platform"
-    val trioChanged = seed == null ||
-        basePricing != pricingMode ||
-        baseWm != trioWm ||
-        basePrice != (trioPrice.toDoubleOrNull() ?: 0.0)
+    val trio = pricingTrio(pricingMode, price, watermark)
+    val trioChanged = trioChanged(seed, trio)
 
     val submitLabel = when {
         submitting -> "Saving…"
@@ -110,37 +103,10 @@ fun PhotographerEventFormScreen(
         else -> "Save changes"
     }
 
-    fun submit() {
-        val input = if (!isEdit) {
-            OwnedEventFormInput(
-                title = title.trim(),
-                date = date,
-                location = location.trim(),
-                organizerName = organizer.trim().ifBlank { null },
-                description = description.trim().ifBlank { null },
-                visibility = visibility,
-                pricingMode = pricingMode,
-                pricePerPhoto = trioPrice,
-                watermarkPolicy = trioWm,
-                coverUri = coverUri?.toString(),
-            )
-        } else {
-            // Diff against the prefill source (detail) — only changed fields.
-            OwnedEventFormInput(
-                title = title.trim().takeIf { it != seed?.name },
-                date = date.takeIf { it != seed?.date },
-                location = location.trim().takeIf { it != seed?.location },
-                organizerName = organizer.trim().takeIf { it != (seed?.organizerName ?: "") },
-                description = description.trim().takeIf { it != (seed?.description ?: "") },
-                visibility = visibility.takeIf { it != seed?.visibility },
-                pricingMode = pricingMode.takeIf { trioChanged },
-                pricePerPhoto = trioPrice.takeIf { trioChanged },
-                watermarkPolicy = trioWm.takeIf { trioChanged },
-                coverUri = coverUri?.toString(),
-            )
-        }
-        viewModel.submitEvent(eventId, input)
-    }
+    fun submit() = viewModel.submitEvent(
+        eventId,
+        ownedEventFormInput(seed, isEdit, title, date, location, organizer, description, visibility, trio, coverUri?.toString()),
+    )
 
     Column(
         modifier = Modifier
@@ -337,4 +303,78 @@ private fun RadioOption(text: String, selected: Boolean, enabled: Boolean, onCli
         Spacer(Modifier.width(4.dp))
         Text(text, style = Typography.bodyMedium, color = Ink)
     }
+}
+
+// Pure form logic, lifted out of the composable so the diff-PATCH and the
+// pricing-change detection are testable: a false negative silently drops a
+// price edit, a false positive sends a live event back into admin review.
+
+internal fun isValidEventDate(date: String): Boolean = Regex("""\d{4}-\d{2}-\d{2}""").matches(date)
+
+internal fun isValidEventPrice(pricingMode: String, price: String): Boolean {
+    val value = price.trim().toDoubleOrNull()
+    return pricingMode == "free" || (price.trim().isNotEmpty() && value != null && value > 0)
+}
+
+/** The pricing trio the form would send for its current fields. */
+internal data class PricingTrio(val pricingMode: String, val price: String, val watermarkPolicy: String)
+
+internal fun pricingTrio(pricingMode: String, price: String, watermark: String) = PricingTrio(
+    pricingMode = pricingMode,
+    price = if (pricingMode == "free") "0" else price.trim(),
+    watermarkPolicy = if (pricingMode == "free") watermark else "platform",
+)
+
+/** Whether [trio] differs from what the form prefilled from: the pending change when one exists, else the event. */
+internal fun trioChanged(seed: PhotographerEventDetailDto?, trio: PricingTrio): Boolean {
+    if (seed == null) return true
+    val requested = seed.pendingChange
+    val basePricing = requested?.get("pricingMode") as? String ?: seed.pricingMode
+    val basePrice = (requested?.get("pricePerPhoto") as? Number)?.toDouble() ?: seed.pricePerPhoto
+    val baseWm = requested?.get("watermarkPolicy") as? String ?: seed.watermarkPolicy
+    return basePricing != trio.pricingMode ||
+        baseWm != trio.watermarkPolicy ||
+        basePrice != (trio.price.toDoubleOrNull() ?: 0.0)
+}
+
+/** Create sends every field; edit diffs against the prefill source and sends only what changed. */
+internal fun ownedEventFormInput(
+    seed: PhotographerEventDetailDto?,
+    isEdit: Boolean,
+    title: String,
+    date: String,
+    location: String,
+    organizer: String,
+    description: String,
+    visibility: String,
+    trio: PricingTrio,
+    coverUri: String?,
+): OwnedEventFormInput {
+    if (!isEdit) {
+        return OwnedEventFormInput(
+            title = title.trim(),
+            date = date,
+            location = location.trim(),
+            organizerName = organizer.trim().ifBlank { null },
+            description = description.trim().ifBlank { null },
+            visibility = visibility,
+            pricingMode = trio.pricingMode,
+            pricePerPhoto = trio.price,
+            watermarkPolicy = trio.watermarkPolicy,
+            coverUri = coverUri,
+        )
+    }
+    val changed = trioChanged(seed, trio)
+    return OwnedEventFormInput(
+        title = title.trim().takeIf { it != seed?.name },
+        date = date.takeIf { it != seed?.date },
+        location = location.trim().takeIf { it != seed?.location },
+        organizerName = organizer.trim().takeIf { it != (seed?.organizerName ?: "") },
+        description = description.trim().takeIf { it != (seed?.description ?: "") },
+        visibility = visibility.takeIf { it != seed?.visibility },
+        pricingMode = trio.pricingMode.takeIf { changed },
+        pricePerPhoto = trio.price.takeIf { changed },
+        watermarkPolicy = trio.watermarkPolicy.takeIf { changed },
+        coverUri = coverUri,
+    )
 }

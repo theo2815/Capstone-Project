@@ -1,5 +1,6 @@
 "use client";
 
+import { captureAuthSession } from "@/lib/auth-session";
 import { useCallback, useEffect } from "react";
 import {
   fetchVerificationStatus,
@@ -63,19 +64,27 @@ export function applyVerification(response: VerificationSubmitResponse): void {
 // Fetch + apply once, guarded against overlap. Callable outside React — the
 // settings page calls it right after a successful Save so completeness updates
 // immediately instead of waiting for the next focus/poll.
-let inFlight = false;
-export async function syncVerificationNow(): Promise<void> {
-  if (inFlight) return;
-  inFlight = true;
-  try {
-    applyVerification(await fetchVerificationStatus());
-  } catch (err) {
-    // Network blip or 401-after-logout. Stay on cached state and try again on
-    // the next trigger — no toast, this is a background sync.
-    console.warn("[photographer/verification] sync failed", err);
-  } finally {
-    inFlight = false;
-  }
+let inFlight: { isCurrent: () => boolean; promise: Promise<void> } | null = null;
+export function syncVerificationNow(): Promise<void> {
+  const auth = useAuthStore.getState();
+  if (!auth.isAuthenticated || auth.user?.role !== "PHOTOGRAPHER") return Promise.resolve();
+  if (inFlight?.isCurrent()) return inFlight.promise;
+  const isCurrent = captureAuthSession();
+  const request = {
+    isCurrent,
+    promise: fetchVerificationStatus()
+      .then((response) => {
+        if (isCurrent()) applyVerification(response);
+      })
+      .catch((err) => {
+        if (isCurrent()) console.warn("[photographer/verification] sync failed", err);
+      })
+      .finally(() => {
+        if (inFlight === request) inFlight = null;
+      }),
+  };
+  inFlight = request;
+  return request.promise;
 }
 
 // Safety: only runs while the user is logged in AND has role PHOTOGRAPHER.
@@ -83,6 +92,7 @@ export async function syncVerificationNow(): Promise<void> {
 // safe for fresh accounts.
 export function usePhotographerVerificationSync(): void {
   const sessionUser = useAuthStore((s) => s.user);
+  const sessionVersion = useAuthStore((s) => s.sessionVersion);
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const isPhotographer = sessionUser?.role === "PHOTOGRAPHER";
 
@@ -107,12 +117,12 @@ export function usePhotographerVerificationSync(): void {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [isPhotographer, syncOnce]);
+  }, [isPhotographer, sessionVersion, syncOnce]);
 
   // Interval poll only while pending — no point pulling once approved.
   useEffect(() => {
     if (!isPhotographer || status !== "pending") return;
     const interval = setInterval(syncOnce, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [isPhotographer, status, syncOnce]);
+  }, [isPhotographer, sessionVersion, status, syncOnce]);
 }

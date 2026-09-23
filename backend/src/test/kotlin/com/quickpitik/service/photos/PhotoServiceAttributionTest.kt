@@ -1,5 +1,6 @@
 package com.quickpitik.service.photos
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.PublicProperties
@@ -26,6 +27,8 @@ import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
 import org.mockito.Mockito
 import org.springframework.data.domain.PageImpl
 import java.math.BigDecimal
@@ -96,9 +99,10 @@ class PhotoServiceAttributionTest {
         Mockito.verify(downloadGrantRepository, Mockito.never()).findOwnedPhotoIdsByUserAndPhotoIds(anyArg(), anyArg())
     }
 
-    @Test
-    fun `freeDownload resolves the original key and filename for a live photo of a free event`() {
-        stubEvent(EventPricingMode.FREE)
+    @ParameterizedTest
+    @EnumSource(EventStatus::class, names = ["ACTIVE", "COMPLETED"])
+    fun `freeDownload resolves the original key and filename for a live photo of a free event`(status: EventStatus) {
+        stubEvent(EventPricingMode.FREE, status)
         val photo = photo(UUID.randomUUID(), price = "0.00")
         Mockito.`when`(photoRepository.findById(photo.id)).thenReturn(Optional.of(photo))
 
@@ -139,7 +143,7 @@ class PhotoServiceAttributionTest {
         Mockito.verify(storageService, Mockito.never()).presignedDownloadUrl(anyArg(), anyArg(), anyArg())
     }
 
-    private fun stubEvent(mode: EventPricingMode) {
+    private fun stubEvent(mode: EventPricingMode, status: EventStatus = EventStatus.ACTIVE) {
         Mockito.`when`(eventRepository.findById(eventId)).thenReturn(
             Optional.of(
                 Event(
@@ -148,11 +152,53 @@ class PhotoServiceAttributionTest {
                     name = "Fun Run",
                     date = LocalDate.of(2026, 9, 1),
                     location = "Cebu City",
-                    status = EventStatus.ACTIVE,
+                    status = status,
                     pricingMode = mode,
                 ),
             ),
         )
+    }
+
+    @ParameterizedTest
+    @EnumSource(EventStatus::class, names = ["DRAFT", "ARCHIVED"])
+    fun `freeDownload refuses a draft or archived free event`(status: EventStatus) {
+        stubEvent(EventPricingMode.FREE, status)
+        val photo = photo(UUID.randomUUID(), price = "0.00")
+        Mockito.`when`(photoRepository.findById(photo.id)).thenReturn(Optional.of(photo))
+
+        val ex = assertFailsWith<NotFoundException> { service().freeDownload(eventId, photo.id) }
+
+        assertEquals(ErrorCodes.PHOTO_NOT_FOUND, ex.code)
+        Mockito.verifyNoInteractions(storageService)
+    }
+
+    @Test
+    fun `bib search strips wildcards and punctuation before the substring query`() {
+        stubPage(emptyList())
+
+        service().listForEvent(eventId, bib = "b- 18%_3\\a", pagination = pagination)
+
+        Mockito.verify(photoRepository).searchForEvent(anyArg(), anyArg(), eqArg("183A"), anyArg())
+        Mockito.verify(photoRepository, Mockito.never())
+            .findForEventNoBib(anyArg(), anyArg(), Mockito.anyLong(), anyArg())
+    }
+
+    @Test
+    fun `public thumbnails use derivatives or null and never the original`() {
+        val photos = listOf(
+            photo(null).also { it.thumbnailS3Key = null },
+            photo(null).also { it.thumbnailS3Key = null; it.watermarkS3Key = "watermark.jpg" },
+            photo(null).also { it.thumbnailS3Key = "thumbnail.jpg"; it.watermarkS3Key = "watermark.jpg" },
+        )
+        stubPage(photos)
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg()))
+            .thenAnswer { "https://storage/${it.getArgument<String>(0)}" }
+
+        val items = service().listForEvent(eventId, bib = null, pagination = pagination).items
+
+        assertEquals(listOf(null, "https://storage/watermark.jpg", "https://storage/thumbnail.jpg"), items.map { it.imageUrl })
+        assertTrue(items.all { it.cleanUrl == null && it.downloadUrl == null })
+        Mockito.verify(storageService, Mockito.never()).presignedGetUrl(eqArg(photos.first().s3Key), anyArg())
     }
 
     // Photographer coupons (V45): the card shows the code and the price with

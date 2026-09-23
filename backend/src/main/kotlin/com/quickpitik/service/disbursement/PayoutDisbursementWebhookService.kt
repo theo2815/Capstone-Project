@@ -8,7 +8,9 @@ import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.ProcessedWebhookEvent
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.ProcessedWebhookEventRepository
-import com.quickpitik.service.earnings.PayoutStatusRecorder
+import com.quickpitik.service.earnings.PayoutCycleTransitions
+import com.quickpitik.service.earnings.PayoutTransition
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -34,7 +36,8 @@ import java.time.OffsetDateTime
 class PayoutDisbursementWebhookService(
     private val payoutCycleRepository: PayoutCycleRepository,
     private val processedWebhookEventRepository: ProcessedWebhookEventRepository,
-    private val payoutStatusRecorder: PayoutStatusRecorder,
+    private val payoutCycleTransitions: PayoutCycleTransitions,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -59,7 +62,7 @@ class PayoutDisbursementWebhookService(
             return mapOf("ignored" to "no-type-or-transfer")
         }
 
-        val target = targetStatusFor(type)
+        val transition = transitionFor(type)
             ?: run {
                 log.info("PayMongo transfer webhook {}: unhandled type {} — acknowledged", eventId, type)
                 return mapOf("acknowledged" to type)
@@ -72,7 +75,7 @@ class PayoutDisbursementWebhookService(
         }
         if (cycle.provider != PROVIDER) throw retryLater("Transfer provider does not match the payout")
 
-        val result = applyTransition(cycle, target)
+        val result = applyTransition(cycle, transition)
         // Record the event as handled only once we've acted on it (transition
         // applied, or a definitive skip). Ignored/acknowledged no-ops above are
         // left unrecorded — re-delivering them just re-no-ops harmlessly.
@@ -80,33 +83,32 @@ class PayoutDisbursementWebhookService(
         return result
     }
 
-    private fun applyTransition(cycle: PayoutCycle, target: PayoutCycleStatus): Map<String, Any?> {
+    private fun applyTransition(cycle: PayoutCycle, transition: PayoutTransition): Map<String, Any?> {
         val from = cycle.status
+        val target = transition.to
         if (from == target || (from == PayoutCycleStatus.RETURNED && target == PayoutCycleStatus.PAID)) {
             // A confirmed return supersedes a successful event delivered later.
             return mapOf("skipped" to "already-applied", "cycle" to cycle.id, "from" to from.wire)
         }
-        val validFrom = when (target) {
-            PayoutCycleStatus.PAID, PayoutCycleStatus.FAILED -> from == PayoutCycleStatus.PROCESSING
-            PayoutCycleStatus.RETURNED -> from in setOf(PayoutCycleStatus.PROCESSING, PayoutCycleStatus.PAID)
-            else -> false
-        }
-        if (!validFrom) {
+        // The allowed-from set is the shared table's, but the response is not:
+        // an out-of-order delivery must ask PayMongo to redeliver (503), never
+        // hand it the admin surface's 409.
+        if (from !in transition.allowedFrom) {
+            // Redelivered forever until reconciled by hand — alert on this counter.
+            meterRegistry.counter("qp.payout.webhook.conflict", "from", from.wire, "to", target.wire).increment()
             log.warn(
                 "PayMongo transfer webhook: cycle {} is {}, cannot move to {} — reconciliation required",
                 cycle.id, from.wire, target.wire,
             )
             throw retryLater("Payout outcome conflicts with its current state; reconciliation required")
         }
-        cycle.status = target
         when (target) {
             PayoutCycleStatus.PAID -> cycle.settledAt = OffsetDateTime.now()
             PayoutCycleStatus.FAILED -> cycle.failedReason = "PayMongo reported the transfer failed"
             PayoutCycleStatus.RETURNED -> cycle.returnedAt = OffsetDateTime.now()
             else -> {}
         }
-        payoutCycleRepository.save(cycle)
-        payoutStatusRecorder.record(cycle.id, from, target, "provider", null, "paymongo webhook")
+        payoutCycleTransitions.apply(cycle, transition, actorId = null, reason = "paymongo webhook")
         return mapOf("ok" to true, "cycle" to cycle.id, "status" to target.wire)
     }
 
@@ -114,11 +116,11 @@ class PayoutDisbursementWebhookService(
         HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.INVALID_STATE_TRANSITION, message, retryAfterSeconds = 30,
     )
 
-    private fun targetStatusFor(type: String): PayoutCycleStatus? = when (type) {
+    private fun transitionFor(type: String): PayoutTransition? = when (type) {
         // ⚠ VERIFY-IN-TEST-MODE: confirm these exact event strings.
-        "transfer.outward.successful" -> PayoutCycleStatus.PAID
-        "transfer.outward.failed" -> PayoutCycleStatus.FAILED
-        "transfer.outward.returned" -> PayoutCycleStatus.RETURNED
+        "transfer.outward.successful" -> PayoutTransition.ProviderPaid
+        "transfer.outward.failed" -> PayoutTransition.ProviderFailed
+        "transfer.outward.returned" -> PayoutTransition.ProviderReturned
         else -> null
     }
 

@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  DisputesQueue,
   useOpenDisputesCount,
   useRefundedThisWeekTotal,
-} from "@/components/admin/disputes-queue";
+} from "@/hooks/use-admin-disputes";
+import { DisputesQueue } from "@/components/admin/disputes-queue";
 import { Kicker } from "@/components/ui/kicker";
 import { formatPrice } from "@/lib/utils";
 

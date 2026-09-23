@@ -124,7 +124,7 @@ class PaymongoCheckoutReconciler(
     private fun closeUnpaidIntent(intentId: String, paymentRef: String): Boolean {
         var intent = paymongoClient.retrievePaymentIntent(intentId)
         if (intent.data.attributes.status == "succeeded") {
-            webhookService.settleCheckoutSession(paymentRef, intent.data.attributes.payments.firstOrNull()?.id)
+            webhookService.settleCheckoutSession(paymentRef, intent.data.attributes.payments.paidPaymentId())
             return false
         }
         if (intent.data.attributes.status !in setOf("cancelled", "canceled")) {
@@ -145,7 +145,7 @@ class PaymongoCheckoutReconciler(
         if (intent.data.attributes.status == "succeeded") {
             webhookService.settlePaymentIntent(
                 intentId,
-                intent.data.attributes.payments.firstOrNull()?.id,
+                intent.data.attributes.payments.paidPaymentId(),
                 intent.data.attributes.metadata,
             )
             return
@@ -164,7 +164,7 @@ class PaymongoCheckoutReconciler(
     private fun reconcileGroup(payments: List<com.quickpitik.entity.Payment>) {
         val sessionId = payments.first().providerRef!!
 
-        val checkout = try {
+        var checkout = try {
             paymongoClient.retrieveCheckoutSession(sessionId)
         } catch (ex: Exception) {
             log.warn("Checkout reconciliation deferred for {}: {}", sessionId, ex.message)
@@ -180,11 +180,18 @@ class PaymongoCheckoutReconciler(
 
         if (!checkout.data.attributes.status.equals("expired", ignoreCase = true)) {
             try {
-                paymongoClient.expireCheckoutSession(sessionId)
+                checkout = paymongoClient.expireCheckoutSession(sessionId)
             } catch (ex: Exception) {
                 log.warn("Checkout expiry deferred for {}: {}", sessionId, ex.message)
                 return
             }
+        }
+        val finalPaid = checkout.data.attributes.payments.firstOrNull {
+            it.attributes.status.equals("paid", ignoreCase = true)
+        }
+        if (finalPaid != null) {
+            webhookService.settleCheckoutSession(sessionId, finalPaid.id)
+            return
         }
         markExpired(payments.map { it.orderId })
     }

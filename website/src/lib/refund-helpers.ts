@@ -17,7 +17,7 @@
 //    a "Refund declined" chip with the admin note.
 
 import type { RunnerDispute } from "@/lib/api-orders";
-import type { MockOrder } from "@/store/orders-store";
+import type { OrderSummary } from "@/types/order";
 
 export type RefundStatusKind =
   | "none"
@@ -37,7 +37,7 @@ export interface OrderRefundStatus {
 }
 
 export function getOrderRefundStatus(
-  order: MockOrder,
+  order: OrderSummary,
 ): OrderRefundStatus {
   const visible = (order.disputes ?? []).filter(
     (d) => d.status !== "withdrawn",
@@ -89,7 +89,7 @@ export function getOrderRefundStatus(
 // Photo IDs the runner can still dispute for this order. Excludes any photo
 // already attached to an open / escalated / resolved dispute. Denied and
 // withdrawn disputes leave the photo eligible for re-submission.
-export function getDisputableePhotoIds(order: MockOrder): string[] {
+export function getDisputableePhotoIds(order: OrderSummary): string[] {
   const blocked = new Set(
     (order.disputes ?? [])
       .filter((d) => d.status !== "denied" && d.status !== "withdrawn")
@@ -100,6 +100,6 @@ export function getDisputableePhotoIds(order: MockOrder): string[] {
 
 // Whether the runner can submit any new dispute for this order. False once
 // every photo is locked into an open / escalated / approved dispute.
-export function canSubmitRefund(order: MockOrder): boolean {
+export function canSubmitRefund(order: OrderSummary): boolean {
   return getDisputableePhotoIds(order).length > 0;
 }

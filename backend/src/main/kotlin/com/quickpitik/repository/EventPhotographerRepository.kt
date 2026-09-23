@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -60,19 +61,20 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
 
     // Admin sales-by-event — sums photographer-keep across all photographers
     // covering an event so the admin tile shows event-level (not per-row)
-    // numbers. impliedGmv is reconstructed from amount_kept / keep_rate
-    // service-side.
+    // numbers. list_gross is what the sold items listed at (order_items), so
+    // impliedGmv never depends on today's keep rate (M-16).
     @Query(
         value = """
         SELECT t.event_id AS event_id,
                COALESCE(SUM(CASE WHEN t.is_refund = false THEN t.amount_kept_php ELSE 0 END), 0)
-                   AS implied_cut,
-               COALESCE(-SUM(CASE WHEN t.is_refund = true  THEN t.amount_kept_php ELSE 0 END), 0)
-                   AS refunds,
+                   AS photographer_keep,
                COUNT(*) FILTER (WHERE t.is_refund = false) AS sales_count,
                COALESCE(SUM(CASE WHEN t.is_refund = false THEN t.discount_php ELSE 0 END), 0)
-                   AS discounts
+                   AS discounts,
+               COALESCE(SUM(CASE WHEN t.is_refund = false THEN oi.price_php_at_purchase ELSE 0 END), 0)
+                   AS list_gross
         FROM transactions t
+        LEFT JOIN order_items oi ON oi.order_id = t.order_id AND oi.photo_id = t.photo_id
         GROUP BY t.event_id
         """,
         nativeQuery = true,
@@ -109,4 +111,22 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId")
     fun adjustPhotoCount(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID,
         @Param("delta") delta: Int): Int
+
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_photographer (event_id, photographer_id, sales_count, revenue_kept_php)
+        VALUES (:eventId, :photographerId, GREATEST(0, :saleDelta), :keptDelta)
+        ON CONFLICT (event_id, photographer_id) DO UPDATE SET
+            sales_count = GREATEST(0, event_photographer.sales_count + :saleDelta),
+            revenue_kept_php = event_photographer.revenue_kept_php + :keptDelta
+        """,
+        nativeQuery = true,
+    )
+    fun adjustSalesCounters(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("saleDelta") saleDelta: Int,
+        @Param("keptDelta") keptDelta: BigDecimal,
+    ): Int
 }

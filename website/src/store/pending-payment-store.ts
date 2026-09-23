@@ -17,6 +17,8 @@ export interface PendingPayment {
   testUrl: string | null;
   email: string;
   total: number;
+  // Missing on records persisted before the checkout-wide response existed.
+  totalSource?: "checkout";
   itemCount: number;
   // Set when the user taps "I've paid" — flips the waiting copy to
   // "confirming" and starts the elapsed clock.

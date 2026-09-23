@@ -10,7 +10,7 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.AuthService
+import com.quickpitik.service.auth.AuthService
 import com.quickpitik.service.earnings.PayoutRequestService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired

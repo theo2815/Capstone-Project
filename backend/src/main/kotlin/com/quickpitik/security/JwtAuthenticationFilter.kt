@@ -3,6 +3,7 @@ package com.quickpitik.security
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.common.ApiError
 import com.quickpitik.common.ApiResponse
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.entity.Role
 import io.jsonwebtoken.JwtException
 import jakarta.servlet.FilterChain
@@ -76,7 +77,7 @@ class JwtAuthenticationFilter(
         response.status = HttpServletResponse.SC_UNAUTHORIZED
         objectMapper.writeValue(
             response.outputStream,
-            ApiResponse.failure(ApiError(code = "UNAUTHORIZED", message = "Invalid or expired token")),
+            ApiResponse.failure(ApiError(code = ErrorCodes.UNAUTHORIZED, message = "Invalid or expired token")),
         )
     }
 

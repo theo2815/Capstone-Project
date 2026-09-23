@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   purging: false,
   covered: [] as unknown[],
   activeRows: 1,
+  photoStatus: "live",
   get: vi.fn(),
   save: vi.fn(async () => 'downloaded'),
   download: vi.fn(),
@@ -37,15 +38,28 @@ vi.mock('@/hooks/use-photographer-data', () => ({
   } }),
   usePhotographerEventPhotos: (_id: string, { deleted }: { deleted: boolean }) => ({
     items: Array.from({ length: deleted ? mocks.rows : mocks.activeRows }, (_, i) => ({
-      id: `photo-${i}`, eventId: 'event-1', tone: 0, span: 'default', salesCount: 0,
+      status: mocks.photoStatus, id: `photo-${i}`, eventId: 'event-1', tone: 0, span: 'default', salesCount: 0,
       uploadedAt: '2026-09-07T00:00:00Z', deletedAt: deleted ? '2026-09-07T01:00:00Z' : null,
       deletionStartedAt: deleted && mocks.purging ? '2026-09-07T02:00:00Z' : null,
     })), total: deleted ? mocks.rows : 3028, isLoading: false, isFetchingNextPage: false,
     fetchNextPage: vi.fn(),
   }),
 }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.activeRows = 1; });
+afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.activeRows = 1; mocks.photoStatus = "live"; });
 describe('photographer photo management', () => {
+  it('labels processing photos until the refreshed library reports them live', () => {
+    mocks.photoStatus = 'processing';
+    const { rerender } = render(<EventPage />);
+    expect(screen.getByText('Processing')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open photo 1/ })).toHaveAccessibleName(/Processing/);
+    mocks.photoStatus = 'live';
+    rerender(<EventPage />);
+    expect(screen.queryByText('Processing')).toBeNull();
+    mocks.photoStatus = 'hidden';
+    rerender(<EventPage />);
+    expect(screen.queryByText('Processing')).toBeNull();
+  });
+
   it('sends single-photo and single-selection saves through the same existing save helper', async () => {
     mocks.get.mockResolvedValue({ url: 'https://storage.test/photo?attachment=signed' });
     render(<EventPage />);
