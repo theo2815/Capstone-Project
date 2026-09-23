@@ -278,13 +278,19 @@ class PhotoUploadWorkerTest {
     fun `direct upload PUTs the bytes to storage and commits, no multipart POST`() = runTest {
         signIn()
         val http = startDirectServer()
-        val id = enqueue(filePath = realJpeg().absolutePath)
+        val image = realJpeg()
+        val id = enqueue(filePath = image.absolutePath)
 
         val result = runWorker()
 
         assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(id)?.uploadStatus)
         assertTrue(result is ListenableWorker.Result.Success)
-        val paths = (1..http.requestCount).map { http.takeRequest().let { r -> "${r.method} ${r.path}" } }
+        val requests = (1..http.requestCount).map { http.takeRequest() }
+        val paths = requests.map { "${it.method} ${it.path}" }
+        val put = requests.single { it.method == "PUT" }
+        assertEquals("image/jpeg", put.getHeader("Content-Type"))
+        assertEquals(image.length().toString(), put.getHeader("Content-Length"))
+        assertEquals(null, put.getHeader("Authorization"))
         assertTrue(paths.any { it.startsWith("PUT /r2/") })
         assertTrue(paths.any { it.endsWith("/photos/direct/commit") })
         assertTrue(paths.none { it == "POST /api/v1/me/photographer/events/$EVENT/photos" })
