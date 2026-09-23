@@ -64,19 +64,54 @@ Regenerate the lock from `requirements-blur.in` with `pip-compile` in a clean Py
 Linux environment with `libpq-dev` installed. The two files are gitignored; the
 build checks their manifest hashes, label order, ONNX shape, and warm inference,
 then embeds them in a read-only image directory. No model mount is needed at
-runtime. The built image is the versioned artifact containing both files. Push
-it to the deployment registry and select its immutable image digest in Railway.
-Until that image is published, Railway cannot reproduce this build from a clean
-Git checkout: the audited inputs exist only in the trusted local workspace.
+runtime. The built image is the immutable artifact containing both files. The
+initial Railway blur service was deployed by CLI upload from an isolated staging
+directory: a committed `ai-api` source tree plus only the audited ONNX and
+`class_names.json` copied from the trusted local artifact directory. Use
+`railway up . --path-as-root --no-gitignore --service ai-api-blur` from that
+staging directory after linking it to the intended project. For example, from
+the monorepo root in PowerShell:
+
+```powershell
+$stage = Join-Path $env:TEMP 'quickpitik-blur-2026-08-14-dynamic'
+$projectId = '<isolated-project-id>'
+New-Item -ItemType Directory -Force $stage | Out-Null
+git archive --format=tar -o "$stage\source.tar" HEAD:ai-api
+tar -xf "$stage\source.tar" -C $stage
+Remove-Item -LiteralPath "$stage\source.tar"
+New-Item -ItemType Directory -Force "$stage\models\blur_classifier" | Out-Null
+Copy-Item ai-api/models/blur_classifier/blur_classifier.onnx "$stage/models/blur_classifier/"
+Copy-Item ai-api/models/blur_classifier/class_names.json "$stage/models/blur_classifier/"
+Set-Location $stage
+railway link --project $projectId --environment production --service ai-api-blur
+railway up . --path-as-root --no-gitignore --service ai-api-blur
+```
+
+Use a fresh empty staging directory for each release. The image build
+rejects wrong hashes, labels, shape, or warm inference; record its Railway
+image digest for each release. Keep `.env`, training data and checkpoints out
+of staging. A clean Git checkout alone cannot rebuild this image because the
+weights are ignored; the local audited pair is still required for a new build.
+
+The blur service's `.railway/railway.ts` sets the pre-deploy migration and
+`/api/v1/health/readyz` healthcheck. Run `npm ci --prefix .railway`, then
+`railway config plan` and `railway config apply` from the staging directory
+linked to the isolated blur project when those settings change. Check the plan
+for deletions before applying it. Its `preserve()` entries retain the existing
+Railway variables, including secrets; their values do not enter source control.
+With npm-installed Railway CLI 5.49.1 on Windows, set `$env:_` to its
+`@railway/cli/bin/railway.exe` path before `config plan`/`apply`; otherwise the
+SDK can misread the CLI version.
 
 Run `alembic upgrade head` as a separate pre-deploy job with `DATABASE_URL` set
 to a `postgresql+asyncpg://` URL for a PostgreSQL database that permits the
 `vector` extension. The existing Alembic chain creates that extension; abort
 the deploy if migrations fail. Provision the desktop key through the existing
 workflow in the gitignored `../docs/api-keys.md`, with only `blur:read` and
-`jobs:read`; do not run `scripts/seed_db.py` in staging or production. Set
-Railway `PORT` and `WORKERS` for the service (defaults: 8000 and 2). Probe
-`/api/v1/health/readyz` for public 200/503 readiness; `/api/v1/health` is
+`jobs:read`; the isolated Railway database uses that existing restricted
+desktop key. Do not run `scripts/seed_db.py` in staging or production. Railway
+injects `PORT`; set `WORKERS` for the service (1 on the initial blur service).
+Probe `/api/v1/health/readyz` for public 200/503 readiness; `/api/v1/health` is
 liveness, and `/api/v1/health/ready` remains authenticated and detailed.
 
 ### Production (GPU)
@@ -224,11 +259,11 @@ The 2-second drain is intentionally short — reverse proxies / load balancers a
 
 ## Model Loading Strategy
 
-**Weights are never baked into the image.** `models/*` is gitignored (only `manifest.json` is
-tracked), so a build from a clean checkout has nothing to copy — the Dockerfile ships
-`manifest.json` alone, and `docker-compose.prod.yml` mounts the real `./models` directory
-read-only at `/app/models` for the API and all four workers. Miss that mount and the container
-starts with no weights at all.
+**Full-profile weights are mounted; the dedicated blur image carries its audited pair.**
+`models/*` is gitignored (only `manifest.json` is tracked), so a clean Git checkout has no
+weights. `docker-compose.prod.yml` mounts the real `./models` directory read-only at
+`/app/models` for the full-profile API and workers. Miss that mount and the full-profile
+container starts with no weights at all.
 
 1. **InsightFace models** (RetinaFace + ArcFace): downloaded automatically on first use into
    `MODEL_DIR` — so with the mount in place they are already there, and with it missing every
