@@ -59,4 +59,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
     CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/api/v1/health/readyz" || exit 1
 
-CMD ["sh", "-c", "exec uvicorn src.main:create_app --factory --host 0.0.0.0 --port \"${PORT:-8000}\" --workers \"${WORKERS:-2}\" --timeout-graceful-shutdown 30"]
+CMD ["sh", "-c", "if [ -z \"${WORKERS:-}\" ]; then if [ \"$MODEL_PROFILE\" = blur ]; then WORKERS=1; else WORKERS=2; fi; fi; exec uvicorn src.main:create_app --factory --host 0.0.0.0 --port \"${PORT:-8000}\" --workers \"$WORKERS\" --timeout-graceful-shutdown 30"]

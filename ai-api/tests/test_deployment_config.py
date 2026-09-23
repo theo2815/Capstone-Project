@@ -14,10 +14,13 @@ nginx.conf <-> MAX_REQUEST_BODY pairing.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -52,12 +55,180 @@ APP_SERVICES = (
     {"MODEL_PROFILE": "blur", "BLUR_MAX_ACTIVE_REQUESTS": 3},
     {"MODEL_PROFILE": "blur", "BLUR_DECODE_CONCURRENCY": 3},
     {"MODEL_PROFILE": "blur", "INFERENCE_SUB_BATCH_SIZE": 51},
+    {"BLUR_INFERENCE_TIMEOUT_SECONDS": 0},
+    {"BLUR_STREAM_TIMEOUT_SECONDS": 0},
+    {"BLUR_REQUEST_TIMEOUT_SECONDS": 0},
 ])
 def test_invalid_upload_budget_fails_at_config_load(override):
     from src.config import Settings
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **override)
+
+
+def test_blur_request_timeout_uses_profile_deadline():
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False,
+                        BLUR_REQUEST_TIMEOUT_SECONDS=0.01)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+
+    @app.get("/api/v1/blur/slow")
+    async def slow():
+        await asyncio.sleep(0.08)
+        return {"ok": True}
+
+    response = TestClient(app).get("/api/v1/blur/slow")
+    assert response.status_code == 504
+    assert response.json()["error"]["code"] == "REQUEST_TIMEOUT"
+
+
+def test_blur_readiness_fails_while_timed_out_native_work_runs(monkeypatch):
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+    app.state.model_registry = SimpleNamespace(all_loaded=lambda: True, status=lambda: {})
+    app.state.redis = SimpleNamespace(ping=lambda: asyncio.sleep(0, result=True))
+
+    async def healthy_db():
+        return True
+
+    monkeypatch.setattr("src.db.session.check_db_health", healthy_db)
+    monkeypatch.setattr("src.utils.timeout.inference_healthy", lambda: False, raising=False)
+    assert TestClient(app).get("/api/v1/health/readyz").status_code == 503
+
+
+def test_blur_profile_defaults_to_one_process_and_two_cpu_threads():
+    from src.config import Settings
+
+    blur = Settings(_env_file=None, MODEL_PROFILE="blur")
+    full = Settings(_env_file=None, MODEL_PROFILE="all")
+    assert (blur.WORKERS, blur.ONNX_INTRA_OP_THREADS, blur.ONNX_INTER_OP_THREADS) == (1, 2, 1)
+    assert (full.WORKERS, full.ONNX_INTRA_OP_THREADS, full.ONNX_INTER_OP_THREADS) == (2, 6, 4)
+
+
+def test_timed_out_request_keeps_admission_until_native_work_exits():
+    from src.config import Settings
+    from src.main import create_app
+    from src.utils.timeout import run_with_timeout, start_timeout_executor
+
+    start_timeout_executor()
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False,
+                        BLUR_MAX_ACTIVE_REQUESTS=1, BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def native():
+        entered.set()
+        release.wait(5)
+
+    @app.get("/api/v1/blur/slow-native")
+    async def slow_native():
+        await asyncio.to_thread(run_with_timeout, native, timeout_seconds=5)
+        return {"ok": True}
+
+    @app.get("/api/v1/blur/probe")
+    async def probe():
+        return {"ok": True}
+
+    @asynccontextmanager
+    async def no_lifespan(_app):
+        yield
+
+    app.router.lifespan_context = no_lifespan
+    with TestClient(app, raise_server_exceptions=False) as client:
+        try:
+            started = time.monotonic()
+            assert client.get("/api/v1/blur/slow-native").status_code == 504
+            assert time.monotonic() - started < 0.5
+            assert entered.is_set()
+            blocked = client.get("/api/v1/blur/probe")
+            assert blocked.status_code == 503
+            assert blocked.json()["error"]["code"] == "BLUR_BUSY"
+        finally:
+            release.set()
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            if client.get("/api/v1/blur/probe").status_code == 200:
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("admission slot was not released after native work exited")
+
+
+async def test_slow_stream_upload_has_a_request_deadline():
+    import httpx
+
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False, DEBUG=True,
+                        BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+    app.state.model_registry = SimpleNamespace(get=lambda _name: None)
+
+    async def slow_body():
+        yield (
+            b'--x\r\nContent-Disposition: form-data; name="files"; filename="a.jpg"\r\n'
+            b'Content-Type: image/jpeg\r\n\r\n'
+        )
+        await asyncio.sleep(0.08)
+        yield b'not-an-image\r\n--x--\r\n'
+
+    start = time.monotonic()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/blur/classify/stream", content=slow_body(),
+            headers={"Content-Type": "multipart/form-data; boundary=x"},
+        )
+    assert response.status_code == 504
+    assert response.json()["error"]["code"] == "REQUEST_TIMEOUT"
+    assert time.monotonic() - start < 0.5
+
+
+@pytest.mark.asyncio
+async def test_stream_deadline_cancels_stalled_response_send():
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False,
+                        BLUR_STREAM_TIMEOUT_SECONDS=0.02)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    middleware = next(
+        item.cls for item in app.user_middleware
+        if item.cls.__name__ == "BlurTimeoutMiddleware"
+    )
+    cancelled = asyncio.Event()
+
+    async def stream(_scope, _receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        try:
+            await send({"type": "http.response.body", "body": b"line\n", "more_body": True})
+        finally:
+            cancelled.set()
+
+    async def blocked_send(message):
+        if message["type"] == "http.response.body":
+            await asyncio.Event().wait()
+
+    scope = {"type": "http", "path": "/api/v1/blur/classify/stream", "state": {}}
+    await asyncio.wait_for(
+        middleware(stream)(scope, lambda: None, blocked_send), timeout=0.2
+    )
+    assert cancelled.is_set()
 
 
 def _services(path: Path) -> dict:
@@ -223,7 +394,9 @@ class TestReadinessVisibility:
         from src.config import Settings
         from src.main import create_app
         from src.ml.registry import ModelRegistry
+        from src.utils.timeout import start_timeout_executor
 
+        start_timeout_executor()
         settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False)
         with patch("src.main.get_settings", return_value=settings):
             app = create_app()

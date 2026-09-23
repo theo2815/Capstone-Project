@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -12,6 +13,7 @@ import pytest
 from PIL import Image
 
 from src.ml.blur.classifier import BlurClassifier
+from src.utils.timeout import InferenceTimeoutError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -198,6 +200,55 @@ class TestBlurClassifierClassify:
             class_names_path=str(tmp_path / "nonexistent.json"),
         )
         assert clf.classify(_make_bgr_image()) is None
+
+    def test_single_native_call_has_a_deadline(self, classifier, monkeypatch):
+        from src import config
+        from src.utils.timeout import start_timeout_executor
+
+        start_timeout_executor()
+        release = threading.Event()
+        completed = threading.Event()
+        monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(
+            MODEL_PROFILE="blur", INFERENCE_TIMEOUT=0.02, INFERENCE_BATCH_TIMEOUT=0.02,
+            BLUR_INFERENCE_TIMEOUT_SECONDS=0.02,
+        ))
+        def slow_run(*_args):
+            release.wait(1)
+            completed.set()
+            return [np.array([[0.1, 0.05, 0.15, 0.7]], dtype=np.float32)]
+
+        classifier.session.run = slow_run
+        try:
+            with pytest.raises(InferenceTimeoutError):
+                classifier.classify(_make_bgr_image())
+        finally:
+            release.set()
+            assert completed.wait(1)
+
+    def test_static_batch_native_calls_have_a_deadline(self, classifier, monkeypatch):
+        from src import config
+        from src.utils.timeout import start_timeout_executor
+
+        start_timeout_executor()
+        release = threading.Event()
+        completed = threading.Event()
+        monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(
+            MODEL_PROFILE="blur", INFERENCE_TIMEOUT=0.02, INFERENCE_BATCH_TIMEOUT=0.02,
+            BLUR_INFERENCE_TIMEOUT_SECONDS=0.02,
+        ))
+        classifier._dynamic_batch = False
+        def slow_run(*_args):
+            release.wait(1)
+            completed.set()
+            return [np.array([[0.1, 0.05, 0.15, 0.7]], dtype=np.float32)]
+
+        classifier.session.run = slow_run
+        try:
+            with pytest.raises(InferenceTimeoutError):
+                classifier.classify_batch([_make_bgr_image()])
+        finally:
+            release.set()
+            assert completed.wait(1)
 
     def test_returns_dict_with_mock_session(self, classifier):
         """classify() returns proper dict with mock session."""

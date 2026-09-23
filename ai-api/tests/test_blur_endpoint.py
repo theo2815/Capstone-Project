@@ -316,6 +316,70 @@ class TestDecodeForClassify:
 
 
 class TestClassifyStream:
+    def test_deadline_marks_stream_incomplete_and_stops_next_sub_batch(
+        self, client, app, stub_registry, monkeypatch
+    ):
+        class SlowClassifier(_StubClassifier):
+            def classify_batch(self, images):
+                self.calls.append(len(images))
+                time.sleep(0.08)
+                return [dict(SHARP) for _ in images]
+
+        stub = stub_registry(SlowClassifier())
+        monkeypatch.setattr(app.state.settings, "INFERENCE_SUB_BATCH_SIZE", 1)
+        monkeypatch.setattr(app.state.settings, "BLUR_STREAM_TIMEOUT_SECONDS", 0.02)
+        response = client.post(
+            "/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()] * 2)
+        )
+        lines = _ndjson(response)
+        assert lines[-1]["_summary"] is True
+        assert lines[-1]["complete"] is False
+        assert lines[-1]["successful"] < 2
+        assert len(stub.calls) <= 1
+
+    def test_static_batch_stops_after_stream_deadline(
+        self, client, app, stub_registry, monkeypatch
+    ):
+        from src.utils.timeout import start_timeout_executor
+
+        start_timeout_executor()
+
+        class StaticClassifier(_StubClassifier):
+            _dynamic_batch = False
+
+            def classify(self, image):
+                self.calls.append(1)
+                time.sleep(0.5)
+                return dict(SHARP)
+
+            def classify_batch(self, images):
+                raise AssertionError("Static path must check the deadline between images")
+
+        stub = stub_registry(StaticClassifier())
+        monkeypatch.setattr(app.state.settings, "BLUR_STREAM_TIMEOUT_SECONDS", 0.3)
+        response = client.post(
+            "/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()] * 3)
+        )
+        assert _ndjson(response)[-1]["complete"] is False
+        assert len(stub.calls) == 1
+
+    def test_busy_classifier_returns_service_envelope(self, client, stub_registry):
+        from src.utils.timeout import InferenceBusyError
+
+        class BusyClassifier(_StubClassifier):
+            def classify(self, image):
+                raise InferenceBusyError("private state")
+
+        stub_registry(BusyClassifier())
+        response = client.post(
+            "/api/v1/blur/classify",
+            files={"file": ("photo.jpg", _make_jpeg_bytes(), "image/jpeg")},
+        )
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "1"
+        assert response.json()["error"]["code"] == "BLUR_BUSY"
+        assert "private state" not in response.text
+
     @pytest.mark.parametrize("route,model", [
         ("classify", "blur_classifier"), ("detect", "blur"),
     ])
@@ -922,3 +986,4 @@ async def test_blur_streams_share_decode_capacity_and_admission():
     assert peak == 2
     assert all(len(r.text.splitlines()) == 5 for r in responses if r.status_code == 200)
     assert next(r for r in responses if r.status_code == 503).json()["error"]["code"] == "BLUR_BUSY"
+    assert next(r for r in responses if r.status_code == 503).headers["Retry-After"] == "1"

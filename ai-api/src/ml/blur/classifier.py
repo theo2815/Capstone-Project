@@ -228,10 +228,15 @@ class BlurClassifier:
         input_tensor = self._preprocess(image)
         input_name = self.session.get_inputs()[0].name
 
-        from src.utils.timeout import run_direct
+        from src.config import get_settings
+        from src.utils.timeout import run_direct, run_with_timeout
 
-        outputs = run_direct(
+        settings = get_settings()
+        runner = run_with_timeout if settings.MODEL_PROFILE == "blur" else run_direct
+        outputs = runner(
             self.session.run, args=(None, {input_name: input_tensor}),
+            timeout_seconds=(settings.BLUR_INFERENCE_TIMEOUT_SECONDS
+                             if settings.MODEL_PROFILE == "blur" else 0),
         )
         return self._logits_to_result(outputs[0][0])
 
@@ -296,6 +301,8 @@ class BlurClassifier:
                 _s.INFERENCE_BATCH_TIMEOUT,
                 _s.INFERENCE_TIMEOUT + len(tensors) * 2,
             )
+            if _s.MODEL_PROFILE == "blur":
+                timeout = min(timeout, _s.BLUR_INFERENCE_TIMEOUT_SECONDS)
             batch_logits = run_with_timeout(
                 self.session.run,
                 args=(None, {input_name: batch_tensor}),
@@ -306,11 +313,17 @@ class BlurClassifier:
                 results[img_i] = self._logits_to_result(batch_logits[batch_i])
         else:
             # Static batch=1: run per-image (no noisy exception per sub-batch)
-            from src.utils.timeout import run_direct
+            from src.config import get_settings
+            from src.utils.timeout import run_direct, run_with_timeout
+
+            settings = get_settings()
+            runner = run_with_timeout if settings.MODEL_PROFILE == "blur" else run_direct
 
             for tensor, img_i in zip(tensors, valid_indices):
-                logits = run_direct(
+                logits = runner(
                     self.session.run, args=(None, {input_name: tensor}),
+                    timeout_seconds=(settings.BLUR_INFERENCE_TIMEOUT_SECONDS
+                                     if settings.MODEL_PROFILE == "blur" else 0),
                 )
                 results[img_i] = self._logits_to_result(logits[0][0])
 

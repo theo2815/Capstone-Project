@@ -47,10 +47,14 @@ async def _checks(request: Request) -> ReadinessResponse:
             return False
 
     db_ok, redis_ok = await asyncio.gather(db_healthy(), redis_healthy())
+    from src.utils.timeout import inference_healthy
 
     return ReadinessResponse(
         models_loaded=registry.all_loaded(),
         models=registry.status(),
+        inference=(
+            request.app.state.settings.MODEL_PROFILE != "blur" or inference_healthy()
+        ),
         database=db_ok,
         redis=redis_ok,
     )
@@ -60,7 +64,7 @@ async def _checks(request: Request) -> ReadinessResponse:
 async def public_readiness(request: Request) -> JSONResponse:
     """Minimal public readiness for the deployment probe."""
     checks = await _checks(request)
-    healthy = checks.models_loaded and checks.database and checks.redis
+    healthy = checks.models_loaded and checks.inference and checks.database and checks.redis
     return JSONResponse(
         status_code=200 if healthy else 503,
         content={"status": "ready" if healthy else "unavailable"},
@@ -74,7 +78,7 @@ async def readiness(
 ) -> APIResponse:
     """Authenticated detailed readiness."""
     checks = await _checks(request)
-    healthy = checks.models_loaded and checks.database and checks.redis
+    healthy = checks.models_loaded and checks.inference and checks.database and checks.redis
 
     response_data = APIResponse(
         success=healthy,

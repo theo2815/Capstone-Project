@@ -83,6 +83,9 @@ async def bounded_to_thread(
             finished.exception()  # Consume errors if the request was cancelled.
 
     task.add_done_callback(release)
+    from src.utils.timeout import track_request_work
+
+    track_request_work(task)
     return await asyncio.shield(task)
 
 

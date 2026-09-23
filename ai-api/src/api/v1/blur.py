@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from functools import partial
 from typing import Any
 
 import cv2
@@ -37,8 +38,30 @@ from src.utils.image_utils import (
     validate_stream_file,
 )
 from src.utils.logging import get_logger
+from src.utils.timeout import (
+    InferenceBusyError,
+    InferenceTimeoutError,
+    run_with_timeout,
+    tracked_to_thread,
+)
 
 logger = get_logger(__name__)
+
+
+def _inference_error_response(request: Request, error: Exception) -> JSONResponse:
+    busy = isinstance(error, InferenceBusyError)
+    return JSONResponse(
+        status_code=503 if busy else 504,
+        headers={"Retry-After": "1"} if busy else None,
+        content=APIResponse(
+            success=False,
+            request_id=getattr(request.state, "request_id", ""),
+            error={
+                "code": "BLUR_BUSY" if busy else "INFERENCE_TIMEOUT",
+                "message": "Blur service is busy" if busy else "Blur inference timed out",
+            },
+        ).model_dump(mode="json"),
+    )
 
 
 class BlurAuthRoute(APIRoute):
@@ -193,7 +216,17 @@ async def detect_blur(
             ).model_dump(mode="json"),
         )
 
-    result = await asyncio.to_thread(detector.detect, image, threshold_override=threshold)
+    try:
+        if settings.MODEL_PROFILE == "blur":
+            result = await tracked_to_thread(
+                run_with_timeout, detector.detect, args=(image,),
+                kwargs={"threshold_override": threshold},
+                timeout_seconds=settings.BLUR_INFERENCE_TIMEOUT_SECONDS,
+            )
+        else:
+            result = await tracked_to_thread(detector.detect, image, threshold_override=threshold)
+    except (InferenceBusyError, InferenceTimeoutError) as error:
+        return _inference_error_response(request, error)
     elapsed_ms = (time.perf_counter() - start) * 1000
     w, h = get_image_dimensions(image)
 
@@ -282,6 +315,7 @@ async def detect_blur_stream(
 
     total = len(files)
     start = time.perf_counter()
+    deadline = time.monotonic() + settings.BLUR_STREAM_TIMEOUT_SECONDS
     request_id = getattr(request.state, "request_id", "")
 
     async def generate():
@@ -298,10 +332,20 @@ async def detect_blur_stream(
                 # Rejected before decode: no semaphore slot, no worker thread.
                 return {"index": index, "filename": filename, "error": error}
             try:
+                if settings.MODEL_PROFILE == "blur":
+                    work = partial(
+                        run_with_timeout, _fast_decode_and_detect,
+                        args=(data, filename, index, detector, threshold,
+                              include_hf_ratio, request_id),
+                        timeout_seconds=settings.BLUR_INFERENCE_TIMEOUT_SECONDS,
+                    )
+                    return await bounded_to_thread(sem, work)
                 return await bounded_to_thread(
                     sem, _fast_decode_and_detect, data, filename, index, detector,
                     threshold, include_hf_ratio, request_id,
                 )
+            except (InferenceBusyError, InferenceTimeoutError):
+                raise
             except Exception as e:
                 logger.error(
                     "Stream image processing failed", error_type=type(e).__name__,
@@ -311,6 +355,8 @@ async def detect_blur_stream(
 
         try:
             for start_idx in range(0, total, settings.INFERENCE_SUB_BATCH_SIZE):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Blur stream deadline exceeded")
                 if await request.is_disconnected():
                     return
                 items = []
@@ -330,7 +376,9 @@ async def detect_blur_stream(
                 ]
                 try:
                     for coro in asyncio.as_completed(tasks):
-                        result = await coro
+                        result = await asyncio.wait_for(
+                            coro, timeout=max(0, deadline - time.monotonic())
+                        )
                         successful += "error" not in result
                         errors += "error" in result
                         yield json.dumps(result, separators=(",", ":")) + "\n"
@@ -462,7 +510,10 @@ async def classify_blur(
 
     if blur_type is not None:
         # Targeted detection mode
-        result = await asyncio.to_thread(classifier.detect_blur_type, image, blur_type.value)
+        try:
+            result = await tracked_to_thread(classifier.detect_blur_type, image, blur_type.value)
+        except (InferenceBusyError, InferenceTimeoutError) as error:
+            return _inference_error_response(request, error)
         if result is None:
             return JSONResponse(
                 status_code=503,
@@ -488,7 +539,10 @@ async def classify_blur(
         )
     else:
         # Full classification mode (backward compatible)
-        result = await asyncio.to_thread(classifier.classify, image)
+        try:
+            result = await tracked_to_thread(classifier.classify, image)
+        except (InferenceBusyError, InferenceTimeoutError) as error:
+            return _inference_error_response(request, error)
         if result is None:
             return JSONResponse(
                 status_code=503,
@@ -587,6 +641,7 @@ async def classify_blur_stream(
     decode_dim = settings.BLUR_CLASSIFY_DECODE_DIM
     min_conf = classifier.min_detection_confidence
     start = time.perf_counter()
+    deadline = time.monotonic() + settings.BLUR_STREAM_TIMEOUT_SECONDS
 
     def _build_line(index: int, filename: str, image, result, error: str | None) -> dict:
         if error is not None:
@@ -647,6 +702,8 @@ async def classify_blur_stream(
         # dynamic batch axis, and a per-image loop otherwise — identical results.
         try:
             for chunk_start in range(0, total, sub_batch):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Blur stream deadline exceeded")
                 if await request.is_disconnected():
                     return
                 sub = []
@@ -659,19 +716,37 @@ async def classify_blur_stream(
                         settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
                     )
                     sub.append((i, name, data, err))
-                images = await asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub])
+                images = await asyncio.wait_for(
+                    asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub]),
+                    timeout=max(0, deadline - time.monotonic()),
+                )
                 valid = [i for i, ((_, _, _, err), image) in enumerate(zip(sub, images))
                          if err is None and image is not None]
                 results = [None] * len(sub)
                 try:
                     if valid:
-                        inferred = await asyncio.to_thread(
-                            classifier.classify_batch, [images[i] for i in valid]
-                        )
+                        if getattr(classifier, "_dynamic_batch", True):
+                            inferred = await asyncio.wait_for(
+                                tracked_to_thread(
+                                    classifier.classify_batch, [images[i] for i in valid]
+                                ),
+                                timeout=max(0, deadline - time.monotonic()),
+                            )
+                        else:
+                            inferred = []
+                            for i in valid:
+                                if await request.is_disconnected():
+                                    return
+                                inferred.append(await asyncio.wait_for(
+                                    tracked_to_thread(classifier.classify, images[i]),
+                                    timeout=max(0, deadline - time.monotonic()),
+                                ))
                         if len(inferred) != len(valid):
                             raise ValueError("Classifier result count mismatch")
                         for i, result in zip(valid, inferred):
                             results[i] = result
+                except (InferenceBusyError, InferenceTimeoutError, TimeoutError):
+                    raise
                 except Exception as e:
                     # Headers are already sent; preserve the stream's indexed rows.
                     logger.error(

@@ -122,6 +122,18 @@ injects `PORT`; set `WORKERS` for the service (1 on the initial blur service).
 Probe `/api/v1/health/readyz` for public 200/503 readiness; `/api/v1/health` is
 liveness, and `/api/v1/health/ready` remains authenticated and detailed.
 
+The blur profile defaults to one API process and 2/1 ONNX intra/inter threads;
+override only after measuring under the actual CPU quota. `src/config.py` owns
+the request, stream, and per-inference deadlines. Blur request admission is
+bounded before multipart parsing; native inference has two process-wide slots
+and **zero queue wait**. Exhaustion returns 503 `BLUR_BUSY` with `Retry-After: 1`;
+each extra `WORKERS` process multiplies the two slots and ONNX thread budget.
+The separate per-key rate limit uses 429. A timed-out native call may still run:
+its slot stays occupied, and readiness is 503 until it exits. A stream deadline
+ends with `complete: false`; clients must retry unaccounted indices. Railway's
+deployment health check is not continuous monitoring, so an instance stuck in
+native code needs an operational restart after it becomes unready.
+
 ### Production (GPU)
 ```bash
 docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up --build -d

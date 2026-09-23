@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from threading import BoundedSemaphore
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -24,6 +25,9 @@ async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
     settings = get_settings()
     app.state.settings = settings
+    from src.utils.timeout import shutdown_timeout_executor, start_timeout_executor
+
+    start_timeout_executor()
 
     # Prevent DEBUG mode in production
     if settings.DEBUG and settings.ENVIRONMENT == "production":
@@ -76,7 +80,10 @@ async def lifespan(app: FastAPI):
 
     logger.info("Shutting down, waiting for in-flight requests to drain...")
     await asyncio.sleep(2)  # Brief grace period for request completion
-    await registry.unload_all()
+    if shutdown_timeout_executor():
+        await registry.unload_all()
+    else:
+        logger.warning("Native inference still running during shutdown; skipping model unload")
     if app.state.redis:
         await app.state.redis.aclose()
     await close_db()
@@ -103,7 +110,7 @@ def create_app() -> FastAPI:
 
             try:
                 return await asyncio.wait_for(call_next(request), timeout=60.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return JSONResponse(
                     status_code=504,
                     content={
@@ -115,6 +122,76 @@ def create_app() -> FastAPI:
                         },
                     },
                 )
+
+    class BlurTimeoutMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            path = scope.get("path", "")
+            if (
+                scope["type"] != "http"
+                or not path.startswith("/api/v1/blur/")
+            ):
+                await self.app(scope, receive, send)
+                return
+
+            started = timed_out = False
+            headers_sent = asyncio.Event()
+
+            async def tracked_send(message):
+                nonlocal started
+                if timed_out:
+                    return
+                if message["type"] == "http.response.start":
+                    started = True
+                await send(message)
+                if started:
+                    headers_sent.set()
+
+            task = asyncio.create_task(self.app(scope, receive, tracked_send))
+            header_waiter = (
+                asyncio.create_task(headers_sent.wait()) if path.endswith("/stream") else None
+            )
+            watched = {task, header_waiter} if header_waiter else {task}
+            done, _ = await asyncio.wait(
+                watched, timeout=settings.BLUR_REQUEST_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if header_waiter:
+                header_waiter.cancel()
+            if header_waiter in done:
+                # Headers are already sent; abort a stalled stream rather than
+                # trying to send a second response over the same socket.
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        task, timeout=settings.BLUR_STREAM_TIMEOUT_SECONDS
+                    )
+                return
+            if done:
+                await task
+                return
+
+            timed_out = True
+            task.cancel()
+
+            def consume(finished):
+                if not finished.cancelled():
+                    finished.exception()
+
+            task.add_done_callback(consume)
+            if not started:
+                await JSONResponse(
+                    status_code=504,
+                    content={
+                        "success": False,
+                        "request_id": scope.get("state", {}).get("request_id", ""),
+                        "error": {
+                            "code": "REQUEST_TIMEOUT",
+                            "message": "Request processing timed out",
+                        },
+                    },
+                )(scope, receive, send)
 
     # SEC-11: Security response headers (pure ASGI — no response body buffering)
     _security_headers = [
@@ -159,7 +236,7 @@ def create_app() -> FastAPI:
 
     _max_body = settings.MAX_REQUEST_BODY
     _blur_body = settings.BLUR_MAX_REQUEST_BODY
-    _blur_admission = asyncio.Semaphore(settings.BLUR_MAX_ACTIVE_REQUESTS)
+    _blur_admission = BoundedSemaphore(settings.BLUR_MAX_ACTIVE_REQUESTS)
     app.state.blur_decode_semaphore = asyncio.Semaphore(settings.BLUR_DECODE_CONCURRENCY)
 
     class BodyTooLarge(Exception):
@@ -181,17 +258,21 @@ def create_app() -> FastAPI:
             limit = _blur_body if blur_request else _max_body
             acquired = False
             if blur_request:
-                try:
-                    await asyncio.wait_for(_blur_admission.acquire(), timeout=0.01)
-                    acquired = True
-                except asyncio.TimeoutError:
+                acquired = _blur_admission.acquire(blocking=False)
+                if not acquired:
                     response = JSONResponse(status_code=503, content={
                         "success": False,
                         "request_id": scope.get("state", {}).get("request_id", ""),
                         "error": {"code": "BLUR_BUSY", "message": "Blur service is busy"},
                     })
+                    response.headers["Retry-After"] = "1"
                     await response(scope, receive, send)
                     return
+
+            from src.utils.timeout import RequestWork, request_work
+
+            tracker = RequestWork(_blur_admission.release) if acquired else None
+            token = request_work.set(tracker)
 
             async def reject():
                 response = JSONResponse(status_code=413, content={
@@ -252,12 +333,15 @@ def create_app() -> FastAPI:
                         raise
                     await reject()
             finally:
+                request_work.reset(token)
                 if acquired:
-                    _blur_admission.release()
+                    tracker.close()
 
     # Middleware (order matters: last added = outermost = first on request)
     app.add_middleware(RateLimitHeadersMiddleware)
-    app.add_middleware(TimeoutMiddleware)
+    app.add_middleware(
+        BlurTimeoutMiddleware if settings.MODEL_PROFILE == "blur" else TimeoutMiddleware
+    )
     # Inside RequestIDMiddleware so the 413 envelope carries a real request_id,
     # still outside routing so it rejects before multipart is parsed.
     app.add_middleware(BodySizeLimitMiddleware)

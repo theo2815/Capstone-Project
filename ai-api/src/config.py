@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     WORKERS: int = Field(default=2, gt=0)
     READINESS_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0)
+    BLUR_REQUEST_TIMEOUT_SECONDS: float = Field(default=60, gt=0)
     # Total request body ceiling, enforced by BodySizeLimitMiddleware in main.py.
     # Until 2026-08-14 this was defined and never read, so nothing in the app
     # bounded body size and nginx's client_max_body_size was the only guard.
@@ -94,6 +95,8 @@ class Settings(BaseSettings):
     # Inference
     INFERENCE_TIMEOUT: int = 120  # Per-image inference timeout in seconds
     INFERENCE_BATCH_TIMEOUT: int = 300  # Max seconds for any single batch ONNX call
+    BLUR_INFERENCE_TIMEOUT_SECONDS: float = Field(default=30, gt=0, le=59)
+    BLUR_STREAM_TIMEOUT_SECONDS: float = Field(default=120, gt=0)
     INFERENCE_SUB_BATCH_SIZE: int = Field(default=50, gt=0)
     # ONNX Runtime thread pools for the blur classifier session. On CPU hosts keep
     # WORKERS x ONNX_INTRA_OP_THREADS <= physical cores to avoid oversubscription
@@ -191,6 +194,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def check_upload_budgets(self):
+        if self.MODEL_PROFILE == "blur":
+            # One API process on the initial 2-vCPU blur service; explicit env
+            # values remain available after load measurements justify tuning.
+            for name, value in (("WORKERS", 1), ("ONNX_INTRA_OP_THREADS", 2),
+                                ("ONNX_INTER_OP_THREADS", 1)):
+                if name not in self.model_fields_set:
+                    setattr(self, name, value)
         if self.MAX_REQUEST_BODY <= self.MAX_FILE_SIZE:
             raise ValueError("MAX_REQUEST_BODY must exceed MAX_FILE_SIZE")
         if self.BLUR_MAX_REQUEST_BODY <= self.MAX_FILE_SIZE:
