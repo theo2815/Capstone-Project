@@ -9,6 +9,7 @@ export default defineRailway(() => {
     preDeploy: "python -m alembic upgrade head",
     env: {
       ALLOWED_ORIGINS: preserve(),
+      BLUR_ASYNC_ENABLED: "false",
       DATABASE_URL: preserve(),
       DEBUG: preserve(),
       ENVIRONMENT: preserve(),

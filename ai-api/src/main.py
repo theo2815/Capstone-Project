@@ -238,6 +238,11 @@ def create_app() -> FastAPI:
     _blur_body = settings.BLUR_MAX_REQUEST_BODY
     _blur_admission = BoundedSemaphore(settings.BLUR_MAX_ACTIVE_REQUESTS)
     app.state.blur_decode_semaphore = asyncio.Semaphore(settings.BLUR_DECODE_CONCURRENCY)
+    _blur_async_paths = {
+        f"/api/v1/blur/{mode}/{size}"
+        for mode in ("detect", "classify")
+        for size in ("batch", "mega")
+    }
 
     class BodyTooLarge(Exception):
         pass
@@ -249,6 +254,15 @@ def create_app() -> FastAPI:
         async def __call__(self, scope, receive, send):
             if scope["type"] != "http":
                 await self.app(scope, receive, send)
+                return
+
+            if (not settings.BLUR_ASYNC_ENABLED and scope.get("method") == "POST"
+                    and scope.get("path") in _blur_async_paths):
+                await JSONResponse(status_code=503, content={
+                    "success": False,
+                    "request_id": scope.get("state", {}).get("request_id", ""),
+                    "error": {"code": "BLUR_ASYNC_DISABLED", "message": "Async blur is unavailable"},
+                })(scope, receive, send)
                 return
 
             blur_request = (

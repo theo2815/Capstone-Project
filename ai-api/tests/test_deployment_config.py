@@ -15,6 +15,7 @@ nginx.conf <-> MAX_REQUEST_BODY pairing.
 from __future__ import annotations
 
 import asyncio
+import io
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from PIL import Image
 from pydantic import ValidationError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -660,6 +662,58 @@ def test_blur_profile_omits_face_and_bib_routes():
     assert client.get("/api/v1/health").status_code == 200
     assert client.post("/api/v1/faces/detect").status_code == 404
     assert client.post("/api/v1/bibs/recognize").status_code == 404
+
+
+@pytest.mark.parametrize("path", (
+    "/api/v1/blur/detect/batch",
+    "/api/v1/blur/classify/batch",
+    "/api/v1/blur/detect/mega",
+    "/api/v1/blur/classify/mega",
+))
+def test_disabled_blur_async_rejects_before_multipart_or_job_creation(path):
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", BLUR_ASYNC_ENABLED=False,
+                        METRICS_ENABLED=False, DEBUG=True)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+
+    with patch("src.api.v1.blur.create_batch_job", side_effect=AssertionError("job created")), \
+         patch("src.api.v1.blur.store_blobs_and_get_paths", side_effect=AssertionError("blob written")), \
+         patch("src.api.v1.blur.dispatch_mega_batch", side_effect=AssertionError("task enqueued")):
+        client = TestClient(app)
+        response = client.post(
+            path,
+            content=b"malformed multipart body",
+            headers={"Content-Type": "multipart/form-data; boundary=missing"},
+        )
+        image = io.BytesIO()
+        Image.new("RGB", (16, 16)).save(image, format="JPEG")
+        valid_response = client.post(path, files={"files": ("photo.jpg", image.getvalue(), "image/jpeg")})
+
+    for rejected in (response, valid_response):
+        assert rejected.status_code == 503
+        assert rejected.json()["error"]["code"] == "BLUR_ASYNC_DISABLED"
+        assert rejected.json()["request_id"] == rejected.headers["X-Request-ID"]
+
+
+def test_blur_async_is_available_by_default():
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False)
+    assert settings.BLUR_ASYNC_ENABLED
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+    response = TestClient(app).post(
+        "/api/v1/blur/classify/batch",
+        content=b"malformed multipart body",
+        headers={"Content-Type": "multipart/form-data; boundary=missing"},
+    )
+    assert response.status_code == 400
 
 
 def test_blur_profile_does_not_import_face_or_bib_routes():

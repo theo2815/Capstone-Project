@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     GPU_DEVICE: int = 0
 
     # Blur Detection
+    BLUR_ASYNC_ENABLED: bool = True
     BLUR_THRESHOLD: float = Field(default=100.0, ge=1.0, le=10000.0)
     # One decode scale for classical single, stream, and worker scores.
     # Re-evaluate labeled images before changing it; BLUR_THRESHOLD is scale-sensitive.

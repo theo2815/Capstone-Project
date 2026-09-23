@@ -339,6 +339,36 @@ class TestDecodeForClassify:
 
 
 class TestClassifyStream:
+    def test_desktop_single_and_stream_work_with_async_disabled(
+        self, client, app, stub_registry, monkeypatch
+    ):
+        class DesktopClassifier(_StubClassifier):
+            def classify(self, image):
+                return {**SHARP, "probabilities": {
+                    "sharp": 0.97, "motion_blurred": 0.03,
+                    "defocused_blurred": 0.0, "defocused_object_portrait": 0.0,
+                }}
+
+        stub_registry(DesktopClassifier())
+        monkeypatch.setattr(app.state.settings, "BLUR_ASYNC_ENABLED", False)
+        image = _make_jpeg_bytes()
+
+        single = client.post(
+            "/api/v1/blur/classify",
+            files={"file": ("photo.jpg", image, "image/jpeg")},
+        )
+        stream = client.post(
+            "/api/v1/blur/classify/stream", files=_files([image])
+        )
+
+        assert single.status_code == 200
+        assert single.json()["data"]["predicted_class"] == "sharp"
+        assert stream.status_code == 200
+        lines = _ndjson(stream)
+        assert lines[0]["predicted_class"] == "sharp"
+        assert lines[1]["_summary"] is True
+        assert lines[1]["complete"] is True
+
     def test_deadline_marks_stream_incomplete_and_stops_next_sub_batch(
         self, client, app, stub_registry, monkeypatch
     ):

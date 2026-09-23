@@ -60,6 +60,27 @@ For a smaller CPU blur image, supply the audited ONNX and ordered labels under
 `docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur:2026-08-14-dynamic .` and run it
 with `MODEL_PROFILE=blur`. This profile installs the pinned
 `requirements-blur.lock` and loads only blur models; face and bib routes return 404.
+For the initial dedicated Railway blur launch, `.railway/railway.ts` sets
+`BLUR_ASYNC_ENABLED=false`. The shared all-model service keeps the default
+`true`. The desktop calls `/api/v1/blur/classify/stream` and falls back to
+`/api/v1/blur/classify`; both remain available.
+
+**Initial Railway blur launch checklist:**
+- Link the staging directory to the isolated blur project, then inspect
+  `railway config plan`: it must name `quickpitik-ai-api-blur` and change only
+  `ai-api-blur.BLUR_ASYNC_ENABLED`. Abort if it names the backend project.
+- Verify `BLUR_ASYNC_ENABLED=false` on `ai-api-blur` before exposing it. The
+  following POST routes return 503 `BLUR_ASYNC_DISABLED` before multipart parsing:
+  `/api/v1/blur/detect/batch`, `/api/v1/blur/classify/batch`,
+  `/api/v1/blur/detect/mega`, `/api/v1/blur/classify/mega`.
+- Deploy the API with PostgreSQL and Redis for keys, jobs and rate limiting;
+  omit the Celery worker, beat scheduler and shared blob volume. Public
+  `/api/v1/health/readyz` checks the dependencies needed for synchronous blur;
+  it does not certify async job processing.
+- Keep R10/R11 async storage, dispatch and replay guarantees open. Complete
+  Task 10B and its cross-service tests before setting the switch to `true`
+  on this Railway service.
+
 The initial one-worker blur budget admits two uploads per process, each at most
 128 MiB total, 25 MiB per file and 500 files per stream. Header dimensions
 must fit 12,000px per edge and 24 megapixels; at most two images decode at
