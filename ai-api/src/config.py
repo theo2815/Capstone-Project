@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings
 
@@ -10,7 +11,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "QuickPitik API"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
-    METRICS_ENABLED: bool = True  # off in dev — instrumentator 7.1.0 crashes on FastAPI 0.141 nested routers
+    METRICS_ENABLED: bool = True
     LOG_LEVEL: str = "INFO"
     ENVIRONMENT: str = "development"
     SQL_ECHO: bool = False
@@ -53,6 +54,7 @@ class Settings(BaseSettings):
 
     # ML Models
     MODEL_DIR: str = "./models"
+    MODEL_PROFILE: Literal["all", "blur"] = "all"
     USE_GPU: bool = False
     GPU_DEVICE: int = 0
 

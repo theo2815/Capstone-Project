@@ -1,5 +1,6 @@
 # ---- Stage 1: Python dependencies ----
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS builder
+ARG MODEL_PROFILE=all
 
 WORKDIR /build
 
@@ -12,11 +13,18 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libpq-dev && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir --prefix=/install .
+COPY pyproject.toml requirements-blur.lock ./
+RUN case "$MODEL_PROFILE" in \
+      blur) pip install --no-cache-dir --prefix=/install -r requirements-blur.lock ;; \
+      all) pip install --no-cache-dir --timeout 120 --prefix=/install . ;; \
+      *) echo "Invalid MODEL_PROFILE: $MODEL_PROFILE" >&2; exit 1 ;; \
+    esac
 
 # ---- Stage 2: Runtime ----
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS runtime
+ARG MODEL_PROFILE=all
+ENV MODEL_PROFILE=$MODEL_PROFILE
+ENV HOME=/app
 
 # libpq5 is the runtime half of the psycopg2 source build above — the compiled
 # extension links against it, so importing psycopg2 fails without it.

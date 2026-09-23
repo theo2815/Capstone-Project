@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.api.v1.router import v1_router
+from src.api.v1.router import make_v1_router
 from src.config import get_settings
 from src.db.session import close_db, init_db
 from src.middleware.cors import setup_cors
@@ -235,7 +235,7 @@ def create_app() -> FastAPI:
         )
 
     # API routes
-    app.include_router(v1_router, prefix="/api/v1")
+    app.include_router(make_v1_router(settings.MODEL_PROFILE), prefix="/api/v1")
 
     # Prometheus metrics — auto-instruments all endpoints
     # SEC-4: Metrics exposed at /metrics, protected by API key in production

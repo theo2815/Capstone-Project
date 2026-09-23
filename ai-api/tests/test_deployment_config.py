@@ -16,10 +16,14 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROD_COMPOSE = PROJECT_ROOT / "docker-compose.prod.yml"
@@ -199,6 +203,69 @@ class TestReadinessVisibility:
             redis=True,
         ).model_dump()
         assert payload["models"]["blur_classifier"] is False
+
+
+def test_metrics_enabled_health_request_works_without_lifespan():
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(METRICS_ENABLED=True)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+    assert TestClient(app).get("/api/v1/health").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_blur_profile_loads_only_blur_models(monkeypatch):
+    from src.ml.registry import ModelRegistry
+
+    registry = ModelRegistry()
+    called = []
+    for name in ("blur", "blur_classifier", "face", "bib_detector", "bib_ocr"):
+        monkeypatch.setattr(
+            registry, f"_load_{name}", lambda _settings, n=name: called.append(n) or object()
+        )
+    monkeypatch.setattr(
+        registry, "_preimport_libs", lambda: pytest.fail("full ML libraries imported")
+    )
+
+    await registry.load_all(SimpleNamespace(MODEL_PROFILE="blur"))
+
+    assert set(called) == {"blur", "blur_classifier"}
+    assert set(registry.status()) == {"blur", "blur_classifier"}
+    assert registry.all_loaded()
+    registry._models["blur_classifier"] = None
+    assert not registry.all_loaded()
+
+
+def test_blur_profile_omits_face_and_bib_routes():
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=True)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+    client = TestClient(app)
+    assert client.get("/api/v1/health").status_code == 200
+    assert client.post("/api/v1/faces/detect").status_code == 404
+    assert client.post("/api/v1/bibs/recognize").status_code == 404
+
+
+def test_blur_profile_does_not_import_face_or_bib_routes():
+    code = (
+        "import os, sys\n"
+        "os.environ['MODEL_PROFILE'] = 'blur'\n"
+        "from src.main import create_app\n"
+        "create_app()\n"
+        "assert 'src.api.v1.faces' not in sys.modules\n"
+        "assert 'src.api.v1.bibs' not in sys.modules\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
 
 
 class TestDockerBuildContext:

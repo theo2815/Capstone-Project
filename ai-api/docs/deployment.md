@@ -54,6 +54,14 @@ standalone stack — API, four per-queue Celery workers, db, redis, nginx and ce
 publishes on `127.0.0.1:8000` only; public traffic arrives through nginx on 80/443, so the
 proxy's rate limit and `client_max_body_size` cannot be bypassed.
 
+The Dockerfile defaults to `MODEL_PROFILE=all` and installs the full application dependencies.
+For a smaller CPU blur image, build with `docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur .`
+and run it with `MODEL_PROFILE=blur`. This profile installs the pinned
+`requirements-blur.lock` and loads only blur models; face and bib routes return 404.
+Regenerate the lock from `requirements-blur.in` with `pip-compile` in a clean Python 3.12
+Linux environment with `libpq-dev` installed. The blur image still needs the model files
+mounted at `/app/models`; artifact delivery and readiness are Task 2 of the Railway plan.
+
 ### Production (GPU)
 ```bash
 docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up --build -d

@@ -13,15 +13,18 @@ class ModelRegistry:
 
     def __init__(self) -> None:
         self._models: dict[str, Any] = {}
+        self._profile = "all"
 
     async def load_all(self, settings: Any) -> None:
         """Load all ML models during FastAPI lifespan startup."""
         logger.info("Loading ML models...")
+        self._profile = settings.MODEL_PROFILE
 
         # Pre-import heavy libraries in the main thread to avoid Windows DLL
         # race conditions when multiple threads try to load torch/shm.dll
         # concurrently via asyncio.to_thread.
-        await asyncio.to_thread(self._preimport_libs)
+        if self._profile == "all":
+            await asyncio.to_thread(self._preimport_libs)
 
         loaders = {
             "blur": self._load_blur,
@@ -30,6 +33,8 @@ class ModelRegistry:
             "bib_detector": self._load_bib_detector,
             "bib_ocr": self._load_bib_ocr,
         }
+        if self._profile == "blur":
+            loaders = {name: loaders[name] for name in ("blur", "blur_classifier")}
 
         results = await asyncio.gather(
             *[asyncio.to_thread(loader, settings) for loader in loaders.values()],
@@ -57,7 +62,11 @@ class ModelRegistry:
 
         bib_detector and blur_classifier are optional (require trained models).
         """
-        required = {"blur", "face", "bib_ocr"}
+        required = (
+            {"blur", "blur_classifier"}
+            if self._profile == "blur"
+            else {"blur", "face", "bib_ocr"}
+        )
         return all(self.is_loaded(name) for name in required)
 
     def status(self) -> dict[str, bool]:
