@@ -93,7 +93,7 @@ The architecture implementation and its local regression workstream are closed a
 | --- | --- |
 | Real PayMongo sandbox payment and webhook confirmation | Deferred at the user's request; unverified |
 | Actual receipt email and full-resolution/signed downloads | Open; not established by fixture receipt checks |
-| Physical Android/iOS browsers and FB/Instagram/Messenger webviews | Open; Google fallback and native QR save/share require device acceptance |
+| Physical Android/iOS browsers and FB/Instagram/Messenger webviews | Evidence remains incomplete; S9 is accepted and excluded from the TASK 11 release gate. No physical-device acceptance is claimed. |
 | Additional proposed test scenarios and coverage reporting | Not claimed by this baseline; assess separately when those surfaces change |
 
 Live ownership and follow-up scheduling belong in the Second Brain `website/tasks.md`; implementation evidence and closeout rationale are in `_journal/2026-09-11-phase-3-settings.md`. Keep this specification as the versioned testing reference, not a second live task board.
