@@ -161,6 +161,28 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `direct upload controls require photographer auth and are never cached`() {
+        val eventId = UUID.randomUUID()
+        val photoId = UUID.randomUUID()
+        val beginBody = """{"contentHash":"${"a".repeat(64)}","contentType":"image/jpeg","sizeBytes":123}"""
+        val commitBody = """{"photoId":"$photoId","key":"staging/photo-uploads/x","contentHash":"${"a".repeat(64)}","contentType":"image/jpeg","sizeBytes":123}"""
+
+        assertEquals(401, post("/api/v1/me/photographer/events/$eventId/photos/direct", beginBody).statusCode())
+        assertEquals(
+            403,
+            post("/api/v1/me/photographer/events/$eventId/photos/direct", beginBody, register(Role.RUNNER)).statusCode(),
+        )
+
+        val photographer = register(Role.PHOTOGRAPHER)
+        val begin = post("/api/v1/me/photographer/events/$eventId/photos/direct", beginBody, photographer)
+        val commit = post("/api/v1/me/photographer/events/$eventId/photos/direct/commit", commitBody, photographer)
+        assertEquals(404, begin.statusCode())
+        assertEquals(403, commit.statusCode())
+        assertTrue("no-store" in begin.headers().firstValue("Cache-Control").orElse(""))
+        assertTrue("no-store" in commit.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
     fun `first-factor and step-up tokens are refused as bearers over HTTP`() {
         val userId = UUID.randomUUID()
 

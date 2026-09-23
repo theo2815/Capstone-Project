@@ -79,6 +79,39 @@ interface PhotoUploadIntentRepository : JpaRepository<PhotoUploadIntent, UUID> {
     @Query(
         value = """
             UPDATE photo_upload_intents
+            SET state = 'PENDING', lease_token = NULL, lease_until = NULL, updated_at = :now
+            WHERE photo_id = :photoId AND state = 'VERIFYING' AND lease_token = :leaseToken
+        """,
+        nativeQuery = true,
+    )
+    fun releaseVerification(
+        @Param("photoId") photoId: UUID,
+        @Param("leaseToken") leaseToken: UUID,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            UPDATE photo_upload_intents
+            SET state = 'EXPIRED', lease_token = NULL, lease_until = NULL,
+                cleanup_after = :cleanupAfter, updated_at = :now
+            WHERE photo_id = :photoId AND state = 'VERIFYING' AND lease_token = :leaseToken
+              AND put_expires_at <= :now
+        """,
+        nativeQuery = true,
+    )
+    fun expireMissingAfterPut(
+        @Param("photoId") photoId: UUID,
+        @Param("leaseToken") leaseToken: UUID,
+        @Param("cleanupAfter") cleanupAfter: OffsetDateTime,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            UPDATE photo_upload_intents
             SET state = 'COMMITTED', result_photo_id = :resultPhotoId, error_code = NULL,
                 lease_token = NULL, lease_until = NULL, cleanup_after = :cleanupAfter, updated_at = :now
             WHERE photo_id = :photoId AND state = 'VERIFYING' AND lease_token = :leaseToken

@@ -162,6 +162,52 @@ class PhotoUploadIntentIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `only the current verifier can release an intent for retry`() {
+        val owner = photographer()
+        val intent = intent(owner.id, event().id)
+        val token = UUID.randomUUID()
+
+        assertEquals(1, inTransaction {
+            intents.acquireVerification(intent.photoId, token, NOW.plusMinutes(5), NOW)
+        })
+        assertEquals(0, inTransaction {
+            intents.releaseVerification(intent.photoId, UUID.randomUUID(), NOW.plusMinutes(1))
+        })
+        assertEquals(1, inTransaction {
+            intents.releaseVerification(intent.photoId, token, NOW.plusMinutes(1))
+        })
+        assertEquals(1, inTransaction {
+            intents.acquireVerification(intent.photoId, UUID.randomUUID(), NOW.plusMinutes(6), NOW.plusMinutes(2))
+        })
+    }
+
+    @Test
+    fun `only the current verifier can expire a missing upload after its put deadline`() {
+        val owner = photographer()
+        val intent = intents.saveAndFlush(
+            newIntent(owner.id, event().id).apply {
+                // The intent remains recoverable for a day, but this particular
+                // signed PUT can no longer create the missing object.
+            },
+        )
+        val token = UUID.randomUUID()
+        val afterPutDeadline = intent.putExpiresAt.plusSeconds(1)
+
+        assertEquals(1, inTransaction {
+            intents.acquireVerification(intent.photoId, token, afterPutDeadline.plusMinutes(5), afterPutDeadline)
+        })
+        assertEquals(0, inTransaction {
+            intents.expireMissingAfterPut(intent.photoId, UUID.randomUUID(), afterPutDeadline.plusHours(1), afterPutDeadline)
+        })
+        assertEquals(1, inTransaction {
+            intents.expireMissingAfterPut(intent.photoId, token, afterPutDeadline.plusHours(1), afterPutDeadline)
+        })
+
+        entityManager.clear()
+        assertEquals(PhotoUploadIntentState.EXPIRED, intents.findById(intent.photoId).orElseThrow().state)
+    }
+
+    @Test
     fun `deleting a result photo retains the committed receipt`() {
         val owner = photographer()
         val event = event()
