@@ -1,0 +1,271 @@
+"""Release-gate regressions against controlled stream responses."""
+
+import hashlib
+import json
+import sys
+from contextlib import nullcontext
+
+import pytest
+
+from scripts import blur_gate
+
+
+def test_missing_prediction_fails_even_when_survivor_is_correct(tmp_path, monkeypatch):
+    for label in ("sharp", "motion_blurred"):
+        folder = tmp_path / label
+        folder.mkdir()
+        (folder / "image.jpg").write_bytes(b"image")
+
+    class Response:
+        status_code = 200
+
+        def iter_lines(self):
+            yield '{"index":0,"filename":"0","predicted_class":"motion_blurred"}'
+            yield '{"_summary":true,"total":2,"successful":1,"errors":0}'
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def stream(self, *args, **kwargs):
+            return nullcontext(Response())
+
+    monkeypatch.setattr(blur_gate.httpx, "Client", Client)
+    monkeypatch.setattr(blur_gate, "resize_bytes", lambda *args: b"jpeg")
+    monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(tmp_path),
+                                    "--report-json", str(tmp_path / "report.json")])
+
+    assert blur_gate.main() != 0
+
+
+LABELS = ("defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp")
+
+
+def _rows():
+    rows = []
+    for i, label in enumerate(LABELS):
+        rows.append({
+            "index": i, "filename": str(i), "predicted_class": label,
+            "confidence": 0.97,
+            "probabilities": {name: (0.97 if name == label else 0.01) for name in LABELS},
+        })
+    return rows
+
+
+def _run(tmp_path, monkeypatch, rows, *flags, status_code=200, fail_resize=False,
+         fail_hash=False, labels=LABELS):
+    root = tmp_path / "labels"
+    root.mkdir()
+    for label in labels:
+        folder = root / label
+        folder.mkdir()
+        (folder / "image.jpg").write_bytes(label.encode())
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"model")
+    digest = hashlib.sha256(b"model").hexdigest()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"models": {"blur_classifier": {
+        "artifact_version": "test-model", "sha256": digest,
+    }}}))
+    report = tmp_path / "report.json"
+    seen_headers = []
+
+    class Response:
+        def __init__(self):
+            self.status_code = status_code
+
+        def iter_lines(self):
+            for row in rows:
+                yield json.dumps(row) if isinstance(row, dict) else row
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def stream(self, *args, headers=None, **kwargs):
+            seen_headers.append(headers)
+            return nullcontext(Response())
+
+    monkeypatch.setattr(blur_gate.httpx, "Client", Client)
+
+    def resize(path, *args):
+        if fail_resize and path.parent.name == "sharp":
+            raise OSError("unreadable")
+        return b"jpeg"
+
+    monkeypatch.setattr(blur_gate, "resize_bytes", resize)
+    if fail_hash:
+        original_digest = hashlib.file_digest
+
+        def digest(file, algorithm):
+            if str(file.name).replace("\\", "/").endswith("defocused_blurred/image.jpg"):
+                raise OSError("unreadable")
+            return original_digest(file, algorithm)
+
+        monkeypatch.setattr(blur_gate.hashlib, "file_digest", digest)
+    monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(root),
+                                    "--model-file", str(model),
+                                    "--model-manifest", str(manifest),
+                                    "--report-json", str(report), *flags])
+    code = blur_gate.main()
+    return code, (json.loads(report.read_text()) if report.exists() else None), seen_headers
+
+
+def test_complete_gate_writes_reproducible_report(tmp_path, monkeypatch):
+    rows = _rows() + [{"_summary": True, "total": 4, "successful": 4,
+                       "errors": 0, "complete": True}]
+    code, report, _ = _run(tmp_path, monkeypatch, rows)
+
+    assert code == 0
+    assert report["status"] == "PASS"
+    assert report["counts"] == {"attempted": 4, "scored": 4, "failed": 0}
+    assert report["model"]["version"] == "test-model"
+    assert report["model"]["sha256"] == hashlib.sha256(b"model").hexdigest()
+    assert len(report["dataset_manifest"]) == 4
+    assert report["confusion"]["sharp"]["sharp"] == 1
+    assert report["runtime_dependencies"]["python"]
+    assert report["gate_arguments"]["batch"] == 200
+
+
+@pytest.mark.parametrize("damage", [
+    "missing", "duplicate", "wrong_index", "wrong_filename", "bad_json",
+    "no_summary", "duplicate_summary", "wrong_summary", "incomplete_summary",
+    "file_error", "unknown_class", "nonfinite_confidence", "nonfinite_probability",
+    "boolean_summary_count", "unknown_probability_class", "nonfinite_summary_time",
+])
+def test_invalid_stream_fails(tmp_path, monkeypatch, damage):
+    rows = _rows() + [{"_summary": True, "total": 4, "successful": 4,
+                       "errors": 0, "complete": True}]
+    if damage == "missing":
+        rows.pop(1)
+    elif damage == "duplicate":
+        rows.insert(1, rows[0].copy())
+    elif damage == "wrong_index":
+        rows[0]["index"] = 9
+    elif damage == "wrong_filename":
+        rows[0]["filename"] = "9"
+    elif damage == "bad_json":
+        rows.insert(1, "{")
+    elif damage == "no_summary":
+        rows.pop()
+    elif damage == "duplicate_summary":
+        rows.append(rows[-1].copy())
+    elif damage == "wrong_summary":
+        rows[-1]["successful"] = 3
+    elif damage == "incomplete_summary":
+        rows[-1]["complete"] = False
+    elif damage == "file_error":
+        rows[0] = {"index": 0, "filename": "0", "error": "decode failed"}
+        rows[-1]["successful"] = 3
+        rows[-1]["errors"] = 1
+    elif damage == "unknown_class":
+        rows[0]["predicted_class"] = "unknown"
+    elif damage == "nonfinite_confidence":
+        rows[0]["confidence"] = float("nan")
+    elif damage == "nonfinite_probability":
+        rows[0]["probabilities"]["sharp"] = float("inf")
+    elif damage == "boolean_summary_count":
+        rows[-1]["errors"] = False
+    elif damage == "unknown_probability_class":
+        rows[0]["probabilities"]["unknown"] = 0.0
+    elif damage == "nonfinite_summary_time":
+        rows[-1]["processing_time_ms"] = float("nan")
+
+    code, report, _ = _run(tmp_path, monkeypatch, rows)
+    assert code != 0
+    assert report is not None and report["status"] == "FAIL"
+
+
+def test_resize_failure_stays_in_attempted_denominator(tmp_path, monkeypatch):
+    rows = _rows()[:3] + [{"_summary": True, "total": 3, "successful": 3,
+                           "errors": 0, "complete": True}]
+    code, report, _ = _run(tmp_path, monkeypatch, rows, fail_resize=True)
+    assert code != 0
+    assert report["counts"] == {"attempted": 4, "scored": 3, "failed": 1}
+
+
+def test_hash_failure_keeps_input_in_manifest_and_fails(tmp_path, monkeypatch):
+    rows = _rows() + [{"_summary": True, "total": 4, "successful": 4,
+                       "errors": 0, "complete": True}]
+    code, report, _ = _run(tmp_path, monkeypatch, rows, fail_hash=True)
+    assert code != 0
+    assert len(report["dataset_manifest"]) == 4
+    assert report["dataset_manifest"][0]["sha256"] is None
+
+
+def test_http_error_fails_and_is_reported(tmp_path, monkeypatch):
+    code, report, _ = _run(tmp_path, monkeypatch, [], status_code=503)
+    assert code != 0
+    assert report["counts"] == {"attempted": 4, "scored": 0, "failed": 4}
+
+
+def test_missing_class_coverage_fails_release_run(tmp_path, monkeypatch):
+    code, report, _ = _run(tmp_path, monkeypatch, _rows()[:3] + [
+        {"_summary": True, "total": 3, "successful": 3, "errors": 0, "complete": True}
+    ], labels=LABELS[:3])
+    assert code != 0
+    assert "sharp" in report["issues"][-1]
+
+
+def test_overcull_limit_fails_even_when_accuracy_floor_is_met(tmp_path, monkeypatch):
+    rows = _rows()
+    rows[3]["predicted_class"] = "motion_blurred"
+    rows[3]["confidence"] = 0.97
+    rows[3]["probabilities"] = {name: (0.97 if name == "motion_blurred" else 0.01)
+                                 for name in LABELS}
+    rows.append({"_summary": True, "total": 4, "successful": 4, "errors": 0,
+                 "complete": True})
+    code, report, _ = _run(tmp_path, monkeypatch, rows,
+                           "--min-accuracy", "0.7", "--max-overcull-rate", "0")
+    assert code != 0
+    assert report["rates"]["sharp_overcull"] == 1.0
+
+
+def test_api_key_comes_from_environment_without_entering_report(tmp_path, monkeypatch):
+    rows = _rows() + [{"_summary": True, "total": 4, "successful": 4,
+                       "errors": 0, "complete": True}]
+    monkeypatch.setenv("AI_API_KEY", "secret-from-env")
+    code, report, headers = _run(tmp_path, monkeypatch, rows)
+    assert code == 0
+    assert headers == [{"X-API-Key": "secret-from-env"}]
+    assert "secret-from-env" not in json.dumps(report)
+
+
+def test_api_key_file_overrides_environment_without_entering_report(tmp_path, monkeypatch):
+    rows = _rows() + [{"_summary": True, "total": 4, "successful": 4,
+                       "errors": 0, "complete": True}]
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("secret-from-file\n")
+    monkeypatch.setenv("AI_API_KEY", "secret-from-env")
+    code, report, headers = _run(tmp_path, monkeypatch, rows,
+                                 "--api-key-file", str(secret_file))
+    assert code == 0
+    assert headers == [{"X-API-Key": "secret-from-file"}]
+    assert "secret-from-file" not in json.dumps(report)
+
+
+def test_limited_run_requires_diagnostic_mode(tmp_path, monkeypatch):
+    rows = _rows()[:2] + [{"_summary": True, "total": 2, "successful": 2,
+                           "errors": 0, "complete": True}]
+    with pytest.raises(SystemExit):
+        _run(tmp_path, monkeypatch, rows, "--limit", "2")
+
+
+def test_diagnostic_mode_never_reports_release_pass(tmp_path, monkeypatch):
+    rows = _rows() + [{"_summary": True, "total": 4, "successful": 4,
+                       "errors": 0, "complete": True}]
+    code, report, _ = _run(tmp_path, monkeypatch, rows, "--diagnostic-subset")
+    assert code == 0
+    assert report["status"] == "DIAGNOSTIC"
