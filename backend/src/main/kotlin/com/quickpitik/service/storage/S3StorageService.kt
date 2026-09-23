@@ -11,9 +11,11 @@ import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.S3Configuration
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest
 import software.amazon.awssdk.services.s3.model.GetObjectRequest
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest
+import software.amazon.awssdk.services.s3.model.MetadataDirective
 import software.amazon.awssdk.services.s3.model.S3Exception
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import software.amazon.awssdk.services.s3.presigner.S3Presigner
@@ -31,6 +33,8 @@ class S3StorageService(
     private val props: StorageProperties,
 ) : StorageService, AutoCloseable {
     override val supportsDirectUpload: Boolean = true
+    override val supportsImmutableDirectUpload: Boolean
+        get() = props.directUpload.enabled && props.isR2Endpoint()
     private val log = LoggerFactory.getLogger(javaClass)
     private val client: S3Client = buildClient()
     private val presigner: S3Presigner = buildPresigner()
@@ -40,19 +44,19 @@ class S3StorageService(
     }
 
     override fun put(key: String, bytes: ByteArray, contentType: String): StoredObject {
-        client.putObject(
+        val response = client.putObject(
             PutObjectRequest.builder().bucket(props.bucket).key(key).contentType(contentType).build(),
             RequestBody.fromBytes(bytes),
         )
-        return StoredObject(key = key, sizeBytes = bytes.size.toLong(), contentType = contentType)
+        return StoredObject(key, bytes.size.toLong(), contentType, response.eTag())
     }
 
     override fun put(key: String, stream: InputStream, contentLength: Long, contentType: String): StoredObject {
-        client.putObject(
+        val response = client.putObject(
             PutObjectRequest.builder().bucket(props.bucket).key(key).contentType(contentType).build(),
             RequestBody.fromInputStream(stream, contentLength),
         )
-        return StoredObject(key = key, sizeBytes = contentLength, contentType = contentType)
+        return StoredObject(key, contentLength, contentType, response.eTag())
     }
 
     override fun getBytes(key: String): ByteArray {
@@ -71,7 +75,7 @@ class S3StorageService(
 
     override fun metadata(key: String): StoredObject? = try {
         val head = client.headObject(HeadObjectRequest.builder().bucket(props.bucket).key(key).build())
-        StoredObject(key, head.contentLength(), head.contentType().orEmpty())
+        StoredObject(key, head.contentLength(), head.contentType().orEmpty(), head.eTag(), head.contentEncoding())
     } catch (e: S3Exception) {
         if (e.statusCode() == 404) null else throw e
     }
@@ -119,6 +123,49 @@ class S3StorageService(
         return presigner.presignPutObject(presignRequest).url().toExternalForm()
     }
 
+    override fun presignedUpload(
+        key: String,
+        ttl: Duration,
+        contentType: String,
+        sizeBytes: Long,
+    ): PresignedUpload {
+        val req = PutObjectRequest.builder()
+            .bucket(props.bucket)
+            .key(key)
+            .contentType(contentType)
+            .contentLength(sizeBytes)
+            .build()
+        val presignRequest = PutObjectPresignRequest.builder()
+            .signatureDuration(ttl)
+            .putObjectRequest(req)
+            .build()
+        return PresignedUpload(
+            url = presigner.presignPutObject(presignRequest).url().toExternalForm(),
+            headers = mapOf("Content-Type" to contentType),
+        )
+    }
+
+    override fun copyIfAbsent(
+        sourceKey: String,
+        targetKey: String,
+        sourceEtag: String,
+        contentType: String,
+    ): StoredObject {
+        val request = CopyObjectRequest.builder()
+            .destinationBucket(props.bucket)
+            .destinationKey(targetKey)
+            .sourceBucket(props.bucket)
+            .sourceKey(sourceKey)
+            .copySourceIfMatch(sourceEtag)
+            .metadataDirective(MetadataDirective.REPLACE)
+            .contentType(contentType)
+            .cacheControl("private, no-store")
+            .overrideConfiguration { it.putHeader("cf-copy-destination-if-none-match", "*") }
+            .build()
+        client.copyObject(request)
+        return checkNotNull(metadata(targetKey)) { "copy completed without target metadata" }
+    }
+
     override fun close() {
         client.close()
         presigner.close()
@@ -139,6 +186,9 @@ class S3StorageService(
         val builder = S3Presigner.builder()
             .region(Region.of(props.region))
             .credentialsProvider(credentials())
+            .serviceConfiguration(
+                S3Configuration.builder().pathStyleAccessEnabled(props.pathStyleAccess).build(),
+            )
         props.endpoint?.takeIf { it.isNotBlank() }?.let { builder.endpointOverride(URI.create(it)) }
         return builder.build()
     }

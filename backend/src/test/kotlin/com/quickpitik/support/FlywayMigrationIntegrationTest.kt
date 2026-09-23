@@ -5,6 +5,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.photographer.HandlePatchRequest
 import com.quickpitik.exception.ApiException
 import com.quickpitik.service.photographer.PhotographerSettingsService
+import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
@@ -183,6 +184,114 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             }
         }
     }
+
+    @Test
+    fun `photo upload intent schema is present`() {
+        val columns = jdbcTemplate.queryForList(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'photo_upload_intents'",
+            String::class.java,
+        )
+        assertTrue(
+            columns.containsAll(
+                listOf(
+                    "photo_id",
+                    "photographer_id",
+                    "event_id",
+                    "request_id",
+                    "content_hash",
+                    "content_type",
+                    "size_bytes",
+                    "staging_key",
+                    "original_key",
+                    "state",
+                    "lease_token",
+                    "lease_until",
+                    "result_photo_id",
+                    "error_code",
+                    "put_expires_at",
+                    "expires_at",
+                    "cleanup_after",
+                    "cleanup_checked_at",
+                    "cleaned_at",
+                ),
+            ),
+        )
+
+        val requestIndex = jdbcTemplate.queryForObject(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_photo_upload_request'",
+            String::class.java,
+        ).orEmpty()
+        assertTrue(requestIndex.contains("(photographer_id, request_id)"), requestIndex)
+        assertTrue(requestIndex.contains("request_id IS NOT NULL"), requestIndex)
+    }
+
+    @Test
+    fun `V65 upgrades V64 without changing existing photos or their hash constraint`() {
+        val schema = "upload_intent_v65_${UUID.randomUUID().toString().replace("-", "")}"
+        val ownerId = UUID.randomUUID()
+        val photoId = UUID.randomUUID()
+        val eventId = UUID.fromString("11111111-1111-1111-1111-111111111111")
+
+        try {
+            flywayFor(schema, "64").migrate()
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.execute(
+                        "INSERT INTO $schema.users (id, email, password_hash, name, role) VALUES " +
+                            "('$ownerId', 'v65-upgrade@test.local', 'stub', 'V65 Upgrade', 'PHOTOGRAPHER')",
+                    )
+                    statement.execute(
+                        "INSERT INTO $schema.photos " +
+                            "(id, event_id, photographer_id, s3_key, status, price_php, content_hash) VALUES " +
+                            "('$photoId', '$eventId', '$ownerId', 'legacy/original.jpg', 'LIVE', 100, '${"a".repeat(64)}')",
+                    )
+                }
+            }
+            val originalIndex = indexDefinition(schema, "uq_photos_photographer_content_hash")
+
+            flywayFor(schema, "65").migrate()
+
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    "SELECT s3_key, content_hash FROM $schema.photos WHERE id = ?::uuid",
+                ).use { statement ->
+                    statement.setString(1, photoId.toString())
+                    statement.executeQuery().use { result ->
+                        assertTrue(result.next())
+                        assertEquals("legacy/original.jpg", result.getString("s3_key"))
+                        assertEquals("a".repeat(64), result.getString("content_hash"))
+                    }
+                }
+            }
+            assertEquals(originalIndex, indexDefinition(schema, "uq_photos_photographer_content_hash"))
+            assertEquals(
+                1,
+                jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM information_schema.tables " +
+                        "WHERE table_schema = ? AND table_name = 'photo_upload_intents'",
+                    Int::class.java,
+                    schema,
+                ),
+            )
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
+    private fun flywayFor(schema: String, target: String): Flyway = Flyway.configure()
+        .dataSource(dataSource)
+        .locations("classpath:db/migration")
+        .defaultSchema(schema)
+        .schemas(schema)
+        .target(target)
+        .load()
+
+    private fun indexDefinition(schema: String, index: String): String = jdbcTemplate.queryForObject(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = ? AND indexname = ?",
+        String::class.java,
+        schema,
+        index,
+    ).orEmpty()
 
     // The columns V29 and V30 add — the two this session introduced, and the
     // ones most likely to drift from their entities.

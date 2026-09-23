@@ -9,6 +9,10 @@ interface StorageService {
     // fall back to the multipart endpoint there.
     val supportsDirectUpload: Boolean
 
+    // Hardened staging-to-immutable-original flow. This stays false until the
+    // R2-only capability has been explicitly enabled after its provider smoke.
+    val supportsImmutableDirectUpload: Boolean
+
     fun put(key: String, bytes: ByteArray, contentType: String): StoredObject
 
     fun put(key: String, stream: InputStream, contentLength: Long, contentType: String): StoredObject
@@ -41,10 +45,31 @@ interface StorageService {
     fun presignedDownloadUrl(key: String, ttl: Duration, filename: String): String
 
     fun presignedPutUrl(key: String, ttl: Duration, contentType: String): String
+
+    fun presignedUpload(
+        key: String,
+        ttl: Duration,
+        contentType: String,
+        sizeBytes: Long,
+    ): PresignedUpload
+
+    fun copyIfAbsent(
+        sourceKey: String,
+        targetKey: String,
+        sourceEtag: String,
+        contentType: String,
+    ): StoredObject
 }
 
 data class StoredObject(
     val key: String,
     val sizeBytes: Long,
     val contentType: String,
+    val etag: String? = null,
+    val contentEncoding: String? = null,
+)
+
+data class PresignedUpload(
+    val url: String,
+    val headers: Map<String, String>,
 )
