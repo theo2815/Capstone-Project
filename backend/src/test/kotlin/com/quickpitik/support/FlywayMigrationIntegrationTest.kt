@@ -7,6 +7,7 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.io.ClassPathResource
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 import org.springframework.jdbc.core.JdbcTemplate
@@ -48,6 +49,9 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var dataSource: DataSource
+
+    @Value("\${app.admin.bootstrap-email}")
+    private lateinit var bootstrapEmail: String
 
     @Test
     fun `account route handles are reserved by the database and rejected by the service`() {
@@ -354,10 +358,12 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
      */
     @Test
     fun `the bootstrap admin is created already verified`() {
-        val unverifiedAdmins = jdbcTemplate.queryForObject(
-            "SELECT count(*) FROM users WHERE role = 'ADMIN' AND email_verified_at IS NULL",
+        // Scoped to the bootstrap row: other classes share this database.
+        val verifiedBootstrapAdmins = jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM users WHERE email = ? AND role = 'ADMIN' AND email_verified_at IS NOT NULL",
             Int::class.java,
+            bootstrapEmail,
         )
-        assertEquals(0, unverifiedAdmins, "the bootstrap admin should be stamped verified on creation")
+        assertEquals(1, verifiedBootstrapAdmins, "the bootstrap admin should be stamped verified on creation")
     }
 }
