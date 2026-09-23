@@ -20,7 +20,7 @@ All models load once at startup via `src/ml/registry.py` and are served from `ap
 
 Two-tier pipeline:
 
-1. **`BlurDetector`** (`src/ml/blur/detector.py`) — classical CV. Laplacian variance + optional FFT high-frequency ratio, normalised to a 640 px linear reference. `detect_fast(gray)` skips BGR→gray and FFT for the hot path used by streaming and Celery batches. No model file needed.
+1. **`BlurDetector`** (`src/ml/blur/detector.py`) — classical CV. Single, stream, and Celery use the same grayscale decode target (`BLUR_DETECT_DECODE_DIM`) and OpenCV Laplacian score, normalized to a 640 px reference. FFT is optional and informational. No model file needed.
 2. **`BlurClassifier`** (`src/ml/blur/classifier.py`) — YOLOv8n-cls (~5.5 MB ONNX). Classifies each image into one of four categories and powers `/blur/classify`:
    - `sharp` — subject in focus, background bokeh allowed
    - `defocused_object_portrait` — camera focused on wrong plane
@@ -64,7 +64,7 @@ If the ONNX detector is missing, the endpoint falls back to running PaddleOCR on
 |---|---|
 | Async batch | Celery + Redis broker. Image bytes are written to `BLOB_STORE_PATH` and workers get file paths (not base64). `.../batch` → 202 + `job_id`; `.../mega` fans out via Celery chord and merges via `finalize_mega_batch`. |
 | DB | PostgreSQL 16 + pgvector (jobs, webhooks, persons, API keys, face embeddings). Async engine (asyncpg) for the API; sync engine (psycopg2) for Celery workers. |
-| C++ acceleration | pybind11 module `_quickpitik_cpp` (`src/cpp/`). Measured wins: Laplacian variance ~5×, cosine top-K ~1.8–2.8× for small/medium databases. All ops release the GIL. Pure-Python fallback always available. |
+| C++ acceleration | The optional `_quickpitik_cpp` module remains used by the face matcher. Classical blur uses OpenCV/NumPy in every build so its score does not depend on whether the extension is installed. |
 | Auth + rate limits | `X-API-Key` header (SHA-256 hashed, cached in Redis). Token-bucket rate limiter wired into every endpoint via `verify_api_key`. Tiers: free=60/min, pro=300/min, internal=1000/min. Per-key concurrent-job cap (`MAX_ACTIVE_JOBS_PER_KEY=10`). |
 | Observability | structlog JSON logs with request_id context. Prometheus metrics auto-instrumented via `prometheus-fastapi-instrumentator`, exposed at `/metrics` (auth-protected in production, open when `DEBUG=true`). |
 

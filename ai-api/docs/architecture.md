@@ -166,12 +166,11 @@ Here's what happens when a client calls `POST /api/v1/blur/detect`:
    │
 8. Route handler:
    ├── validate_and_decode() — content type, MAX_FILE_SIZE cap, PIL magic
-   │                          check, EXIF rotate, 32–MAX_IMAGE_DIMENSION px
-   │                          bounds, BGR ndarray (downscaled to
-   │                          MAX_INFERENCE_DIMENSION)
+   │                          check and 32–MAX_IMAGE_DIMENSION px bounds;
+   │                          classical grayscale decode at BLUR_DETECT_DECODE_DIM
    ├── registry.get("blur") — BlurDetector
    ├── asyncio.to_thread(detector.detect, image) — runs Laplacian (+ FFT)
-   │   off the event loop; uses _quickpitik_cpp when present
+   │   off the event loop; uses OpenCV/NumPy in every build
    └── Wraps result in BlurDetectionResponse → APIResponse envelope
    │
 9. RateLimitHeadersMiddleware attaches X-RateLimit-*

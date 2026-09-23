@@ -82,7 +82,7 @@ except ImportError:
     _HAS_CPP = False
 ```
 
-Then branch on `_HAS_CPP`. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs. Note (2026-08-14): `classify_preprocess` is deliberately **no longer called** — the classifier's C++ preprocess branch was removed so the anti-aliased Python path always applies; the live consumers are the blur-detector metrics and `batch_cosine_topk` in the face matcher, and only dev machines that built the extension ever hit them.
+Then branch on `_HAS_CPP` only where a function has the same output contract. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs. The live consumer is `batch_cosine_topk` in the face matcher. The classifier preprocess and classical blur metric functions remain exported but are not used by served inference: classifier preprocessing needs area averaging, and the C++ blur score differs from OpenCV at image borders.
 
 ### Database Access
 
@@ -216,7 +216,7 @@ Do not add new dependencies without justification. Prefer existing libraries ove
 
 Two systems coexist:
 
-1. **Laplacian/FFT detector** (`src/ml/blur/detector.py`): Always-available classical CV. Laplacian variance + optional FFT high-frequency ratio. Normalised to a 640px linear reference. `detect_fast(gray)` is a faster path used by streaming and batch tasks — it skips BGR→gray conversion and FFT.
+1. **Laplacian/FFT detector** (`src/ml/blur/detector.py`): Always-available classical CV. Single, stream, and worker decode grayscale at `BLUR_DETECT_DECODE_DIM` and use the same OpenCV Laplacian score, normalized to a 640px reference. FFT is informational and runs only when requested. `detect_fast(gray)` skips FFT.
 2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the ONNX model at `models/blur_classifier/blur_classifier.onnx`. Required and verified in the `blur` profile; optional in `all`.
 
 API endpoints:

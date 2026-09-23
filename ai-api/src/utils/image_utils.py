@@ -27,6 +27,7 @@ async def validate_and_decode(
     max_file_size: int = 0,
     max_pixels: int = 0,
     decode_semaphore: asyncio.Semaphore | None = None,
+    grayscale_max_dim: int = 0,
 ) -> tuple[bytes, np.ndarray]:
     """Validate an uploaded image and decode it to a numpy array.
 
@@ -35,6 +36,7 @@ async def validate_and_decode(
         max_file_size: Override in bytes. 0 (default) uses MAX_FILE_SIZE.
         max_pixels: Optional decoded-pixel cap for the blur profile.
         decode_semaphore: Optional process-wide blur decode limit.
+        grayscale_max_dim: Classical blur decode target; 0 keeps the BGR path.
 
     Returns:
         Tuple of (raw_bytes, bgr_numpy_array)
@@ -59,7 +61,9 @@ async def validate_and_decode(
 
     # Offload all CPU-bound image decoding to a thread so the async event
     # loop is not blocked (~100-500ms for large images).
-    image = await bounded_to_thread(decode_semaphore, _decode_image_bytes, contents, max_pixels)
+    image = await bounded_to_thread(
+        decode_semaphore, _decode_image_bytes, contents, max_pixels, grayscale_max_dim
+    )
 
     return contents, image
 
@@ -89,11 +93,13 @@ async def bounded_to_thread(
     return await asyncio.shield(task)
 
 
-def _decode_image_bytes(contents: bytes, max_pixels: int = 0) -> np.ndarray:
-    """Decode raw image bytes to a BGR numpy array (CPU-bound, runs in thread).
+def _decode_image_bytes(
+    contents: bytes, max_pixels: int = 0, grayscale_max_dim: int = 0
+) -> np.ndarray:
+    """Decode raw image bytes to BGR, or grayscale for classical blur.
 
-    Validates magic bytes, applies EXIF rotation, checks dimensions, and
-    downscales for inference.
+    Validates magic bytes and dimensions. The BGR path applies EXIF rotation;
+    the classical path uses the same OpenCV grayscale decode as stream/worker.
     """
     # Single open + EXIF transpose (no .verify() — the decode itself catches
     # corrupt files, and .verify() forces a full decode then invalidates the
@@ -118,6 +124,15 @@ def _decode_image_bytes(contents: bytes, max_pixels: int = 0) -> np.ndarray:
     if max_pixels and w * h > max_pixels:
         raise ImageValidationError(f"Image exceeds {max_pixels} pixel limit")
 
+    if grayscale_max_dim:
+        try:
+            gray = decode_gray_for_blur(contents, grayscale_max_dim)
+        except cv2.error:
+            gray = None
+        if gray is None:
+            raise ImageValidationError("Invalid or corrupt image file")
+        return gray
+
     try:
         img = ImageOps.exif_transpose(img)
     except Exception:
@@ -136,11 +151,17 @@ def _decode_image_bytes(contents: bytes, max_pixels: int = 0) -> np.ndarray:
     return image
 
 
+def decode_gray_for_blur(contents: bytes, max_dim: int) -> np.ndarray | None:
+    """Use the same OpenCV grayscale decode and area resize for classical blur."""
+    gray = cv2.imdecode(np.frombuffer(contents, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    return downscale_for_inference(gray, max_dim) if gray is not None else None
+
+
 def downscale_for_inference(image: np.ndarray, max_dim: int = 0) -> np.ndarray:
     """Downscale image if it exceeds *max_dim* (or MAX_INFERENCE_DIMENSION).
 
     Args:
-        image: BGR numpy array.
+        image: BGR or grayscale numpy array.
         max_dim: Override dimension. 0 (default) uses the global setting.
 
     Returns the original image if downscaling is disabled (0) or not needed.
@@ -157,7 +178,7 @@ def downscale_for_inference(image: np.ndarray, max_dim: int = 0) -> np.ndarray:
         return image
 
     scale = max_dim / max(w, h)
-    new_w, new_h = int(w * scale), int(h * scale)
+    new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 

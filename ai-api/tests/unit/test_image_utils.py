@@ -381,3 +381,13 @@ class TestCalibratedUploadLimits:
 
     def test_decompression_bomb_guard_tracks_the_cap(self):
         assert Image.MAX_IMAGE_PIXELS == MAX_DIMENSION * MAX_DIMENSION
+
+
+def test_classical_decode_keeps_thin_images_nonempty():
+    from src.utils.image_utils import decode_gray_for_blur
+
+    raw = _make_image_bytes(width=32, height=12000, fmt="PNG")
+    gray = decode_gray_for_blur(raw, 64)
+    assert gray is not None
+    assert gray.shape[0] == 64
+    assert gray.shape[1] >= 1

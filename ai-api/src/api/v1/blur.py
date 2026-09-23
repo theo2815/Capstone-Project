@@ -32,6 +32,7 @@ from src.schemas.blur import (
 from src.schemas.common import APIResponse
 from src.utils.image_utils import (
     bounded_to_thread,
+    decode_gray_for_blur,
     downscale_for_inference,
     get_image_dimensions,
     validate_and_decode,
@@ -103,57 +104,21 @@ def _fast_decode_and_detect(
     index: int,
     detector: Any,
     threshold: float | None,
+    decode_dim: int,
     include_hf_ratio: bool = False,
     request_id: str = "",
 ) -> dict:
     """Decode an image with OpenCV and run blur detection in one call.
 
-    Optimized for throughput:
-    - Decodes as grayscale directly (30% faster than color decode)
-    - Downscales to 640px (blur normalizes to this reference anyway)
-    - Skips FFT hf_ratio by default (saves ~8ms per image)
-    - Skips EXIF rotation (irrelevant for blur metrics)
+    Uses the same grayscale decode, scale, and detector score as single and worker.
     """
     try:
-        arr = np.frombuffer(data, dtype=np.uint8)
-
-        if include_hf_ratio:
-            # Need BGR for full detector.detect() which computes both metrics
-            image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            if image is None:
-                return {"index": index, "filename": filename, "error": "Failed to decode image"}
-            image = _downscale_stream_image(image, 640)
-            result = detector.detect(image, threshold_override=threshold)
-            return {"index": index, "filename": filename, **result}
-
-        # Fast path: grayscale decode + Laplacian only (~18ms vs ~70ms)
-        gray = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+        gray = decode_gray_for_blur(data, decode_dim)
         if gray is None:
             return {"index": index, "filename": filename, "error": "Failed to decode image"}
-
-        gray = _downscale_stream_image(gray, 640)
-
-        laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
-        # Normalize to 640px reference resolution
-        h2, w2 = gray.shape
-        if max(h2, w2) > 0:
-            laplacian_var = laplacian_var * 640 / max(h2, w2)
-
-        thr = threshold if threshold is not None else detector.laplacian_threshold
-        is_blurry = laplacian_var < thr
-        if is_blurry:
-            confidence = 1.0 - min(1.0, laplacian_var / thr)
-        else:
-            confidence = min(1.0, laplacian_var / thr)
-
-        return {
-            "index": index,
-            "filename": filename,
-            "is_blurry": is_blurry,
-            "confidence": round(confidence, 4),
-            "laplacian_variance": round(laplacian_var, 2),
-        }
+        result = (detector.detect(gray, threshold_override=threshold)
+                  if include_hf_ratio else detector.detect_fast(gray, threshold_override=threshold))
+        return {"index": index, "filename": filename, **result}
     except Exception as e:
         logger.warning(
             "Stream image processing failed", error_type=type(e).__name__, request_id=request_id,
@@ -186,7 +151,7 @@ def _decode_bgr_for_classify(data: bytes, max_dim: int) -> np.ndarray | None:
 async def detect_blur(
     request: Request,
     file: UploadFile = File(..., description="Image file (JPEG, PNG, WebP)"),
-    threshold: float = Query(default=100.0, ge=1.0, le=10000.0),
+    threshold: float | None = Query(default=None, ge=1.0, le=10000.0),
     include_metrics: bool = Query(default=True),
     key_meta: dict = Depends(verify_api_key),
 ) -> APIResponse:
@@ -200,9 +165,13 @@ async def detect_blur(
             file, max_file_size=settings.MAX_FILE_SIZE,
             max_pixels=settings.BLUR_MAX_IMAGE_PIXELS,
             decode_semaphore=request.app.state.blur_decode_semaphore,
+            grayscale_max_dim=settings.BLUR_DETECT_DECODE_DIM,
         )
     else:
-        _, image = await validate_and_decode(file, max_file_size=settings.MAX_FILE_SIZE)
+        _, image = await validate_and_decode(
+            file, max_file_size=settings.MAX_FILE_SIZE,
+            grayscale_max_dim=settings.BLUR_DETECT_DECODE_DIM,
+        )
 
     registry = request.app.state.model_registry
     detector = registry.get("blur")
@@ -220,11 +189,14 @@ async def detect_blur(
         if settings.MODEL_PROFILE == "blur":
             result = await tracked_to_thread(
                 run_with_timeout, detector.detect, args=(image,),
-                kwargs={"threshold_override": threshold},
+                kwargs={"threshold_override": threshold, "include_hf_ratio": include_metrics},
                 timeout_seconds=settings.BLUR_INFERENCE_TIMEOUT_SECONDS,
             )
         else:
-            result = await tracked_to_thread(detector.detect, image, threshold_override=threshold)
+            result = await tracked_to_thread(
+                detector.detect, image, threshold_override=threshold,
+                include_hf_ratio=include_metrics,
+            )
     except (InferenceBusyError, InferenceTimeoutError) as error:
         return _inference_error_response(request, error)
     elapsed_ms = (time.perf_counter() - start) * 1000
@@ -336,13 +308,13 @@ async def detect_blur_stream(
                     work = partial(
                         run_with_timeout, _fast_decode_and_detect,
                         args=(data, filename, index, detector, threshold,
-                              include_hf_ratio, request_id),
+                              settings.BLUR_DETECT_DECODE_DIM, include_hf_ratio, request_id),
                         timeout_seconds=settings.BLUR_INFERENCE_TIMEOUT_SECONDS,
                     )
                     return await bounded_to_thread(sem, work)
                 return await bounded_to_thread(
                     sem, _fast_decode_and_detect, data, filename, index, detector,
-                    threshold, include_hf_ratio, request_id,
+                    threshold, settings.BLUR_DETECT_DECODE_DIM, include_hf_ratio, request_id,
                 )
             except (InferenceBusyError, InferenceTimeoutError):
                 raise

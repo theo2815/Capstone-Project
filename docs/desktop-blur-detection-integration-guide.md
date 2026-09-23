@@ -123,7 +123,7 @@ POST /api/v1/blur/detect
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `file` | file | yes | -- | Image file (JPEG, PNG, WebP) up to 25 MB (`MAX_FILE_SIZE`, raised 2026-08-14) |
-| `threshold` | float | no | `100.0` | Blur threshold (1.0 - 10000.0). Lower = stricter |
+| `threshold` | float | no | `BLUR_THRESHOLD` (`100.0` by default) | Blur threshold (1.0 - 10000.0). Lower marks fewer images blurry |
 | `include_metrics` | bool | no | `true` | Include Laplacian variance and FFT metrics |
 
 **Example (cURL):**
@@ -139,13 +139,13 @@ curl -X POST http://localhost:8000/api/v1/blur/detect \
 ```json
 {
   "is_blurry": true,
-  "confidence": 0.85,
+  "confidence": 0.573,
   "metrics": {
     "laplacian_variance": 42.7,
     "hf_ratio": 0.12,
-    "confidence": 0.85
+    "confidence": 0.573
   },
-  "image_dimensions": [4032, 3024],
+  "image_dimensions": [640, 480],
   "processing_time_ms": 23.5
 }
 ```
@@ -153,10 +153,10 @@ curl -X POST http://localhost:8000/api/v1/blur/detect \
 | Field | Type | Description |
 |-------|------|-------------|
 | `is_blurry` | bool | `true` if image is blurry |
-| `confidence` | float | 0.0 - 1.0 confidence score |
-| `metrics.laplacian_variance` | float | Sharpness score -- lower = blurrier |
-| `metrics.hf_ratio` | float | High-frequency content ratio (FFT) |
-| `image_dimensions` | [w, h] | Image width and height in pixels |
+| `confidence` | float | Threshold-ratio heuristic, not a measured probability; `1.0` can mean score saturation |
+| `metrics.laplacian_variance` | float | Texture/edge score at the classical decode scale -- lower = blurrier |
+| `metrics.hf_ratio` | float | Informational high-frequency content ratio (FFT); does not affect `is_blurry` |
+| `image_dimensions` | [w, h] | Processed image width and height in pixels (long edge at most `BLUR_DETECT_DECODE_DIM`) |
 | `processing_time_ms` | float | Server-side processing time |
 
 ---
@@ -406,7 +406,7 @@ for the duration of the run — a queued job survives a disconnect, a stream doe
 
 ### Confidence threshold guidance
 
-The minimum confidence floor is configurable server-side (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). On the desktop side, you may want an additional UI threshold:
+For the CNN classifier only, the minimum confidence floor is configurable server-side (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). On the desktop side, you may want an additional UI threshold:
 
 - **confidence >= 0.8**: High confidence -- auto-tag
 - **0.5 <= confidence < 0.8**: Medium -- show to user for review

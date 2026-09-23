@@ -48,10 +48,10 @@ Every library, framework, and tool used in QuickPitik, with explanations of why 
 
 Two models cooperate:
 
-- **Laplacian/FFT detector (`src/ml/blur/detector.py`)** — no external model, just OpenCV + NumPy. Computes Laplacian variance (edge energy; blurry images have fewer edges → lower variance) and an optional FFT high-frequency ratio. Normalized to a 640-pixel linear reference so results are resolution-independent. Fast enough to call on every upload.
+- **Laplacian/FFT detector (`src/ml/blur/detector.py`)** — no external model, just OpenCV + NumPy. Computes Laplacian variance (edge energy; blurry images have fewer edges → lower variance) and an optional FFT high-frequency ratio. All classical routes decode to `BLUR_DETECT_DECODE_DIM` and normalize the score to a 640-pixel reference; scores still depend on image preparation.
 - **YOLOv8n-cls classifier (`src/ml/blur/classifier.py`)** — custom-trained 4-class ONNX model (`sharp`, `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`). Achieved 98.68% top-1 accuracy (100% on the sharp class). Loaded only if the ONNX file is present; used by `POST /blur/classify` and its streaming/batch/mega variants.
 
-Both paths accept an optional C++ fast path (`laplacian_variance`, `fft_hf_ratio`, `classify_preprocess`) from the `_quickpitik_cpp` extension, falling back to pure NumPy/OpenCV when the extension isn't compiled.
+The optional C++ extension is used by the face matcher. Its blur functions remain exported for benchmarks, but the served classical detector uses one OpenCV/NumPy score contract in every build.
 
 ### Face Recognition: InsightFace (RetinaFace + ArcFace)
 

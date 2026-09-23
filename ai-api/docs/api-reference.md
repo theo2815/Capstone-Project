@@ -79,8 +79,10 @@ Check if a single image is blurry (Laplacian/FFT).
 
 **Request:**
 - `file` (multipart, required): Image file (JPEG, PNG, or WebP)
-- `threshold` (query, optional): Laplacian variance threshold. Default `100.0`, range `1.0–10000.0`. Lower = stricter.
-- `include_metrics` (query, optional): Include detailed metrics. Default `true`.
+- `threshold` (query, optional): Override `BLUR_THRESHOLD` (default `100.0`), range `1.0–10000.0`. Lower marks fewer images blurry.
+- `include_metrics` (query, optional): Include detailed metrics. Default `true`; `false` skips the FFT calculation.
+
+All classical paths decode to `BLUR_DETECT_DECODE_DIM` (default 640 px on the long edge), then report Laplacian variance normalized to a 640 px reference. `is_blurry` is `score < threshold`; FFT `hf_ratio` is informational and does not affect the decision. The score is a texture/edge heuristic, not a probability or a calibrated quality rating. Classical `confidence` is also a heuristic ratio to the threshold: blurry results use `1 - min(1, score / threshold)`, while sharp results use `min(1, score / threshold)`. A value of `1.0` can simply mean the sharp score exceeded the threshold; it is **not** measured certainty. `image_dimensions` describes the processed image. Compare scores only under the same image preparation and decode settings.
 
 **Scope:** `blur:read`
 
@@ -98,13 +100,13 @@ curl -X POST http://localhost:8000/api/v1/blur/detect \
   "success": true,
   "data": {
     "is_blurry": false,
-    "confidence": 0.85,
+    "confidence": 1.0,
     "metrics": {
       "laplacian_variance": 185.42,
       "hf_ratio": 0.72,
-      "confidence": 0.85
+      "confidence": 1.0
     },
-    "image_dimensions": [1920, 1080],
+    "image_dimensions": [640, 360],
     "processing_time_ms": 12.34
   }
 }
@@ -116,14 +118,14 @@ High-throughput synchronous blur detection. Streams NDJSON — one JSON object p
 
 **Request:**
 - `files` (multipart, required): up to 500 images
-- `threshold` (query, optional): Laplacian threshold override
-- `include_hf_ratio` (query, optional, default `false`): Also compute FFT high-frequency ratio (adds ~8 ms per image)
+- `threshold` (query, optional): Same `BLUR_THRESHOLD` override and range as single detection
+- `include_hf_ratio` (query, optional, default `false`): Also compute the informational FFT high-frequency ratio (extra CPU work)
 
 **Response:** `application/x-ndjson`, one result per line, then a summary:
 
 ```
-{"index":0,"filename":"IMG_001.jpg","is_blurry":false,"confidence":0.82,"laplacian_variance":185.42}
-{"index":1,"filename":"IMG_002.jpg","is_blurry":true,"confidence":0.95,"laplacian_variance":4.12}
+{"index":0,"filename":"IMG_001.jpg","is_blurry":false,"confidence":1.0,"laplacian_variance":185.42}
+{"index":1,"filename":"IMG_002.jpg","is_blurry":true,"confidence":0.9588,"laplacian_variance":4.12}
 {"_summary":true,"total":2,"processing_time_ms":412.3}
 ```
 

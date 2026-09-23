@@ -41,6 +41,14 @@ def _make_jpeg_bytes(width: int = 256, height: int = 256, sharp: bool = True) ->
     return buf.getvalue()
 
 
+def _textured_jpeg() -> bytes:
+    y, x = np.indices((800, 1280))
+    pattern = np.uint8(128 + (2 * ((x // 8 + y // 8) % 2) - 1) * 6)
+    buf = io.BytesIO()
+    Image.fromarray(pattern).convert("RGB").save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
+
+
 def _make_png_bytes(width: int = 256, height: int = 256) -> bytes:
     """Create a PNG image in memory."""
     arr = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
@@ -135,6 +143,21 @@ class TestBlurEndpointSuccess:
         )
         body = resp.json()
         assert body["data"]["metrics"] is None
+
+    def test_metrics_excluded_skips_fft_without_changing_decision(self, client):
+        data = _make_jpeg_bytes(sharp=False)
+        files = {"file": ("test.jpg", data, "image/jpeg")}
+        expected = client.post("/api/v1/blur/detect", files=files).json()["data"]
+        with patch("src.ml.blur.detector.np.fft.fft2",
+                   side_effect=AssertionError("FFT should be skipped")):
+            response = client.post(
+                "/api/v1/blur/detect?include_metrics=false", files=files
+            )
+        assert response.status_code == 200
+        result = response.json()["data"]
+        assert result["metrics"] is None
+        assert result["is_blurry"] == expected["is_blurry"]
+        assert result["confidence"] == expected["confidence"]
 
     def test_custom_threshold(self, client: TestClient):
         """A very high threshold should make any image 'blurry'."""
@@ -617,6 +640,74 @@ class TestClassifyStream:
 
 
 class TestDetectStream:
+    @pytest.mark.parametrize("decode_dim", [640, 512])
+    def test_classical_paths_agree_on_textured_jpeg(
+        self, client, app, tmp_path, monkeypatch, decode_dim
+    ):
+        """A fine pattern previously flipped at 1280 vs 640 pixels."""
+        from src.workers.tasks.blur_tasks import blur_detect_batch
+
+        monkeypatch.setattr(app.state.settings, "BLUR_DETECT_DECODE_DIM", decode_dim)
+        data = _textured_jpeg()
+
+        single = client.post(
+            "/api/v1/blur/detect", files={"file": ("pattern.jpg", data, "image/jpeg")}
+        ).json()["data"]
+        stream = _ndjson(client.post(
+            "/api/v1/blur/detect/stream", files=_files([data])
+        ))[0]
+        stream_fft = _ndjson(client.post(
+            "/api/v1/blur/detect/stream?include_hf_ratio=true", files=_files([data])
+        ))[0]
+        path = tmp_path / "pattern.jpg"
+        path.write_bytes(data)
+        with patch("src.workers.model_loader.get_blur_detector",
+                   return_value=app.state.model_registry.get("blur")), patch(
+                   "src.config.get_settings", return_value=app.state.settings):
+            worker = blur_detect_batch("", [str(path)])[0]
+
+        assert (
+            single["is_blurry"] == stream["is_blurry"]
+            == stream_fft["is_blurry"] == worker["is_blurry"]
+        )
+        assert single["metrics"]["laplacian_variance"] == pytest.approx(
+            stream["laplacian_variance"], abs=0.01
+        )
+        assert worker["laplacian_variance"] == pytest.approx(
+            stream["laplacian_variance"], abs=0.01
+        )
+        assert stream_fft["laplacian_variance"] == pytest.approx(
+            stream["laplacian_variance"], abs=0.01
+        )
+        assert stream_fft["hf_ratio"] == pytest.approx(single["metrics"]["hf_ratio"])
+
+    def test_classical_threshold_default_and_override(self, client, app, monkeypatch):
+        detector = app.state.model_registry.get("blur")
+        monkeypatch.setattr(detector, "laplacian_threshold", 300.0)
+        data = _textured_jpeg()
+        files = {"file": ("pattern.jpg", data, "image/jpeg")}
+
+        default = client.post("/api/v1/blur/detect", files=files).json()["data"]
+        explicit = client.post("/api/v1/blur/detect?threshold=300", files=files).json()["data"]
+        override = client.post("/api/v1/blur/detect?threshold=100", files=files).json()["data"]
+        stream = _ndjson(client.post(
+            "/api/v1/blur/detect/stream", files=_files([data])
+        ))[0]
+        assert default["is_blurry"] == explicit["is_blurry"] == stream["is_blurry"]
+        assert default["is_blurry"] != override["is_blurry"]
+
+    @pytest.mark.parametrize("threshold", [0, 10001, "nan", "inf"])
+    def test_classical_threshold_rejects_out_of_range(self, client, threshold):
+        data = _make_jpeg_bytes()
+        assert client.post(
+            f"/api/v1/blur/detect?threshold={threshold}",
+            files={"file": ("x.jpg", data, "image/jpeg")},
+        ).status_code == 422
+        assert client.post(
+            f"/api/v1/blur/detect/stream?threshold={threshold}",
+            files=_files([data]),
+        ).status_code == 422
+
     def test_streams_one_line_per_image_plus_summary(self, client):
         images = [_make_jpeg_bytes() for _ in range(3)]
 

@@ -68,7 +68,10 @@ class Settings(BaseSettings):
     GPU_DEVICE: int = 0
 
     # Blur Detection
-    BLUR_THRESHOLD: float = 100.0
+    BLUR_THRESHOLD: float = Field(default=100.0, ge=1.0, le=10000.0)
+    # One decode scale for classical single, stream, and worker scores.
+    # Re-evaluate labeled images before changing it; BLUR_THRESHOLD is scale-sensitive.
+    BLUR_DETECT_DECODE_DIM: int = Field(default=640, gt=0)
     BLUR_DETECTION_MIN_CONFIDENCE: float = Field(default=0.5, ge=0, le=1)
     # Resolution the blur CLASSIFIER decodes to before inference. Calibrated, not
     # arbitrary: re-measured 2026-08-14 on 1057 labelled val images after

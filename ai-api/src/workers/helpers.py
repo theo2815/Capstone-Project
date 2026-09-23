@@ -86,37 +86,31 @@ def _decode_raw_bytes(raw_bytes: bytes, max_dim: int = 0) -> np.ndarray | None:
     return image
 
 
-def decode_gray_from_path(path: str, max_dim: int = 640) -> np.ndarray | None:
+def decode_gray_from_path(path: str, max_dim: int = 0) -> np.ndarray | None:
     """Load an image from the blob store and decode directly to grayscale.
 
-    Optimised for blur detection: uses cv2.imdecode(IMREAD_GRAYSCALE) which is
-    ~30% faster than colour decode, skips EXIF rotation (irrelevant for blur
-    metrics), and avoids PIL entirely. Mirrors the fast path in the streaming
-    blur endpoint.
+    Uses the same OpenCV grayscale decode and resize as both blur endpoints.
 
     Args:
         path: Blob store file path.
-        max_dim: Max dimension to downscale to (default 640 for blur pipeline).
+        max_dim: Max dimension to downscale to (0 uses BLUR_DETECT_DECODE_DIM).
     """
     try:
         from src.utils.blob_store import load_blob
 
         raw_bytes = load_blob(path)
-        arr = np.frombuffer(raw_bytes, dtype=np.uint8)
-        gray = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
-        if gray is None:
-            return None
-        h, w = gray.shape
-        if max_dim > 0 and max(h, w) > max_dim:
-            scale = max_dim / max(h, w)
-            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-        return gray
+        from src.config import get_settings
+        from src.utils.image_utils import decode_gray_for_blur
+
+        return decode_gray_for_blur(
+            raw_bytes, max_dim or get_settings().BLUR_DETECT_DECODE_DIM
+        )
     except Exception:
         return None
 
 
 def decode_grays_from_paths(
-    paths: list[str], max_dim: int = 640, max_workers: int = 0,
+    paths: list[str], max_dim: int = 0, max_workers: int = 0,
 ) -> list[np.ndarray | None]:
     """Decode multiple images to grayscale in parallel using a thread pool.
 

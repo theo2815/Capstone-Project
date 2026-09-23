@@ -41,7 +41,9 @@ def blur_detect_batch(self, job_id: str, image_paths: list[str]):
     for chunk_start in range(0, total, sub_batch):
         chunk_paths = image_paths[chunk_start:chunk_start + sub_batch]
         # Parallel decode: overlaps disk I/O with CPU decompression (grayscale, no EXIF)
-        decoded = decode_grays_from_paths(chunk_paths, max_dim=640)
+        decoded = decode_grays_from_paths(
+            chunk_paths, max_dim=settings.BLUR_DETECT_DECODE_DIM
+        )
 
         for j, gray in enumerate(decoded):
             idx = chunk_start + j
