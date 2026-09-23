@@ -17,6 +17,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -54,13 +55,7 @@ def _env(service: dict) -> dict[str, str]:
 
 
 class TestProdComposeModels:
-    """The image ships manifest.json and nothing else, by design.
-
-    So the host mount is the ONLY way weights reach a container. Without it
-    blur_classifier and bib_detector are absent — and because the registry
-    calls both optional, /health/ready still answers 200 while every
-    /blur/classify* route, the desktop's primary path, fails.
-    """
+    """The full Compose profile still mounts its complete model directory."""
 
     @pytest.mark.parametrize("name", APP_SERVICES)
     def test_every_app_service_mounts_models(self, name):
@@ -72,15 +67,12 @@ class TestProdComposeModels:
             f"bundle fail loudly instead of silently re-downloading ~300 MB"
         )
 
-    def test_dockerfile_copies_only_the_manifest(self):
-        """Guards the pairing, not the line. `COPY models/` looked correct and
-        delivered nothing, because .dockerignore had already excluded it.
-        """
+    def test_dockerfile_copies_the_audited_blur_pair(self):
+        """The blur image carries its audited model and labels."""
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
-        assert "COPY models/manifest.json" in dockerfile
-        assert "COPY models/ " not in dockerfile
+        assert "COPY models/ /app/models/" in dockerfile
 
-    def test_dockerignore_still_excludes_weights_but_keeps_the_manifest(self):
+    def test_dockerignore_keeps_only_the_blur_pair_and_manifest(self):
         lines = [
             ln.strip()
             for ln in (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
@@ -88,6 +80,8 @@ class TestProdComposeModels:
         ]
         assert "models/" in lines
         assert "!models/manifest.json" in lines
+        assert "!models/blur_classifier/blur_classifier.onnx" in lines
+        assert "!models/blur_classifier/class_names.json" in lines
         # Training-Images/ alone is ~16 GB. Leaving it in the context meant every
         # build shipped it to the daemon before the first instruction ran.
         for heavy in ("Training-Images/", "runs/", "build/"):
@@ -158,7 +152,8 @@ class TestReadinessVisibility:
 
         registry = ModelRegistry()
         registry._models = {
-            name: (object() if ok else None) for name, ok in loaded.items()
+            name: (SimpleNamespace(session=object()) if name == "blur_classifier" else object())
+            if ok else None for name, ok in loaded.items()
         }
         return registry
 
@@ -193,6 +188,91 @@ class TestReadinessVisibility:
         )
         assert registry.all_loaded() is False
 
+    def test_classifier_without_a_session_is_unavailable(self):
+        from src.ml.registry import ModelRegistry
+
+        registry = ModelRegistry()
+        registry._profile = "blur"
+        registry._models = {
+            "blur": object(),
+            "blur_classifier": SimpleNamespace(session=None),
+        }
+        assert registry.status()["blur_classifier"] is False
+        assert registry.all_loaded() is False
+
+    def test_public_readyz_reflects_model_and_dependency_recovery(self, monkeypatch):
+        from src.config import Settings
+        from src.main import create_app
+        from src.ml.registry import ModelRegistry
+
+        settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False)
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        registry = ModelRegistry()
+        registry._profile = "blur"
+        registry._models = {"blur": object(), "blur_classifier": SimpleNamespace(session=None)}
+        app.state.model_registry = registry
+
+        class Redis:
+            available = False
+
+            async def ping(self):
+                if not self.available:
+                    raise ConnectionError("redis down")
+
+        redis = Redis()
+        app.state.redis = redis
+        db = {"available": False}
+
+        async def check_db():
+            return db["available"]
+
+        monkeypatch.setattr("src.db.session.check_db_health", check_db)
+        client = TestClient(app)
+        path = "/api/v1/health/readyz"
+        assert client.get("/api/v1/health").status_code == 200
+        assert client.get(path).status_code == 503
+        db["available"] = True
+        redis.available = True
+        assert client.get(path).status_code == 503
+        registry._models["blur_classifier"].session = object()
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json() == {"status": "ready"}
+        redis.available = False
+        assert client.get(path).status_code == 503
+
+    def test_public_readyz_bounds_a_stalled_database_check(self, monkeypatch):
+        import asyncio
+
+        from src.config import Settings
+        from src.main import create_app
+        from src.ml.registry import ModelRegistry
+
+        settings = Settings(
+            MODEL_PROFILE="blur", METRICS_ENABLED=False, READINESS_TIMEOUT_SECONDS=0.01
+        )
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        registry = ModelRegistry()
+        registry._profile = "blur"
+        registry._models = {
+            "blur": object(), "blur_classifier": SimpleNamespace(session=object())
+        }
+        app.state.model_registry = registry
+        app.state.redis = None
+
+        async def stuck_db():
+            await asyncio.sleep(60)
+            return True
+
+        monkeypatch.setattr("src.db.session.check_db_health", stuck_db)
+        start = time.monotonic()
+        assert TestClient(app).get("/api/v1/health/readyz").status_code == 503
+        assert time.monotonic() - start < 0.5
+
     def test_readiness_schema_carries_the_field(self):
         from src.schemas.common import ReadinessResponse
 
@@ -216,6 +296,52 @@ def test_metrics_enabled_health_request_works_without_lifespan():
     assert TestClient(app).get("/api/v1/health").status_code == 200
 
 
+def test_readyz_recovers_when_redis_was_down_at_startup(monkeypatch):
+    from src.config import Settings
+    from src.main import create_app
+    from src.ml.registry import ModelRegistry
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False)
+    monkeypatch.setattr("src.main.get_settings", lambda: settings)
+
+    async def no_op():
+        pass
+
+    async def unload_models(self):
+        pass
+
+    async def load_models(self, _settings):
+        self._profile = "blur"
+        self._models = {
+            "blur": object(), "blur_classifier": SimpleNamespace(session=object())
+        }
+
+    monkeypatch.setattr("src.main.init_db", no_op)
+    monkeypatch.setattr("src.main.close_db", no_op)
+    monkeypatch.setattr("src.db.session.check_db_health", lambda: no_op_true())
+    monkeypatch.setattr(ModelRegistry, "load_all", load_models)
+    monkeypatch.setattr(ModelRegistry, "unload_all", unload_models)
+
+    async def no_op_true():
+        return True
+
+    class Redis:
+        calls = 0
+
+        async def ping(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConnectionError("redis unavailable")
+
+        async def aclose(self):
+            pass
+
+    redis = Redis()
+    monkeypatch.setattr("redis.asyncio.from_url", lambda *_args, **_kwargs: redis)
+    with TestClient(create_app()) as client:
+        assert client.get("/api/v1/health/readyz").status_code == 200
+
+
 @pytest.mark.asyncio
 async def test_blur_profile_loads_only_blur_models(monkeypatch):
     from src.ml.registry import ModelRegistry
@@ -224,7 +350,10 @@ async def test_blur_profile_loads_only_blur_models(monkeypatch):
     called = []
     for name in ("blur", "blur_classifier", "face", "bib_detector", "bib_ocr"):
         monkeypatch.setattr(
-            registry, f"_load_{name}", lambda _settings, n=name: called.append(n) or object()
+            registry, f"_load_{name}",
+            lambda _settings, n=name: called.append(n) or (
+                SimpleNamespace(session=object()) if n == "blur_classifier" else object()
+            )
         )
     monkeypatch.setattr(
         registry, "_preimport_libs", lambda: pytest.fail("full ML libraries imported")
@@ -269,19 +398,13 @@ def test_blur_profile_does_not_import_face_or_bib_routes():
 
 
 class TestDockerBuildContext:
-    """What actually reaches the image.
+    """Inspect the real Docker context for the audited blur artifact."""
 
-    Docker and git differ here, and this whole finding turns on the difference:
-    git refuses to re-include a file whose parent directory is excluded, Docker
-    honours the exception. `models/` + `!models/manifest.json` is therefore
-    broken in .gitignore (already fixed there, to `models/*`) and correct in
-    .dockerignore. That is too subtle to assert from reading the file, so build
-    the real context and look.
-    """
-
-    def test_context_carries_the_manifest_and_no_weights(self):
+    def test_context_carries_only_the_audited_blur_pair(self):
         if not shutil.which("docker"):
             pytest.skip("docker unavailable — cannot inspect the build context")
+        if not (PROJECT_ROOT / "models/blur_classifier/blur_classifier.onnx").exists():
+            pytest.skip("audited local artifact absent — release build must provision it")
 
         tag = "quickpitik-context-probe:test"
         # busybox rather than the real Dockerfile: this asserts what the context
@@ -299,7 +422,10 @@ class TestDockerBuildContext:
                 pytest.fail(f"context probe build failed:\n{build.stderr.decode(errors='replace')}")
 
             listing = subprocess.run(
-                ["docker", "run", "--rm", tag, "sh", "-c", "ls -A /ctx /ctx/models"],
+                [
+                    "docker", "run", "--rm", tag, "sh", "-c",
+                    "ls -A /ctx /ctx/models /ctx/models/blur_classifier",
+                ],
                 capture_output=True,
                 timeout=120,
             )
@@ -308,7 +434,9 @@ class TestDockerBuildContext:
             subprocess.run(["docker", "rmi", "-f", tag], capture_output=True, timeout=120)
 
         assert "manifest.json" in out, "models/manifest.json never reached the image"
-        for weight in ("blur_classifier", "bib_detection", "buffalo_l"):
+        assert "blur_classifier.onnx" in out, "audited ONNX absent from build context"
+        assert "class_names.json" in out, "audited labels absent from build context"
+        for weight in ("bib_detection", "buffalo_l"):
             assert weight not in out, (
                 f"{weight} is in the build context — weights are meant to be "
                 f"volume-mounted, and models/* is gitignored so a clean "

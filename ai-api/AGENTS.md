@@ -48,13 +48,13 @@ All ML models are loaded **once** at startup via `src/ml/registry.py` and stored
 ```python
 registry = request.app.state.model_registry
 detector = registry.get("blur")           # BlurDetector
-classifier = registry.get("blur_classifier")  # BlurClassifier, optional
+classifier = registry.get("blur_classifier")  # BlurClassifier, required in blur profile
 embedder = registry.get("face")           # FaceEmbedder (InsightFace)
 bib_detector = registry.get("bib_detector")   # BibDetector (YOLO), optional
 bib_ocr = registry.get("bib_ocr")         # BibRecognizer (PaddleOCR)
 ```
 
-`blur` and `bib_ocr` and `face` are required; `blur_classifier` and `bib_detector` are optional and are marked absent in the readiness check only when loading raises.
+`blur` is required in every profile; `blur_classifier` is required and verified in the `blur` profile, while face and bib models are excluded. In the `all` profile, `face` and `bib_ocr` are required, while `blur_classifier` and `bib_detector` remain optional.
 
 ### API Response Envelope
 
@@ -92,7 +92,7 @@ Celery workers cannot use asyncpg — they use the sync engine in `src/db/sync_s
 
 ### Authentication + Rate Limiting
 
-Every endpoint except `GET /health` uses `Depends(verify_api_key)` (`src/middleware/auth.py`). The dependency:
+Every endpoint except `GET /health` and the minimal public `GET /health/readyz` uses `Depends(verify_api_key)` (`src/middleware/auth.py`). The dependency:
 
 1. SHA-256-hashes the `X-API-Key` header
 2. Checks Redis cache, then falls back to the `api_keys` table
@@ -217,7 +217,7 @@ Do not add new dependencies without justification. Prefer existing libraries ove
 Two systems coexist:
 
 1. **Laplacian/FFT detector** (`src/ml/blur/detector.py`): Always-available classical CV. Laplacian variance + optional FFT high-frequency ratio. Normalised to a 640px linear reference. `detect_fast(gray)` is a faster path used by streaming and batch tasks — it skips BGR→gray conversion and FFT.
-2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the ONNX model at `models/blur_classifier/blur_classifier.onnx`. Optional — loads only if the file exists.
+2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the ONNX model at `models/blur_classifier/blur_classifier.onnx`. Required and verified in the `blur` profile; optional in `all`.
 
 API endpoints:
 

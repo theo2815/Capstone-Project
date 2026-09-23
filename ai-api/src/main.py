@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized")
 
     # Initialize Redis with connection pooling
+    app.state.redis = None
     try:
         import redis.asyncio as aioredis
 
@@ -53,8 +54,7 @@ async def lifespan(app: FastAPI):
         await app.state.redis.ping()
         logger.info("Redis connected")
     except Exception as e:
-        logger.warning("Redis not available, running without cache", error=str(e))
-        app.state.redis = None
+        logger.warning("Redis not available at startup", error=str(e))
 
     # Load ML models
     registry = ModelRegistry()

@@ -36,25 +36,27 @@ COPY --from=builder /install /usr/local
 WORKDIR /app
 
 COPY src/ /app/src/
-# Manifest only — the ~618 MB of weights are mounted read-only from the host at
-# /app/models by docker-compose.prod.yml. They cannot be baked: models/* is
-# gitignored, so a build from a clean checkout has nothing to copy. Copying the
-# whole directory here looked like it delivered them and delivered nothing,
-# because .dockerignore excludes it.
-COPY models/manifest.json /app/models/manifest.json
+# The audited blur pair is supplied to the build context, never committed.
+# .dockerignore admits only these two small files and the manifest. Full-profile
+# deployments can still mount their other models as before.
+COPY models/ /app/models/
 COPY alembic.ini /app/alembic.ini
+
+RUN if [ "$MODEL_PROFILE" = "blur" ]; then \
+      python -c 'import sys; from src.ml.blur.classifier import BlurClassifier; c = BlurClassifier(manifest_path="/app/models/manifest.json"); sys.exit(0 if c.session is not None else "Verified blur artifact is unavailable")'; \
+    fi
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Non-root user for security
 RUN adduser --disabled-password --no-create-home appuser && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && chmod -R a-w /app/models
 USER appuser
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/api/v1/health/readyz" || exit 1
 
-CMD ["uvicorn", "src.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--timeout-graceful-shutdown", "30"]
+CMD ["sh", "-c", "exec uvicorn src.main:create_app --factory --host 0.0.0.0 --port \"${PORT:-8000}\" --workers \"${WORKERS:-2}\" --timeout-graceful-shutdown 30"]

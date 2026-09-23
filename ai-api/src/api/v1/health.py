@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
@@ -22,35 +24,56 @@ async def liveness(request: Request) -> HealthResponse:
     )
 
 
-@router.get("/ready", response_model=APIResponse)
-async def readiness(
-    request: Request,
-    key_meta: dict = Depends(verify_api_key),
-) -> APIResponse:
-    """Readiness probe. Checks that models, DB, and Redis are available.
-
-    Requires authentication to prevent exposing infrastructure status.
-    """
+async def _checks(request: Request) -> ReadinessResponse:
     registry = request.app.state.model_registry
     from src.db.session import check_db_health
 
-    db_ok = await check_db_health()
-
     redis = getattr(request.app.state, "redis", None)
-    redis_ok = False
-    if redis:
-        try:
-            await redis.ping()
-            redis_ok = True
-        except Exception:
-            redis_ok = False
+    timeout = request.app.state.settings.READINESS_TIMEOUT_SECONDS
 
-    checks = ReadinessResponse(
+    async def db_healthy() -> bool:
+        try:
+            return await asyncio.wait_for(check_db_health(), timeout)
+        except Exception:
+            return False
+
+    async def redis_healthy() -> bool:
+        if redis is None:
+            return False
+        try:
+            await asyncio.wait_for(redis.ping(), timeout)
+            return True
+        except Exception:
+            return False
+
+    db_ok, redis_ok = await asyncio.gather(db_healthy(), redis_healthy())
+
+    return ReadinessResponse(
         models_loaded=registry.all_loaded(),
         models=registry.status(),
         database=db_ok,
         redis=redis_ok,
     )
+
+
+@router.get("/readyz", include_in_schema=False)
+async def public_readiness(request: Request) -> JSONResponse:
+    """Minimal public readiness for the deployment probe."""
+    checks = await _checks(request)
+    healthy = checks.models_loaded and checks.database and checks.redis
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content={"status": "ready" if healthy else "unavailable"},
+    )
+
+
+@router.get("/ready", response_model=APIResponse)
+async def readiness(
+    request: Request,
+    key_meta: dict = Depends(verify_api_key),
+) -> APIResponse:
+    """Authenticated detailed readiness."""
+    checks = await _checks(request)
     healthy = checks.models_loaded and checks.database and checks.redis
 
     response_data = APIResponse(

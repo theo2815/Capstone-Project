@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     WORKERS: int = 2
+    READINESS_TIMEOUT_SECONDS: float = 3.0
     # Total request body ceiling, enforced by BodySizeLimitMiddleware in main.py.
     # Until 2026-08-14 this was defined and never read, so nothing in the app
     # bounded body size and nginx's client_max_body_size was the only guard.

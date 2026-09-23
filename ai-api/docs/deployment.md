@@ -55,12 +55,29 @@ publishes on `127.0.0.1:8000` only; public traffic arrives through nginx on 80/4
 proxy's rate limit and `client_max_body_size` cannot be bypassed.
 
 The Dockerfile defaults to `MODEL_PROFILE=all` and installs the full application dependencies.
-For a smaller CPU blur image, build with `docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur .`
-and run it with `MODEL_PROFILE=blur`. This profile installs the pinned
+For a smaller CPU blur image, supply the audited ONNX and ordered labels under
+`models/blur_classifier/` in the trusted build workspace, then build with
+`docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur:2026-08-14-dynamic .` and run it
+with `MODEL_PROFILE=blur`. This profile installs the pinned
 `requirements-blur.lock` and loads only blur models; face and bib routes return 404.
 Regenerate the lock from `requirements-blur.in` with `pip-compile` in a clean Python 3.12
-Linux environment with `libpq-dev` installed. The blur image still needs the model files
-mounted at `/app/models`; artifact delivery and readiness are Task 2 of the Railway plan.
+Linux environment with `libpq-dev` installed. The two files are gitignored; the
+build checks their manifest hashes, label order, ONNX shape, and warm inference,
+then embeds them in a read-only image directory. No model mount is needed at
+runtime. The built image is the versioned artifact containing both files. Push
+it to the deployment registry and select its immutable image digest in Railway.
+Until that image is published, Railway cannot reproduce this build from a clean
+Git checkout: the audited inputs exist only in the trusted local workspace.
+
+Run `alembic upgrade head` as a separate pre-deploy job with `DATABASE_URL` set
+to a `postgresql+asyncpg://` URL for a PostgreSQL database that permits the
+`vector` extension. The existing Alembic chain creates that extension; abort
+the deploy if migrations fail. Provision the desktop key through the existing
+workflow in the gitignored `../docs/api-keys.md`, with only `blur:read` and
+`jobs:read`; do not run `scripts/seed_db.py` in staging or production. Set
+Railway `PORT` and `WORKERS` for the service (defaults: 8000 and 2). Probe
+`/api/v1/health/readyz` for public 200/503 readiness; `/api/v1/health` is
+liveness, and `/api/v1/health/ready` remains authenticated and detailed.
 
 ### Production (GPU)
 ```bash
@@ -161,10 +178,13 @@ providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 - Used by container orchestrators to detect crashed processes
 - If this fails, restart the container
 
-### Readiness: GET /api/v1/health/ready
-- Checks: models loaded + database reachable + Redis reachable
-- Used by load balancers to know when to send traffic
-- If this fails, stop routing traffic to this instance (but don't restart)
+### Public readiness: GET /api/v1/health/readyz
+- Returns only `{"status":"ready"}` (200) or `{"status":"unavailable"}` (503)
+- Checks the profile's required models, database and Redis with bounded probes
+- Use this path for container and Railway readiness checks
+
+### Authenticated detail: GET /api/v1/health/ready
+- Returns the model breakdown and dependency status to an authorized API key
 
 The readiness payload also carries a per-model breakdown:
 
@@ -174,16 +194,15 @@ The readiness payload also carries a per-model breakdown:
             "blur_classifier": false, "bib_detector": false}}
 ```
 
-`models_loaded` covers only the **required** set (`blur`, `face`, `bib_ocr`), so it stays
-`true` — and the probe stays 200 — when an optional model is missing. `models` is where that
-shows up. A `blur_classifier: false` means every `/blur/classify*` route is failing, which is
-the desktop app's primary path; check the `./models` mount first.
+In the full profile, `models_loaded` covers `blur`, `face`, and `bib_ocr`; the
+classifier remains optional. In the blur profile, `blur` and `blur_classifier`
+are both required, so a missing or invalid classifier makes readiness 503.
 
 ### Docker health check
 The Dockerfile includes a built-in health check:
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/api/v1/health/readyz" || exit 1
 ```
 
 ---
@@ -225,13 +244,13 @@ starts with no weights at all.
    — without it, bib recognition falls back to full-image OCR with more false positives.
 
 4. **Blur classifier**: custom-trained ONNX at `models/blur_classifier/blur_classifier.onnx`
-   plus `class_names.json`. **Optional** — without it every `/blur/classify*` route fails.
+   plus `class_names.json`. Required by the dedicated blur image; optional in the full profile.
 
-Both "optional" models are optional to the *registry*, not to the product. Run
+For the full profile, the classifier and bib detector remain optional to the registry. Run
 `python scripts/download_models.py` before deploying: it checks every artifact named in
 `models/manifest.json` and exits non-zero listing whatever is absent.
 
-At server startup, the `ModelRegistry` loads all models in parallel (via `asyncio.gather` + `asyncio.to_thread`). Heavy libraries (`torch`, `insightface`, `ultralytics`) are pre-imported on the main thread first to avoid Windows DLL loading races. This takes 5–15 seconds depending on the machine. The readiness probe returns 503 until loading completes.
+At server startup, the `ModelRegistry` loads selected models in parallel (via `asyncio.gather` + `asyncio.to_thread`). In the full profile, heavy libraries (`torch`, `insightface`, `ultralytics`) are pre-imported on the main thread to avoid Windows DLL loading races. The server accepts requests after startup; `/api/v1/health/readyz` returns 503 if required inference, PostgreSQL, or Redis is unavailable.
 
 ---
 
