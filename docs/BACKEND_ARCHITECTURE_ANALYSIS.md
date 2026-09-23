@@ -290,8 +290,8 @@ flowchart LR
     C --> D["Duplicate Check (Per-Photographer)"]
     D --> E["Store Raw Image to S3/Disk"]
     E --> F["Insert Photo Record (Status: PROCESSING)"]
-    O["Direct begin: gates + hash dedup"] --> P["Phone PUT original to presigned S3/R2 slot"]
-    P --> Q["Commit: idempotency + object HEAD validation"]
+    O["Direct begin: gates + durable intent"] --> P["Client PUT to owner-scoped staging slot"]
+    P --> Q["Commit: immutable copy + server byte validation"]
     Q --> F
 
     subgraph AsyncWorker["Asynchronous Processing (Off Request Thread)"]
@@ -317,23 +317,31 @@ flowchart LR
 **Direct upload contract — mobile/backend:**
 
 `POST /api/v1/me/photographer/events/{eventId}/photos/direct` returns `direct`,
-`existing`, or `multipart`. Direct mode issues an expiring PUT URL; the marketplace
-uses that original object, with an asynchronously generated preview. There is no
-second original upload to a separate marketplace store.
+`existing`, or `multipart`. Direct mode first reserves a durable, owner/event-scoped
+intent, then issues an expiring PUT URL for a private staging key. Optional
+`requestId` makes begin idempotent; optional `client=website` is rollout-gated.
+The additive response fields expose signed upload headers and PUT/intent deadlines.
+Existing native clients may omit both request fields and ignore the new response data.
 
 `POST /api/v1/me/photographer/events/{eventId}/photos/direct/commit` accepts
 `photoId`, `key`, `contentHash`, `contentType`, and optional positive `sizeBytes`.
 Existing clients may omit size. A new commit checks object HEAD metadata against
-the supported type/size bounds and supplied size/type. The hash remains
-client-asserted; HEAD is not independent byte-checksum verification. Decode/pixel
-validation runs in the watermark worker before public visibility.
+the persisted reservation, snapshots staging to the final original with a
+source-ETag and create-only destination condition, then reads at most 25 MiB + 1
+from that immutable original. The backend computes SHA-256, identifies the actual
+JPEG/PNG/WebP format, checks dimensions and performs a bounded decode before any
+photo row, counter or processing event is committed. Multipart upload uses the
+same byte validator. The current JDK has no WebP ImageIO reader, so WebP fails
+closed with 415 before direct issuance; no codec dependency is silently added.
 
-A repeated committed ID must match owner, event, key and hash. It returns the
-existing photo even after its event upload window closes and never deletes its
-original. New rows use INSERT, with photo-ID and photographer/hash constraints
-resolved after transaction rollback. Concurrent same-event duplicates return the
-winning photo without incrementing counters again; only a separate losing object
-is eligible for cleanup. Cross-event dedup remains a conflict.
+A repeated committed intent must match owner, event, issued key and recorded
+metadata. It returns the existing photo even after its event upload window closes
+and never rewrites or deletes its original. Verification is protected by a bounded
+semaphore plus a database lease token; photo insertion, both counters, processing
+events and intent completion commit atomically. Photo-ID and photographer/hash
+constraint races resolve only after rollback. Concurrent same-event duplicates
+return the winner without extra counters/events; cross-event dedup remains a
+terminal conflict. Unissued or foreign staging keys are never read or deleted.
 
 Android persists the slot before PUT and retries commit first after interruption;
 only `UPLOAD_OBJECT_MISSING` starts another transfer. Transient storage failures do

@@ -123,6 +123,22 @@ app:
     path-style-access: ${STORAGE_PATH_STYLE:false}
     local-root: ${STORAGE_LOCAL_ROOT:.storage}
     public-base-url: ${STORAGE_PUBLIC_BASE_URL:}
+    direct-upload:
+      # Capability and rollout gates stay off until the real R2/browser/native
+      # smoke proves signed length and create-only destination copy semantics.
+      enabled: ${STORAGE_DIRECT_UPLOAD_ENABLED:false}
+      website-enabled: ${STORAGE_DIRECT_UPLOAD_WEBSITE_ENABLED:false}
+      put-ttl: ${STORAGE_DIRECT_UPLOAD_PUT_TTL:PT15M}
+      intent-ttl: ${STORAGE_DIRECT_UPLOAD_INTENT_TTL:PT24H}
+      max-bytes: ${STORAGE_DIRECT_UPLOAD_MAX_BYTES:26214400}
+      max-pending-per-user: ${STORAGE_DIRECT_UPLOAD_MAX_PENDING_PER_USER:32}
+      max-pending-bytes-per-user: ${STORAGE_DIRECT_UPLOAD_MAX_PENDING_BYTES_PER_USER:838860800}
+      verification-concurrency: ${STORAGE_DIRECT_UPLOAD_VERIFICATION_CONCURRENCY:2}
+      verification-lease: ${STORAGE_DIRECT_UPLOAD_VERIFICATION_LEASE:PT5M}
+      cleanup-delay: ${STORAGE_DIRECT_UPLOAD_CLEANUP_DELAY:PT1H}
+      cleanup-interval: ${STORAGE_DIRECT_UPLOAD_CLEANUP_INTERVAL:PT1M}
+      cleanup-batch-size: ${STORAGE_DIRECT_UPLOAD_CLEANUP_BATCH_SIZE:100}
+      cleanup-recheck-window: ${STORAGE_DIRECT_UPLOAD_CLEANUP_RECHECK_WINDOW:P7D}
   ai:
     # Which backend fulfils face + bib inference. `ai-api` (default) uses the
     # self-hosted ai-api service configured under app.ai-api below.

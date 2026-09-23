@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.StandardOpenOption
 import java.nio.file.StandardCopyOption
 import java.time.Duration
 
@@ -21,6 +22,7 @@ class LocalFsStorageService(
     private val environment: Environment,
 ) : StorageService {
     override val supportsDirectUpload: Boolean = false
+    override val supportsImmutableDirectUpload: Boolean = false
     private val log = LoggerFactory.getLogger(javaClass)
     private val root: Path = Paths.get(props.localRoot).toAbsolutePath().also(Files::createDirectories)
 
@@ -84,6 +86,34 @@ class LocalFsStorageService(
 
     override fun presignedPutUrl(key: String, ttl: Duration, contentType: String): String =
         buildLocalUrl(key, ttl, "PUT")
+
+    override fun presignedUpload(
+        key: String,
+        ttl: Duration,
+        contentType: String,
+        sizeBytes: Long,
+    ): PresignedUpload = throw UnsupportedOperationException("local storage does not support direct browser uploads")
+
+    override fun copyIfAbsent(
+        sourceKey: String,
+        targetKey: String,
+        sourceEtag: String,
+        contentType: String,
+    ): StoredObject {
+        val source = resolve(sourceKey)
+        val target = resolve(targetKey)
+        Files.createDirectories(target.parent)
+        return Files.newInputStream(source).use { input ->
+            val output = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+            try {
+                output.use { input.transferTo(it) }
+                StoredObject(targetKey, Files.size(target), contentType)
+            } catch (error: Throwable) {
+                Files.deleteIfExists(target)
+                throw error
+            }
+        }
+    }
 
     private fun resolve(key: String): Path {
         require(!key.contains("..")) { "key may not traverse: $key" }

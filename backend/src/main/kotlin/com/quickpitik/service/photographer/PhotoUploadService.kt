@@ -12,13 +12,17 @@ import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoSpan
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.PhotoUploadIntent
+import com.quickpitik.entity.PhotoUploadIntentState
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.service.image.ImagePixelGuard
+import com.quickpitik.repository.PhotoUploadIntentRepository
+import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.service.image.PhotoUploadValidator
 import com.quickpitik.service.storage.StorageService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
@@ -28,15 +32,18 @@ import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
-import java.security.MessageDigest
+import java.io.ByteArrayInputStream
+import java.time.Clock
+import java.time.Duration
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
-import java.util.HexFormat
 import java.util.UUID
+import java.util.concurrent.Semaphore
 import kotlin.random.Random
 
 @Service
@@ -44,16 +51,21 @@ class PhotoUploadService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val photoRepository: PhotoRepository,
+    private val photoUploadIntentRepository: PhotoUploadIntentRepository,
     private val eventPhotographerRepository: EventPhotographerRepository,
     private val eventRepository: EventRepository,
+    private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val accessGuard: PhotographerAccessGuard,
+    private val photoUploadValidator: PhotoUploadValidator,
     private val aiApiProperties: AiApiProperties,
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
     private val meterRegistry: MeterRegistry,
     private val entityManager: EntityManager,
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+    private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency)
 
     // Deliberately NOT @Transactional: the original-object storage PUT below
     // takes long enough that it would pin a Hikari connection (pool of 10) for
@@ -78,17 +90,11 @@ class PhotoUploadService(
         }
 
         val bytes = file.bytes
-
-        // Decompression-bomb guard: header-only dimension check BEFORE the full
-        // ImageIO decode below. The 25 MB multipart cap bounds the compressed
-        // bytes, not the decoded raster — a bomb under 25 MB is unbounded heap.
-        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
-            throw ApiException(
-                status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                message = "Image dimensions exceed the supported maximum.",
-            )
-        }
+        val contentHash = photoUploadValidator.validate(
+            ByteArrayInputStream(bytes),
+            contentType,
+            bytes.size.toLong(),
+        )
 
         // Duplicate detection (enterprise dedup). A photo's identity is the
         // SHA-256 of its ORIGINAL bytes, hashed HERE — before watermarking,
@@ -99,7 +105,6 @@ class PhotoUploadService(
         // idempotently; a different-event re-upload is rejected. The partial
         // unique index (photographer_id, content_hash) from V24 is the
         // race-safe backstop (see persistNew below).
-        val contentHash = sha256Hex(bytes)
         duplicateOf(photographerId, eventId, contentHash)?.let { return existingPhotoDto(it) }
 
         // Blur culling is desktop-only (BatchMyPhotos). Web upload assumes
@@ -134,13 +139,11 @@ class PhotoUploadService(
     // the phone, out to storage) — measured at ~6 s per 1.2 MB frame on the
     // 2026-09-02 device session, all of it the storage PUT. These two steps let
     // the client PUT straight to S3/R2 with a presigned URL and then register
-    // the object. The gates, dedup and persist are the SAME code as upload();
-    // only who moves the bytes changes.
+    // the object. Commit still performs one bounded server-side read so the
+    // gates, byte validation, dedup and persist match upload().
     //
-    // Trust note: contentHash is client-asserted here (the server never sees
-    // the bytes in-request). A photographer can only mislead their own dedupe
-    // with it; the async watermark pass still decodes the object and guards
-    // the pixel budget, so a bad object stalls in PROCESSING, owner-only.
+    // The client supplies the expected hash, but commit snapshots the staging
+    // object and verifies its actual bytes before any marketplace row exists.
 
     fun beginDirectUpload(
         photographerId: UUID,
@@ -148,30 +151,64 @@ class PhotoUploadService(
         contentHash: String,
         contentType: String,
         sizeBytes: Long,
+        requestId: UUID? = null,
+        client: String? = null,
     ): DirectUploadBeginResponse {
-        val (event, settings) = gate(photographerId, eventId)
+        if (client != null && client != WEBSITE_CLIENT) {
+            throw ApiException(HttpStatus.BAD_REQUEST, ErrorCodes.VALIDATION_ERROR, "Unknown upload client.")
+        }
         val type = contentType.lowercase()
-        if (type !in ALLOWED_CONTENT_TYPES || sizeBytes !in 1..MAX_DIRECT_UPLOAD_BYTES) {
+        val hash = contentHash.lowercase()
+        if (type !in ALLOWED_CONTENT_TYPES || sizeBytes !in 1..storageProperties.directUpload.maxBytes) {
             throw ApiException(
                 status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
                 message = "Upload must be image/jpeg, image/png, or image/webp under 25 MB.",
             )
         }
-        duplicateOf(photographerId, eventId, contentHash.lowercase())?.let {
+        if (!photoUploadValidator.canDecode(type)) {
+            throw ApiException(
+                HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                "That image type is not supported by the server image decoder.",
+            )
+        }
+
+        if (requestId != null) {
+            accessGuard.requireApproved(photographerId, "uploading")
+            photoUploadIntentRepository.findByPhotographerIdAndRequestId(photographerId, requestId)?.let {
+                validateReplay(it, eventId, hash, type, sizeBytes)
+                return replayBegin(it)
+            }
+        }
+
+        val (event, settings) = gate(photographerId, eventId)
+        duplicateOf(photographerId, eventId, hash)?.let {
             return DirectUploadBeginResponse(mode = "existing", existing = existingPhotoDto(it))
         }
         requireWatermark(settings, event)
-        if (!storageService.supportsDirectUpload) return DirectUploadBeginResponse(mode = "multipart")
-        val photoId = UUID.randomUUID()
-        val key = originalKeyFor(eventId, photoId)
-        return DirectUploadBeginResponse(
-            mode = "direct",
-            photoId = photoId,
-            key = key,
-            uploadUrl = storageService.presignedPutUrl(key, DIRECT_PUT_TTL, type),
-            expiresInSeconds = DIRECT_PUT_TTL.seconds,
-        )
+        if (!storageService.supportsImmutableDirectUpload ||
+            (client == WEBSITE_CLIENT && !storageProperties.directUpload.websiteEnabled)) {
+            return DirectUploadBeginResponse(mode = "multipart")
+        }
+
+        val intent = try {
+            reserveIntent(photographerId, eventId, requestId, hash, type, sizeBytes)
+        } catch (error: DataIntegrityViolationException) {
+            val existing = requestId?.let {
+                photoUploadIntentRepository.findByPhotographerIdAndRequestId(photographerId, it)
+            } ?: throw error
+            validateReplay(existing, eventId, hash, type, sizeBytes)
+            return replayBegin(existing)
+        } catch (error: ApiException) {
+            if (error.code != ErrorCodes.RATE_LIMITED) throw error
+            val existing = requestId?.let {
+                photoUploadIntentRepository.findByPhotographerIdAndRequestId(photographerId, it)
+            } ?: throw error
+            validateReplay(existing, eventId, hash, type, sizeBytes)
+            return replayBegin(existing)
+        }
+        return presign(intent)
     }
 
     fun commitDirectUpload(
@@ -184,52 +221,344 @@ class PhotoUploadService(
         contentType: String? = null,
     ): UploadedPhotoDto {
         val timerSample = Timer.start(meterRegistry)
-        // The key is derived, never trusted: a client can only commit the
-        // object slot that begin() issued for this event.
-        if (key != originalKeyFor(eventId, photoId)) {
-            throw ApiException(
-                status = HttpStatus.UNPROCESSABLE_ENTITY,
-                code = ErrorCodes.UPLOAD_KEY_MISMATCH,
-                message = "That upload key doesn't match the photo it was issued for.",
-            )
-        }
+        accessGuard.requireApproved(photographerId, "uploading")
         val hash = contentHash.lowercase()
-        // A lost success response is a read, even if the event's window has since closed.
-        committedPhoto(photoId, photographerId, eventId, key, hash)?.let { return existingPhotoDto(it) }
-        val (event, settings) = gate(photographerId, eventId)
-        val stored = storageService.metadata(key)
-        if (stored == null) {
-            throw ApiException(
-                status = HttpStatus.UNPROCESSABLE_ENTITY,
-                code = ErrorCodes.UPLOAD_OBJECT_MISSING,
-                message = "The uploaded file wasn't found in storage. Upload it again.",
-            )
+        val intent = photoUploadIntentRepository.findOwned(photoId, photographerId, eventId)
+        if (intent == null) {
+            legacyCommittedPhoto(photoId, photographerId, eventId, key, hash)?.let {
+                return existingPhotoDto(it)
+            }
+            if (photoRepository.findById(photoId).isPresent) {
+                throw ApiException(HttpStatus.NOT_FOUND, ErrorCodes.UPLOAD_NOT_FOUND, "Upload not found.")
+            }
+            if (key == originalKeyFor(eventId, photoId)) uploadObjectMissing()
+            throw ApiException(HttpStatus.NOT_FOUND, ErrorCodes.UPLOAD_NOT_FOUND, "Upload not found.")
         }
-        if (stored.sizeBytes !in 1..MAX_DIRECT_UPLOAD_BYTES || stored.contentType.lowercase() !in ALLOWED_CONTENT_TYPES ||
-            (sizeBytes != null && stored.sizeBytes != sizeBytes) ||
-            (contentType != null && !stored.contentType.equals(contentType, ignoreCase = true))) {
-            runCatching { storageService.delete(key) }
-            throw ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                "The stored image size or type does not match the upload. Retry with a supported original image.")
-        }
-        duplicateOf(photographerId, eventId, hash)?.let { existing ->
-            // Lost a race with an identical upload — drop the orphan object.
-            if (key != existing.s3Key) runCatching { storageService.delete(key) }
-            return existingPhotoDto(existing)
-        }
-        requireWatermark(settings, event)
-        val dto = persistNew(photoId, eventId, photographerId, key, hash, event)
+        validateCommitRequest(intent, key, hash, sizeBytes, contentType)
+        val dto = commitIntent(intent)
         timerSample.stop(meterRegistry.timer("qp.upload.duration"))
         return dto
     }
 
-    private fun committedPhoto(id: UUID, owner: UUID, event: UUID, key: String, hash: String): Photo? =
-        photoRepository.findById(id).orElse(null)?.also {
-            if (it.photographerId != owner || it.eventId != event || it.s3Key != key || it.contentHash != hash) {
-                throw ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCodes.UPLOAD_KEY_MISMATCH,
-                    "That upload slot belongs to a different photo.")
+    private fun legacyCommittedPhoto(id: UUID, owner: UUID, event: UUID, key: String, hash: String): Photo? =
+        photoRepository.findById(id).orElse(null)?.takeIf {
+            it.photographerId == owner && it.eventId == event && it.s3Key == key && it.contentHash == hash
+        }
+
+    private fun reserveIntent(
+        ownerId: UUID,
+        eventId: UUID,
+        requestId: UUID?,
+        contentHash: String,
+        contentType: String,
+        sizeBytes: Long,
+    ): PhotoUploadIntent = checkNotNull(transactionTemplate.execute {
+        photographerSettingsRepository.findByUserIdForUpdate(ownerId)
+            ?: throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
+                "Submit your photographer verification before uploading.")
+        val now = OffsetDateTime.now(clock)
+        val quota = photoUploadIntentRepository.activeQuota(ownerId, now)
+        val direct = storageProperties.directUpload
+        if (quota.slots >= direct.maxPendingPerUser || quota.bytes > direct.maxPendingBytesPerUser - sizeBytes) {
+            throw ApiException(HttpStatus.TOO_MANY_REQUESTS, ErrorCodes.RATE_LIMITED,
+                "Too many direct uploads are pending. Try again shortly.", retryAfterSeconds = 5)
+        }
+        val photoId = UUID.randomUUID()
+        photoUploadIntentRepository.saveAndFlush(
+            PhotoUploadIntent(
+                photoId = photoId,
+                photographerId = ownerId,
+                eventId = eventId,
+                requestId = requestId,
+                contentHash = contentHash,
+                contentType = contentType,
+                sizeBytes = sizeBytes,
+                stagingKey = stagingKeyFor(ownerId, eventId, photoId),
+                originalKey = originalKeyFor(eventId, photoId),
+                createdAt = now,
+                putExpiresAt = now.plus(direct.putTtl),
+                expiresAt = now.plus(direct.intentTtl),
+                updatedAt = now,
+            ),
+        )
+    })
+
+    private fun presign(intent: PhotoUploadIntent): DirectUploadBeginResponse {
+        val now = OffsetDateTime.now(clock)
+        val ttl = Duration.between(now, intent.putExpiresAt)
+        if (ttl.isZero || ttl.isNegative) return replayBegin(intent)
+        val upload = try {
+            storageService.presignedUpload(intent.stagingKey, ttl, intent.contentType, intent.sizeBytes)
+        } catch (error: Exception) {
+            log.warn("Direct upload presign failed for intent {}: {}", intent.photoId, error.javaClass.simpleName)
+            throw ApiException(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE,
+                "Upload storage is temporarily unavailable. Try again.",
+                retryAfterSeconds = 5,
+            )
+        }
+        return DirectUploadBeginResponse(
+            mode = "direct",
+            photoId = intent.photoId,
+            key = intent.stagingKey,
+            uploadUrl = upload.url,
+            expiresInSeconds = ttl.seconds.coerceAtLeast(1),
+            expiresAt = intent.putExpiresAt,
+            intentExpiresAt = intent.expiresAt,
+            uploadHeaders = upload.headers,
+        )
+    }
+
+    private fun validateReplay(
+        intent: PhotoUploadIntent,
+        eventId: UUID,
+        contentHash: String,
+        contentType: String,
+        sizeBytes: Long,
+    ) {
+        if (intent.eventId != eventId || intent.contentHash != contentHash ||
+            intent.contentType != contentType || intent.sizeBytes != sizeBytes) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.UPLOAD_REQUEST_CONFLICT,
+                "That request id was already used for a different upload.")
+        }
+    }
+
+    private fun replayBegin(intent: PhotoUploadIntent): DirectUploadBeginResponse = when (intent.state) {
+        PhotoUploadIntentState.COMMITTED -> DirectUploadBeginResponse(
+            mode = "existing",
+            existing = committedIntentPhoto(intent),
+        )
+        PhotoUploadIntentState.REJECTED -> throwStoredRejection(intent.errorCode)
+        PhotoUploadIntentState.EXPIRED -> uploadObjectMissing()
+        PhotoUploadIntentState.VERIFYING -> {
+            val now = OffsetDateTime.now(clock)
+            if (intent.leaseUntil?.isAfter(now) == true) uploadInProgress(intent.leaseUntil, now)
+            DirectUploadBeginResponse(mode = "existing", existing = commitIntent(intent))
+        }
+        PhotoUploadIntentState.PENDING -> {
+            if (intent.putExpiresAt.isAfter(OffsetDateTime.now(clock))) presign(intent)
+            else DirectUploadBeginResponse(mode = "existing", existing = commitIntent(intent))
+        }
+    }
+
+    private fun validateCommitRequest(
+        intent: PhotoUploadIntent,
+        key: String,
+        contentHash: String,
+        sizeBytes: Long?,
+        contentType: String?,
+    ) {
+        if (key != intent.stagingKey) {
+            throw ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCodes.UPLOAD_KEY_MISMATCH,
+                "That upload key doesn't match the issued slot.")
+        }
+        if (contentHash != intent.contentHash ||
+            (sizeBytes != null && sizeBytes != intent.sizeBytes) ||
+            (contentType != null && !contentType.equals(intent.contentType, ignoreCase = true))) {
+            throw ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCodes.UPLOAD_REQUEST_CONFLICT,
+                "The upload metadata doesn't match the issued slot.")
+        }
+    }
+
+    private fun commitIntent(intent: PhotoUploadIntent): UploadedPhotoDto {
+        accessGuard.requireApproved(intent.photographerId, "uploading")
+        when (intent.state) {
+            PhotoUploadIntentState.COMMITTED -> return committedIntentPhoto(intent)
+            PhotoUploadIntentState.REJECTED -> throwStoredRejection(intent.errorCode)
+            PhotoUploadIntentState.EXPIRED -> uploadObjectMissing()
+            PhotoUploadIntentState.VERIFYING -> {
+                val now = OffsetDateTime.now(clock)
+                if (intent.leaseUntil?.isAfter(now) == true) uploadInProgress(intent.leaseUntil, now)
+            }
+            PhotoUploadIntentState.PENDING -> Unit
+        }
+
+        val now = OffsetDateTime.now(clock)
+        if (!intent.expiresAt.isAfter(now)) {
+            transactionTemplate.executeWithoutResult {
+                photoUploadIntentRepository.expire(intent.photoId, cleanupAfter(intent, now), now)
+            }
+            uploadObjectMissing()
+        }
+        val (event, settings) = gate(intent.photographerId, intent.eventId)
+        requireWatermark(settings, event)
+        if (!verificationSlots.tryAcquire()) {
+            throw ApiException(HttpStatus.TOO_MANY_REQUESTS, ErrorCodes.RATE_LIMITED,
+                "Upload verification is busy. Try again shortly.", retryAfterSeconds = 1)
+        }
+
+        val token = UUID.randomUUID()
+        try {
+            val acquired = transactionTemplate.execute {
+                photoUploadIntentRepository.acquireVerification(
+                    intent.photoId,
+                    token,
+                    OffsetDateTime.now(clock).plus(storageProperties.directUpload.verificationLease),
+                    OffsetDateTime.now(clock),
+                )
+            } ?: 0
+            if (acquired != 1) return resolveUnacquired(intent)
+
+            try {
+                val verifiedHash = validateCandidate(intent)
+                val refreshed = gate(intent.photographerId, intent.eventId)
+                requireWatermark(refreshed.settings, refreshed.event)
+                return persistNew(
+                    intent.photoId,
+                    intent.eventId,
+                    intent.photographerId,
+                    intent.originalKey,
+                    verifiedHash,
+                    refreshed.event,
+                    intent,
+                    token,
+                )
+            } catch (error: ConflictException) {
+                if (!rejectIntent(intent, token, error.code)) return resolveUnacquired(intent)
+                throw error
+            } catch (error: ApiException) {
+                if (error.code in TERMINAL_VALIDATION_CODES) {
+                    if (!rejectIntent(intent, token, error.code)) return resolveUnacquired(intent)
+                } else if (!releaseIntent(
+                        intent,
+                        token,
+                        expireIfPutEnded = error.code == ErrorCodes.UPLOAD_OBJECT_MISSING,
+                    )) {
+                    return resolveUnacquired(intent)
+                }
+                throw error
+            } catch (_: LeaseLostException) {
+                return resolveUnacquired(intent)
+            } catch (error: Exception) {
+                if (!releaseIntent(intent, token)) return resolveUnacquired(intent)
+                log.warn("Direct upload storage operation failed for intent {}: {}", intent.photoId, error.javaClass.simpleName)
+                throw ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE,
+                    "Upload storage is temporarily unavailable. Try again.", retryAfterSeconds = 5)
+            }
+        } finally {
+            verificationSlots.release()
+        }
+    }
+
+    private fun validateCandidate(intent: PhotoUploadIntent): String {
+        var target = storageService.metadata(intent.originalKey)
+        if (target == null) {
+            val source = storageService.metadata(intent.stagingKey) ?: uploadObjectMissing()
+            validateStoredMetadata(source, intent)
+            target = try {
+                storageService.copyIfAbsent(
+                    intent.stagingKey,
+                    intent.originalKey,
+                    source.etag.orEmpty(),
+                    intent.contentType,
+                )
+            } catch (error: Exception) {
+                storageService.metadata(intent.originalKey) ?: throw error
             }
         }
+        validateStoredMetadata(checkNotNull(target), intent)
+        return photoUploadValidator.validate(
+            storageService.open(intent.originalKey),
+            intent.contentType,
+            intent.sizeBytes,
+            intent.contentHash,
+        )
+    }
+
+    private fun validateStoredMetadata(
+        stored: com.quickpitik.service.storage.StoredObject,
+        intent: PhotoUploadIntent,
+    ) {
+        if (stored.sizeBytes != intent.sizeBytes) {
+            throw ApiException(HttpStatus.PAYLOAD_TOO_LARGE, ErrorCodes.PAYLOAD_TOO_LARGE,
+                "The stored image size does not match the upload.")
+        }
+        val missingRequiredType = stored.contentType.isBlank() && storageService.supportsImmutableDirectUpload
+        val wrongType = stored.contentType.isNotBlank() &&
+            !stored.contentType.equals(intent.contentType, ignoreCase = true)
+        if (missingRequiredType || wrongType ||
+            !stored.contentEncoding.isNullOrBlank() && !stored.contentEncoding.equals("identity", ignoreCase = true)) {
+            throw ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                "The stored image type does not match the upload.")
+        }
+    }
+
+    private fun resolveUnacquired(intent: PhotoUploadIntent): UploadedPhotoDto {
+        val current = photoUploadIntentRepository.findOwned(intent.photoId, intent.photographerId, intent.eventId)
+            ?: throw ApiException(HttpStatus.NOT_FOUND, ErrorCodes.UPLOAD_NOT_FOUND, "Upload not found.")
+        return when (current.state) {
+            PhotoUploadIntentState.COMMITTED -> committedIntentPhoto(current)
+            PhotoUploadIntentState.REJECTED -> throwStoredRejection(current.errorCode)
+            PhotoUploadIntentState.EXPIRED -> uploadObjectMissing()
+            else -> uploadInProgress(current.leaseUntil, OffsetDateTime.now(clock))
+        }
+    }
+
+    private fun committedIntentPhoto(intent: PhotoUploadIntent): UploadedPhotoDto {
+        val resultId = intent.resultPhotoId
+            ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
+        val photo = photoRepository.findById(resultId).orElse(null)
+            ?.takeIf { it.photographerId == intent.photographerId && it.eventId == intent.eventId }
+            ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
+        return existingPhotoDto(photo)
+    }
+
+    private fun rejectIntent(intent: PhotoUploadIntent, token: UUID, errorCode: String): Boolean =
+        (transactionTemplate.execute {
+            photoUploadIntentRepository.reject(
+                intent.photoId,
+                token,
+                errorCode,
+                cleanupAfter(intent, OffsetDateTime.now(clock)),
+                OffsetDateTime.now(clock),
+            )
+        } ?: 0) == 1
+
+    private fun releaseIntent(
+        intent: PhotoUploadIntent,
+        token: UUID,
+        expireIfPutEnded: Boolean = false,
+    ): Boolean {
+        val now = OffsetDateTime.now(clock)
+        return (transactionTemplate.execute {
+            if (expireIfPutEnded && !intent.putExpiresAt.isAfter(now)) {
+                photoUploadIntentRepository.expireMissingAfterPut(
+                    intent.photoId,
+                    token,
+                    cleanupAfter(intent, now),
+                    now,
+                )
+            } else if (intent.expiresAt.isAfter(now)) {
+                photoUploadIntentRepository.releaseVerification(intent.photoId, token, now)
+            } else {
+                photoUploadIntentRepository.expire(intent.photoId, cleanupAfter(intent, now), now)
+            }
+        } ?: 0) == 1
+    }
+
+    private fun cleanupAfter(intent: PhotoUploadIntent, now: OffsetDateTime): OffsetDateTime =
+        maxOf(intent.putExpiresAt, now).plus(storageProperties.directUpload.cleanupDelay)
+
+    private fun throwStoredRejection(code: String?): Nothing = when (code) {
+        ErrorCodes.PAYLOAD_TOO_LARGE -> throw ApiException(HttpStatus.PAYLOAD_TOO_LARGE, code, "The stored image size is invalid.")
+        ErrorCodes.UPLOAD_CHECKSUM_MISMATCH -> throw ApiException(HttpStatus.UNPROCESSABLE_ENTITY, code, "The uploaded file checksum does not match.")
+        ErrorCodes.PHOTO_DUPLICATE_DIFFERENT_EVENT -> throw ConflictException(code, "This photo already exists in another event.")
+        else -> throw ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+            "The stored image is not supported.")
+    }
+
+    private fun uploadObjectMissing(): Nothing = throw ApiException(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        ErrorCodes.UPLOAD_OBJECT_MISSING,
+        "The uploaded file wasn't found in storage. Upload it again.",
+    )
+
+    private fun uploadInProgress(leaseUntil: OffsetDateTime?, now: OffsetDateTime): Nothing {
+        val retry = leaseUntil?.let { Duration.between(now, it).seconds.coerceIn(1, 30) } ?: 1
+        throw ApiException(HttpStatus.CONFLICT, ErrorCodes.UPLOAD_IN_PROGRESS,
+            "Upload verification is already in progress.", retryAfterSeconds = retry)
+    }
 
     private data class Gate(val event: com.quickpitik.entity.Event, val settings: com.quickpitik.entity.PhotographerSettings)
 
@@ -262,7 +591,7 @@ class PhotoUploadService(
         //    event date, then closed. The owner set the date, so no lower bound.
         //  - Admin event: race day + 3 days (4 inclusive); outside that the
         //    gallery is open for sale (or future-dated) and uploads are closed.
-        val today = LocalDate.now(PH_ZONE)
+        val today = LocalDate.now(clock.withZone(PH_ZONE))
         val closed = if (owned) {
             today.isAfter(event.date.plusMonths(OWNER_UPLOAD_GRACE_MONTHS))
         } else {
@@ -324,6 +653,9 @@ class PhotoUploadService(
     private fun originalKeyFor(eventId: UUID, photoId: UUID): String =
         "events/$eventId/photos/$photoId/original.jpg"
 
+    private fun stagingKeyFor(photographerId: UUID, eventId: UUID, photoId: UUID): String =
+        "staging/photo-uploads/$photographerId/$eventId/$photoId/original"
+
     /**
      * Row + counters + async triggers for an original that is already durably
      * in storage under [originalKey]. Shared by the multipart and direct paths.
@@ -335,6 +667,8 @@ class PhotoUploadService(
         originalKey: String,
         contentHash: String,
         event: com.quickpitik.entity.Event,
+        intent: PhotoUploadIntent? = null,
+        leaseToken: UUID? = null,
     ): UploadedPhotoDto {
         // PROCESSING until PhotoWatermarkService stores the watermark and flips
         // it LIVE. Runner/public queries filter status = LIVE, so the clean
@@ -413,16 +747,45 @@ class PhotoUploadService(
                 if (aiApiProperties.enabled) {
                     eventPublisher.publishEvent(PhotoUploadedForIndexing(photoId = photoId, eventId = eventId))
                 }
+
+                if (intent != null) {
+                    val token = checkNotNull(leaseToken)
+                    val settledAt = OffsetDateTime.now(clock)
+                    if (photoUploadIntentRepository.complete(
+                            intent.photoId,
+                            token,
+                            photoId,
+                            cleanupAfter(intent, settledAt),
+                            settledAt,
+                        ) != 1) {
+                        throw LeaseLostException()
+                    }
+                }
             }
         } catch (ex: RuntimeException) {
             val violated = generateSequence<Throwable>(ex) { it.cause }
                 .filterIsInstance<ConstraintViolationException>().firstOrNull()?.constraintName
             if (violated !in setOf(CONTENT_HASH_CONSTRAINT, "photos_pkey")) throw ex
             // Resolve only AFTER rollback: PostgreSQL rejects reads in an aborted transaction.
-            val existing = committedPhoto(photoId, photographerId, eventId, originalKey, contentHash)
+            val existing = legacyCommittedPhoto(photoId, photographerId, eventId, originalKey, contentHash)
                 ?: duplicateOf(photographerId, eventId, contentHash)
                 ?: throw ex
-            if (originalKey != existing.s3Key) runCatching { storageService.delete(originalKey) }
+            if (intent == null) {
+                if (originalKey != existing.s3Key) runCatching { storageService.delete(originalKey) }
+            } else {
+                val token = checkNotNull(leaseToken)
+                val now = OffsetDateTime.now(clock)
+                val completed = transactionTemplate.execute {
+                    photoUploadIntentRepository.complete(
+                        intent.photoId,
+                        token,
+                        existing.id,
+                        cleanupAfter(intent, now),
+                        now,
+                    )
+                } ?: 0
+                if (completed != 1) throw LeaseLostException()
+            }
             return existingPhotoDto(existing)
         }
 
@@ -482,9 +845,6 @@ class PhotoUploadService(
         return PhotoExistsResponse(results = results)
     }
 
-    private fun sha256Hex(bytes: ByteArray): String =
-        HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
-
     // Rebuild the upload response from an already-stored photo, for the
     // idempotent same-event duplicate return. Mirrors the live return at the
     // end of upload(): same fields, a fresh presigned thumbnail, and the same
@@ -518,14 +878,17 @@ class PhotoUploadService(
         // Photographer-owned events: the owner may upload up to one calendar
         // month after the event date (before/during/after), then it closes.
         const val OWNER_UPLOAD_GRACE_MONTHS = 1L
-        // Direct path: same ceiling as the multipart cap in application.yml.
-        const val MAX_DIRECT_UPLOAD_BYTES = 25L * 1024 * 1024
-        // Long enough for a 25 MB frame on a bad venue uplink, short enough that
-        // a leaked URL is useless by the time anyone could reuse it.
-        val DIRECT_PUT_TTL: java.time.Duration = java.time.Duration.ofMinutes(15)
+        const val WEBSITE_CLIENT = "website"
+        val TERMINAL_VALIDATION_CODES = setOf(
+            ErrorCodes.PAYLOAD_TOO_LARGE,
+            ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+            ErrorCodes.UPLOAD_CHECKSUM_MISMATCH,
+        )
 
         // The V24 partial unique index. The race backstop only treats THIS
         // constraint as a duplicate; any other violation is rethrown.
         const val CONTENT_HASH_CONSTRAINT = "uq_photos_photographer_content_hash"
     }
+
+    private class LeaseLostException : RuntimeException()
 }
