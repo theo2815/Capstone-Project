@@ -42,6 +42,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var cart: CartService
     @Autowired lateinit var publicPhotos: PhotoService
     @Autowired lateinit var manager: PhotographerPhotoService
+    @Autowired lateinit var uploadIntents: PhotoUploadIntentRepository
     @Autowired lateinit var grants: DownloadGrantRepository
     @Autowired lateinit var reconciler: com.quickpitik.service.orders.PaymongoCheckoutReconciler
     @Autowired lateinit var tx: TransactionTemplate
@@ -57,7 +58,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
     }
 
     private fun deletingWith(storage: StorageService, coverageRepo: EventPhotographerRepository = coverage) =
-        PhotographerPhotoService(photos, coverageRepo, items, storage, events, grants, reconciler, tx)
+        PhotographerPhotoService(photos, uploadIntents, coverageRepo, items, storage, events, grants, reconciler, tx)
 
     @Test fun `trash is excluded from real gallery queries while owner trash includes it`() {
         manager.trash(owner.id, event.id, listOf(photo.id))
@@ -120,6 +121,36 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         val deleting = deletingWith(storage)
         deleting.permanentDelete(owner.id, event.id, listOf(photo.id))
         assertFalse(photos.existsById(photo.id))
+    }
+
+    @Test fun `permanent delete keeps committed upload receipt terminal and restarts cleanup`() {
+        val now = OffsetDateTime.now()
+        val receipt = uploadIntents.saveAndFlush(
+            PhotoUploadIntent(
+                photographerId = owner.id,
+                eventId = event.id,
+                contentHash = "a".repeat(64),
+                contentType = "image/jpeg",
+                sizeBytes = 1,
+                stagingKey = "staging/photo-uploads/${owner.id}/${event.id}/${photo.id}/original",
+                originalKey = photo.s3Key,
+                state = PhotoUploadIntentState.COMMITTED,
+                resultPhotoId = photo.id,
+                putExpiresAt = now.plusMinutes(15),
+                expiresAt = now.plusHours(24),
+                cleanupAfter = null,
+                cleanedAt = now.minusDays(8),
+            ),
+        )
+        manager.trash(owner.id, event.id, listOf(photo.id))
+
+        assertEquals(listOf(photo.id), manager.permanentDelete(owner.id, event.id, listOf(photo.id)).deleted)
+
+        val stored = uploadIntents.findById(receipt.photoId).orElseThrow()
+        assertEquals(PhotoUploadIntentState.COMMITTED, stored.state)
+        assertNull(stored.resultPhotoId)
+        assertNotNull(stored.cleanupAfter)
+        assertNull(stored.cleanedAt)
     }
 
     @Test fun `trash counter update must preserve a concurrent upload increment`() {

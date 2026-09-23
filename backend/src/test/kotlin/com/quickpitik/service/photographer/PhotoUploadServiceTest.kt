@@ -16,10 +16,12 @@ import com.quickpitik.entity.WatermarkPolicy
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotoUploadIntentRepository
+import com.quickpitik.repository.PhotoUploadPendingMetrics
 import com.quickpitik.repository.PhotoUploadQuota
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
@@ -47,8 +49,11 @@ import java.io.ByteArrayOutputStream
 import java.sql.SQLException
 import java.security.MessageDigest
 import java.time.LocalDate
+import java.time.Clock
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.Optional
 import java.util.HexFormat
 import java.util.UUID
@@ -91,6 +96,8 @@ class PhotoUploadServiceTest {
     // Mockito.any() returns null at runtime; declared as a (platform) T so Kotlin
     // inserts no null-assertion — usable as a matcher for a non-null param.
     private fun <T> anyArg(): T = Mockito.any()
+    private fun <T> eqArg(value: T): T = Mockito.eq(value) ?: value
+    private fun <T> nullableArg(): T? = Mockito.any()
     private fun <T> capture(c: ArgumentCaptor<T>): T = c.capture()
 
     @BeforeEach
@@ -106,7 +113,11 @@ class PhotoUploadServiceTest {
         entityManager = Mockito.mock(EntityManager::class.java)
     }
 
-    private fun service(aiApiProperties: AiApiProperties) = PhotoUploadService(
+    private fun service(
+        aiApiProperties: AiApiProperties,
+        meterRegistry: SimpleMeterRegistry = SimpleMeterRegistry(),
+        clock: Clock = Clock.systemUTC(),
+    ) = PhotoUploadService(
         storageService,
         storageProperties,
         photoRepository,
@@ -127,9 +138,9 @@ class PhotoUploadServiceTest {
                 Mockito.`when`(it.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
             },
         ),
-        SimpleMeterRegistry(),
+        meterRegistry,
         entityManager,
-        java.time.Clock.systemUTC(),
+        clock,
     )
 
     private fun event(id: UUID = eventId, name: String = "Cebu Marathon 2026"): Event =
@@ -316,13 +327,14 @@ class PhotoUploadServiceTest {
         stubValidationsPass()
         val requestId = UUID.randomUUID()
         val intent = intent(helloBytes.size.toLong(), requestId = requestId)
+        val registry = SimpleMeterRegistry()
         Mockito.`when`(photoUploadIntentRepository.findByPhotographerIdAndRequestId(photographerId, requestId))
             .thenReturn(intent)
         Mockito.`when`(storageService.presignedUpload(anyArg(), anyArg(), anyArg(), Mockito.anyLong()))
             .thenThrow(IllegalStateException("provider-secret"))
 
         val error = assertFailsWith<ApiException> {
-            service(AiApiProperties(enabled = false)).beginDirectUpload(
+            service(AiApiProperties(enabled = false), registry).beginDirectUpload(
                 photographerId,
                 eventId,
                 helloSha256,
@@ -335,6 +347,7 @@ class PhotoUploadServiceTest {
         assertEquals(ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, error.code)
         assertEquals(5, error.retryAfterSeconds)
         assertTrue("provider-secret" !in error.message.orEmpty())
+        assertEquals(0.0, registry.counter("qp.upload.direct", "outcome", "begun").count())
     }
 
     @Test
@@ -363,6 +376,55 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `commit retry cannot recreate a permanently deleted committed photo`() {
+        stubValidationsPass()
+        val intent = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.COMMITTED
+            resultPhotoId = null
+        }
+        Mockito.`when`(photoUploadIntentRepository.findOwned(intent.photoId, photographerId, eventId)).thenReturn(intent)
+
+        val error = assertFailsWith<NotFoundException> {
+            service(AiApiProperties(enabled = false)).commitDirectUpload(
+                photographerId,
+                eventId,
+                intent.photoId,
+                intent.stagingKey,
+                intent.contentHash,
+            )
+        }
+
+        assertEquals(ErrorCodes.PHOTO_NOT_FOUND, error.code)
+        Mockito.verifyNoInteractions(storageService)
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
+    }
+
+    @Test
+    fun `committed receipt becomes terminal as soon as permanent deletion is claimed`() {
+        stubValidationsPass()
+        val deleted = existingPhoto(eventId).apply { deletionStartedAt = CLEANUP_NOW }
+        val intent = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.COMMITTED
+            resultPhotoId = deleted.id
+        }
+        Mockito.`when`(photoUploadIntentRepository.findOwned(intent.photoId, photographerId, eventId)).thenReturn(intent)
+        Mockito.`when`(photoRepository.findById(deleted.id)).thenReturn(Optional.of(deleted))
+
+        val error = assertFailsWith<NotFoundException> {
+            service(AiApiProperties(enabled = false)).commitDirectUpload(
+                photographerId,
+                eventId,
+                intent.photoId,
+                intent.stagingKey,
+                intent.contentHash,
+            )
+        }
+
+        assertEquals(ErrorCodes.PHOTO_NOT_FOUND, error.code)
+        Mockito.verifyNoInteractions(storageService)
+    }
+
+    @Test
     fun `owned intent rejects client metadata that differs from its reservation`() {
         stubValidationsPass()
         val intent = intent(sizeBytes = 1_000)
@@ -388,6 +450,7 @@ class PhotoUploadServiceTest {
         sizeBytes: Long,
         requestId: UUID? = UUID.randomUUID(),
         putExpiresAt: OffsetDateTime = OffsetDateTime.now().plusMinutes(15),
+        expiresAt: OffsetDateTime = OffsetDateTime.now().plusHours(24),
     ): PhotoUploadIntent {
         val id = UUID.randomUUID()
         val now = OffsetDateTime.now()
@@ -402,9 +465,228 @@ class PhotoUploadServiceTest {
             stagingKey = "staging/photo-uploads/$photographerId/$eventId/$id/original",
             originalKey = "events/$eventId/photos/$id/original.jpg",
             putExpiresAt = putExpiresAt,
-            expiresAt = now.plusHours(24),
+            expiresAt = expiresAt,
             createdAt = now,
         )
+    }
+
+    @Test
+    fun `cleanup protects a referenced original while removing and rechecking staging`() {
+        val registry = SimpleMeterRegistry()
+        val current = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.COMMITTED
+            resultPhotoId = photoId
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+        }
+        Mockito.`when`(photoUploadIntentRepository.findCleanupCandidateIds(anyArg(), anyArg(), anyArg()))
+            .thenReturn(listOf(current.photoId))
+        Mockito.`when`(photoUploadIntentRepository.claimCleanup(anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.findById(current.photoId)).thenReturn(Optional.of(current))
+        Mockito.`when`(photoRepository.existsByS3Key(current.originalKey)).thenReturn(true)
+        Mockito.`when`(photoUploadIntentRepository.completeCleanup(anyArg(), anyArg(), anyArg(), nullableArg(), anyArg()))
+            .thenReturn(1)
+
+        service(AiApiProperties(enabled = false), registry, CLEANUP_CLOCK).cleanupDirectUploads()
+        service(AiApiProperties(enabled = false), registry, CLEANUP_CLOCK).cleanupDirectUploads()
+
+        Mockito.verify(storageService, Mockito.times(2)).delete(current.stagingKey)
+        Mockito.verify(storageService, Mockito.never()).delete(current.originalKey)
+        assertEquals(2.0, registry.counter("qp.upload.cleanup", "outcome", "protected").count())
+    }
+
+    @Test
+    fun `cleanup retries a partial delete without marking the receipt cleaned`() {
+        val registry = SimpleMeterRegistry()
+        val current = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.REJECTED
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+        }
+        Mockito.`when`(photoUploadIntentRepository.findCleanupCandidateIds(anyArg(), anyArg(), anyArg()))
+            .thenReturn(listOf(current.photoId))
+        Mockito.`when`(photoUploadIntentRepository.claimCleanup(anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.findById(current.photoId)).thenReturn(Optional.of(current))
+        Mockito.`when`(photoRepository.existsByS3Key(current.originalKey)).thenReturn(false)
+        Mockito.doThrow(IllegalStateException("R2 unavailable")).`when`(storageService).delete(current.stagingKey)
+        Mockito.`when`(photoUploadIntentRepository.retryCleanup(anyArg(), anyArg(), anyArg(), anyArg())).thenReturn(1)
+
+        service(AiApiProperties(enabled = false), registry, CLEANUP_CLOCK).cleanupDirectUploads()
+
+        Mockito.verify(storageService).delete(current.originalKey)
+        Mockito.verify(photoUploadIntentRepository).retryCleanup(
+            eqArg(current.photoId),
+            eqArg(CLEANUP_NOW.plus(storageProperties.directUpload.cleanupDelay)),
+            eqArg(CLEANUP_NOW.plus(storageProperties.directUpload.cleanupDelay)),
+            eqArg(CLEANUP_NOW),
+        )
+        Mockito.verify(photoUploadIntentRepository, Mockito.never())
+            .completeCleanup(anyArg(), anyArg(), anyArg(), nullableArg(), anyArg())
+        assertEquals(1.0, registry.counter("qp.upload.cleanup", "outcome", "partial").count())
+    }
+
+    @Test
+    fun `cleanup continues the batch when one receipt cannot settle`() {
+        val first = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.EXPIRED
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+        }
+        val second = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.REJECTED
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+        }
+        Mockito.`when`(photoUploadIntentRepository.findCleanupCandidateIds(anyArg(), anyArg(), anyArg()))
+            .thenReturn(listOf(first.photoId, second.photoId))
+        Mockito.`when`(photoUploadIntentRepository.claimCleanup(anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.findById(first.photoId)).thenReturn(Optional.of(first))
+        Mockito.`when`(photoUploadIntentRepository.findById(second.photoId)).thenReturn(Optional.of(second))
+        Mockito.`when`(photoRepository.existsByS3Key(anyArg())).thenReturn(false)
+        Mockito.`when`(photoUploadIntentRepository.completeCleanup(eqArg(first.photoId), anyArg(), anyArg(), nullableArg(), anyArg()))
+            .thenThrow(IllegalStateException("database unavailable"))
+        Mockito.`when`(photoUploadIntentRepository.completeCleanup(eqArg(second.photoId), anyArg(), anyArg(), nullableArg(), anyArg()))
+            .thenReturn(1)
+
+        service(AiApiProperties(enabled = false), clock = CLEANUP_CLOCK).cleanupDirectUploads()
+
+        Mockito.verify(storageService).delete(second.stagingKey)
+        Mockito.verify(storageService).delete(second.originalKey)
+        Mockito.verify(photoUploadIntentRepository).completeCleanup(
+            eqArg(second.photoId),
+            anyArg(),
+            anyArg(),
+            anyArg(),
+            eqArg(CLEANUP_NOW),
+        )
+    }
+
+    @Test
+    fun `cleanup rechecks and removes an object that arrived after an earlier missing delete`() {
+        val current = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.EXPIRED
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+        }
+        val stored = mutableSetOf<String>()
+        Mockito.`when`(photoUploadIntentRepository.findCleanupCandidateIds(anyArg(), anyArg(), anyArg()))
+            .thenAnswer { invocation ->
+                val now = invocation.getArgument<OffsetDateTime>(0)
+                if (current.cleanupAfter?.let { !it.isAfter(now) } == true) listOf(current.photoId) else emptyList()
+            }
+        Mockito.`when`(photoUploadIntentRepository.claimCleanup(anyArg(), anyArg(), anyArg())).thenAnswer { invocation ->
+            val now = invocation.getArgument<OffsetDateTime>(1)
+            if (current.cleanupAfter?.let { !it.isAfter(now) } != true) return@thenAnswer 0
+            current.cleanupAfter = invocation.getArgument(2)
+            current.cleanupCheckedAt = now
+            1
+        }
+        Mockito.`when`(photoUploadIntentRepository.findById(current.photoId)).thenReturn(Optional.of(current))
+        Mockito.`when`(photoRepository.existsByS3Key(current.originalKey)).thenReturn(false)
+        Mockito.doAnswer { invocation -> stored.remove(invocation.getArgument<String>(0)); null }
+            .`when`(storageService).delete(anyArg())
+        Mockito.`when`(photoUploadIntentRepository.completeCleanup(anyArg(), anyArg(), anyArg(), nullableArg(), anyArg()))
+            .thenAnswer { invocation ->
+                current.cleanedAt = invocation.getArgument(2)
+                current.cleanupAfter = invocation.getArgument(3)
+                current.cleanupCheckedAt = invocation.getArgument(4)
+                1
+            }
+
+        service(AiApiProperties(enabled = false), clock = CLEANUP_CLOCK).cleanupDirectUploads()
+        assertEquals(CLEANUP_NOW.plus(storageProperties.directUpload.cleanupDelay), current.cleanupAfter)
+        stored += current.stagingKey
+        stored += current.originalKey
+        val recheckClock = Clock.offset(CLEANUP_CLOCK, storageProperties.directUpload.cleanupDelay)
+        service(AiApiProperties(enabled = false), clock = recheckClock).cleanupDirectUploads()
+
+        assertTrue(stored.isEmpty())
+        Mockito.verify(storageService, Mockito.times(2)).delete(current.stagingKey)
+        Mockito.verify(storageService, Mockito.times(2)).delete(current.originalKey)
+    }
+
+    @Test
+    fun `cleanup does not report success after losing the settlement fence`() {
+        val registry = SimpleMeterRegistry()
+        val current = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.EXPIRED
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+        }
+        Mockito.`when`(photoUploadIntentRepository.findCleanupCandidateIds(anyArg(), anyArg(), anyArg()))
+            .thenReturn(listOf(current.photoId))
+        Mockito.`when`(photoUploadIntentRepository.claimCleanup(anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.findById(current.photoId)).thenReturn(Optional.of(current))
+        Mockito.`when`(photoRepository.existsByS3Key(current.originalKey)).thenReturn(false)
+        Mockito.`when`(photoUploadIntentRepository.completeCleanup(anyArg(), anyArg(), anyArg(), nullableArg(), anyArg()))
+            .thenReturn(0)
+
+        service(AiApiProperties(enabled = false), registry, CLEANUP_CLOCK).cleanupDirectUploads()
+
+        assertEquals(0.0, registry.find("qp.upload.cleanup").counters().sumOf { it.count() })
+    }
+
+    @Test
+    fun `cleanup performs the final recheck before clearing due work`() {
+        val current = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.EXPIRED
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+            cleanedAt = CLEANUP_NOW.minus(storageProperties.directUpload.cleanupRecheckWindow)
+        }
+        Mockito.`when`(photoUploadIntentRepository.findCleanupCandidateIds(anyArg(), anyArg(), anyArg()))
+            .thenReturn(listOf(current.photoId))
+        Mockito.`when`(photoUploadIntentRepository.claimCleanup(anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.findById(current.photoId)).thenReturn(Optional.of(current))
+        Mockito.`when`(photoRepository.existsByS3Key(current.originalKey)).thenReturn(false)
+        Mockito.`when`(photoUploadIntentRepository.completeCleanup(anyArg(), anyArg(), anyArg(), nullableArg(), anyArg()))
+            .thenReturn(1)
+
+        service(AiApiProperties(enabled = false), clock = CLEANUP_CLOCK).cleanupDirectUploads()
+
+        Mockito.verify(storageService).delete(current.stagingKey)
+        Mockito.verify(storageService).delete(current.originalKey)
+        Mockito.verify(photoUploadIntentRepository).completeCleanup(
+            eqArg(current.photoId),
+            anyArg(),
+            eqArg(checkNotNull(current.cleanedAt)),
+            Mockito.isNull(),
+            eqArg(CLEANUP_NOW),
+        )
+    }
+
+    @Test
+    fun `cleanup expires stale pending receipts before object deletion becomes due`() {
+        val registry = SimpleMeterRegistry()
+        val current = intent(
+            helloBytes.size.toLong(),
+            putExpiresAt = CLEANUP_NOW.minusHours(1),
+            expiresAt = CLEANUP_NOW.minusMinutes(1),
+        )
+        Mockito.`when`(photoUploadIntentRepository.findExpiredCandidateIds(anyArg(), anyArg()))
+            .thenReturn(listOf(current.photoId))
+        Mockito.`when`(photoUploadIntentRepository.expire(anyArg(), anyArg(), anyArg())).thenReturn(1)
+
+        service(AiApiProperties(enabled = false), registry, CLEANUP_CLOCK).cleanupDirectUploads()
+
+        Mockito.verify(photoUploadIntentRepository).expire(
+            eqArg(current.photoId),
+            eqArg(CLEANUP_NOW.plus(storageProperties.directUpload.cleanupDelay)),
+            eqArg(CLEANUP_NOW),
+        )
+        Mockito.verifyNoInteractions(storageService)
+        assertEquals(1.0, registry.counter("qp.upload.direct", "outcome", "expired").count())
+    }
+
+    @Test
+    fun `cleanup refreshes active pending count bytes and oldest age gauges`() {
+        val registry = SimpleMeterRegistry()
+        Mockito.`when`(photoUploadIntentRepository.pendingMetrics(CLEANUP_NOW)).thenReturn(
+            object : PhotoUploadPendingMetrics {
+                override val slots = 3L
+                override val bytes = 12_345L
+                override val oldestCreatedAt = CLEANUP_NOW.minusMinutes(30).toInstant()
+            },
+        )
+
+        service(AiApiProperties(enabled = false), registry, CLEANUP_CLOCK).cleanupDirectUploads()
+
+        assertEquals(3.0, registry.get("qp.upload.direct.pending.count").gauge().value())
+        assertEquals(12_345.0, registry.get("qp.upload.direct.pending.bytes").gauge().value())
+        assertEquals(1_800.0, registry.get("qp.upload.direct.pending.oldest.age").gauge().value())
     }
 
     @Test
@@ -493,7 +775,8 @@ class PhotoUploadServiceTest {
             .thenReturn(1)
         Mockito.`when`(photoUploadIntentRepository.complete(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(1)
-        val svc = service(AiApiProperties(enabled = false))
+        val registry = SimpleMeterRegistry()
+        val svc = service(AiApiProperties(enabled = false), registry)
 
         val begin = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong())
         assertEquals("direct", begin.mode)
@@ -516,6 +799,9 @@ class PhotoUploadServiceTest {
         // The bytes never touched this server: no storage PUT in either step.
         Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
         Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoUploadedForWatermark>())
+        assertEquals(1.0, registry.counter("qp.upload.direct", "outcome", "begun").count())
+        assertEquals(1.0, registry.counter("qp.upload.direct", "outcome", "committed").count())
+        assertEquals(1L, registry.timer("qp.upload.validation.duration").count())
     }
 
     @Test
@@ -559,8 +845,9 @@ class PhotoUploadServiceTest {
         Mockito.`when`(storageService.metadata(intent.originalKey))
             .thenReturn(StoredObject(intent.originalKey, intent.sizeBytes, "image/png"))
 
+        val registry = SimpleMeterRegistry()
         val error = assertFailsWith<ApiException> {
-            service(AiApiProperties(enabled = false)).commitDirectUpload(
+            service(AiApiProperties(enabled = false), registry).commitDirectUpload(
                 photographerId,
                 eventId,
                 intent.photoId,
@@ -570,6 +857,7 @@ class PhotoUploadServiceTest {
         }
 
         assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, error.code)
+        assertEquals(1.0, registry.counter("qp.upload.direct", "outcome", "rejected").count())
         Mockito.verify(storageService, Mockito.never()).open(anyArg())
         Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
     }
@@ -935,4 +1223,9 @@ class PhotoUploadServiceTest {
             "constraint violation",
             ConstraintViolationException("constraint violation", SQLException("violation"), constraintName),
         )
+
+    private companion object {
+        val CLEANUP_NOW: OffsetDateTime = OffsetDateTime.parse("2026-09-24T00:00:00Z")
+        val CLEANUP_CLOCK: Clock = Clock.fixed(Instant.parse("2026-09-24T00:00:00Z"), ZoneOffset.UTC)
+    }
 }

@@ -343,6 +343,34 @@ constraint races resolve only after rollback. Concurrent same-event duplicates
 return the winner without extra counters/events; cross-event dedup remains a
 terminal conflict. Unissued or foreign staging keys are never read or deleted.
 
+`PhotoUploadCleanupTrigger` runs bounded fixed-delay sweeps without holding a
+database connection across storage I/O. It expires abandoned intents, claims due
+terminal receipts, removes staging and only deletes an original after checking
+that no `Photo.s3Key` references it. Successful deletes are rechecked for seven
+days to catch late PUT/copy completion; terminal receipts are retained. Permanent
+photo deletion nulls the result FK and reschedules that receipt in the same short
+transaction, so later commit retries remain terminal `PHOTO_NOT_FOUND` and cannot
+recreate the photo. Cleanup is idempotent and a failed object is retried without
+rolling back a committed photo.
+
+Operational metrics are `qp.upload.direct{outcome=begun|committed|existing|rejected|expired}`,
+`qp.upload.validation.duration`, `qp.upload.cleanup{outcome=cleaned|protected|complete|partial|failed}`,
+and the gauges `qp.upload.direct.pending.count`, `qp.upload.direct.pending.bytes`,
+and `qp.upload.direct.pending.oldest.age`. Labels never contain file, hash, URL,
+or intent identifiers; cleanup logs contain only operation, intent ID and error class.
+
+**Proposed R2 deployment additions (not applied by application code):** before
+rollout, export the bucket's current CORS and lifecycle JSON. Preserve every
+existing rule, then add `PUT` to a rule whose exact origins are the approved web
+origins (`https://quickpitik.com` and `https://www.quickpitik.com` for production;
+use a separately approved exact origin in preview/nonproduction), whose allowed
+request header is `Content-Type`, and whose exposed response header is `ETag`.
+Keep existing `GET`/`HEAD` behavior and do not use wildcard origins or headers.
+Add one lifecycle rule scoped only to prefix `staging/photo-uploads/`, expiring
+objects after two days. Never apply expiry to `events/`, originals, or derivatives.
+Task 4 records this proposal only; deployment must apply and read back both rules
+in the controlled rollout after preserving the prior JSON.
+
 Android persists the slot before PUT and retries commit first after interruption;
 only `UPLOAD_OBJECT_MISSING` starts another transfer. Transient storage failures do
 not fall back to multipart. Network/401/408/429/5xx failures retain originals and

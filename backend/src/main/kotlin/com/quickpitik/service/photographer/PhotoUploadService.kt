@@ -30,6 +30,7 @@ import jakarta.persistence.EntityManager
 import org.hibernate.exception.ConstraintViolationException
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.data.domain.PageRequest
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.dao.DataIntegrityViolationException
@@ -44,6 +45,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.util.UUID
 import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
 @Service
@@ -66,6 +68,9 @@ class PhotoUploadService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency)
+    private val pendingCount = meterRegistry.gauge("qp.upload.direct.pending.count", AtomicLong())!!
+    private val pendingBytes = meterRegistry.gauge("qp.upload.direct.pending.bytes", AtomicLong())!!
+    private val oldestPendingAge = meterRegistry.gauge("qp.upload.direct.pending.oldest.age", AtomicLong())!!
 
     // Deliberately NOT @Transactional: the original-object storage PUT below
     // takes long enough that it would pin a Hikari connection (pool of 10) for
@@ -184,6 +189,7 @@ class PhotoUploadService(
 
         val (event, settings) = gate(photographerId, eventId)
         duplicateOf(photographerId, eventId, hash)?.let {
+            directOutcome("existing")
             return DirectUploadBeginResponse(mode = "existing", existing = existingPhotoDto(it))
         }
         requireWatermark(settings, event)
@@ -226,6 +232,7 @@ class PhotoUploadService(
         val intent = photoUploadIntentRepository.findOwned(photoId, photographerId, eventId)
         if (intent == null) {
             legacyCommittedPhoto(photoId, photographerId, eventId, key, hash)?.let {
+                directOutcome("existing")
                 return existingPhotoDto(it)
             }
             if (photoRepository.findById(photoId).isPresent) {
@@ -240,9 +247,136 @@ class PhotoUploadService(
         return dto
     }
 
+    fun cleanupDirectUploads() {
+        val now = OffsetDateTime.now(clock)
+        val batch = PageRequest.of(0, storageProperties.directUpload.cleanupBatchSize)
+        try {
+            photoUploadIntentRepository.findExpiredCandidateIds(now, batch).forEach { photoId ->
+                try {
+                    val expired = transactionTemplate.execute {
+                        photoUploadIntentRepository.expire(
+                            photoId,
+                            now.plus(storageProperties.directUpload.cleanupDelay),
+                            now,
+                        )
+                    } ?: 0
+                    if (expired == 1) directOutcome("expired")
+                } catch (error: Exception) {
+                    log.warn("Upload cleanup expire failed intent={} error={}", photoId, error.javaClass.simpleName)
+                }
+            }
+
+            photoUploadIntentRepository.findCleanupCandidateIds(now, TERMINAL_INTENT_STATES, batch).forEach { photoId ->
+                try {
+                    cleanupIntent(photoId, now)
+                } catch (error: Exception) {
+                    log.warn("Upload cleanup settle failed intent={} error={}", photoId, error.javaClass.simpleName)
+                }
+            }
+        } finally {
+            refreshPendingMetrics(now)
+        }
+    }
+
+    private fun refreshPendingMetrics(now: OffsetDateTime) {
+        try {
+            val metrics = photoUploadIntentRepository.pendingMetrics(now)
+            pendingCount.set(metrics?.slots ?: 0)
+            pendingBytes.set(metrics?.bytes ?: 0)
+            oldestPendingAge.set(
+                metrics?.oldestCreatedAt?.let { Duration.between(it, now.toInstant()).seconds.coerceAtLeast(0) } ?: 0,
+            )
+        } catch (error: Exception) {
+            log.warn("Upload pending metrics refresh failed error={}", error.javaClass.simpleName)
+        }
+    }
+
+    private fun cleanupIntent(photoId: UUID, now: OffsetDateTime) {
+        val claimedUntil = now.plus(storageProperties.directUpload.cleanupDelay)
+        val claimed = try {
+            transactionTemplate.execute {
+                photoUploadIntentRepository.claimCleanup(photoId, now, claimedUntil)
+            } ?: 0
+        } catch (error: Exception) {
+            log.warn("Upload cleanup claim failed intent={} error={}", photoId, error.javaClass.simpleName)
+            return
+        }
+        if (claimed != 1) return
+
+        val intent = photoUploadIntentRepository.findById(photoId).orElse(null) ?: return
+        var attempted = 0
+        var failed = 0
+        fun delete(operation: String, key: String) {
+            attempted++
+            try {
+                storageService.delete(key)
+            } catch (error: Exception) {
+                failed++
+                log.warn(
+                    "Upload cleanup delete failed operation={} intent={} error={}",
+                    operation,
+                    photoId,
+                    error.javaClass.simpleName,
+                )
+            }
+        }
+
+        delete("staging", intent.stagingKey)
+        val protected = try {
+            photoRepository.existsByS3Key(intent.originalKey)
+        } catch (error: Exception) {
+            failed++
+            log.warn("Upload cleanup reference check failed intent={} error={}", photoId, error.javaClass.simpleName)
+            true
+        }
+        if (!protected) delete("original", intent.originalKey)
+
+        if (failed > 0) {
+            val retried = transactionTemplate.execute {
+                photoUploadIntentRepository.retryCleanup(
+                    photoId,
+                    claimedUntil,
+                    now.plus(storageProperties.directUpload.cleanupDelay),
+                    now,
+                )
+            } ?: 0
+            if (retried == 1) cleanupOutcome(if (failed < attempted) "partial" else "failed")
+            return
+        }
+
+        val cleanedAt = intent.cleanedAt ?: now
+        val recheckUntil = cleanedAt.plus(storageProperties.directUpload.cleanupRecheckWindow)
+        val nextCleanup = if (now >= recheckUntil) {
+            null
+        } else {
+            minOf(now.plus(storageProperties.directUpload.cleanupDelay), recheckUntil)
+        }
+        val completed = transactionTemplate.execute {
+            photoUploadIntentRepository.completeCleanup(
+                photoId,
+                claimedUntil,
+                cleanedAt,
+                nextCleanup,
+                now,
+            )
+        } ?: 0
+        if (completed == 1) {
+            cleanupOutcome(if (protected) "protected" else if (nextCleanup == null) "complete" else "cleaned")
+        }
+    }
+
+    private fun directOutcome(outcome: String) {
+        meterRegistry.counter("qp.upload.direct", "outcome", outcome).increment()
+    }
+
+    private fun cleanupOutcome(outcome: String) {
+        meterRegistry.counter("qp.upload.cleanup", "outcome", outcome).increment()
+    }
+
     private fun legacyCommittedPhoto(id: UUID, owner: UUID, event: UUID, key: String, hash: String): Photo? =
         photoRepository.findById(id).orElse(null)?.takeIf {
-            it.photographerId == owner && it.eventId == event && it.s3Key == key && it.contentHash == hash
+            it.photographerId == owner && it.eventId == event && it.s3Key == key && it.contentHash == hash &&
+                it.deletionStartedAt == null
         }
 
     private fun reserveIntent(
@@ -298,6 +432,7 @@ class PhotoUploadService(
                 retryAfterSeconds = 5,
             )
         }
+        directOutcome("begun")
         return DirectUploadBeginResponse(
             mode = "direct",
             photoId = intent.photoId,
@@ -376,9 +511,10 @@ class PhotoUploadService(
 
         val now = OffsetDateTime.now(clock)
         if (!intent.expiresAt.isAfter(now)) {
-            transactionTemplate.executeWithoutResult {
+            val expired = transactionTemplate.execute {
                 photoUploadIntentRepository.expire(intent.photoId, cleanupAfter(intent, now), now)
-            }
+            } ?: 0
+            if (expired == 1) directOutcome("expired")
             uploadObjectMissing()
         }
         val (event, settings) = gate(intent.photographerId, intent.eventId)
@@ -458,12 +594,17 @@ class PhotoUploadService(
             }
         }
         validateStoredMetadata(checkNotNull(target), intent)
-        return photoUploadValidator.validate(
-            storageService.open(intent.originalKey),
-            intent.contentType,
-            intent.sizeBytes,
-            intent.contentHash,
-        )
+        val sample = Timer.start(meterRegistry)
+        return try {
+            photoUploadValidator.validate(
+                storageService.open(intent.originalKey),
+                intent.contentType,
+                intent.sizeBytes,
+                intent.contentHash,
+            )
+        } finally {
+            sample.stop(meterRegistry.timer("qp.upload.validation.duration"))
+        }
     }
 
     private fun validateStoredMetadata(
@@ -499,13 +640,17 @@ class PhotoUploadService(
         val resultId = intent.resultPhotoId
             ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         val photo = photoRepository.findById(resultId).orElse(null)
-            ?.takeIf { it.photographerId == intent.photographerId && it.eventId == intent.eventId }
+            ?.takeIf {
+                it.photographerId == intent.photographerId && it.eventId == intent.eventId &&
+                    it.deletionStartedAt == null
+            }
             ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
+        directOutcome("existing")
         return existingPhotoDto(photo)
     }
 
-    private fun rejectIntent(intent: PhotoUploadIntent, token: UUID, errorCode: String): Boolean =
-        (transactionTemplate.execute {
+    private fun rejectIntent(intent: PhotoUploadIntent, token: UUID, errorCode: String): Boolean {
+        val rejected = (transactionTemplate.execute {
             photoUploadIntentRepository.reject(
                 intent.photoId,
                 token,
@@ -514,6 +659,9 @@ class PhotoUploadService(
                 OffsetDateTime.now(clock),
             )
         } ?: 0) == 1
+        if (rejected) directOutcome("rejected")
+        return rejected
+    }
 
     private fun releaseIntent(
         intent: PhotoUploadIntent,
@@ -521,8 +669,10 @@ class PhotoUploadService(
         expireIfPutEnded: Boolean = false,
     ): Boolean {
         val now = OffsetDateTime.now(clock)
-        return (transactionTemplate.execute {
+        var expired = false
+        val released = (transactionTemplate.execute {
             if (expireIfPutEnded && !intent.putExpiresAt.isAfter(now)) {
+                expired = true
                 photoUploadIntentRepository.expireMissingAfterPut(
                     intent.photoId,
                     token,
@@ -532,9 +682,12 @@ class PhotoUploadService(
             } else if (intent.expiresAt.isAfter(now)) {
                 photoUploadIntentRepository.releaseVerification(intent.photoId, token, now)
             } else {
+                expired = true
                 photoUploadIntentRepository.expire(intent.photoId, cleanupAfter(intent, now), now)
             }
         } ?: 0) == 1
+        if (released && expired) directOutcome("expired")
+        return released
     }
 
     private fun cleanupAfter(intent: PhotoUploadIntent, now: OffsetDateTime): OffsetDateTime =
@@ -786,6 +939,7 @@ class PhotoUploadService(
                 } ?: 0
                 if (completed != 1) throw LeaseLostException()
             }
+            if (intent != null) directOutcome("existing")
             return existingPhotoDto(existing)
         }
 
@@ -793,6 +947,8 @@ class PhotoUploadService(
         // field is eventually-consistent ("pending" until indexing completes);
         // clients treat it as informational. "none" when ai-api is disabled.
         val aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none"
+
+        if (intent != null) directOutcome("committed")
 
         return UploadedPhotoDto(
             id = photoId,
@@ -883,6 +1039,11 @@ class PhotoUploadService(
             ErrorCodes.PAYLOAD_TOO_LARGE,
             ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
             ErrorCodes.UPLOAD_CHECKSUM_MISMATCH,
+        )
+        val TERMINAL_INTENT_STATES = listOf(
+            PhotoUploadIntentState.COMMITTED,
+            PhotoUploadIntentState.REJECTED,
+            PhotoUploadIntentState.EXPIRED,
         )
 
         // The V24 partial unique index. The race backstop only treats THIS

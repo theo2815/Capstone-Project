@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -53,6 +54,18 @@ interface PhotoUploadIntentRepository : JpaRepository<PhotoUploadIntent, UUID> {
         @Param("ownerId") ownerId: UUID,
         @Param("now") now: OffsetDateTime,
     ): PhotoUploadQuota
+
+    @Query(
+        value = """
+            SELECT COUNT(*) AS slots,
+                   COALESCE(SUM(size_bytes), 0)::bigint AS bytes,
+                   MIN(created_at) AS "oldestCreatedAt"
+            FROM photo_upload_intents
+            WHERE state IN ('PENDING', 'VERIFYING') AND expires_at > :now
+        """,
+        nativeQuery = true,
+    )
+    fun pendingMetrics(@Param("now") now: OffsetDateTime): PhotoUploadPendingMetrics?
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
@@ -188,9 +201,82 @@ interface PhotoUploadIntentRepository : JpaRepository<PhotoUploadIntent, UUID> {
         @Param("states") states: Collection<PhotoUploadIntentState>,
         pageable: Pageable,
     ): List<UUID>
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            UPDATE photo_upload_intents
+            SET cleanup_after = :claimedUntil, cleanup_checked_at = :now, updated_at = :now
+            WHERE photo_id = :photoId
+              AND cleanup_after IS NOT NULL AND cleanup_after <= :now
+              AND state IN ('COMMITTED', 'REJECTED', 'EXPIRED')
+        """,
+        nativeQuery = true,
+    )
+    fun claimCleanup(
+        @Param("photoId") photoId: UUID,
+        @Param("now") now: OffsetDateTime,
+        @Param("claimedUntil") claimedUntil: OffsetDateTime,
+    ): Int
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            UPDATE photo_upload_intents
+            SET cleaned_at = :cleanedAt, cleanup_after = :nextCleanupAfter,
+                cleanup_checked_at = :now, updated_at = :now
+            WHERE photo_id = :photoId AND cleanup_after = :claimedUntil AND cleanup_checked_at = :now
+              AND state IN ('COMMITTED', 'REJECTED', 'EXPIRED')
+        """,
+        nativeQuery = true,
+    )
+    fun completeCleanup(
+        @Param("photoId") photoId: UUID,
+        @Param("claimedUntil") claimedUntil: OffsetDateTime,
+        @Param("cleanedAt") cleanedAt: OffsetDateTime,
+        @Param("nextCleanupAfter") nextCleanupAfter: OffsetDateTime?,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            UPDATE photo_upload_intents
+            SET cleanup_after = :retryAt, cleanup_checked_at = :now, updated_at = :now
+            WHERE photo_id = :photoId AND cleanup_after = :claimedUntil AND cleanup_checked_at = :now
+              AND state IN ('COMMITTED', 'REJECTED', 'EXPIRED')
+        """,
+        nativeQuery = true,
+    )
+    fun retryCleanup(
+        @Param("photoId") photoId: UUID,
+        @Param("claimedUntil") claimedUntil: OffsetDateTime,
+        @Param("retryAt") retryAt: OffsetDateTime,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            UPDATE photo_upload_intents
+            SET cleanup_after = :now, cleanup_checked_at = NULL, cleaned_at = NULL, updated_at = :now
+            WHERE result_photo_id = :photoId AND state = 'COMMITTED'
+        """,
+        nativeQuery = true,
+    )
+    fun scheduleCleanupForResultPhoto(
+        @Param("photoId") photoId: UUID,
+        @Param("now") now: OffsetDateTime,
+    ): Int
 }
 
 interface PhotoUploadQuota {
     val slots: Long
     val bytes: Long
+}
+
+interface PhotoUploadPendingMetrics {
+    val slots: Long
+    val bytes: Long
+    val oldestCreatedAt: Instant?
 }

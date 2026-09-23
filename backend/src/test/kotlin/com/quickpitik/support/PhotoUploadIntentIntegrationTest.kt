@@ -263,6 +263,125 @@ class PhotoUploadIntentIntegrationTest : PostgresIntegrationTest() {
         )
     }
 
+    @Test
+    fun `cleanup claim is exclusive recovers after a worker crash and retains the receipt`() {
+        val owner = photographer()
+        val event = event()
+        val receipt = intents.saveAndFlush(
+            newIntent(owner.id, event.id).apply {
+                state = PhotoUploadIntentState.REJECTED
+                cleanupAfter = NOW.minusMinutes(1)
+            },
+        )
+        val claimedUntil = NOW.plusMinutes(1)
+        val reclaimedUntil = claimedUntil.plusMinutes(1)
+
+        assertEquals(1, inTransaction { intents.claimCleanup(receipt.photoId, NOW, claimedUntil) })
+        assertEquals(0, inTransaction { intents.claimCleanup(receipt.photoId, NOW, claimedUntil.plusMinutes(1)) })
+        assertTrue(intents.findCleanupCandidateIds(
+            NOW,
+            listOf(PhotoUploadIntentState.REJECTED),
+            PageRequest.of(0, 10),
+        ).isEmpty())
+        assertEquals(1, inTransaction { intents.claimCleanup(receipt.photoId, claimedUntil, reclaimedUntil) })
+        assertEquals(0, inTransaction {
+            intents.completeCleanup(receipt.photoId, claimedUntil, NOW, null, NOW)
+        })
+        assertEquals(1, inTransaction {
+            intents.completeCleanup(receipt.photoId, reclaimedUntil, NOW, null, claimedUntil)
+        })
+
+        entityManager.clear()
+        val stored = intents.findById(receipt.photoId).orElseThrow()
+        assertEquals(PhotoUploadIntentState.REJECTED, stored.state)
+        assertEquals(NOW, stored.cleanedAt)
+        assertEquals(claimedUntil, stored.cleanupCheckedAt)
+        assertNull(stored.cleanupAfter)
+    }
+
+    @Test
+    fun `cleanup retry makes a failed terminal receipt due again without marking it cleaned`() {
+        val owner = photographer()
+        val receipt = intents.saveAndFlush(
+            newIntent(owner.id, event().id).apply {
+                state = PhotoUploadIntentState.EXPIRED
+                cleanupAfter = NOW.minusMinutes(1)
+            },
+        )
+        val claimedUntil = NOW.plusMinutes(1)
+        val retryAt = NOW.plusMinutes(2)
+
+        assertEquals(1, inTransaction { intents.claimCleanup(receipt.photoId, NOW, claimedUntil) })
+        assertEquals(1, inTransaction { intents.retryCleanup(receipt.photoId, claimedUntil, retryAt, NOW) })
+
+        entityManager.clear()
+        val stored = intents.findById(receipt.photoId).orElseThrow()
+        assertEquals(retryAt, stored.cleanupAfter)
+        assertEquals(NOW, stored.cleanupCheckedAt)
+        assertNull(stored.cleanedAt)
+    }
+
+    @Test
+    fun `permanent deletion reschedule fences a stale cleanup settlement`() {
+        val owner = photographer()
+        val event = event()
+        val result = photo(owner.id, event.id)
+        val receipt = intents.saveAndFlush(
+            newIntent(owner.id, event.id).apply {
+                state = PhotoUploadIntentState.COMMITTED
+                resultPhotoId = result.id
+                cleanupAfter = NOW.minusMinutes(1)
+                cleanedAt = NOW.minusDays(7)
+            },
+        )
+        val claimedUntil = NOW.plusMinutes(1)
+        val deletionAt = claimedUntil
+
+        assertEquals(1, inTransaction { intents.claimCleanup(receipt.photoId, NOW, claimedUntil) })
+        assertEquals(1, inTransaction { intents.scheduleCleanupForResultPhoto(result.id, deletionAt) })
+        assertEquals(0, inTransaction {
+            intents.completeCleanup(receipt.photoId, claimedUntil, NOW, null, NOW.plusSeconds(20))
+        })
+
+        entityManager.clear()
+        val stored = intents.findById(receipt.photoId).orElseThrow()
+        assertEquals(PhotoUploadIntentState.COMMITTED, stored.state)
+        assertEquals(deletionAt, stored.cleanupAfter)
+        assertNull(stored.cleanedAt)
+    }
+
+    @Test
+    fun `pending metrics aggregate only active unexpired receipts`() {
+        val owner = photographer()
+        val event = event()
+        val metricNow = NOW.plusYears(1)
+        intents.saveAndFlush(newIntent(
+            owner.id,
+            event.id,
+            expiresAt = metricNow.plusHours(24),
+            createdAt = metricNow.minusMinutes(10),
+        ))
+        intents.saveAndFlush(newIntent(
+            owner.id,
+            event.id,
+            expiresAt = metricNow.plusHours(24),
+            createdAt = metricNow,
+        ).apply { state = PhotoUploadIntentState.VERIFYING })
+        intents.saveAndFlush(newIntent(owner.id, event.id, expiresAt = metricNow.minusSeconds(1)))
+        intents.saveAndFlush(newIntent(
+            owner.id,
+            event.id,
+            expiresAt = metricNow.plusHours(24),
+            createdAt = metricNow,
+        ).apply { state = PhotoUploadIntentState.REJECTED })
+
+        val metrics = checkNotNull(intents.pendingMetrics(metricNow))
+
+        assertEquals(2, metrics.slots)
+        assertEquals(FILE_SIZE * 2, metrics.bytes)
+        assertEquals(metricNow.minusMinutes(10).toInstant(), metrics.oldestCreatedAt)
+    }
+
     private fun photographer() = users.saveAndFlush(
         User(
             email = "intent-${UUID.randomUUID()}@test.local",
@@ -300,6 +419,7 @@ class PhotoUploadIntentIntegrationTest : PostgresIntegrationTest() {
         eventId: UUID,
         requestId: UUID? = null,
         expiresAt: OffsetDateTime = NOW.plusHours(24),
+        createdAt: OffsetDateTime = NOW,
     ): PhotoUploadIntent {
         val photoId = UUID.randomUUID()
         return PhotoUploadIntent(
@@ -312,8 +432,8 @@ class PhotoUploadIntentIntegrationTest : PostgresIntegrationTest() {
             sizeBytes = FILE_SIZE,
             stagingKey = "staging/photo-uploads/$ownerId/$eventId/$photoId/original",
             originalKey = "events/$eventId/photos/$photoId/original.jpg",
-            createdAt = NOW,
-            putExpiresAt = NOW.plusMinutes(15),
+            createdAt = createdAt,
+            putExpiresAt = createdAt.plusMinutes(15),
             expiresAt = expiresAt,
         )
     }
