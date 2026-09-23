@@ -8,6 +8,7 @@ import threading
 import time
 from unittest.mock import AsyncMock, patch
 
+import cv2
 import numpy as np
 import pytest
 from fastapi import Request
@@ -292,6 +293,22 @@ class TestDecodeForClassify:
 
         assert _decode_bgr_for_classify(b"definitely not an image", 640) is None
 
+    def test_thin_image_downscale_keeps_both_axes(self):
+        from src.api.v1.blur import _decode_bgr_for_classify
+
+        out = _decode_bgr_for_classify(_solid_png(1, 2000), 640)
+        assert out.shape[:2] == (640, 1)
+
+    def test_normal_downscale_preserves_calibrated_opencv_mapping(self):
+        from src.api.v1.blur import _decode_bgr_for_classify
+
+        data = _make_jpeg_bytes(width=2000, height=999)
+        decoded = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        expected = cv2.resize(
+            decoded, None, fx=640 / 2000, fy=640 / 2000, interpolation=cv2.INTER_AREA
+        )
+        assert np.array_equal(_decode_bgr_for_classify(data, 640), expected)
+
     def test_default_setting_is_the_calibrated_640(self):
         from src.config import Settings
 
@@ -299,6 +316,22 @@ class TestDecodeForClassify:
 
 
 class TestClassifyStream:
+    @pytest.mark.parametrize("route,model", [
+        ("classify", "blur_classifier"), ("detect", "blur"),
+    ])
+    def test_missing_model_rejected_before_stream(self, client, app, route, model):
+        registry = app.state.model_registry
+        original = registry.get(model)
+        registry._models[model] = None
+        try:
+            resp = client.post(f"/api/v1/blur/{route}/stream", files=_files([_make_jpeg_bytes()]))
+        finally:
+            registry._models[model] = original
+
+        assert resp.status_code == 503
+        assert resp.json()["error"]["code"] == "MODEL_UNAVAILABLE"
+        assert resp.headers.get("content-type", "").startswith("application/json")
+
     def test_streams_one_line_per_image_plus_summary(self, client, stub_registry):
         stub_registry(_StubClassifier())
         images = [_make_jpeg_bytes() for _ in range(3)]
@@ -319,8 +352,8 @@ class TestClassifyStream:
             assert line["predicted_class"] == "sharp"
 
     def test_undecodable_image_errors_without_killing_the_batch(self, client, stub_registry):
-        stub_registry(_StubClassifier())
-        images = [_make_jpeg_bytes(), b"not an image at all", _make_jpeg_bytes()]
+        stub = stub_registry(_StubClassifier())
+        images = [_make_jpeg_bytes(), b"", _make_jpeg_bytes()]
 
         resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
 
@@ -331,6 +364,68 @@ class TestClassifyStream:
         assert lines[1]["error"] == "Failed to decode image"
         assert lines[2]["predicted_class"] == "sharp"
         assert lines[3]["_summary"] is True
+        assert lines[3]["successful"] == 2
+        assert lines[3]["errors"] == 1
+        assert stub.calls == [2]
+
+    def test_later_sub_batch_decode_failure_keeps_all_indices(
+        self, client, stub_registry, app, monkeypatch
+    ):
+        stub = stub_registry(_StubClassifier())
+        monkeypatch.setattr(app.state.settings, "INFERENCE_SUB_BATCH_SIZE", 2)
+        from src.api.v1 import blur
+
+        original = blur._decode_bgr_for_classify
+        bad = _make_jpeg_bytes()
+
+        def decode(data, max_dim):
+            if data == bad:
+                raise cv2.error("private/path/decoder.cpp: internal details")
+            return original(data, max_dim)
+
+        with patch("src.api.v1.blur._decode_bgr_for_classify", side_effect=decode):
+            resp = client.post(
+                "/api/v1/blur/classify/stream",
+                files=_files([_make_jpeg_bytes(), _make_jpeg_bytes(), bad, _make_jpeg_bytes()]),
+            )
+
+        lines = _ndjson(resp)
+        assert len(lines) == 5
+        assert [row["index"] for row in lines[:4]] == [0, 1, 2, 3]
+        assert lines[2]["error"] == "Failed to decode image"
+        assert "private/path" not in resp.text
+        assert [row["predicted_class"] for row in (lines[0], lines[1], lines[3])] == ["sharp"] * 3
+        assert lines[4]["successful"] == 3
+        assert lines[4]["errors"] == 1
+        assert stub.calls == [2, 1]
+
+    def test_unexpected_stream_failure_is_marked_incomplete(self, client, stub_registry):
+        stub_registry(_StubClassifier())
+        with patch(
+            "src.api.v1.blur.validate_stream_file", side_effect=RuntimeError("private/path")
+        ):
+            resp = client.post("/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()]))
+
+        lines = _ndjson(resp)
+        assert len(lines) == 1
+        assert lines[0]["_summary"] is True
+        assert (lines[0]["total"], lines[0]["successful"], lines[0]["errors"]) == (
+            1, 0, 0,
+        )
+        assert lines[0]["complete"] is False
+        assert "private/path" not in resp.text
+
+    def test_disconnect_stops_before_next_sub_batch(self, client, stub_registry, app, monkeypatch):
+        stub = stub_registry(_StubClassifier())
+        monkeypatch.setattr(app.state.settings, "INFERENCE_SUB_BATCH_SIZE", 1)
+        with patch.object(Request, "is_disconnected", new_callable=AsyncMock) as disconnected:
+            disconnected.side_effect = [False, True]
+            resp = client.post(
+                "/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()] * 2)
+            )
+
+        assert [line["index"] for line in _ndjson(resp)] == [0]
+        assert stub.calls == [1]
 
     def test_sub_batch_failure_emits_error_lines_and_still_summarises(
         self, client, stub_registry
@@ -350,8 +445,10 @@ class TestClassifyStream:
         lines = _ndjson(resp)
         assert len(lines) == 3
         assert [line["index"] for line in lines[:2]] == [0, 1]
-        assert all("onnx session died" in line["error"] for line in lines[:2])
+        assert all(line["error"] == "Classification failed" for line in lines[:2])
         assert lines[2]["_summary"] is True  # stream terminated cleanly
+        assert lines[2]["successful"] == 0
+        assert lines[2]["errors"] == 2
 
     def test_blur_type_mode_respects_min_confidence(self, client, stub_registry):
         """detected must mirror BlurClassifier.detect_blur_type: the predicted
@@ -475,7 +572,7 @@ class TestDetectStream:
         assert all("is_blurry" in line for line in results)
 
     def test_undecodable_image_errors_without_killing_the_batch(self, client):
-        images = [_make_jpeg_bytes(), b"not an image at all", _make_jpeg_bytes()]
+        images = [_make_jpeg_bytes(), b"", _make_jpeg_bytes()]
 
         resp = client.post("/api/v1/blur/detect/stream", files=_files(images))
 
@@ -483,6 +580,18 @@ class TestDetectStream:
         by_index = {line["index"]: line for line in _ndjson(resp) if not line.get("_summary")}
         assert by_index[1]["error"] == "Failed to decode image"
         assert "is_blurry" in by_index[0] and "is_blurry" in by_index[2]
+
+    def test_decode_exception_is_sanitized_and_counted(self, client):
+        with patch(
+            "src.api.v1.blur.cv2.imdecode", side_effect=cv2.error("private/path/decoder.cpp")
+        ):
+            resp = client.post("/api/v1/blur/detect/stream", files=_files([_make_jpeg_bytes()]))
+
+        lines = _ndjson(resp)
+        assert lines[0]["error"] == "Failed to process image"
+        assert "private/path" not in resp.text
+        assert lines[1]["successful"] == 0
+        assert lines[1]["errors"] == 1
 
     def test_oversize_file_errors_without_killing_the_batch(
         self, client, app, monkeypatch

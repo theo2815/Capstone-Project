@@ -57,6 +57,19 @@ class BlurAuthRoute(APIRoute):
 router = APIRouter(prefix="/blur", tags=["Blur Detection"], route_class=BlurAuthRoute)
 
 
+def _downscale_stream_image(image: np.ndarray, max_dim: int) -> np.ndarray:
+    h, w = image.shape[:2]
+    if max(h, w) <= max_dim:
+        return image
+    scale = max_dim / max(h, w)
+    if min(h, w) * scale <= 0.5:
+        return cv2.resize(
+            image, (max(1, round(w * scale)), max(1, round(h * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    return cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+
 # ---------------------------------------------------------------------------
 # Fast decode + detect for streaming batch (bypasses full PIL pipeline)
 # ---------------------------------------------------------------------------
@@ -68,6 +81,7 @@ def _fast_decode_and_detect(
     detector: Any,
     threshold: float | None,
     include_hf_ratio: bool = False,
+    request_id: str = "",
 ) -> dict:
     """Decode an image with OpenCV and run blur detection in one call.
 
@@ -85,10 +99,7 @@ def _fast_decode_and_detect(
             image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             if image is None:
                 return {"index": index, "filename": filename, "error": "Failed to decode image"}
-            h, w = image.shape[:2]
-            if max(h, w) > 640:
-                scale = 640 / max(h, w)
-                image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            image = _downscale_stream_image(image, 640)
             result = detector.detect(image, threshold_override=threshold)
             return {"index": index, "filename": filename, **result}
 
@@ -97,10 +108,7 @@ def _fast_decode_and_detect(
         if gray is None:
             return {"index": index, "filename": filename, "error": "Failed to decode image"}
 
-        h, w = gray.shape
-        if max(h, w) > 640:
-            scale = 640 / max(h, w)
-            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        gray = _downscale_stream_image(gray, 640)
 
         laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
@@ -124,7 +132,10 @@ def _fast_decode_and_detect(
             "laplacian_variance": round(laplacian_var, 2),
         }
     except Exception as e:
-        return {"index": index, "filename": filename, "error": str(e)}
+        logger.warning(
+            "Stream image processing failed", error_type=type(e).__name__, request_id=request_id,
+        )
+        return {"index": index, "filename": filename, "error": "Failed to process image"}
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +156,7 @@ def _decode_bgr_for_classify(data: bytes, max_dim: int) -> np.ndarray | None:
     image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if image is None:
         return None
-    h, w = image.shape[:2]
-    if max(h, w) > max_dim:
-        scale = max_dim / max(h, w)
-        image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    return image
+    return _downscale_stream_image(image, max_dim)
 
 
 @router.post("/detect", response_model=APIResponse)
@@ -275,29 +282,37 @@ async def detect_blur_stream(
 
     total = len(files)
     start = time.perf_counter()
+    request_id = getattr(request.state, "request_id", "")
 
     async def generate():
+        successful = errors = 0
+        complete = True
         sem = (
             request.app.state.blur_decode_semaphore
             if settings.MODEL_PROFILE == "blur"
             else asyncio.Semaphore(concurrency)
         )
 
-        async def process(index: int, filename: str, data: bytes, error: str | None) -> str:
+        async def process(index: int, filename: str, data: bytes, error: str | None) -> dict:
             if error is not None:
                 # Rejected before decode: no semaphore slot, no worker thread.
-                return json.dumps(
-                    {"index": index, "filename": filename, "error": error},
-                    separators=(",", ":"),
-                ) + "\n"
-            result = await bounded_to_thread(
-                sem, _fast_decode_and_detect, data, filename, index, detector,
-                threshold, include_hf_ratio,
-            )
-            return json.dumps(result, separators=(",", ":")) + "\n"
+                return {"index": index, "filename": filename, "error": error}
+            try:
+                return await bounded_to_thread(
+                    sem, _fast_decode_and_detect, data, filename, index, detector,
+                    threshold, include_hf_ratio, request_id,
+                )
+            except Exception as e:
+                logger.error(
+                    "Stream image processing failed", error_type=type(e).__name__,
+                    request_id=request_id,
+                )
+                return {"index": index, "filename": filename, "error": "Failed to process image"}
 
         try:
             for start_idx in range(0, total, settings.INFERENCE_SUB_BATCH_SIZE):
+                if await request.is_disconnected():
+                    return
                 items = []
                 end_idx = min(start_idx + settings.INFERENCE_SUB_BATCH_SIZE, total)
                 for i in range(start_idx, end_idx):
@@ -315,18 +330,27 @@ async def detect_blur_stream(
                 ]
                 try:
                     for coro in asyncio.as_completed(tasks):
-                        yield await coro
+                        result = await coro
+                        successful += "error" not in result
+                        errors += "error" in result
+                        yield json.dumps(result, separators=(",", ":")) + "\n"
                 finally:
                     for task in tasks:
                         task.cancel()
                     await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            complete = False
+            logger.error(
+                "Stream blur detection failed", error_type=type(e).__name__, request_id=request_id,
+            )
         finally:
             for f in files:
                 await f.close()
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000
-        summary = {"_summary": True, "total": total, "processing_time_ms": round(elapsed, 2)}
+        summary = {"_summary": True, "total": total, "successful": successful,
+                   "errors": errors, "complete": complete, "processing_time_ms": round(elapsed, 2)}
         yield json.dumps(summary, separators=(",", ":")) + "\n"
 
     logger.info(
@@ -595,6 +619,9 @@ async def classify_blur_stream(
         }
 
     async def generate():
+        successful = errors = 0
+        complete = True
+        request_id = getattr(request.state, "request_id", "")
         sem = (
             request.app.state.blur_decode_semaphore
             if settings.MODEL_PROFILE == "blur"
@@ -603,10 +630,16 @@ async def classify_blur_stream(
 
         async def decode_one(data: bytes, error: str | None):
             if error is not None:
-                # Rejected before decode. None is what classify_batch already
-                # maps to a None result, so the sub-batch shape is unchanged.
+                # Rejected before decode; only valid arrays reach inference.
                 return None
-            return await bounded_to_thread(sem, _decode_bgr_for_classify, data, decode_dim)
+            try:
+                return await bounded_to_thread(sem, _decode_bgr_for_classify, data, decode_dim)
+            except (cv2.error, ValueError, OverflowError) as e:
+                logger.warning(
+                    "Stream image decode failed", error_type=type(e).__name__,
+                    request_id=request_id,
+                )
+                return None
 
         # Sequential sub-batches (mirrors the Celery blur_classify_batch worker):
         # decode each sub-batch's images in parallel, then ONE batched inference.
@@ -614,6 +647,8 @@ async def classify_blur_stream(
         # dynamic batch axis, and a per-image loop otherwise — identical results.
         try:
             for chunk_start in range(0, total, sub_batch):
+                if await request.is_disconnected():
+                    return
                 sub = []
                 for i in range(chunk_start, min(chunk_start + sub_batch, total)):
                     f = files[i]
@@ -625,32 +660,58 @@ async def classify_blur_stream(
                     )
                     sub.append((i, name, data, err))
                 images = await asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub])
+                valid = [i for i, ((_, _, _, err), image) in enumerate(zip(sub, images))
+                         if err is None and image is not None]
+                results = [None] * len(sub)
                 try:
-                    results = await asyncio.to_thread(classifier.classify_batch, images)
+                    if valid:
+                        inferred = await asyncio.to_thread(
+                            classifier.classify_batch, [images[i] for i in valid]
+                        )
+                        if len(inferred) != len(valid):
+                            raise ValueError("Classifier result count mismatch")
+                        for i, result in zip(valid, inferred):
+                            results[i] = result
                 except Exception as e:
                     # Headers are already sent; preserve the stream's indexed rows.
                     logger.error(
                         "Stream classify sub-batch failed",
                         chunk_start=chunk_start,
                         size=len(sub),
-                        error=str(e),
+                        error_type=type(e).__name__,
+                        request_id=request_id,
                     )
-                    for idx, name, _, err in sub:
+                    for (idx, name, _, err), image in zip(sub, images):
                         # A rejected file keeps its own reason.
-                        line = {"index": idx, "filename": name, "error": err or str(e)}
+                        line = {
+                            "index": idx, "filename": name,
+                            "error": err or (
+                                "Failed to decode image"
+                                if image is None else "Classification failed"
+                            ),
+                        }
+                        errors += 1
                         yield json.dumps(line, separators=(",", ":")) + "\n"
                     continue
                 for (idx, name, _, err), image, result in zip(sub, images, results):
-                    yield json.dumps(
-                        _build_line(idx, name, image, result, err), separators=(",", ":")
-                    ) + "\n"
+                    line = _build_line(idx, name, image, result, err)
+                    successful += "error" not in line
+                    errors += "error" in line
+                    yield json.dumps(line, separators=(",", ":")) + "\n"
+        except Exception as e:
+            complete = False
+            logger.error(
+                "Stream blur classification failed", error_type=type(e).__name__,
+                request_id=request_id,
+            )
         finally:
             for f in files:
                 await f.close()
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000
-        summary = {"_summary": True, "total": total, "processing_time_ms": round(elapsed, 2)}
+        summary = {"_summary": True, "total": total, "successful": successful,
+                   "errors": errors, "complete": complete, "processing_time_ms": round(elapsed, 2)}
         yield json.dumps(summary, separators=(",", ":")) + "\n"
 
     logger.info(
