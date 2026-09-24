@@ -295,6 +295,9 @@ Client rules that matter:
   undecodable file; keep reading, the rest of the batch is unaffected.
 - Respect server `BLUR_BUSY` responses and `Retry-After` before starting another
   stream. A single service currently admits two requests.
+- A busy rejection can close the connection while a large multipart body is still
+  uploading, so the client may see a network error instead of the `503` response.
+  Treat either outcome as a failed stream; wait before retrying unaccounted images.
 
 **Limits on the stream path** (added 2026-08-14 — it previously validated nothing):
 
