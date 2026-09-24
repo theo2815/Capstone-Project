@@ -230,10 +230,13 @@ class R2DirectUploadSmokeTest {
     private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes)
 
     private fun browserPut(url: String, bytes: ByteArray, origin: String) {
-        require(origin == "http://localhost:3000") { "This browser probe serves only the approved local origin" }
+        val localOrigin = URI.create(origin)
+        require(localOrigin.scheme == "http" && localOrigin.host == "localhost" && localOrigin.port > 0) {
+            "This browser probe serves only an approved localhost origin"
+        }
         val completed = CountDownLatch(1)
         val status = AtomicReference<String>()
-        val server = HttpServer.create(InetSocketAddress("localhost", 3000), 0)
+        val server = HttpServer.create(InetSocketAddress("localhost", localOrigin.port), 0)
         fun respond(exchange: com.sun.net.httpserver.HttpExchange, contentType: String, body: ByteArray) {
             exchange.responseHeaders.add("Content-Type", contentType)
             exchange.sendResponseHeaders(200, body.size.toLong())
