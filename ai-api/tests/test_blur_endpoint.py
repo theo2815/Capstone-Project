@@ -6,7 +6,7 @@ import io
 import json
 import threading
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import cv2
 import numpy as np
@@ -211,14 +211,26 @@ class TestBlurEndpointAuth:
         # DEBUG=true in .env allows keyless access
         assert resp.status_code == 200
 
-    def test_invalid_key_rejected(self, client: TestClient):
-        """An explicitly wrong key should be rejected."""
+    def test_invalid_key_rejected(self, client: TestClient, app):
+        """An explicitly wrong key is rejected when auth dependencies are available."""
+        redis = AsyncMock()
+        redis.get.return_value = None
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        session = AsyncMock()
+        session.execute.return_value = result
+        session_ctx = AsyncMock()
+        session_ctx.__aenter__.return_value = session
         data = _make_jpeg_bytes()
-        resp = client.post(
-            "/api/v1/blur/detect",
-            headers={"X-API-Key": "definitely_wrong_key"},
-            files={"file": ("test.jpg", data, "image/jpeg")},
-        )
+        with (
+            patch.object(app.state, "redis", redis),
+            patch("src.db.session.get_session_ctx", return_value=session_ctx),
+        ):
+            resp = client.post(
+                "/api/v1/blur/detect",
+                headers={"X-API-Key": "definitely_wrong_key"},
+                files={"file": ("test.jpg", data, "image/jpeg")},
+            )
         # Even in debug, if a key IS provided it must be valid
         assert resp.status_code == 401
 
