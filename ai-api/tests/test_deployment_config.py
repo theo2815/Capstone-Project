@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import shlex
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,20 @@ from PIL import Image
 from pydantic import ValidationError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_release_workflow_forwards_approved_limits_into_smoke_container():
+    workflow = yaml.safe_load((PROJECT_ROOT.parent / ".github/workflows/ai-api-blur.yml")
+                              .read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["release-check"]["steps"]
+    smoke = next(step for step in steps if step.get("name", "").startswith("Smoke test metrics"))
+    command = next(line for line in smoke["run"].splitlines()
+                   if "blur_release_smoke.py" in line)
+    args = shlex.split(command)
+    forwarded = {args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-e"}
+    assert {"BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE"} <= forwarded
+
+
 PROD_COMPOSE = PROJECT_ROOT / "docker-compose.prod.yml"
 GPU_COMPOSE = PROJECT_ROOT / "docker-compose.gpu.yml"
 
