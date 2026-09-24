@@ -94,7 +94,7 @@ interface UploadEntry {
   checkpoint?: DirectUploadCheckpoint;
   retryState?: UploadRetryState;
   phase?: "preparing" | "uploading" | "confirming";
-  receiptStatus?: "live" | "processing";
+  receiptStatus?: "live" | "processing" | "hidden";
   error?: string;
   /** True when the error happened during upload (network glitch — same file
    *  could succeed on a retry). False when the file was rejected by
@@ -435,9 +435,11 @@ function UploadForm({
 }) {
   const { showToast } = useToast();
   const [entries, setEntries] = useState<UploadEntry[]>([]);
+  const [gateError, setGateError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
+  const paused = useRef(false);
   const batch = useMemo(() => ({
     active: new Map<string, AbortController>(),
     preflight: new Set<AbortController>(),
@@ -677,6 +679,7 @@ function UploadForm({
   // flip stays synchronous (before any await) so a re-fired effect can never
   // claim an entry that is already being sent.
   useEffect(() => {
+    if (paused.current) return;
     const slots = MAX_CONCURRENT_UPLOADS - batch.active.size;
     if (slots <= 0) return;
     const queued = entries
@@ -731,8 +734,24 @@ function UploadForm({
             return;
           }
           const codes = err instanceof ApiError ? err.errors.map((item) => item.code) : [];
+          const batchGate = err instanceof ApiError && (
+            (err.status === 401 && !codes.includes("UPLOAD_TRANSFER_FAILED")) || codes.some((code) => [
+              "EVENT_NOT_FOUND", "EVENT_NOT_UPLOADABLE", "PHOTOGRAPHER_NOT_VERIFIED",
+              "ACCOUNT_SUSPENDED", "ACCOUNT_LOCKED", "USER_NOT_FOUND",
+              "WATERMARK_MISSING", "FORBIDDEN",
+            ].includes(code))
+          );
+          if (batchGate) {
+            paused.current = true;
+            const activeIds = new Set(batch.active.keys());
+            batch.active.forEach((active) => active.abort());
+            batch.active.clear();
+            setEntries((prev) => prev.map((p) => activeIds.has(p.id) ? { ...p, status: "queued", progress: 0 } : p));
+            setGateError(err.message || "Upload access changed.");
+            return;
+          }
           const terminal = err instanceof ApiError && (
-            [400, 401, 403, 404, 413, 415, 429].includes(err.status ?? 0) ||
+            [400, 401, 403, 404, 413, 415].includes(err.status ?? 0) ||
             codes.some((code) => [
               "PHOTO_DUPLICATE_DIFFERENT_EVENT", "PHOTO_DUPLICATE_SAME_EVENT",
               "UNSUPPORTED_MEDIA_TYPE", "PAYLOAD_TOO_LARGE", "UPLOAD_CHECKSUM_MISMATCH",
@@ -834,6 +853,8 @@ function UploadForm({
   }
 
   function clearAll() {
+    paused.current = false;
+    setGateError(null);
     batch.preflight.forEach((controller) => controller.abort());
     batch.preflight.clear();
     batch.active.forEach((controller) => controller.abort());
@@ -965,6 +986,15 @@ function UploadForm({
           )}
         </div>
       </section>
+
+      {entries.length > 0 && gateError && (
+        <div role="alert" className="mb-6 rounded-xl border border-error/40 bg-error/5 px-5 py-4 text-sm text-ink">
+          <p>{gateError} Resolve access to this event or account, then resume uploads.</p>
+          <button type="button" onClick={() => { paused.current = false; setGateError(null); setRetryNonce((n) => n + 1); }} className="mt-2 underline underline-offset-4">
+            Resume uploads
+          </button>
+        </div>
+      )}
 
       {entries.length > 0 && (
         <StagedSection
@@ -1262,8 +1292,8 @@ const QueueRow = memo(function QueueRow({
               {status === "queued" ? "Queued" : status === "checking" ? "Checking…" : status === "preparing" ? "Preparing…" : status === "confirming" ? "Confirming…" : "Waiting for connection…"}
             </p>
           ) : status === "done" ? (
-            <p className="font-mono text-[10px] tracking-[0.15em] text-fresh tnum uppercase">
-              {entry.receiptStatus === "processing" ? "Uploaded — preparing preview" : "Live"}
+            <p className={cn("font-mono text-[10px] tracking-[0.15em] tnum uppercase", entry.receiptStatus === "hidden" ? "text-slate" : "text-fresh")}>
+              {entry.receiptStatus === "processing" ? "Uploaded — preparing preview" : entry.receiptStatus === "hidden" ? "Hidden" : "Live"}
             </p>
           ) : status === "skipped" ? (
             <p className="font-mono text-[10px] tracking-[0.15em] text-slate tnum uppercase">

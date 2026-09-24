@@ -207,7 +207,7 @@ it("replays the same request id after an ambiguous begin", async () => {
   expect(checkpoints[0].requestId).toBe(post.mock.calls[0][1].requestId);
 });
 
-it("waits for UPLOAD_IN_PROGRESS Retry-After and does not retry a 429", async () => {
+it("waits for Retry-After on verification contention and bounded 429s", async () => {
   const nativeTimer = globalThis.setTimeout;
   const delays: number[] = [];
   vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
@@ -220,9 +220,164 @@ it("waits for UPLOAD_IN_PROGRESS Retry-After and does not retry a 429", async ()
   const checkpoint = { requestId: "request", photoId: "saved", key: "slot" };
   expect(await uploadPhotographerPhoto("event", file, undefined, { contentHash: "a".repeat(64), checkpoint })).toEqual(receipt);
   expect(delays).toContain(5000);
-  post.mockReset().mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMITED", message: "Slow down" }], 429, 5));
+  post.mockReset().mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMITED", message: "Busy" }], 429, 5))
+    .mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMITED", message: "Busy" }], 429, 5))
+    .mockResolvedValueOnce(receipt);
+  expect(await uploadPhotographerPhoto("event", file, undefined, { contentHash: "a".repeat(64), checkpoint })).toEqual(receipt);
+  expect(post).toHaveBeenCalledTimes(3);
+  expect(delays.filter((delay) => delay === 5000)).toHaveLength(3);
+  post.mockReset().mockRejectedValue(new ApiError([{ code: "RATE_LIMITED", message: "Busy" }], 429, 5));
   await expect(uploadPhotographerPhoto("event", file, undefined, { contentHash: "a".repeat(64), checkpoint })).rejects.toMatchObject({ status: 429 });
+  expect(post).toHaveBeenCalledTimes(4);
+});
+
+it("renews a lost begin request only after its reservation is confirmed missing", async () => {
+  let online = true;
+  vi.spyOn(window.navigator, "onLine", "get").mockImplementation(() => online);
+  const missing = new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Expired" }], 422);
+  const receipt = { id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  const checkpoints: { requestId: string }[] = [];
+  const retryState = {};
+  const file = new File(["a"], "a.jpg", { type: "image/jpeg" });
+  post.mockImplementationOnce(async () => { online = false; throw new TypeError("Lost reply"); })
+    .mockRejectedValueOnce(missing)
+    .mockResolvedValueOnce({ mode: "existing", existing: receipt });
+  const options = { contentHash: "a".repeat(64), retryState, onCheckpoint: (value: { requestId: string }) => checkpoints.push(value) };
+  await expect(uploadPhotographerPhoto("event", file, undefined, options)).rejects.toBeInstanceOf(OfflineUploadError);
+  online = true;
+  expect(await uploadPhotographerPhoto("event", file, undefined, { ...options, checkpoint: checkpoints.at(-1) })).toEqual(receipt);
+  expect(post).toHaveBeenCalledTimes(3);
+  expect(post.mock.calls[0][1].requestId).toBe(post.mock.calls[1][1].requestId);
+  expect(post.mock.calls[2][1].requestId).not.toBe(post.mock.calls[1][1].requestId);
+});
+
+it("reconciles an R2 XML 403 before renewing a confirmed-missing expired grant", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const firstExpiry = new Date(now + 60_000).toISOString();
+  const sent: { url: string; headers: Record<string, string>; credentials: boolean }[] = [];
+  class StorageXhr {
+    status = 200;
+    responseText = "<Error>ExpiredToken</Error>";
+    withCredentials = true;
+    upload = { onprogress: null };
+    onload?: () => void;
+    private url = "";
+    private headers: Record<string, string> = {};
+    open(_method: string, url: string) { this.url = url; }
+    setRequestHeader(name: string, value: string) { this.headers[name] = value; }
+    send() {
+      sent.push({ url: this.url, headers: this.headers, credentials: this.withCredentials });
+      if (sent.length === 1) { this.status = 403; now += 120_000; }
+      queueMicrotask(() => this.onload?.());
+    }
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", StorageXhr);
+  const missing = new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Missing" }], 422);
+  const receipt = { id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  post.mockResolvedValueOnce({ mode: "direct", photoId: "old", key: "old-key", uploadUrl: "https://uploads.example.test/old?sig=1", expiresAt: firstExpiry, uploadHeaders: { "Content-Type": "image/jpeg" } })
+    .mockRejectedValueOnce(missing)
+    .mockResolvedValueOnce({ mode: "direct", photoId: "new", key: "new-key", uploadUrl: "https://uploads.example.test/new?sig=2", expiresAt: new Date(now + 300_000).toISOString(), uploadHeaders: { "Content-Type": "image/jpeg" } })
+    .mockResolvedValueOnce(receipt);
+  try {
+    expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, { contentHash: "a".repeat(64) })).toEqual(receipt);
+    expect(post.mock.calls.map(([path]) => path)).toEqual([
+      "/me/photographer/events/event/photos/direct", "/me/photographer/events/event/photos/direct/commit",
+      "/me/photographer/events/event/photos/direct", "/me/photographer/events/event/photos/direct/commit",
+    ]);
+    expect(post.mock.calls[2][1].requestId).not.toBe(post.mock.calls[0][1].requestId);
+    expect(sent).toEqual([
+      { url: "https://uploads.example.test/old?sig=1", headers: { "Content-Type": "image/jpeg" }, credentials: false },
+      { url: "https://uploads.example.test/new?sig=2", headers: { "Content-Type": "image/jpeg" }, credentials: false },
+    ]);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
+
+it("bounds confirmed-missing begin renewals and never renews an ambiguous error", async () => {
+  const missing = new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Expired" }], 422);
+  const retryState = {};
+  post.mockRejectedValue(missing);
+  await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+    contentHash: "a".repeat(64), retryState,
+  })).rejects.toBe(missing);
+  expect(post).toHaveBeenCalledTimes(4);
+  expect(new Set(post.mock.calls.map(([, body]) => body.requestId)).size).toBe(4);
+  post.mockReset().mockRejectedValue(new ApiError([{ code: "UPLOAD_REQUEST_CONFLICT", message: "Conflict" }], 409));
+  await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+    contentHash: "a".repeat(64),
+  })).rejects.toMatchObject({ status: 409, errors: [{ code: "UPLOAD_REQUEST_CONFLICT" }] });
   expect(post).toHaveBeenCalledTimes(1);
+});
+
+it("does not renew a storage 403 while its grant is unexpired", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  class DeniedXhr {
+    status = 403; upload = { onprogress: null }; onload?: () => void;
+    open() {}
+    setRequestHeader() {}
+    send() { queueMicrotask(() => this.onload?.()); }
+  }
+  vi.stubGlobal("XMLHttpRequest", DeniedXhr);
+  post.mockResolvedValueOnce({ mode: "direct", photoId: "old", key: "key", uploadUrl: "https://uploads.example.test/key", expiresAt: "2099-01-01T00:00:00Z" })
+    .mockRejectedValueOnce(new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Missing" }], 422));
+  try {
+    await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, { contentHash: "a".repeat(64) }))
+      .rejects.toMatchObject({ status: 403, errors: [{ code: "UPLOAD_TRANSFER_FAILED" }] });
+    expect(post.mock.calls.map(([path]) => path)).toEqual([
+      "/me/photographer/events/event/photos/direct", "/me/photographer/events/event/photos/direct/commit",
+    ]);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
+
+it("keeps a backend 403 terminal before any storage transfer or multipart fallback", async () => {
+  const send = vi.fn();
+  vi.stubGlobal("XMLHttpRequest", class { upload = { onprogress: null }; open() {} setRequestHeader() {} send = send; });
+  post.mockRejectedValueOnce(new ApiError([{ code: "PHOTOGRAPHER_NOT_VERIFIED", message: "Verification required" }], 403));
+  try {
+    await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, { contentHash: "a".repeat(64) }))
+      .rejects.toMatchObject({ status: 403, errors: [{ code: "PHOTOGRAPHER_NOT_VERIFIED" }] });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it("rejects an unexpected direct-upload origin before sending any bytes", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  const send = vi.fn();
+  vi.stubGlobal("XMLHttpRequest", class { upload = { onprogress: null }; open() {} setRequestHeader() {} send = send; });
+  post.mockResolvedValueOnce({ mode: "direct", photoId: "photo", key: "key", uploadUrl: "https://elsewhere.example.test/key" });
+  try {
+    await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, { contentHash: "a".repeat(64) }))
+      .rejects.toThrow("Invalid upload URL");
+    expect(send).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledTimes(1);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
+
+it("settles a raw PUT after 120 seconds without byte progress", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  let aborted = false;
+  class StalledXhr {
+    upload = { onprogress: null };
+    open() {}
+    setRequestHeader() {}
+    send() {}
+    abort() { aborted = true; }
+  }
+  vi.stubGlobal("XMLHttpRequest", StalledXhr);
+  const receipt = { id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  post.mockResolvedValueOnce({ mode: "direct", photoId: "saved", key: "key", uploadUrl: "https://uploads.example.test/key" })
+    .mockResolvedValueOnce(receipt);
+  try {
+    const work = uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, { contentHash: "a".repeat(64) });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(await work).toEqual(receipt);
+    expect(aborted).toBe(true);
+    expect(post).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
 });
 
 it("starts a fresh request only after an expired grant is confirmed missing", async () => {

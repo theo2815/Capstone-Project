@@ -210,3 +210,36 @@ it("does not duplicate a manual retry when its button is activated twice", async
   await waitFor(() => expect(screen.getByText("Uploaded — preparing preview")).toBeInTheDocument());
   expect(puts).toHaveLength(1);
 });
+
+it("shows an existing hidden receipt as hidden rather than live", async () => {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.endsWith("/photos/exists")) return response({ results: [] });
+    if (url.endsWith("/photos/direct")) return response({ mode: "existing", existing: { id: "saved", status: "hidden", uploadedAt: "now", thumbnailUrl: "", span: "default" } });
+    throw new Error(`Unexpected fetch ${url}`);
+  });
+  render(<FocusedUploadPage />);
+  select([new File(["a"], "hidden.jpg", { type: "image/jpeg" })]);
+  await waitFor(() => expect(screen.getByText("Hidden")).toBeInTheDocument());
+  expect(screen.queryByText(/^Live$/)).not.toBeInTheDocument();
+  expect(puts).toHaveLength(0);
+});
+
+it("pauses real workflows when commit reports an event-wide gate", async () => {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.endsWith("/photos/exists")) return response({ results: [] });
+    if (url.endsWith("/photos/direct/commit")) return new Response(JSON.stringify({ success: false, errors: [{ code: "EVENT_NOT_UPLOADABLE", message: "Upload window closed" }] }), { status: 422 });
+    if (url.endsWith("/photos/direct")) {
+      const id = ++nextId;
+      return response({ mode: "direct", photoId: `photo-${id}`, key: `key-${id}`, uploadUrl: `https://uploads.example.test/${id}` });
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  });
+  render(<FocusedUploadPage />);
+  select(Array.from({ length: 5 }, (_, index) => new File([`${index}`], `closed-${index}.jpg`, { type: "image/jpeg" })));
+  await waitFor(() => expect(puts).toHaveLength(4));
+  await act(async () => { puts[0].finish(); });
+  expect(puts).toHaveLength(4);
+  expect(puts.slice(1).every((put) => put.aborted)).toBe(true);
+  expect(screen.getByRole("alert")).toHaveTextContent("Upload window closed");
+  expect(screen.getByText("closed-4.jpg")).toBeInTheDocument();
+});

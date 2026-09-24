@@ -94,7 +94,7 @@ export type UploadedPhotoAiDetectionStatus =
 
 export interface UploadedPhoto {
   id: string;
-  status: "live" | "processing";
+  status: "live" | "processing" | "hidden";
   uploadedAt: string;
   thumbnailUrl: string;
   span: "default" | "wide";
@@ -284,6 +284,7 @@ export interface UploadRetryState {
   transferRetries?: number;
   commitRetries?: number;
   transferDeadline?: number;
+  grantRenewals?: number;
 }
 
 export interface PhotographerUploadOptions {
@@ -312,7 +313,7 @@ export class OfflineUploadError extends Error {
 
 function uploadError(error: unknown): boolean {
   if (error instanceof ApiError) {
-    if (error.errors.some((item) => item.code === "UPLOAD_IN_PROGRESS")) return true;
+    if (error.errors.some((item) => item.code === "UPLOAD_IN_PROGRESS" || item.code === "RATE_LIMITED" && error.status === 429)) return true;
     return error.status === undefined || error.status >= 500;
   }
   return error instanceof TypeError;
@@ -469,6 +470,12 @@ export async function uploadPhotographerPhoto(
     checkpoint = value;
     options.onCheckpoint?.(value);
   };
+  const renewGrant = (error: unknown) => {
+    const renewals = retryState.grantRenewals ?? 0;
+    if (renewals >= 3) throw error;
+    retryState.grantRenewals = renewals + 1;
+    save({ requestId: uploadRequestId() });
+  };
   const commit = () => retryUpload(() => api.post<UploadedPhoto>(`${base}/direct/commit`, {
     photoId: checkpoint!.photoId, key: checkpoint!.key, contentHash,
     contentType: file.type, sizeBytes: file.size,
@@ -484,64 +491,84 @@ export async function uploadPhotographerPhoto(
       if ((checkpoint.putExpiresAt && Date.parse(checkpoint.putExpiresAt) <= Date.now()) ||
           (checkpoint.intentExpiresAt && Date.parse(checkpoint.intentExpiresAt) <= Date.now())) {
         if (!globalThis.crypto?.getRandomValues) return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
-        save({ requestId: uploadRequestId() });
+        renewGrant(error);
       }
     }
   }
 
-  let begin: DirectBeginResponse;
-  try {
-    begin = await retryUpload(() => api.post<DirectBeginResponse>(`${base}/direct`, {
-      contentHash, contentType: file.type, sizeBytes: file.size,
-      requestId: checkpoint!.requestId, client: "website",
-    }, { signal }), signal, isCurrent, retryState, "beginRetries");
-  } catch (error) {
-    // Older backend without the direct route: only a generic 404 qualifies.
-    if (error instanceof ApiError && error.status === 404 && error.errors.every((item) => item.code === "UNKNOWN" || item.code === "NOT_FOUND")) {
-      return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
-    }
-    throw error;
-  }
-  if (begin.mode === "existing" && begin.existing) return begin.existing;
-  if (begin.mode === "multipart") return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
-  if (begin.mode !== "direct" || !begin.photoId || !begin.key || !begin.uploadUrl) throw new Error("Invalid direct upload grant.");
-  validateUploadUrl(begin.uploadUrl);
-  save({ requestId: checkpoint.requestId, photoId: begin.photoId, key: begin.key, putExpiresAt: begin.expiresAt, intentExpiresAt: begin.intentExpiresAt });
-  options.onPhase?.("uploading");
-  let recovered: UploadedPhoto | undefined;
-  let confirmationUnknown = false;
-  const transferDeadline = retryState.transferDeadline ??= Date.now() + 15 * 60_000;
-  await retryUpload(async () => {
+  for (;;) {
+    let begin: DirectBeginResponse;
     try {
-      await rawPut(begin.uploadUrl!, file, begin.uploadHeaders ?? {}, onProgress, signal, transferDeadline);
+      begin = await retryUpload(() => api.post<DirectBeginResponse>(`${base}/direct`, {
+        contentHash, contentType: file.type, sizeBytes: file.size,
+        requestId: checkpoint!.requestId, client: "website",
+      }, { signal }), signal, isCurrent, retryState, "beginRetries");
     } catch (error) {
-      // A lost PUT reply may hide a complete object. Resolve the receipt
-      // before retransmitting, and only retransmit if storage confirms absent.
-      if (uploadError(error)) {
-        options.onPhase?.("confirming");
-        try { recovered = await commit(); return; }
-        catch (commitError) {
-          if (commitError instanceof OfflineUploadError) {
-            const retries = retryState.transferRetries ?? 0;
-            if (retries >= 3) throw error;
-            retryState.transferRetries = retries + 1;
-            throw commitError;
-          }
-          if (!(commitError instanceof ApiError) || !commitError.errors.some((item) => item.code === "UPLOAD_OBJECT_MISSING")) {
-            confirmationUnknown = true;
-            throw commitError;
-          }
-          if (begin.expiresAt && Date.parse(begin.expiresAt) <= Date.now()) throw commitError;
-          options.onPhase?.("uploading");
-        }
+      if (error instanceof ApiError && error.errors.some((item) => item.code === "UPLOAD_OBJECT_MISSING")) {
+        renewGrant(error);
+        continue;
+      }
+      // Older backend without the direct route: only a generic 404 qualifies.
+      if (error instanceof ApiError && error.status === 404 && error.errors.every((item) => item.code === "UNKNOWN" || item.code === "NOT_FOUND")) {
+        return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
       }
       throw error;
     }
-  }, signal, isCurrent, retryState, "transferRetries", (error) => !confirmationUnknown && uploadError(error));
-  assertUploadActive(signal, isCurrent);
-  if (recovered) return recovered;
-  options.onPhase?.("confirming");
-  return commit();
+    if (begin.mode === "existing" && begin.existing) return begin.existing;
+    if (begin.mode === "multipart") return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
+    if (begin.mode !== "direct" || !begin.photoId || !begin.key || !begin.uploadUrl) throw new Error("Invalid direct upload grant.");
+    validateUploadUrl(begin.uploadUrl);
+    save({ requestId: checkpoint.requestId, photoId: begin.photoId, key: begin.key, putExpiresAt: begin.expiresAt, intentExpiresAt: begin.intentExpiresAt });
+    options.onPhase?.("uploading");
+    let recovered: UploadedPhoto | undefined;
+    let confirmationUnknown = false;
+    let renewAfterPut = false;
+    const transferDeadline = retryState.transferDeadline ??= Date.now() + 15 * 60_000;
+    try {
+      await retryUpload(async () => {
+        try {
+          await rawPut(begin.uploadUrl!, file, begin.uploadHeaders ?? {}, onProgress, signal, transferDeadline);
+        } catch (error) {
+          const storageDenied = error instanceof ApiError && error.status === 403 && error.errors.some((item) => item.code === "UPLOAD_TRANSFER_FAILED");
+          // A lost PUT reply or storage 403 may hide a complete object.
+          // Reconcile before sending bytes again or renewing a grant.
+          if (uploadError(error) || storageDenied) {
+            options.onPhase?.("confirming");
+            try { recovered = await commit(); return; }
+            catch (commitError) {
+              if (commitError instanceof OfflineUploadError) {
+                const retries = retryState.transferRetries ?? 0;
+                if (retries >= 3) throw error;
+                retryState.transferRetries = retries + 1;
+                throw commitError;
+              }
+              if (!(commitError instanceof ApiError) || !commitError.errors.some((item) => item.code === "UPLOAD_OBJECT_MISSING")) {
+                confirmationUnknown = true;
+                throw commitError;
+              }
+              if (begin.expiresAt && Date.parse(begin.expiresAt) <= Date.now()) {
+                if (storageDenied) { renewAfterPut = true; throw error; }
+                throw commitError;
+              }
+              options.onPhase?.("uploading");
+            }
+          }
+          throw error;
+        }
+      }, signal, isCurrent, retryState, "transferRetries", (error) => !confirmationUnknown && !renewAfterPut && uploadError(error));
+    } catch (error) {
+      if (!renewAfterPut) throw error;
+      const retries = retryState.transferRetries ?? 0;
+      if (retries >= 3) throw error;
+      retryState.transferRetries = retries + 1;
+      renewGrant(error);
+      continue;
+    }
+    assertUploadActive(signal, isCurrent);
+    if (recovered) return recovered;
+    options.onPhase?.("confirming");
+    return commit();
+  }
 }
 
 function multipartUpload(

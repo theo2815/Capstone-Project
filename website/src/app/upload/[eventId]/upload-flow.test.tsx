@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import FocusedUploadPage from "./page";
 import { useAuthStore } from "@/store/auth-store";
 import { OfflineUploadError } from "@/lib/api-photographer";
+import { ApiError } from "@/lib/api";
 
 const { upload, check, hash } = vi.hoisted(() => ({ upload: vi.fn(), check: vi.fn(), hash: vi.fn() }));
 vi.mock("next/navigation", () => ({ useParams: () => ({ eventId: "event-1" }), notFound: () => { throw new Error("not found"); }, unstable_rethrow: () => undefined }));
@@ -188,4 +189,54 @@ it("reuses retry limits on reconnect but resets them for a manual retry", async 
   fireEvent.click(screen.getByRole("button", { name: /try uploading recover.jpg again/i }));
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(3));
   expect(states[2]).not.toBe(states[1]);
+});
+
+it.each(["EVENT_NOT_UPLOADABLE", "PHOTOGRAPHER_NOT_VERIFIED", "ACCOUNT_SUSPENDED", "WATERMARK_MISSING"])(
+  "pauses the whole batch on %s without starting the fifth queued file", async (code) => {
+    const pending = new Map<string, { reject: (error: Error) => void; signal: AbortSignal }>();
+    upload.mockImplementation((_event, file: File, _progress, options) => new Promise((_resolve, reject) => {
+      pending.set(file.name, { reject, signal: options.signal });
+    }));
+    render(<FocusedUploadPage />);
+    const files = Array.from({ length: 5 }, (_, index) => new File([`${index}`], `gate-${index}.jpg`, { type: "image/jpeg" }));
+    fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(4));
+    await act(async () => { pending.get("gate-0.jpg")!.reject(new ApiError([{ code, message: "Upload access changed" }], code === "ACCOUNT_SUSPENDED" ? 403 : 422)); });
+    expect(upload).toHaveBeenCalledTimes(4);
+    expect([...pending.values()].slice(1).every(({ signal }) => signal.aborted)).toBe(true);
+    expect(screen.getByRole("alert")).toHaveTextContent("Upload access changed");
+    expect(screen.getByText("gate-4.jpg")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /resume uploads/i }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(8));
+  },
+);
+
+it.each([
+  ["UPLOAD_CHECKSUM_MISMATCH", 422],
+  ["UPLOAD_TRANSFER_FAILED", 401],
+])("keeps %s local and starts the fifth queued file", async (code, status) => {
+  let rejectFirst!: (error: Error) => void;
+  upload.mockImplementation((_event, file: File) => new Promise((_resolve, reject) => {
+    if (file.name === "file-0.jpg") rejectFirst = reject;
+  }));
+  render(<FocusedUploadPage />);
+  const files = Array.from({ length: 5 }, (_, index) => new File([`${index}`], `file-${index}.jpg`, { type: "image/jpeg" }));
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(4));
+  await act(async () => { rejectFirst(new ApiError([{ code, message: "Wrong bytes" }], status)); });
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(5));
+  expect(upload.mock.calls[4][1].name).toBe("file-4.jpg");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("leaves an exhausted temporary 429 available for manual Retry", async () => {
+  upload.mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMITED", message: "Verification busy" }], 429, 1))
+    .mockImplementation(() => new Promise(() => {}));
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "busy.jpg", { type: "image/jpeg" })] },
+  });
+  const retry = await screen.findByRole("button", { name: /try uploading busy.jpg again/i });
+  fireEvent.click(retry);
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
 });
