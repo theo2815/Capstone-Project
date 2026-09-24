@@ -1,0 +1,93 @@
+name: ai-api-blur
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [dev-main, main]
+    paths: ['ai-api/**', '.github/workflows/ai-api-blur.yml']
+  pull_request:
+    paths: ['ai-api/**', '.github/workflows/ai-api-blur.yml']
+  workflow_dispatch:
+
+jobs:
+  regressions:
+    runs-on: ubuntu-latest
+    env:
+      MODEL_PROFILE: blur
+      MODEL_DIR: ./missing-ci-models
+      DEBUG: 'true'
+    defaults:
+      run:
+        working-directory: ai-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: ai-api/requirements-blur.lock
+      - run: sudo apt-get update && sudo apt-get install -y libpq-dev libgl1 libglib2.0-0 libgomp1
+      - run: python -m pip install -r requirements-blur.lock pytest pytest-asyncio pytest-cov
+      - run: python -m pytest tests/test_deployment_config.py tests/test_blur_gate.py tests/test_blur_endpoint.py -q
+
+  release-check:
+    if: github.event_name == 'workflow_dispatch'
+    needs: regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: blur-release
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:release-smoke@127.0.0.1:5432/quickpitik
+      REDIS_URL: redis://127.0.0.1:6379/0
+      BLUR_MODEL_URL: ${{ secrets.BLUR_MODEL_URL }}
+      BLUR_LABELS_URL: ${{ secrets.BLUR_LABELS_URL }}
+      BLUR_HOLDOUT_URL: ${{ secrets.BLUR_HOLDOUT_URL }}
+      BLUR_MIN_ACCURACY: ${{ vars.BLUR_MIN_ACCURACY }}
+      BLUR_MAX_MISS_RATE: ${{ vars.BLUR_MAX_MISS_RATE }}
+      BLUR_MAX_OVERCULL_RATE: ${{ vars.BLUR_MAX_OVERCULL_RATE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch private release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${BLUR_MODEL_URL:?Set BLUR_MODEL_URL in blur-release}"
+          : "${BLUR_LABELS_URL:?Set BLUR_LABELS_URL in blur-release}"
+          : "${BLUR_HOLDOUT_URL:?Set BLUR_HOLDOUT_URL in blur-release}"
+          mkdir -p ai-api/models/blur_classifier ai-api/holdout ai-api/reports
+          curl -fsSL "$BLUR_MODEL_URL" -o ai-api/models/blur_classifier/blur_classifier.onnx
+          curl -fsSL "$BLUR_LABELS_URL" -o ai-api/models/blur_classifier/class_names.json
+          curl -fsSL "$BLUR_HOLDOUT_URL" -o "$RUNNER_TEMP/holdout.zip"
+          test -s ai-api/models/blur_classifier/blur_classifier.onnx
+          test -s ai-api/models/blur_classifier/class_names.json
+          unzip -q "$RUNNER_TEMP/holdout.zip" -d ai-api/holdout
+          chmod a+rwx ai-api/reports
+      - name: Build clean blur image
+        run: docker build --build-arg MODEL_PROFILE=blur --tag quickpitik-blur:release ai-api
+      - name: Start disposable dependencies and migrate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --network host --name blur-smoke-db -e POSTGRES_PASSWORD=release-smoke -e POSTGRES_DB=quickpitik pgvector/pgvector:pg16
+          docker run -d --network host --name blur-smoke-redis redis:7-alpine
+          for attempt in {1..30}; do
+            if docker exec blur-smoke-db pg_isready -U postgres -d quickpitik >/dev/null 2>&1; then break; fi
+            if [ "$attempt" -eq 30 ]; then echo "PostgreSQL did not become ready" >&2; exit 1; fi
+            sleep 1
+          done
+          docker run --rm --network host -e DATABASE_URL quickpitik-blur:release python -m alembic upgrade head
+      - name: Smoke test metrics and run the full holdout gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --network host --name blur-smoke-api -e DATABASE_URL -e REDIS_URL -e MODEL_PROFILE=blur -e BLUR_ASYNC_ENABLED=false -e METRICS_ENABLED=true -e ENVIRONMENT=production -e DEBUG=false -e WORKERS=1 -e 'ALLOWED_ORIGINS=["https://example.invalid"]' quickpitik-blur:release
+          docker run --rm --network host -e DATABASE_URL -e BLUR_HOLDOUT_DIR=/holdout -e BLUR_MIN_ACCURACY -e BLUR_MAX_MISS_RATE -e BLUR_MAX_OVERCULL_RATE -v "$PWD/ai-api/scripts:/app/scripts:ro" -v "$PWD/ai-api/holdout:/holdout:ro" -v "$PWD/ai-api/reports:/reports" quickpitik-blur:release python /app/scripts/blur_release_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: private-blur-release-report
+          path: ai-api/reports/blur-gate-report.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -362,6 +362,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
 
+    fun existsByS3Key(s3Key: String): Boolean
+
     // Owner+event-scoped bulk load for trash / restore / permanent-delete. A
     // foreign or wrong-event id simply isn't returned, so a bulk operation can
     // never touch another photographer's (or another event's) photos.

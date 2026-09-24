@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -10,7 +12,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "QuickPitik API"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
-    METRICS_ENABLED: bool = True  # off in dev — instrumentator 7.1.0 crashes on FastAPI 0.141 nested routers
+    METRICS_ENABLED: bool = True
     LOG_LEVEL: str = "INFO"
     ENVIRONMENT: str = "development"
     SQL_ECHO: bool = False
@@ -18,7 +20,9 @@ class Settings(BaseSettings):
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    WORKERS: int = 2
+    WORKERS: int = Field(default=2, gt=0)
+    READINESS_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0)
+    BLUR_REQUEST_TIMEOUT_SECONDS: float = Field(default=60, gt=0)
     # Total request body ceiling, enforced by BodySizeLimitMiddleware in main.py.
     # Until 2026-08-14 this was defined and never read, so nothing in the app
     # bounded body size and nginx's client_max_body_size was the only guard.
@@ -38,12 +42,18 @@ class Settings(BaseSettings):
     # (BLUR_AI_MAX_DIMENSION in BatchMyPhotos), giving ~253 KB per image and
     # ~49 MB for its 200-image chunk — 40x under the ceiling.
     #
-    # Consequence accepted: /stream buffers every file in RAM with no blob-store
-    # offload, so its worst case doubles with this value. See docs/security.md.
+    # /stream now retains one sub-batch; the dedicated blur profile has its own
+    # smaller transport and decode budget. See docs/security.md.
     #
     # Keep in lockstep with client_max_body_size in nginx.conf — TestBodySizeLimit
     # parses that file and fails if the two drift.
-    MAX_REQUEST_BODY: int = 2 * 1024 * 1024 * 1024  # 2 GB
+    MAX_REQUEST_BODY: int = Field(default=2 * 1024 * 1024 * 1024, gt=0)  # 2 GB
+    # Dedicated 2-GiB blur service: two admitted requests can spool at most
+    # 256 MiB, while decoding is capped separately below.
+    BLUR_MAX_REQUEST_BODY: int = Field(default=128 * 1024 * 1024, gt=0)
+    BLUR_MAX_IMAGE_PIXELS: int = Field(default=24_000_000, gt=0)
+    BLUR_MAX_ACTIVE_REQUESTS: int = Field(default=2, gt=0)
+    BLUR_DECODE_CONCURRENCY: int = Field(default=2, gt=0)
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik"
@@ -53,12 +63,17 @@ class Settings(BaseSettings):
 
     # ML Models
     MODEL_DIR: str = "./models"
+    MODEL_PROFILE: Literal["all", "blur"] = "all"
     USE_GPU: bool = False
     GPU_DEVICE: int = 0
 
     # Blur Detection
-    BLUR_THRESHOLD: float = 100.0
-    BLUR_DETECTION_MIN_CONFIDENCE: float = 0.5
+    BLUR_ASYNC_ENABLED: bool = True
+    BLUR_THRESHOLD: float = Field(default=100.0, ge=1.0, le=10000.0)
+    # One decode scale for classical single, stream, and worker scores.
+    # Re-evaluate labeled images before changing it; BLUR_THRESHOLD is scale-sensitive.
+    BLUR_DETECT_DECODE_DIM: int = Field(default=640, gt=0)
+    BLUR_DETECTION_MIN_CONFIDENCE: float = Field(default=0.5, ge=0, le=1)
     # Resolution the blur CLASSIFIER decodes to before inference. Calibrated, not
     # arbitrary: re-measured 2026-08-14 on 1057 labelled val images after
     # _preprocess switched to INTER_AREA, so this is no longer just standing in
@@ -71,12 +86,12 @@ class Settings(BaseSettings):
     # worker — keep all three on one value or they will disagree on the same
     # photo. Distinct from MAX_INFERENCE_DIMENSION (1280), which is sized for bib
     # OCR and must stay there.
-    BLUR_CLASSIFY_DECODE_DIM: int = 640
+    BLUR_CLASSIFY_DECODE_DIM: int = Field(default=640, gt=0)
 
     # Face Recognition
-    FACE_SIMILARITY_THRESHOLD: float = 0.4
+    FACE_SIMILARITY_THRESHOLD: float = Field(default=0.4, ge=0, le=1)
     FACE_DET_SIZE: int = 640
-    FACE_MIN_ENROLLMENT_CONFIDENCE: float = 0.7
+    FACE_MIN_ENROLLMENT_CONFIDENCE: float = Field(default=0.7, ge=0, le=1)
 
     # Bib Recognition
     BIB_MIN_CHARS: int = 2
@@ -84,7 +99,9 @@ class Settings(BaseSettings):
     # Inference
     INFERENCE_TIMEOUT: int = 120  # Per-image inference timeout in seconds
     INFERENCE_BATCH_TIMEOUT: int = 300  # Max seconds for any single batch ONNX call
-    INFERENCE_SUB_BATCH_SIZE: int = 50  # Match MAX_BATCH_SIZE: 1 ONNX call per task
+    BLUR_INFERENCE_TIMEOUT_SECONDS: float = Field(default=30, gt=0, le=59)
+    BLUR_STREAM_TIMEOUT_SECONDS: float = Field(default=120, gt=0)
+    INFERENCE_SUB_BATCH_SIZE: int = Field(default=50, gt=0)
     # ONNX Runtime thread pools for the blur classifier session. On CPU hosts keep
     # WORKERS x ONNX_INTRA_OP_THREADS <= physical cores to avoid oversubscription
     # (e.g. WORKERS=2 -> set intra=3 on a 6-core box). The streaming classify path
@@ -116,6 +133,8 @@ class Settings(BaseSettings):
 
     # Celery
     CELERY_SECURITY_KEY: str = ""
+    CELERY_VISIBILITY_TIMEOUT: int = Field(default=4200, gt=3600)
+    JOB_LEASE_SECONDS: int = Field(default=3900, gt=3600)
 
     # File Upload
     # 25 MB matches the Spring backend's multipart ceiling
@@ -123,7 +142,7 @@ class Settings(BaseSettings):
     # ORIGINAL uploaded bytes to /faces/enroll and /bibs/recognize, so anything
     # it accepts must be accepted here too — at the previous 10 MB, ~1% of real
     # photographer originals uploaded fine and then failed indexing.
-    MAX_FILE_SIZE: int = 25 * 1024 * 1024  # 25 MB
+    MAX_FILE_SIZE: int = Field(default=25 * 1024 * 1024, gt=0)  # 25 MB
     # Upload bound on the longest edge — NOT the decode target (that is
     # MAX_INFERENCE_DIMENSION below, which every path downscales to anyway).
     # This exists only to fail closed on absurd input; it is a bomb guard, not
@@ -134,13 +153,13 @@ class Settings(BaseSettings):
     # single-image endpoints while the batch/mega paths accepted them, so the
     # same photo indexed or failed depending on INDEXING_MODE. Enforced by
     # validate_and_decode AND validate_batch_file so the two cannot drift.
-    MAX_IMAGE_DIMENSION: int = 12000
-    MAX_BATCH_SIZE: int = 50  # Raised from 20: Redis now 1GB + lazy decode keeps memory O(1)
-    MEGA_BATCH_MAX_SIZE: int = 500  # Max images per mega-batch request (server-side chunking)
-    STREAM_BATCH_MAX_SIZE: int = 500  # Max images per streaming sync batch request
-    STREAM_CONCURRENCY: int = 8  # Thread pool size for concurrent image processing
-    STREAM_CLASSIFY_MAX_SIZE: int = 500  # Max images per streaming classify request
-    STREAM_CLASSIFY_CONCURRENCY: int = 8  # Thread pool for classify/stream (ONNX is heavier)
+    MAX_IMAGE_DIMENSION: int = Field(default=12000, gt=0)
+    MAX_BATCH_SIZE: int = Field(default=50, gt=0)
+    MEGA_BATCH_MAX_SIZE: int = Field(default=500, gt=0)
+    STREAM_BATCH_MAX_SIZE: int = Field(default=500, gt=0)
+    STREAM_CONCURRENCY: int = Field(default=8, gt=0)
+    STREAM_CLASSIFY_MAX_SIZE: int = Field(default=500, gt=0)
+    STREAM_CLASSIFY_CONCURRENCY: int = Field(default=8, gt=0)
     MAX_ACTIVE_JOBS_PER_KEY: int = 10  # Backpressure: max pending+processing jobs per API key
     # Internal-tier callers (e.g. the Spring backend's bulk photo-indexing
     # drain) submit a FACE + BIB job per event-batch and may drain several
@@ -148,8 +167,13 @@ class Settings(BaseSettings):
     MAX_ACTIVE_JOBS_PER_KEY_INTERNAL: int = 50
     JOB_RETENTION_DAYS: int = 7  # Auto-delete completed/failed jobs older than this
 
-    # Blob store — images written to shared volume instead of base64-in-Redis
+    # Local development falls back to disk. Railway async uses a private S3 bucket.
     BLOB_STORE_PATH: str = "/tmp/quickpitik-blobs"
+    AWS_S3_BUCKET_NAME: str = ""
+    AWS_ENDPOINT_URL: str = ""
+    AWS_DEFAULT_REGION: str = "auto"
+    AWS_S3_URL_STYLE: str = "virtual"
+    BLOB_RETENTION_SECONDS: int = Field(default=86400, gt=0)
 
     # Image preprocessing — downscale large images before inference.
     # 640 was too aggressive for marathon photos: a 2400x1600 frame got shrunk
@@ -177,7 +201,35 @@ class Settings(BaseSettings):
     #     divergence mis-attributes photos. 1024 was also below the floor this
     #     setting was raised to in the first place.
     # Blur is deliberately NOT on this value: see BLUR_CLASSIFY_DECODE_DIM.
-    MAX_INFERENCE_DIMENSION: int = 1280
+    MAX_INFERENCE_DIMENSION: int = Field(default=1280, gt=0)
+
+    @model_validator(mode="after")
+    def check_upload_budgets(self):
+        if self.MODEL_PROFILE == "blur":
+            # One API process on the initial 2-vCPU blur service; explicit env
+            # values remain available after load measurements justify tuning.
+            for name, value in (("WORKERS", 1), ("ONNX_INTRA_OP_THREADS", 2),
+                                ("ONNX_INTER_OP_THREADS", 1)):
+                if name not in self.model_fields_set:
+                    setattr(self, name, value)
+            if self.METRICS_ENABLED and self.WORKERS != 1:
+                raise ValueError(
+                    "blur metrics require WORKERS=1 until multiprocess aggregation exists"
+                )
+        if self.MAX_REQUEST_BODY <= self.MAX_FILE_SIZE:
+            raise ValueError("MAX_REQUEST_BODY must exceed MAX_FILE_SIZE")
+        if self.BLUR_MAX_REQUEST_BODY <= self.MAX_FILE_SIZE:
+            raise ValueError("BLUR_MAX_REQUEST_BODY must exceed MAX_FILE_SIZE")
+        if self.BLUR_MAX_IMAGE_PIXELS > self.MAX_IMAGE_DIMENSION**2:
+            raise ValueError("BLUR_MAX_IMAGE_PIXELS must fit MAX_IMAGE_DIMENSION")
+        if self.MODEL_PROFILE == "blur":
+            if self.BLUR_MAX_REQUEST_BODY * self.BLUR_MAX_ACTIVE_REQUESTS > 256 * 1024 * 1024:
+                raise ValueError("blur admitted upload bytes exceed the 256 MiB budget")
+            if self.BLUR_MAX_IMAGE_PIXELS * self.BLUR_DECODE_CONCURRENCY > 48_000_000:
+                raise ValueError("blur simultaneous decode pixels exceed the 48 MP budget")
+            if self.INFERENCE_SUB_BATCH_SIZE > 50:
+                raise ValueError("blur inference sub-batches must contain at most 50 images")
+        return self
 
     model_config = {
         "env_file": ".env",

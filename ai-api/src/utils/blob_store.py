@@ -1,108 +1,127 @@
-"""Filesystem blob store for batch image staging.
-
-Replaces base64-encoded image data in Celery task messages with file-path
-references.  Image bytes are written to a shared Docker volume and cleaned
-up after the job completes (or by the periodic stale-blob reaper).
-
-Typical flow:
-    API endpoint → store_batch(job_id, raw_bytes_list) → list[str]  (paths)
-    Celery task  → load_blob(path)                     → bytes
-    complete_job → cleanup_batch(job_id)                → None
-"""
+"""Private batch image staging with opaque keys shared by API and workers."""
 from __future__ import annotations
 
 import os
+import re
 import shutil
-import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from src.config import get_settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+_KEY = re.compile(r"^jobs/[0-9a-f-]{36}/[0-9]{5}\.bin$")
 
 
-def _blob_root() -> str:
-    return get_settings().BLOB_STORE_PATH
+def _client():
+    import boto3
+    from botocore.config import Config
+
+    settings = get_settings()
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.AWS_ENDPOINT_URL or None,
+        region_name=settings.AWS_DEFAULT_REGION,
+        config=Config(s3={"addressing_style": settings.AWS_S3_URL_STYLE}),
+    )
+
+
+def _key(job_id: str, index: int) -> str:
+    return f"jobs/{uuid.UUID(job_id)}/{index:05d}.bin"
+
+
+def _local_path(key: str) -> str:
+    if not _KEY.fullmatch(key):
+        raise ValueError("Invalid blob key")
+    return os.path.join(get_settings().BLOB_STORE_PATH, *key.split("/"))
 
 
 def store_batch(job_id: str, raw_bytes_list: list[bytes]) -> list[str]:
-    """Write image bytes to ``{BLOB_ROOT}/{job_id}/{index:05d}.bin``.
+    """Upload every image before publishing a task; remove partial batches on error."""
+    settings = get_settings()
+    keys = [_key(job_id, i) for i in range(len(raw_bytes_list))]
+    bucket = settings.AWS_S3_BUCKET_NAME
+    client = _client() if bucket else None
 
-    Uses atomic write (tmp -> rename) so workers never read a partial file.
-    Writes are parallelised with a thread pool — filesystem I/O releases
-    the GIL, so threads provide real concurrency here.
-    Returns a list of absolute paths in the same order as *raw_bytes_list*.
-    """
-    from concurrent.futures import ThreadPoolExecutor
+    def write(item: tuple[str, bytes]) -> None:
+        key, raw = item
+        if len(raw) > settings.MAX_FILE_SIZE:
+            raise ValueError("Image blob exceeds maximum size")
+        if client:
+            client.put_object(Bucket=bucket, Key=key, Body=raw)
+        else:
+            path = _local_path(key)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            temp = path + ".tmp"
+            with open(temp, "wb") as f:
+                f.write(raw)
+            os.replace(temp, path)
 
-    job_dir = os.path.join(_blob_root(), job_id)
-    os.makedirs(job_dir, exist_ok=True)
-
-    def _write_one(idx_raw: tuple[int, bytes]) -> str:
-        idx, raw = idx_raw
-        final_path = os.path.join(job_dir, f"{idx:05d}.bin")
-        tmp_path = final_path + ".tmp"
-        with open(tmp_path, "wb") as f:
-            f.write(raw)
-        os.replace(tmp_path, final_path)
-        return final_path
-
-    max_workers = min(8, len(raw_bytes_list)) or 1
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        paths = list(pool.map(_write_one, enumerate(raw_bytes_list)))
-
-    logger.debug(
-        "Blob batch stored",
-        job_id=job_id,
-        count=len(paths),
-        total_bytes=sum(len(b) for b in raw_bytes_list),
-    )
-    return paths
-
-
-def load_blob(path: str) -> bytes:
-    """Read and return the raw image bytes at *path*.
-
-    Raises ``FileNotFoundError`` with a clear message if the blob was
-    already cleaned up (e.g. job completed before the worker fetched it).
-    """
     try:
-        with open(path, "rb") as f:
-            return f.read()
-    except FileNotFoundError:
-        raise FileNotFoundError(
-            f"Image blob not found: {path}. "
-            "The job may have already completed or been cleaned up."
-        )
+        with ThreadPoolExecutor(max_workers=min(8, len(keys)) or 1) as pool:
+            list(pool.map(write, zip(keys, raw_bytes_list, strict=True)))
+    except Exception:
+        cleanup_batch(job_id)
+        raise
+    logger.debug("Blob batch stored", job_id=job_id, count=len(keys))
+    return keys
+
+
+def load_blob(key: str) -> bytes:
+    """Load at most one validated upload; never accept an arbitrary path or URL."""
+    if not _KEY.fullmatch(key):
+        raise ValueError("Invalid blob key")
+    settings = get_settings()
+    limit = settings.MAX_FILE_SIZE
+    if settings.AWS_S3_BUCKET_NAME:
+        body = _client().get_object(Bucket=settings.AWS_S3_BUCKET_NAME, Key=key)["Body"]
+        try:
+            data = body.read(limit + 1)
+        finally:
+            body.close()
+    else:
+        with open(_local_path(key), "rb") as f:
+            data = f.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("Image blob exceeds maximum size")
+    return data
 
 
 def cleanup_batch(job_id: str) -> None:
-    """Remove the staging directory for *job_id*.
+    """Delete one job's private inputs; errors surface for scheduled retry."""
+    job_id = str(uuid.UUID(job_id))
+    prefix = f"jobs/{job_id}/"
+    settings = get_settings()
+    if settings.AWS_S3_BUCKET_NAME:
+        client = _client()
+        for page in client.get_paginator("list_objects_v2").paginate(
+            Bucket=settings.AWS_S3_BUCKET_NAME, Prefix=prefix
+        ):
+            for obj in page.get("Contents", []):
+                client.delete_object(Bucket=settings.AWS_S3_BUCKET_NAME, Key=obj["Key"])
+    else:
+        path = os.path.join(settings.BLOB_STORE_PATH, "jobs", job_id)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
 
-    Called by ``complete_job`` and ``fail_job``.  Safe to call if the
-    directory does not exist (e.g. job used the streaming path).
-    """
-    job_dir = os.path.join(_blob_root(), job_id)
-    shutil.rmtree(job_dir, ignore_errors=True)
 
-
-def cleanup_stale_blobs(max_age_seconds: int = 7200) -> int:
-    """Remove blob directories older than *max_age_seconds*.
-
-    Catches jobs that crashed before cleanup.  Returns the number of
-    directories removed.
-    """
-    root = _blob_root()
+def list_batches() -> list[tuple[str, float]]:
+    """Return staged job IDs and newest object mtime for the retention reaper."""
+    settings = get_settings()
+    if settings.AWS_S3_BUCKET_NAME:
+        # ponytail: full prefix scan; use inventory if retained object count grows large.
+        batches: dict[str, float] = {}
+        for page in _client().get_paginator("list_objects_v2").paginate(
+            Bucket=settings.AWS_S3_BUCKET_NAME, Prefix="jobs/"
+        ):
+            for obj in page.get("Contents", []):
+                parts = obj["Key"].split("/")
+                if len(parts) == 3 and _KEY.fullmatch(obj["Key"]):
+                    stamp = obj["LastModified"].timestamp()
+                    batches[parts[1]] = max(batches.get(parts[1], 0), stamp)
+        return list(batches.items())
+    root = os.path.join(settings.BLOB_STORE_PATH, "jobs")
     if not os.path.isdir(root):
-        return 0
-
-    cutoff = time.time() - max_age_seconds
-    removed = 0
-    for entry in os.scandir(root):
-        if entry.is_dir() and entry.stat().st_mtime < cutoff:
-            shutil.rmtree(entry.path, ignore_errors=True)
-            removed += 1
-
-    if removed:
-        logger.info("Cleaned up stale blob directories", removed=removed)
-    return removed
+        return []
+    return [(entry.name, entry.stat().st_mtime) for entry in os.scandir(root) if entry.is_dir()]

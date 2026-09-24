@@ -86,7 +86,7 @@ Structured JSON logging via `structlog`. Key fields: `event`, `level`, `timestam
 | `"Database health check failed"` | PostgreSQL unreachable | Check DB connection, restart if needed |
 | `"Inference timed out after Xs"` | ML model hung on an image | Check if recurring; may indicate bad model state |
 | `"Worker: failed to load"` | Model didn't load on worker start | Check model files exist, disk space, memory |
-| `"Redis not available"` | Redis down; rate limiting disabled | Restore Redis ASAP |
+| `"Redis not available"` | Redis down; authenticated requests return 503 | Restore Redis; the pooled client reconnects |
 | `"Database engine was created in PID"` | Fork-safety violation | Ensure `--preload` is disabled for uvicorn/gunicorn |
 
 ### Metrics
@@ -392,7 +392,7 @@ docker compose up -d ai-api celery-worker
 |---------|-------------|----------|
 | `/health` returns non-200 | Process crashed | Check logs, restart: `docker compose restart ai-api` |
 | `/health/ready` shows `database: false` | PostgreSQL down or unreachable | Check DB status, connection string, restart DB |
-| `/health/ready` shows `redis: false` | Redis down | Restart Redis. API continues without cache/rate limiting |
+| `/health/ready` shows `redis: false` | Redis unavailable or required commands failing | Restore Redis; readiness and authenticated access recover without an API restart |
 | `/health/ready` shows `models_loaded: false` | Model files missing or corrupt | Check `./models/` directory, re-download models, restart |
 | Jobs stuck in `processing` | Worker crashed mid-task | `reap_stale_jobs` auto-marks them failed after ~65 min. Or manually: `UPDATE jobs SET status='failed', error='manual reset' WHERE status='processing' AND created_at < NOW() - INTERVAL '1 hour'` |
 | 503 on ML endpoints | Model not loaded | Check startup logs for model loading errors |

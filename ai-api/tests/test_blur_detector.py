@@ -4,7 +4,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
+from src.config import Settings
 from src.ml.blur.detector import BlurDetector
 
 
@@ -42,6 +44,11 @@ def _make_gaussian_blurred(size: int = 256, ksize: int = 31) -> np.ndarray:
 
 
 class TestBlurDetectorInit:
+    @pytest.mark.parametrize("threshold", [0, -1, float("nan"), float("inf"), 10001])
+    def test_configured_threshold_must_be_finite_and_in_range(self, threshold):
+        with pytest.raises(ValidationError):
+            Settings(BLUR_THRESHOLD=threshold)
+
     def test_default_threshold(self):
         d = BlurDetector()
         assert d.laplacian_threshold == 100.0
@@ -52,6 +59,15 @@ class TestBlurDetectorInit:
 
 
 class TestBlurDetectorDetect:
+    def test_score_matches_opencv_with_optional_extension_present(self, detector):
+        y, x = np.indices((800, 1280))
+        gray = np.uint8(128 + (2 * ((x // 8 + y // 8) % 2) - 1) * 6)
+        expected = cv2.Laplacian(gray, cv2.CV_64F).var() * 640 / 1280
+
+        assert detector.detect_fast(gray)["laplacian_variance"] == pytest.approx(
+            expected, abs=0.01
+        )
+
     def test_returns_required_keys(self, detector: BlurDetector):
         image = _make_sharp_image()
         result = detector.detect(image)

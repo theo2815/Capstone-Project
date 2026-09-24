@@ -28,11 +28,14 @@ celery_app.conf.update(
     accept_content=["json"],
     task_track_started=True,
     task_acks_late=True,
-    worker_prefetch_multiplier=4,  # Safe now that tasks carry paths, not image data
+    worker_prefetch_multiplier=1,
     result_expires=3600,
     task_reject_on_worker_lost=True,
     task_time_limit=3600,
     task_soft_time_limit=3300,
+    broker_transport_options={"visibility_timeout": settings.CELERY_VISIBILITY_TIMEOUT},
+    result_backend_transport_options={"visibility_timeout": settings.CELERY_VISIBILITY_TIMEOUT},
+    visibility_timeout=settings.CELERY_VISIBILITY_TIMEOUT,
     worker_max_tasks_per_child=500,  # Avoid model-reload restarts during large batches
     worker_max_memory_per_child=2_000_000,  # 2 GB — restart process on OOM
     broker_connection_retry_on_startup=True,

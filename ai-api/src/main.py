@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+from threading import BoundedSemaphore
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
+from redis.exceptions import RedisError
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.api.v1.router import v1_router
+from src.api.v1.router import make_v1_router
 from src.config import get_settings
 from src.db.session import close_db, init_db
 from src.middleware.cors import setup_cors
@@ -24,6 +26,9 @@ async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
     settings = get_settings()
     app.state.settings = settings
+    from src.utils.timeout import shutdown_timeout_executor, start_timeout_executor
+
+    start_timeout_executor()
 
     # Prevent DEBUG mode in production
     if settings.DEBUG and settings.ENVIRONMENT == "production":
@@ -40,27 +45,36 @@ async def lifespan(app: FastAPI):
     logger.info("Database initialized")
 
     # Initialize Redis with connection pooling
-    try:
-        import redis.asyncio as aioredis
+    import redis.asyncio as aioredis
 
-        app.state.redis = aioredis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            max_connections=50,
-            socket_timeout=5,
-            socket_connect_timeout=5,
-        )
+    app.state.redis = aioredis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        max_connections=50,
+        socket_timeout=5,
+        socket_connect_timeout=5,
+    )
+    try:
         await app.state.redis.ping()
         logger.info("Redis connected")
-    except Exception as e:
-        logger.warning("Redis not available, running without cache", error=str(e))
-        app.state.redis = None
+    except RedisError as exc:
+        logger.warning("Redis not available at startup", error_type=type(exc).__name__)
 
     # Load ML models
     registry = ModelRegistry()
     await registry.load_all(settings)
     app.state.model_registry = registry
     logger.info("ML models loaded", all_loaded=registry.all_loaded())
+    if settings.MODEL_PROFILE == "blur" and settings.METRICS_ENABLED and registry.all_loaded():
+        import json
+        from pathlib import Path
+
+        from src.utils.blur_metrics import model_info
+
+        artifact = json.loads(
+            (Path(settings.MODEL_DIR) / "manifest.json").read_text(encoding="utf-8")
+        )["models"]["blur_classifier"]
+        model_info.labels(artifact["artifact_version"], artifact["sha256"]).set(1)
 
     # SEC-6: Warn if webhook secrets will be stored as plaintext
     if not settings.WEBHOOK_SECRET_KEY:
@@ -76,7 +90,10 @@ async def lifespan(app: FastAPI):
 
     logger.info("Shutting down, waiting for in-flight requests to drain...")
     await asyncio.sleep(2)  # Brief grace period for request completion
-    await registry.unload_all()
+    if shutdown_timeout_executor():
+        await registry.unload_all()
+    else:
+        logger.warning("Native inference still running during shutdown; skipping model unload")
     if app.state.redis:
         await app.state.redis.aclose()
     await close_db()
@@ -103,7 +120,7 @@ def create_app() -> FastAPI:
 
             try:
                 return await asyncio.wait_for(call_next(request), timeout=60.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return JSONResponse(
                     status_code=504,
                     content={
@@ -115,6 +132,85 @@ def create_app() -> FastAPI:
                         },
                     },
                 )
+
+    class BlurTimeoutMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            path = scope.get("path", "")
+            if (
+                scope["type"] != "http"
+                or not path.startswith("/api/v1/blur/")
+            ):
+                await self.app(scope, receive, send)
+                return
+
+            started = timed_out = False
+            headers_sent = asyncio.Event()
+
+            async def tracked_send(message):
+                nonlocal started
+                if timed_out:
+                    return
+                if message["type"] == "http.response.start":
+                    started = True
+                await send(message)
+                if started:
+                    headers_sent.set()
+
+            task = asyncio.create_task(self.app(scope, receive, tracked_send))
+            header_waiter = (
+                asyncio.create_task(headers_sent.wait()) if path.endswith("/stream") else None
+            )
+            watched = {task, header_waiter} if header_waiter else {task}
+            done, _ = await asyncio.wait(
+                watched, timeout=settings.BLUR_REQUEST_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if header_waiter:
+                header_waiter.cancel()
+            if header_waiter in done:
+                # Headers are already sent; abort a stalled stream rather than
+                # trying to send a second response over the same socket. Give
+                # the route one second to close files and emit its incomplete
+                # summary after its own deadline.
+                try:
+                    await asyncio.wait_for(
+                        task, timeout=settings.BLUR_STREAM_TIMEOUT_SECONDS + 1.0
+                    )
+                except TimeoutError:
+                    from src.utils.blur_metrics import timeouts
+
+                    timeouts.labels("stream").inc()
+                return
+            if done:
+                await task
+                return
+
+            timed_out = True
+            from src.utils.blur_metrics import timeouts
+
+            timeouts.labels("request").inc()
+            task.cancel()
+
+            def consume(finished):
+                if not finished.cancelled():
+                    finished.exception()
+
+            task.add_done_callback(consume)
+            if not started:
+                await JSONResponse(
+                    status_code=504,
+                    content={
+                        "success": False,
+                        "request_id": scope.get("state", {}).get("request_id", ""),
+                        "error": {
+                            "code": "REQUEST_TIMEOUT",
+                            "message": "Request processing timed out",
+                        },
+                    },
+                )(scope, receive, send)
 
     # SEC-11: Security response headers (pure ASGI — no response body buffering)
     _security_headers = [
@@ -157,21 +253,18 @@ def create_app() -> FastAPI:
                 response.headers["X-RateLimit-Reset"] = str(rate_info["reset"])
             return response
 
-    # Total request body ceiling. Pure ASGI so the check costs one header lookup
-    # and never touches the body — the /stream endpoints are the desktop's
-    # high-throughput path, and an O(1) guard here is what makes bounding them
-    # affordable at all.
-    #
-    # This is the only thing bounding the AGGREGATE of a multipart upload. Both
-    # /blur/*/stream endpoints read every file into a list and hold all of them
-    # at once, so at STREAM_*_MAX_SIZE=500 the per-file checks in image_utils
-    # cannot bound memory on their own — 500 files under the per-file cap still
-    # sum to 12.5 GB.
-    #
-    # Content-Length only: a chunked request carries no length to check and
-    # passes through to the per-file layer. Not a total guarantee, and not
-    # claimed as one.
     _max_body = settings.MAX_REQUEST_BODY
+    _blur_body = settings.BLUR_MAX_REQUEST_BODY
+    _blur_admission = BoundedSemaphore(settings.BLUR_MAX_ACTIVE_REQUESTS)
+    app.state.blur_decode_semaphore = asyncio.Semaphore(settings.BLUR_DECODE_CONCURRENCY)
+    _blur_async_paths = {
+        f"/api/v1/blur/{mode}/{size}"
+        for mode in ("detect", "classify")
+        for size in ("batch", "mega")
+    }
+
+    class BodyTooLarge(Exception):
+        pass
 
     class BodySizeLimitMiddleware:
         def __init__(self, app):
@@ -182,6 +275,68 @@ def create_app() -> FastAPI:
                 await self.app(scope, receive, send)
                 return
 
+            if (not settings.BLUR_ASYNC_ENABLED and scope.get("method") == "POST"
+                    and scope.get("path") in _blur_async_paths):
+                from src.utils.blur_metrics import rejected_requests
+
+                rejected_requests.labels("async_disabled").inc()
+                await JSONResponse(status_code=503, content={
+                    "success": False,
+                    "request_id": scope.get("state", {}).get("request_id", ""),
+                    "error": {"code": "BLUR_ASYNC_DISABLED", "message": "Async blur is unavailable"},
+                })(scope, receive, send)
+                return
+
+            blur_request = (
+                settings.MODEL_PROFILE == "blur"
+                and scope.get("path", "").startswith("/api/v1/blur/")
+            )
+            limit = _blur_body if blur_request else _max_body
+            acquired = False
+            if blur_request:
+                acquired = _blur_admission.acquire(blocking=False)
+                if not acquired:
+                    from src.utils.blur_metrics import rejected_requests
+
+                    rejected_requests.labels("busy").inc()
+                    response = JSONResponse(status_code=503, content={
+                        "success": False,
+                        "request_id": scope.get("state", {}).get("request_id", ""),
+                        "error": {"code": "BLUR_BUSY", "message": "Blur service is busy"},
+                    })
+                    response.headers["Retry-After"] = "1"
+                    await response(scope, receive, send)
+                    return
+
+            from src.utils.timeout import RequestWork, request_work
+
+            if acquired:
+                from src.utils.blur_metrics import active_requests
+
+                active_requests.inc()
+
+                def release_blur():
+                    _blur_admission.release()
+                    active_requests.dec()
+
+                tracker = RequestWork(release_blur)
+            else:
+                tracker = None
+            token = request_work.set(tracker)
+
+            async def reject():
+                if blur_request:
+                    from src.utils.blur_metrics import rejected_requests
+
+                    rejected_requests.labels("too_large").inc()
+                response = JSONResponse(status_code=413, content={
+                    "success": False,
+                    "request_id": scope.get("state", {}).get("request_id", ""),
+                    "error": {"code": "REQUEST_TOO_LARGE", "message": "Request body exceeds limit"},
+                })
+                await response(scope, receive, send)
+
+            declared_too_large = False
             for name, value in scope.get("headers", []):
                 if name != b"content-length":
                     continue
@@ -189,31 +344,58 @@ def create_app() -> FastAPI:
                     declared = int(value)
                 except ValueError:
                     break  # malformed — let the server reject it
-                if declared > _max_body:
-                    response = JSONResponse(
-                        status_code=413,
-                        content={
-                            "success": False,
-                            "request_id": scope.get("state", {}).get("request_id", ""),
-                            "error": {
-                                "code": "REQUEST_TOO_LARGE",
-                                "message": (
-                                    f"Request body of {declared // (1024 * 1024)}MB exceeds the "
-                                    f"{_max_body // (1024 * 1024)}MB limit. Send fewer files "
-                                    f"per request."
-                                ),
-                            },
-                        },
-                    )
-                    await response(scope, receive, send)
-                    return
+                declared_too_large = declared > limit
                 break
 
-            await self.app(scope, receive, send)
+            received = 0
+            started = False
+            overflow = False
+
+            async def bounded_receive():
+                nonlocal received, overflow
+                message = await receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > limit:
+                        overflow = True
+                        raise BodyTooLarge()
+                return message
+
+            async def track_send(message):
+                nonlocal started
+                if overflow and not started:
+                    return
+                if message["type"] == "http.response.start":
+                    started = True
+                await send(message)
+
+            try:
+                if declared_too_large:
+                    await reject()
+                    return
+                try:
+                    await self.app(scope, bounded_receive, track_send)
+                    if overflow and not started:
+                        await reject()
+                except BodyTooLarge:
+                    if started:
+                        raise  # Headers already sent; abort the connection.
+                    await reject()
+                except BaseExceptionGroup as group:
+                    overflow, other = group.split(BodyTooLarge)
+                    if overflow is None or other is not None or started:
+                        raise
+                    await reject()
+            finally:
+                request_work.reset(token)
+                if acquired:
+                    tracker.close()
 
     # Middleware (order matters: last added = outermost = first on request)
     app.add_middleware(RateLimitHeadersMiddleware)
-    app.add_middleware(TimeoutMiddleware)
+    app.add_middleware(
+        BlurTimeoutMiddleware if settings.MODEL_PROFILE == "blur" else TimeoutMiddleware
+    )
     # Inside RequestIDMiddleware so the 413 envelope carries a real request_id,
     # still outside routing so it rejects before multipart is parsed.
     app.add_middleware(BodySizeLimitMiddleware)
@@ -235,7 +417,7 @@ def create_app() -> FastAPI:
         )
 
     # API routes
-    app.include_router(v1_router, prefix="/api/v1")
+    app.include_router(make_v1_router(settings.MODEL_PROFILE), prefix="/api/v1")
 
     # Prometheus metrics — auto-instruments all endpoints
     # SEC-4: Metrics exposed at /metrics, protected by API key in production
@@ -252,44 +434,17 @@ def create_app() -> FastAPI:
         # In development, expose /metrics without auth
         instrumentator.expose(app, include_in_schema=False)
     elif settings.METRICS_ENABLED:
-        # In production, serve metrics behind a dedicated authenticated route
+        # Require an explicit operations scope; desktop and wildcard keys stay out.
+        from fastapi import Depends, HTTPException
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
         from starlette.responses import Response
-        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+        from src.middleware.auth import verify_api_key
 
         @app.get("/metrics", include_in_schema=False)
-        async def metrics(request: Request):
-            import hashlib
-
-            from src.db.session import get_session_ctx
-
-            api_key = request.headers.get(settings.API_KEY_HEADER)
-            if not api_key:
-                return JSONResponse(
-                    status_code=401, content={"detail": "Missing API key"}
-                )
-
-            # Validate API key against DB (same logic as verify_api_key)
-            key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-            from src.db.models import APIKey
-            from sqlalchemy import select
-
-            try:
-                async with get_session_ctx() as session:
-                    result = await session.execute(
-                        select(APIKey).where(
-                            APIKey.key_hash == key_hash,
-                            APIKey.active.is_(True),
-                        )
-                    )
-                    if result.scalar_one_or_none() is None:
-                        return JSONResponse(
-                            status_code=403, content={"detail": "Invalid API key"}
-                        )
-            except Exception:
-                return JSONResponse(
-                    status_code=503, content={"detail": "Cannot validate API key"}
-                )
-
+        async def metrics(key_meta: dict = Depends(verify_api_key)):
+            if "metrics:read" not in key_meta.get("scopes", []):
+                raise HTTPException(status_code=403, detail="Operations scope required")
             return Response(
                 content=generate_latest(), media_type=CONTENT_TYPE_LATEST
             )

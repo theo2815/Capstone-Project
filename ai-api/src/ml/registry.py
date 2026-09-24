@@ -13,15 +13,18 @@ class ModelRegistry:
 
     def __init__(self) -> None:
         self._models: dict[str, Any] = {}
+        self._profile = "all"
 
     async def load_all(self, settings: Any) -> None:
         """Load all ML models during FastAPI lifespan startup."""
         logger.info("Loading ML models...")
+        self._profile = settings.MODEL_PROFILE
 
         # Pre-import heavy libraries in the main thread to avoid Windows DLL
         # race conditions when multiple threads try to load torch/shm.dll
         # concurrently via asyncio.to_thread.
-        await asyncio.to_thread(self._preimport_libs)
+        if self._profile == "all":
+            await asyncio.to_thread(self._preimport_libs)
 
         loaders = {
             "blur": self._load_blur,
@@ -30,6 +33,8 @@ class ModelRegistry:
             "bib_detector": self._load_bib_detector,
             "bib_ocr": self._load_bib_ocr,
         }
+        if self._profile == "blur":
+            loaders = {name: loaders[name] for name in ("blur", "blur_classifier")}
 
         results = await asyncio.gather(
             *[asyncio.to_thread(loader, settings) for loader in loaders.values()],
@@ -42,7 +47,7 @@ class ModelRegistry:
                 self._models[name] = None
             else:
                 self._models[name] = result
-                logger.info("Model loaded", model=name)
+                logger.info("Model load finished", model=name, available=self.is_loaded(name))
 
     def get(self, name: str) -> Any:
         """Get a loaded model by name. Returns None if not loaded."""
@@ -50,26 +55,26 @@ class ModelRegistry:
 
     def is_loaded(self, name: str) -> bool:
         """Check if a model is loaded and available."""
-        return self._models.get(name) is not None
+        model = self._models.get(name)
+        return model is not None and (
+            name != "blur_classifier" or getattr(model, "session", None) is not None
+        )
 
     def all_loaded(self) -> bool:
         """Check if all required models are loaded.
 
-        bib_detector and blur_classifier are optional (require trained models).
+        Blur classifier is required in the dedicated blur profile.
         """
-        required = {"blur", "face", "bib_ocr"}
+        required = (
+            {"blur", "blur_classifier"}
+            if self._profile == "blur"
+            else {"blur", "face", "bib_ocr"}
+        )
         return all(self.is_loaded(name) for name in required)
 
     def status(self) -> dict[str, bool]:
-        """Per-model load state, for the readiness payload.
-
-        all_loaded() deliberately ignores the two optional models, so a
-        container missing blur_classifier or bib_detector reports ready while
-        every /blur/classify* route fails. This does not change that verdict —
-        it just stops the absence being invisible. Exposed as a method so the
-        API layer never reaches into _models.
-        """
-        return {name: model is not None for name, model in self._models.items()}
+        """Per-model usable state for the authenticated readiness payload."""
+        return {name: self.is_loaded(name) for name in self._models}
 
     async def unload_all(self) -> None:
         """Release model memory and GPU/ONNX resources during graceful shutdown."""
@@ -150,4 +155,7 @@ class ModelRegistry:
             class_names_path=f"{settings.MODEL_DIR}/blur_classifier/class_names.json",
             use_gpu=settings.USE_GPU,
             min_detection_confidence=settings.BLUR_DETECTION_MIN_CONFIDENCE,
+            manifest_path=(
+                f"{settings.MODEL_DIR}/manifest.json" if settings.MODEL_PROFILE == "blur" else None
+            ),
         )

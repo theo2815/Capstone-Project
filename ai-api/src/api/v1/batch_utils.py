@@ -25,6 +25,7 @@ async def validate_batch_files(
     files: list[UploadFile],
     max_batch_size: int,
     max_file_size: int,
+    max_pixels: int = 0,
 ) -> list[bytes] | JSONResponse:
     """Validate batch files and return raw bytes (no base64 encoding).
 
@@ -56,8 +57,8 @@ async def validate_batch_files(
         )
 
     async def _read_and_validate(f: UploadFile) -> bytes:
-        raw = await f.read()
-        validate_batch_file(raw, f.filename or "unknown", max_file_size, f.content_type)
+        raw = await f.read(max_file_size + 1)
+        validate_batch_file(raw, f.filename or "unknown", max_file_size, f.content_type, max_pixels)
         return raw
 
     raw_bytes_list = list(await asyncio.gather(
@@ -109,6 +110,7 @@ async def create_batch_job(
         repo = JobRepository(session)
 
         if api_key_id and max_active > 0:
+            await repo.lock_admission(api_key_id)
             active_count = await repo.count_active_by_key(api_key_id)
             if active_count >= max_active:
                 return JSONResponse(

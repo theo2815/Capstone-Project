@@ -121,7 +121,9 @@ don't enforce; `config/SecurityConfig.kt` is authoritative. Set `API_DOCS_ENABLE
 the surface entirely.
 
 Actuator (2026-08-27): `GET /actuator/health` is public; `/actuator/metrics` (+ `info`) require an
-ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.dedup{outcome}`,
+ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.duration`,
+`qp.upload.dedup{outcome}`, `qp.upload.direct{outcome}`, `qp.upload.cleanup{outcome}`,
+`qp.upload.direct.pending.{count,bytes,oldest.age}`,
 `qp.indexing.outcome{outcome,provider}`, `qp.ai.call{op}`, `qp.ratelimit.denied{policy}`,
 `qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28) —
 plus Hikari/JVM/HTTP-server metrics for free.

@@ -6,7 +6,7 @@ This is a modular AI API built with FastAPI (Python 3.11+) for computer vision t
 
 All three ML pipelines are trained, integrated, and wired into the API:
 
-- **Blur classifier** — YOLOv8n-cls ONNX at `models/blur_classifier/blur_classifier.onnx` (98.68% top-1, 100% on sharp class)
+- **Blur classifier** — YOLOv8n-cls ONNX at `models/blur_classifier/blur_classifier.onnx`; quality evidence and limitations are in `docs/ai-system-overview.md`
 - **Face pipeline** — InsightFace `buffalo_l` (RetinaFace + ArcFace, 512-dim embeddings) at `models/models/buffalo_l/`
 - **Bib detector** — custom YOLOv8n at `models/bib_detection/yolov8n_bib.onnx` + PaddleOCR PP-OCRv5 for OCR
 
@@ -48,13 +48,13 @@ All ML models are loaded **once** at startup via `src/ml/registry.py` and stored
 ```python
 registry = request.app.state.model_registry
 detector = registry.get("blur")           # BlurDetector
-classifier = registry.get("blur_classifier")  # BlurClassifier, optional
+classifier = registry.get("blur_classifier")  # BlurClassifier, required in blur profile
 embedder = registry.get("face")           # FaceEmbedder (InsightFace)
 bib_detector = registry.get("bib_detector")   # BibDetector (YOLO), optional
 bib_ocr = registry.get("bib_ocr")         # BibRecognizer (PaddleOCR)
 ```
 
-`blur` and `bib_ocr` and `face` are required; `blur_classifier` and `bib_detector` are optional and are marked absent in the readiness check only when loading raises.
+`blur` is required in every profile; `blur_classifier` is required and verified in the `blur` profile, while face and bib models are excluded. In the `all` profile, `face` and `bib_ocr` are required, while `blur_classifier` and `bib_detector` remain optional.
 
 ### API Response Envelope
 
@@ -82,7 +82,7 @@ except ImportError:
     _HAS_CPP = False
 ```
 
-Then branch on `_HAS_CPP`. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs. Note (2026-08-14): `classify_preprocess` is deliberately **no longer called** — the classifier's C++ preprocess branch was removed so the anti-aliased Python path always applies; the live consumers are the blur-detector metrics and `batch_cosine_topk` in the face matcher, and only dev machines that built the extension ever hit them.
+Then branch on `_HAS_CPP` only where a function has the same output contract. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs. The live consumer is `batch_cosine_topk` in the face matcher. The classifier preprocess and classical blur metric functions remain exported but are not used by served inference: classifier preprocessing needs area averaging, and the C++ blur score differs from OpenCV at image borders.
 
 ### Database Access
 
@@ -92,7 +92,7 @@ Celery workers cannot use asyncpg — they use the sync engine in `src/db/sync_s
 
 ### Authentication + Rate Limiting
 
-Every endpoint except `GET /health` uses `Depends(verify_api_key)` (`src/middleware/auth.py`). The dependency:
+Every endpoint except `GET /health` and the minimal public `GET /health/readyz` uses `Depends(verify_api_key)` (`src/middleware/auth.py`). The dependency:
 
 1. SHA-256-hashes the `X-API-Key` header
 2. Checks Redis cache, then falls back to the `api_keys` table
@@ -216,8 +216,8 @@ Do not add new dependencies without justification. Prefer existing libraries ove
 
 Two systems coexist:
 
-1. **Laplacian/FFT detector** (`src/ml/blur/detector.py`): Always-available classical CV. Laplacian variance + optional FFT high-frequency ratio. Normalised to a 640px linear reference. `detect_fast(gray)` is a faster path used by streaming and batch tasks — it skips BGR→gray conversion and FFT.
-2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the ONNX model at `models/blur_classifier/blur_classifier.onnx`. Optional — loads only if the file exists.
+1. **Laplacian/FFT detector** (`src/ml/blur/detector.py`): Always-available classical CV. Single, stream, and worker decode grayscale at `BLUR_DETECT_DECODE_DIM` and use the same OpenCV Laplacian score, normalized to a 640px reference. FFT is informational and runs only when requested. `detect_fast(gray)` skips FFT.
+2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the ONNX model at `models/blur_classifier/blur_classifier.onnx`. Required and verified in the `blur` profile; optional in `all`.
 
 API endpoints:
 
@@ -302,7 +302,7 @@ Training images live in `Training-Images/` (gitignored). Model artifacts live in
 | Service | Purpose | Required for |
 |---------|---------|-------------|
 | PostgreSQL 16 + pgvector | Jobs, webhook subscriptions, persons, face embeddings, API keys | All features |
-| Redis 7 | Celery broker/backend, rate limiting, API key cache | All features (rate limiting and caching degrade gracefully if absent) |
+| Redis 7 | Celery broker/backend, rate limiting, API key cache | All features (authenticated requests return 503 while Redis is unavailable) |
 | Celery worker | Async task execution | Batch / mega endpoints and webhooks |
 | Blob store volume | `BLOB_STORE_PATH` (default `/tmp/quickpitik-blobs`) — shared between API and workers | Batch / mega endpoints |
 

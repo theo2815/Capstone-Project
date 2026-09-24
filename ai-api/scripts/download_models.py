@@ -1,20 +1,15 @@
-"""Verify that the model artifacts named in the manifest are actually present.
+"""Check whether manifest-listed model files are present locally.
 
-Nothing is downloaded. InsightFace and PaddleOCR fetch their own weights on
-first use; the blur classifier and bib detector are produced by the training
-scripts in this directory and are mounted into containers from the host
-(./models:/app/models:ro in docker-compose.prod.yml) rather than baked into the
-image. So the useful job here is the pre-deploy check: say plainly which
-artifacts are missing and exit non-zero, because a missing OPTIONAL model is
-otherwise invisible — the registry marks blur_classifier and bib_detector
-optional, so the API starts and /health/ready returns 200 without them while
-every /blur/classify* route fails.
+Nothing is downloaded. Full Compose deployments mount the model directory;
+the dedicated blur image bakes in the audited ONNX file and ordered labels.
+Its Docker build verifies their hashes and warm inference. This presence-only
+command is for checking the local full-model directory before Compose deploys.
 
 Entries with "file": null (bib_ocr — PaddleOCR caches outside models/) have no
 artifact to check and are skipped.
 
 Usage:
-    python scripts/download_models.py            # exit 0 = all present
+    python scripts/download_models.py            # exit 0 = all listed files present
 """
 from __future__ import annotations
 

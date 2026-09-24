@@ -1,0 +1,25 @@
+# CPU blur API: web, image/ONNX, auth, jobs, and metrics. Full install remains pyproject.toml.
+fastapi>=0.141.1,<1
+uvicorn[standard]>=0.34,<1
+pydantic>=2.10,<3
+pydantic-settings>=2.7,<3
+python-multipart>=0.0.18
+opencv-python-headless>=4.10,<5
+numpy>=2.1,<3
+Pillow>=12.3,<13
+pillow-heif>=1.3,<2
+onnxruntime>=1.20,<2
+sqlalchemy[asyncio]>=2.0.36,<3
+asyncpg>=0.30,<1
+psycopg2>=2.9.9,<3
+alembic>=1.14,<2
+pgvector>=0.3.6,<0.4
+celery[redis]>=5.4,<6
+redis>=5.2,<6
+boto3>=1.43,<2
+PyJWT[crypto]>=2.9,<3
+bcrypt>=4.2,<5
+structlog>=24.4,<25
+prometheus-client>=0.21,<1
+prometheus-fastapi-instrumentator>=8.1,<9
+httpx>=0.28,<1

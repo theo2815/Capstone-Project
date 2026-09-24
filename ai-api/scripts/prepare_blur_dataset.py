@@ -1,218 +1,152 @@
-"""Prepare the blur classification dataset in ImageFolder format for YOLOv8-cls.
+"""Build a content-grouped blur ImageFolder split without changing source photos.
 
-Reads raw images from Training-Images/ subdirectories, applies augmentation
-to balance under-represented classes, and creates an 80/20 train/val split.
-
-The `sharp` class is sourced from two directories (Sharp Object in portrait/
-and Sharp_images/) which are merged during preparation.
-
-Usage:
-    python scripts/prepare_blur_dataset.py
+Optional --groups CSV columns: sha256,group_id. Assign one group_id to all
+captures from an event or burst; hashes without metadata remain independent.
+Conflicting labels are excluded for review. Training adds augmentation later.
 """
 
 from __future__ import annotations
 
+import argparse
+import csv
+import hashlib
+import json
 import random
 import shutil
+import tempfile
+from collections import Counter, defaultdict
 from pathlib import Path
-
-import cv2
-import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TRAINING_DIR = PROJECT_ROOT / "Training-Images"
-DATASET_DIR = TRAINING_DIR / "dataset"
+DATASET_DIR = TRAINING_DIR / "dataset_clean"
 
-# Mapping: class_name -> source directory name(s)
-# Classes with multiple source directories use a list.
 CLASS_DIRS: dict[str, str | list[str]] = {
     "sharp": ["Sharp Object in portrait", "Sharp_images"],
     "defocused_object_portrait": "Defocused object in portrait",
     "defocused_blurred": "defocused_blurred",
     "motion_blurred": "motion_blurred",
 }
-
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
-
-# Augmentation target: how many total images per class (original + augmented)
-# For classes below this count, augment to reach it.
-AUGMENTATION_TARGET = 300
-
 RANDOM_SEED = 42
 VAL_RATIO = 0.2
 
 
-def list_images(directory: Path) -> list[Path]:
-    """List all image files in a directory."""
-    return sorted(
-        p for p in directory.iterdir()
-        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+def prepare_dataset(
+    source_dir: Path = TRAINING_DIR,
+    output_dir: Path = DATASET_DIR,
+    groups_file: Path | None = None,
+) -> None:
+    """Write one copy per content identity and a manifest of every source path."""
+    if output_dir.exists():
+        raise FileExistsError(f"Refusing to replace existing dataset: {output_dir}")
+
+    by_hash: dict[str, list[tuple[str, Path]]] = defaultdict(list)
+    for label, folders in CLASS_DIRS.items():
+        for folder in [folders] if isinstance(folders, str) else folders:
+            directory = source_dir / folder
+            if not directory.is_dir():
+                raise FileNotFoundError(directory)
+            for path in sorted(directory.iterdir()):
+                if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+                    with path.open("rb") as stream:
+                        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                    by_hash[digest].append((label, path))
+
+    group_ids: dict[str, str] = {}
+    if groups_file:
+        with groups_file.open(newline="", encoding="utf-8") as stream:
+            reader = csv.DictReader(stream)
+            if reader.fieldnames != ["sha256", "group_id"]:
+                raise ValueError("Groups CSV must have sha256,group_id columns")
+            for row in reader:
+                digest, group_id = row["sha256"], row["group_id"].strip()
+                if digest not in by_hash or not group_id or digest in group_ids:
+                    raise ValueError(f"Invalid or duplicate group mapping: {digest}")
+                group_ids[digest] = group_id
+
+    entries = []
+    conflicts = []
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for digest, copies in sorted(by_hash.items()):
+        labels = sorted({label for label, _ in copies})
+        entry = {
+            "sha256": digest,
+            "labels": labels,
+            "sources": sorted(path.relative_to(source_dir).as_posix() for _, path in copies),
+            "group_id": group_ids.get(digest),
+        }
+        if len(labels) != 1:
+            entry.update(split="excluded", reason="conflicting labels require review")
+            conflicts.append(entry)
+        else:
+            grouped[group_ids.get(digest, digest)].append(entry)
+        entries.append(entry)
+
+    counts = Counter(entry["labels"][0] for members in grouped.values() for entry in members)
+    targets = {
+        label: max(1, round(count * VAL_RATIO)) if count > 1 else 0
+        for label, count in counts.items()
+    }
+    remaining = counts.copy()
+    validation = Counter()
+    rng = random.Random(RANDOM_SEED)
+    group_names = sorted(grouped)
+    rng.shuffle(group_names)
+    for group_name in group_names:
+        members = grouped[group_name]
+        group_counts = Counter(entry["labels"][0] for entry in members)
+        use_val = any(validation[label] < targets[label] for label in group_counts) and all(
+            remaining[label] > group_counts[label] for label in group_counts
+        )
+        for entry in members:
+            entry["split"] = "val" if use_val else "train"
+        if use_val:
+            validation.update(group_counts)
+        remaining.subtract(group_counts)
+
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="blur-clean-", dir=output_dir.parent) as tmp:
+        staging = Path(tmp) / "dataset"
+        staging.mkdir()
+        for entry in entries:
+            if entry["split"] == "excluded":
+                continue
+            source = source_dir / entry["sources"][0]
+            destination = (
+                staging
+                / entry["split"]
+                / entry["labels"][0]
+                / (entry["sha256"] + source.suffix.lower())
+            )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        manifest = {
+            "seed": RANDOM_SEED,
+            "validation_ratio": VAL_RATIO,
+            "event_burst_metadata": "partial" if group_ids else "not supplied",
+            "entries": entries,
+        }
+        (staging / "split_manifest.json").write_text(
+            json.dumps(manifest, separators=(",", ":")), encoding="utf-8"
+        )
+        (staging / "conflict_review.json").write_text(
+            json.dumps(conflicts, indent=2), encoding="utf-8"
+        )
+        staging.replace(output_dir)
+    print(
+        f"Prepared {len(entries) - len(conflicts)} identities at {output_dir}; "
+        f"excluded {len(conflicts)} conflicts"
+    )
+    print(
+        f"Validation: {dict(validation)}; event/burst metadata: {manifest['event_burst_metadata']}"
     )
 
 
-def augment_image(img: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Apply a random combination of augmentations to an image.
-
-    Uses OpenCV only (no extra dependencies).
-    """
-    h, w = img.shape[:2]
-    result = img.copy()
-
-    # 1. Random horizontal flip (50%)
-    if rng.random() < 0.5:
-        result = cv2.flip(result, 1)
-
-    # 2. Random rotation (-15 to +15 degrees)
-    angle = rng.uniform(-15, 15)
-    center = (w // 2, h // 2)
-    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-    result = cv2.warpAffine(result, M, (w, h), borderMode=cv2.BORDER_REFLECT_101)
-
-    # 3. Random crop and resize back (85-100% of original)
-    scale = rng.uniform(0.85, 1.0)
-    crop_h, crop_w = int(h * scale), int(w * scale)
-    y_off = rng.randint(0, h - crop_h)
-    x_off = rng.randint(0, w - crop_w)
-    result = result[y_off : y_off + crop_h, x_off : x_off + crop_w]
-    result = cv2.resize(result, (w, h), interpolation=cv2.INTER_LINEAR)
-
-    # 4. Color jitter: brightness and contrast
-    alpha = rng.uniform(0.8, 1.2)  # contrast
-    beta = rng.uniform(-20, 20)  # brightness
-    result = cv2.convertScaleAbs(result, alpha=alpha, beta=beta)
-
-    # 5. Gaussian noise (30%)
-    if rng.random() < 0.3:
-        noise = np.random.default_rng(rng.randint(0, 2**31)).normal(
-            0, 10, result.shape
-        ).astype(np.float32)
-        result = np.clip(result.astype(np.float32) + noise, 0, 255).astype(np.uint8)
-
-    return result
-
-
-def _unique_name(img_path: Path, seen: set[str]) -> str:
-    """Return a unique filename, appending a suffix on collision."""
-    name = img_path.name
-    if name not in seen:
-        seen.add(name)
-        return name
-    stem, suffix = img_path.stem, img_path.suffix
-    i = 1
-    while True:
-        candidate = f"{stem}_{i}{suffix}"
-        if candidate not in seen:
-            seen.add(candidate)
-            return candidate
-        i += 1
-
-
-def prepare_dataset() -> None:
-    """Build the ImageFolder dataset with augmentation and train/val split."""
-    rng = random.Random(RANDOM_SEED)
-
-    # Clean previous dataset
-    if DATASET_DIR.exists():
-        print(f"Removing existing dataset at {DATASET_DIR}")
-        shutil.rmtree(DATASET_DIR)
-
-    print("=" * 60)
-    print("Preparing blur classification dataset")
-    print("=" * 60)
-
-    for split in ("train", "val"):
-        for cls_name in CLASS_DIRS:
-            (DATASET_DIR / split / cls_name).mkdir(parents=True, exist_ok=True)
-
-    total_stats: dict[str, dict[str, int]] = {}
-
-    for cls_name, dir_names in CLASS_DIRS.items():
-        # Support single string or list of directories per class
-        if isinstance(dir_names, str):
-            dir_names = [dir_names]
-
-        images: list[Path] = []
-        for dir_name in dir_names:
-            src_dir = TRAINING_DIR / dir_name
-            found = list_images(src_dir)
-            if not found:
-                print(f"  WARNING: No images found in {src_dir}")
-            images.extend(found)
-
-        n_originals = len(images)
-
-        if n_originals == 0:
-            print(f"  WARNING: No images found for class '{cls_name}'")
-            continue
-
-        # Shuffle deterministically
-        shuffled = images.copy()
-        rng.shuffle(shuffled)
-
-        # Split into train/val
-        n_val = max(1, int(n_originals * VAL_RATIO))
-        val_images = shuffled[:n_val]
-        train_images = shuffled[n_val:]
-
-        source_dirs = ", ".join(dir_names)
-        print(f"\n{cls_name}:")
-        print(f"  Source: {source_dirs}")
-        print(f"  Original images: {n_originals}")
-        print(f"  Train: {len(train_images)}, Val: {n_val}")
-
-        # Copy validation images (no augmentation)
-        val_count = 0
-        seen_names: set[str] = set()
-        for img_path in val_images:
-            name = _unique_name(img_path, seen_names)
-            dest = DATASET_DIR / "val" / cls_name / name
-            shutil.copy2(img_path, dest)
-            val_count += 1
-
-        # Copy train images
-        train_count = 0
-        for img_path in train_images:
-            name = _unique_name(img_path, seen_names)
-            dest = DATASET_DIR / "train" / cls_name / name
-            shutil.copy2(img_path, dest)
-            train_count += 1
-
-        # Augment if this class needs more images (train only — never augment val)
-        if n_originals < AUGMENTATION_TARGET:
-            n_augmented_needed = AUGMENTATION_TARGET - n_originals
-
-            print(f"  Augmenting: {n_augmented_needed} train (val uses originals only)")
-
-            # Generate train augmentations only
-            for i in range(n_augmented_needed):
-                src_path = train_images[i % len(train_images)]
-                img = cv2.imread(str(src_path))
-                if img is None:
-                    continue
-                aug = augment_image(img, rng)
-                stem = src_path.stem
-                dest = DATASET_DIR / "train" / cls_name / f"{stem}_aug{i:04d}.jpg"
-                cv2.imwrite(str(dest), aug)
-                train_count += 1
-
-        total_stats[cls_name] = {"train": train_count, "val": val_count}
-
-    # Print summary
-    print("\n" + "=" * 60)
-    print("Dataset Summary")
-    print("=" * 60)
-    print(f"{'Class':<25} {'Train':>8} {'Val':>8} {'Total':>8}")
-    print("-" * 51)
-    grand_train = grand_val = 0
-    for cls_name, counts in total_stats.items():
-        t, v = counts["train"], counts["val"]
-        grand_train += t
-        grand_val += v
-        print(f"{cls_name:<25} {t:>8} {v:>8} {t + v:>8}")
-    print("-" * 51)
-    print(f"{'TOTAL':<25} {grand_train:>8} {grand_val:>8} {grand_train + grand_val:>8}")
-    print(f"\nDataset written to: {DATASET_DIR}")
-
-
 if __name__ == "__main__":
-    prepare_dataset()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, default=TRAINING_DIR)
+    parser.add_argument("--output", type=Path, default=DATASET_DIR)
+    parser.add_argument("--groups", type=Path, help="Optional sha256,group_id event/burst CSV")
+    args = parser.parse_args()
+    prepare_dataset(args.source, args.output, args.groups)

@@ -1,10 +1,17 @@
 """Integration tests for POST /api/v1/blur/detect endpoint."""
 from __future__ import annotations
 
+import asyncio
 import io
+import json
+import threading
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import cv2
 import numpy as np
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -31,6 +38,14 @@ def _make_jpeg_bytes(width: int = 256, height: int = 256, sharp: bool = True) ->
     img = Image.fromarray(arr)
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def _textured_jpeg() -> bytes:
+    y, x = np.indices((800, 1280))
+    pattern = np.uint8(128 + (2 * ((x // 8 + y // 8) % 2) - 1) * 6)
+    buf = io.BytesIO()
+    Image.fromarray(pattern).convert("RGB").save(buf, format="JPEG", quality=90)
     return buf.getvalue()
 
 
@@ -129,6 +144,21 @@ class TestBlurEndpointSuccess:
         body = resp.json()
         assert body["data"]["metrics"] is None
 
+    def test_metrics_excluded_skips_fft_without_changing_decision(self, client):
+        data = _make_jpeg_bytes(sharp=False)
+        files = {"file": ("test.jpg", data, "image/jpeg")}
+        expected = client.post("/api/v1/blur/detect", files=files).json()["data"]
+        with patch("src.ml.blur.detector.np.fft.fft2",
+                   side_effect=AssertionError("FFT should be skipped")):
+            response = client.post(
+                "/api/v1/blur/detect?include_metrics=false", files=files
+            )
+        assert response.status_code == 200
+        result = response.json()["data"]
+        assert result["metrics"] is None
+        assert result["is_blurry"] == expected["is_blurry"]
+        assert result["confidence"] == expected["confidence"]
+
     def test_custom_threshold(self, client: TestClient):
         """A very high threshold should make any image 'blurry'."""
         data = _make_jpeg_bytes(sharp=True)
@@ -181,14 +211,26 @@ class TestBlurEndpointAuth:
         # DEBUG=true in .env allows keyless access
         assert resp.status_code == 200
 
-    def test_invalid_key_rejected(self, client: TestClient):
-        """An explicitly wrong key should be rejected."""
+    def test_invalid_key_rejected(self, client: TestClient, app):
+        """An explicitly wrong key is rejected when auth dependencies are available."""
+        redis = AsyncMock()
+        redis.get.return_value = None
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        session = AsyncMock()
+        session.execute.return_value = result
+        session_ctx = AsyncMock()
+        session_ctx.__aenter__.return_value = session
         data = _make_jpeg_bytes()
-        resp = client.post(
-            "/api/v1/blur/detect",
-            headers={"X-API-Key": "definitely_wrong_key"},
-            files={"file": ("test.jpg", data, "image/jpeg")},
-        )
+        with (
+            patch.object(app.state, "redis", redis),
+            patch("src.db.session.get_session_ctx", return_value=session_ctx),
+        ):
+            resp = client.post(
+                "/api/v1/blur/detect",
+                headers={"X-API-Key": "definitely_wrong_key"},
+                files={"file": ("test.jpg", data, "image/jpeg")},
+            )
         # Even in debug, if a key IS provided it must be valid
         assert resp.status_code == 401
 
@@ -286,6 +328,22 @@ class TestDecodeForClassify:
 
         assert _decode_bgr_for_classify(b"definitely not an image", 640) is None
 
+    def test_thin_image_downscale_keeps_both_axes(self):
+        from src.api.v1.blur import _decode_bgr_for_classify
+
+        out = _decode_bgr_for_classify(_solid_png(1, 2000), 640)
+        assert out.shape[:2] == (640, 1)
+
+    def test_normal_downscale_preserves_calibrated_opencv_mapping(self):
+        from src.api.v1.blur import _decode_bgr_for_classify
+
+        data = _make_jpeg_bytes(width=2000, height=999)
+        decoded = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        expected = cv2.resize(
+            decoded, None, fx=640 / 2000, fy=640 / 2000, interpolation=cv2.INTER_AREA
+        )
+        assert np.array_equal(_decode_bgr_for_classify(data, 640), expected)
+
     def test_default_setting_is_the_calibrated_640(self):
         from src.config import Settings
 
@@ -293,6 +351,116 @@ class TestDecodeForClassify:
 
 
 class TestClassifyStream:
+    def test_desktop_single_and_stream_work_with_async_disabled(
+        self, client, app, stub_registry, monkeypatch
+    ):
+        class DesktopClassifier(_StubClassifier):
+            def classify(self, image):
+                return {**SHARP, "probabilities": {
+                    "sharp": 0.97, "motion_blurred": 0.03,
+                    "defocused_blurred": 0.0, "defocused_object_portrait": 0.0,
+                }}
+
+        stub_registry(DesktopClassifier())
+        monkeypatch.setattr(app.state.settings, "BLUR_ASYNC_ENABLED", False)
+        image = _make_jpeg_bytes()
+
+        single = client.post(
+            "/api/v1/blur/classify",
+            files={"file": ("photo.jpg", image, "image/jpeg")},
+        )
+        stream = client.post(
+            "/api/v1/blur/classify/stream", files=_files([image])
+        )
+
+        assert single.status_code == 200
+        assert single.json()["data"]["predicted_class"] == "sharp"
+        assert stream.status_code == 200
+        lines = _ndjson(stream)
+        assert lines[0]["predicted_class"] == "sharp"
+        assert lines[1]["_summary"] is True
+        assert lines[1]["complete"] is True
+
+    def test_deadline_marks_stream_incomplete_and_stops_next_sub_batch(
+        self, client, app, stub_registry, monkeypatch
+    ):
+        class SlowClassifier(_StubClassifier):
+            def classify_batch(self, images):
+                self.calls.append(len(images))
+                time.sleep(0.08)
+                return [dict(SHARP) for _ in images]
+
+        stub = stub_registry(SlowClassifier())
+        monkeypatch.setattr(app.state.settings, "INFERENCE_SUB_BATCH_SIZE", 1)
+        monkeypatch.setattr(app.state.settings, "BLUR_STREAM_TIMEOUT_SECONDS", 0.02)
+        response = client.post(
+            "/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()] * 2)
+        )
+        lines = _ndjson(response)
+        assert lines[-1]["_summary"] is True
+        assert lines[-1]["complete"] is False
+        assert lines[-1]["successful"] < 2
+        assert len(stub.calls) <= 1
+
+    def test_static_batch_stops_after_stream_deadline(
+        self, client, app, stub_registry, monkeypatch
+    ):
+        from src.utils.timeout import start_timeout_executor
+
+        start_timeout_executor()
+
+        class StaticClassifier(_StubClassifier):
+            _dynamic_batch = False
+
+            def classify(self, image):
+                self.calls.append(1)
+                time.sleep(0.5)
+                return dict(SHARP)
+
+            def classify_batch(self, images):
+                raise AssertionError("Static path must check the deadline between images")
+
+        stub = stub_registry(StaticClassifier())
+        monkeypatch.setattr(app.state.settings, "BLUR_STREAM_TIMEOUT_SECONDS", 0.3)
+        response = client.post(
+            "/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()] * 3)
+        )
+        assert _ndjson(response)[-1]["complete"] is False
+        assert len(stub.calls) == 1
+
+    def test_busy_classifier_returns_service_envelope(self, client, stub_registry):
+        from src.utils.timeout import InferenceBusyError
+
+        class BusyClassifier(_StubClassifier):
+            def classify(self, image):
+                raise InferenceBusyError("private state")
+
+        stub_registry(BusyClassifier())
+        response = client.post(
+            "/api/v1/blur/classify",
+            files={"file": ("photo.jpg", _make_jpeg_bytes(), "image/jpeg")},
+        )
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "1"
+        assert response.json()["error"]["code"] == "BLUR_BUSY"
+        assert "private state" not in response.text
+
+    @pytest.mark.parametrize("route,model", [
+        ("classify", "blur_classifier"), ("detect", "blur"),
+    ])
+    def test_missing_model_rejected_before_stream(self, client, app, route, model):
+        registry = app.state.model_registry
+        original = registry.get(model)
+        registry._models[model] = None
+        try:
+            resp = client.post(f"/api/v1/blur/{route}/stream", files=_files([_make_jpeg_bytes()]))
+        finally:
+            registry._models[model] = original
+
+        assert resp.status_code == 503
+        assert resp.json()["error"]["code"] == "MODEL_UNAVAILABLE"
+        assert resp.headers.get("content-type", "").startswith("application/json")
+
     def test_streams_one_line_per_image_plus_summary(self, client, stub_registry):
         stub_registry(_StubClassifier())
         images = [_make_jpeg_bytes() for _ in range(3)]
@@ -313,8 +481,8 @@ class TestClassifyStream:
             assert line["predicted_class"] == "sharp"
 
     def test_undecodable_image_errors_without_killing_the_batch(self, client, stub_registry):
-        stub_registry(_StubClassifier())
-        images = [_make_jpeg_bytes(), b"not an image at all", _make_jpeg_bytes()]
+        stub = stub_registry(_StubClassifier())
+        images = [_make_jpeg_bytes(), b"", _make_jpeg_bytes()]
 
         resp = client.post("/api/v1/blur/classify/stream", files=_files(images))
 
@@ -325,6 +493,68 @@ class TestClassifyStream:
         assert lines[1]["error"] == "Failed to decode image"
         assert lines[2]["predicted_class"] == "sharp"
         assert lines[3]["_summary"] is True
+        assert lines[3]["successful"] == 2
+        assert lines[3]["errors"] == 1
+        assert stub.calls == [2]
+
+    def test_later_sub_batch_decode_failure_keeps_all_indices(
+        self, client, stub_registry, app, monkeypatch
+    ):
+        stub = stub_registry(_StubClassifier())
+        monkeypatch.setattr(app.state.settings, "INFERENCE_SUB_BATCH_SIZE", 2)
+        from src.api.v1 import blur
+
+        original = blur._decode_bgr_for_classify
+        bad = _make_jpeg_bytes()
+
+        def decode(data, max_dim):
+            if data == bad:
+                raise cv2.error("private/path/decoder.cpp: internal details")
+            return original(data, max_dim)
+
+        with patch("src.api.v1.blur._decode_bgr_for_classify", side_effect=decode):
+            resp = client.post(
+                "/api/v1/blur/classify/stream",
+                files=_files([_make_jpeg_bytes(), _make_jpeg_bytes(), bad, _make_jpeg_bytes()]),
+            )
+
+        lines = _ndjson(resp)
+        assert len(lines) == 5
+        assert [row["index"] for row in lines[:4]] == [0, 1, 2, 3]
+        assert lines[2]["error"] == "Failed to decode image"
+        assert "private/path" not in resp.text
+        assert [row["predicted_class"] for row in (lines[0], lines[1], lines[3])] == ["sharp"] * 3
+        assert lines[4]["successful"] == 3
+        assert lines[4]["errors"] == 1
+        assert stub.calls == [2, 1]
+
+    def test_unexpected_stream_failure_is_marked_incomplete(self, client, stub_registry):
+        stub_registry(_StubClassifier())
+        with patch(
+            "src.api.v1.blur.validate_stream_file", side_effect=RuntimeError("private/path")
+        ):
+            resp = client.post("/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()]))
+
+        lines = _ndjson(resp)
+        assert len(lines) == 1
+        assert lines[0]["_summary"] is True
+        assert (lines[0]["total"], lines[0]["successful"], lines[0]["errors"]) == (
+            1, 0, 0,
+        )
+        assert lines[0]["complete"] is False
+        assert "private/path" not in resp.text
+
+    def test_disconnect_stops_before_next_sub_batch(self, client, stub_registry, app, monkeypatch):
+        stub = stub_registry(_StubClassifier())
+        monkeypatch.setattr(app.state.settings, "INFERENCE_SUB_BATCH_SIZE", 1)
+        with patch.object(Request, "is_disconnected", new_callable=AsyncMock) as disconnected:
+            disconnected.side_effect = [False, True]
+            resp = client.post(
+                "/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()] * 2)
+            )
+
+        assert [line["index"] for line in _ndjson(resp)] == [0]
+        assert stub.calls == [1]
 
     def test_sub_batch_failure_emits_error_lines_and_still_summarises(
         self, client, stub_registry
@@ -344,8 +574,10 @@ class TestClassifyStream:
         lines = _ndjson(resp)
         assert len(lines) == 3
         assert [line["index"] for line in lines[:2]] == [0, 1]
-        assert all("onnx session died" in line["error"] for line in lines[:2])
+        assert all(line["error"] == "Classification failed" for line in lines[:2])
         assert lines[2]["_summary"] is True  # stream terminated cleanly
+        assert lines[2]["successful"] == 0
+        assert lines[2]["errors"] == 2
 
     def test_blur_type_mode_respects_min_confidence(self, client, stub_registry):
         """detected must mirror BlurClassifier.detect_blur_type: the predicted
@@ -450,6 +682,91 @@ class TestClassifyStream:
 
 
 class TestDetectStream:
+    def test_stream_deadline_is_counted(self, client, app, monkeypatch):
+        from src.utils.blur_metrics import timeouts
+
+        before = timeouts.labels("stream")._value.get()
+        monkeypatch.setattr(app.state.settings, "BLUR_STREAM_TIMEOUT_SECONDS", 0.000001)
+        response = client.post(
+            "/api/v1/blur/detect/stream", files=_files([_make_jpeg_bytes()])
+        )
+        assert _ndjson(response)[-1]["complete"] is False
+        assert timeouts.labels("stream")._value.get() - before == 1
+
+    @pytest.mark.parametrize("decode_dim", [640, 512])
+    def test_classical_paths_agree_on_textured_jpeg(
+        self, client, app, tmp_path, monkeypatch, decode_dim
+    ):
+        """A fine pattern previously flipped at 1280 vs 640 pixels."""
+        from src.workers.tasks.blur_tasks import blur_detect_batch
+
+        monkeypatch.setattr(app.state.settings, "BLUR_DETECT_DECODE_DIM", decode_dim)
+        data = _textured_jpeg()
+
+        single = client.post(
+            "/api/v1/blur/detect", files={"file": ("pattern.jpg", data, "image/jpeg")}
+        ).json()["data"]
+        stream = _ndjson(client.post(
+            "/api/v1/blur/detect/stream", files=_files([data])
+        ))[0]
+        stream_fft = _ndjson(client.post(
+            "/api/v1/blur/detect/stream?include_hf_ratio=true", files=_files([data])
+        ))[0]
+        import uuid
+
+        from src.utils.blob_store import store_batch
+
+        monkeypatch.setattr(app.state.settings, "BLOB_STORE_PATH", str(tmp_path))
+        job_id = str(uuid.uuid4())
+        key = store_batch(job_id, [data])[0]
+        monkeypatch.setattr("src.workers.helpers.touch_mega_job", lambda _: True)
+        with patch("src.workers.model_loader.get_blur_detector",
+                   return_value=app.state.model_registry.get("blur")), patch(
+                   "src.config.get_settings", return_value=app.state.settings):
+            worker = blur_detect_batch(job_id, [key], mega_child=True)[0]
+
+        assert (
+            single["is_blurry"] == stream["is_blurry"]
+            == stream_fft["is_blurry"] == worker["is_blurry"]
+        )
+        assert single["metrics"]["laplacian_variance"] == pytest.approx(
+            stream["laplacian_variance"], abs=0.01
+        )
+        assert worker["laplacian_variance"] == pytest.approx(
+            stream["laplacian_variance"], abs=0.01
+        )
+        assert stream_fft["laplacian_variance"] == pytest.approx(
+            stream["laplacian_variance"], abs=0.01
+        )
+        assert stream_fft["hf_ratio"] == pytest.approx(single["metrics"]["hf_ratio"])
+
+    def test_classical_threshold_default_and_override(self, client, app, monkeypatch):
+        detector = app.state.model_registry.get("blur")
+        monkeypatch.setattr(detector, "laplacian_threshold", 300.0)
+        data = _textured_jpeg()
+        files = {"file": ("pattern.jpg", data, "image/jpeg")}
+
+        default = client.post("/api/v1/blur/detect", files=files).json()["data"]
+        explicit = client.post("/api/v1/blur/detect?threshold=300", files=files).json()["data"]
+        override = client.post("/api/v1/blur/detect?threshold=100", files=files).json()["data"]
+        stream = _ndjson(client.post(
+            "/api/v1/blur/detect/stream", files=_files([data])
+        ))[0]
+        assert default["is_blurry"] == explicit["is_blurry"] == stream["is_blurry"]
+        assert default["is_blurry"] != override["is_blurry"]
+
+    @pytest.mark.parametrize("threshold", [0, 10001, "nan", "inf"])
+    def test_classical_threshold_rejects_out_of_range(self, client, threshold):
+        data = _make_jpeg_bytes()
+        assert client.post(
+            f"/api/v1/blur/detect?threshold={threshold}",
+            files={"file": ("x.jpg", data, "image/jpeg")},
+        ).status_code == 422
+        assert client.post(
+            f"/api/v1/blur/detect/stream?threshold={threshold}",
+            files=_files([data]),
+        ).status_code == 422
+
     def test_streams_one_line_per_image_plus_summary(self, client):
         images = [_make_jpeg_bytes() for _ in range(3)]
 
@@ -469,7 +786,7 @@ class TestDetectStream:
         assert all("is_blurry" in line for line in results)
 
     def test_undecodable_image_errors_without_killing_the_batch(self, client):
-        images = [_make_jpeg_bytes(), b"not an image at all", _make_jpeg_bytes()]
+        images = [_make_jpeg_bytes(), b"", _make_jpeg_bytes()]
 
         resp = client.post("/api/v1/blur/detect/stream", files=_files(images))
 
@@ -477,6 +794,18 @@ class TestDetectStream:
         by_index = {line["index"]: line for line in _ndjson(resp) if not line.get("_summary")}
         assert by_index[1]["error"] == "Failed to decode image"
         assert "is_blurry" in by_index[0] and "is_blurry" in by_index[2]
+
+    def test_decode_exception_is_sanitized_and_counted(self, client):
+        with patch(
+            "src.api.v1.blur.cv2.imdecode", side_effect=cv2.error("private/path/decoder.cpp")
+        ):
+            resp = client.post("/api/v1/blur/detect/stream", files=_files([_make_jpeg_bytes()]))
+
+        lines = _ndjson(resp)
+        assert lines[0]["error"] == "Failed to process image"
+        assert "private/path" not in resp.text
+        assert lines[1]["successful"] == 0
+        assert lines[1]["errors"] == 1
 
     def test_oversize_file_errors_without_killing_the_batch(
         self, client, app, monkeypatch
@@ -554,12 +883,13 @@ class TestValidateStreamFile:
         data = _solid_png(MAX_DIMENSION, 32)
         assert validate_stream_file(data, "edge.png", 25 * 1024 * 1024) is None
 
-    def test_defers_undecodable_bytes_to_cv2(self):
-        """Not PIL-parseable is not the same as invalid — cv2 reads formats PIL
-        does not, and returns None when it genuinely cannot."""
+    def test_rejects_unparseable_header_before_cv2(self):
         from src.utils.image_utils import validate_stream_file
 
-        assert validate_stream_file(b"not an image", "x.jpg", 25 * 1024 * 1024) is None
+        assert (
+            validate_stream_file(b"not an image", "x.jpg", 25 * 1024 * 1024)
+            == "Failed to decode image"
+        )
 
     def test_rejects_a_decompression_bomb(self, monkeypatch):
         """PIL raises rather than reporting a size once past MAX_IMAGE_PIXELS,
@@ -579,11 +909,7 @@ class TestValidateStreamFile:
 
 
 class TestBodySizeLimit:
-    """The only thing bounding a multipart upload in total.
-
-    Per-file limits cannot do it: both /stream endpoints hold every file in
-    memory at once, so 500 files each under MAX_FILE_SIZE still sum to 12.5 GB.
-    """
+    """Aggregate ASGI byte limits apply before multipart parsing."""
 
     def test_declared_body_over_the_cap_is_refused(self, client, app):
         over = app.state.settings.MAX_REQUEST_BODY + 1
@@ -608,16 +934,133 @@ class TestBodySizeLimit:
 
         assert resp.status_code == 200
 
-    def test_request_without_content_length_is_not_refused(self, client):
-        """A chunked request declares no length. It passes to the per-file layer
-        rather than being blocked — stated as a limit, not papered over."""
+    def test_actual_body_limit_without_content_length(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(MAX_REQUEST_BODY=1024, MAX_FILE_SIZE=100)
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+
+        @app.post("/probe")
+        async def probe(request: Request):
+            await request.body()
+            return {"ok": True}
 
         def chunked():
-            yield b"not-multipart"
+            yield b"x" * 700
+            yield b"x" * 700
 
-        resp = client.post("/api/v1/blur/detect/stream", content=chunked())
+        response = TestClient(app).post("/probe", content=chunked())
+        assert response.status_code == 413, response.text
+        assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"
 
-        assert resp.status_code != 413
+
+        assert response.json()["request_id"]
+
+    def test_lying_content_length_is_rejected(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(MAX_REQUEST_BODY=1024, MAX_FILE_SIZE=100)
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+
+        @app.post("/probe")
+        async def probe(request: Request):
+            await request.body()
+            return {"ok": True}
+
+        response = TestClient(app).post(
+            "/probe", content=iter([b"x" * 700, b"x" * 700]),
+            headers={"Content-Length": "500"},
+        )
+        assert response.status_code == 413
+
+    def test_blur_auth_precedes_multipart_parse(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(DEBUG=False, MODEL_PROFILE="blur")
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        response = TestClient(app).post(
+            "/api/v1/blur/detect",
+            content=b"broken multipart",
+            headers={"Content-Type": "multipart/form-data; boundary=missing"},
+        )
+        assert response.status_code == 401
+
+    def test_blur_key_rate_limited_once_before_parse(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(DEBUG=False, MODEL_PROFILE="blur")
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        app.state.redis = AsyncMock()
+        app.state.redis.get.return_value = json.dumps({
+            "key_id": "test", "scopes": ["blur:read"], "rate_tier": "internal",
+        })
+        with patch("src.middleware.auth._enforce_rate_limit", new_callable=AsyncMock) as limit:
+            response = TestClient(app).post("/api/v1/blur/detect", headers={"X-API-Key": "test"})
+        assert response.status_code == 422
+        limit.assert_awaited_once()
+
+    def test_blur_redis_outage_returns_503_then_recovers(self):
+        from redis.exceptions import ConnectionError as RedisConnectionError
+
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(DEBUG=False, MODEL_PROFILE="blur", METRICS_ENABLED=False)
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        redis = AsyncMock()
+        app.state.redis = redis
+        redis.get.side_effect = RedisConnectionError("down")
+        client = TestClient(app)
+        url = "/api/v1/blur/detect"
+        headers = {"X-API-Key": "test"}
+
+        response = client.post(url, headers=headers)
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "1"
+
+        redis.get.side_effect = None
+        redis.get.return_value = json.dumps({
+            "key_id": "test", "scopes": ["blur:read"], "rate_tier": "internal"
+        })
+        redis.eval.side_effect = RedisConnectionError("down")
+        assert client.post(url, headers=headers).status_code == 503
+
+        redis.eval.side_effect = None
+        redis.eval.return_value = [1, 999, 1]
+        assert client.post(url, headers=headers).status_code == 422
+
+    def test_blur_actual_multipart_bytes_rejected(self):
+        from src.config import Settings
+        from src.main import create_app
+
+        settings = Settings(
+            DEBUG=True, MODEL_PROFILE="blur", BLUR_MAX_REQUEST_BODY=1024, MAX_FILE_SIZE=100,
+        )
+        with patch("src.main.get_settings", return_value=settings):
+            app = create_app()
+        app.state.settings = settings
+        body = (
+            b"--test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.jpg\"\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + b"x" * 1400 + b"\r\n--test--\r\n"
+        )
+        response = TestClient(app).post(
+            "/api/v1/blur/detect", content=iter([body[:700], body[700:]]),
+            headers={"Content-Type": "multipart/form-data; boundary=test"},
+        )
+        assert response.status_code == 413
+        assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"
 
     def test_nginx_client_max_body_size_matches_the_setting(self):
         """The ceiling lives in two files. This is what stops them drifting —
@@ -673,3 +1116,56 @@ class TestBodySizeLimit:
         )
 
         assert result.returncode == 0, result.stderr.decode(errors="replace")
+
+
+async def test_blur_streams_share_decode_capacity_and_admission():
+    import httpx
+
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(DEBUG=True, MODEL_PROFILE="blur", METRICS_ENABLED=False,
+                        BLUR_DECODE_CONCURRENCY=2)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+
+    class Classifier:
+        min_detection_confidence = 0.5
+
+        def classify_batch(self, images):
+            return [{"predicted_class": "sharp", "confidence": 1.0,
+                     "probabilities": {"sharp": 1.0}} for _ in images]
+
+    class Registry:
+        def get(self, name):
+            return Classifier() if name == "blur_classifier" else None
+
+    app.state.model_registry = Registry()
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def decode(data, max_dim):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.03)
+        with lock:
+            active -= 1
+        return np.zeros((32, 32, 3), dtype=np.uint8)
+
+    image = _make_jpeg_bytes(width=32, height=32)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch("src.api.v1.blur._decode_bgr_for_classify", side_effect=decode):
+            responses = await asyncio.gather(*[
+                client.post("/api/v1/blur/classify/stream", files=_files([image] * 4))
+                for _ in range(3)
+            ])
+    assert sorted(r.status_code for r in responses) == [200, 200, 503]
+    assert peak == 2
+    assert all(len(r.text.splitlines()) == 5 for r in responses if r.status_code == 200)
+    assert next(r for r in responses if r.status_code == 503).json()["error"]["code"] == "BLUR_BUSY"
+    assert next(r for r in responses if r.status_code == 503).headers["Retry-After"] == "1"

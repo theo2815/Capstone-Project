@@ -110,8 +110,8 @@ ai-api/
 │   │   ├── blur/
 │   │   │   ├── detector.py     # BlurDetector (Laplacian variance + FFT high-
 │   │   │   │                   # frequency ratio, 640px-normalized). `detect_fast`
-│   │   │   │                   # skips FFT + BGR→gray for the hot path. Uses C++
-│   │   │   │                   # `laplacian_variance` / `fft_hf_ratio` when available.
+│   │   │   │                   # skips FFT for the hot path. Uses one OpenCV/NumPy
+│   │   │   │                   # score contract across all classical callers.
 │   │   │   └── classifier.py   # BlurClassifier (YOLOv8n-cls, 4 classes via ONNX).
 │   │   │                       # Optional — loads only if
 │   │   │                       # models/blur_classifier/blur_classifier.onnx exists.
@@ -279,7 +279,7 @@ ai-api/
 ├── models/                     # === ML MODEL FILES (gitignored) ===
 │   ├── manifest.json           # Lists required models with sources/notes.
 │   ├── blur_classifier/
-│   │   ├── blur_classifier.onnx  # YOLOv8n-cls, 4 classes — 98.68% accuracy.
+│   │   ├── blur_classifier.onnx  # YOLOv8n-cls, 4 classes; see ai-system-overview.md for quality evidence.
 │   │   └── class_names.json
 │   ├── bib_detection/
 │   │   └── yolov8n_bib.onnx    # Custom-trained bib detector (Ultralytics).

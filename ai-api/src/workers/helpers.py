@@ -15,6 +15,27 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def claim_job(job_id: str) -> tuple[str, str, list | dict | None]:
+    """Acquire this delivery's DB lease before accessing any staged input."""
+    token = uuid.uuid4().hex
+    from src.config import get_settings
+
+    with get_sync_session() as session:
+        repo = SyncJobRepository(session)
+        state = repo.claim(uuid.UUID(job_id), token, get_settings().JOB_LEASE_SECONDS)
+        result = repo.get(uuid.UUID(job_id)).result if state == "terminal" else None
+    return state, token, result
+
+
+def touch_mega_job(job_id: str) -> bool:
+    """Refresh the parent lease without changing aggregate result progress."""
+    from src.config import get_settings
+
+    with get_sync_session() as session:
+        return SyncJobRepository(session).touch_mega(uuid.UUID(job_id),
+                                                     get_settings().JOB_LEASE_SECONDS)
+
+
 def decode_base64_image(
     b64_data: str, *, raw_bytes: bytes | None = None
 ) -> np.ndarray | None:
@@ -86,37 +107,31 @@ def _decode_raw_bytes(raw_bytes: bytes, max_dim: int = 0) -> np.ndarray | None:
     return image
 
 
-def decode_gray_from_path(path: str, max_dim: int = 640) -> np.ndarray | None:
+def decode_gray_from_path(path: str, max_dim: int = 0) -> np.ndarray | None:
     """Load an image from the blob store and decode directly to grayscale.
 
-    Optimised for blur detection: uses cv2.imdecode(IMREAD_GRAYSCALE) which is
-    ~30% faster than colour decode, skips EXIF rotation (irrelevant for blur
-    metrics), and avoids PIL entirely. Mirrors the fast path in the streaming
-    blur endpoint.
+    Uses the same OpenCV grayscale decode and resize as both blur endpoints.
 
     Args:
         path: Blob store file path.
-        max_dim: Max dimension to downscale to (default 640 for blur pipeline).
+        max_dim: Max dimension to downscale to (0 uses BLUR_DETECT_DECODE_DIM).
     """
     try:
         from src.utils.blob_store import load_blob
 
         raw_bytes = load_blob(path)
-        arr = np.frombuffer(raw_bytes, dtype=np.uint8)
-        gray = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
-        if gray is None:
-            return None
-        h, w = gray.shape
-        if max_dim > 0 and max(h, w) > max_dim:
-            scale = max_dim / max(h, w)
-            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-        return gray
+        from src.config import get_settings
+        from src.utils.image_utils import decode_gray_for_blur
+
+        return decode_gray_for_blur(
+            raw_bytes, max_dim or get_settings().BLUR_DETECT_DECODE_DIM
+        )
     except Exception:
         return None
 
 
 def decode_grays_from_paths(
-    paths: list[str], max_dim: int = 640, max_workers: int = 0,
+    paths: list[str], max_dim: int = 0, max_workers: int = 0,
 ) -> list[np.ndarray | None]:
     """Decode multiple images to grayscale in parallel using a thread pool.
 
@@ -161,7 +176,8 @@ def decode_images_from_paths(
 
 
 def update_job_progress(
-    job_id: str, processed: int, total: int, every_n: int | None = None
+    job_id: str, processed: int, total: int, every_n: int | None = None,
+    attempt_token: str | None = None,
 ) -> None:
     """Update job progress in the database, throttled to every N items.
 
@@ -178,47 +194,45 @@ def update_job_progress(
     progress = processed / total if total > 0 else 0.0
     with get_sync_session() as session:
         repo = SyncJobRepository(session)
-        repo.update_progress(uuid.UUID(job_id), processed, progress)
+        from src.config import get_settings
+        repo.update_progress(uuid.UUID(job_id), processed, progress, attempt_token,
+                             get_settings().JOB_LEASE_SECONDS)
 
 
-def complete_job(job_id: str, results: list[dict]) -> None:
-    """Mark a job as completed, clean up blobs, and dispatch webhooks."""
+def complete_job(job_id: str, results: list[dict], attempt_token: str | None = None) -> bool:
+    """Commit one result; duplicates never replace it or send another webhook."""
     with get_sync_session() as session:
         repo = SyncJobRepository(session)
-        repo.complete(uuid.UUID(job_id), results)
+        changed = repo.complete(uuid.UUID(job_id), results, attempt_token)
+        if not changed:
+            return False
         job = repo.get(uuid.UUID(job_id))
-        api_key_id = job.api_key_id if job else None
-
-    # Clean up staged image blobs (no-op if blobs don't exist)
-    from src.utils.blob_store import cleanup_batch
-
-    cleanup_batch(job_id)
+        api_key_id = job.api_key_id
 
     dispatch_webhook_sync(
         event="job.completed",
         payload={"job_id": job_id, "result_count": len(results)},
         api_key_id=api_key_id,
     )
+    return True
 
 
-def fail_job(job_id: str, error: str) -> None:
-    """Mark a job as failed, clean up blobs, and dispatch webhooks."""
+def fail_job(job_id: str, error: str, attempt_token: str | None = None) -> bool:
+    """Commit one failure; retained inputs are removed by maintenance later."""
     with get_sync_session() as session:
         repo = SyncJobRepository(session)
-        repo.fail(uuid.UUID(job_id), error)
+        changed = repo.fail(uuid.UUID(job_id), error, attempt_token)
+        if not changed:
+            return False
         job = repo.get(uuid.UUID(job_id))
-        api_key_id = job.api_key_id if job else None
-
-    # Clean up staged image blobs (no-op if blobs don't exist)
-    from src.utils.blob_store import cleanup_batch
-
-    cleanup_batch(job_id)
+        api_key_id = job.api_key_id
 
     dispatch_webhook_sync(
         event="job.failed",
         payload={"job_id": job_id, "error": error},
         api_key_id=api_key_id,
     )
+    return True
 
 
 def dispatch_webhook_sync(event: str, payload: dict, api_key_id: str | None = None) -> int:

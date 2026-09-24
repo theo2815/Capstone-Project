@@ -7,6 +7,7 @@ import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotoUploadIntentRepository
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.service.orders.PaymongoCheckoutReconciler
 import org.slf4j.LoggerFactory
@@ -23,6 +24,7 @@ import java.util.UUID
 @Service
 class PhotographerPhotoService(
     private val photoRepository: PhotoRepository,
+    private val photoUploadIntentRepository: PhotoUploadIntentRepository,
     private val eventPhotographerRepository: EventPhotographerRepository,
     private val orderItemRepository: OrderItemRepository,
     private val storageService: StorageService,
@@ -93,6 +95,7 @@ class PhotographerPhotoService(
                 transactionTemplate.executeWithoutResult {
                     photoRepository.findAllByIdForUpdate(listOf(photo.id)).singleOrNull()?.let {
                         check(it.deletionStartedAt != null)
+                        photoUploadIntentRepository.scheduleCleanupForResultPhoto(photo.id, OffsetDateTime.now())
                         photoRepository.delete(it)
                     }
                 }

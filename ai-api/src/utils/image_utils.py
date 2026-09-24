@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from typing import Callable, TypeVar
 
 import cv2
 import numpy as np
@@ -15,6 +16,7 @@ ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 # Calibrated upload bound — see MAX_IMAGE_DIMENSION in config.py.
 MAX_DIMENSION = get_settings().MAX_IMAGE_DIMENSION
 MIN_DIMENSION = 32
+T = TypeVar("T")
 
 # Prevent Pillow decompression bombs (matches MAX_DIMENSION)
 Image.MAX_IMAGE_PIXELS = MAX_DIMENSION * MAX_DIMENSION
@@ -23,12 +25,18 @@ Image.MAX_IMAGE_PIXELS = MAX_DIMENSION * MAX_DIMENSION
 async def validate_and_decode(
     file: UploadFile,
     max_file_size: int = 0,
+    max_pixels: int = 0,
+    decode_semaphore: asyncio.Semaphore | None = None,
+    grayscale_max_dim: int = 0,
 ) -> tuple[bytes, np.ndarray]:
     """Validate an uploaded image and decode it to a numpy array.
 
     Args:
         file: The uploaded file.
         max_file_size: Override in bytes. 0 (default) uses MAX_FILE_SIZE.
+        max_pixels: Optional decoded-pixel cap for the blur profile.
+        decode_semaphore: Optional process-wide blur decode limit.
+        grayscale_max_dim: Classical blur decode target; 0 keeps the BGR path.
 
     Returns:
         Tuple of (raw_bytes, bgr_numpy_array)
@@ -45,7 +53,7 @@ async def validate_and_decode(
             f"Allowed: {', '.join(ALLOWED_CONTENT_TYPES)}"
         )
 
-    contents = await file.read()
+    contents = await file.read(max_file_size + 1)
     if len(contents) > max_file_size:
         raise ImageValidationError(
             f"File exceeds {max_file_size // (1024 * 1024)}MB limit"
@@ -53,25 +61,56 @@ async def validate_and_decode(
 
     # Offload all CPU-bound image decoding to a thread so the async event
     # loop is not blocked (~100-500ms for large images).
-    image = await asyncio.to_thread(_decode_image_bytes, contents)
+    image = await bounded_to_thread(
+        decode_semaphore, _decode_image_bytes, contents, max_pixels, grayscale_max_dim
+    )
 
     return contents, image
 
 
-def _decode_image_bytes(contents: bytes) -> np.ndarray:
-    """Decode raw image bytes to a BGR numpy array (CPU-bound, runs in thread).
+async def bounded_to_thread(
+    semaphore: asyncio.Semaphore | None, fn: Callable[..., T], *args
+) -> T:
+    """Keep a decode slot occupied until the native thread really exits."""
+    if semaphore is None:
+        return await asyncio.to_thread(fn, *args)
+    await semaphore.acquire()
+    try:
+        task = asyncio.create_task(asyncio.to_thread(fn, *args))
+    except BaseException:
+        semaphore.release()
+        raise
 
-    Validates magic bytes, applies EXIF rotation, checks dimensions, and
-    downscales for inference.
+    def release(finished: asyncio.Task):
+        semaphore.release()
+        if not finished.cancelled():
+            finished.exception()  # Consume errors if the request was cancelled.
+
+    task.add_done_callback(release)
+    from src.utils.timeout import track_request_work
+
+    track_request_work(task)
+    return await asyncio.shield(task)
+
+
+def _decode_image_bytes(
+    contents: bytes, max_pixels: int = 0, grayscale_max_dim: int = 0
+) -> np.ndarray:
+    """Decode raw image bytes to BGR, or grayscale for classical blur.
+
+    Validates magic bytes and dimensions. The BGR path applies EXIF rotation;
+    the classical path uses the same OpenCV grayscale decode as stream/worker.
     """
     # Single open + EXIF transpose (no .verify() — the decode itself catches
     # corrupt files, and .verify() forces a full decode then invalidates the
     # object, requiring a wasteful second open).
     try:
         img = Image.open(io.BytesIO(contents))
-        img = ImageOps.exif_transpose(img)
     except Exception:
-        raise ImageValidationError("Invalid or corrupt image file")
+        raise ImageValidationError("Invalid or corrupt image file") from None
+
+    if img.format not in {"JPEG", "PNG", "WEBP"}:
+        raise ImageValidationError("Unsupported image format")
 
     w, h = img.size
     if w > MAX_DIMENSION or h > MAX_DIMENSION:
@@ -82,6 +121,22 @@ def _decode_image_bytes(contents: bytes) -> np.ndarray:
         raise ImageValidationError(
             f"Image too small ({w}x{h}). Minimum is {MIN_DIMENSION}px"
         )
+    if max_pixels and w * h > max_pixels:
+        raise ImageValidationError(f"Image exceeds {max_pixels} pixel limit")
+
+    if grayscale_max_dim:
+        try:
+            gray = decode_gray_for_blur(contents, grayscale_max_dim)
+        except cv2.error:
+            gray = None
+        if gray is None:
+            raise ImageValidationError("Invalid or corrupt image file")
+        return gray
+
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        raise ImageValidationError("Invalid or corrupt image file") from None
 
     # Skip .convert("RGB") when already RGB (always true for JPEG after EXIF
     # transpose). np.asarray gives a zero-copy view when possible.
@@ -96,11 +151,17 @@ def _decode_image_bytes(contents: bytes) -> np.ndarray:
     return image
 
 
+def decode_gray_for_blur(contents: bytes, max_dim: int) -> np.ndarray | None:
+    """Use the same OpenCV grayscale decode and area resize for classical blur."""
+    gray = cv2.imdecode(np.frombuffer(contents, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    return downscale_for_inference(gray, max_dim) if gray is not None else None
+
+
 def downscale_for_inference(image: np.ndarray, max_dim: int = 0) -> np.ndarray:
     """Downscale image if it exceeds *max_dim* (or MAX_INFERENCE_DIMENSION).
 
     Args:
-        image: BGR numpy array.
+        image: BGR or grayscale numpy array.
         max_dim: Override dimension. 0 (default) uses the global setting.
 
     Returns the original image if downscaling is disabled (0) or not needed.
@@ -117,12 +178,13 @@ def downscale_for_inference(image: np.ndarray, max_dim: int = 0) -> np.ndarray:
         return image
 
     scale = max_dim / max(w, h)
-    new_w, new_h = int(w * scale), int(h * scale)
+    new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
 def validate_batch_file(
-    raw: bytes, filename: str, max_file_size: int, content_type: str | None = None
+    raw: bytes, filename: str, max_file_size: int, content_type: str | None = None,
+    max_pixels: int = 0,
 ) -> None:
     """Validate a single file in a batch upload (size, content type, magic bytes,
     dimensions).
@@ -146,12 +208,12 @@ def validate_batch_file(
         )
     try:
         img = Image.open(io.BytesIO(raw))
-        # .size is populated by open() from the header; verify() invalidates
-        # the object, so read the dimensions before calling it.
+        # .size is populated by open() from the header.
         w, h = img.size
-        img.verify()
+        if img.format not in {"JPEG", "PNG", "WEBP"}:
+            raise ValueError("unsupported image format")
     except Exception:
-        raise ImageValidationError(f"File '{filename}' is not a valid image")
+        raise ImageValidationError(f"File '{filename}' is not a valid image") from None
 
     # Outside the try: an ImageValidationError raised inside would be swallowed
     # by the bare `except` above and mis-reported as a corrupt file.
@@ -159,10 +221,17 @@ def validate_batch_file(
         raise ImageValidationError(
             f"File '{filename}' dimensions ({w}x{h}) exceed {MAX_DIMENSION}px limit"
         )
+    if max_pixels and w * h > max_pixels:
+        raise ImageValidationError(f"File '{filename}' exceeds {max_pixels} pixel limit")
+
+    try:
+        img.verify()
+    except Exception:
+        raise ImageValidationError(f"File '{filename}' is not a valid image") from None
 
 
 def validate_stream_file(
-    raw: bytes, filename: str, max_file_size: int
+    raw: bytes, filename: str, max_file_size: int, max_pixels: int = 0
 ) -> str | None:
     """Validate one file on the streaming path. Returns an error message, or None.
 
@@ -170,13 +239,9 @@ def validate_stream_file(
     It returns instead of raising because the stream endpoints answer a bad file
     with a per-image NDJSON error line, not by failing the whole request.
 
-    Deliberately narrower than validate_batch_file:
-      - no ``img.verify()`` — it walks the entire file, and cv2.imdecode already
-        fails closed on corrupt bytes (returns None, which the callers already
-        render as "Failed to decode image").
-      - no content-type check — cv2.imdecode fails closed on non-images too, and
-        this is the one check that could reject a correct desktop client that
-        posts application/octet-stream.
+    Deliberately narrower than validate_batch_file: it reads only the header,
+    leaving full decode to OpenCV. It accepts octet-stream multipart parts when
+    their actual format is JPEG, PNG, or WebP.
 
     What is left is the pair neither of those covers: the bytes admitted into
     memory, and the pixel count a decode would allocate. cv2.imdecode has no
@@ -187,18 +252,21 @@ def validate_stream_file(
         return f"File '{filename}' exceeds {max_file_size // (1024 * 1024)}MB limit"
 
     try:
-        w, h = Image.open(io.BytesIO(raw)).size
+        image = Image.open(io.BytesIO(raw))
+        if image.format not in {"JPEG", "PNG", "WEBP"}:
+            return f"File '{filename}' has unsupported image format"
+        w, h = image.size
     except (Image.DecompressionBombError, Image.DecompressionBombWarning):
         # Over Image.MAX_IMAGE_PIXELS (MAX_DIMENSION squared) — PIL refuses to
         # report a size, so report the cap rather than dimensions we never read.
         return f"File '{filename}' exceeds the {MAX_DIMENSION}px limit"
     except Exception:
-        # Not something PIL can parse a header from. Leave the verdict to
-        # cv2.imdecode, which handles formats PIL does not.
-        return None
+        return "Failed to decode image"
 
     if w > MAX_DIMENSION or h > MAX_DIMENSION:
         return f"File '{filename}' dimensions ({w}x{h}) exceed {MAX_DIMENSION}px limit"
+    if max_pixels and w * h > max_pixels:
+        return f"File '{filename}' exceeds {max_pixels} pixel limit"
     return None
 
 

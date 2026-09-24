@@ -344,6 +344,9 @@ data class DirectUploadBeginRequest(
     val contentType: String,
     @field:Positive
     val sizeBytes: Long,
+    val requestId: UUID? = null,
+    @field:Pattern(regexp = "^website$", message = "client must be website when supplied.")
+    val client: String? = null,
 )
 
 data class DirectUploadBeginResponse(
@@ -352,6 +355,9 @@ data class DirectUploadBeginResponse(
     val key: String? = null,
     val uploadUrl: String? = null,
     val expiresInSeconds: Long? = null,
+    val expiresAt: OffsetDateTime? = null,
+    val intentExpiresAt: OffsetDateTime? = null,
+    val uploadHeaders: Map<String, String> = emptyMap(),
     val existing: UploadedPhotoDto? = null,
 )
 

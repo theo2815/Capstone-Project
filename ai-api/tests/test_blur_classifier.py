@@ -1,17 +1,19 @@
 """Tests for BlurClassifier and /blur/classify endpoint."""
 from __future__ import annotations
 
+import hashlib
 import io
 import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+import threading
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 from PIL import Image
 
 from src.ml.blur.classifier import BlurClassifier
-
+from src.utils.timeout import InferenceTimeoutError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,6 +76,74 @@ def _make_mock_onnx_session_for_class(class_idx: int, num_classes: int = 4):
 # ---------------------------------------------------------------------------
 
 class TestBlurClassifierInit:
+    def test_verified_artifact_rejects_changed_labels_before_loading_onnx(self, tmp_path):
+        model = tmp_path / "blur_classifier.onnx"
+        labels = tmp_path / "class_names.json"
+        manifest = tmp_path / "manifest.json"
+        model.write_bytes(b"audited model")
+        labels.write_text(json.dumps([
+            "sharp", "motion_blurred", "defocused_blurred", "defocused_object_portrait",
+        ]))
+        manifest.write_text(json.dumps({"models": {"blur_classifier": {
+            "sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
+            "labels_sha256": hashlib.sha256(labels.read_bytes()).hexdigest(),
+            "classes": BlurClassifier.CLASSES,
+        }}}))
+        classifier = BlurClassifier(
+            model_path=str(model), class_names_path=str(labels),
+            manifest_path=str(manifest),
+        )
+        assert classifier.session is None
+
+    def test_verified_artifact_requires_both_files(self, tmp_path):
+        manifest = tmp_path / "manifest.json"
+        manifest.write_text(json.dumps({"models": {"blur_classifier": {
+            "sha256": "0" * 64, "labels_sha256": "0" * 64,
+            "classes": BlurClassifier.CLASSES,
+        }}}))
+        classifier = BlurClassifier(
+            model_path=str(tmp_path / "missing.onnx"),
+            class_names_path=str(tmp_path / "missing.json"),
+            manifest_path=str(manifest),
+        )
+        assert classifier.session is None
+
+    @pytest.mark.parametrize("probs", [
+        [[float("nan"), 0.0, 0.0, 1.0]],
+        [[0.1, 0.1, 0.1, 0.1]],
+        [[1.0, 0.0, 0.0]],
+    ])
+    def test_verified_artifact_rejects_bad_warm_inference(self, tmp_path, monkeypatch, probs):
+        import onnxruntime
+
+        model = tmp_path / "blur_classifier.onnx"
+        labels = tmp_path / "class_names.json"
+        manifest = tmp_path / "manifest.json"
+        model.write_bytes(b"model")
+        labels.write_text(json.dumps(BlurClassifier.CLASSES))
+        manifest.write_text(json.dumps({"models": {"blur_classifier": {
+            "sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
+            "labels_sha256": hashlib.sha256(labels.read_bytes()).hexdigest(),
+            "classes": BlurClassifier.CLASSES,
+        }}}))
+
+        class Session:
+            def get_inputs(self):
+                return [SimpleNamespace(name="images", shape=["batch", 3, 224, 224])]
+
+            def get_outputs(self):
+                return [SimpleNamespace(shape=["batch", 4])]
+
+            def run(self, *_args):
+                return [np.array(probs, dtype=np.float32)]
+
+        monkeypatch.setattr(onnxruntime, "InferenceSession", lambda *_args, **_kwargs: Session())
+        classifier = BlurClassifier(
+            model_path=str(model), class_names_path=str(labels),
+            manifest_path=str(manifest),
+        )
+        assert classifier.session is None
+
     def test_no_model_file(self, tmp_path):
         """Classifier gracefully handles missing model file."""
         clf = BlurClassifier(
@@ -130,6 +200,55 @@ class TestBlurClassifierClassify:
             class_names_path=str(tmp_path / "nonexistent.json"),
         )
         assert clf.classify(_make_bgr_image()) is None
+
+    def test_single_native_call_has_a_deadline(self, classifier, monkeypatch):
+        from src import config
+        from src.utils.timeout import start_timeout_executor
+
+        start_timeout_executor()
+        release = threading.Event()
+        completed = threading.Event()
+        monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(
+            MODEL_PROFILE="blur", INFERENCE_TIMEOUT=0.02, INFERENCE_BATCH_TIMEOUT=0.02,
+            BLUR_INFERENCE_TIMEOUT_SECONDS=0.02,
+        ))
+        def slow_run(*_args):
+            release.wait(1)
+            completed.set()
+            return [np.array([[0.1, 0.05, 0.15, 0.7]], dtype=np.float32)]
+
+        classifier.session.run = slow_run
+        try:
+            with pytest.raises(InferenceTimeoutError):
+                classifier.classify(_make_bgr_image())
+        finally:
+            release.set()
+            assert completed.wait(1)
+
+    def test_static_batch_native_calls_have_a_deadline(self, classifier, monkeypatch):
+        from src import config
+        from src.utils.timeout import start_timeout_executor
+
+        start_timeout_executor()
+        release = threading.Event()
+        completed = threading.Event()
+        monkeypatch.setattr(config, "get_settings", lambda: SimpleNamespace(
+            MODEL_PROFILE="blur", INFERENCE_TIMEOUT=0.02, INFERENCE_BATCH_TIMEOUT=0.02,
+            BLUR_INFERENCE_TIMEOUT_SECONDS=0.02,
+        ))
+        classifier._dynamic_batch = False
+        def slow_run(*_args):
+            release.wait(1)
+            completed.set()
+            return [np.array([[0.1, 0.05, 0.15, 0.7]], dtype=np.float32)]
+
+        classifier.session.run = slow_run
+        try:
+            with pytest.raises(InferenceTimeoutError):
+                classifier.classify_batch([_make_bgr_image()])
+        finally:
+            release.set()
+            assert completed.wait(1)
 
     def test_returns_dict_with_mock_session(self, classifier):
         """classify() returns proper dict with mock session."""

@@ -54,6 +54,200 @@ standalone stack — API, four per-queue Celery workers, db, redis, nginx and ce
 publishes on `127.0.0.1:8000` only; public traffic arrives through nginx on 80/443, so the
 proxy's rate limit and `client_max_body_size` cannot be bypassed.
 
+The Dockerfile defaults to `MODEL_PROFILE=all` and installs the full application dependencies.
+For a smaller CPU blur image, supply the audited ONNX and ordered labels under
+`models/blur_classifier/` in the trusted build workspace, then build with
+`docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur:2026-08-14-dynamic .` and run it
+with `MODEL_PROFILE=blur`. This profile installs the pinned
+`requirements-blur.lock` and loads only blur models; face and bib routes return 404.
+For the initial dedicated Railway blur launch, `.railway/railway.ts` sets
+`BLUR_ASYNC_ENABLED=false`. The shared all-model service keeps the default
+`true`. The desktop calls `/api/v1/blur/classify/stream` and falls back to
+`/api/v1/blur/classify`; both remain available.
+
+**Initial Railway blur launch checklist:**
+- Link the staging directory to the isolated blur project, then inspect
+  `railway config plan`: it must name `quickpitik-ai-api-blur` and change only
+  `ai-api-blur.BLUR_ASYNC_ENABLED`. Abort if it names the backend project.
+- Verify `BLUR_ASYNC_ENABLED=false` on `ai-api-blur` before exposing it. The
+  following POST routes return 503 `BLUR_ASYNC_DISABLED` before multipart parsing:
+  `/api/v1/blur/detect/batch`, `/api/v1/blur/classify/batch`,
+  `/api/v1/blur/detect/mega`, `/api/v1/blur/classify/mega`.
+- Deploy the API with PostgreSQL and Redis for keys, jobs and rate limiting;
+  omit the Celery worker, beat scheduler and shared blob volume. Public
+  `/api/v1/health/readyz` checks the dependencies needed for synchronous blur;
+  it does not certify async job processing.
+- Keep R10/R11 async storage, dispatch and replay guarantees open. Complete
+  Task 10B and its cross-service tests before setting the switch to `true`
+  on this Railway service.
+
+### Optional durable async blur topology (Task 10B)
+
+Keep `.railway/railway.ts` as the stream-only default. When async batch/mega is
+approved for a separate release, preview `.railway/railway-async.ts` with
+`railway config plan --file .railway/railway-async.ts` from an isolated staging
+directory linked to **quickpitik-ai-api-blur**. Review resource creation and
+deletion before applying it. That plan adds one private Railway Bucket, one
+blur worker (`blur,default`, concurrency 1), and one beat scheduler; it enables
+async on the API. Deploy the same verified `MODEL_PROFILE=blur` image/source to
+all three services. Run `railway up . --path-as-root --no-gitignore --service
+<service-name>` separately for the API, worker and beat from the trusted build
+staging directory after the configuration is applied. Deploy the migration
+before accepting async traffic. The worker and beat have no public domain.
+
+The bucket's `BUCKET`, `ENDPOINT`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` and
+`REGION` references feed the matching `AWS_*` variables in each service. Use
+the bucket's reported URL style if it differs from `virtual`. Do not share its
+credentials with desktop keys. The API uploads opaque `jobs/<uuid>/...` keys
+before dispatch, and the worker reads at most the configured per-file limit.
+The single beat process runs the reaper every 5 minutes and blob cleanup every
+30 minutes. Terminal inputs remain for `BLOB_RETENTION_SECONDS` (default 24 h)
+after completion; orphan uploads use the same age window. A cleanup error is
+logged and retried on the next beat pass. Railway Buckets currently have no
+native lifecycle policy, so this scheduler is required for retention.
+
+For the existing Redis service, verify `CONFIG GET appendonly appendfsync
+maxmemory-policy` returns `yes`, `everysec` and `noeviction`, and confirm its
+data volume actually persists through a service restart. Set a memory limit
+with headroom for pending chord results and monitor its usage; an evicting
+cache policy can silently lose jobs. Celery uses a 4,200-second visibility
+timeout, 3,600-second hard task limit and 3,900-second processing lease.
+Start with one 2 vCPU / 2 GiB API process and one 2 vCPU / 2 GiB worker with
+prefetch 1; measure real queue and memory use before changing either budget.
+Keep `WEBHOOK_SECRET_KEY`, Postgres and Redis references aligned across the
+services. A successful `/readyz` checks API dependencies, so also run a
+restricted-key batch request through the separate worker and confirm the
+terminal job before exposing async routes.
+
+The initial one-worker blur budget admits two uploads per process, each at most
+128 MiB total, 25 MiB per file and 500 files per stream. Header dimensions
+must fit 12,000px per edge and 24 megapixels; at most two images decode at
+once across admitted requests. Streams retain one 50-image sub-batch in memory.
+The upload contract remains JPEG/PNG/WebP; clients convert HEIF before upload.
+The full `all` profile retains its 2 GiB shared body ceiling and existing
+per-file limits. Tune the blur values in `src/config.py` only after measuring
+real desktop payloads and container peak RSS under the target Railway quota.
+Regenerate the lock from `requirements-blur.in` with `pip-compile` in a clean Python 3.12
+Linux environment with `libpq-dev` installed. The two files are gitignored; the
+build checks their manifest hashes, label order, ONNX shape, and warm inference,
+then embeds them in a read-only image directory. No model mount is needed at
+runtime. The built image is the immutable artifact containing both files. The
+initial Railway blur service was deployed by CLI upload from an isolated staging
+directory: a committed `ai-api` source tree plus only the audited ONNX and
+`class_names.json` fetched from the private artifact store. Use
+`railway up . --path-as-root --no-gitignore --service ai-api-blur` from that
+staging directory after linking it to the intended project. For example, from
+the monorepo root in PowerShell:
+
+```powershell
+$stage = Join-Path $env:TEMP ("quickpitik-blur-" + [guid]::NewGuid())
+$projectId = '<isolated-project-id>'
+if (-not $env:BLUR_MODEL_URL -or -not $env:BLUR_LABELS_URL) {
+    throw 'Set private BLUR_MODEL_URL and BLUR_LABELS_URL first'
+}
+New-Item -ItemType Directory -Force $stage | Out-Null
+git archive --format=tar -o "$stage\source.tar" HEAD:ai-api
+tar -xf "$stage\source.tar" -C $stage
+Remove-Item -LiteralPath "$stage\source.tar"
+New-Item -ItemType Directory -Force "$stage\models\blur_classifier" | Out-Null
+curl.exe -fsSL $env:BLUR_MODEL_URL -o "$stage/models/blur_classifier/blur_classifier.onnx"
+if ($LASTEXITCODE -ne 0) { throw 'Model fetch failed' }
+curl.exe -fsSL $env:BLUR_LABELS_URL -o "$stage/models/blur_classifier/class_names.json"
+if ($LASTEXITCODE -ne 0) { throw 'Labels fetch failed' }
+Set-Location $stage
+railway link --project $projectId --environment production --service ai-api-blur
+railway up . --path-as-root --no-gitignore --service ai-api-blur
+```
+
+Use a fresh empty staging directory for each release. The image build
+rejects wrong hashes, labels, shape, or warm inference; record its Railway
+image digest for each release. Keep `.env`, training data and checkpoints out
+of staging. A clean Git checkout alone cannot rebuild this image because the
+weights are ignored; private artifact access is required for a new build.
+
+The blur service's `.railway/railway.ts` sets the pre-deploy migration and
+`/api/v1/health/readyz` healthcheck. Run `npm ci --prefix .railway`, then
+`railway config plan` and `railway config apply` from the staging directory
+linked to the isolated blur project when those settings change. Check the plan
+for deletions before applying it. Its `preserve()` entries retain the existing
+Railway variables, including secrets; their values do not enter source control.
+With npm-installed Railway CLI 5.49.1 on Windows, set `$env:_` to its
+`@railway/cli/bin/railway.exe` path before `config plan`/`apply`; otherwise the
+SDK can misread the CLI version.
+
+The configured Railway pre-deploy command runs `python -m alembic upgrade head`
+with `DATABASE_URL` set to a `postgresql+asyncpg://` URL for a database that permits the
+`vector` extension. The existing Alembic chain creates that extension; abort
+the deploy if migrations fail. Provision the desktop key through the existing
+workflow in the gitignored `../docs/api-keys.md`, with only `blur:read` and
+`jobs:read`; the isolated Railway database uses that existing restricted
+desktop key. Do not run `scripts/seed_db.py` in staging or production. Railway
+injects `PORT`; set `WORKERS` for the service (1 on the initial blur service).
+Probe `/api/v1/health/readyz` for public 200/503 readiness; `/api/v1/health` is
+liveness, and `/api/v1/health/ready` remains authenticated and detailed.
+
+The blur profile defaults to one API process and 2/1 ONNX intra/inter threads.
+`WORKERS=1` is required while metrics are enabled; adding workers needs
+Prometheus multiprocess aggregation first. `src/config.py` owns
+the request, stream, and per-inference deadlines. Blur request admission is
+bounded before multipart parsing; native inference has two process-wide slots
+and **zero queue wait**. Exhaustion returns 503 `BLUR_BUSY` with `Retry-After: 1`.
+The separate per-key rate limit uses 429. A timed-out native call may still run:
+its slot stays occupied, and readiness is 503 until it exits. A stream deadline
+ends with `complete: false`; clients must retry unaccounted indices. Railway's
+deployment health check is not continuous monitoring, so an instance stuck in
+native code needs an operational restart after it becomes unready.
+
+### Railway operations and release check
+
+Use the dedicated `MODEL_PROFILE=blur`, `WORKERS=1`, `METRICS_ENABLED=true`,
+`DEBUG=false` profile. Railway supplies `PORT`; the Docker command and health
+check use it. Configure a TLS domain and keep `/api/v1/health/readyz` public for
+the Railway health check. Set `DATABASE_URL`, `REDIS_URL`,
+`ALLOWED_ORIGINS`, and `WEBHOOK_SECRET_KEY` as Railway variables. The
+`.railway/railway.ts` pre-deploy command runs Alembic; verify its success and
+pgvector availability before routing traffic. Provision a restricted desktop key
+using the private `../docs/api-keys.md` workflow and a separate
+`metrics:read` operations key. Never use `scripts/seed_db.py` in production.
+
+The initial service exposes single-image and stream blur only. No worker, beat,
+or blob volume is needed while `BLUR_ASYNC_ENABLED=false`. The optional async
+topology above requires its private bucket, worker, beat, Redis persistence,
+and `BLOB_RETENTION_SECONDS` cleanup. Keep one API process until a measured
+capacity review. Record the chosen Railway CPU, RAM, monthly budget, domain,
+availability alert, termination grace, deployment overlap, image digest, model
+digest, and previous working deployment before rollout. The 2-vCPU/2-GiB local
+measurement in `docs/security.md` is a starting profile, not a Railway promise.
+
+GitHub Actions `ai-api-blur` runs deterministic regressions on pushes and PRs.
+The manual `release-check` job builds from a clean checkout after fetching
+private ONNX, labels, and an approved labelled holdout through the
+`blur-release` environment's `BLUR_MODEL_URL`, `BLUR_LABELS_URL`, and
+`BLUR_HOLDOUT_URL` secrets. The holdout ZIP must have the four class
+directories at its root (see `scripts/blur_gate.py --help`). Missing
+artifacts fail. Set the approved `BLUR_MIN_ACCURACY`, `BLUR_MAX_MISS_RATE`,
+and `BLUR_MAX_OVERCULL_RATE` in that environment's variables; missing or
+invalid limits fail before the release smoke creates database keys. It migrates disposable
+PostgreSQL/pgvector, starts Redis and the built image with async routes disabled,
+checks real inference, verifies batch/mega requests return `BLUR_ASYNC_DISABLED`,
+denies desktop access to `/metrics`, and runs the complete `blur_gate.py`
+holdout gate. The private report is retained for seven days. No deployment
+follows automatically. The independent holdout and acceptance limits remain
+the Task 8 prerequisite; the existing night-event sharp sample already shows
+over-culling (see `docs/ai-system-overview.md`).
+
+Scrape `/metrics` with only the operations key. Watch `blur_images_total`
+(attempted/succeeded/failed/unaccounted), `blur_rejected_requests_total`,
+`blur_active_requests`, `blur_timeouts_total`, `blur_first_result_seconds`,
+`blur_stream_duration_seconds`, `blur_streams_total`, `blur_model_info`,
+`blur_dependency_ready`, and the Prometheus `process_resident_memory_bytes`
+collector. Admission has no waiting queue, so busy rejections measure
+saturation. Read logs by request ID; stream completion logs include counts and
+outcome, with no image bytes or full filenames. Roll back to the recorded
+deployment if readiness stays 503, native timeouts persist, image errors or
+unaccounted results rise, or memory approaches the allocated limit. Scale only
+after measuring the chosen quota and a drain/redeploy test in Task 12.
+
 ### Production (GPU)
 ```bash
 docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up --build -d
@@ -94,13 +288,10 @@ Stage 2 (runtime):
 
 | Model | CPU Latency | GPU Latency | When to Use GPU |
 |---|---|---|---|
-| Blur detection | ~2ms | N/A | Always CPU (too fast to benefit from GPU) |
-| RetinaFace (face detection) | ~80ms | ~8ms | Production with faces |
-| ArcFace (face embedding) | ~50ms | ~5ms | Production with faces |
-| YOLOv8n (bib detection) | ~40ms | ~4ms | Production with bibs |
-| PaddleOCR (bib OCR) | ~30ms | ~6ms | Production with bibs |
+| Blur detection | Measure on the chosen quota | Measure if GPU is selected | CPU for the initial blur profile |
+| Face, bib and OCR | Measure per workload | Measure per workload | Separate all-model profile |
 
-**GPU is 10x faster for neural network inference.** But for development and testing, CPU is fine.
+No generic speed multiplier or latency target is certified for Railway.
 
 The code handles this automatically via ONNX Runtime's provider selection:
 ```python
@@ -153,10 +344,13 @@ providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 - Used by container orchestrators to detect crashed processes
 - If this fails, restart the container
 
-### Readiness: GET /api/v1/health/ready
-- Checks: models loaded + database reachable + Redis reachable
-- Used by load balancers to know when to send traffic
-- If this fails, stop routing traffic to this instance (but don't restart)
+### Public readiness: GET /api/v1/health/readyz
+- Returns only `{"status":"ready"}` (200) or `{"status":"unavailable"}` (503)
+- Checks the profile's required models, database and Redis with bounded probes
+- Use this path for container and Railway readiness checks
+
+### Authenticated detail: GET /api/v1/health/ready
+- Returns the model breakdown and dependency status to an authorized API key
 
 The readiness payload also carries a per-model breakdown:
 
@@ -166,16 +360,15 @@ The readiness payload also carries a per-model breakdown:
             "blur_classifier": false, "bib_detector": false}}
 ```
 
-`models_loaded` covers only the **required** set (`blur`, `face`, `bib_ocr`), so it stays
-`true` — and the probe stays 200 — when an optional model is missing. `models` is where that
-shows up. A `blur_classifier: false` means every `/blur/classify*` route is failing, which is
-the desktop app's primary path; check the `./models` mount first.
+In the full profile, `models_loaded` covers `blur`, `face`, and `bib_ocr`; the
+classifier remains optional. In the blur profile, `blur` and `blur_classifier`
+are both required, so a missing or invalid classifier makes readiness 503.
 
 ### Docker health check
 The Dockerfile includes a built-in health check:
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/api/v1/health/readyz" || exit 1
 ```
 
 ---
@@ -197,11 +390,11 @@ The 2-second drain is intentionally short — reverse proxies / load balancers a
 
 ## Model Loading Strategy
 
-**Weights are never baked into the image.** `models/*` is gitignored (only `manifest.json` is
-tracked), so a build from a clean checkout has nothing to copy — the Dockerfile ships
-`manifest.json` alone, and `docker-compose.prod.yml` mounts the real `./models` directory
-read-only at `/app/models` for the API and all four workers. Miss that mount and the container
-starts with no weights at all.
+**Full-profile weights are mounted; the dedicated blur image carries its audited pair.**
+`models/*` is gitignored (only `manifest.json` is tracked), so a clean Git checkout has no
+weights. `docker-compose.prod.yml` mounts the real `./models` directory read-only at
+`/app/models` for the full-profile API and workers. Miss that mount and the full-profile
+container starts with no weights at all.
 
 1. **InsightFace models** (RetinaFace + ArcFace): downloaded automatically on first use into
    `MODEL_DIR` — so with the mount in place they are already there, and with it missing every
@@ -217,13 +410,13 @@ starts with no weights at all.
    — without it, bib recognition falls back to full-image OCR with more false positives.
 
 4. **Blur classifier**: custom-trained ONNX at `models/blur_classifier/blur_classifier.onnx`
-   plus `class_names.json`. **Optional** — without it every `/blur/classify*` route fails.
+   plus `class_names.json`. Required by the dedicated blur image; optional in the full profile.
 
-Both "optional" models are optional to the *registry*, not to the product. Run
+For the full profile, the classifier and bib detector remain optional to the registry. Run
 `python scripts/download_models.py` before deploying: it checks every artifact named in
 `models/manifest.json` and exits non-zero listing whatever is absent.
 
-At server startup, the `ModelRegistry` loads all models in parallel (via `asyncio.gather` + `asyncio.to_thread`). Heavy libraries (`torch`, `insightface`, `ultralytics`) are pre-imported on the main thread first to avoid Windows DLL loading races. This takes 5–15 seconds depending on the machine. The readiness probe returns 503 until loading completes.
+At server startup, the `ModelRegistry` loads selected models in parallel (via `asyncio.gather` + `asyncio.to_thread`). In the full profile, heavy libraries (`torch`, `insightface`, `ultralytics`) are pre-imported on the main thread to avoid Windows DLL loading races. The server accepts requests after startup; `/api/v1/health/readyz` returns 503 if required inference, PostgreSQL, or Redis is unavailable.
 
 ---
 
@@ -234,12 +427,12 @@ At server startup, the `ModelRegistry` loads all models in parallel (via `asynci
 | `DEBUG` | `true` | `false` | `false` (startup aborts if `true` + `ENVIRONMENT=production`) |
 | `ENVIRONMENT` | `development` | `staging` | `production` |
 | `LOG_LEVEL` | `DEBUG` | `INFO` | `INFO` |
-| `WORKERS` | 1–2 | 2 | scale by CPU |
-| `USE_GPU` | `false` | `false` | `true` (needs `[gpu]` extras + CUDA) |
+| `WORKERS` | 1–2 | 1 for blur | 1 for blur while metrics are enabled |
+| `USE_GPU` | `false` | `false` | `false` for the initial blur profile |
 | Swagger UI / `/redoc` | Enabled | Disabled | Disabled |
 | API-key auth | Bypassable when `DEBUG=true` | Required | Required |
-| `/metrics` | Open (no auth) | Auth required | Auth required |
-| Rate limits | Enforced if Redis is up; no-op otherwise | Enforced | Enforced |
+| `/metrics` | Open when `DEBUG=true` | Explicit `metrics:read` key | Explicit `metrics:read` key |
+| Rate limits | 503 when Redis is unavailable | 503 when Redis is unavailable | 503 when Redis is unavailable |
 | `WEBHOOK_SECRET_KEY` | Optional (plaintext fallback) | Set | Set |
 | HSTS header | Off | Off | On (`strict-transport-security`) |
-| `BLOB_STORE_PATH` | `/tmp/quickpitik-blobs` | Shared volume | Shared volume mounted in API + workers |
+| `BLOB_STORE_PATH` | `/tmp/quickpitik-blobs` | Unused for stream-only blur | Unused for stream-only blur |

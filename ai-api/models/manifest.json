@@ -30,11 +30,14 @@
     "blur_classifier": {
       "name": "YOLOv8n-cls Blur Classifier (4-class)",
       "file": "blur_classifier/blur_classifier.onnx",
+      "artifact_version": "2026-08-14-dynamic",
+      "sha256": "1187f4d5c99c7c8c10596db4c7c343c5d4ca029d4c1f893b69502be6d799cb97",
+      "labels_sha256": "bbd45c36351c2084870b033f04b8a45c0c33cfc64b29b90d622a1f8084056a39",
       "source": "scripts/train_blur_classifier.py -> scripts/export_blur_classifier.py",
       "classes": ["defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp"],
       "export": { "imgsz": 224, "dynamic": true, "simplify": false, "opset": 20 },
       "input_shape": ["batch", 3, "height", "width"],
-      "notes": "Top-1 98.68%. Re-exported 2026-08-14 with dynamic=True: the batch axis is dynamic so classify_batch issues one (N,3,224,224) ONNX call instead of a per-image loop. Ultralytics also makes H/W dynamic; the wrapper always centre-crops and resizes to 224 so that is inert. Verified bit-identical to the previous static export (max abs diff 0.0) and batched-vs-per-image agreement within float32 epsilon. Measured CPU gain is small (~1.06x on 50 images) because the model is tiny and ONNX Runtime already parallelises a single inference — batching is what pays off on GPU. Optional model, loaded only if the .onnx exists. Re-run export_blur_classifier.py to regenerate; it self-verifies the dynamic axis."
+      "notes": "Top-1 98.68%. Re-exported 2026-08-14 with dynamic=True: the batch axis is dynamic so classify_batch issues one (N,3,224,224) ONNX call instead of a per-image loop. Ultralytics also makes H/W dynamic; the wrapper always centre-crops and resizes to 224 so that is inert. Verified bit-identical to the previous static export (max abs diff 0.0) and batched-vs-per-image agreement within float32 epsilon. Measured CPU gain is small (~1.06x on 50 images) because the model is tiny and ONNX Runtime already parallelises a single inference — batching is what pays off on GPU. Required in the blur profile; optional in the full profile. Re-run export_blur_classifier.py to regenerate with a new artifact version and digests; it self-verifies the dynamic axis."
     }
   }
 }

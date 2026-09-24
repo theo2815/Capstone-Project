@@ -31,6 +31,7 @@ import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
 import jakarta.validation.Valid
+import jakarta.servlet.http.HttpServletResponse
 import org.springframework.beans.propertyeditors.StringTrimmerEditor
 import org.springframework.http.MediaType
 import org.springframework.security.access.prepost.PreAuthorize
@@ -178,7 +179,9 @@ class MePhotographerController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: DirectUploadBeginRequest,
+        response: HttpServletResponse,
     ): DirectUploadBeginResponse {
+        response.setHeader("Cache-Control", "no-store")
         rateLimiter.acquireOrThrow(
             policy = Bucket4jRateLimiter.POLICY_PHOTOGRAPHER_UPLOAD,
             key = principal.userId.toString(),
@@ -189,6 +192,8 @@ class MePhotographerController(
             contentHash = body.contentHash,
             contentType = body.contentType,
             sizeBytes = body.sizeBytes,
+            requestId = body.requestId,
+            client = body.client,
         )
     }
 
@@ -198,7 +203,9 @@ class MePhotographerController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: DirectUploadCommitRequest,
+        response: HttpServletResponse,
     ): UploadedPhotoDto {
+        response.setHeader("Cache-Control", "no-store")
         rateLimiter.acquireOrThrow(
             policy = Bucket4jRateLimiter.POLICY_PHOTOGRAPHER_UPLOAD,
             key = principal.userId.toString(),

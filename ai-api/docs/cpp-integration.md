@@ -19,7 +19,9 @@ Most of the "heavy" work (model inference) is already in C++ under the hood via 
 
 Numbers are from `benchmarks/bench_cpp_vs_python.py` on MSVC 19.50 / Windows / AVX2 / Python 3.12. They will differ on Linux-glibc with GCC.
 
-**Key non-speed benefit:** every C++ function releases the GIL via `py::gil_scoped_release`, so multiple Python threads can overlap computation. This matters inside the streaming and Celery batch pipelines, which use thread pools for decode + inference.
+The blur functions remain exported for benchmarks but are not called by the served detector: the C++ Laplacian excludes border pixels and gives different scores from OpenCV. The detector uses OpenCV/NumPy in every build so optional extension installation cannot change a blur decision.
+
+**Key non-speed benefit:** every C++ function releases the GIL via `py::gil_scoped_release`, so multiple Python threads can overlap computation when callers use the exported extension functions. Served blur detection uses OpenCV/NumPy instead.
 
 ## How It Works
 

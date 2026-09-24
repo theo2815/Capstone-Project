@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -19,6 +20,9 @@ class BlurClassifier:
     """
 
     DEFAULT_MIN_DETECTION_CONFIDENCE = 0.5
+    CLASSES = [
+        "defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp",
+    ]
 
     def __init__(
         self,
@@ -27,24 +31,21 @@ class BlurClassifier:
         input_size: int = 224,
         use_gpu: bool = False,
         min_detection_confidence: float = DEFAULT_MIN_DETECTION_CONFIDENCE,
+        manifest_path: str | None = None,
     ) -> None:
         self.model_path = model_path
         self.class_names_path = class_names_path
         self.input_size = input_size
         self.use_gpu = use_gpu
         self.min_detection_confidence = min_detection_confidence
+        self.manifest_path = manifest_path
         self.session = None
         self.class_names: list[str] = []
         self._load_model()
 
     def _load_model(self) -> None:
         # Default class ordering (alphabetical, as YOLOv8 sorts)
-        self.class_names = [
-            "defocused_blurred",
-            "defocused_object_portrait",
-            "motion_blurred",
-            "sharp",
-        ]
+        self.class_names = self.CLASSES.copy()
 
         try:
             import onnxruntime as ort
@@ -55,6 +56,23 @@ class BlurClassifier:
                     model_path=self.model_path,
                 )
                 return
+
+            if self.manifest_path:
+                artifact = json.loads(Path(self.manifest_path).read_text(encoding="utf-8"))[
+                    "models"
+                ]["blur_classifier"]
+                names_path = Path(self.class_names_path)
+                if not names_path.is_file() or artifact["classes"] != self.CLASSES:
+                    raise ValueError("Blur classifier labels are missing or unordered")
+                for path, digest in (
+                    (Path(self.model_path), artifact["sha256"]),
+                    (names_path, artifact["labels_sha256"]),
+                ):
+                    with path.open("rb") as f:
+                        if hashlib.file_digest(f, "sha256").hexdigest() != digest:
+                            raise ValueError("Blur classifier artifact digest mismatch")
+                if json.loads(names_path.read_text(encoding="utf-8")) != self.CLASSES:
+                    raise ValueError("Blur classifier label order mismatch")
 
             providers = (
                 ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -100,6 +118,22 @@ class BlurClassifier:
                 self.session = None
                 return
 
+            if self.manifest_path:
+                input_shape = self.session.get_inputs()[0].shape
+                if len(input_shape) != 4 or input_shape[1] != 3 or len(output_shape) != 2:
+                    raise ValueError("Blur classifier ONNX input/output shape mismatch")
+                input_name = self.session.get_inputs()[0].name
+                sample = np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8)
+                warm = self.session.run(None, {input_name: self._preprocess(sample)})[0]
+                if (
+                    warm.shape != (1, len(self.CLASSES))
+                    or not np.isfinite(warm).all()
+                    or (warm < -1e-5).any()
+                    or (warm > 1 + 1e-5).any()
+                    or not np.isclose(warm.sum(), 1.0, atol=1e-4)
+                ):
+                    raise ValueError("Blur classifier warm inference failed")
+
             # Check if model supports dynamic batch (dim 0 is -1 or None)
             input_shape = self.session.get_inputs()[0].shape
             self._dynamic_batch = (
@@ -117,7 +151,7 @@ class BlurClassifier:
             logger.warning(
                 "BlurClassifier model not available",
                 model_path=self.model_path,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             self.session = None
 
@@ -194,10 +228,15 @@ class BlurClassifier:
         input_tensor = self._preprocess(image)
         input_name = self.session.get_inputs()[0].name
 
-        from src.utils.timeout import run_direct
+        from src.config import get_settings
+        from src.utils.timeout import run_direct, run_with_timeout
 
-        outputs = run_direct(
+        settings = get_settings()
+        runner = run_with_timeout if settings.MODEL_PROFILE == "blur" else run_direct
+        outputs = runner(
             self.session.run, args=(None, {input_name: input_tensor}),
+            timeout_seconds=(settings.BLUR_INFERENCE_TIMEOUT_SECONDS
+                             if settings.MODEL_PROFILE == "blur" else 0),
         )
         return self._logits_to_result(outputs[0][0])
 
@@ -262,6 +301,8 @@ class BlurClassifier:
                 _s.INFERENCE_BATCH_TIMEOUT,
                 _s.INFERENCE_TIMEOUT + len(tensors) * 2,
             )
+            if _s.MODEL_PROFILE == "blur":
+                timeout = min(timeout, _s.BLUR_INFERENCE_TIMEOUT_SECONDS)
             batch_logits = run_with_timeout(
                 self.session.run,
                 args=(None, {input_name: batch_tensor}),
@@ -272,11 +313,17 @@ class BlurClassifier:
                 results[img_i] = self._logits_to_result(batch_logits[batch_i])
         else:
             # Static batch=1: run per-image (no noisy exception per sub-batch)
-            from src.utils.timeout import run_direct
+            from src.config import get_settings
+            from src.utils.timeout import run_direct, run_with_timeout
+
+            settings = get_settings()
+            runner = run_with_timeout if settings.MODEL_PROFILE == "blur" else run_direct
 
             for tensor, img_i in zip(tensors, valid_indices):
-                logits = run_direct(
+                logits = runner(
                     self.session.run, args=(None, {input_name: tensor}),
+                    timeout_seconds=(settings.BLUR_INFERENCE_TIMEOUT_SECONDS
+                                     if settings.MODEL_PROFILE == "blur" else 0),
                 )
                 results[img_i] = self._logits_to_result(logits[0][0])
 

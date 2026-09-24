@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from src.middleware.auth import check_scope, verify_api_key
 from src.middleware.rate_limit import RATE_TIERS, check_rate_limit
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,6 +115,17 @@ class TestVerifyApiKey:
         assert "Missing API key" in exc_info.value.detail
 
     @pytest.mark.asyncio
+    async def test_no_redis_fails_before_database(self, fake_request):
+        with (
+            patch("src.db.session.get_session_ctx") as database,
+            pytest.raises(HTTPException) as error,
+        ):
+            await verify_api_key(fake_request, api_key="valid-key")
+        assert error.value.status_code == 503
+        assert error.value.headers["Retry-After"] == "1"
+        database.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_debug_bypass_returns_wildcard_scopes(self, debug_request):
         """DEBUG=true + no key => debug key_meta with scopes=["*"]."""
         result = await verify_api_key(debug_request, api_key=None)
@@ -142,6 +153,8 @@ class TestVerifyApiKey:
 
         mock_ctx = _make_session_ctx(mock_session)
         mock_get_session_ctx = MagicMock(return_value=mock_ctx)
+        fake_request.app.state.redis = AsyncMock()
+        fake_request.app.state.redis.get.return_value = None
 
         with (
             _patch_db_imports(mock_get_session_ctx),
@@ -165,6 +178,8 @@ class TestVerifyApiKey:
 
         mock_ctx = _make_session_ctx(mock_session)
         mock_get_session_ctx = MagicMock(return_value=mock_ctx)
+        fake_request.app.state.redis = AsyncMock()
+        fake_request.app.state.redis.get.return_value = None
 
         with _patch_db_imports(mock_get_session_ctx):
             with pytest.raises(HTTPException) as exc_info:
@@ -198,6 +213,20 @@ class TestVerifyApiKey:
         mock_rl.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_redis_get_failure_returns_503_then_recovers(self):
+        redis = AsyncMock()
+        redis.get.side_effect = [RedisConnectionError("down"), json.dumps({
+            "key_id": "cached-id", "scopes": ["blur:read"], "rate_tier": "free"
+        })]
+        request = _make_request(redis=redis)
+        with patch("src.middleware.auth._enforce_rate_limit", new_callable=AsyncMock):
+            with pytest.raises(HTTPException) as error:
+                await verify_api_key(request, api_key="valid-key")
+            assert error.value.status_code == 503
+            assert error.value.headers["Retry-After"] == "1"
+            assert (await verify_api_key(request, api_key="valid-key"))["key_id"] == "cached-id"
+
+    @pytest.mark.asyncio
     async def test_rate_limit_called_after_db_auth(self, fake_request):
         """After successful DB auth, _enforce_rate_limit must be called."""
         raw_key = "rl-test-key"
@@ -214,6 +243,8 @@ class TestVerifyApiKey:
 
         mock_ctx = _make_session_ctx(mock_session)
         mock_get_session_ctx = MagicMock(return_value=mock_ctx)
+        fake_request.app.state.redis = AsyncMock()
+        fake_request.app.state.redis.get.return_value = None
 
         with (
             _patch_db_imports(mock_get_session_ctx),
@@ -328,6 +359,24 @@ class TestVerifyApiKey:
             f"apikey:{key_hash}", json.dumps(expected_meta), ex=300
         )
 
+    @pytest.mark.asyncio
+    async def test_redis_set_failure_returns_503(self):
+        db_row = MagicMock(id=uuid.uuid4(), scopes=["blur:read"], rate_tier="free")
+        session = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = db_row
+        session.execute.return_value = result
+        redis = AsyncMock()
+        redis.get.return_value = None
+        redis.set.side_effect = RedisConnectionError("down")
+        with (
+            _patch_db_imports(MagicMock(return_value=_make_session_ctx(session))),
+            pytest.raises(HTTPException) as error,
+        ):
+            await verify_api_key(_make_request(redis=redis), api_key="valid-key")
+        assert error.value.status_code == 503
+        assert error.value.headers["Retry-After"] == "1"
+
 
 # ===================================================================
 # 2. check_rate_limit
@@ -337,16 +386,27 @@ class TestCheckRateLimit:
     """Tests for ``check_rate_limit`` in rate_limit.py."""
 
     @pytest.mark.asyncio
-    async def test_no_redis_returns_unlimited(self):
-        """Without Redis, rate limiting is effectively disabled."""
+    async def test_no_redis_returns_503(self):
+        """A missing limiter cannot admit paid compute."""
         request = _make_request(debug=False, redis=None)
         key_meta = {"key_id": "k1", "rate_tier": "free"}
 
-        result = await check_rate_limit(request, key_meta)
+        with pytest.raises(HTTPException) as error:
+            await check_rate_limit(request, key_meta)
+        assert error.value.status_code == 503
+        assert error.value.headers["Retry-After"] == "1"
 
-        assert result["remaining"] == -1
-        assert result["limit"] == -1
-        assert result["reset"] == 0
+    @pytest.mark.asyncio
+    async def test_eval_failure_returns_503_then_recovers(self):
+        redis = AsyncMock()
+        redis.eval.side_effect = [RedisConnectionError("down"), [1, 59, 1]]
+        request = _make_request(redis=redis)
+        key_meta = {"key_id": "k1", "rate_tier": "free"}
+        with pytest.raises(HTTPException) as error:
+            await check_rate_limit(request, key_meta)
+        assert error.value.status_code == 503
+        assert error.value.headers["Retry-After"] == "1"
+        assert (await check_rate_limit(request, key_meta))["remaining"] == 59
 
     @pytest.mark.asyncio
     async def test_returns_rate_info_when_allowed(self):

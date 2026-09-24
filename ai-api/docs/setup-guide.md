@@ -183,7 +183,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 Make sure PostgreSQL is running: `docker compose up db -d`
 
 ### "Redis not available" warning
-Not critical for development. Redis is optional. Rate limiting and caching will be disabled.
+Start Redis with `docker compose up redis -d`. Authenticated requests return 503 until it is available; `/health` remains responsive.
 
 ### Models fail to load
 On first run, InsightFace and PaddleOCR download models automatically (~500MB total). Ensure you have internet access. The custom YOLOv8 bib detector ONNX must be placed manually at `models/bib_detection/yolov8n_bib.onnx` — the repo ships with one that's ready to use. The blur classifier ONNX is also optional and lives at `models/blur_classifier/blur_classifier.onnx`; if missing, `/blur/classify*` returns `MODEL_UNAVAILABLE` but `/blur/detect*` still works.
