@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from threading import BoundedSemaphore
 
 from fastapi import FastAPI, Request
@@ -65,6 +65,16 @@ async def lifespan(app: FastAPI):
     await registry.load_all(settings)
     app.state.model_registry = registry
     logger.info("ML models loaded", all_loaded=registry.all_loaded())
+    if settings.MODEL_PROFILE == "blur" and settings.METRICS_ENABLED and registry.all_loaded():
+        import json
+        from pathlib import Path
+
+        from src.utils.blur_metrics import model_info
+
+        artifact = json.loads(
+            (Path(settings.MODEL_DIR) / "manifest.json").read_text(encoding="utf-8")
+        )["models"]["blur_classifier"]
+        model_info.labels(artifact["artifact_version"], artifact["sha256"]).set(1)
 
     # SEC-6: Warn if webhook secrets will be stored as plaintext
     if not settings.WEBHOOK_SECRET_KEY:
@@ -162,17 +172,26 @@ def create_app() -> FastAPI:
                 header_waiter.cancel()
             if header_waiter in done:
                 # Headers are already sent; abort a stalled stream rather than
-                # trying to send a second response over the same socket.
-                with suppress(TimeoutError):
+                # trying to send a second response over the same socket. Give
+                # the route one second to close files and emit its incomplete
+                # summary after its own deadline.
+                try:
                     await asyncio.wait_for(
-                        task, timeout=settings.BLUR_STREAM_TIMEOUT_SECONDS
+                        task, timeout=settings.BLUR_STREAM_TIMEOUT_SECONDS + 1.0
                     )
+                except TimeoutError:
+                    from src.utils.blur_metrics import timeouts
+
+                    timeouts.labels("stream").inc()
                 return
             if done:
                 await task
                 return
 
             timed_out = True
+            from src.utils.blur_metrics import timeouts
+
+            timeouts.labels("request").inc()
             task.cancel()
 
             def consume(finished):
@@ -258,6 +277,9 @@ def create_app() -> FastAPI:
 
             if (not settings.BLUR_ASYNC_ENABLED and scope.get("method") == "POST"
                     and scope.get("path") in _blur_async_paths):
+                from src.utils.blur_metrics import rejected_requests
+
+                rejected_requests.labels("async_disabled").inc()
                 await JSONResponse(status_code=503, content={
                     "success": False,
                     "request_id": scope.get("state", {}).get("request_id", ""),
@@ -274,6 +296,9 @@ def create_app() -> FastAPI:
             if blur_request:
                 acquired = _blur_admission.acquire(blocking=False)
                 if not acquired:
+                    from src.utils.blur_metrics import rejected_requests
+
+                    rejected_requests.labels("busy").inc()
                     response = JSONResponse(status_code=503, content={
                         "success": False,
                         "request_id": scope.get("state", {}).get("request_id", ""),
@@ -285,10 +310,25 @@ def create_app() -> FastAPI:
 
             from src.utils.timeout import RequestWork, request_work
 
-            tracker = RequestWork(_blur_admission.release) if acquired else None
+            if acquired:
+                from src.utils.blur_metrics import active_requests
+
+                active_requests.inc()
+
+                def release_blur():
+                    _blur_admission.release()
+                    active_requests.dec()
+
+                tracker = RequestWork(release_blur)
+            else:
+                tracker = None
             token = request_work.set(tracker)
 
             async def reject():
+                if blur_request:
+                    from src.utils.blur_metrics import rejected_requests
+
+                    rejected_requests.labels("too_large").inc()
                 response = JSONResponse(status_code=413, content={
                     "success": False,
                     "request_id": scope.get("state", {}).get("request_id", ""),
@@ -394,45 +434,17 @@ def create_app() -> FastAPI:
         # In development, expose /metrics without auth
         instrumentator.expose(app, include_in_schema=False)
     elif settings.METRICS_ENABLED:
-        # In production, serve metrics behind a dedicated authenticated route
+        # Require an explicit operations scope; desktop and wildcard keys stay out.
+        from fastapi import Depends, HTTPException
         from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
         from starlette.responses import Response
 
+        from src.middleware.auth import verify_api_key
+
         @app.get("/metrics", include_in_schema=False)
-        async def metrics(request: Request):
-            import hashlib
-
-            from src.db.session import get_session_ctx
-
-            api_key = request.headers.get(settings.API_KEY_HEADER)
-            if not api_key:
-                return JSONResponse(
-                    status_code=401, content={"detail": "Missing API key"}
-                )
-
-            # Validate API key against DB (same logic as verify_api_key)
-            key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-            from sqlalchemy import select
-
-            from src.db.models import APIKey
-
-            try:
-                async with get_session_ctx() as session:
-                    result = await session.execute(
-                        select(APIKey).where(
-                            APIKey.key_hash == key_hash,
-                            APIKey.active.is_(True),
-                        )
-                    )
-                    if result.scalar_one_or_none() is None:
-                        return JSONResponse(
-                            status_code=403, content={"detail": "Invalid API key"}
-                        )
-            except Exception:
-                return JSONResponse(
-                    status_code=503, content={"detail": "Cannot validate API key"}
-                )
-
+        async def metrics(key_meta: dict = Depends(verify_api_key)):
+            if "metrics:read" not in key_meta.get("scopes", []):
+                raise HTTPException(status_code=403, detail="Operations scope required")
             return Response(
                 content=generate_latest(), media_type=CONTENT_TYPE_LATEST
             )

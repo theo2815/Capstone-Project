@@ -16,51 +16,15 @@ make celery    # only needed for batch endpoints
 
 ---
 
-## 1. Generate and Register Your API Key
+## 1. Provision the Desktop API Key
 
-### Step 1: Generate a key
-
-Run from the `ai-api/` directory:
-
-```bash
-python gen_api_key.py
-```
-
-Output:
-
-```
-Your API key: sk_test_<random_hex>
-
-Run this SQL:
-INSERT INTO api_keys (id, key_hash, name, scopes, rate_tier, active)
-VALUES ('<uuid>', '<sha256_hash>', 'Desktop App', '["*"]', 'pro', true);
-```
-
-**Save the `sk_test_...` key immediately** -- it cannot be recovered. Only the hash is stored in the database.
-
-### Step 2: Insert the key into the database
-
-If running PostgreSQL via Docker Compose:
-
-```bash
-docker compose exec db psql -U postgres -d quickpitik -c "<the SQL from step 1>"
-```
-
-Or run the helper script if one was already generated:
-
-```bash
-python insert_key.py
-```
-
-### Scopes
-
-The `["*"]` scope grants access to all endpoints. For a desktop app that only needs blur detection, you can restrict to:
-
-```json
-["blur:read"]
-```
-
-This allows `/blur/detect`, `/blur/classify`, and their batch variants, but blocks face and bib endpoints.
+Use the private `docs/api-keys.md` workflow to create and register a key in
+the target ai-api database. Give it exactly `["blur:read","jobs:read"]`;
+`jobs:read` covers polling if async is enabled later. Store the plaintext key
+in the desktop's secret configuration. The database stores only its hash.
+`gen_api_key.py` prints a generic wildcard SQL example, so do not execute
+that SQL unchanged for a desktop key. Do not run `seed_db.py` in staging or
+production.
 
 ### Rate Tiers
 
@@ -316,7 +280,7 @@ POST /api/v1/blur/classify/stream   (CNN classifier, also accepts blur_type)
 ```
 {"index":0,"filename":"IMG_001.jpg","predicted_class":"sharp","confidence":0.97,"probabilities":{...}}
 {"index":1,"filename":"IMG_002.jpg","predicted_class":"motion_blurred","confidence":0.88,"probabilities":{...}}
-{"_summary":true,"total":2,"processing_time_ms":412.7}
+{"_summary":true,"total":2,"successful":2,"errors":0,"complete":true,"processing_time_ms":412.7}
 ```
 
 Client rules that matter:
@@ -324,28 +288,26 @@ Client rules that matter:
 - **Match results by `filename`, not arrival order.** `/detect/stream` completes
   images as they finish, so lines arrive out of order. (`/classify/stream` emits in
   sub-batch order, but do not depend on that.)
-- **Treat a missing `_summary` line as a failed run.** The HTTP status is sent
+- **Treat a missing `_summary` line or `complete:false` as a failed run.** The HTTP status is sent
   before processing begins, so a mid-stream server failure cannot become an error
   code — it shows up as a short body. The summary line is the completion signal.
 - **A per-image `{"index":…,"filename":…,"error":…}` line is normal** for an
   undecodable file; keep reading, the rest of the batch is unaffected.
-- For 5k–10k images, send several concurrent requests of 200–500 each rather than
-  one giant request.
+- Respect server `BLUR_BUSY` responses and `Retry-After` before starting another
+  stream. A single service currently admits two requests.
 
 **Limits on the stream path** (added 2026-08-14 — it previously validated nothing):
 
-- **Per file**, `MAX_FILE_SIZE` (25 MB) and `MAX_IMAGE_DIMENSION` (12000 px longest
-  edge). Both are sized to pass any real camera, so a normal frame is never
-  refused. A file that breaks either gets a per-image `error` line at its own
+- **Per file**, `MAX_FILE_SIZE` (25 MB), `MAX_IMAGE_DIMENSION` (12000 px longest
+  edge), and 24 megapixels on the dedicated blur service. A file that breaks a
+  limit gets a per-image `error` line at its own
   index — the request still returns 200 and every other image is still scored.
   Content-Type is *not* checked on this path, so posting
   `application/octet-stream` is fine.
-- **Per request**, `MAX_REQUEST_BODY` (2 GB total) — refused with `413` before any
-  file is read. Not a practical constraint on this path: the desktop resizes to
-  1280 px / q90 before uploading, which measures ~253 KB per image (p90 412 KB),
-  so a full 200-image chunk is ~49 MB and even a 500-image one is ~127 MB. The
-  ceiling is sized for the Spring backend's mega drain, which posts *original*
-  bytes; it is not sized for this path.
+- **Per request**, `BLUR_MAX_REQUEST_BODY` (128 MiB) on the dedicated blur
+  service — refused with `413` before multipart parsing. The shared all-model
+  service retains its separate `MAX_REQUEST_BODY` ceiling (2 GiB). Split a
+  stream if its prepared JPEGs approach the blur service's body limit.
 
 Both `/blur/classify` and `/blur/classify/stream` decode to
 `BLUR_CLASSIFY_DECODE_DIM` (640) internally and score identically.
@@ -359,9 +321,9 @@ Both `/blur/classify` and `/blur/classify/stream` decode to
 ```
 1. User imports photos into desktop app
 2. Desktop app iterates each photo:
-   a. POST /blur/detect  (fast Laplacian check ~20ms)
+   a. POST /blur/detect  (classical Laplacian check)
    b. If is_blurry == true:
-      - POST /blur/classify  (CNN classification ~45ms)
+      - POST /blur/classify  (CNN classification)
       - Tag photo with blur type (motion_blurred, defocused_object_portrait, etc.)
    c. If is_blurry == false:
       - Tag photo as sharp, skip classification
@@ -400,9 +362,10 @@ for the duration of the run — a queued job survives a disconnect, a stream doe
 | `401` | Invalid key -- prompt user to re-enter |
 | `403` | Scope issue -- key needs `blur:read` |
 | `400` | Validation failure on a single-image endpoint -- file over 25 MB (`MAX_FILE_SIZE`), over 12000 px (`MAX_IMAGE_DIMENSION`), wrong type, or corrupt. On `/stream` the same failures arrive as a per-image `error` line instead, with the request still `200`. |
-| `413` | Whole request body over 2 GB (`MAX_REQUEST_BODY`) -- send fewer files per request. Not per-image: no file has been read yet, so the response names no filename. Unreachable from this client at the resized upload size. |
+| `413` | Whole request body over the service limit (128 MiB on dedicated blur) -- send fewer files per request. No filename is available yet. |
 | `429` | Rate limited -- wait for `Retry-After` seconds, then retry |
-| `503` | Model not loaded -- blur classifier may not be deployed yet, fall back to `/blur/detect` |
+| `503` | Check the error code: `BLUR_BUSY` means retry after `Retry-After`; `BLUR_ASYNC_DISABLED` means use single/stream routes; unavailable model or dependency means wait for service recovery. |
+| `504` | Request or inference deadline reached -- retry only unaccounted images after native work clears. |
 
 ### Confidence threshold guidance
 
@@ -420,17 +383,16 @@ For the CNN classifier only, the minimum confidence floor is configurable server
 |------|-------|
 | Base URL | `http://localhost:8000/api/v1` |
 | Auth header | `X-API-Key: sk_test_...` |
-| Required scope | `blur:read` |
+| Required scopes | `blur:read`, `jobs:read` |
 | Max file size | 25 MB (`MAX_FILE_SIZE`) |
 | Max image dimension | 12000 px longest edge (`MAX_IMAGE_DIMENSION`) |
-| Max total request body | 2 GB (`MAX_REQUEST_BODY`) -- ~49 MB for a 200-image resized chunk |
+| Max total request body | 128 MiB on dedicated blur (`BLUR_MAX_REQUEST_BODY`); 2 GiB on shared all-model (`MAX_REQUEST_BODY`) |
 | Max async batch size | 50 images (`MAX_BATCH_SIZE`) |
-| Max stream batch size | 500 images (`STREAM_*_MAX_SIZE`), subject to the 2 GB body limit |
+| Max stream batch size | 500 images (`STREAM_*_MAX_SIZE`), subject to the service body limit |
 | Supported formats | JPEG, PNG, WebP |
 | Fast check | `POST /blur/detect` |
 | CNN classify | `POST /blur/classify` |
 | **Stream detect (primary)** | `POST /blur/detect/stream` |
 | **Stream classify (primary)** | `POST /blur/classify/stream` |
-| Batch detect | `POST /blur/detect/batch` |
-| Batch classify | `POST /blur/classify/batch` |
+| Batch detect/classify | Optional async; disabled on the initial dedicated Railway blur service |
 | Poll job | `GET /jobs/{job_id}` |

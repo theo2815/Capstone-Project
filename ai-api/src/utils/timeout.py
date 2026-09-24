@@ -188,6 +188,9 @@ def run_with_timeout(
     try:
         return future.result(timeout=timeout_seconds)
     except TimeoutError:
+        from src.utils.blur_metrics import timeouts
+
+        timeouts.labels("native").inc()
         if not future.cancel():
             with _state_lock:
                 if not future.done():

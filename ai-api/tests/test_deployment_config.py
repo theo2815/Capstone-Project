@@ -228,9 +228,42 @@ async def test_stream_deadline_cancels_stalled_response_send():
 
     scope = {"type": "http", "path": "/api/v1/blur/classify/stream", "state": {}}
     await asyncio.wait_for(
-        middleware(stream)(scope, lambda: None, blocked_send), timeout=0.2
+        middleware(stream)(scope, lambda: None, blocked_send), timeout=1.2
     )
     assert cancelled.is_set()
+
+
+def test_blur_profile_stream_reports_incomplete_before_transport_deadline():
+    import json
+
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", DEBUG=True, METRICS_ENABLED=False,
+                        BLUR_STREAM_TIMEOUT_SECONDS=0.02)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+
+    class Classifier:
+        min_detection_confidence = 0.5
+        _dynamic_batch = True
+
+        def classify_batch(self, images):
+            time.sleep(0.08)
+            return [{"predicted_class": "sharp", "confidence": 1.0,
+                     "probabilities": {"sharp": 1.0}} for _ in images]
+
+    app.state.model_registry = SimpleNamespace(get=lambda name: Classifier())
+    image = io.BytesIO()
+    Image.new("RGB", (64, 64)).save(image, format="JPEG")
+    response = TestClient(app).post(
+        "/api/v1/blur/classify/stream",
+        files={"files": ("image.jpg", image.getvalue(), "image/jpeg")},
+    )
+    lines = [json.loads(line) for line in response.text.splitlines()]
+    assert response.status_code == 200
+    assert lines[-1]["_summary"] and lines[-1]["complete"] is False
 
 
 def _services(path: Path) -> dict:
@@ -499,6 +532,114 @@ def test_metrics_enabled_health_request_works_without_lifespan():
     assert TestClient(app).get("/api/v1/health").status_code == 200
 
 
+def test_metrics_requires_explicit_operations_scope():
+    import hashlib
+    import json
+
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", ENVIRONMENT="production", DEBUG=False,
+                        METRICS_ENABLED=True)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+
+    keys = {
+        hashlib.sha256(key.encode()).hexdigest(): json.dumps({
+            "key_id": key, "scopes": scopes, "rate_tier": "internal",
+        })
+        for key, scopes in (
+            ("desktop", ["blur:read", "jobs:read"]),
+            ("wildcard", ["*"]),
+            ("operator", ["metrics:read"]),
+        )
+    }
+
+    class Redis:
+        async def get(self, name):
+            return keys.get(name.removeprefix("apikey:"))
+
+        async def eval(self, *_args):
+            return [1, 10, 1]
+
+    app.state.redis = Redis()
+    client = TestClient(app)
+    assert client.get("/metrics").status_code == 401
+    assert client.get("/metrics", headers={"X-API-Key": "desktop"}).status_code == 403
+    assert client.get("/metrics", headers={"X-API-Key": "wildcard"}).status_code == 403
+    response = client.get("/metrics", headers={"X-API-Key": "operator"})
+    assert response.status_code == 200
+    assert "http_request_duration_seconds" in response.text
+
+
+def test_blur_metrics_require_one_api_process():
+    from src.config import Settings
+
+    with pytest.raises(ValidationError, match="WORKERS=1"):
+        Settings(_env_file=None, MODEL_PROFILE="blur", METRICS_ENABLED=True, WORKERS=2)
+
+
+def test_native_inference_timeout_is_counted_until_work_exits():
+    from prometheus_client import generate_latest
+
+    from src.utils.timeout import InferenceTimeoutError, run_with_timeout, start_timeout_executor
+
+    start_timeout_executor()
+    release = threading.Event()
+
+    def count():
+        for line in generate_latest().splitlines():
+            if line.startswith(b'blur_timeouts_total{phase="native"} '):
+                return float(line.rsplit(b" ", 1)[-1])
+        return 0.0
+
+    before = count()
+    try:
+        with pytest.raises(InferenceTimeoutError):
+            run_with_timeout(lambda: release.wait(1), timeout_seconds=0.01)
+        assert count() - before == 1
+    finally:
+        release.set()
+
+
+def test_stream_image_error_is_counted_separately_from_request_rejection():
+    import json
+
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=True, DEBUG=True)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+    app.state.model_registry = SimpleNamespace(
+        get=lambda name: SimpleNamespace(min_detection_confidence=0.5)
+        if name == "blur_classifier" else None
+    )
+    client = TestClient(app)
+
+    def metric(name):
+        for line in client.get("/metrics").text.splitlines():
+            if line.startswith(name + " "):
+                return float(line.rsplit(" ", 1)[-1])
+        return 0.0
+
+    attempted = 'blur_images_total{operation="classify",outcome="attempted"}'
+    failed = 'blur_images_total{operation="classify",outcome="failed"}'
+    rejected = 'blur_rejected_requests_total{reason="busy"}'
+    before = (metric(attempted), metric(failed), metric(rejected))
+    response = client.post("/api/v1/blur/classify/stream",
+                           files=[("files", ("bad.jpg", b"not an image", "image/jpeg"))])
+    lines = [json.loads(line) for line in response.text.splitlines()]
+    assert response.status_code == 200
+    assert lines[0]["error"]
+    assert lines[-1]["_summary"] and lines[-1]["errors"] == 1
+    assert metric(attempted) - before[0] == 1
+    assert metric(failed) - before[1] == 1
+    assert metric(rejected) - before[2] == 0
+
+
 def test_readyz_recovers_when_redis_was_down_at_startup(monkeypatch):
     from src.config import Settings
     from src.main import create_app
@@ -560,11 +701,15 @@ def test_readyz_recovers_when_redis_was_down_at_startup(monkeypatch):
     with TestClient(create_app()) as client:
         assert client.get("/api/v1/health").status_code == 200
         assert client.get("/api/v1/health/readyz").status_code == 503
+        from prometheus_client import generate_latest
+
+        assert b'blur_dependency_ready{dependency="redis"} 0.0' in generate_latest()
         path = "/api/v1/blur/detect"
         headers = {"X-API-Key": "test"}
         assert client.post(path, headers=headers).status_code == 503
         redis.available = True
         assert client.get("/api/v1/health/readyz").status_code == 200
+        assert b'blur_dependency_ready{dependency="redis"} 1.0' in generate_latest()
         assert client.post(path, headers=headers).status_code == 422
 
 

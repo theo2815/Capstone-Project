@@ -151,7 +151,7 @@ class BlurClassifier:
             logger.warning(
                 "BlurClassifier model not available",
                 model_path=self.model_path,
-                error=str(e),
+                error_type=type(e).__name__,
             )
             self.session = None
 

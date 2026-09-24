@@ -59,7 +59,7 @@ async def _checks(request: Request) -> ReadinessResponse:
     db_ok, redis_ok = await asyncio.gather(db_healthy(), redis_healthy())
     from src.utils.timeout import inference_healthy
 
-    return ReadinessResponse(
+    checks = ReadinessResponse(
         models_loaded=registry.all_loaded(),
         models=registry.status(),
         inference=(
@@ -68,6 +68,15 @@ async def _checks(request: Request) -> ReadinessResponse:
         database=db_ok,
         redis=redis_ok,
     )
+    if request.app.state.settings.MODEL_PROFILE == "blur":
+        from src.utils.blur_metrics import dependency_ready
+
+        for name, ready in (
+            ("models", checks.models_loaded), ("inference", checks.inference),
+            ("database", db_ok), ("redis", redis_ok),
+        ):
+            dependency_ready.labels(name).set(int(ready))
+    return checks
 
 
 @router.get("/readyz", include_in_schema=False)

@@ -32,6 +32,12 @@ Checks Redis cache for "apikey:a1b2c3d4..."
 
 **Development mode:** When `DEBUG=true`, requests without an API key are allowed with full access. This only applies in development.
 
+**Operational metrics:** In non-debug environments, `/metrics` requires an
+active, rate-limited key with the explicit `metrics:read` scope. A desktop
+`blur:read`/`jobs:read` key and even a wildcard `*` key are denied. Keep the
+operations key in the private scraper; never add it to a desktop client. The
+scrape has fixed labels and must not include keys, filenames, or image data.
+
 ### JWT (future, for mobile/web)
 
 When the mobile app or website needs to call the AI API directly (instead of going through the backend), JWT-based auth will be used. `JWT_PUBLIC_KEY` and `JWT_ALGORITHM=RS256` are already in `Settings` but no endpoint currently validates JWTs — only API-key auth is enforced today. The dependency is `PyJWT` with `cryptography`.
@@ -222,9 +228,11 @@ assert hmac.compare_digest(expected, received)
 
 ## Dependency Security
 
-- **pip-audit**: Run in CI pipeline to check for known vulnerabilities in dependencies
-- **Dependabot / Renovate**: Automated dependency update PRs
-- **Pinned versions**: All dependencies in `pyproject.toml` have upper bounds (e.g., `>=0.115,<1`) to prevent unexpected breaking changes
+- **Dependency scan**: Task 12 release qualification must scan the exact built
+  environment; the current blur workflow runs regressions and a model/holdout
+  gate, not a vulnerability scanner.
+- **Version bounds**: `pyproject.toml` bounds major versions; the blur image
+  installs `requirements-blur.lock`.
 
 ---
 
@@ -233,7 +241,7 @@ assert hmac.compare_digest(expected, received)
 - [x] API key authentication (SHA-256 hashed, scoped)
 - [x] Rate limiting (token bucket via Redis — enforced on every authenticated endpoint)
 - [x] Per-key concurrent batch job cap (`MAX_ACTIVE_JOBS_PER_KEY`)
-- [x] Input validation (file type, size, dimensions, magic bytes, decompression bomb guard) — single-image and batch/mega paths; **not** the two `/stream` endpoints
+- [x] Input validation on single, batch/mega, and stream paths; stream accepts octet-stream parts but checks actual image headers and limits
 - [x] EXIF rotation applied, EXIF metadata discarded (privacy)
 - [x] No persistent image storage (only embeddings, hashes, and short-lived Celery blob staging)
 - [x] GDPR right-to-erasure endpoint

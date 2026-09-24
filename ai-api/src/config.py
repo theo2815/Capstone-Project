@@ -212,6 +212,10 @@ class Settings(BaseSettings):
                                 ("ONNX_INTER_OP_THREADS", 1)):
                 if name not in self.model_fields_set:
                     setattr(self, name, value)
+            if self.METRICS_ENABLED and self.WORKERS != 1:
+                raise ValueError(
+                    "blur metrics require WORKERS=1 until multiprocess aggregation exists"
+                )
         if self.MAX_REQUEST_BODY <= self.MAX_FILE_SIZE:
             raise ValueError("MAX_REQUEST_BODY must exceed MAX_FILE_SIZE")
         if self.BLUR_MAX_REQUEST_BODY <= self.MAX_FILE_SIZE:

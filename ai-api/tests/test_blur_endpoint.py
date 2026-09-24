@@ -670,6 +670,17 @@ class TestClassifyStream:
 
 
 class TestDetectStream:
+    def test_stream_deadline_is_counted(self, client, app, monkeypatch):
+        from src.utils.blur_metrics import timeouts
+
+        before = timeouts.labels("stream")._value.get()
+        monkeypatch.setattr(app.state.settings, "BLUR_STREAM_TIMEOUT_SECONDS", 0.000001)
+        response = client.post(
+            "/api/v1/blur/detect/stream", files=_files([_make_jpeg_bytes()])
+        )
+        assert _ndjson(response)[-1]["complete"] is False
+        assert timeouts.labels("stream")._value.get() - before == 1
+
     @pytest.mark.parametrize("decode_dim", [640, 512])
     def test_classical_paths_agree_on_textured_jpeg(
         self, client, app, tmp_path, monkeypatch, decode_dim

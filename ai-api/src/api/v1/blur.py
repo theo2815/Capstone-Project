@@ -39,6 +39,7 @@ from src.utils.image_utils import (
     validate_and_decode,
     validate_stream_file,
 )
+from src.utils.blur_metrics import images, first_result, stream_duration, stream_outcomes, timeouts
 from src.utils.logging import get_logger
 from src.utils.timeout import (
     InferenceBusyError,
@@ -110,7 +111,17 @@ class BlurAuthRoute(APIRoute):
             key_meta = await verify_api_key(request, request.headers.get("X-API-Key"))
             check_scope("blur:read", key_meta)
             request.state.blur_key_meta = key_meta
-            return await handler(request)
+            operation = request.url.path.rsplit("/", 1)[-1]
+            if operation not in ("detect", "classify"):
+                return await handler(request)
+            images.labels(operation, "attempted").inc()
+            try:
+                response = await handler(request)
+            except BaseException:
+                images.labels(operation, "failed").inc()
+                raise
+            images.labels(operation, "succeeded" if response.status_code < 400 else "failed").inc()
+            return response
 
         return authenticate_before_form
 
@@ -323,6 +334,7 @@ async def detect_blur_stream(
         )
 
     total = len(files)
+    images.labels("detect", "attempted").inc(total)
     start = time.perf_counter()
     deadline = time.monotonic() + settings.BLUR_STREAM_TIMEOUT_SECONDS
     request_id = getattr(request.state, "request_id", "")
@@ -330,6 +342,7 @@ async def detect_blur_stream(
     async def generate():
         successful = errors = 0
         complete = True
+        first_seen = False
         sem = (
             request.app.state.blur_decode_semaphore
             if settings.MODEL_PROFILE == "blur"
@@ -388,8 +401,14 @@ async def detect_blur_stream(
                         result = await asyncio.wait_for(
                             coro, timeout=max(0, deadline - time.monotonic())
                         )
+                        if not first_seen:
+                            first_result.labels("detect").observe(time.perf_counter() - start)
+                            first_seen = True
                         successful += "error" not in result
                         errors += "error" in result
+                        images.labels(
+                            "detect", "failed" if "error" in result else "succeeded"
+                        ).inc()
                         yield json.dumps(result, separators=(",", ":")) + "\n"
                 finally:
                     for task in tasks:
@@ -397,12 +416,23 @@ async def detect_blur_stream(
                     await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
             complete = False
+            if isinstance(e, TimeoutError):
+                timeouts.labels("stream").inc()
             logger.error(
                 "Stream blur detection failed", error_type=type(e).__name__, request_id=request_id,
             )
         finally:
             for f in files:
                 await f.close()
+            unaccounted = total - successful - errors
+            if unaccounted:
+                images.labels("detect", "unaccounted").inc(unaccounted)
+            outcome = "completed" if complete and not unaccounted else "interrupted"
+            stream_outcomes.labels("detect", outcome).inc()
+            stream_duration.labels("detect").observe(time.perf_counter() - start)
+            logger.info("Stream blur detection finished", request_id=request_id,
+                        outcome=outcome, successful=successful, errors=errors,
+                        unaccounted=unaccounted)
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000
@@ -644,6 +674,7 @@ async def classify_blur_stream(
         )
 
     total = len(files)
+    images.labels("classify", "attempted").inc(total)
     bt = blur_type.value if blur_type else None
     sub_batch = settings.INFERENCE_SUB_BATCH_SIZE
     decode_dim = settings.BLUR_CLASSIFY_DECODE_DIM
@@ -684,6 +715,8 @@ async def classify_blur_stream(
     async def generate():
         successful = errors = 0
         complete = True
+        first_seen = False
+        phase = "stream"
         request_id = getattr(request.state, "request_id", "")
         sem = (
             request.app.state.blur_decode_semaphore
@@ -724,19 +757,21 @@ async def classify_blur_stream(
                         settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
                     )
                     sub.append((i, name, data, err))
-                images = await asyncio.wait_for(
+                phase = "decode"
+                decoded = await asyncio.wait_for(
                     asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub]),
                     timeout=max(0, deadline - time.monotonic()),
                 )
-                valid = [i for i, ((_, _, _, err), image) in enumerate(zip(sub, images))
+                valid = [i for i, ((_, _, _, err), image) in enumerate(zip(sub, decoded))
                          if err is None and image is not None]
                 results = [None] * len(sub)
+                phase = "inference"
                 try:
                     if valid:
                         if getattr(classifier, "_dynamic_batch", True):
                             inferred = await asyncio.wait_for(
                                 tracked_to_thread(
-                                    classifier.classify_batch, [images[i] for i in valid]
+                                    classifier.classify_batch, [decoded[i] for i in valid]
                                 ),
                                 timeout=max(0, deadline - time.monotonic()),
                             )
@@ -746,7 +781,7 @@ async def classify_blur_stream(
                                 if await request.is_disconnected():
                                     return
                                 inferred.append(await asyncio.wait_for(
-                                    tracked_to_thread(classifier.classify, images[i]),
+                                    tracked_to_thread(classifier.classify, decoded[i]),
                                     timeout=max(0, deadline - time.monotonic()),
                                 ))
                         if len(inferred) != len(valid):
@@ -764,7 +799,7 @@ async def classify_blur_stream(
                         error_type=type(e).__name__,
                         request_id=request_id,
                     )
-                    for (idx, name, _, err), image in zip(sub, images):
+                    for (idx, name, _, err), image in zip(sub, decoded):
                         # A rejected file keeps its own reason.
                         line = {
                             "index": idx, "filename": name,
@@ -774,15 +809,26 @@ async def classify_blur_stream(
                             ),
                         }
                         errors += 1
+                        images.labels("classify", "failed").inc()
+                        if not first_seen:
+                            first_result.labels("classify").observe(time.perf_counter() - start)
+                            first_seen = True
                         yield json.dumps(line, separators=(",", ":")) + "\n"
                     continue
-                for (idx, name, _, err), image, result in zip(sub, images, results):
+                for (idx, name, _, err), image, result in zip(sub, decoded, results):
                     line = _build_line(idx, name, image, result, err)
+                    if not first_seen:
+                        first_result.labels("classify").observe(time.perf_counter() - start)
+                        first_seen = True
                     successful += "error" not in line
                     errors += "error" in line
+                    images.labels("classify", "failed" if "error" in line else "succeeded").inc()
                     yield json.dumps(line, separators=(",", ":")) + "\n"
+                phase = "stream"
         except Exception as e:
             complete = False
+            if isinstance(e, TimeoutError):
+                timeouts.labels(phase).inc()
             logger.error(
                 "Stream blur classification failed", error_type=type(e).__name__,
                 request_id=request_id,
@@ -790,6 +836,15 @@ async def classify_blur_stream(
         finally:
             for f in files:
                 await f.close()
+            unaccounted = total - successful - errors
+            if unaccounted:
+                images.labels("classify", "unaccounted").inc(unaccounted)
+            outcome = "completed" if complete and not unaccounted else "interrupted"
+            stream_outcomes.labels("classify", outcome).inc()
+            stream_duration.labels("classify").observe(time.perf_counter() - start)
+            logger.info("Stream blur classification finished", request_id=request_id,
+                        outcome=outcome, successful=successful, errors=errors,
+                        unaccounted=unaccounted)
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000
