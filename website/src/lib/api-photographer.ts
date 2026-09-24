@@ -284,7 +284,6 @@ export interface UploadRetryState {
   transferRetries?: number;
   commitRetries?: number;
   transferDeadline?: number;
-  grantRenewals?: number;
 }
 
 export interface PhotographerUploadOptions {
@@ -340,6 +339,21 @@ function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+async function scheduleUploadRetry(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  isCurrent: () => boolean,
+  retryState: UploadRetryState,
+  phase: "beginRetries" | "transferRetries" | "commitRetries",
+): Promise<void> {
+  if (signal?.aborted || !isCurrent()) assertUploadActive(signal, isCurrent);
+  const attempt = retryState[phase] ?? 0;
+  if (attempt >= 3) throw error;
+  retryState[phase] = attempt + 1;
+  assertUploadActive(signal, isCurrent);
+  await waitForRetry(retryDelay(error, attempt), signal);
+}
+
 async function retryUpload<T>(
   work: () => Promise<T>,
   signal: AbortSignal | undefined,
@@ -356,11 +370,8 @@ async function retryUpload<T>(
       return result;
     } catch (error) {
       if (signal?.aborted || !isCurrent()) assertUploadActive(signal, isCurrent);
-      const attempt = retryState[phase] ?? 0;
-      if (attempt >= 3 || !canRetry(error)) throw error;
-      retryState[phase] = attempt + 1;
-      assertUploadActive(signal, isCurrent);
-      await waitForRetry(retryDelay(error, attempt), signal);
+      if (!canRetry(error)) throw error;
+      await scheduleUploadRetry(error, signal, isCurrent, retryState, phase);
     }
   }
 }
@@ -470,12 +481,7 @@ export async function uploadPhotographerPhoto(
     checkpoint = value;
     options.onCheckpoint?.(value);
   };
-  const renewGrant = (error: unknown) => {
-    const renewals = retryState.grantRenewals ?? 0;
-    if (renewals >= 3) throw error;
-    retryState.grantRenewals = renewals + 1;
-    save({ requestId: uploadRequestId() });
-  };
+  const renewGrant = () => save({ requestId: uploadRequestId() });
   const commit = () => retryUpload(() => api.post<UploadedPhoto>(`${base}/direct/commit`, {
     photoId: checkpoint!.photoId, key: checkpoint!.key, contentHash,
     contentType: file.type, sizeBytes: file.size,
@@ -491,7 +497,8 @@ export async function uploadPhotographerPhoto(
       if ((checkpoint.putExpiresAt && Date.parse(checkpoint.putExpiresAt) <= Date.now()) ||
           (checkpoint.intentExpiresAt && Date.parse(checkpoint.intentExpiresAt) <= Date.now())) {
         if (!globalThis.crypto?.getRandomValues) return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
-        renewGrant(error);
+        await scheduleUploadRetry(error, signal, isCurrent, retryState, "beginRetries");
+        renewGrant();
       }
     }
   }
@@ -505,7 +512,8 @@ export async function uploadPhotographerPhoto(
       }, { signal }), signal, isCurrent, retryState, "beginRetries");
     } catch (error) {
       if (error instanceof ApiError && error.errors.some((item) => item.code === "UPLOAD_OBJECT_MISSING")) {
-        renewGrant(error);
+        await scheduleUploadRetry(error, signal, isCurrent, retryState, "beginRetries");
+        renewGrant();
         continue;
       }
       // Older backend without the direct route: only a generic 404 qualifies.
@@ -558,10 +566,8 @@ export async function uploadPhotographerPhoto(
       }, signal, isCurrent, retryState, "transferRetries", (error) => !confirmationUnknown && !renewAfterPut && uploadError(error));
     } catch (error) {
       if (!renewAfterPut) throw error;
-      const retries = retryState.transferRetries ?? 0;
-      if (retries >= 3) throw error;
-      retryState.transferRetries = retries + 1;
-      renewGrant(error);
+      await scheduleUploadRetry(error, signal, isCurrent, retryState, "transferRetries");
+      renewGrant();
       continue;
     }
     assertUploadActive(signal, isCurrent);

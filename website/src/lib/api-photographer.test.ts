@@ -253,6 +253,13 @@ it("renews a lost begin request only after its reservation is confirmed missing"
 
 it("reconciles an R2 XML 403 before renewing a confirmed-missing expired grant", async () => {
   vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  const delays: number[] = [];
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (ms && ms < 5000) delays.push(ms);
+    return nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args);
+  }) as typeof setTimeout);
   let now = Date.now();
   vi.spyOn(Date, "now").mockImplementation(() => now);
   const firstExpiry = new Date(now + 60_000).toISOString();
@@ -292,23 +299,104 @@ it("reconciles an R2 XML 403 before renewing a confirmed-missing expired grant",
       { url: "https://uploads.example.test/old?sig=1", headers: { "Content-Type": "image/jpeg" }, credentials: false },
       { url: "https://uploads.example.test/new?sig=2", headers: { "Content-Type": "image/jpeg" }, credentials: false },
     ]);
+    expect(delays).toContain(1000);
   } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
 });
 
-it("bounds confirmed-missing begin renewals and never renews an ambiguous error", async () => {
+it("shares begin retries between transient failures and confirmed-missing renewal", async () => {
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  const delays: number[] = [];
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (ms && ms < 5000) delays.push(ms);
+    return nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args);
+  }) as typeof setTimeout);
   const missing = new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Expired" }], 422);
-  const retryState = {};
-  post.mockRejectedValue(missing);
+  const retryState: { beginRetries?: number } = {};
+  post.mockRejectedValueOnce(new TypeError("Lost begin reply"))
+    .mockRejectedValueOnce(new TypeError("Lost begin reply"))
+    .mockRejectedValueOnce(new TypeError("Lost begin reply"))
+    .mockRejectedValue(missing);
   await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
     contentHash: "a".repeat(64), retryState,
   })).rejects.toBe(missing);
   expect(post).toHaveBeenCalledTimes(4);
-  expect(new Set(post.mock.calls.map(([, body]) => body.requestId)).size).toBe(4);
+  expect(new Set(post.mock.calls.map(([, body]) => body.requestId)).size).toBe(1);
+  expect(retryState.beginRetries).toBe(3);
+  expect(delays).toEqual([1000, 2000, 4000]);
   post.mockReset().mockRejectedValue(new ApiError([{ code: "UPLOAD_REQUEST_CONFLICT", message: "Conflict" }], 409));
   await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
     contentHash: "a".repeat(64),
   })).rejects.toMatchObject({ status: 409, errors: [{ code: "UPLOAD_REQUEST_CONFLICT" }] });
   expect(post).toHaveBeenCalledTimes(1);
+});
+
+it("delays a confirmed-missing begin renewal using its begin retry budget", async () => {
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  const delays: number[] = [];
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (ms && ms < 5000) delays.push(ms);
+    return nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args);
+  }) as typeof setTimeout);
+  const receipt = { id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  post.mockRejectedValueOnce(new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Expired" }], 422, 3))
+    .mockResolvedValueOnce({ mode: "existing", existing: receipt });
+  const retryState: { beginRetries?: number } = {};
+  expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+    contentHash: "a".repeat(64), retryState,
+  })).toEqual(receipt);
+  expect(retryState.beginRetries).toBe(1);
+  expect(delays).toContain(3000);
+  expect(post.mock.calls[1][1].requestId).not.toBe(post.mock.calls[0][1].requestId);
+});
+
+it("shares transfer retries between in-call failures and expired-storage renewals", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  const delays: number[] = [];
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (ms && ms < 5000) delays.push(ms);
+    return nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args);
+  }) as typeof setTimeout);
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  let puts = 0;
+  class FailingStorageXhr {
+    status = 403;
+    upload = { onprogress: null };
+    onload?: () => void;
+    onerror?: () => void;
+    open() {}
+    setRequestHeader() {}
+    send() {
+      puts++;
+      if (puts > 1) now += 20_000;
+      queueMicrotask(() => puts === 1 ? this.onerror?.() : this.onload?.());
+    }
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", FailingStorageXhr);
+  const missing = new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Missing" }], 422);
+  let begins = 0;
+  let commits = 0;
+  post.mockImplementation(async (path: string) => {
+    if (path.endsWith("/direct/commit")) { commits++; throw missing; }
+    begins++;
+    return { mode: "direct", photoId: `photo-${begins}`, key: `key-${begins}`, uploadUrl: `https://uploads.example.test/${begins}`, expiresAt: new Date(now + 10_000).toISOString() };
+  });
+  const retryState: { transferRetries?: number } = {};
+  try {
+    await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+      contentHash: "a".repeat(64), retryState,
+    })).rejects.toMatchObject({ status: 403, errors: [{ code: "UPLOAD_TRANSFER_FAILED" }] });
+    expect(puts).toBe(4);
+    expect(begins).toBe(3);
+    expect(commits).toBe(4);
+    expect(retryState.transferRetries).toBe(3);
+    expect(delays).toEqual([1000, 2000, 4000]);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
 });
 
 it("does not renew a storage 403 while its grant is unexpired", async () => {
