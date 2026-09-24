@@ -158,6 +158,34 @@ it("resumes an offline transfer through its saved receipt before resending bytes
   expect(commits).toBe(2);
 });
 
+it("requires manual Retry before a fifth PUT after repeated offline losses", async () => {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.endsWith("/photos/exists")) return response({ results: [] });
+    if (url.endsWith("/photos/direct/commit")) return response(null, 422);
+    if (url.endsWith("/photos/direct")) {
+      return response({ mode: "direct", photoId: "saved", key: "key", uploadUrl: "https://uploads.example.test/key", expiresAt: "2099-01-01T00:00:00Z" });
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  });
+  render(<FocusedUploadPage />);
+  select([new File(["a"], "budget.jpg", { type: "image/jpeg" })]);
+  for (let index = 0; index < 4; index++) {
+    await waitFor(() => expect(puts).toHaveLength(index + 1));
+    await act(async () => { puts[index].failOffline(); });
+    if (index < 3) {
+      expect(screen.getByText(/waiting for connection/i)).toBeInTheDocument();
+      online = true;
+      await act(async () => { window.dispatchEvent(new Event("online")); });
+    }
+  }
+  await waitFor(() => expect(screen.getByRole("button", { name: /try uploading budget.jpg again/i })).toBeInTheDocument());
+  online = true;
+  await act(async () => { window.dispatchEvent(new Event("online")); });
+  expect(puts).toHaveLength(4);
+  fireEvent.click(screen.getByRole("button", { name: /try uploading budget.jpg again/i }));
+  await waitFor(() => expect(puts).toHaveLength(5));
+});
+
 it("does not duplicate a manual retry when its button is activated twice", async () => {
   let begins = 0;
   fetchMock.mockImplementation(async (url: string) => {

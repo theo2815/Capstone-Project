@@ -823,8 +823,6 @@ function UploadForm({
   }
 
   const clearOne = useCallback((id: string) => {
-    batch.preflight.forEach((controller) => controller.abort());
-    batch.preflight.clear();
     batch.active.get(id)?.abort();
     batch.active.delete(id);
     setEntries((prev) => prev.filter((p) => p.id !== id));

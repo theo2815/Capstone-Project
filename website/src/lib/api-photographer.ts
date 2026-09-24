@@ -521,6 +521,12 @@ export async function uploadPhotographerPhoto(
         options.onPhase?.("confirming");
         try { recovered = await commit(); return; }
         catch (commitError) {
+          if (commitError instanceof OfflineUploadError) {
+            const retries = retryState.transferRetries ?? 0;
+            if (retries >= 3) throw error;
+            retryState.transferRetries = retries + 1;
+            throw commitError;
+          }
           if (!(commitError instanceof ApiError) || !commitError.errors.some((item) => item.code === "UPLOAD_OBJECT_MISSING")) {
             confirmationUnknown = true;
             throw commitError;

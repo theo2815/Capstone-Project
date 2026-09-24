@@ -145,6 +145,28 @@ it("restarts preflight when a removed checking file is replaced in one render", 
   await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
 });
 
+it("keeps a new file's preflight alive when an uploading row is removed", async () => {
+  let finishCheck!: (results: { hash: string; status: "new"; eventName: null }[]) => void;
+  let pendingSignal!: AbortSignal;
+  check.mockResolvedValueOnce([{ hash: "a".repeat(64), status: "new", eventName: null }])
+    .mockImplementationOnce((_event, _hashes, signal) => {
+      pendingSignal = signal;
+      return new Promise((resolve) => { finishCheck = resolve; });
+    });
+  upload.mockImplementation(() => new Promise(() => {}));
+  render(<FocusedUploadPage />);
+  const input = screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!;
+  fireEvent.change(input, { target: { files: [new File(["a"], "active.jpg", { type: "image/jpeg" })] } });
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+  fireEvent.change(input, { target: { files: [new File(["b"], "checking.jpg", { type: "image/jpeg" })] } });
+  await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole("button", { name: "Remove active.jpg" }));
+  expect(pendingSignal.aborted).toBe(false);
+  await act(async () => { finishCheck([{ hash: "a".repeat(64), status: "new", eventName: null }]); });
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+  expect(upload.mock.calls[1][1].name).toBe("checking.jpg");
+});
+
 it("reuses retry limits on reconnect but resets them for a manual retry", async () => {
   const states: unknown[] = [];
   upload.mockImplementation((_event, _file, _progress, options) => {
