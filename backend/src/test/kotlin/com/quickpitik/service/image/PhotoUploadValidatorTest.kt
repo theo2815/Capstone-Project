@@ -60,6 +60,11 @@ class PhotoUploadValidatorTest {
     @Test
     fun `recorded size and maximum size are enforced from the stream`() {
         val bytes = jpeg()
+        val atLimit = ByteArray(PhotoUploadValidator.MAX_BYTES).also { bytes.copyInto(it) }
+        assertEquals(
+            HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(atLimit)),
+            validator.validate(ByteArrayInputStream(atLimit), "image/jpeg", atLimit.size.toLong()),
+        )
         val mismatch = assertFailsWith<ApiException> {
             validator.validate(ByteArrayInputStream(bytes), "image/jpeg", bytes.size.toLong() + 1)
         }

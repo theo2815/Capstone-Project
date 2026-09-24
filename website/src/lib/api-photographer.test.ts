@@ -481,6 +481,29 @@ it("starts a fresh request only after an expired grant is confirmed missing", as
   expect(saved[0].requestId).toBe(post.mock.calls[1][1].requestId);
 });
 
+it("lets the backend expire a grant when the browser clock is behind", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("1990-01-01T00:00:00Z"));
+  const nativeTimer = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) =>
+    nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args)) as typeof setTimeout);
+  const checkpoint = { requestId: "old-request", photoId: "old-photo", key: "old-key", putExpiresAt: "2000-01-01T00:00:00Z" };
+  const missing = new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Missing" }], 422);
+  const receipt = { id: "new-photo", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  post.mockRejectedValueOnce(missing).mockRejectedValueOnce(missing)
+    .mockResolvedValueOnce({ mode: "existing", existing: receipt });
+
+  expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+    contentHash: "a".repeat(64), checkpoint,
+  })).toEqual(receipt);
+  expect(post.mock.calls.map(([path]) => path)).toEqual([
+    "/me/photographer/events/event/photos/direct/commit",
+    "/me/photographer/events/event/photos/direct",
+    "/me/photographer/events/event/photos/direct",
+  ]);
+  expect(post.mock.calls[1][1].requestId).toBe(checkpoint.requestId);
+  expect(post.mock.calls[2][1].requestId).not.toBe(checkpoint.requestId);
+});
+
 it("reports multipart transfer progress and confirmation phases", async () => {
   const original = globalThis.XMLHttpRequest;
   class MultipartXhr {

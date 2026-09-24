@@ -45,6 +45,40 @@ it("keeps the row confirming after byte progress and shows the backend processin
   expect(screen.queryByText(/^Live$/)).not.toBeInTheDocument();
   await act(async () => { finish({ id: "photo-1", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" }); });
   expect(screen.getByText("Uploaded — preparing preview")).toBeInTheDocument();
+  expect(screen.getByText("Uploaded — preparing preview").closest('[role="status"]')).toHaveAttribute("aria-live", "polite");
+});
+
+it.each(["offline", "429", "malformed"])("continues with server authority when duplicate preflight is %s", async (failure) => {
+  if (failure === "malformed") check.mockResolvedValueOnce(null);
+  else check.mockRejectedValueOnce(failure === "429"
+    ? new ApiError([{ code: "RATE_LIMITED", message: "Busy" }], 429, 1)
+    : new TypeError("offline"));
+  upload.mockResolvedValue({ id: "photo-1", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" });
+
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], `preflight-${failure}.jpg`, { type: "image/jpeg" })] },
+  });
+
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+  expect(check).toHaveBeenCalledTimes(1);
+  expect(upload.mock.calls[0][3].contentHash).toBe("a".repeat(64));
+  expect(screen.getByText("Uploaded — preparing preview")).toBeInTheDocument();
+});
+
+it("keeps a long-running watermark receipt in processing status", async () => {
+  upload.mockResolvedValue({ id: "photo-1", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" });
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "pending.jpg", { type: "image/jpeg" })] },
+  });
+  await screen.findByText("Uploaded — preparing preview");
+
+  vi.useFakeTimers();
+  act(() => vi.advanceTimersByTime(61_000));
+  expect(screen.getByText("Uploaded — preparing preview")).toBeInTheDocument();
+  expect(screen.queryByText(/^Live$/)).not.toBeInTheDocument();
+  vi.useRealTimers();
 });
 
 it("aborts an active workflow when its row is removed", async () => {

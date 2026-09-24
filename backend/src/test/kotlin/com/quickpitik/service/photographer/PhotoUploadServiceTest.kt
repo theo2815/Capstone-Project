@@ -805,6 +805,74 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `direct commit releases a storage fault for retry without deleting its candidate`() {
+        stubValidationsPass()
+        val intent = intent(helloBytes.size.toLong())
+        Mockito.`when`(photoUploadIntentRepository.findOwned(intent.photoId, photographerId, eventId)).thenReturn(intent)
+        Mockito.`when`(photoUploadIntentRepository.acquireVerification(anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.releaseVerification(anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.`when`(storageService.metadata(intent.originalKey))
+            .thenThrow(IllegalStateException("provider-secret"))
+            .thenReturn(StoredObject(intent.originalKey, intent.sizeBytes, intent.contentType))
+        Mockito.`when`(storageService.open(intent.originalKey)).thenAnswer { ByteArrayInputStream(helloBytes) }
+        Mockito.`when`(photoUploadIntentRepository.complete(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        val svc = service(AiApiProperties(enabled = false))
+
+        val error = assertFailsWith<ApiException> {
+            svc.commitDirectUpload(
+                photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
+            )
+        }
+
+        assertEquals(ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, error.code)
+        assertTrue(error.message!!.contains("provider-secret").not())
+        Mockito.verify(photoUploadIntentRepository).releaseVerification(eqArg(intent.photoId), anyArg(), anyArg())
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
+        Mockito.verify(storageService, Mockito.never()).delete(anyArg())
+        assertEquals(intent.photoId, svc.commitDirectUpload(
+            photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
+        ).id)
+        Mockito.verify(eventRepository).incrementPhotoCount(eventId)
+    }
+
+    @Test
+    fun `direct commit releases a database fault without treating it as a duplicate`() {
+        stubValidationsPass()
+        val intent = intent(helloBytes.size.toLong())
+        Mockito.`when`(photoUploadIntentRepository.findOwned(intent.photoId, photographerId, eventId)).thenReturn(intent)
+        Mockito.`when`(photoUploadIntentRepository.acquireVerification(anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.releaseVerification(anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.`when`(storageService.metadata(intent.originalKey))
+            .thenReturn(StoredObject(intent.originalKey, intent.sizeBytes, intent.contentType))
+        Mockito.`when`(storageService.open(intent.originalKey)).thenAnswer { ByteArrayInputStream(helloBytes) }
+        Mockito.`when`(photoUploadIntentRepository.complete(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.doThrow(dataIntegrityViolation("fk_photos_other_constraint")).doNothing()
+            .`when`(entityManager).flush()
+        val svc = service(AiApiProperties(enabled = false))
+
+        val error = assertFailsWith<ApiException> {
+            svc.commitDirectUpload(
+                photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
+            )
+        }
+
+        assertEquals(ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, error.code)
+        Mockito.verify(photoUploadIntentRepository).releaseVerification(eqArg(intent.photoId), anyArg(), anyArg())
+        Mockito.verify(eventRepository, Mockito.never()).incrementPhotoCount(anyArg())
+        Mockito.verify(storageService, Mockito.never()).delete(anyArg())
+        assertEquals(intent.photoId, svc.commitDirectUpload(
+            photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
+        ).id)
+        Mockito.verify(eventRepository).incrementPhotoCount(eventId)
+    }
+
+    @Test
     fun `direct commit rejects bad stored size without deleting outside the janitor`() {
         stubValidationsPass()
         for (size in listOf(0L, 500L, 60L * 1024 * 1024)) {
@@ -1156,6 +1224,40 @@ class PhotoUploadServiceTest {
         assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, ex.code)
         assertTrue(ex.message!!.contains("1-month"))
         Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
+    }
+
+    @Test
+    fun `owner month-end upload window includes the last Manila day`() {
+        stubOwnedUpload(ownedEvent(date = LocalDate.of(2026, 1, 31)))
+        val lastDay = Clock.fixed(Instant.parse("2026-02-28T04:00:00Z"), ZoneOffset.UTC)
+        val dayAfter = Clock.fixed(Instant.parse("2026-03-01T04:00:00Z"), ZoneOffset.UTC)
+
+        assertEquals("processing", service(AiApiProperties(enabled = false), clock = lastDay)
+            .upload(photographerId, eventId, file()).status)
+        assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, assertFailsWith<ApiException> {
+            service(AiApiProperties(enabled = false), clock = dayAfter)
+                .upload(photographerId, eventId, file())
+        }.code)
+    }
+
+    @Test
+    fun `admin race upload window is four inclusive Manila days`() {
+        val race = LocalDate.of(2026, 9, 25)
+        stubValidationsPass()
+        Mockito.`when`(eventRepository.findById(eventId)).thenReturn(Optional.of(event().apply { date = race }))
+        for (offset in -1L..4L) {
+            val day = race.plusDays(offset)
+            val clock = Clock.fixed(day.atTime(12, 0).atZone(ZoneId.of("Asia/Manila")).toInstant(), ZoneOffset.UTC)
+            if (offset in 0L..3L) {
+                assertEquals("processing", service(AiApiProperties(enabled = false), clock = clock)
+                    .upload(photographerId, eventId, file()).status)
+            } else {
+                assertEquals(ErrorCodes.EVENT_NOT_UPLOADABLE, assertFailsWith<ApiException> {
+                    service(AiApiProperties(enabled = false), clock = clock)
+                        .upload(photographerId, eventId, file())
+                }.code)
+            }
+        }
     }
 
     // Refactoring the owned window into an if/else must not loosen the admin
