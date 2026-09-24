@@ -18,7 +18,7 @@ function nextSession() {
 beforeEach(() => { useAuthStore.getState().setUser(user); setTokens("old-access", "old-refresh"); });
 afterEach(() => { useAuthStore.getState().logout(); clearTokens(); setStepUpHandler(null); vi.unstubAllGlobals(); });
 
-it.each(["query cancellation", "request timeout"])("GET preserves %s when supplied a Query signal", async (cause) => {
+it.each(["query cancellation", "request timeout"])("GET distinguishes %s when supplied a Query signal", async (cause) => {
   const query = new AbortController();
   const timeout = new AbortController();
   const timer = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
@@ -27,13 +27,29 @@ it.each(["query cancellation", "request timeout"])("GET preserves %s when suppli
   })));
   try {
     const request = api.get("/me/orders", { signal: query.signal });
-    const result = expect(request).rejects.toThrow("Request timed out");
+    const result = expect(request).rejects.toMatchObject(cause === "query cancellation" ? { name: "AbortError" } : { errors: [{ code: "TIMEOUT" }] });
     (cause === "query cancellation" ? query : timeout).abort();
     await result;
     expect(timer).toHaveBeenCalledWith(30_000);
   } finally {
     timer.mockRestore();
   }
+});
+
+it("POST carries a custom timeout and caller signal through the refresh retry", async () => {
+  const signal = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const fetch = vi.fn().mockResolvedValueOnce(response([], 401))
+    .mockResolvedValueOnce(response({ accessToken: "fresh", refreshToken: "fresh-refresh" }))
+    .mockResolvedValueOnce(response({ saved: true }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    expect(await api.post("/me/photographer/events/e/photos/direct/commit", {}, { signal: signal.signal, timeoutMs: 120_000 })).toEqual({ saved: true });
+    expect(timeout).toHaveBeenCalledWith(120_000);
+    expect(fetch.mock.calls[2][1].signal).not.toBe(signal.signal);
+    signal.abort();
+    expect(fetch.mock.calls[2][1].signal.aborted).toBe(true);
+  } finally { timeout.mockRestore(); }
 });
 
 it("deduplicates refresh within a session, but never joins or commits an old session's refresh", async () => {

@@ -4,6 +4,8 @@ import { API_BASE_URL } from "./constants";
 import { buildLoginRedirect, currentUrlForRedirect } from "./redirect";
 import type { ApiResponse } from "@/types/api";
 
+type ApiRequestOptions = RequestInit & { timeoutMs?: number };
+
 class ApiClient {
   private baseUrl: string;
 
@@ -16,7 +18,7 @@ class ApiClient {
   // callers needing a header (getWithTotal → X-Total-Count) can read it.
   async fetchRaw<T>(
     path: string,
-    options?: RequestInit,
+    options?: ApiRequestOptions,
     // Set on the one retry we allow after a token refresh. A second refresh
     // can never help: if a freshly-minted token still 401s, a newer one will
     // too — and unbounded recursion here re-submits the request forever.
@@ -34,20 +36,22 @@ class ApiClient {
       ...options?.headers,
     };
 
-    // Nothing here carried a signal, so a stalled connection hung forever —
-    // React Query never saw the promise settle and skeletons held
-    // indefinitely. FormData gets the long budget: a 10 MB cover on venue
-    // Wi-Fi is slow, not dead.
+    // FormData gets the long budget: a 10 MB cover on venue Wi-Fi is slow.
     let res: Response;
     try {
+      const { timeoutMs, ...requestOptions } = options ?? {};
+      const timeout = AbortSignal.timeout(timeoutMs ?? (isFormData ? 120_000 : 30_000));
       res = await fetch(`${this.baseUrl}${path}`, {
-        ...options,
+        ...requestOptions,
         headers,
         signal: options?.signal
-          ? AbortSignal.any([options.signal, AbortSignal.timeout(isFormData ? 120_000 : 30_000)])
-          : AbortSignal.timeout(isFormData ? 120_000 : 30_000),
+          ? AbortSignal.any([options.signal, timeout])
+          : timeout,
       });
     } catch (e) {
+      if (options?.signal?.aborted) {
+        throw new DOMException("Request cancelled", "AbortError");
+      }
       if (
         e instanceof DOMException &&
         (e.name === "TimeoutError" || e.name === "AbortError")
@@ -140,7 +144,7 @@ class ApiClient {
     return { data: data.data, res };
   }
 
-  async fetch<T>(path: string, options?: RequestInit): Promise<T> {
+  async fetch<T>(path: string, options?: ApiRequestOptions): Promise<T> {
     return (await this.fetchRaw<T>(path, options)).data;
   }
 
@@ -164,12 +168,14 @@ class ApiClient {
   async post<T>(
     path: string,
     body?: unknown,
-    init?: { headers?: HeadersInit },
+    init?: { headers?: HeadersInit; signal?: AbortSignal; timeoutMs?: number },
   ): Promise<T> {
     return this.fetch<T>(path, {
       method: "POST",
       body: body instanceof FormData ? body : JSON.stringify(body),
       headers: init?.headers,
+      signal: init?.signal,
+      timeoutMs: init?.timeoutMs,
     });
   }
 
@@ -335,7 +341,7 @@ export function formatRetryWait(seconds: number): string {
 export class ApiError extends Error {
   errors: { code: string; message: string; field?: string }[];
   status?: number;
-  // Seconds from a 429's Retry-After header; undefined on every other status.
+  // Seconds from Retry-After (including upload 409 and rate-limit 429).
   retryAfterSeconds?: number;
 
   constructor(
