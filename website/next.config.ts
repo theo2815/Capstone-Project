@@ -23,6 +23,13 @@ const API_ORIGIN = new URL(
 const WS_ORIGIN = (
   process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080/ws"
 ).replace(/^(wss?:\/\/[^/]+).*$/, "$1");
+const R2_UPLOAD_ORIGIN = process.env.NEXT_PUBLIC_R2_UPLOAD_ORIGIN;
+if (R2_UPLOAD_ORIGIN) {
+  const parsed = new URL(R2_UPLOAD_ORIGIN);
+  if (parsed.protocol !== "https:" || parsed.origin !== R2_UPLOAD_ORIGIN) {
+    throw new Error("NEXT_PUBLIC_R2_UPLOAD_ORIGIN must be an exact HTTPS origin.");
+  }
+}
 
 // Production-only: dev needs HMR's eval + the dev overlay, and a CSP that
 // only exists in prod is one that can't drift out of sync with dev tooling.
@@ -42,7 +49,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
   "img-src 'self' data: blob: https: http://localhost:8080",
   "font-src 'self' data:",
-  `connect-src 'self' ${API_ORIGIN} ${WS_ORIGIN} https://accounts.google.com/gsi/`,
+  `connect-src 'self' ${API_ORIGIN} ${WS_ORIGIN} https://accounts.google.com/gsi/${R2_UPLOAD_ORIGIN ? ` ${R2_UPLOAD_ORIGIN}` : ""}`,
   "frame-src 'self' https://accounts.google.com/gsi/",
   "frame-ancestors 'none'",
   "object-src 'none'",
