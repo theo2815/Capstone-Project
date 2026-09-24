@@ -33,6 +33,7 @@ import {
   uploadPhotographerPhoto,
   type DirectUploadCheckpoint,
   type PhotoExistsResult,
+  type UploadRetryState,
 } from "@/lib/api-photographer";
 import { ROUTES } from "@/lib/constants";
 import {
@@ -91,6 +92,7 @@ interface UploadEntry {
   progress: number;
   contentHash?: string;
   checkpoint?: DirectUploadCheckpoint;
+  retryState?: UploadRetryState;
   phase?: "preparing" | "uploading" | "confirming";
   receiptStatus?: "live" | "processing";
   error?: string;
@@ -274,6 +276,7 @@ function UploadGate({
   ownedByMe: boolean;
 }) {
   const gate = useCanUpload();
+  const sessionVersion = useAuthStore((state) => state.sessionVersion);
 
   // The owner of a photographer-owned event (V46) uploads on any date — the
   // BE skips the window for them too. Verification still gates below.
@@ -385,7 +388,7 @@ function UploadGate({
     );
   }
 
-  return <UploadForm event={event} ownedByMe={ownedByMe} />;
+  return <UploadForm key={`${event.id}:${sessionVersion}`} event={event} ownedByMe={ownedByMe} />;
 }
 
 function GraceBadge({ event }: { event: ListEvent }) {
@@ -435,20 +438,19 @@ function UploadForm({
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
-  const sessionVersion = useAuthStore((state) => state.sessionVersion);
   const batch = useMemo(() => ({
     active: new Map<string, AbortController>(),
-    preflight: new AbortController(),
+    preflight: new Set<AbortController>(),
     isCurrent: captureAuthSession(),
-  }), [event.id, sessionVersion]);
+  }), [event.id]);
   useEffect(() => {
     return () => {
-      batch.preflight.abort();
+      batch.preflight.forEach((controller) => controller.abort());
+      batch.preflight.clear();
       batch.active.forEach((controller) => controller.abort());
       batch.active.clear();
     };
   }, [batch]);
-  useEffect(() => { setEntries([]); }, [sessionVersion, event.id]);
 
   const accepted = useMemo(
     () => entries.filter((e) => e.status === "done"),
@@ -526,6 +528,7 @@ function UploadForm({
           progress: 0,
           error,
           retryable: false,
+          retryState: {},
         };
       });
 
@@ -560,6 +563,7 @@ function UploadForm({
   // re-fires even when entries.length hasn't changed (retried entries flip
   // back to queued in place; checking entries flip forward to queued).
   const [retryNonce, setRetryNonce] = useState(0);
+  const checkingKey = entries.filter((entry) => entry.status === "checking").map((entry) => entry.id).join("\0");
 
   // Pre-flight duplicate check (dedup Phase 2). Newly-ingested valid files land
   // as "checking"; here we hash them locally and ask the backend which already
@@ -573,7 +577,9 @@ function UploadForm({
   useEffect(() => {
     const pending = entries.filter((e) => e.status === "checking");
     if (pending.length === 0) return;
-    let cancelled = false;
+    const controller = new AbortController();
+    batch.preflight.add(controller);
+    const cancelled = () => controller.signal.aborted;
 
     void (async () => {
       // Hash with bounded concurrency so a 500-file batch doesn't read every
@@ -587,9 +593,9 @@ function UploadForm({
       const worker = async () => {
         while (cursor < files.length) {
           const i = cursor++;
-          if (cancelled || !batch.isCurrent()) return;
+          if (cancelled() || !batch.isCurrent()) return;
           heic[i] = await isHeicFile(files[i]);
-          if (cancelled || !batch.isCurrent()) return;
+          if (cancelled() || !batch.isCurrent()) return;
           try { hashes[i] = heic[i] ? "" : await sha256Hex(files[i]); }
           catch { hashes[i] = undefined; }
         }
@@ -597,20 +603,20 @@ function UploadForm({
       await Promise.all(
         Array.from({ length: Math.min(8, files.length) }, worker),
       );
-      if (cancelled || !batch.isCurrent()) return;
+      if (cancelled() || !batch.isCurrent()) return;
 
       let byHash = new Map<string, PhotoExistsResult>();
       const checkable = [...new Set(hashes.filter((h): h is string => !!h))];
       try {
         if (checkable.length > 0) {
-          const results = await checkPhotosExist(event.id, checkable, batch.preflight.signal);
+          const results = await checkPhotosExist(event.id, checkable, controller.signal);
           byHash = new Map(results.map((r) => [r.hash, r]));
         }
       } catch {
         // Leave byHash empty → every file falls through to "queued" and the
         // server-side unique index remains the source of truth.
       }
-      if (cancelled || !batch.isCurrent()) return;
+      if (cancelled() || !batch.isCurrent()) return;
 
       const hashById = new Map(pending.map((e, i) => [e.id, hashes[i]]));
       const heicById = new Map(pending.map((e, i) => [e.id, heic[i]]));
@@ -657,10 +663,11 @@ function UploadForm({
     })();
 
     return () => {
-      cancelled = true;
+      controller.abort();
+      batch.preflight.delete(controller);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries.length, event.id, batch]);
+  }, [checkingKey, event.id, batch]);
 
   // A slot covers begin, storage PUT, and backend confirmation together.
   //
@@ -696,6 +703,7 @@ function UploadForm({
       }, {
         contentHash: entry.contentHash,
         checkpoint: entry.checkpoint,
+        retryState: entry.retryState,
         signal: controller.signal,
         onCheckpoint: (checkpoint) => {
           if (!alive()) return;
@@ -815,6 +823,8 @@ function UploadForm({
   }
 
   const clearOne = useCallback((id: string) => {
+    batch.preflight.forEach((controller) => controller.abort());
+    batch.preflight.clear();
     batch.active.get(id)?.abort();
     batch.active.delete(id);
     setEntries((prev) => prev.filter((p) => p.id !== id));
@@ -826,6 +836,8 @@ function UploadForm({
   }
 
   function clearAll() {
+    batch.preflight.forEach((controller) => controller.abort());
+    batch.preflight.clear();
     batch.active.forEach((controller) => controller.abort());
     batch.active.clear();
     setEntries([]);
@@ -839,7 +851,7 @@ function UploadForm({
     setEntries((prev) =>
       prev.map((p) =>
         p.id === id && p.status === "error" && p.retryable
-          ? { ...p, status: "queued", progress: 0, error: undefined }
+          ? { ...p, status: "queued", progress: 0, error: undefined, retryState: {} }
           : p,
       ),
     );
@@ -850,7 +862,7 @@ function UploadForm({
     setEntries((prev) =>
       prev.map((p) =>
         p.status === "error" && p.retryable
-          ? { ...p, status: "queued", progress: 0, error: undefined }
+          ? { ...p, status: "queued", progress: 0, error: undefined, retryState: {} }
           : p,
       ),
     );

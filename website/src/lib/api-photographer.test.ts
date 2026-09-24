@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import { permanentDeletePhotographerPhotos, restorePhotographerPhotos, trashPhotographerPhotos, uploadPhotographerPhoto } from "./api-photographer";
+import { OfflineUploadError, permanentDeletePhotographerPhotos, restorePhotographerPhotos, trashPhotographerPhotos, uploadPhotographerPhoto } from "./api-photographer";
 import { fetchPhotographerPayoutReports } from "./api-photographer-earnings";
 import { report } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
@@ -298,4 +298,83 @@ it("keeps the fifteen-minute transfer cap across PUT retries", async () => {
     expect(sends).toBe(2);
     expect(caps).toEqual([900_000, 840_000]);
   } finally { vi.stubGlobal("XMLHttpRequest", original); vi.unstubAllEnvs(); }
+});
+
+it("retries a failed multipart transfer but keeps terminal errors terminal", async () => {
+  const nativeTimer = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) =>
+    nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args)) as typeof setTimeout);
+  let sends = 0;
+  class MultipartXhr {
+    status = 200;
+    responseText = JSON.stringify({ success: true, data: { id: "saved", status: "processing" } });
+    upload = { onprogress: null };
+    onload?: () => void;
+    onerror?: () => void;
+    open() {}
+    setRequestHeader() {}
+    send() { sends++; queueMicrotask(() => sends === 1 ? this.onerror?.() : this.onload?.()); }
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", MultipartXhr);
+  post.mockResolvedValue({ mode: "multipart" });
+  expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, { contentHash: "a".repeat(64) })).toMatchObject({ id: "saved" });
+  expect(sends).toBe(2);
+  vi.unstubAllGlobals();
+});
+
+it("retains begin retry budget across automatic offline recovery", async () => {
+  const nativeTimer = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) =>
+    nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args)) as typeof setTimeout);
+  const state = {};
+  let online = true;
+  vi.spyOn(window.navigator, "onLine", "get").mockImplementation(() => online);
+  let calls = 0;
+  post.mockImplementation(() => {
+    calls++;
+    if (calls <= 2) online = false;
+    return Promise.reject(new TypeError("Connection lost"));
+  });
+  const file = new File(["a"], "a.jpg", { type: "image/jpeg" });
+  const options = { contentHash: "a".repeat(64), retryState: state, checkpoint: { requestId: "same" } };
+  await expect(uploadPhotographerPhoto("event", file, undefined, options)).rejects.toBeInstanceOf(OfflineUploadError);
+  online = true;
+  await expect(uploadPhotographerPhoto("event", file, undefined, options)).rejects.toBeInstanceOf(OfflineUploadError);
+  online = true;
+  await expect(uploadPhotographerPhoto("event", file, undefined, options)).rejects.toThrow("Connection lost");
+  expect(calls).toBe(4);
+});
+
+it("parks multipart after a connection loss and resumes with the same retry budget", async () => {
+  let online = true;
+  vi.spyOn(window.navigator, "onLine", "get").mockImplementation(() => online);
+  let sends = 0;
+  class MultipartXhr {
+    status = 200;
+    responseText = JSON.stringify({ success: true, data: { id: "saved", status: "processing" } });
+    upload = { onprogress: null };
+    onload?: () => void;
+    onerror?: () => void;
+    open() {}
+    setRequestHeader() {}
+    send() {
+      sends++;
+      queueMicrotask(() => {
+        if (sends === 1) { online = false; this.onerror?.(); }
+        else this.onload?.();
+      });
+    }
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", MultipartXhr);
+  post.mockResolvedValue({ mode: "multipart" });
+  const retryState = {};
+  const options = { contentHash: "a".repeat(64), retryState };
+  const file = new File(["a"], "a.jpg", { type: "image/jpeg" });
+  await expect(uploadPhotographerPhoto("event", file, undefined, options)).rejects.toBeInstanceOf(OfflineUploadError);
+  expect(retryState).toMatchObject({ transferRetries: 1 });
+  online = true;
+  expect(await uploadPhotographerPhoto("event", file, undefined, options)).toMatchObject({ id: "saved" });
+  expect(sends).toBe(2);
 });

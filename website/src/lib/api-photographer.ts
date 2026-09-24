@@ -279,10 +279,18 @@ export interface DirectUploadCheckpoint {
   intentExpiresAt?: string;
 }
 
+export interface UploadRetryState {
+  beginRetries?: number;
+  transferRetries?: number;
+  commitRetries?: number;
+  transferDeadline?: number;
+}
+
 export interface PhotographerUploadOptions {
   contentHash?: string;
   signal?: AbortSignal;
   checkpoint?: DirectUploadCheckpoint;
+  retryState?: UploadRetryState;
   onCheckpoint?: (value: DirectUploadCheckpoint) => void;
   onPhase?: (phase: "preparing" | "uploading" | "confirming") => void;
 }
@@ -335,17 +343,22 @@ async function retryUpload<T>(
   work: () => Promise<T>,
   signal: AbortSignal | undefined,
   isCurrent: () => boolean,
+  retryState: UploadRetryState,
+  phase: "beginRetries" | "transferRetries" | "commitRetries",
   canRetry: (error: unknown) => boolean = uploadError,
 ): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
+  for (;;) {
     assertUploadActive(signal, isCurrent);
     try {
       const result = await work();
       assertUploadActive(signal, isCurrent);
       return result;
     } catch (error) {
-      assertUploadActive(signal, isCurrent);
+      if (signal?.aborted || !isCurrent()) assertUploadActive(signal, isCurrent);
+      const attempt = retryState[phase] ?? 0;
       if (attempt >= 3 || !canRetry(error)) throw error;
+      retryState[phase] = attempt + 1;
+      assertUploadActive(signal, isCurrent);
       await waitForRetry(retryDelay(error, attempt), signal);
     }
   }
@@ -434,6 +447,7 @@ export async function uploadPhotographerPhoto(
 ): Promise<UploadedPhoto> {
   const isCurrent = captureAuthSession();
   const signal = options.signal;
+  const retryState = options.retryState ?? {};
   assertUploadActive(signal, isCurrent);
   options.onPhase?.("preparing");
   const base = `/me/photographer/events/${encodeURIComponent(eventId)}/photos`;
@@ -441,7 +455,7 @@ export async function uploadPhotographerPhoto(
   // been requested yet, so the backend's multipart route is safe here.
   if ((!globalThis.crypto?.subtle && (!options.contentHash || !options.checkpoint?.photoId || !options.checkpoint.key)) ||
       (!options.checkpoint && !globalThis.crypto?.getRandomValues)) {
-    return multipartUpload(eventId, file, onProgress, signal, isCurrent, options.onPhase);
+    return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
   }
   const contentHash = options.contentHash ?? await sha256Hex(file);
   assertUploadActive(signal, isCurrent);
@@ -458,7 +472,7 @@ export async function uploadPhotographerPhoto(
   const commit = () => retryUpload(() => api.post<UploadedPhoto>(`${base}/direct/commit`, {
     photoId: checkpoint!.photoId, key: checkpoint!.key, contentHash,
     contentType: file.type, sizeBytes: file.size,
-  }, { signal, timeoutMs: 120_000 }), signal, isCurrent);
+  }, { signal, timeoutMs: 120_000 }), signal, isCurrent, retryState, "commitRetries");
 
   // A retained receipt may already have reached storage before the tab lost
   // its reply. Ask the backend before making another grant or sending bytes.
@@ -469,7 +483,7 @@ export async function uploadPhotographerPhoto(
       if (!(error instanceof ApiError) || !error.errors.some((item) => item.code === "UPLOAD_OBJECT_MISSING")) throw error;
       if ((checkpoint.putExpiresAt && Date.parse(checkpoint.putExpiresAt) <= Date.now()) ||
           (checkpoint.intentExpiresAt && Date.parse(checkpoint.intentExpiresAt) <= Date.now())) {
-        if (!globalThis.crypto?.getRandomValues) return multipartUpload(eventId, file, onProgress, signal, isCurrent, options.onPhase);
+        if (!globalThis.crypto?.getRandomValues) return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
         save({ requestId: uploadRequestId() });
       }
     }
@@ -480,23 +494,23 @@ export async function uploadPhotographerPhoto(
     begin = await retryUpload(() => api.post<DirectBeginResponse>(`${base}/direct`, {
       contentHash, contentType: file.type, sizeBytes: file.size,
       requestId: checkpoint!.requestId, client: "website",
-    }, { signal }), signal, isCurrent);
+    }, { signal }), signal, isCurrent, retryState, "beginRetries");
   } catch (error) {
-    // Older backend without the direct route: only an unmapped 404 qualifies.
-    if (error instanceof ApiError && error.status === 404 && error.errors.every((item) => item.code === "UNKNOWN")) {
-      return multipartUpload(eventId, file, onProgress, signal, isCurrent, options.onPhase);
+    // Older backend without the direct route: only a generic 404 qualifies.
+    if (error instanceof ApiError && error.status === 404 && error.errors.every((item) => item.code === "UNKNOWN" || item.code === "NOT_FOUND")) {
+      return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
     }
     throw error;
   }
   if (begin.mode === "existing" && begin.existing) return begin.existing;
-  if (begin.mode === "multipart") return multipartUpload(eventId, file, onProgress, signal, isCurrent, options.onPhase);
+  if (begin.mode === "multipart") return multipartUpload(eventId, file, onProgress, signal, isCurrent, retryState, options.onPhase);
   if (begin.mode !== "direct" || !begin.photoId || !begin.key || !begin.uploadUrl) throw new Error("Invalid direct upload grant.");
   validateUploadUrl(begin.uploadUrl);
   save({ requestId: checkpoint.requestId, photoId: begin.photoId, key: begin.key, putExpiresAt: begin.expiresAt, intentExpiresAt: begin.intentExpiresAt });
   options.onPhase?.("uploading");
   let recovered: UploadedPhoto | undefined;
   let confirmationUnknown = false;
-  const transferDeadline = Date.now() + 15 * 60_000;
+  const transferDeadline = retryState.transferDeadline ??= Date.now() + 15 * 60_000;
   await retryUpload(async () => {
     try {
       await rawPut(begin.uploadUrl!, file, begin.uploadHeaders ?? {}, onProgress, signal, transferDeadline);
@@ -517,7 +531,7 @@ export async function uploadPhotographerPhoto(
       }
       throw error;
     }
-  }, signal, isCurrent, (error) => !confirmationUnknown && uploadError(error));
+  }, signal, isCurrent, retryState, "transferRetries", (error) => !confirmationUnknown && uploadError(error));
   assertUploadActive(signal, isCurrent);
   if (recovered) return recovered;
   options.onPhase?.("confirming");
@@ -530,6 +544,7 @@ function multipartUpload(
   onProgress: ((event: UploadProgressEvent) => void) | undefined,
   signal: AbortSignal | undefined,
   isCurrent: () => boolean,
+  retryState: UploadRetryState,
   onPhase?: PhotographerUploadOptions["onPhase"],
 ): Promise<UploadedPhoto> {
   const url = `${API_BASE_URL}/me/photographer/events/${encodeURIComponent(eventId)}/photos`;
@@ -618,7 +633,7 @@ function multipartUpload(
       xhr.send(fd);
     });
 
-  return attempt(getAccessToken(), false);
+  return retryUpload(() => attempt(getAccessToken(), false), signal, isCurrent, retryState, "transferRetries");
 }
 
 // Pre-flight duplicate check (dedup Phase 2). The upload page hashes each file
