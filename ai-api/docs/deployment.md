@@ -225,7 +225,9 @@ private ONNX, labels, and an approved labelled holdout through the
 `blur-release` environment's `BLUR_MODEL_URL`, `BLUR_LABELS_URL`, and
 `BLUR_HOLDOUT_URL` secrets. The holdout ZIP must have the four class
 directories at its root (see `scripts/blur_gate.py --help`). Missing
-artifacts fail. It migrates disposable
+artifacts fail. Set the approved `BLUR_MIN_ACCURACY`, `BLUR_MAX_MISS_RATE`,
+and `BLUR_MAX_OVERCULL_RATE` in that environment's variables; missing or
+invalid limits fail before the release smoke creates database keys. It migrates disposable
 PostgreSQL/pgvector, starts Redis and the built image with async routes disabled,
 checks real inference, verifies batch/mega requests return `BLUR_ASYNC_DISABLED`,
 denies desktop access to `/metrics`, and runs the complete `blur_gate.py`

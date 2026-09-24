@@ -44,6 +44,9 @@ jobs:
       BLUR_MODEL_URL: ${{ secrets.BLUR_MODEL_URL }}
       BLUR_LABELS_URL: ${{ secrets.BLUR_LABELS_URL }}
       BLUR_HOLDOUT_URL: ${{ secrets.BLUR_HOLDOUT_URL }}
+      BLUR_MIN_ACCURACY: ${{ vars.BLUR_MIN_ACCURACY }}
+      BLUR_MAX_MISS_RATE: ${{ vars.BLUR_MAX_MISS_RATE }}
+      BLUR_MAX_OVERCULL_RATE: ${{ vars.BLUR_MAX_OVERCULL_RATE }}
     steps:
       - uses: actions/checkout@v4
       - name: Fetch private release artifacts

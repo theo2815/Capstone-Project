@@ -269,3 +269,20 @@ def test_diagnostic_mode_never_reports_release_pass(tmp_path, monkeypatch):
     code, report, _ = _run(tmp_path, monkeypatch, rows, "--diagnostic-subset")
     assert code == 2
     assert report["status"] == "DIAGNOSTIC"
+
+
+@pytest.mark.asyncio
+async def test_release_smoke_rejects_missing_approved_limits_before_db(tmp_path, monkeypatch):
+    from scripts import blur_release_smoke
+
+    monkeypatch.setenv("BLUR_HOLDOUT_DIR", str(tmp_path))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://unused")
+    for name in ("BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE"):
+        monkeypatch.delenv(name, raising=False)
+
+    async def no_database(*_args, **_kwargs):
+        raise AssertionError("release smoke reached the database without approved limits")
+
+    monkeypatch.setattr(blur_release_smoke.asyncpg, "connect", no_database)
+    with pytest.raises(RuntimeError, match="BLUR_MIN_ACCURACY"):
+        await blur_release_smoke.run(False)

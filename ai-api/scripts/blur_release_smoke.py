@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import io
 import json
+import math
 import os
 import secrets
 import subprocess
@@ -28,6 +29,16 @@ async def run(smoke_only: bool) -> None:
     holdout = os.environ.get("BLUR_HOLDOUT_DIR", "")
     if not smoke_only and (not holdout or not Path(holdout).is_dir()):
         raise RuntimeError("BLUR_HOLDOUT_DIR must contain the approved labelled holdout")
+    limits = {}
+    if not smoke_only:
+        for name in ("BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE"):
+            try:
+                value = float(os.environ[name])
+            except (KeyError, ValueError):
+                raise RuntimeError(f"{name} must be set to a number from 0 to 1") from None
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise RuntimeError(f"{name} must be set to a number from 0 to 1")
+            limits[name] = str(value)
 
     desktop = secrets.token_urlsafe(32)
     operator = secrets.token_urlsafe(32)
@@ -99,7 +110,10 @@ async def run(smoke_only: bool) -> None:
             env = {**os.environ, "AI_API_KEY": desktop}
             result = subprocess.run(
                 [sys.executable, "/app/scripts/blur_gate.py", holdout,
-                 "--url", base, "--report-json", "/reports/blur-gate-report.json"],
+                 "--url", base, "--report-json", "/reports/blur-gate-report.json",
+                 "--min-accuracy", limits["BLUR_MIN_ACCURACY"],
+                 "--max-miss-rate", limits["BLUR_MAX_MISS_RATE"],
+                 "--max-overcull-rate", limits["BLUR_MAX_OVERCULL_RATE"]],
                 env=env, capture_output=True, text=True, check=False,
             )
             report = json.loads(Path("/reports/blur-gate-report.json").read_text(encoding="utf-8"))
