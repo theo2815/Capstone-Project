@@ -314,7 +314,7 @@ flowchart LR
 - **Watermark Resistance:** Applies diagonal wordmark patterns, custom photographer logos, and seed-based geometry derived from `HMAC(seed, photoId)`.
 - **Copyright Verification:** Computes 64-bit DCT perceptual hashes. `POST /public/photos/verify` allows runners or admins to upload screenshots or crops and find the original photographer using Hamming distance comparison (≤ 12 bits).
 
-**Direct upload contract — mobile/backend:**
+**Direct upload contract — mobile/website/backend:**
 
 `POST /api/v1/me/photographer/events/{eventId}/photos/direct` returns `direct`,
 `existing`, or `multipart`. Direct mode first reserves a durable, owner/event-scoped
@@ -359,17 +359,27 @@ and the gauges `qp.upload.direct.pending.count`, `qp.upload.direct.pending.bytes
 and `qp.upload.direct.pending.oldest.age`. Labels never contain file, hash, URL,
 or intent identifiers; cleanup logs contain only operation, intent ID and error class.
 
-**Proposed R2 deployment additions (not applied by application code):** before
-rollout, export the bucket's current CORS and lifecycle JSON. Preserve every
-existing rule, then add `PUT` to a rule whose exact origins are the approved web
-origins (`https://quickpitik.com` and `https://www.quickpitik.com` for production;
-use a separately approved exact origin in preview/nonproduction), whose allowed
-request header is `Content-Type`, and whose exposed response header is `ETag`.
-Keep existing `GET`/`HEAD` behavior and do not use wildcard origins or headers.
-Add one lifecycle rule scoped only to prefix `staging/photo-uploads/`, expiring
-objects after two days. Never apply expiry to `events/`, originals, or derivatives.
-Task 4 records this proposal only; deployment must apply and read back both rules
-in the controlled rollout after preserving the prior JSON.
+**R2 bucket rules (applied to production 2026-09-25, not by application code):**
+one CORS rule allows `PUT` from exactly `https://quickpitik.com` (`www` redirects
+to the apex, so it never originates an upload), allowed request header
+`Content-Type`, exposed header `ETag`. The production bucket had no CORS rule
+before; no `GET` rule is needed because nothing fetches R2 cross-origin. One
+lifecycle rule expires only prefix `staging/photo-uploads/` after two days, beside
+the default multipart-abort rule. Never apply expiry to `events/`, originals, or
+derivatives. Nonproduction buckets use their own exact origins, never wildcards.
+The website's exact R2 origin is `NEXT_PUBLIC_R2_UPLOAD_ORIGIN` (the storage
+endpoint origin); it feeds both the transport's URL check and production CSP
+`connect-src`.
+
+**Rollout switches and rollback:** `STORAGE_DIRECT_UPLOAD_ENABLED` issues direct
+grants to any client; `STORAGE_DIRECT_UPLOAD_WEBSITE_ENABLED` additionally lets
+`client=website` begins go direct. Both default to `false` and are `true` in
+production. Kill switch: set the website flag `false` and redeploy — new website
+begins return `multipart`, while already-issued intents still commit and are
+cleaned. Setting `STORAGE_DIRECT_UPLOAD_ENABLED=false` does the same for mobile.
+Never roll back to a backend without the intent ledger, never drop
+`photo_upload_intents`, and never switch a file to multipart because a commit
+was ambiguous.
 
 Android persists the slot before PUT and retries commit first after interruption;
 only `UPLOAD_OBJECT_MISSING` starts another transfer. Transient storage failures do
