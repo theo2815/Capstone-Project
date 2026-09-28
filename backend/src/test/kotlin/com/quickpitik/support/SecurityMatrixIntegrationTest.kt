@@ -161,6 +161,25 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `metadata routes obey photographer and anonymous gates with no store`() {
+        val id = UUID.randomUUID()
+        val ownerPath = "/api/v1/me/photographer/photos/$id/metadata"
+        val publicPath = "/api/v1/public/photos/$id/metadata"
+        assertEquals(401, get(ownerPath).statusCode())
+        assertEquals(403, get(ownerPath, register(Role.RUNNER)).statusCode())
+        val photographer = register(Role.PHOTOGRAPHER)
+        val settings = get("/api/v1/me/photographer/metadata-settings", photographer)
+        assertEquals(200, settings.statusCode())
+        assertTrue("no-store" in settings.headers().firstValue("Cache-Control").orElse(""))
+        val missingOwner = get(ownerPath, photographer)
+        assertEquals(404, missingOwner.statusCode())
+        assertTrue("no-store" in missingOwner.headers().firstValue("Cache-Control").orElse(""))
+        val missingPublic = get(publicPath)
+        assertEquals(404, missingPublic.statusCode())
+        assertTrue("no-store" in missingPublic.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
     fun `direct upload controls require photographer auth and are never cached`() {
         val eventId = UUID.randomUUID()
         val photoId = UUID.randomUUID()

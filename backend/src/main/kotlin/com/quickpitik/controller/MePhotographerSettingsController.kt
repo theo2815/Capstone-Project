@@ -27,6 +27,7 @@ import com.quickpitik.service.photographer.SocialLinkService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
+import jakarta.servlet.http.HttpServletResponse
 import jakarta.validation.Valid
 import org.springframework.http.MediaType
 import org.springframework.security.access.prepost.PreAuthorize
@@ -71,14 +72,23 @@ class MePhotographerSettingsController(
     private val photoMetadataSettingsService: PhotoMetadataSettingsService,
 ) {
     @GetMapping("/metadata-settings")
-    fun getMetadataSettings(@AuthenticationPrincipal principal: AuthPrincipal): MetadataSettingsDto =
-        photoMetadataSettingsService.getDefault(principal.userId)
+    fun getMetadataSettings(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        response: HttpServletResponse,
+    ): MetadataSettingsDto {
+        response.setHeader("Cache-Control", "private, no-store")
+        return photoMetadataSettingsService.getDefault(principal.userId)
+    }
 
     @PutMapping("/metadata-settings")
     fun putMetadataSettings(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @Valid @RequestBody body: MetadataSettingsDto,
-    ): MetadataSettingsDto = photoMetadataSettingsService.setDefault(principal.userId, body.metadataPublicByDefault)
+        response: HttpServletResponse,
+    ): MetadataSettingsDto {
+        response.setHeader("Cache-Control", "private, no-store")
+        return photoMetadataSettingsService.setDefault(principal.userId, body.metadataPublicByDefault)
+    }
 
     // ─── Brand / Handle / Region ──────────────────────────────────────────
     @GetMapping("/brand")

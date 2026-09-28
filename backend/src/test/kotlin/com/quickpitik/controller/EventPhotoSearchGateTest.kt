@@ -18,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.mock.web.MockHttpServletRequest
+import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.mock.web.MockMultipartFile
 import java.time.LocalDate
 import java.util.UUID
@@ -159,6 +160,7 @@ class EventPhotoSearchGateTest {
                 slug = slug,
                 body = EventPhotoController.SearchByFaceJsonRequest(selfieId = UUID.randomUUID().toString()),
                 request = MockHttpServletRequest(),
+                response = MockHttpServletResponse(),
             )
         }
 
@@ -173,6 +175,7 @@ class EventPhotoSearchGateTest {
         offset = null,
         limit = null,
         request = MockHttpServletRequest(),
+        response = MockHttpServletResponse(),
     )
 
     private fun verifyNoSearch() = Mockito.verify(photoSearchService, Mockito.never())
