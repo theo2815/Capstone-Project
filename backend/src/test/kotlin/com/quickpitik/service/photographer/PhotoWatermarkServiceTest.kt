@@ -48,6 +48,9 @@ class PhotoWatermarkServiceTest {
     private lateinit var userRepository: UserRepository
     private lateinit var watermarkService: WatermarkService
     private lateinit var eventPublisher: ApplicationEventPublisher
+    private lateinit var metadataService: PhotoMetadataService
+    private lateinit var transactionManager: PlatformTransactionManager
+    private var lastOriginal: ByteArray? = null
 
     private val photographerId = UUID.randomUUID()
     private val eventId = UUID.randomUUID()
@@ -68,9 +71,12 @@ class PhotoWatermarkServiceTest {
         userRepository = Mockito.mock(UserRepository::class.java)
         watermarkService = Mockito.mock(WatermarkService::class.java)
         eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
+        metadataService = Mockito.mock(PhotoMetadataService::class.java)
+        transactionManager = Mockito.mock(PlatformTransactionManager::class.java)
+        Mockito.`when`(transactionManager.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
     }
 
-    private fun service(maxAttempts: Int = 5) = PhotoWatermarkService(
+    private fun service(maxAttempts: Int = 5, metadata: PhotoMetadataService = metadataService) = PhotoWatermarkService(
         storageService,
         StorageProperties(),
         photoRepository,
@@ -81,13 +87,10 @@ class PhotoWatermarkServiceTest {
         // Real cache over the mocked storage — first get() always calls through.
         WatermarkLogoCache(storageService, SimpleMeterRegistry()),
         eventPublisher,
-        TransactionTemplate(
-            Mockito.mock(PlatformTransactionManager::class.java).also {
-                Mockito.`when`(it.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
-            },
-        ),
+        TransactionTemplate(transactionManager),
         SimpleMeterRegistry(),
         maxAttempts,
+        metadata,
     )
 
     private fun photo(
@@ -146,6 +149,7 @@ class PhotoWatermarkServiceTest {
         Mockito.`when`(watermarkService.processThumbnail(anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(), anyArg())).thenAnswer { inv ->
             // Kotlin's non-null parameter rejects ArgumentCaptor/eq (both return
             // null), so record the arguments here instead.
+            lastOriginal = inv.getArgument(0)
             lastLogo = inv.getArgument(1)
             lastCredit = inv.getArgument(2)
             lastPlatformMark = inv.getArgument(3)
@@ -232,6 +236,67 @@ class PhotoWatermarkServiceTest {
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
     }
 
+    @Test
+    fun `metadata uses the same original after publication commits and storage failure stays isolated`() {
+        stubHappyPath()
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        var committed = false
+        var published = false
+        var extracted = false
+        Mockito.doAnswer { published = true; null }.`when`(eventPublisher).publishEvent(anyArg<PhotoPublishedEvent>())
+        Mockito.doAnswer { committed = true; null }.`when`(transactionManager).commit(anyArg())
+        Mockito.doAnswer { invocation ->
+            assertTrue(committed)
+            assertTrue(published)
+            assertTrue(lastOriginal === invocation.getArgument<ByteArray>(1))
+            extracted = true
+            throw IllegalStateException("metadata database unavailable")
+        }.`when`(metadataService).extractIfDue(anyArg(), anyArg())
+
+        service().process(photoId)
+
+        assertTrue(extracted)
+        Mockito.verify(storageService, Mockito.times(1)).getBytes("events/$eventId/photos/$photoId/original.jpg")
+        Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
+        Mockito.verify(transactionManager, Mockito.never()).rollback(anyArg())
+    }
+
+    @Test
+    fun `parser exception after committed publication leaves watermark successful`() {
+        stubHappyPath()
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        val metadata = Mockito.mock(com.quickpitik.repository.PhotoMetadataRepository::class.java)
+        val extractor = Mockito.mock(com.quickpitik.service.image.PhotoMetadataExtractor::class.java)
+        Mockito.`when`(metadata.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
+        var committed = false
+        var parsed = false
+        Mockito.doAnswer { committed = true; null }.`when`(transactionManager).commit(anyArg())
+        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+            assertTrue(committed)
+            parsed = true
+            throw IllegalArgumentException("broken metadata")
+        }
+        val extraction = PhotoMetadataService(metadata, extractor, TransactionTemplate(transactionManager), java.time.Clock.systemUTC())
+
+        service(metadata = extraction).process(photoId)
+
+        assertTrue(parsed)
+        Mockito.verify(metadata).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
+        Mockito.verify(transactionManager, Mockito.never()).rollback(anyArg())
+    }
+
+    @Test
+    fun `failed publication commit never starts metadata extraction`() {
+        stubHappyPath()
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.doThrow(IllegalStateException("commit failed")).`when`(transactionManager).commit(anyArg())
+
+        kotlin.test.assertFailsWith<IllegalStateException> { service().process(photoId) }
+
+        Mockito.verifyNoInteractions(metadataService)
+    }
+
     // The credit baked into the preview: brand name when the photographer set
     // one, otherwise the account name; handle straight from settings.
     @Test
@@ -288,6 +353,7 @@ class PhotoWatermarkServiceTest {
         service().process(photoId)
 
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
+        Mockito.verifyNoInteractions(metadataService)
     }
 
     @Test
@@ -328,6 +394,7 @@ class PhotoWatermarkServiceTest {
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
         Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
+        Mockito.verifyNoInteractions(metadataService)
     }
 
     @Test
@@ -344,6 +411,7 @@ class PhotoWatermarkServiceTest {
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
         Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
+        Mockito.verifyNoInteractions(metadataService)
     }
 
     // photographer_id is FK-backed, so a missing user row is an inconsistency,

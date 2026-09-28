@@ -10,6 +10,7 @@ import com.drew.metadata.exif.ExifSubIFDDirectory
 import com.drew.metadata.iptc.IptcDirectory
 import com.drew.metadata.xmp.XmpDirectory
 import com.quickpitik.dto.photos.PhotoMetadataFields
+import org.springframework.stereotype.Component
 import java.io.InputStream
 import java.text.Normalizer
 import java.time.LocalDateTime
@@ -19,6 +20,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
 
 /** Reads only display-safe metadata from an already bounded original image stream. */
+@Component
 class PhotoMetadataExtractor {
     fun extract(input: InputStream): PhotoMetadataFields {
         val metadata = ImageMetadataReader.readMetadata(input)

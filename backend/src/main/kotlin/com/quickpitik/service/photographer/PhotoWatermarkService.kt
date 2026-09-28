@@ -42,6 +42,7 @@ class PhotoWatermarkService(
     private val transactionTemplate: TransactionTemplate,
     private val meterRegistry: MeterRegistry,
     @Value("\${app.watermark.max-attempts:5}") private val maxAttempts: Int,
+    private val metadataService: PhotoMetadataService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -110,8 +111,9 @@ class PhotoWatermarkService(
             portraitY = settings.watermarkPosPortraitY,
         )
 
+        val original: ByteArray
         val marked = try {
-            val original = storageService.getBytes(photo.s3Key)
+            original = storageService.getBytes(photo.s3Key)
             val logo = watermarkKeySetting
                 ?.takeIf { policy != WatermarkPolicy.NONE }
                 ?.let { watermarkLogoCache.get(it) }
@@ -167,7 +169,7 @@ class PhotoWatermarkService(
         val thumbnailUrl =
             storageService.presignedGetUrl(watermarkKey, storageProperties.presignedTtl.thumbnail)
 
-        transactionTemplate.execute {
+        val published = transactionTemplate.execute {
             val flipped = photoRepository.publishWatermarked(
                 photo.id,
                 watermarkKey,
@@ -196,8 +198,17 @@ class PhotoWatermarkService(
                     ),
                 )
             }
+            flipped == 1
         }
         meterRegistry.counter("qp.watermark.outcome", "outcome", "live").increment()
+        if (published == true) {
+            // Publication and its AFTER_COMMIT WebSocket frame complete first.
+            try {
+                metadataService.extractIfDue(photoId, original)
+            } catch (ex: Exception) {
+                log.warn("Metadata extraction failed after publishing photo {} ({})", photoId, ex.javaClass.simpleName)
+            }
+        }
     }
 
     private fun settleSemanticFailure(photoId: UUID, attemptsBefore: Int, reason: String) {
