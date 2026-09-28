@@ -94,6 +94,36 @@ describe('photographer photo management', () => {
     expect(mocks.removeQueries).not.toHaveBeenCalled();
   });
 
+  it('keeps an unsaved event choice across a visibility refetch error and recovery', () => {
+    useAuthStore.getState().setUser({ id: 'photographer-a', role: 'PHOTOGRAPHER', name: 'A', email: 'a@example.test', createdAt: '2026-09-28' });
+    const { rerender } = render(<EventPage />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' }));
+    expect(screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' })).toBeChecked();
+
+    mocks.visibility = { isSuccess: false, isPending: false, isError: true, data: { metadataPublic: false }, refetch: vi.fn() };
+    rerender(<EventPage />);
+    expect(screen.getByText("Couldn't load metadata visibility.")).toBeInTheDocument();
+    mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() };
+    rerender(<EventPage />);
+
+    const choice = screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' });
+    expect(choice).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Save metadata visibility' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel metadata change' }));
+    expect(choice).not.toBeChecked();
+  });
+
+  it('clears an unsaved event choice when the account changes role', () => {
+    const user = { id: 'photographer-a', name: 'A', email: 'a@example.test', createdAt: '2026-09-28' };
+    useAuthStore.getState().setUser({ ...user, role: 'PHOTOGRAPHER' });
+    render(<EventPage />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' }));
+    act(() => useAuthStore.getState().setUser({ ...user, role: 'RUNNER' }));
+    expect(screen.queryByRole('checkbox', { name: 'Show metadata publicly for my photos' })).toBeNull();
+    act(() => useAuthStore.getState().setUser({ ...user, role: 'PHOTOGRAPHER' }));
+    expect(screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' })).not.toBeChecked();
+  });
+
   it('ignores a save completed after the photographer session changes', async () => {
     useAuthStore.getState().setUser({ id: 'photographer-a', role: 'PHOTOGRAPHER', name: 'A', email: 'a@example.test', createdAt: '2026-09-28' });
     let resolve!: (value: { metadataPublic: boolean }) => void;

@@ -229,14 +229,22 @@ function EventMetadataVisibility({ event }: { event: PhotographerEventDetail }) 
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const [draft, setDraft] = useState<boolean | null>(null);
+  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const serverValue = visibility.data?.metadataPublic;
+  const sessionOwner = session.key[0];
+  const sessionRole = session.key[1];
   const sessionVersion = session.key[2];
 
   useEffect(() => {
-    setDraft(visibility.isSuccess && serverValue !== undefined ? serverValue : null);
+    setDraft(null);
+    setDirty(false);
     setSaving(false);
-  }, [event.id, sessionVersion, visibility.isSuccess, serverValue]);
+  }, [event.id, sessionOwner, sessionRole, sessionVersion]);
+
+  useEffect(() => {
+    if (!dirty && visibility.isSuccess) setDraft(serverValue ?? null);
+  }, [event.id, sessionOwner, sessionRole, sessionVersion, dirty, visibility.isSuccess, serverValue]);
 
   async function save() {
     if (!session.enabled || !visibility.isSuccess || draft === null || draft === visibility.data.metadataPublic || saving) return;
@@ -253,6 +261,7 @@ function EventMetadataVisibility({ event }: { event: PhotographerEventDetail }) 
       // M7's public photo metadata queries use this prefix; no M7 hook exists yet.
       queryClient.removeQueries({ queryKey: ["photo", "metadata", "public"] });
       setDraft(saved.metadataPublic);
+      setDirty(false);
       showToast({ kind: "success", message: "Metadata visibility saved." });
     } catch {
       if (isCurrent()) showToast({ kind: "error", message: "Couldn't save metadata visibility." });
@@ -278,7 +287,10 @@ function EventMetadataVisibility({ event }: { event: PhotographerEventDetail }) 
             <input
               type="checkbox"
               checked={draft}
-              onChange={(change) => setDraft(change.target.checked)}
+              onChange={(change) => {
+                setDraft(change.target.checked);
+                setDirty(change.target.checked !== visibility.data.metadataPublic);
+              }}
               disabled={saving}
               aria-describedby="event-metadata-help event-metadata-boundary"
               className="size-5 shrink-0 accent-fresh disabled:cursor-not-allowed"
@@ -289,7 +301,7 @@ function EventMetadataVisibility({ event }: { event: PhotographerEventDetail }) 
           <p id="event-metadata-boundary" className="mt-2 font-sans text-sm text-slate">This controls the metadata popup. Original downloads keep their embedded metadata.</p>
           <div className="mt-5 flex flex-wrap gap-2">
             <button type="button" onClick={() => void save()} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_PRIMARY, BTN_SIZE.sm)}>Save metadata visibility</button>
-            <button type="button" onClick={() => setDraft(visibility.data.metadataPublic)} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Cancel metadata change</button>
+            <button type="button" onClick={() => { setDraft(visibility.data.metadataPublic); setDirty(false); }} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Cancel metadata change</button>
           </div>
         </>
       )}
