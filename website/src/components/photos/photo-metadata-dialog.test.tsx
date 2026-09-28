@@ -16,8 +16,8 @@ const ready: PhotoMetadataDto = {
   },
 };
 let client: QueryClient;
-function Harness({ photoId = "photo-a" }: { photoId?: string }) {
-  const [open, setOpen] = useState(false);
+function Harness({ photoId = "photo-a", initialOpen = false }: { photoId?: string; initialOpen?: boolean }) {
+  const [open, setOpen] = useState(initialOpen);
   const [mounted, setMounted] = useState(true);
   const triggerRef = useRef<HTMLButtonElement>(null);
   return <QueryClientProvider client={client}>
@@ -136,4 +136,11 @@ it("contains Tab and Shift+Tab, and restores trigger focus on close, Escape, bac
   await user.click(screen.getByRole("button", { name: "Unmount popup" }));
   expect(trigger).toHaveFocus();
   view.unmount();
+});
+
+it("focuses Close metadata when first mounted already open", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ ...ready, status: "pending", fields: null });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<Harness initialOpen />);
+  expect(await screen.findByRole("button", { name: "Close metadata" })).toHaveFocus();
 });

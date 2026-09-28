@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type RefObject, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type RefObject, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -46,12 +46,13 @@ function section(title: string, content: ReactNode) {
 export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, triggerRef }: PhotoMetadataDialogProps) {
   const query = usePhotoMetadata(photoId, access, isOpen);
   const contentRef = useRef<HTMLDivElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
+  const focusClose = useCallback((node: HTMLButtonElement | null) => {
+    if (node && isOpen) node.focus();
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
     const trigger = triggerRef.current;
-    closeRef.current?.focus();
     const containTab = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
       const controls = contentRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], input:not(:disabled)");
@@ -84,7 +85,7 @@ export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, triggerR
     className="max-w-md p-5 md:p-7 [&>h2]:font-display [&>h2]:text-xl [&>h2]:font-bold [&>h2]:normal-case [&>h2]:tracking-normal [&>h2]:text-ink">
     <div ref={contentRef} className="space-y-5">
       <div className="absolute right-2 top-2">
-        <button ref={closeRef} type="button" onClick={onClose} aria-label="Close metadata"
+        <button ref={focusClose} type="button" onClick={onClose} aria-label="Close metadata"
           className="flex size-11 items-center justify-center rounded-full text-slate hover:bg-bone-deep hover:text-ink">
           <X className="size-4" aria-hidden="true" />
         </button>
