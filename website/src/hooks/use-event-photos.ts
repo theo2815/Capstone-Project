@@ -10,6 +10,7 @@ import {
   type Photo,
 } from "@/lib/api-photos";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import { useAuthStore } from "@/store/auth-store";
 
 interface UseEventPhotosArgs {
   slug: string;
@@ -38,8 +39,9 @@ interface UseEventPhotosResult {
 export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
   const bib = args.bib?.trim() || undefined;
   const viewer = usePrivateQuerySession();
-  const guestPage = !viewer.enabled && !bib ? args.initialPage : undefined;
-  const scope = JSON.stringify([args.slug, ...viewer.key]);
+  const authLoading = useAuthStore((s) => s.isLoading);
+  const guestPage = !authLoading && !viewer.enabled && !bib ? args.initialPage : undefined;
+  const scope = JSON.stringify([args.slug, ...viewer.key, authLoading]);
   const snapshotRef = useRef({ scope, value: guestPage?.snapshotAt });
   if (snapshotRef.current.scope !== scope) {
     snapshotRef.current = { scope, value: guestPage?.snapshotAt };
@@ -52,6 +54,7 @@ export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
       "photos",
       { bib: bib ?? null, snapshotAt: guestPage?.snapshotAt ?? null },
       ...viewer.key,
+      authLoading,
     ],
     fetchPage: async (offset, limit, signal) => {
       const page = await fetchEventPhotos(args.slug, {
@@ -68,7 +71,7 @@ export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
     },
     limit: PAGE_SIZE.PHOTO_INCREMENT,
     initialPage: guestPage,
-    enabled: args.enabled ?? true,
+    enabled: (args.enabled ?? true) && !authLoading,
     staleTime: 30_000,
   });
 

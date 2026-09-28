@@ -30,7 +30,29 @@ it("uses the anonymous page-zero seed only for guests and fetches authenticated 
   act(() => login("runner-a"));
   await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(hook.result.current.photos.map((p) => p.id)).toEqual(["private"]));
-  expect(client.getQueryCache().getAll().map((q) => q.queryKey.at(-3))).toContain("runner-a");
+  expect(client.getQueryCache().getAll().some((q) => q.queryKey.includes("runner-a"))).toBe(true);
+});
+
+it("withholds the anonymous SSR seed while a stored session is still hydrating", async () => {
+  useAuthStore.getState().setLoading(true);
+  const get = vi.spyOn(api, "get").mockResolvedValue(page("signed-in", 0, "signed-in-snapshot"));
+  const hook = renderHook(() => useEventPhotos({ slug: "race", initialPage: page("anonymous", 0, "guest-snapshot") }), { wrapper });
+  expect(hook.result.current.photos).toEqual([]);
+  expect(get).not.toHaveBeenCalled();
+  act(() => login("runner-a"));
+  await waitFor(() => expect(hook.result.current.photos.map((p) => p.id)).toEqual(["signed-in"]));
+  expect(get).toHaveBeenCalledTimes(1);
+  expect(get.mock.calls[0][0]).not.toContain("guest-snapshot");
+});
+
+it("uses the SSR seed once hydration confirms a guest", () => {
+  useAuthStore.getState().setLoading(true);
+  const get = vi.spyOn(api, "get");
+  const hook = renderHook(() => useEventPhotos({ slug: "race", initialPage: page("anonymous", 0, "guest-snapshot") }), { wrapper });
+  expect(hook.result.current.photos).toEqual([]);
+  act(() => useAuthStore.getState().setLoading(false));
+  expect(hook.result.current.photos.map((p) => p.id)).toEqual(["anonymous"]);
+  expect(get).not.toHaveBeenCalled();
 });
 
 it("resets the paging snapshot and cache on viewer changes and forwards abort signals", async () => {
