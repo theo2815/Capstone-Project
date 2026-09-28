@@ -1,7 +1,7 @@
 package com.quickpitik.service.photographer
 
-import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.config.PhotoMetadataProperties
+import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.repository.PhotoMetadataRepository
@@ -11,8 +11,8 @@ import com.quickpitik.service.image.PhotoMetadataExtractor
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
-import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
+import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.SimpleTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
@@ -20,6 +20,8 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
 import kotlin.test.*
 
 class PhotoMetadataServiceTest {
@@ -79,6 +81,25 @@ class PhotoMetadataServiceTest {
         }
         service.extractIfDue(UUID.randomUUID(), byteArrayOf(1))
         assertEquals(PhotoMetadataState.READY, settled)
+    }
+
+    @Test
+    fun `recovery submits no more than ten ids with larger idle pool`() {
+        val pool = Mockito.mock(ThreadPoolExecutor::class.java)
+        Mockito.`when`(watermarkPool.threadPoolExecutor).thenReturn(pool)
+        Mockito.`when`(pool.queue).thenReturn(LinkedBlockingQueue<Runnable>())
+        Mockito.`when`(watermarkPool.maxPoolSize).thenReturn(12)
+        val ids = List(12) { UUID.randomUUID() }
+        Mockito.`when`(repository.findDueCandidateIds(Mockito.anyInt(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())).thenAnswer {
+            ids.take(it.getArgument<org.springframework.data.domain.Pageable>(4).pageSize)
+        }
+        val submitted = mutableListOf<Runnable>()
+        Mockito.doAnswer { submitted += it.getArgument<Runnable>(0); null }.`when`(watermarkPool).execute(Mockito.any(Runnable::class.java))
+
+        service().recoverDue()
+
+        assertEquals(10, submitted.size)
+        Mockito.verifyNoInteractions(storage)
     }
 
     @Test
