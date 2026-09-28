@@ -210,6 +210,7 @@ class MePhotographerController(
             contentHash = body.contentHash,
             contentType = body.contentType,
             sizeBytes = body.sizeBytes,
+            originalFilename = body.originalFilename,
             requestId = body.requestId,
             client = body.client,
         )

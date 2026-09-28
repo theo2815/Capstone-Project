@@ -5,6 +5,8 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoMetadata
+import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotoUploadIntent
 import com.quickpitik.entity.PhotoUploadIntentState
@@ -239,6 +241,7 @@ class PhotoUploadServiceTest {
         val intent = ArgumentCaptor.forClass(PhotoUploadIntent::class.java)
         Mockito.verify(photoUploadIntentRepository).saveAndFlush(capture(intent))
         assertEquals(requestId, intent.value.requestId)
+        assertEquals(null, intent.value.originalFilename)
         assertEquals("staging/photo-uploads/$photographerId/$eventId/${intent.value.photoId}/original", intent.value.stagingKey)
         assertEquals(intent.value.stagingKey, result.key)
         assertEquals(mapOf("Content-Type" to "image/jpeg"), result.uploadHeaders)
@@ -778,7 +781,8 @@ class PhotoUploadServiceTest {
         val registry = SimpleMeterRegistry()
         val svc = service(AiApiProperties(enabled = false), registry)
 
-        val begin = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong())
+        val begin = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(),
+            originalFilename = "D:\\race/first.jpg")
         assertEquals("direct", begin.mode)
         assertTrue(begin.key!!.startsWith("staging/photo-uploads/$photographerId/$eventId/"))
         val intent = checkNotNull(saved)
@@ -795,6 +799,13 @@ class PhotoUploadServiceTest {
         Mockito.verify(entityManager).persist(capture(captor))
         assertEquals(helloSha256, captor.value.contentHash)
         assertEquals(intent.originalKey, captor.value.s3Key)
+        assertEquals("first.jpg", intent.originalFilename)
+        val metadata = ArgumentCaptor.forClass(PhotoMetadata::class.java)
+        Mockito.verify(entityManager).persist(capture(metadata))
+        assertEquals(captor.value.id, metadata.value.photoId)
+        assertEquals("first.jpg", metadata.value.originalFilename)
+        assertEquals(helloBytes.size.toLong(), metadata.value.originalSizeBytes)
+        assertEquals(PhotoMetadataState.PENDING, metadata.value.state)
         assertEquals("processing", dto.status)
         // The bytes never touched this server: no storage PUT in either step.
         Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
@@ -1089,6 +1100,34 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `multipart acceptance stores sanitized basename and actual byte size once`() {
+        stubValidationsPass()
+        val upload = file()
+        Mockito.`when`(upload.originalFilename).thenReturn("C:\\camera\\trip/ca\u0000fe\u0301.jpg")
+
+        service(AiApiProperties(enabled = false)).upload(photographerId, eventId, upload)
+
+        val metadata = ArgumentCaptor.forClass(PhotoMetadata::class.java)
+        Mockito.verify(entityManager).persist(capture(metadata))
+        assertEquals("café.jpg", metadata.value.originalFilename)
+        assertEquals(helloBytes.size.toLong(), metadata.value.originalSizeBytes)
+        assertEquals(PhotoMetadataState.PENDING, metadata.value.state)
+    }
+
+    @Test
+    fun `multipart acceptance limits a Unicode basename to 255 characters`() {
+        stubValidationsPass()
+        val upload = file()
+        Mockito.`when`(upload.originalFilename).thenReturn("/camera/" + "😀".repeat(300))
+
+        service(AiApiProperties(enabled = false)).upload(photographerId, eventId, upload)
+
+        val metadata = ArgumentCaptor.forClass(PhotoMetadata::class.java)
+        Mockito.verify(entityManager).persist(capture(metadata))
+        assertEquals("😀".repeat(255), metadata.value.originalFilename)
+    }
+
+    @Test
     fun `checkExisting reports new, same-event, and different-event per hash`() {
         val sameEventHash = "1111111111111111111111111111111111111111111111111111111111111111"
         val otherEventHash = "2222222222222222222222222222222222222222222222222222222222222222"
@@ -1155,7 +1194,7 @@ class PhotoUploadServiceTest {
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
 
         assertEquals("processing", dto.status)
-        Mockito.verify(entityManager).persist(anyArg<Photo>())
+        Mockito.verify(entityManager).persist(Mockito.argThat<Any> { it is Photo })
     }
 
     @Test
@@ -1211,7 +1250,7 @@ class PhotoUploadServiceTest {
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
 
         assertEquals("processing", dto.status)
-        Mockito.verify(entityManager).persist(anyArg<Photo>())
+        Mockito.verify(entityManager).persist(Mockito.argThat<Any> { it is Photo })
     }
 
     @Test
