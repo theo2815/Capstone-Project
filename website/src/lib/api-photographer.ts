@@ -134,6 +134,30 @@ export async function fetchPhotographerEventDetail(
   );
 }
 
+export interface MetadataSettingsDto {
+  metadataPublicByDefault: boolean;
+}
+
+export interface EventMetadataVisibilityDto {
+  metadataPublic: boolean;
+}
+
+export async function getMetadataSettings(signal?: AbortSignal): Promise<MetadataSettingsDto> {
+  return api.get<MetadataSettingsDto>("/me/photographer/metadata-settings", { signal });
+}
+
+export async function putMetadataSettings(settings: MetadataSettingsDto): Promise<MetadataSettingsDto> {
+  return api.put<MetadataSettingsDto>("/me/photographer/metadata-settings", settings);
+}
+
+export async function getEventMetadataVisibility(eventId: string, signal?: AbortSignal): Promise<EventMetadataVisibilityDto> {
+  return api.get<EventMetadataVisibilityDto>(`/me/photographer/events/${encodeURIComponent(eventId)}/metadata-visibility`, { signal });
+}
+
+export async function putEventMetadataVisibility(eventId: string, visibility: EventMetadataVisibilityDto): Promise<EventMetadataVisibilityDto> {
+  return api.put<EventMetadataVisibilityDto>(`/me/photographer/events/${encodeURIComponent(eventId)}/metadata-visibility`, visibility);
+}
+
 export interface PhotographerEventPhotosArgs {
   offset?: number;
   limit?: number;
@@ -508,7 +532,7 @@ export async function uploadPhotographerPhoto(
     try {
       begin = await retryUpload(() => api.post<DirectBeginResponse>(`${base}/direct`, {
         contentHash, contentType: file.type, sizeBytes: file.size,
-        requestId: checkpoint!.requestId, client: "website",
+        originalFilename: file.name, requestId: checkpoint!.requestId, client: "website",
       }, { signal }), signal, isCurrent, retryState, "beginRetries");
     } catch (error) {
       if (error instanceof ApiError && error.errors.some((item) => item.code === "UPLOAD_OBJECT_MISSING")) {
