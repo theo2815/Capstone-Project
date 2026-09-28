@@ -213,6 +213,7 @@ describe("PhotoPreviewCard metadata access", () => {
     expect(await screen.findByText("Metadata is no longer available")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close metadata" }));
     expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Close preview" })[1]).toHaveFocus();
     view.rerender(withQuery(<PhotoPreviewCard photo={{ ...photo, id: "photo-b" }} metadataAccess="public" mode="owned" eventName="Cebu Run" index={2} total={2} {...callbacks()} />));
     await waitFor(() => expect(screen.getByRole("button", { name: "Show Metadata" })).toBeInTheDocument());
     expect(get).toHaveBeenCalledTimes(2);
