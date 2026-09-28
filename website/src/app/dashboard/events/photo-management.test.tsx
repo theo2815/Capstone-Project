@@ -16,13 +16,14 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(async () => 'downloaded'),
   download: vi.fn(),
   put: vi.fn(),
+  cancelQueries: vi.fn(async () => {}),
   invalidate: vi.fn(async () => {}),
   setQueryData: vi.fn(),
   removeQueries: vi.fn(),
   visibility: { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false } as { metadataPublic: boolean } | undefined, refetch: vi.fn() },
 }));
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'event-1' }), notFound: () => { throw Error('404'); } }));
-vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: mocks.invalidate, setQueryData: mocks.setQueryData, removeQueries: mocks.removeQueries }) }));
+vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ cancelQueries: mocks.cancelQueries, invalidateQueries: mocks.invalidate, setQueryData: mocks.setQueryData, removeQueries: mocks.removeQueries }) }));
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ showToast: mocks.toast }) }));
 vi.mock('@/hooks/use-confirmation', () => ({ useConfirmation: () => ({ confirm: async () => true }) }));
 vi.mock('@/components/layout/site-header', () => ({ SiteHeader: () => null }));
