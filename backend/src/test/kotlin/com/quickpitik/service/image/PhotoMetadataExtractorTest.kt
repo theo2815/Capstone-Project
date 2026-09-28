@@ -25,6 +25,23 @@ class PhotoMetadataExtractorTest {
     }
 
     @Test
+    fun `rejects negative rational denominators and uses valid XMP aperture`() {
+        val fields = javaClass.getResourceAsStream("/photo-metadata/rejected-values.jpg")!!.use {
+            PhotoMetadataExtractor().extract(it)
+        }
+        assertNull(fields.exposureTime)
+        assertEquals(5.6, fields.aperture)
+    }
+
+    @Test
+    fun `invalid EXIF flash falls back to XMP Fired`() {
+        val fields = javaClass.getResourceAsStream("/photo-metadata/rejected-values.jpg")!!.use {
+            PhotoMetadataExtractor().extract(it)
+        }
+        assertEquals("Did not fire", fields.flash)
+    }
+
+    @Test
     fun `normalizes fixture vectors and excludes private source tags`() {
         val mapper = jacksonObjectMapper().registerModule(JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)

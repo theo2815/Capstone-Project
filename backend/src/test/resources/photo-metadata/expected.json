@@ -1,5 +1,5 @@
 {
-  "provenance": "All images were created locally on 2026-09-28 from 8x8 solid-color pixels with Pillow 11.3.0. EXIF was written with Pillow, JPEG XMP and IPTC APP segments were assembled from synthetic text, and PNG XMP was written as iTXt. No private or licensed photographs were used.",
+  "provenance": "All images were created locally on 2026-09-28 from 8x8 solid-color pixels with Pillow 11.3.0. EXIF was written with Pillow, JPEG XMP and IPTC APP segments were assembled from synthetic text, and PNG XMP was written as iTXt. The rejected-values EXIF rational was patched to a synthetic invalid signed denominator. No private or licensed photographs were used.",
   "sentinels": ["GPS_SENTINEL_QP_94", "SERIAL_SENTINEL_QP_94", "PRIVATE_PATH_SENTINEL_QP_94"],
   "vectors": {
     "complete-exif.jpg": {
@@ -38,6 +38,10 @@
       "whiteBalance": "Manual"
     },
     "invalid-calendar.jpg": {},
+    "rejected-values.jpg": {
+      "aperture": 5.6,
+      "flash": "Did not fire"
+    },
     "iptc-only.jpg": {
       "author": "José IPTC",
       "copyright": "© José IPTC",

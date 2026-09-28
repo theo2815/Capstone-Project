@@ -33,8 +33,8 @@ class PhotoMetadataExtractor {
         val lens = clean(exif.string(ExifSubIFDDirectory.TAG_LENS_MODEL), 256)
             ?: clean(xmp.value(XMPConst.NS_EXIFX, "LensModel"), 256)
             ?: clean(xmp.value(XMPConst.NS_EXIF_AUX, "Lens"), 256)
-        val aperture = (exif.rational(ExifSubIFDDirectory.TAG_FNUMBER)?.toDouble()
-            ?: xmp.value(XMPConst.NS_EXIF, "FNumber")?.toDoubleOrNull())?.takeIf { it.isFinite() && it > 0 }
+        val aperture = exif.rational(ExifSubIFDDirectory.TAG_FNUMBER)?.toDouble()?.takeIf { it.isFinite() && it > 0 }
+            ?: xmp.value(XMPConst.NS_EXIF, "FNumber")?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
         val exposureTime = exposure(exif.rational(ExifSubIFDDirectory.TAG_EXPOSURE_TIME))
             ?: exposure(xmp.value(XMPConst.NS_EXIF, "ExposureTime"))
         val iso = exif.number(ExifSubIFDDirectory.TAG_ISO_EQUIVALENT)?.takeIf { it > 0 }
@@ -49,7 +49,8 @@ class PhotoMetadataExtractor {
             ?: clean(iptc.string(IptcDirectory.TAG_COPYRIGHT_NOTICE), 1000)
             ?: clean(ifd0.string(ExifIFD0Directory.TAG_COPYRIGHT), 1000)
         val taken = exifDate(exif) ?: xmpDate(xmp) ?: iptcDate(iptc)
-        val flash = exif.number(ExifSubIFDDirectory.TAG_FLASH)?.let { if (it and 1L == 1L) "Fired" else "Did not fire" }
+        val flash = exif.number(ExifSubIFDDirectory.TAG_FLASH)?.takeIf { it in 0L..0x7fL }
+            ?.let { if (it and 1L == 1L) "Fired" else "Did not fire" }
             ?: xmp.value(XMPConst.NS_EXIF, "Flash/exif:Fired")?.let {
                 when (it.lowercase()) { "true", "1" -> "Fired"; "false", "0" -> "Did not fire"; else -> null }
             }
@@ -93,7 +94,7 @@ class PhotoMetadataExtractor {
 
     private fun Directory?.string(tag: Int): String? = runCatching { this?.getString(tag) }.getOrNull()?.takeIf { it.isNotBlank() }
     private fun Directory?.rational(tag: Int): Rational? = runCatching { this?.getRational(tag) }.getOrNull()
-        ?.takeIf { it.denominator != 0L && it.numerator > 0L }
+        ?.takeIf { it.denominator > 0L && it.numerator > 0L }
     private fun Directory?.number(tag: Int): Long? = runCatching { this?.getLong(tag) }.getOrNull()
 
     private fun XMPMeta?.value(ns: String, name: String): String? =
@@ -121,7 +122,7 @@ class PhotoMetadataExtractor {
         if (parts.size == 2) {
             val n = parts[0].trim().toLongOrNull() ?: return null
             val d = parts[1].trim().toLongOrNull() ?: return null
-            return exposure(Rational(n, d).takeIf { d != 0L && n > 0L })
+            return exposure(Rational(n, d).takeIf { d > 0L && n > 0L })
         }
         val seconds = value.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: return null
         return "${seconds.toBigDecimal().stripTrailingZeros().toPlainString()} s"
