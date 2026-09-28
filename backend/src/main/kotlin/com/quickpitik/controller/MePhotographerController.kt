@@ -18,6 +18,7 @@ import com.quickpitik.dto.photographer.PhotographerBundleDto
 import com.quickpitik.dto.photographer.PhotographerLibraryPhotoDto
 import com.quickpitik.dto.photographer.UpdateMyEventRequest
 import com.quickpitik.dto.photographer.UploadedPhotoDto
+import com.quickpitik.dto.photographer.EventMetadataVisibilityDto
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
@@ -27,6 +28,7 @@ import com.quickpitik.service.photographer.PhotographerBundleService
 import com.quickpitik.service.photographer.PhotographerEventService
 import com.quickpitik.service.photographer.PhotographerOwnedEventService
 import com.quickpitik.service.photographer.PhotographerPhotoService
+import com.quickpitik.service.photographer.PhotoMetadataSettingsService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
@@ -47,6 +49,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestPart
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
@@ -61,7 +64,22 @@ class MePhotographerController(
     private val photographerBundleService: PhotographerBundleService,
     private val photoUploadService: PhotoUploadService,
     private val rateLimiter: RateLimiter,
+    private val photoMetadataSettingsService: PhotoMetadataSettingsService,
 ) {
+    @GetMapping("/events/{eventId}/metadata-visibility")
+    fun getMetadataVisibility(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+    ): EventMetadataVisibilityDto = photoMetadataSettingsService.getEvent(principal.userId, eventId)
+
+    @PutMapping("/events/{eventId}/metadata-visibility")
+    fun putMetadataVisibility(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: EventMetadataVisibilityDto,
+    ): EventMetadataVisibilityDto =
+        photoMetadataSettingsService.setEvent(principal.userId, eventId, body.metadataPublic)
+
     // ── Photographer-owned events (V46) ───────────────────────────────────
     // multipart/form-data like the admin create: the text parts bind onto the
     // request DTO, the optional `cover` part carries the image bytes.

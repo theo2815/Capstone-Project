@@ -129,7 +129,7 @@ class PhotographerOwnedEventService(
         req: CreateMyEventRequest,
         cover: AdminEventService.CoverUpload?,
     ): PhotographerEventDetailDto {
-        accessGuard.requireApproved(photographerId, "creating an event")
+        val settings = accessGuard.requireApproved(photographerId, "creating an event")
         val trio = PricingTrio.parse(req.pricingMode, req.pricePerPhoto, req.watermarkPolicy)
         val visibility = parseVisibility(req.visibility)
         val now = OffsetDateTime.now()
@@ -159,7 +159,10 @@ class PhotographerOwnedEventService(
         // Coverage row up front so the event shows in /me/photographer/events
         // before the first upload; the upload upsert bumps its counters later.
         val ep = eventPhotographerRepository.save(
-            EventPhotographer(id = EventPhotographerId(event.id, photographerId)),
+            EventPhotographer(
+                id = EventPhotographerId(event.id, photographerId),
+                metadataPublic = settings.metadataPublicByDefault,
+            ),
         )
         notifyAdmins("event_submitted", event, photographerId)
         return detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)

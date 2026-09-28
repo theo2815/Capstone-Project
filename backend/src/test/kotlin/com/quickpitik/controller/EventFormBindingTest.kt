@@ -73,6 +73,7 @@ class EventFormBindingTest {
                 Mockito.mock(PhotographerBundleService::class.java),
                 Mockito.mock(PhotoUploadService::class.java),
                 rateLimiter,
+                Mockito.mock(com.quickpitik.service.photographer.PhotoMetadataSettingsService::class.java),
             ),
         )
         admin = mvc(AdminEventsController(adminEvents))

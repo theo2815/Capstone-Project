@@ -91,8 +91,9 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
     @Modifying
     @Query(
         value = """
-        INSERT INTO event_photographer (event_id, photographer_id, photo_count, first_upload_at, last_upload_at)
-        VALUES (:eventId, :photographerId, 1, :now, :now)
+        INSERT INTO event_photographer (event_id, photographer_id, photo_count, first_upload_at, last_upload_at, metadata_public)
+        SELECT :eventId, :photographerId, 1, :now, :now,
+               COALESCE((SELECT metadata_public_by_default FROM photographer_settings WHERE user_id = :photographerId), false)
         ON CONFLICT (event_id, photographer_id) DO UPDATE SET
             photo_count     = event_photographer.photo_count + 1,
             first_upload_at = COALESCE(event_photographer.first_upload_at, EXCLUDED.first_upload_at),
@@ -104,6 +105,33 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         @Param("eventId") eventId: UUID,
         @Param("photographerId") photographerId: UUID,
         @Param("now") now: OffsetDateTime,
+    ): Int
+
+    @Modifying
+    @Query(
+        "UPDATE EventPhotographer ep SET ep.metadataPublic = :value " +
+            "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId",
+    )
+    fun updateMetadataVisibility(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("value") value: Boolean,
+    ): Int
+
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_photographer (event_id, photographer_id, metadata_public)
+        VALUES (:eventId, :photographerId, :value)
+        ON CONFLICT (event_id, photographer_id) DO UPDATE SET
+            metadata_public = EXCLUDED.metadata_public
+        """,
+        nativeQuery = true,
+    )
+    fun upsertMetadataVisibility(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("value") value: Boolean,
     ): Int
 
     @Modifying

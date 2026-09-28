@@ -66,6 +66,9 @@ class PhotographerSettings(
     @Column(name = "watermark_label", length = 40)
     var watermarkLabel: String? = null,
 
+    @Column(name = "metadata_public_by_default", nullable = false)
+    var metadataPublicByDefault: Boolean = false,
+
     // Photographer-controlled placement of their own logo (V51). Opacity
     // (0.05-1.0) and scale (fraction of photo width) are shared; position is a
     // normalized free-space fraction in [0,1] split per orientation. Defaults
