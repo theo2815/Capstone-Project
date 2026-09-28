@@ -34,7 +34,7 @@ class PhotoMetadataExtractor {
             ?: clean(xmp.value(XMPConst.NS_EXIFX, "LensModel"), 256)
             ?: clean(xmp.value(XMPConst.NS_EXIF_AUX, "Lens"), 256)
         val aperture = exif.rational(ExifSubIFDDirectory.TAG_FNUMBER)?.toDouble()?.takeIf { it.isFinite() && it > 0 }
-            ?: xmp.value(XMPConst.NS_EXIF, "FNumber")?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+            ?: xmpAperture(xmp.value(XMPConst.NS_EXIF, "FNumber"))
         val exposureTime = exposure(exif.rational(ExifSubIFDDirectory.TAG_EXPOSURE_TIME))
             ?: exposure(xmp.value(XMPConst.NS_EXIF, "ExposureTime"))
         val iso = exif.number(ExifSubIFDDirectory.TAG_ISO_EQUIVALENT)?.takeIf { it > 0 }
@@ -70,7 +70,11 @@ class PhotoMetadataExtractor {
             val result = StringBuilder()
             for (point in value.codePoints().toArray()) {
                 val unit = String(Character.toChars(point))
-                val cost = if (point == '"'.code || point == '\\'.code) 2 else unit.toByteArray(Charsets.UTF_8).size
+                val cost = when {
+                    point > 0xffff -> 12 // Jackson writes a surrogate pair as two six-byte escapes.
+                    point == '"'.code || point == '\\'.code -> 2
+                    else -> unit.toByteArray(Charsets.UTF_8).size
+                }
                 if (cost > remaining) break
                 result.append(unit)
                 remaining -= cost
@@ -96,6 +100,21 @@ class PhotoMetadataExtractor {
     private fun Directory?.rational(tag: Int): Rational? = runCatching { this?.getRational(tag) }.getOrNull()
         ?.takeIf { it.denominator > 0L && it.numerator > 0L }
     private fun Directory?.number(tag: Int): Long? = runCatching { this?.getLong(tag) }.getOrNull()
+
+    private fun xmpAperture(value: String?): Double? {
+        val parts = value?.split('/') ?: return null
+        val number = when (parts.size) {
+            1 -> parts[0].trim().toDoubleOrNull()
+            2 -> {
+                val numerator = parts[0].trim().toLongOrNull() ?: return null
+                val denominator = parts[1].trim().toLongOrNull() ?: return null
+                if (numerator <= 0 || denominator <= 0) return null
+                numerator.toDouble() / denominator
+            }
+            else -> null
+        }
+        return number?.takeIf { it.isFinite() && it > 0 }
+    }
 
     private fun XMPMeta?.value(ns: String, name: String): String? =
         runCatching { this?.getPropertyString(ns, name) }.getOrNull()?.takeIf { it.isNotBlank() }
