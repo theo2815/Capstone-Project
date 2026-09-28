@@ -10,6 +10,7 @@ import com.quickpitik.dto.photographer.UploadedPhotoDto
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoMetadata
 import com.quickpitik.entity.PhotoSpan
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotoUploadIntent
@@ -38,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
 import java.io.ByteArrayInputStream
+import java.text.Normalizer
 import java.time.Clock
 import java.time.Duration
 import java.time.LocalDate
@@ -134,7 +136,8 @@ class PhotoUploadService(
 
         storageService.put(originalKey, bytes, contentType)
 
-        val dto = persistNew(photoId, eventId, photographerId, originalKey, contentHash, event)
+        val dto = persistNew(photoId, eventId, photographerId, originalKey, contentHash, event,
+            originalFilename = file.originalFilename, originalSizeBytes = bytes.size.toLong())
         timerSample.stop(meterRegistry.timer("qp.upload.duration"))
         return dto
     }
@@ -158,6 +161,7 @@ class PhotoUploadService(
         sizeBytes: Long,
         requestId: UUID? = null,
         client: String? = null,
+        originalFilename: String? = null,
     ): DirectUploadBeginResponse {
         if (client != null && client != WEBSITE_CLIENT) {
             throw ApiException(HttpStatus.BAD_REQUEST, ErrorCodes.VALIDATION_ERROR, "Unknown upload client.")
@@ -199,7 +203,7 @@ class PhotoUploadService(
         }
 
         val intent = try {
-            reserveIntent(photographerId, eventId, requestId, hash, type, sizeBytes)
+            reserveIntent(photographerId, eventId, requestId, hash, type, sizeBytes, originalFilename)
         } catch (error: DataIntegrityViolationException) {
             val existing = requestId?.let {
                 photoUploadIntentRepository.findByPhotographerIdAndRequestId(photographerId, it)
@@ -386,6 +390,7 @@ class PhotoUploadService(
         contentHash: String,
         contentType: String,
         sizeBytes: Long,
+        originalFilename: String?,
     ): PhotoUploadIntent = checkNotNull(transactionTemplate.execute {
         photographerSettingsRepository.findByUserIdForUpdate(ownerId)
             ?: throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
@@ -407,6 +412,7 @@ class PhotoUploadService(
                 contentHash = contentHash,
                 contentType = contentType,
                 sizeBytes = sizeBytes,
+                originalFilename = sanitizeOriginalFilename(originalFilename),
                 stagingKey = stagingKeyFor(ownerId, eventId, photoId),
                 originalKey = originalKeyFor(eventId, photoId),
                 createdAt = now,
@@ -549,6 +555,8 @@ class PhotoUploadService(
                     refreshed.event,
                     intent,
                     token,
+                    intent.originalFilename,
+                    intent.sizeBytes,
                 )
             } catch (error: ConflictException) {
                 if (!rejectIntent(intent, token, error.code)) return resolveUnacquired(intent)
@@ -822,6 +830,8 @@ class PhotoUploadService(
         event: com.quickpitik.entity.Event,
         intent: PhotoUploadIntent? = null,
         leaseToken: UUID? = null,
+        originalFilename: String? = null,
+        originalSizeBytes: Long,
     ): UploadedPhotoDto {
         // PROCESSING until PhotoWatermarkService stores the watermark and flips
         // it LIVE. Runner/public queries filter status = LIVE, so the clean
@@ -875,6 +885,9 @@ class PhotoUploadService(
                 // existing original and increment counters twice when a commit response is lost.
                 entityManager.persist(photo)
                 entityManager.flush()
+                entityManager.persist(PhotoMetadata(photoId = photoId,
+                    originalFilename = sanitizeOriginalFilename(originalFilename),
+                    originalSizeBytes = originalSizeBytes))
 
                 // Atomic counter writes — concurrent uploads during a live marathon are
                 // the normal case, not an edge case. The prior read-modify-write pattern
@@ -1024,6 +1037,15 @@ class PhotoUploadService(
             span = photo.span.wire,
             aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none",
         )
+    }
+
+    private fun sanitizeOriginalFilename(raw: String?): String? {
+        val basename = raw?.substringAfterLast('/')?.substringAfterLast('\\') ?: return null
+        val normalized = Normalizer.normalize(basename, Normalizer.Form.NFC)
+            .replace(Regex("[\\p{Cc}\\p{Cf}\\p{Cs}]"), "")
+            .trim()
+        val codePoints = normalized.codePoints().limit(255).toArray()
+        return String(codePoints, 0, codePoints.size).takeIf { it.isNotBlank() }
     }
 
     private companion object {

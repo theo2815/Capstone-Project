@@ -344,6 +344,7 @@ data class DirectUploadBeginRequest(
     val contentType: String,
     @field:Positive
     val sizeBytes: Long,
+    val originalFilename: String? = null,
     val requestId: UUID? = null,
     @field:Pattern(regexp = "^website$", message = "client must be website when supplied.")
     val client: String? = null,
