@@ -253,8 +253,11 @@ function EventMetadataVisibility({ event }: { event: PhotographerEventDetail }) 
     try {
       const saved = await putEventMetadataVisibility(event.id, { metadataPublic: draft });
       if (!isCurrent()) return;
+      const visibilityKey = ["photographer", "events", event.id, "metadata-visibility", ...session.key];
+      await queryClient.cancelQueries({ queryKey: visibilityKey, exact: true });
+      if (!isCurrent()) return;
       queryClient.setQueryData<EventMetadataVisibilityDto>(
-        ["photographer", "events", event.id, "metadata-visibility", ...session.key], saved,
+        visibilityKey, saved,
       );
       void queryClient.invalidateQueries({ queryKey: ["events", event.slug, "photos"] });
       if (event.handle) void queryClient.invalidateQueries({ queryKey: ["photographer", "public", event.handle, event.slug, "photos"] });
