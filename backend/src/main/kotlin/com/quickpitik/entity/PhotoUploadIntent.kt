@@ -36,6 +36,9 @@ class PhotoUploadIntent(
     @Column(name = "size_bytes", nullable = false, updatable = false)
     val sizeBytes: Long,
 
+    @Column(name = "original_filename", length = 255, updatable = false)
+    val originalFilename: String? = null,
+
     @Column(name = "staging_key", nullable = false, length = 512, updatable = false)
     val stagingKey: String,
 
