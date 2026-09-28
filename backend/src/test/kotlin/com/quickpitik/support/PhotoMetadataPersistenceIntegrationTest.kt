@@ -23,6 +23,7 @@ import java.time.Clock
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.io.ByteArrayInputStream
+import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
@@ -31,6 +32,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import kotlin.test.*
+import org.testcontainers.utility.MountableFile
 
 class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var metadata: PhotoMetadataRepository
@@ -39,6 +41,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var properties: PhotoMetadataProperties
     @Autowired private lateinit var clock: Clock
     @Autowired private lateinit var events: EventRepository
+    @Autowired private lateinit var users: UserRepository
     @Autowired private lateinit var transactions: TransactionTemplate
     @Autowired private lateinit var service: PhotoMetadataService
     @Autowired private lateinit var jdbc: JdbcTemplate
@@ -95,6 +98,56 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
 
     private fun settle(id: UUID, token: UUID, version: Int = 1, model: String = "R6") =
         transactions.execute { metadata.settle(id, token, version, PhotoMetadataState.READY, PhotoMetadataFields(cameraModel = model), OffsetDateTime.now()) }!!
+
+    @Test
+    fun `operator seed is bounded scoped and repeat safe without changing photo visibility or counters`() {
+        val owner = users.save(User(email = "metadata-seed-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Seed", role = Role.PHOTOGRAPHER))
+        val event = events.saveAndFlush(Event(slug = "metadata-seed-${UUID.randomUUID()}", name = "Run", date = LocalDate.now(), location = "Cebu", status = EventStatus.ACTIVE, photoCount = 5))
+        val otherEvent = events.saveAndFlush(Event(slug = "metadata-seed-${UUID.randomUUID()}", name = "Other", date = LocalDate.now(), location = "Cebu", status = EventStatus.ACTIVE))
+        coverage.saveAndFlush(EventPhotographer(id = EventPhotographerId(event.id, owner.id), photoCount = 5, firstUploadAt = OffsetDateTime.now(), metadataPublic = true))
+        val first = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "seed/${UUID.randomUUID()}", pricePhp = BigDecimal.ONE, status = PhotoStatus.PROCESSING))
+        val second = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "seed/${UUID.randomUUID()}", pricePhp = BigDecimal.ONE, status = PhotoStatus.HIDDEN))
+        val terminal = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "seed/${UUID.randomUUID()}", pricePhp = BigDecimal.ONE))
+        val trash = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "seed/${UUID.randomUUID()}", pricePhp = BigDecimal.ONE))
+        val purging = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "seed/${UUID.randomUUID()}", pricePhp = BigDecimal.ONE))
+        val foreign = photos.saveAndFlush(Photo(eventId = otherEvent.id, s3Key = "seed/${UUID.randomUUID()}", pricePhp = BigDecimal.ONE))
+        jdbc.update("UPDATE photos SET uploaded_at = now() - interval '2 minutes' WHERE id = ?", first.id)
+        jdbc.update("UPDATE photos SET uploaded_at = now() - interval '1 minute' WHERE id = ?", second.id)
+        jdbc.update("UPDATE photos SET deleted_at = now() WHERE id = ?", trash.id)
+        jdbc.update("UPDATE photos SET deleted_at = now(), deletion_started_at = now() WHERE id = ?", purging.id)
+        metadata.saveAndFlush(PhotoMetadata(photoId = terminal.id, state = PhotoMetadataState.READY, originalFilename = "preserve.jpg"))
+
+        val script = Path.of("scripts/backfill-photo-metadata.sql").toAbsolutePath()
+        PostgresIntegrationTest.postgres.copyFileToContainer(MountableFile.forHostPath(script), "/tmp/backfill-photo-metadata.sql")
+        fun runSeed(limit: Int? = null, apply: Boolean? = null, eventId: UUID? = event.id): org.testcontainers.containers.Container.ExecResult {
+            val args = mutableListOf("psql", "-X", "-q", "-t", "-A", "-F", "|", "-v", "ON_ERROR_STOP=1", "-U", "quickpitik", "-d", "quickpitik_test")
+            if (eventId != null) args += listOf("-v", "event_id=$eventId")
+            if (limit != null) args += listOf("-v", "limit=$limit")
+            if (apply != null) args += listOf("-v", "apply=$apply")
+            args += listOf("-f", "/tmp/backfill-photo-metadata.sql")
+            return PostgresIntegrationTest.postgres.execInContainer(*args.toTypedArray())
+        }
+
+        assertNotEquals(0, runSeed(2, true, eventId = null).exitCode)
+        assertNotEquals(0, runSeed(apply = true).exitCode)
+        val dry = runSeed(2)
+        assertEquals(0, dry.exitCode, dry.stderr)
+        assertEquals(listOf("${first.id}|2", "${second.id}|2"), dry.stdout.trim().lines())
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM photo_metadata WHERE photo_id IN (?, ?)", Int::class.java, first.id, second.id))
+
+        repeat(2) {
+            val applied = runSeed(3, true)
+            assertEquals(0, applied.exitCode, applied.stderr)
+        }
+        assertEquals(setOf(first.id, second.id, trash.id, terminal.id), jdbc.queryForList("SELECT photo_id FROM photo_metadata WHERE photo_id IN (?, ?, ?, ?, ?, ?)", UUID::class.java, first.id, second.id, trash.id, terminal.id, purging.id, foreign.id).toSet())
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM photo_metadata WHERE photo_id IN (?, ?, ?) AND state = 'PENDING' AND extractor_version = 1 AND attempts = 0 AND original_filename IS NULL", Int::class.java, first.id, second.id, trash.id))
+        assertEquals("READY|preserve.jpg", jdbc.queryForObject("SELECT state || '|' || original_filename FROM photo_metadata WHERE photo_id = ?", String::class.java, terminal.id))
+        assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM photos WHERE id = ?", String::class.java, first.id))
+        assertEquals("HIDDEN", jdbc.queryForObject("SELECT status FROM photos WHERE id = ?", String::class.java, second.id))
+        assertEquals(5, jdbc.queryForObject("SELECT photo_count FROM events WHERE id = ?", Int::class.java, event.id))
+        assertEquals(5, jdbc.queryForObject("SELECT photo_count FROM event_photographer WHERE event_id = ? AND photographer_id = ?", Int::class.java, event.id, owner.id))
+        assertEquals(true, jdbc.queryForObject("SELECT metadata_public FROM event_photographer WHERE event_id = ? AND photographer_id = ?", Boolean::class.java, event.id, owner.id))
+    }
 
     @Test
     fun `simultaneous claims yield one worker and one attempt`() {
