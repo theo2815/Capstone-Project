@@ -1093,6 +1093,7 @@ function PhotoLibrary({
       {!selecting && previewItem && openIndex !== null && (
         <PhotoPreviewCard
           mode="owned"
+          metadataAccess="owner"
           photo={previewItem}
           eventName={event.name}
           eventDate={event.date}

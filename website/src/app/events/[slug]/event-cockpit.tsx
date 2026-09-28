@@ -1031,6 +1031,7 @@ function PhotoPreviewMount({
     return (
       <PhotoPreviewCard
         mode="owned"
+        metadataAccess={photo.metadataAccess}
         photo={photo}
         eventName={event.name}
         eventDate={event.date}
@@ -1098,6 +1099,7 @@ function PhotoPreviewMount({
   return (
     <PhotoPreviewCard
       photo={photo}
+      metadataAccess={photo.metadataAccess}
       eventName={event.name}
       eventDate={event.date}
       index={index + 1}

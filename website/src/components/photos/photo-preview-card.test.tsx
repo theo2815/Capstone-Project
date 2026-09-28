@@ -1,5 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api, ApiError } from "@/lib/api";
+import { useAuthStore } from "@/store/auth-store";
+import type { PhotoMetadataDto } from "@/types/photo-metadata";
 import { PhotoPreviewCard, type PhotoPreviewItem } from "./photo-preview-card";
 
 describe("PhotoPreviewCard coupon offer", () => {
@@ -71,5 +76,145 @@ describe("PhotoPreviewCard coupon offer", () => {
     );
 
     await waitFor(() => expect(screen.queryAllByText(/applied at checkout/)).toHaveLength(0));
+  });
+});
+
+const photo: PhotoPreviewItem = { id: "photo-a", bib: "101", time: "", tone: 0, price: 100 };
+const metadata: PhotoMetadataDto = {
+  photoId: "photo-a", status: "ready", originalFilename: "photo-a.jpg", fileSizeBytes: 1024,
+  fields: { cameraMake: "Canon", cameraModel: "EOS R6", lens: null, aperture: null,
+    exposureTime: null, iso: null, author: null, copyright: null, takenAtLocal: null,
+    takenAtOffset: null, flash: null, exposureMode: null, whiteBalance: null },
+};
+const callbacks = () => ({ onClose: vi.fn(), onPrev: vi.fn(), onNext: vi.fn(), onDownload: vi.fn() });
+function withQuery(card: React.ReactElement) {
+  return <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{card}</QueryClientProvider>;
+}
+afterEach(() => { vi.restoreAllMocks(); useAuthStore.getState().logout(); });
+
+describe("PhotoPreviewCard metadata access", () => {
+  it("shows no metadata action for sibling callers or modes without explicit access", async () => {
+    const get = vi.spyOn(api, "get");
+    const base = { photo, eventName: "Cebu Run", index: 1, total: 1, onClose: vi.fn() };
+    const { rerender } = render(withQuery(<PhotoPreviewCard {...base} mode="owned" onDownload={vi.fn()} />));
+    expect(await screen.findByRole("button", { name: "Download photo" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
+    rerender(withQuery(<PhotoPreviewCard {...base} mode="review" />));
+    expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
+    rerender(withQuery(<PhotoPreviewCard {...base} inCart={false} onToggleCart={vi.fn()} onBuyNow={vi.fn()} />));
+    expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
+    rerender(withQuery(<PhotoPreviewCard {...base} metadataAccess="none" inCart={false} onToggleCart={vi.fn()} onBuyNow={vi.fn()} />));
+    expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it.each(["owner", "public"] as const)("fetches %s only on activation and keeps download primary", async (access) => {
+    if (access === "owner") useAuthStore.getState().startSession({ id: "photographer", role: "PHOTOGRAPHER", email: "a@b.test", name: "A", createdAt: "2026-09-28" });
+    const get = vi.spyOn(api, "get").mockResolvedValue(metadata);
+    const user = userEvent.setup();
+    const cb = callbacks();
+    render(withQuery(<PhotoPreviewCard photo={photo} metadataAccess={access} mode="owned" eventName="Cebu Run" index={1} total={1} {...cb} />));
+    const trigger = await screen.findByRole("button", { name: "Show Metadata" });
+    expect(get).not.toHaveBeenCalled();
+    await user.click(trigger);
+    expect(await screen.findByText("Canon EOS R6")).toBeInTheDocument();
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith(access === "owner" ? "/me/photographer/photos/photo-a/metadata" : "/public/photos/photo-a/metadata", expect.anything());
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Photo metadata" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Preview photo 101" })).toBeInTheDocument();
+    expect(cb.onClose).not.toHaveBeenCalled();
+    expect(trigger).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(cb.onClose).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Download photo" }));
+    expect(cb.onDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes metadata on photo navigation and discards a late prior-photo result", async () => {
+    let resolveA!: (value: PhotoMetadataDto) => void;
+    vi.spyOn(api, "get").mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve as typeof resolveA; })).mockResolvedValueOnce({ ...metadata, photoId: "photo-b", fields: { ...metadata.fields!, cameraModel: "EOS R8" } });
+    const cb = callbacks();
+    const user = userEvent.setup();
+    const renderCard = (selected: PhotoPreviewItem) => withQuery(<PhotoPreviewCard photo={selected} metadataAccess="public" mode="owned" eventName="Cebu Run" index={1} total={2} {...cb} />);
+    const view = render(renderCard(photo));
+    await user.click(await screen.findByRole("button", { name: "Show Metadata" }));
+    expect(screen.getByRole("status", { name: "Loading metadata" })).toBeInTheDocument();
+    view.rerender(renderCard({ ...photo, id: "photo-b" }));
+    expect(screen.queryByRole("dialog", { name: "Photo metadata" })).toBeNull();
+    await act(async () => resolveA(metadata));
+    expect(screen.queryByText("Canon EOS R6")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show Metadata" }));
+    expect(await screen.findByText("Canon EOS R8")).toBeInTheDocument();
+  });
+
+  it("keeps browse cart actions and suspends parent arrows during metadata retry", async () => {
+    const get = vi.spyOn(api, "get").mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(metadata);
+    const user = userEvent.setup();
+    const onPrev = vi.fn(); const onNext = vi.fn(); const onClose = vi.fn();
+    const onToggleCart = vi.fn(); const onBuyNow = vi.fn();
+    render(withQuery(<PhotoPreviewCard photo={photo} metadataAccess="public" eventName="Cebu Run" index={1} total={2}
+      inCart={false} onClose={onClose} onPrev={onPrev} onNext={onNext} onToggleCart={onToggleCart} onBuyNow={onBuyNow} />));
+    expect(await screen.findByRole("button", { name: "Buy now" })).toBeInTheDocument();
+    expect(get).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Show Metadata" }));
+    expect(await screen.findByText("Metadata could not be loaded.")).toBeInTheDocument();
+    await user.keyboard("{ArrowLeft}{ArrowRight}");
+    expect(onPrev).not.toHaveBeenCalled();
+    expect(onNext).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Canon EOS R6")).toBeInTheDocument();
+    expect(get).toHaveBeenCalledTimes(2);
+    await user.keyboard("{Escape}{ArrowRight}");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onNext).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "+ Add to cart" }));
+    await user.click(screen.getByRole("button", { name: "Buy now" }));
+    expect(onToggleCart).toHaveBeenCalledTimes(1);
+    expect(onBuyNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a metadata response arriving after logout", async () => {
+    let resolve!: (value: PhotoMetadataDto) => void;
+    vi.spyOn(api, "get").mockImplementation(() => new Promise((r) => { resolve = r as typeof resolve; }));
+    const user = userEvent.setup();
+    render(withQuery(<PhotoPreviewCard photo={photo} metadataAccess="public" mode="owned" eventName="Cebu Run" index={1} total={1} {...callbacks()} />));
+    await user.click(await screen.findByRole("button", { name: "Show Metadata" }));
+    expect(screen.getByRole("status", { name: "Loading metadata" })).toBeInTheDocument();
+    act(() => useAuthStore.getState().logout());
+    await act(async () => resolve(metadata));
+    expect(screen.queryByRole("dialog", { name: "Photo metadata" })).toBeNull();
+    expect(screen.queryByText("Canon EOS R6")).toBeNull();
+  });
+
+  it("closes owner metadata when the viewer role changes under the same user ID", async () => {
+    const viewer = { id: "viewer", role: "PHOTOGRAPHER" as const, email: "a@b.test", name: "A", createdAt: "2026-09-28" };
+    useAuthStore.getState().setUser(viewer);
+    vi.spyOn(api, "get").mockResolvedValue(metadata);
+    const user = userEvent.setup();
+    render(withQuery(<PhotoPreviewCard photo={photo} metadataAccess="owner" mode="owned" eventName="Cebu Run" index={1} total={1} {...callbacks()} />));
+    await user.click(await screen.findByRole("button", { name: "Show Metadata" }));
+    expect(await screen.findByText("Canon EOS R6")).toBeInTheDocument();
+    act(() => useAuthStore.getState().setUser({ ...viewer, role: "RUNNER" }));
+    expect(screen.queryByRole("dialog", { name: "Photo metadata" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
+  });
+
+  it("drops metadata on session change and suppresses a denied public action until the photo changes", async () => {
+    const get = vi.spyOn(api, "get").mockResolvedValueOnce(metadata).mockRejectedValueOnce(new ApiError([{ code: "NOT_FOUND", message: "Gone" }], 404));
+    const user = userEvent.setup();
+    const view = render(withQuery(<PhotoPreviewCard photo={photo} metadataAccess="public" mode="owned" eventName="Cebu Run" index={1} total={2} {...callbacks()} />));
+    await user.click(await screen.findByRole("button", { name: "Show Metadata" }));
+    expect(await screen.findByText("Canon EOS R6")).toBeInTheDocument();
+    act(() => useAuthStore.getState().logout());
+    expect(screen.queryByRole("dialog", { name: "Photo metadata" })).toBeNull();
+    expect(screen.queryByText("Canon EOS R6")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Show Metadata" }));
+    expect(await screen.findByText("Metadata is no longer available")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close metadata" }));
+    expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
+    view.rerender(withQuery(<PhotoPreviewCard photo={{ ...photo, id: "photo-b" }} metadataAccess="public" mode="owned" eventName="Cebu Run" index={2} total={2} {...callbacks()} />));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show Metadata" })).toBeInTheDocument());
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });

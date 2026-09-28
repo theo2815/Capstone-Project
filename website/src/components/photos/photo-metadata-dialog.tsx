@@ -14,6 +14,7 @@ interface PhotoMetadataDialogProps {
   access: PhotoMetadataAccess;
   isOpen: boolean;
   onClose: () => void;
+  onDenied?: () => void;
   triggerRef: RefObject<HTMLElement | null>;
 }
 
@@ -43,7 +44,7 @@ function section(title: string, content: ReactNode) {
   </section>;
 }
 
-export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, triggerRef }: PhotoMetadataDialogProps) {
+export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, onDenied, triggerRef }: PhotoMetadataDialogProps) {
   const query = usePhotoMetadata(photoId, access, isOpen);
   const contentRef = useRef<HTMLDivElement>(null);
   const focusClose = useCallback((node: HTMLButtonElement | null) => {
@@ -76,6 +77,9 @@ export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, triggerR
 
   const data = query.data;
   const missing = access === "public" && query.error instanceof ApiError && query.error.status === 404;
+  useEffect(() => {
+    if (isOpen && missing) onDenied?.();
+  }, [isOpen, missing, onDenied]);
   const loading = query.isPending || query.isFetching;
   const status = !loading && !query.isError ? data?.status : undefined;
   const fields = status === "ready" ? data?.fields : null;
