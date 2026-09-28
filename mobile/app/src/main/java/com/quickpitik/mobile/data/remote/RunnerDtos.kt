@@ -85,7 +85,8 @@ data class PhotoDto(
     // downloadUrl is an attachment URL for the clean file (cleanUrl is also set
     // for every visitor); both null on paid events unless owned.
     val free: Boolean = false,
-    val downloadUrl: String? = null
+    val downloadUrl: String? = null,
+    val metadataAccess: String? = null
 )
 
 data class SearchByFaceJsonRequest(
