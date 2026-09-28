@@ -13,13 +13,16 @@ const env = {
 
 test('healthy readiness and valid fast classification stay quiet', async () => {
   const calls: string[] = [];
+  let uploaded: Buffer | undefined;
   const fetcher: typeof fetch = async (input, init) => {
     const url = String(input);
     calls.push(url);
     if (url.endsWith('/readyz')) return Response.json({ status: 'ready' });
     assert.equal(init?.method, 'POST');
     assert.equal((init?.headers as Record<string, string>)['X-API-Key'], 'probe-secret');
-    assert.ok((init?.body as FormData).get('file') instanceof File);
+    const file = (init?.body as FormData).get('file');
+    assert.ok(file instanceof File);
+    uploaded = Buffer.from(await file.arrayBuffer());
     return Response.json({ success: true, data: { predicted_class: 'sharp' } });
   };
   await run(env, fetcher, () => 0);
@@ -27,6 +30,22 @@ test('healthy readiness and valid fast classification stay quiet', async () => {
     'https://blur.example.test/api/v1/health/readyz',
     'https://blur.example.test/api/v1/blur/classify',
   ]);
+  assert.ok(uploaded && uploaded.length > 100);
+  assert.equal(uploaded.subarray(0, 2).toString('hex'), 'ffd8');
+  let offset = 2;
+  let frame = false;
+  let scan = false;
+  while (offset < uploaded.length - 2) {
+    assert.equal(uploaded[offset], 0xff);
+    const marker = uploaded[offset + 1];
+    const length = uploaded.readUInt16BE(offset + 2);
+    assert.ok(length >= 2 && offset + length + 2 <= uploaded.length);
+    if (marker === 0xc0) frame = true;
+    if (marker === 0xda) { scan = true; break; }
+    offset += length + 2;
+  }
+  assert.ok(frame && scan);
+  assert.equal(uploaded.subarray(-2).toString('hex'), 'ffd9');
 });
 
 test('slow classification sends a bounded failure alert', async () => {
