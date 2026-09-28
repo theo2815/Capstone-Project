@@ -65,5 +65,6 @@
       "whiteBalance": "Manual"
     }
   },
-  "parserFailure": "malformed.jpg"
+  "parserFailure": "malformed.jpg",
+  "payloadLimitFixture": "xmp-payload-limit.jpg: synthetic 8x8 Pillow JPEG with embedded XMP FNumber 28/10, 1,400 U+1F600 code points across camera/lens/rights text, 200 quotes and 200 backslashes in creator, and GPS/serial/path sentinels."
 }

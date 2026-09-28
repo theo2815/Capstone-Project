@@ -42,6 +42,28 @@ class PhotoMetadataExtractorTest {
     }
 
     @Test
+    fun `reads rational XMP FNumber from embedded metadata`() {
+        val fields = javaClass.getResourceAsStream("/photo-metadata/xmp-payload-limit.jpg")!!.use {
+            PhotoMetadataExtractor().extract(it)
+        }
+        assertEquals(2.8, fields.aperture)
+    }
+
+    @Test
+    fun `serialized allowlist stays within eight KiB with supplementary text`() {
+        val fields = javaClass.getResourceAsStream("/photo-metadata/xmp-payload-limit.jpg")!!.use {
+            PhotoMetadataExtractor().extract(it)
+        }
+        val bytes = jacksonObjectMapper().registerModule(JavaTimeModule()).writeValueAsBytes(fields)
+        assertTrue(fields.cameraMake?.isNotBlank() == true)
+        assertTrue(fields.author?.contains('"') == true)
+        assertTrue(fields.author?.contains('\\') == true)
+        assertTrue(fields.copyright?.isNotBlank() == true)
+        assertTrue(bytes.size <= 8 * 1024, "serialized metadata was ${bytes.size} bytes")
+        assertFalse(String(bytes, Charsets.UTF_8).contains("GPS_SENTINEL_QP_94"))
+    }
+
+    @Test
     fun `normalizes fixture vectors and excludes private source tags`() {
         val mapper = jacksonObjectMapper().registerModule(JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
