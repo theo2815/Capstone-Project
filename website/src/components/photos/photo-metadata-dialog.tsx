@@ -16,6 +16,7 @@ interface PhotoMetadataDialogProps {
   onClose: () => void;
   onDenied?: () => void;
   triggerRef: RefObject<HTMLElement | null>;
+  fallbackFocus?: () => void;
 }
 
 const fallback = "Not recorded";
@@ -44,7 +45,7 @@ function section(title: string, content: ReactNode) {
   </section>;
 }
 
-export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, onDenied, triggerRef }: PhotoMetadataDialogProps) {
+export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, onDenied, triggerRef, fallbackFocus }: PhotoMetadataDialogProps) {
   const query = usePhotoMetadata(photoId, access, isOpen);
   const contentRef = useRef<HTMLDivElement>(null);
   const focusClose = useCallback((node: HTMLButtonElement | null) => {
@@ -71,9 +72,10 @@ export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, onDenied
     document.addEventListener("keydown", containTab, true);
     return () => {
       document.removeEventListener("keydown", containTab, true);
-      trigger?.focus();
+      if (trigger?.isConnected) trigger.focus();
+      else fallbackFocus?.();
     };
-  }, [isOpen, triggerRef]);
+  }, [isOpen, triggerRef, fallbackFocus]);
 
   const data = query.data;
   const missing = access === "public" && query.error instanceof ApiError && query.error.status === 404;

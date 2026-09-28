@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
@@ -140,6 +140,12 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   const [openMetadataContext, setOpenMetadataContext] = useState<string | null>(null);
   const [deniedMetadataContext, setDeniedMetadataContext] = useState<string | null>(null);
   const metadataTrigger = useRef<HTMLButtonElement>(null);
+  const mobileClose = useRef<HTMLButtonElement>(null);
+  const desktopClose = useRef<HTMLButtonElement>(null);
+  const focusPreviewClose = useCallback(() => {
+    const desktop = window.matchMedia?.("(min-width: 1024px)").matches;
+    (desktop ? desktopClose.current : mobileClose.current)?.focus();
+  }, []);
   const metadataOpen = openMetadataContext === metadataContext;
   const showMetadata = (access === "public" || (access === "owner" && viewer.enabled && viewer.key[1] === "PHOTOGRAPHER")) && deniedMetadataContext !== metadataContext;
   useScrollLock(true);
@@ -328,6 +334,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               <span />
             )}
             <button
+              ref={mobileClose}
               type="button"
               onClick={onClose}
               aria-label="Close preview"
@@ -379,6 +386,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             <div className="flex items-center gap-4">
               {counter}
               <button
+                ref={desktopClose}
                 type="button"
                 onClick={onClose}
                 aria-label="Close preview"
@@ -537,6 +545,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         onClose={() => setOpenMetadataContext(null)}
         onDenied={() => setDeniedMetadataContext(metadataContext)}
         triggerRef={metadataTrigger}
+        fallbackFocus={focusPreviewClose}
       />
     )}
   </>;
