@@ -48,9 +48,15 @@ function section(title: string, content: ReactNode) {
 export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, onDenied, triggerRef, fallbackFocus }: PhotoMetadataDialogProps) {
   const query = usePhotoMetadata(photoId, access, isOpen);
   const contentRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const focusClose = useCallback((node: HTMLButtonElement | null) => {
+    closeButtonRef.current = node;
     if (node && isOpen) node.focus();
   }, [isOpen]);
+  const refetch = () => {
+    closeButtonRef.current?.focus();
+    void query.refetch();
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -103,11 +109,11 @@ export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, onDenied
       </div> : missing ? <p className="font-sans text-base text-slate">Metadata is no longer available</p>
         : query.isError || status === "failed" ? <div className="space-y-4">
           <p className="font-sans text-base text-slate">Metadata could not be loaded.</p>
-          <button type="button" onClick={() => void query.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
+          <button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
         </div> : <>
           {status === "pending" && <div className="space-y-4">
             <p className="font-sans text-base text-slate">Metadata is being prepared.</p>
-            <button type="button" onClick={() => void query.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Refresh</button>
+            <button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Refresh</button>
           </div>}
           {status === "empty" && <p className="font-sans text-base text-slate">No camera metadata was found.</p>}
           {status === "unavailable" && <p className="font-sans text-base text-slate">Metadata is unavailable for this photo.</p>}

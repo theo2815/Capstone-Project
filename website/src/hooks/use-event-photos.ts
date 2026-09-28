@@ -40,11 +40,12 @@ export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
   const bib = args.bib?.trim() || undefined;
   const viewer = usePrivateQuerySession();
   const authLoading = useAuthStore((s) => s.isLoading);
-  const guestPage = !authLoading && !viewer.enabled && !bib ? args.initialPage : undefined;
+  const guestSeed = !authLoading && !viewer.enabled ? args.initialPage : undefined;
+  const guestPage = !bib ? guestSeed : undefined;
   const scope = JSON.stringify([args.slug, ...viewer.key, authLoading]);
-  const snapshotRef = useRef({ scope, value: guestPage?.snapshotAt });
+  const snapshotRef = useRef({ scope, value: guestSeed?.snapshotAt });
   if (snapshotRef.current.scope !== scope) {
-    snapshotRef.current = { scope, value: guestPage?.snapshotAt };
+    snapshotRef.current = { scope, value: guestSeed?.snapshotAt };
   }
 
   const list = useInfiniteList<Photo>({
