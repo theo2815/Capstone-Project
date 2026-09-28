@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import { getMetadataSettings } from "@/lib/api-photographer";
 import {
   fetchBrand,
   fetchPayoutAccounts,
@@ -13,6 +14,7 @@ export const photographerSettingsKeys = {
   brand: ["photographer", "settings", "brand"] as const,
   socials: ["photographer", "settings", "socials"] as const,
   payouts: ["photographer", "settings", "payouts"] as const,
+  metadata: ["photographer", "settings", "metadata"] as const,
 };
 
 const RETRY_DELAY_MS = 2_000;
@@ -44,6 +46,12 @@ export function usePhotographerSettingsQueries() {
     payouts: useQuery({
       queryKey: [...photographerSettingsKeys.payouts, ...querySuffix],
       queryFn: fetchPayoutAccounts,
+      enabled: session.enabled,
+      ...queryOptions,
+    }),
+    metadata: useQuery({
+      queryKey: [...photographerSettingsKeys.metadata, ...querySuffix],
+      queryFn: ({ signal }) => getMetadataSettings(signal),
       enabled: session.enabled,
       ...queryOptions,
     }),

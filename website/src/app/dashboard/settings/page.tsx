@@ -31,6 +31,7 @@ import { useConfirmation } from "@/hooks/use-confirmation";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import { uploadAvatar } from "@/lib/api-avatar";
+import { putMetadataSettings, type MetadataSettingsDto } from "@/lib/api-photographer";
 import {
   deletePayoutAccount,
   deleteSocial,
@@ -171,6 +172,8 @@ interface EditModeContextValue {
   saveEdit: () => Promise<void>;
   cancelEdit: () => void;
   setPendingFile: (slot: PendingFileSlot, file: File | null) => void;
+  metadataPublicByDefault: boolean;
+  setMetadataPublicByDefault: (value: boolean) => void;
 }
 
 const EditModeContext = createContext<EditModeContextValue | null>(null);
@@ -241,6 +244,8 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
 function EditModeProvider({ children }: { children: ReactNode }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [metadataDraft, setMetadataDraft] = useState(false);
+  const metadataSnapshotRef = useRef<boolean | null>(null);
   const draftEpochRef = useRef<number | null>(null);
   const confirmedRef = useRef(false);
   const editSessionRef = useRef<(() => boolean) | null>(null);
@@ -252,10 +257,10 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   });
   const { showToast } = useToast();
   const queryClient = useQueryClient();
-  const { session, brand, socials, payouts } = usePhotographerSettingsQueries();
+  const { session, brand, socials, payouts, metadata } = usePhotographerSettingsQueries();
   const hydratedSessionVersion = usePhotographerSettingsStore((s) => s.hydratedSessionVersion);
-  const canEdit = session.enabled && hydratedSessionVersion === session.key[2];
-  const initialQueries = [brand, socials, payouts];
+  const canEdit = session.enabled && hydratedSessionVersion === session.key[2] && metadata.isSuccess && metadata.data != null;
+  const initialQueries = [brand, socials, payouts, metadata];
   const initialLoadFailed = !canEdit && initialQueries.some((query) => query.isError);
   const retryingInitialLoad = initialQueries.some((query) => query.isFetching);
 
@@ -286,15 +291,17 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     const auth = useAuthStore.getState();
     if (
       !auth.isAuthenticated || auth.user?.role !== "PHOTOGRAPHER" ||
-      state.hydratedSessionVersion !== auth.sessionVersion
+      state.hydratedSessionVersion !== auth.sessionVersion || !canEdit
     ) return;
+    setMetadataDraft(metadata.data.metadataPublicByDefault);
+    metadataSnapshotRef.current = metadata.data.metadataPublicByDefault;
     draftEpochRef.current = state.beginDraft();
     confirmedRef.current = false;
     editSessionRef.current = captureAuthSession();
     snapshotRef.current = takeSnapshot();
     pendingFilesRef.current = { avatar: null, cover: null, watermark: null };
     setEditing(true);
-  }, []);
+  }, [canEdit, metadata.data]);
 
   const cancelEdit = useCallback(() => {
     if (!editSessionRef.current?.()) return;
@@ -353,6 +360,20 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       onSuccess?: (result: unknown) => void;
     }
     const tasks: SaveTask[] = [];
+
+    if (metadataDraft !== metadataSnapshotRef.current) {
+      tasks.push({
+        label: "Metadata default",
+        run: () => putMetadataSettings({ metadataPublicByDefault: metadataDraft }),
+        onSuccess: (result) => {
+          metadataSnapshotRef.current = (result as MetadataSettingsDto).metadataPublicByDefault;
+          queryClient.setQueryData<MetadataSettingsDto>(
+            [...photographerSettingsKeys.metadata, ...session.key],
+            result as MetadataSettingsDto,
+          );
+        },
+      });
+    }
 
     const brandDirty =
       snap.brandName !== settings.brandName ||
@@ -748,7 +769,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     } finally {
       if (ownsDraft()) setSaving(false);
     }
-  }, [reconcileDraft, saving, showToast]);
+  }, [metadataDraft, queryClient, reconcileDraft, saving, session.key, showToast]);
 
   const value = useMemo<EditModeContextValue>(
     () => ({
@@ -759,8 +780,10 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       saveEdit,
       cancelEdit,
       setPendingFile,
+      metadataPublicByDefault: editing ? metadataDraft : metadata.data?.metadataPublicByDefault ?? false,
+      setMetadataPublicByDefault: setMetadataDraft,
     }),
-    [editing, saving, canEdit, beginEdit, saveEdit, cancelEdit, setPendingFile],
+    [editing, saving, canEdit, beginEdit, saveEdit, cancelEdit, setPendingFile, metadataDraft, metadata.data],
   );
 
   return (
@@ -1016,6 +1039,7 @@ export default function SettingsPage() {
       <SocialSlab />
       <PayoutSlab />
       <EventCouponsSlab />
+      <MetadataDefaultSlab />
       <ReadyToSubmitNudge />
       <EditModePill />
     </EditModeProvider>
@@ -1035,6 +1059,31 @@ function EventCouponsSlab() {
       >
         Manage event coupons
       </Link>
+    </Slab>
+  );
+}
+
+function MetadataDefaultSlab() {
+  const { editing, saving, metadataPublicByDefault, setMetadataPublicByDefault } = useEditMode();
+  return (
+    <Slab id="metadata" number="08" title="Photo metadata" caption="New events">
+      <label className="flex min-h-[44px] items-center gap-3 font-sans text-base font-semibold text-ink">
+        <input
+          type="checkbox"
+          checked={metadataPublicByDefault}
+          onChange={(event) => setMetadataPublicByDefault(event.target.checked)}
+          disabled={!editing || saving}
+          aria-describedby="metadata-default-help metadata-default-boundary"
+          className="size-5 shrink-0 accent-fresh disabled:cursor-not-allowed"
+        />
+        Show metadata publicly for new events
+      </label>
+      <p id="metadata-default-help" className="mt-3 max-w-md font-sans text-sm text-slate">
+        Applies to events you create or start covering next. Existing events keep their settings.
+      </p>
+      <p id="metadata-default-boundary" className="mt-2 max-w-md font-sans text-sm text-slate">
+        This controls the metadata popup. Original downloads keep their embedded metadata.
+      </p>
     </Slab>
   );
 }

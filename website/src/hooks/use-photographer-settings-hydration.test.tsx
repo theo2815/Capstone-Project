@@ -38,11 +38,11 @@ afterEach(() => {
 
 it("hydrates the draft bridge from session-scoped Query data", async () => {
   vi.spyOn(api, "get").mockImplementation((path) =>
-    Promise.resolve(path.endsWith("/brand") ? brand : []),
+    Promise.resolve(path.endsWith("/brand") ? brand : path.endsWith("/metadata-settings") ? { metadataPublicByDefault: false } : []),
   );
   renderHook(usePhotographerSettingsHydration, { wrapper });
   await waitFor(() => expect(usePhotographerSettingsStore.getState().brandName).toBe("Brand A"));
-  expect(api.get).toHaveBeenCalledTimes(3);
+  expect(api.get).toHaveBeenCalledTimes(4);
 });
 
 it.each([
