@@ -14,14 +14,17 @@ interface PhotoMetadataRepository : JpaRepository<PhotoMetadata, UUID> {
     @Query("""
         SELECT m.photoId FROM PhotoMetadata m, Photo p
         WHERE p.id = m.photoId AND p.deletionStartedAt IS NULL
-            AND m.extractorVersion = :version AND m.attempts < :maxAttempts
-            AND ((m.state = com.quickpitik.entity.PhotoMetadataState.PENDING
-                    AND p.uploadedAt <= :pendingBefore
-                    AND (m.nextAttemptAt IS NULL OR m.nextAttemptAt <= :now))
-                OR (m.state = com.quickpitik.entity.PhotoMetadataState.FAILED
-                    AND m.nextAttemptAt IS NOT NULL AND m.nextAttemptAt <= :now)
+            AND m.extractorVersion = :version
+            AND ((m.attempts < :maxAttempts
+                    AND ((m.state = com.quickpitik.entity.PhotoMetadataState.PENDING
+                            AND p.uploadedAt <= :pendingBefore
+                            AND (m.nextAttemptAt IS NULL OR m.nextAttemptAt <= :now))
+                        OR (m.state = com.quickpitik.entity.PhotoMetadataState.FAILED
+                            AND m.nextAttemptAt IS NOT NULL AND m.nextAttemptAt <= :now)
+                        OR (m.state = com.quickpitik.entity.PhotoMetadataState.PROCESSING
+                            AND m.leaseUntil <= :now)))
                 OR (m.state = com.quickpitik.entity.PhotoMetadataState.PROCESSING
-                    AND m.leaseUntil <= :now))
+                    AND m.attempts >= :maxAttempts AND m.leaseUntil <= :now))
         ORDER BY p.uploadedAt, m.photoId
     """)
     fun findDueCandidateIds(
@@ -45,12 +48,25 @@ interface PhotoMetadataRepository : JpaRepository<PhotoMetadata, UUID> {
     @Modifying
     @Query("""
         UPDATE PhotoMetadata m SET m.state = :state, m.fields = :fields, m.extractedAt = :now,
+            m.originalSizeBytes = COALESCE(m.originalSizeBytes, :sizeBytes),
             m.leaseToken = null, m.leaseUntil = null, m.nextAttemptAt = null
         WHERE m.photoId = :photoId AND m.leaseToken = :token AND m.extractorVersion = :version
             AND m.state = com.quickpitik.entity.PhotoMetadataState.PROCESSING
             AND EXISTS (SELECT p.id FROM Photo p WHERE p.id = m.photoId AND p.deletionStartedAt IS NULL)
     """)
-    fun settle(photoId: UUID, token: UUID, version: Int, state: PhotoMetadataState, fields: PhotoMetadataFields?, now: OffsetDateTime): Int
+    fun settle(photoId: UUID, token: UUID, version: Int, state: PhotoMetadataState, fields: PhotoMetadataFields?,
+               now: OffsetDateTime, sizeBytes: Long? = null): Int
+
+    @Modifying
+    @Query("""
+        UPDATE PhotoMetadata m SET m.state = com.quickpitik.entity.PhotoMetadataState.FAILED,
+            m.extractedAt = :now, m.leaseToken = null, m.leaseUntil = null, m.nextAttemptAt = null
+        WHERE m.photoId = :photoId AND m.extractorVersion = :version
+            AND m.state = com.quickpitik.entity.PhotoMetadataState.PROCESSING
+            AND m.attempts >= :maxAttempts AND m.leaseUntil <= :now
+            AND EXISTS (SELECT p.id FROM Photo p WHERE p.id = m.photoId AND p.deletionStartedAt IS NULL)
+    """)
+    fun failExpiredExhaustedLease(photoId: UUID, version: Int, maxAttempts: Int, now: OffsetDateTime): Int
 
     @Modifying
     @Query("""

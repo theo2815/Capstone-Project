@@ -328,6 +328,86 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `recovery fills script seeded file sizes without inventing filename or overwriting known size`() {
+        val ready = fixture()
+        val empty = fixture()
+        for (id in listOf(ready, empty)) {
+            jdbc.update("DELETE FROM photo_metadata WHERE photo_id = ?", id)
+            jdbc.update("INSERT INTO photo_metadata (photo_id, state, extractor_version) VALUES (?, 'PENDING', 1)", id)
+            old(id)
+        }
+        val known = fixture().also(::old)
+        val bytes = mapOf(ready to byteArrayOf(1), empty to byteArrayOf(2), known to byteArrayOf(3))
+        for ((id, content) in bytes) {
+            val key = photos.findById(id).orElseThrow().s3Key
+            Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
+            Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(content))
+        }
+        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+            when (it.getArgument<java.io.InputStream>(0).read()) {
+                2 -> PhotoMetadataFields()
+                else -> PhotoMetadataFields(cameraModel = "R6")
+            }
+        }
+        val tasks = mutableListOf<Runnable>()
+        val manual = sweeper(photos, deferredExecutor(tasks))
+        for (id in listOf(ready, empty, known)) {
+            manual.recoverDue()
+            assertEquals(1, tasks.size)
+            tasks.removeAt(0).run()
+        }
+
+        assertEquals(PhotoMetadataState.READY, metadata.findById(ready).orElseThrow().state)
+        assertEquals(PhotoMetadataState.EMPTY, metadata.findById(empty).orElseThrow().state)
+        assertEquals(1L, metadata.findById(ready).orElseThrow().originalSizeBytes)
+        assertEquals(1L, metadata.findById(empty).orElseThrow().originalSizeBytes)
+        assertNull(metadata.findById(ready).orElseThrow().originalFilename)
+        assertNull(metadata.findById(empty).orElseThrow().originalFilename)
+        assertEquals(42L, metadata.findById(known).orElseThrow().originalSizeBytes)
+    }
+
+    @Test
+    fun `expired fourth claim becomes terminal without GET while active and renewed leases survive`() {
+        val expired = fixture(PhotoMetadataState.PROCESSING)
+        val active = fixture(PhotoMetadataState.PROCESSING)
+        val renewed = fixture(PhotoMetadataState.PROCESSING)
+        val purging = fixture(PhotoMetadataState.PROCESSING)
+        val oldToken = UUID.randomUUID()
+        val newToken = UUID.randomUUID()
+        for (id in listOf(expired, renewed, purging)) {
+            jdbc.update("UPDATE photo_metadata SET attempts = 4, lease_token = ?, lease_until = now() - interval '1 minute' WHERE photo_id = ?", oldToken, id)
+        }
+        jdbc.update("UPDATE photos SET deleted_at = now(), deletion_started_at = now() WHERE id = ?", purging)
+        jdbc.update("UPDATE photo_metadata SET attempts = 4, lease_token = ?, lease_until = now() + interval '1 minute' WHERE photo_id = ?", newToken, active)
+        old(expired)
+        old(active)
+        old(renewed)
+        val tasks = mutableListOf<Runnable>()
+        val manual = sweeper(photos, deferredExecutor(tasks, capacity = 2))
+
+        manual.recoverDue()
+        assertEquals(2, tasks.size)
+        jdbc.update("UPDATE photo_metadata SET lease_token = ?, lease_until = now() + interval '1 minute' WHERE photo_id = ?", newToken, renewed)
+        tasks.forEach(Runnable::run)
+
+        val failed = metadata.findById(expired).orElseThrow()
+        assertEquals(PhotoMetadataState.FAILED, failed.state)
+        assertEquals(4, failed.attempts)
+        assertNull(failed.leaseToken)
+        assertNull(failed.leaseUntil)
+        assertNull(failed.nextAttemptAt)
+        assertEquals(0, settle(expired, oldToken))
+        for (id in listOf(active, renewed)) {
+            val row = metadata.findById(id).orElseThrow()
+            assertEquals(PhotoMetadataState.PROCESSING, row.state)
+            assertEquals(4, row.attempts)
+            assertEquals(newToken, row.leaseToken)
+        }
+        assertEquals(PhotoMetadataState.PROCESSING, metadata.findById(purging).orElseThrow().state)
+        Mockito.verifyNoInteractions(storage)
+    }
+
+    @Test
     fun `transient storage failures schedule three delays then stop after fourth claim`() {
         val id = fixture().also(::old)
         val key = photos.findById(id).orElseThrow().s3Key

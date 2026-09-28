@@ -291,7 +291,7 @@ class PhotoWatermarkServiceTest {
         service(metadata = extraction).process(photoId)
 
         assertTrue(parsed)
-        Mockito.verify(metadata).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(metadata).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
         Mockito.verify(transactionManager, Mockito.never()).rollback(anyArg())
     }

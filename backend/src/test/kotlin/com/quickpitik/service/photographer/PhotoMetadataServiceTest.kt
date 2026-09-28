@@ -46,7 +46,7 @@ class PhotoMetadataServiceTest {
         Mockito.`when`(extractor.extract(anyArg())).thenThrow(IllegalArgumentException("private tag value"))
         var state: PhotoMetadataState? = null
         var fields: PhotoMetadataFields? = PhotoMetadataFields()
-        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())).thenAnswer {
+        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())).thenAnswer {
             state = it.getArgument(3)
             fields = it.getArgument(4)
             1
@@ -75,7 +75,7 @@ class PhotoMetadataServiceTest {
         Mockito.`when`(repository.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
         Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "R6"))
         var settled: PhotoMetadataState? = null
-        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())).thenAnswer {
+        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())).thenAnswer {
             settled = it.getArgument(3)
             1
         }
@@ -106,9 +106,9 @@ class PhotoMetadataServiceTest {
     fun `settlement outage does not escape or attempt a second settlement`() {
         Mockito.`when`(repository.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
         Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "R6"))
-        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())).thenThrow(IllegalStateException("database down"))
+        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())).thenThrow(IllegalStateException("database down"))
         service().extractIfDue(UUID.randomUUID(), byteArrayOf(1))
-        Mockito.verify(repository, Mockito.times(1)).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(repository, Mockito.times(1)).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())
     }
 
     @Test
