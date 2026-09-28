@@ -59,6 +59,22 @@ class MetadataVisibilityIntegrationTest : PostgresIntegrationTest() {
     private val json = ObjectMapper()
 
     @Test
+    fun `metadata settings reject non boolean JSON without changing private choices`() {
+        val owner = photographer()
+        val event = event()
+        transactions.executeWithoutResult { coverage.upsertOnUpload(event.id, owner.id, OffsetDateTime.now()) }
+        val defaultsPath = "/api/v1/me/photographer/metadata-settings"
+        val eventPath = "/api/v1/me/photographer/events/${event.id}/metadata-visibility"
+
+        assertEquals(400, request("PUT", defaultsPath, owner, """{"metadataPublicByDefault":1}""").statusCode())
+        assertEquals(false, metadataSettings.getDefault(owner.id).metadataPublicByDefault)
+        assertEquals(400, request("PUT", eventPath, owner, """{"metadataPublic":"true"}""").statusCode())
+        assertEquals(false, metadataSettings.getEvent(owner.id, event.id).metadataPublic)
+        assertEquals(200, request("PUT", defaultsPath, owner, """{"metadataPublicByDefault":false}""").statusCode())
+        assertEquals(200, request("PUT", eventPath, owner, """{"metadataPublic":false}""").statusCode())
+    }
+
+    @Test
     fun `settings routes return typed envelopes and refuse foreign or non photographer callers`() {
         val a = photographer()
         val b = photographer()
