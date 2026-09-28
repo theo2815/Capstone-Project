@@ -34,7 +34,7 @@ class AsyncConfig {
     // the slow AI calls above can't sit between an upload and the photo going
     // LIVE for runners (2026-09-02 scale review).
     @Bean(name = ["watermarkProcessing"])
-    fun watermarkProcessingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
+    fun watermarkProcessingExecutor(): ThreadPoolTaskExecutor = ThreadPoolTaskExecutor().apply {
         // 2 until SubsampledDecode (P0-6) + the 2 GB limit (OPS-2) land, then back to 4
         corePoolSize = 2
         maxPoolSize = 2

@@ -1,6 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PhotoMetadataProperties
 import com.quickpitik.dto.photos.PhotoMetadataDto
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Photo
@@ -12,7 +13,12 @@ import com.quickpitik.repository.PhotoMetadataRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.image.PhotoMetadataExtractor
 import com.quickpitik.service.image.hasRecordedTags
+import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.data.domain.PageRequest
+import org.springframework.scheduling.annotation.Scheduled
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
@@ -27,6 +33,9 @@ class PhotoMetadataService(
     private val photos: PhotoRepository,
     private val coverage: EventPhotographerRepository,
     private val extractor: PhotoMetadataExtractor,
+    private val storage: StorageService,
+    @Qualifier("watermarkProcessing") private val watermarkPool: ThreadPoolTaskExecutor,
+    private val properties: PhotoMetadataProperties,
     private val transactions: TransactionTemplate,
     private val clock: Clock,
 ) {
@@ -73,31 +82,96 @@ class PhotoMetadataService(
                 repository.claimIfDue(photoId, token, EXTRACTOR_VERSION, now, now.plusMinutes(LEASE_MINUTES), MAX_ATTEMPTS)
             }
             if (claimed != 1) return
-
-            // Only parsing failures are terminal. A database outage leaves the
-            // committed lease for recovery instead of mislabelling the bytes.
-            val fields = try {
-                originalBytes.inputStream().use(extractor::extract)
-            } catch (ex: Exception) {
-                log.warn("Metadata parsing failed for photo {} ({})", photoId, ex.javaClass.simpleName)
-                null
-            }
-            val state = when {
-                fields == null -> PhotoMetadataState.FAILED
-                fields.hasRecordedTags() -> PhotoMetadataState.READY
-                else -> PhotoMetadataState.EMPTY
-            }
-            transactions.executeWithoutResult {
-                repository.settle(photoId, token, EXTRACTOR_VERSION, state, fields, OffsetDateTime.now(clock))
-            }
+            extractClaimed(photoId, token, originalBytes)
         } catch (ex: Exception) {
             log.warn("Metadata persistence failed for photo {} ({})", photoId, ex.javaClass.simpleName)
+        }
+    }
+
+    @Scheduled(fixedDelayString = "\${app.photo-metadata.recovery-interval-ms:60000}")
+    fun recoverDue() {
+        if (!properties.recoveryEnabled || watermarkPool.activeCount != 0 ||
+            watermarkPool.threadPoolExecutor.queue.isNotEmpty()) return
+        val capacity = minOf(RECOVERY_BATCH_SIZE, watermarkPool.maxPoolSize - watermarkPool.activeCount)
+        if (capacity <= 0) return
+        val now = OffsetDateTime.now(clock)
+        repository.findDueCandidateIds(EXTRACTOR_VERSION, MAX_ATTEMPTS, now.minusMinutes(PENDING_GRACE_MINUTES), now,
+            PageRequest.of(0, capacity)).forEach { photoId ->
+            watermarkPool.execute { recoverOne(photoId) }
+        }
+    }
+
+    private fun recoverOne(photoId: UUID) {
+        try {
+            val token = UUID.randomUUID()
+            val now = OffsetDateTime.now(clock)
+            val claimed = transactions.execute {
+                repository.claimIfDue(photoId, token, EXTRACTOR_VERSION, now, now.plusMinutes(LEASE_MINUTES), MAX_ATTEMPTS)
+            }
+            if (claimed != 1) return
+            val key = photos.findById(photoId).orElse(null)?.s3Key ?: return
+            val head = try { storage.metadata(key) } catch (ex: Exception) {
+                settleStorageFailure(photoId, token)
+                return
+            }
+            if (head == null || head.sizeBytes > MAX_ORIGINAL_BYTES) {
+                settleUnavailable(photoId, token, head?.sizeBytes)
+                return
+            }
+            val bytes = try {
+                storage.open(key).use { it.readNBytes((MAX_ORIGINAL_BYTES + 1).toInt()) }
+            } catch (ex: Exception) {
+                val disappeared = try { storage.metadata(key) == null } catch (_: Exception) { false }
+                if (disappeared) settleUnavailable(photoId, token, null)
+                else settleStorageFailure(photoId, token)
+                return
+            }
+            if (bytes.size > MAX_ORIGINAL_BYTES) settleUnavailable(photoId, token, bytes.size.toLong())
+            else extractClaimed(photoId, token, bytes)
+        } catch (ex: Exception) {
+            log.warn("Metadata recovery failed for photo {} ({})", photoId, ex.javaClass.simpleName)
+        }
+    }
+
+    private fun settleStorageFailure(photoId: UUID, token: UUID) {
+        val now = OffsetDateTime.now(clock)
+        transactions.executeWithoutResult {
+            repository.settleStorageFailure(photoId, token, EXTRACTOR_VERSION, now,
+                now.plusMinutes(1), now.plusMinutes(5), now.plusMinutes(30))
+        }
+    }
+
+    private fun settleUnavailable(photoId: UUID, token: UUID, sizeBytes: Long?) {
+        transactions.executeWithoutResult {
+            repository.settleUnavailable(photoId, token, EXTRACTOR_VERSION, sizeBytes, OffsetDateTime.now(clock))
+        }
+    }
+
+    private fun extractClaimed(photoId: UUID, token: UUID, originalBytes: ByteArray) {
+        // Only parsing failures are terminal. A database outage leaves the
+        // committed lease for recovery instead of mislabelling the bytes.
+        val fields = try {
+            originalBytes.inputStream().use(extractor::extract)
+        } catch (ex: Exception) {
+            log.warn("Metadata parsing failed for photo {} ({})", photoId, ex.javaClass.simpleName)
+            null
+        }
+        val state = when {
+            fields == null -> PhotoMetadataState.FAILED
+            fields.hasRecordedTags() -> PhotoMetadataState.READY
+            else -> PhotoMetadataState.EMPTY
+        }
+        transactions.executeWithoutResult {
+            repository.settle(photoId, token, EXTRACTOR_VERSION, state, fields, OffsetDateTime.now(clock))
         }
     }
 
     private companion object {
         const val EXTRACTOR_VERSION = 1
         const val LEASE_MINUTES = 5L
-        const val MAX_ATTEMPTS = 3
+        const val MAX_ATTEMPTS = 4
+        const val PENDING_GRACE_MINUTES = 5L
+        const val MAX_ORIGINAL_BYTES = 25L * 1024 * 1024
+        const val RECOVERY_BATCH_SIZE = 10
     }
 }

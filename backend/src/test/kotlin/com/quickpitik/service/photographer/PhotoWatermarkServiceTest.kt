@@ -281,6 +281,9 @@ class PhotoWatermarkServiceTest {
             Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
             Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java),
             extractor,
+            Mockito.mock(com.quickpitik.service.storage.StorageService::class.java),
+            Mockito.mock(org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor::class.java),
+            com.quickpitik.config.PhotoMetadataProperties(),
             TransactionTemplate(transactionManager),
             java.time.Clock.systemUTC(),
         )

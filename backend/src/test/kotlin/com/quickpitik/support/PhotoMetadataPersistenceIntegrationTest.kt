@@ -5,16 +5,22 @@ import com.quickpitik.entity.*
 import com.quickpitik.repository.*
 import com.quickpitik.service.image.PhotoMetadataExtractor
 import com.quickpitik.service.photographer.PhotoMetadataService
+import com.quickpitik.service.storage.StorageService
+import com.quickpitik.service.storage.StoredObject
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.BeforeEach
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.io.ByteArrayInputStream
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
@@ -29,9 +35,18 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var transactions: TransactionTemplate
     @Autowired private lateinit var service: PhotoMetadataService
     @Autowired private lateinit var jdbc: JdbcTemplate
+    @Autowired @Qualifier("watermarkProcessing") private lateinit var watermarkPool: ThreadPoolTaskExecutor
     @MockitoBean private lateinit var extractor: PhotoMetadataExtractor
+    @MockitoBean private lateinit var storage: StorageService
 
     private fun <T> anyArg(): T = Mockito.any()
+
+    @BeforeEach
+    fun clearPriorMetadataFixtures() {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while ((watermarkPool.activeCount != 0 || watermarkPool.threadPoolExecutor.queue.isNotEmpty()) && System.nanoTime() < deadline) Thread.sleep(20)
+        jdbc.update("DELETE FROM photo_metadata")
+    }
 
     private fun fixture(state: PhotoMetadataState = PhotoMetadataState.PENDING): UUID {
         val event = events.save(Event(slug = "metadata-${UUID.randomUUID()}", name = "Run", date = LocalDate.now(), location = "Cebu", status = EventStatus.ACTIVE))
@@ -41,7 +56,22 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     }
 
     private fun claim(id: UUID, token: UUID, now: OffsetDateTime = OffsetDateTime.now()) =
-        transactions.execute { metadata.claimIfDue(id, token, 1, now, now.plusMinutes(5), 3) }!!
+        transactions.execute { metadata.claimIfDue(id, token, 1, now, now.plusMinutes(5), 4) }!!
+
+    private fun old(id: UUID) {
+        jdbc.update("UPDATE photos SET uploaded_at = now() - interval '6 minutes' WHERE id = ?", id)
+    }
+
+    private fun awaitState(id: UUID, state: PhotoMetadataState, attempts: Int) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (System.nanoTime() < deadline) {
+            val row = metadata.findById(id).orElse(null)
+            if (row?.state == state && row.attempts == attempts) return
+            Thread.sleep(20)
+        }
+        val row = metadata.findById(id).orElse(null)
+        fail("Expected $state/$attempts, got ${row?.state}/${row?.attempts}")
+    }
 
     private fun settle(id: UUID, token: UUID, version: Int = 1, model: String = "R6") =
         transactions.execute { metadata.settle(id, token, version, PhotoMetadataState.READY, PhotoMetadataFields(cameraModel = model), OffsetDateTime.now()) }!!
@@ -166,9 +196,186 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         jdbc.update("UPDATE photo_metadata SET next_attempt_at = now() + interval '1 hour' WHERE photo_id = ?", future)
         assertEquals(0, claim(future, UUID.randomUUID()))
         val exhausted = fixture(PhotoMetadataState.PROCESSING)
-        jdbc.update("UPDATE photo_metadata SET attempts = 3, lease_until = now() - interval '1 minute' WHERE photo_id = ?", exhausted)
+        jdbc.update("UPDATE photo_metadata SET attempts = 4, lease_until = now() - interval '1 minute' WHERE photo_id = ?", exhausted)
         assertEquals(0, claim(exhausted, UUID.randomUUID()))
         Mockito.verifyNoInteractions(extractor)
+    }
+
+    @Test
+    fun `fourth claim can recover an expired metadata lease`() {
+        val id = fixture(PhotoMetadataState.PROCESSING)
+        jdbc.update("UPDATE photo_metadata SET attempts = 3, lease_until = now() - interval '1 minute' WHERE photo_id = ?", id)
+        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "Recovered"))
+
+        service.extractIfDue(id, byteArrayOf(1))
+
+        val row = metadata.findById(id).orElseThrow()
+        assertEquals(PhotoMetadataState.READY, row.state)
+        assertEquals(4, row.attempts)
+        assertEquals("Recovered", row.fields?.cameraModel)
+    }
+
+    @Test
+    fun `due selection honors grace leases retries and terminal states`() {
+        val oldPending = fixture().also(::old)
+        val freshPending = fixture()
+        val expired = fixture(PhotoMetadataState.PROCESSING)
+        jdbc.update("UPDATE photo_metadata SET lease_until = now() - interval '1 second' WHERE photo_id = ?", expired)
+        val active = fixture(PhotoMetadataState.PROCESSING)
+        jdbc.update("UPDATE photo_metadata SET lease_until = now() + interval '1 minute' WHERE photo_id = ?", active)
+        val dueFailed = fixture(PhotoMetadataState.FAILED)
+        jdbc.update("UPDATE photo_metadata SET next_attempt_at = now() - interval '1 second' WHERE photo_id = ?", dueFailed)
+        val terminalFailed = fixture(PhotoMetadataState.FAILED)
+        val ready = fixture(PhotoMetadataState.READY)
+        val empty = fixture(PhotoMetadataState.EMPTY)
+        val exhausted = fixture(PhotoMetadataState.FAILED)
+        jdbc.update("UPDATE photo_metadata SET attempts = 4, next_attempt_at = now() - interval '1 second' WHERE photo_id = ?", exhausted)
+
+        val now = OffsetDateTime.now()
+        val due = metadata.findDueCandidateIds(1, 4, now.minusMinutes(5), now, org.springframework.data.domain.PageRequest.of(0, 10)).toSet()
+        assertEquals(setOf(oldPending, expired, dueFailed), due)
+        assertFalse(freshPending in due || active in due || terminalFailed in due || ready in due || empty in due || exhausted in due)
+    }
+
+    @Test
+    fun `recovery reads retained original while watermark photo is still processing`() {
+        val id = fixture().also(::old)
+        jdbc.update("UPDATE photos SET status = 'PROCESSING' WHERE id = ?", id)
+        val key = photos.findById(id).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
+        Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
+        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "Recovered"))
+
+        service.recoverDue()
+        awaitState(id, PhotoMetadataState.READY, 1)
+
+        assertEquals("Recovered", metadata.findById(id).orElseThrow().fields?.cameraModel)
+        assertEquals(PhotoStatus.PROCESSING, photos.findById(id).orElseThrow().status)
+        Mockito.verify(storage, Mockito.times(1)).open(key)
+    }
+
+    @Test
+    fun `transient storage failures schedule three delays then stop after fourth claim`() {
+        val id = fixture().also(::old)
+        val key = photos.findById(id).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(key)).thenThrow(IllegalStateException("storage down"))
+        for ((attempt, delay) in listOf(1L, 5L, 30L, 0L).withIndex()) {
+            val before = OffsetDateTime.now()
+            service.recoverDue()
+            awaitState(id, PhotoMetadataState.FAILED, attempt + 1)
+            val row = metadata.findById(id).orElseThrow()
+            if (delay == 0L) assertNull(row.nextAttemptAt)
+            else {
+                assertNotNull(row.nextAttemptAt)
+                assertTrue(row.nextAttemptAt!!.isAfter(before.plusMinutes(delay).minusSeconds(5)))
+                assertTrue(row.nextAttemptAt!!.isBefore(OffsetDateTime.now().plusMinutes(delay).plusSeconds(5)))
+                jdbc.update("UPDATE photo_metadata SET next_attempt_at = now() - interval '1 second' WHERE photo_id = ?", id)
+            }
+        }
+        service.recoverDue()
+        assertEquals(4, metadata.findById(id).orElseThrow().attempts)
+        Mockito.verify(storage, Mockito.times(4)).metadata(key)
+    }
+
+    @Test
+    fun `missing and oversized originals settle unavailable before GET`() {
+        val missing = fixture().also(::old)
+        val oversized = fixture().also(::old)
+        val bigKey = photos.findById(oversized).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(bigKey)).thenReturn(StoredObject(bigKey, 25L * 1024 * 1024 + 1, "image/jpeg"))
+
+        service.recoverDue()
+        awaitState(missing, PhotoMetadataState.UNAVAILABLE, 1)
+        awaitState(oversized, PhotoMetadataState.UNAVAILABLE, 1)
+        assertEquals(25L * 1024 * 1024 + 1, metadata.findById(oversized).orElseThrow().originalSizeBytes)
+        Mockito.verify(storage, Mockito.never()).open(Mockito.anyString())
+    }
+
+    @Test
+    fun `deletion between HEAD and GET cannot resurrect metadata`() {
+        val id = fixture().also(::old)
+        val key = photos.findById(id).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
+        Mockito.`when`(storage.open(key)).thenAnswer {
+            jdbc.update("DELETE FROM photos WHERE id = ?", id)
+            ByteArrayInputStream(byteArrayOf(1))
+        }
+
+        service.recoverDue()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (metadata.existsById(id) && System.nanoTime() < deadline) Thread.sleep(20)
+        assertFalse(metadata.existsById(id))
+    }
+
+    @Test
+    fun `object disappearing between HEAD and GET settles unavailable`() {
+        val id = fixture().also(::old)
+        val key = photos.findById(id).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"), null)
+        Mockito.`when`(storage.open(key)).thenThrow(IllegalStateException("object gone"))
+
+        service.recoverDue()
+        awaitState(id, PhotoMetadataState.UNAVAILABLE, 1)
+        assertNull(metadata.findById(id).orElseThrow().nextAttemptAt)
+    }
+
+    @Test
+    fun `GET failure and failed recheck remain retryable`() {
+        val id = fixture().also(::old)
+        val key = photos.findById(id).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
+            .thenThrow(IllegalStateException("HEAD outage"))
+        Mockito.`when`(storage.open(key)).thenThrow(IllegalStateException("GET outage"))
+
+        service.recoverDue()
+        awaitState(id, PhotoMetadataState.FAILED, 1)
+        assertNotNull(metadata.findById(id).orElseThrow().nextAttemptAt)
+    }
+
+    @Test
+    fun `deterministic parser failure is terminal in recovery`() {
+        val id = fixture().also(::old)
+        val key = photos.findById(id).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
+        Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
+        Mockito.`when`(extractor.extract(anyArg())).thenThrow(IllegalArgumentException("bad tags"))
+
+        service.recoverDue()
+        awaitState(id, PhotoMetadataState.FAILED, 1)
+        assertNull(metadata.findById(id).orElseThrow().nextAttemptAt)
+        service.recoverDue()
+        assertEquals(1, metadata.findById(id).orElseThrow().attempts)
+    }
+
+    @Test
+    fun `one sweep submits at most idle pool capacity and ten candidates`() {
+        val ids = List(12) { fixture().also(::old) }
+        val now = OffsetDateTime.now()
+        assertEquals(10, metadata.findDueCandidateIds(1, 4, now.minusMinutes(5), now,
+            org.springframework.data.domain.PageRequest.of(0, 10)).size)
+
+        service.recoverDue()
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (metadata.findAllById(ids).count { it.state == PhotoMetadataState.UNAVAILABLE } < 2 && System.nanoTime() < deadline) Thread.sleep(20)
+        val rows = metadata.findAllById(ids)
+        assertEquals(2, rows.count { it.state == PhotoMetadataState.UNAVAILABLE })
+        assertEquals(10, rows.count { it.state == PhotoMetadataState.PENDING })
+        Mockito.verify(storage, Mockito.times(2)).metadata(Mockito.anyString())
+    }
+
+    @Test
+    fun `busy watermark pool defers the entire sweep`() {
+        val id = fixture().also(::old)
+        val release = CountDownLatch(1)
+        val started = CountDownLatch(2)
+        try {
+            repeat(2) { watermarkPool.execute { started.countDown(); release.await(10, TimeUnit.SECONDS) } }
+            assertTrue(started.await(10, TimeUnit.SECONDS))
+            watermarkPool.execute { }
+            service.recoverDue()
+            assertEquals(PhotoMetadataState.PENDING, metadata.findById(id).orElseThrow().state)
+            Mockito.verifyNoInteractions(storage)
+        } finally { release.countDown() }
     }
 
     @Test
