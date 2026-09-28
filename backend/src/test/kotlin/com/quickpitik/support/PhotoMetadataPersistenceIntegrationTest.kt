@@ -16,6 +16,7 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -94,6 +95,63 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         val purging = fixture()
         jdbc.update("UPDATE photos SET deleted_at = now(), deletion_started_at = now() WHERE id = ?", purging)
         assertEquals(0, claim(purging, UUID.randomUUID()))
+    }
+
+    @Test
+    fun `overlapping purge and settlement leave no metadata whichever transaction locks first`() {
+        for (purgeFirst in listOf(true, false)) {
+            val id = fixture()
+            val token = UUID.randomUUID()
+            assertEquals(1, claim(id, token))
+            val purge = { jdbc.update("DELETE FROM photos WHERE id = ?", id) }
+            val settle = {
+                metadata.settle(id, token, 1, PhotoMetadataState.READY, PhotoMetadataFields(cameraModel = "R6"), OffsetDateTime.now())
+            }
+            val holderPid = CompletableFuture<Int>()
+            val waiterPid = CompletableFuture<Int>()
+            val holdingLock = CountDownLatch(1)
+            val releaseLock = CountDownLatch(1)
+            val pool = Executors.newFixedThreadPool(2)
+            try {
+                val holder = pool.submit<Int> {
+                    transactions.execute {
+                        holderPid.complete(jdbc.queryForObject("SELECT pg_backend_pid()", Int::class.java)!!)
+                        val changed = if (purgeFirst) purge() else settle()
+                        holdingLock.countDown()
+                        check(releaseLock.await(10, TimeUnit.SECONDS))
+                        changed
+                    }!!
+                }
+                assertTrue(holdingLock.await(10, TimeUnit.SECONDS))
+                val waiter = pool.submit<Int> {
+                    transactions.execute {
+                        waiterPid.complete(jdbc.queryForObject("SELECT pg_backend_pid()", Int::class.java)!!)
+                        if (purgeFirst) settle() else purge()
+                    }!!
+                }
+                val firstPid = holderPid.get(10, TimeUnit.SECONDS)
+                val secondPid = waiterPid.get(10, TimeUnit.SECONDS)
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                var blocked = false
+                while (!blocked && System.nanoTime() < deadline) {
+                    blocked = jdbc.queryForObject(
+                        "SELECT ? = ANY(pg_blocking_pids(?))", Boolean::class.java, firstPid, secondPid,
+                    )!!
+                    if (!blocked) Thread.sleep(10)
+                }
+                assertTrue(blocked, "Purge and settlement must overlap on the metadata row lock")
+                releaseLock.countDown()
+                assertEquals(1, holder.get(10, TimeUnit.SECONDS))
+                // A committed purge makes the waiting UPDATE affect zero rows;
+                // a settlement committed first is removed by the waiting cascade.
+                assertEquals(if (purgeFirst) 0 else 1, waiter.get(10, TimeUnit.SECONDS))
+                assertFalse(photos.existsById(id))
+                assertFalse(metadata.existsById(id))
+            } finally {
+                releaseLock.countDown()
+                pool.shutdownNow()
+            }
+        }
     }
 
     @Test
