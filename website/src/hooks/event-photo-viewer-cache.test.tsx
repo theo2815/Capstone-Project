@@ -55,6 +55,29 @@ it("uses the SSR seed once hydration confirms a guest", () => {
   expect(get).not.toHaveBeenCalled();
 });
 
+it("keeps the anonymous snapshot when an initial bib filter is cleared before loading more", async () => {
+  const get = vi.spyOn(api, "get")
+    .mockResolvedValueOnce(page("bib-101", 0, "filtered-snapshot"))
+    .mockResolvedValueOnce(page("anonymous-next", 1, "anonymous-snapshot"));
+  const hook = renderHook(
+    ({ bib }: { bib: string | undefined }) => useEventPhotos({
+      slug: "race",
+      bib,
+      initialPage: page("anonymous", 0, "anonymous-snapshot"),
+    }),
+    { wrapper, initialProps: { bib: "101" as string | undefined } },
+  );
+
+  await waitFor(() => expect(hook.result.current.photos.map((p) => p.id)).toEqual(["bib-101"]));
+  expect(get.mock.calls[0][0]).toContain("bib=101");
+  hook.rerender({ bib: undefined });
+  expect(hook.result.current.photos.map((p) => p.id)).toEqual(["anonymous"]);
+
+  act(() => hook.result.current.fetchNextPage());
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  expect(get.mock.calls[1][0]).toContain("snapshotAt=anonymous-snapshot");
+});
+
 it("resets the paging snapshot and cache on viewer changes and forwards abort signals", async () => {
   const get = vi.spyOn(api, "get")
     .mockResolvedValueOnce(page("a-zero", 0, "a-snapshot"))

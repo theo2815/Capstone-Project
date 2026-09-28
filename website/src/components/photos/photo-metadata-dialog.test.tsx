@@ -75,11 +75,18 @@ it.each([
 });
 
 it("refreshes pending metadata manually", async () => {
-  const get = vi.spyOn(api, "get").mockResolvedValueOnce({ ...ready, status: "pending", fields: null }).mockResolvedValueOnce(ready);
+  let resolve!: (value: PhotoMetadataDto) => void;
+  const get = vi.spyOn(api, "get")
+    .mockResolvedValueOnce({ ...ready, status: "pending", fields: null })
+    .mockImplementationOnce(() => new Promise((r) => { resolve = r as typeof resolve; }));
   const user = userEvent.setup(); setup();
   await user.click(screen.getByRole("button", { name: "Show Metadata" }));
   await user.click(await screen.findByRole("button", { name: "Refresh" }));
+  expect(screen.getByRole("status", { name: "Loading metadata" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close metadata" })).toHaveFocus();
+  await act(async () => resolve(ready));
   expect(await screen.findByText("Canon EOS R6")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close metadata" })).toHaveFocus();
   expect(get).toHaveBeenCalledTimes(2);
 });
 
@@ -98,12 +105,19 @@ it("clears the old photo during a new load and preserves a supplied capture offs
 });
 
 it("shows a retry for network failure and a distinct public 404 without stale values", async () => {
-  const get = vi.spyOn(api, "get").mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(ready);
+  let resolveRetry!: (value: PhotoMetadataDto) => void;
+  const get = vi.spyOn(api, "get")
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockImplementationOnce(() => new Promise((r) => { resolveRetry = r as typeof resolveRetry; }));
   const user = userEvent.setup(); setup();
   await user.click(screen.getByRole("button", { name: "Show Metadata" }));
   expect(await screen.findByText("Metadata could not be loaded.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(screen.getByRole("status", { name: "Loading metadata" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close metadata" })).toHaveFocus();
+  await act(async () => resolveRetry(ready));
   expect(await screen.findByText("Canon EOS R6")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close metadata" })).toHaveFocus();
   expect(get).toHaveBeenCalledTimes(2);
   await user.click(screen.getByRole("button", { name: "Close metadata" }));
   get.mockRejectedValueOnce(new ApiError([{ code: "NOT_FOUND", message: "Gone" }], 404));
