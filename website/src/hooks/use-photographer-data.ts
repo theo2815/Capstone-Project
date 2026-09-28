@@ -10,6 +10,8 @@ import {
   fetchPhotographerEvents,
   fetchPhotographerEventDetail,
   fetchPhotographerEventPhotos,
+  getEventMetadataVisibility,
+  type EventMetadataVisibilityDto,
   type PhotographerEventDetail,
 } from "@/lib/api-photographer";
 import {
@@ -132,6 +134,16 @@ export function usePhotographerEventPhotos(
         : Promise.resolve({ items: [], total: 0, offset, limit }),
     limit: PAGE_SIZE.PHOTO_INCREMENT,
     enabled: session.enabled && !!eventId && (opts.enabled ?? true),
+    staleTime: EVENTS_STALE_MS,
+  });
+}
+
+export function usePhotographerEventMetadataVisibility(eventId: string | null) {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
+  return useQuery<EventMetadataVisibilityDto>({
+    queryKey: ["photographer", "events", eventId, "metadata-visibility", ...session.key],
+    queryFn: ({ signal }) => getEventMetadataVisibility(eventId!, signal),
+    enabled: session.enabled && !!eventId,
     staleTime: EVENTS_STALE_MS,
   });
 }

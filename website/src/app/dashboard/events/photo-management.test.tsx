@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import EventPage from '@/app/dashboard/events/[id]/page';
 import EventList from '@/app/dashboard/events/page';
+import { useAuthStore } from '@/store/auth-store';
 
 const mocks = vi.hoisted(() => ({
   post: vi.fn(async (path: string, body: { photoIds: string[] }) => path.endsWith('permanent-delete') ? { deleted: body.photoIds, blockedSold: [] } : { affected: body.photoIds.length }),
@@ -14,9 +15,14 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   save: vi.fn(async () => 'downloaded'),
   download: vi.fn(),
+  put: vi.fn(),
+  invalidate: vi.fn(async () => {}),
+  setQueryData: vi.fn(),
+  removeQueries: vi.fn(),
+  visibility: { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false } as { metadataPublic: boolean } | undefined, refetch: vi.fn() },
 }));
 vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'event-1' }), notFound: () => { throw Error('404'); } }));
-vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: async () => {} }) }));
+vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: mocks.invalidate, setQueryData: mocks.setQueryData, removeQueries: mocks.removeQueries }) }));
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ showToast: mocks.toast }) }));
 vi.mock('@/hooks/use-confirmation', () => ({ useConfirmation: () => ({ confirm: async () => true }) }));
 vi.mock('@/components/layout/site-header', () => ({ SiteHeader: () => null }));
@@ -27,15 +33,16 @@ vi.mock('@/lib/save-photo', () => ({ savePhoto: mocks.save, showInAppSaveHint: v
 vi.mock('@/lib/utils', async (original) => ({ ...await original<typeof import('@/lib/utils')>(), triggerDownload: mocks.download }));
 vi.mock('@/components/profile-shell', () => ({ Slab: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('@/components/events/event-tile', () => ({ EventTile: ({ event }: { event: { name: string } }) => <div>{event.name}</div> }));
-vi.mock('@/lib/api', () => ({ api: { post: mocks.post, get: mocks.get }, refreshAccessToken: vi.fn() }));
+vi.mock('@/lib/api', () => ({ api: { post: mocks.post, get: mocks.get, put: mocks.put }, refreshAccessToken: vi.fn() }));
 vi.mock('@/hooks/use-photographer-data', () => ({
   COVERED_EVENTS_MAX: 200,
   usePhotographerEvents: () => mocks.covered,
   usePhotographerEventDetail: () => ({ isMissing: false, detail: {
     id: 'event-1', slug: 'test-event', name: 'Review Event', date: '2026-09-07',
     location: 'Cebu', state: 'past', photoCount: 1, salesCount: 0, revenueKept: 0,
-    pricingMode: 'free', handle: 'reviewer',
+    pricingMode: 'free', handle: 'reviewer', ownedByMe: false,
   } }),
+  usePhotographerEventMetadataVisibility: () => mocks.visibility,
   usePhotographerEventPhotos: (_id: string, { deleted }: { deleted: boolean }) => ({
     items: Array.from({ length: deleted ? mocks.rows : mocks.activeRows }, (_, i) => ({
       status: mocks.photoStatus, id: `photo-${i}`, eventId: 'event-1', tone: 0, span: 'default', salesCount: 0,
@@ -45,8 +52,63 @@ vi.mock('@/hooks/use-photographer-data', () => ({
     fetchNextPage: vi.fn(),
   }),
 }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.activeRows = 1; mocks.photoStatus = "live"; });
+afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); mocks.activeRows = 1; mocks.photoStatus = "live"; mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() }; });
 describe('photographer photo management', () => {
+  it('shows the server-false event choice on a shared event and saves only an explicit change', async () => {
+    useAuthStore.getState().setUser({ id: 'photographer-a', role: 'PHOTOGRAPHER', name: 'A', email: 'a@example.test', createdAt: '2026-09-28' });
+    mocks.put.mockResolvedValue({ metadataPublic: true });
+    render(<EventPage />);
+    const choice = screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' });
+    expect(choice).not.toBeChecked();
+    expect(screen.getByText('Only your photos in this event. You can always view your own metadata.')).toBeInTheDocument();
+    expect(screen.getByText('This controls the metadata popup. Original downloads keep their embedded metadata.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save metadata visibility' })).toBeDisabled();
+    fireEvent.click(choice);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel metadata change' }));
+    expect(choice).not.toBeChecked();
+    fireEvent.click(choice);
+    fireEvent.click(screen.getByRole('button', { name: 'Save metadata visibility' }));
+    await waitFor(() => expect(mocks.put).toHaveBeenCalledWith('/me/photographer/events/event-1/metadata-visibility', { metadataPublic: true }));
+    await waitFor(() => expect(mocks.setQueryData).toHaveBeenCalled());
+    expect(mocks.invalidate).toHaveBeenCalledWith({ queryKey: ['events', 'test-event', 'photos'] });
+    expect(mocks.invalidate).toHaveBeenCalledWith({ queryKey: ['photographer', 'public', 'reviewer', 'test-event', 'photos'] });
+    expect(mocks.removeQueries).toHaveBeenCalledWith({ queryKey: ['photo', 'metadata', 'public'] });
+    expect(mocks.toast).toHaveBeenCalledWith({ kind: 'success', message: 'Metadata visibility saved.' });
+  });
+
+  it('blocks an unconfirmed event value, offers retry, and keeps a failed save draft', async () => {
+    useAuthStore.getState().setUser({ id: 'photographer-a', role: 'PHOTOGRAPHER', name: 'A', email: 'a@example.test', createdAt: '2026-09-28' });
+    mocks.visibility = { isSuccess: false, isPending: false, isError: true, data: undefined, refetch: vi.fn() };
+    const { rerender } = render(<EventPage />);
+    expect(screen.queryByRole('checkbox', { name: 'Show metadata publicly for my photos' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry metadata visibility' }));
+    expect(mocks.visibility.refetch).toHaveBeenCalledOnce();
+    mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() };
+    mocks.put.mockRejectedValueOnce(new Error('offline'));
+    rerender(<EventPage />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save metadata visibility' }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith({ kind: 'error', message: "Couldn't save metadata visibility." }));
+    expect(screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' })).toBeChecked();
+    expect(mocks.setQueryData).not.toHaveBeenCalled();
+    expect(mocks.removeQueries).not.toHaveBeenCalled();
+  });
+
+  it('ignores a save completed after the photographer session changes', async () => {
+    useAuthStore.getState().setUser({ id: 'photographer-a', role: 'PHOTOGRAPHER', name: 'A', email: 'a@example.test', createdAt: '2026-09-28' });
+    let resolve!: (value: { metadataPublic: boolean }) => void;
+    mocks.put.mockReturnValueOnce(new Promise((yes) => { resolve = yes; }));
+    render(<EventPage />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show metadata publicly for my photos' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save metadata visibility' }));
+    act(() => { useAuthStore.getState().logout(); useAuthStore.getState().setUser({ id: 'photographer-b', role: 'PHOTOGRAPHER', name: 'B', email: 'b@example.test', createdAt: '2026-09-28' }); });
+    await act(async () => resolve({ metadataPublic: true }));
+    expect(mocks.setQueryData).not.toHaveBeenCalled();
+    expect(mocks.invalidate).not.toHaveBeenCalled();
+    expect(mocks.removeQueries).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
   it('labels processing photos until the refreshed library reports them live', () => {
     mocks.photoStatus = 'processing';
     const { rerender } = render(<EventPage />);
