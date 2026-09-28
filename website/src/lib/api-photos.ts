@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import type { MockPhoto } from "@/types/photo";
 import type { PaginatedResponse } from "@/types/api";
+import type { PhotoMetadataDto } from "@/types/photo-metadata";
 
 export type Photo = MockPhoto;
 
@@ -22,6 +23,7 @@ export interface EventPhotosResult {
 export async function fetchEventPhotos(
   slug: string,
   query: EventPhotosQuery = {},
+  signal?: AbortSignal,
 ): Promise<EventPhotosResult> {
   const offset = query.offset ?? 0;
   const limit = query.limit ?? 200;
@@ -33,8 +35,16 @@ export async function fetchEventPhotos(
   if (query.snapshotAt) params.set("snapshotAt", query.snapshotAt);
   const res = await api.get<PaginatedResponse<Photo>>(
     `/events/${encodeURIComponent(slug)}/photos?${params.toString()}`,
+    { signal },
   );
   return res;
+}
+
+export function fetchPhotoMetadata(photoId: string, access: "owner" | "public", signal?: AbortSignal): Promise<PhotoMetadataDto> {
+  const path = access === "owner"
+    ? `/me/photographer/photos/${encodeURIComponent(photoId)}/metadata`
+    : `/public/photos/${encodeURIComponent(photoId)}/metadata`;
+  return api.get<PhotoMetadataDto>(path, { signal });
 }
 
 export interface SearchByFaceArgs {

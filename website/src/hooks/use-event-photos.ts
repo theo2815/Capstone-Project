@@ -2,6 +2,8 @@
 
 import { useRef } from "react";
 import { useInfiniteList } from "@/hooks/use-infinite-list";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import { fetchPublicPhotographerEventPhotos } from "@/lib/api-photographer-public";
 import {
   fetchEventPhotos,
   type EventPhotosResult,
@@ -35,28 +37,37 @@ interface UseEventPhotosResult {
 // so cockpit (no bib) and browse (with bib) cache — and page — independently.
 export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
   const bib = args.bib?.trim() || undefined;
-  const snapshotRef = useRef(args.initialPage?.snapshotAt);
+  const viewer = usePrivateQuerySession();
+  const guestPage = !viewer.enabled && !bib ? args.initialPage : undefined;
+  const scope = JSON.stringify([args.slug, ...viewer.key]);
+  const snapshotRef = useRef({ scope, value: guestPage?.snapshotAt });
+  if (snapshotRef.current.scope !== scope) {
+    snapshotRef.current = { scope, value: guestPage?.snapshotAt };
+  }
 
   const list = useInfiniteList<Photo>({
     queryKey: [
       "events",
       args.slug,
       "photos",
-      { bib: bib ?? null, snapshotAt: args.initialPage?.snapshotAt ?? null },
+      { bib: bib ?? null, snapshotAt: guestPage?.snapshotAt ?? null },
+      ...viewer.key,
     ],
-    fetchPage: async (offset, limit) => {
+    fetchPage: async (offset, limit, signal) => {
       const page = await fetchEventPhotos(args.slug, {
         bib,
         offset,
         limit,
         // Page zero starts a new gallery snapshot; later pages reuse it.
-        snapshotAt: !bib && offset > 0 ? snapshotRef.current : undefined,
-      });
-      if (!bib && page.snapshotAt) snapshotRef.current = page.snapshotAt;
+        snapshotAt: !bib && offset > 0 ? snapshotRef.current.value : undefined,
+      }, signal);
+      if (!bib && page.snapshotAt && snapshotRef.current.scope === scope) {
+        snapshotRef.current.value = page.snapshotAt;
+      }
       return page;
     },
     limit: PAGE_SIZE.PHOTO_INCREMENT,
-    initialPage: !bib ? args.initialPage : undefined,
+    initialPage: guestPage,
     enabled: args.enabled ?? true,
     staleTime: 30_000,
   });
@@ -71,4 +82,15 @@ export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
     fetchNextPage: list.fetchNextPage,
     error: list.error,
   };
+}
+
+export function usePublicPhotographerEventPhotos(handle: string, slug: string) {
+  const viewer = usePrivateQuerySession();
+  return useInfiniteList<Photo>({
+    queryKey: ["photographer", "public", handle, slug, "photos", ...viewer.key],
+    fetchPage: (offset, limit, signal) =>
+      fetchPublicPhotographerEventPhotos(handle, slug, { offset, limit }, signal),
+    limit: PAGE_SIZE.PHOTO_INCREMENT,
+    staleTime: 60_000,
+  });
 }
