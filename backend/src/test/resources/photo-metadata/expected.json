@@ -1,0 +1,65 @@
+{
+  "provenance": "All images were created locally on 2026-09-28 from 8x8 solid-color pixels with Pillow 11.3.0. EXIF was written with Pillow, JPEG XMP and IPTC APP segments were assembled from synthetic text, and PNG XMP was written as iTXt. No private or licensed photographs were used.",
+  "sentinels": ["GPS_SENTINEL_QP_94", "SERIAL_SENTINEL_QP_94", "PRIVATE_PATH_SENTINEL_QP_94"],
+  "vectors": {
+    "complete-exif.jpg": {
+      "cameraMake": "Canon",
+      "cameraModel": "EOS R6",
+      "lens": "RF 70-200mm F2.8",
+      "aperture": 2.8,
+      "exposureTime": "1/500 s",
+      "iso": 400,
+      "author": "Camera Author",
+      "copyright": "Camera Copyright",
+      "takenAtLocal": "2026-09-28T06:35:20",
+      "flash": "Did not fire",
+      "exposureMode": "Auto",
+      "whiteBalance": "Auto"
+    },
+    "edited-iptc-xmp.jpg": {
+      "cameraMake": "Canon",
+      "cameraModel": "EOS R6",
+      "lens": "XF 23mm F2",
+      "aperture": 5.6,
+      "iso": 800,
+      "author": "Élodie Cebu",
+      "copyright": "© Élodie 2026",
+      "takenAtLocal": "2026-09-28T06:35:20.125",
+      "takenAtOffset": "+08:00",
+      "flash": "Fired",
+      "exposureMode": "Manual",
+      "whiteBalance": "Manual"
+    },
+    "invalid-tags.jpg": {
+      "cameraMake": "Canon",
+      "exposureTime": "1/1000 s",
+      "flash": "Did not fire",
+      "exposureMode": "Manual",
+      "whiteBalance": "Manual"
+    },
+    "invalid-calendar.jpg": {},
+    "iptc-only.jpg": {
+      "author": "José IPTC",
+      "copyright": "© José IPTC",
+      "takenAtLocal": "2026-09-27T12:00:00",
+      "takenAtOffset": "+08:00"
+    },
+    "no-tags.jpg": {},
+    "xmp.png": {
+      "cameraMake": "Fujifilm",
+      "cameraModel": "X-T5",
+      "lens": "XF 16mm",
+      "aperture": 4.0,
+      "exposureTime": "2 s",
+      "iso": 1600,
+      "author": "Ana Cebu",
+      "copyright": "Rights in French",
+      "takenAtLocal": "2026-09-29T10:11:12",
+      "takenAtOffset": "+08:00",
+      "flash": "Did not fire",
+      "exposureMode": "Auto bracket",
+      "whiteBalance": "Manual"
+    }
+  },
+  "parserFailure": "malformed.jpg"
+}
