@@ -108,7 +108,12 @@ class PhotoMetadataService(
             val claimed = transactions.execute {
                 repository.claimIfDue(photoId, token, EXTRACTOR_VERSION, now, now.plusMinutes(LEASE_MINUTES), MAX_ATTEMPTS)
             }
-            if (claimed != 1) return
+            if (claimed != 1) {
+                transactions.executeWithoutResult {
+                    repository.failExpiredExhaustedLease(photoId, EXTRACTOR_VERSION, MAX_ATTEMPTS, now)
+                }
+                return
+            }
             val key = try { photos.findById(photoId).orElse(null)?.s3Key } catch (ex: Exception) {
                 settleStorageFailure(photoId, token)
                 return
@@ -132,7 +137,7 @@ class PhotoMetadataService(
             when {
                 bytes.size > MAX_ORIGINAL_BYTES -> settleUnavailable(photoId, token, bytes.size.toLong())
                 bytes.size.toLong() != head.sizeBytes -> settleStorageFailure(photoId, token)
-                else -> extractClaimed(photoId, token, bytes)
+                else -> extractClaimed(photoId, token, bytes, head.sizeBytes)
             }
         } catch (ex: Exception) {
             log.warn("Metadata recovery failed for photo {} ({})", photoId, ex.javaClass.simpleName)
@@ -153,7 +158,7 @@ class PhotoMetadataService(
         }
     }
 
-    private fun extractClaimed(photoId: UUID, token: UUID, originalBytes: ByteArray) {
+    private fun extractClaimed(photoId: UUID, token: UUID, originalBytes: ByteArray, verifiedSizeBytes: Long? = null) {
         // Only parsing failures are terminal. A database outage leaves the
         // committed lease for recovery instead of mislabelling the bytes.
         val fields = try {
@@ -168,7 +173,7 @@ class PhotoMetadataService(
             else -> PhotoMetadataState.EMPTY
         }
         transactions.executeWithoutResult {
-            repository.settle(photoId, token, EXTRACTOR_VERSION, state, fields, OffsetDateTime.now(clock))
+            repository.settle(photoId, token, EXTRACTOR_VERSION, state, fields, OffsetDateTime.now(clock), verifiedSizeBytes)
         }
     }
 
