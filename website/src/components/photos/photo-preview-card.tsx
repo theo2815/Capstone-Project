@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ZoomableImage } from "@/components/photos/zoomable-image";
+import { PhotoMetadataDialog } from "@/components/photos/photo-metadata-dialog";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import type { PhotoMetadataAccess } from "@/types/photo-metadata";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { formatRaceDate } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
@@ -47,6 +50,7 @@ export interface PhotoPreviewItem {
 
 interface BasePhotoPreviewProps {
   photo: PhotoPreviewItem;
+  metadataAccess?: PhotoMetadataAccess;
   eventName: string;
   /** Event date as YYYY-MM-DD. Shown in the `lg` header row beside the counter;
    *  surfaces without it (cart, orders) simply render no date. */
@@ -130,7 +134,20 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     onNext,
   } = props;
   const mode = props.mode ?? "browse";
+  const viewer = usePrivateQuerySession();
+  const access = props.metadataAccess;
+  const metadataContext = JSON.stringify([photo.id, access, ...viewer.key]);
+  const [openMetadataContext, setOpenMetadataContext] = useState<string | null>(null);
+  const [deniedMetadataContext, setDeniedMetadataContext] = useState<string | null>(null);
+  const metadataTrigger = useRef<HTMLButtonElement>(null);
+  const metadataOpen = openMetadataContext === metadataContext;
+  const showMetadata = (access === "public" || (access === "owner" && viewer.enabled && viewer.key[1] === "PHOTOGRAPHER")) && deniedMetadataContext !== metadataContext;
   useScrollLock(true);
+
+  useEffect(() => {
+    setOpenMetadataContext(null);
+    setDeniedMetadataContext(null);
+  }, [metadataContext]);
 
   // Mount through a portal so the modal escapes any ancestor that establishes
   // a containing block (e.g. an `animate-fade-up` ancestor with a non-`none`
@@ -141,6 +158,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   }, []);
 
   useEffect(() => {
+    if (metadataOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowLeft" && onPrev) onPrev();
@@ -150,7 +168,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     return () => {
       document.removeEventListener("keydown", onKey);
     };
-  }, [onClose, onPrev, onNext]);
+  }, [metadataOpen, onClose, onPrev, onNext]);
 
   // Owned-mode photos get the clean original from BE; everyone else sees the
   // watermarked thumbnail. Closes G-2.
@@ -483,6 +501,17 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               </>
             )}
 
+            {showMetadata && (
+              <button
+                ref={metadataTrigger}
+                type="button"
+                onClick={() => setOpenMetadataContext(metadataContext)}
+                className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-2.5 w-full")}
+              >
+                Show Metadata
+              </button>
+            )}
+
             {/* Gesture hints — invisible gestures don't ship. */}
             {hasImage && (
               <p className="mt-3 lg:mt-4 font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft text-center lg:text-left">
@@ -498,7 +527,19 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     </div>
   );
 
-  return createPortal(content, document.body);
+  return <>
+    {createPortal(content, document.body)}
+    {(access === "owner" || access === "public") && (
+      <PhotoMetadataDialog
+        photoId={photo.id}
+        access={access}
+        isOpen={metadataOpen}
+        onClose={() => setOpenMetadataContext(null)}
+        onDenied={() => setDeniedMetadataContext(metadataContext)}
+        triggerRef={metadataTrigger}
+      />
+    )}
+  </>;
 }
 
 // Photo credit line in the rail.

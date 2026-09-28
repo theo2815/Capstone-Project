@@ -29,7 +29,7 @@ vi.mock('@/hooks/use-confirmation', () => ({ useConfirmation: () => ({ confirm: 
 vi.mock('@/components/layout/site-header', () => ({ SiteHeader: () => null }));
 vi.mock('@/components/dashboard/event-coupon-modal', () => ({ EventCouponModal: () => null }));
 vi.mock('@/components/dashboard/my-event-form', () => ({ MyEventForm: () => null }));
-vi.mock('@/components/photos/photo-preview-card', () => ({ PhotoPreviewCard: ({ onDownload }: { onDownload: () => void }) => <button onClick={onDownload}>Download photo</button> }));
+vi.mock('@/components/photos/photo-preview-card', () => ({ PhotoPreviewCard: ({ onDownload, metadataAccess }: { onDownload: () => void; metadataAccess?: string }) => <button data-metadata-access={metadataAccess} onClick={onDownload}>Download photo</button> }));
 vi.mock('@/lib/save-photo', () => ({ savePhoto: mocks.save, showInAppSaveHint: vi.fn() }));
 vi.mock('@/lib/utils', async (original) => ({ ...await original<typeof import('@/lib/utils')>(), triggerDownload: mocks.download }));
 vi.mock('@/components/profile-shell', () => ({ Slab: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
@@ -157,6 +157,7 @@ describe('photographer photo management', () => {
     mocks.get.mockResolvedValue({ url: 'https://storage.test/photo?attachment=signed' });
     render(<EventPage />);
     fireEvent.click(screen.getByRole('button', { name: 'Open photo 1' }));
+    expect(screen.getByRole('button', { name: 'Download photo' })).toHaveAttribute('data-metadata-access', 'owner');
     fireEvent.click(screen.getByRole('button', { name: 'Download photo' }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole('button', { name: 'Select' }));
@@ -165,6 +166,16 @@ describe('photographer photo management', () => {
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
     expect(mocks.get).toHaveBeenLastCalledWith('/me/photographer/photos/photo-0/download');
     expect(mocks.save).toHaveBeenLastCalledWith('https://storage.test/photo?attachment=signed');
+  });
+
+  it('passes owner access for hidden and recoverably trashed previews', () => {
+    mocks.photoStatus = 'hidden';
+    render(<EventPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open photo 1' }));
+    expect(screen.getByRole('button', { name: 'Download photo' })).toHaveAttribute('data-metadata-access', 'owner');
+    fireEvent.click(screen.getByRole('tab', { name: 'Deleted' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open photo 1' }));
+    expect(screen.getByRole('button', { name: 'Download photo' })).toHaveAttribute('data-metadata-access', 'owner');
   });
 
   it('downloads all independently of 60 loaded tiles, then posts only selected IDs for a ZIP', async () => {
