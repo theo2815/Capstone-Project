@@ -15,52 +15,16 @@ QuickPitik is a **multi-product platform** that serves three client applications
 | QuickPitik Web | Next.js (Vercel) | Face search + Bib recognition (no blur — rule 6) |
 | QuickPitik Mobile | Kotlin (Android first, iOS planned) | Face search + Bib recognition (no blur — rule 6) |
 
-Each product has its **own backend**. All backends share a **single ai-api instance** for ML inference.
+Web and mobile use the Spring Boot backend for inference. The BatchMyPhotos
+Electron main process calls ai-api directly for blur classification.
 
 ---
 
 ## Architecture Diagram
 
 ```
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│  Desktop App │  │  Website     │  │  Mobile App  │
-│  (Electron)  │  │  (Next.js /  │  │  (Kotlin /   │
-│              │  │   Vercel)    │  │   Android)   │
-└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-       │                 │                 │
-       │                 └────────┬────────┘
-       │                          │
-┌──────▼───────┐       ┌──────────▼───────────┐
-│  Desktop     │       │  Web/Mobile          │
-│  Backend     │       │  Backend             │
-│              │       │                      │
-│  Owns:       │       │  Owns:               │
-│  - User auth │       │  - User auth         │
-│  - Photo     │       │  - Events            │
-│    library   │       │  - Participants      │
-│  - Blur      │       │  - Photo galleries   │
-│    results   │       │  - Bib-to-person     │
-│    storage   │       │    matching          │
-│              │       │  - Face galleries     │
-│              │       │    per event         │
-│              │       │  - Search results    │
-│              │       │    storage           │
-└──────┬───────┘       └──────────┬───────────┘
-       │                          │
-       │   ┌──────────────────┐   │
-       └──►│     ai-api       │◄──┘
-            │  (shared ML      │
-            │   microservice)  │
-            │                  │
-            │  Owns:           │
-            │  - ML models     │
-            │  - Face          │
-            │    embeddings    │
-            │  - Batch job     │
-            │    queue         │
-            │  - Raw inference │
-            │    results       │
-            └──────────────────┘
+BatchMyPhotos Electron main ── HTTPS + restricted key ──► ai-api (blur)
+Website / Mobile ──► Spring Boot backend ──► ai-api (face / bib)
 ```
 
 ---
@@ -92,18 +56,17 @@ This is the single source of truth for what each layer owns. If a concern is not
 - Photo storage (processes in memory, discards after)
 - Client-facing API design (response shaping for UI)
 
-### Desktop Backend — owns photo library + blur workflow
+### BatchMyPhotos desktop — owns local blur workflow
 
 | Responsibility | Details |
 |---------------|---------|
-| User authentication | Desktop app login (local or cloud accounts) |
-| Photo library | Import, organize, tag photos locally or in cloud storage |
-| Blur filtering | Call ai-api for blur detection/classification, store results, let user filter |
-| Result storage | Persist blur scores and classifications per photo |
-| UI-ready responses | Shape ai-api raw results into what the desktop UI needs |
-| Offline fallback | (Future) Optional local ONNX inference if ai-api unreachable |
+| User authentication | Existing BatchMyPhotos sign-in; feedback uses its Supabase session |
+| Photo library | Local file groups, preview, and ordinary batch operations |
+| Blur suggestions | On explicit Start Analysis, main prepares JPEGs and calls ai-api classify/stream directly |
+| Result handling | Map raw probabilities to advisory categories and sensitivity; keep one-folder results in memory |
+| Feedback | Separate opt-in submission of one prepared JPEG through Supabase; not part of inference |
 
-**Desktop Backend does NOT own:**
+**BatchMyPhotos desktop does NOT own:**
 - Events, participants, or bib numbers
 - Face recognition or search
 - ML model management
@@ -136,11 +99,11 @@ Each backend gets its own API key with appropriate scopes. ai-api isolates data 
 
 | Backend | API Key Scopes | Rate Tier |
 |---------|--------------|-----------|
-| Desktop Backend | `blur:read`, `jobs:read` (+ `webhooks:*` if using webhook callbacks) | `pro` (300/min) — canonical in `docs/api-keys.md` |
+| Invited desktop beta | `blur:read`, `jobs:read` | Per-tester staging tier recorded in private `docs/api-keys.md` |
 | Web/Mobile Backend | `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write` — or a single `*` super-scope | Internal (1000 req/min) |
 
 - **No `blur:read` for the Web/Mobile Backend.** Blur is desktop-only (root rule 6) — photographers cull in BatchMyPhotos before uploading, so the web and mobile upload paths never call a blur endpoint. Matches `integration-contracts.md`.
-- **Never expose ai-api keys to client apps.** Clients talk to their own backend only.
+- **Never expose ai-api keys to website or mobile clients.** The desktop exception keeps its restricted key encrypted in Electron main and sends only presence to the renderer.
 - Each API key creates an isolated data space in ai-api (separate face embeddings, separate job history).
 - If multiple environments exist (staging, production), use separate API keys per environment.
 
@@ -202,7 +165,7 @@ When an enroll supplies `person_id`, the person is fetched scoped by
 `api_key_id` **and** `event_id`. An existence-only lookup would let one tenant
 attach faces to another tenant's person.
 
-Desktop Backend does not use face search, so event isolation does not apply to it.
+BatchMyPhotos does not use face search, so event isolation does not apply to it.
 
 ---
 
@@ -237,8 +200,8 @@ ai-api always returns raw confidence scores. Each backend decides what to do wit
 
 | Feature | ai-api returns | Backend applies |
 |---------|---------------|-----------------|
-| Blur detect | `confidence: 0.85, is_blurry: false` | Desktop only: show to user as a quality score. Web/mobile do not call blur (rule 6). |
-| Blur classify | `predicted_class: "motion_blurred", confidence: 0.72` | Desktop only: tag/cull the photo by blur type. Web/mobile do not call blur (rule 6). |
+| Blur detect | `confidence: 0.85, is_blurry: false` | Available to API clients, but the invited desktop beta does not call this route. Web/mobile do not call blur (rule 6). |
+| Blur classify | `predicted_class: "motion_blurred", confidence: 0.72` | Desktop maps raw probabilities to advisory suggestions; it never automatically culls or moves a photo. Web/mobile do not call blur (rule 6). |
 | Face search | `similarity: 0.65` | Web: show match only if similarity >= event's face threshold (e.g., 0.6) |
 | Bib OCR | `bib_number: "1023", confidence: 0.45` | Web: discard if confidence < event's bib threshold (e.g., 0.7) |
 
@@ -274,7 +237,7 @@ to every event and the per-event override exists for when it doesn't.
 
 ## Network Topology
 
-### Production (AWS)
+### Web/mobile production design (AWS; desktop blur staging is separate)
 
 ```
                     ┌──────────────────┐
@@ -311,21 +274,21 @@ to every event and the per-event override exists for when it doesn't.
 └─────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────┐
-│  Desktop App (Electron — on photographer's machine)  │
-│  └── Desktop Backend → calls ai-api over HTTPS       │
-│  └── Desktop DB (local or cloud)                     │
+│  BatchMyPhotos (Electron — photographer's machine)   │
+│  └── Main process → blur ai-api over HTTPS            │
+│  └── Restricted key encrypted locally                │
 └─────────────────────────────────────────────────────┘
 ```
 
-- ai-api is **private within EC2** — only the Spring Boot backend and Desktop Backend can reach it.
+- The web/mobile ai-api route is private behind the Spring Boot backend. The invited desktop beta uses a separately addressed staging blur service over HTTPS.
 - Spring Boot Backend is the public API for website and mobile app.
-- Desktop Backend connects to ai-api over HTTPS with its own API key.
+- BatchMyPhotos main connects directly to ai-api with its own restricted staging key.
 - Mobile app and website **never** talk to ai-api directly.
 
 ### Development
 
 ```
-localhost:3000  ← Desktop Backend
+Electron main   ← BatchMyPhotos blur client
 localhost:8080  ← Web/Mobile Backend (Spring Boot)
 localhost:8000  ← ai-api (FastAPI)
 localhost:5432  ← PostgreSQL
@@ -343,7 +306,7 @@ localhost:6379  ← Redis
 | Participants | Web/Mobile Backend | Web/Mobile DB (AWS RDS) | Web/Mobile Backend |
 | Photos (files) | Backends | AWS S3 | Backends |
 | Face embeddings | ai-api | PostgreSQL + pgvector (AWS RDS) | ai-api |
-| Blur scores | ai-api (computed) | Desktop DB (persisted) | Desktop Backend |
+| Blur probabilities | ai-api (computed) | Desktop one-folder memory cache | BatchMyPhotos advisory UI |
 | Bib OCR text | ai-api (computed) | Backend DBs (persisted) | Web/Mobile Backend |
 | Batch jobs | ai-api | ai-api PostgreSQL + Redis | ai-api → webhook → Backends |
 | API keys | ai-api admin | ai-api PostgreSQL | Backends (as credentials) |

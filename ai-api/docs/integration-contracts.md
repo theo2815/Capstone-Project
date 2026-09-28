@@ -6,200 +6,63 @@
 
 ---
 
-## Contract 1: Desktop Backend (Blur Only)
+## Contract 1: BatchMyPhotos desktop (blur only)
 
-The Desktop Backend uses ai-api for image quality assessment. It calls two endpoints.
+BatchMyPhotos' Electron **main process** calls ai-api directly. Its Express backend is
+not a blur proxy. In the invited beta, analysis starts only after **Start Analysis**;
+results are suggestions and never change batch routing or original files. See
+the [desktop integration guide](../../docs/desktop-blur-detection-integration-guide.md)
+and the implementation in
+BatchMyPhotos/desktop/src/main/blurDetectionService.js.
 
-### Endpoints Used
+### Routes used by this client
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/v1/blur/detect` | Quick blur check (Laplacian + optional FFT) |
-| `POST /api/v1/blur/detect/stream` | NDJSON streaming check for up to 500 images (no polling) |
-| `POST /api/v1/blur/detect/batch` | Async Celery batch, up to 50 |
-| `POST /api/v1/blur/detect/mega` | Async Celery chord, up to 500 (server splits) |
-| `POST /api/v1/blur/classify` | Detailed blur-type classification (CNN) |
-| `POST /api/v1/blur/classify/stream` | NDJSON streaming classify |
-| `POST /api/v1/blur/classify/batch` | Async batch classify |
-| `POST /api/v1/blur/classify/mega` | Async mega-batch classify |
-| `GET /api/v1/jobs/{job_id}` | Poll batch job status (supports `offset`/`limit`) |
-| `GET /api/v1/health/ready` | Health check before processing |
+| Endpoint | Use |
+|----------|-----|
+| `POST /api/v1/blur/classify/stream` | Main CNN path; multipart prepared JPEGs, NDJSON rows and terminal summary |
+| `POST /api/v1/blur/classify` | One image when the stream route is unsupported or a valid stream summary omits a row |
 
-### Authentication
+The API also offers `/blur/detect`, `/batch`, `/mega`, and `/jobs/{id}` for other
+clients. This desktop beta does not use a classical pre-check, Celery jobs,
+polling, or webhooks.
 
-```
-X-API-Key: sk_desktop_prod_<your_key>
-```
+### Credential and configuration
 
-Scope: `blur:read` (covers both detect and classify endpoints).
+Give each invited tester a separate, revocable **staging** key with exactly
+`blur:read` and `jobs:read`. Record owner, tier, expiry or revocation, and scope
+in the private `docs/api-keys.md` workflow. The main process sends the key only
+in the `X-API-Key` header. Packaged beta builds require a validated staging
+`blur-beta.json` with an HTTPS origin, then accept the key through Settings
+after installation. Electron `safeStorage` encrypts it in the dedicated
+`blur-beta-key` store; IPC reveals only whether a key is configured. Neither
+the installer nor key-status IPC returns the raw saved key. Source runs use the
+`BATCH_BLUR_*` settings in BatchMyPhotos/desktop/src/main/config.js; packaged
+environment overrides cannot redirect the origin or inject a key.
 
-### Flow 1: Single Photo Quality Check
+### Analysis and response handling
 
-Use when user imports one photo or selects a photo for review.
+1. Choose one supported raster companion per JPG/RAW group; RAW-only and
+   undecodable groups remain unanalysed. Sharp auto-orients, resizes, and
+   re-encodes each selected image as a JPEG before upload.
+2. Split prepared JPEGs by count **and byte budget**. The authoritative
+   limits, concurrency and timeouts are in BatchMyPhotos/desktop/src/main/constants.js.
+3. Match each NDJSON row by the uploaded chunk index, not arrival order or
+   original filename. Require one consistent terminal `_summary` with
+   `complete:true`; reject malformed, duplicate, or contradictory rows.
+4. A per-image error marks only that group unanalysed. Recover missing rows
+   through the single route only after a valid summary. An unsupported stream
+   route also uses singles. Retry a retryable stream failure once within the
+   configured backoff bound. A truncated or invalid stream fails visibly.
+5. Map returned probabilities using the client's sensitivity and selected
+   categories. This mapping is advisory and must not remove a group from
+   preview, copy/move, or rollback.
 
-```
-Desktop App                Desktop Backend                ai-api
-    │                           │                           │
-    │  "Check this photo"       │                           │
-    │─────────────────────────►│                           │
-    │                           │  POST /blur/detect        │
-    │                           │  + file                   │
-    │                           │─────────────────────────►│
-    │                           │                           │
-    │                           │  { is_blurry: false,      │
-    │                           │    confidence: 0.85,      │
-    │                           │    metrics: {             │
-    │                           │      laplacian: 185.4,    │
-    │                           │      hf_ratio: 0.72 } }  │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │                           │  (Optional) If not blurry │
-    │                           │  but user wants detail:   │
-    │                           │  POST /blur/classify      │
-    │                           │  + file                   │
-    │                           │─────────────────────────►│
-    │                           │                           │
-    │                           │  { predicted_class:       │
-    │                           │    "sharp",               │
-    │                           │    confidence: 0.96,      │
-    │                           │    probabilities: {...} } │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "Sharp (96% confident)"  │                           │
-    │◄─────────────────────────│                           │
-```
-
-**Desktop Backend logic:**
-```python
-# 1. Call ai-api blur detect
-response = httpx.post(
-    f"{AI_API_URL}/api/v1/blur/detect",
-    headers={"X-API-Key": AI_API_KEY},
-    files={"file": (filename, image_bytes, content_type)},
-)
-result = response.json()["data"]
-
-# 2. Store result in desktop DB
-photo.blur_score = result["metrics"]["laplacian_variance"]
-photo.is_blurry = result["is_blurry"]
-photo.blur_confidence = result["confidence"]
-photo.hf_ratio = result["metrics"]["hf_ratio"]
-db.save(photo)
-
-# 3. Optionally classify for blur type
-if not result["is_blurry"] or user_wants_detail:
-    classify_resp = httpx.post(
-        f"{AI_API_URL}/api/v1/blur/classify",
-        headers={"X-API-Key": AI_API_KEY},
-        files={"file": (filename, image_bytes, content_type)},
-    )
-    classify_result = classify_resp.json()["data"]
-    photo.blur_type = classify_result["predicted_class"]
-    photo.blur_type_confidence = classify_result["confidence"]
-    db.save(photo)
-
-# 4. Return to desktop UI
-return {
-    "quality": "sharp" if not photo.is_blurry else "blurry",
-    "blur_score": photo.blur_score,
-    "blur_type": photo.blur_type,  # e.g., "motion_blurred"
-    "confidence": photo.blur_confidence,
-}
-```
-
-### Flow 2: Batch Import (Multiple Photos)
-
-Use when user imports a folder of photos. Desktop backend should batch them.
-
-```
-Desktop App                Desktop Backend                ai-api
-    │                           │                           │
-    │  "Import 50 photos"       │                           │
-    │─────────────────────────►│                           │
-    │                           │  POST /blur/detect/batch  │
-    │                           │  + 50 files               │
-    │                           │─────────────────────────►│
-    │                           │                           │
-    │                           │  { job_id: "abc-123",     │
-    │                           │    status: "pending",     │
-    │                           │    poll_url: "/jobs/..." }│
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "Processing 50 photos…"  │                           │
-    │◄─────────────────────────│                           │
-    │                           │                           │
-    │                           │  (poll every 2-5 seconds) │
-    │                           │  GET /jobs/abc-123        │
-    │                           │─────────────────────────►│
-    │                           │  { status: "processing",  │
-    │                           │    progress: 0.60 }       │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "60% complete"           │                           │
-    │◄─────────────────────────│                           │
-    │                           │                           │
-    │                           │  GET /jobs/abc-123        │
-    │                           │─────────────────────────►│
-    │                           │  { status: "completed",   │
-    │                           │    result: [50 results] } │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "Done! 42 sharp, 8 blurry"│                          │
-    │◄─────────────────────────│                           │
-```
-
-**Desktop Backend logic:**
-```python
-# 1. Submit batch
-files = [("files", (f.name, f.bytes, f.content_type)) for f in photos]
-response = httpx.post(
-    f"{AI_API_URL}/api/v1/blur/detect/batch",
-    headers={"X-API-Key": AI_API_KEY},
-    files=files,
-)
-job_id = response.json()["data"]["job_id"]
-
-# 2. Poll for results (or use webhook)
-while True:
-    status = httpx.get(
-        f"{AI_API_URL}/api/v1/jobs/{job_id}",
-        headers={"X-API-Key": AI_API_KEY},
-    ).json()["data"]
-
-    if status["status"] == "completed":
-        break
-    if status["status"] == "failed":
-        raise ProcessingError(status["error"])
-
-    notify_progress(status["progress"])
-    await asyncio.sleep(3)
-
-# 3. Store all results
-for item in status["result"]:
-    photo = photos[item["index"]]
-    photo.is_blurry = item["is_blurry"]
-    photo.blur_score = item["metrics"]["laplacian_variance"]
-    db.save(photo)
-```
-
-### Desktop Backend Response Shaping
-
-The desktop UI doesn't need raw ai-api responses. Shape them:
-
-```json
-// What desktop UI receives from desktop backend:
-{
-  "photo_id": "local-123",
-  "filename": "IMG_4521.jpg",
-  "quality": {
-    "status": "sharp",
-    "score": 185.4,
-    "blur_type": null,
-    "confidence": 0.85
-  },
-  "imported_at": "2026-03-26T10:00:00Z"
-}
-```
+Analysis uploads are separate from training feedback. A label alone sends
+nothing; an explicit **Submit this example** action sends the selected
+prepared JPEG through the user's Supabase session. The packaged app still
+uses production Supabase for feedback. Local SQL/Storage tests do not prove
+its production migration, bucket, or policies are ready. See
+BatchMyPhotos/desktop/docs/blur-detection.md for retention and deletion.
 
 ---
 
@@ -610,17 +473,12 @@ async def check_ai_api_health():
 
 ## Configuration Each Backend Needs
 
-### Desktop Backend `.env`
+### BatchMyPhotos desktop configuration
 
-```bash
-# ai-api connection
-AI_API_URL=http://ai-api.internal:8000
-AI_API_KEY=sk_desktop_prod_xxxxxxxxxxxx
-
-# Blur settings (backend decides these, not ai-api)
-BLUR_AUTO_REJECT=false         # Desktop shows results, doesn't auto-reject
-BLUR_CLASSIFY_ON_IMPORT=true   # Run classification on every import
-```
+Source runs use the `BATCH_BLUR_*` development settings in
+`BatchMyPhotos/desktop/src/main/config.js`. The packaged beta accepts only a
+valid staging `blur-beta.json` resource for its origin and an OS-encrypted key
+entered after install. It does not classify on import or auto-reject photos.
 
 ### Web/Mobile Backend `.env`
 
@@ -644,14 +502,10 @@ BIB_CONFIDENCE_THRESHOLD_DEFAULT=0.7  # Minimum OCR confidence to trust
 ## Summary: Who Calls What
 
 ```
-Desktop Backend:
-  ✅ blur/detect, blur/detect/stream, blur/detect/batch, blur/detect/mega
-  ✅ blur/classify, blur/classify/stream, blur/classify/batch, blur/classify/mega
-  ✅ jobs/{id}
-  ✅ health/ready
-  ❌ faces/*       (not used)
-  ❌ bibs/*        (not used)
-  ❌ webhooks      (optional — polling is fine for desktop)
+BatchMyPhotos Electron main:
+  ✅ blur/classify/stream (primary), blur/classify (fallback/recovery)
+  ❌ blur/detect, blur/*/batch, blur/*/mega, jobs/{id}, webhooks
+  ❌ faces/*, bibs/*
 
 Web/Mobile Backend:
   ❌ blur/*                (desktop-only — root CLAUDE.md rule 6)
