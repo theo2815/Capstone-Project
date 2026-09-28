@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EventState, ListEvent } from "@/types/event";
 import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
@@ -26,8 +26,10 @@ import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import {
   usePhotographerEventDetail,
+  usePhotographerEventMetadataVisibility,
   usePhotographerEventPhotos,
 } from "@/hooks/use-photographer-data";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import { useToast } from "@/hooks/use-toast";
 import {
   fetchPhotographerPhotoDownload,
@@ -36,8 +38,11 @@ import {
   restorePhotographerPhotos,
   trashPhotographerPhotos,
   updateMyEvent,
+  putEventMetadataVisibility,
+  type EventMetadataVisibilityDto,
   type PhotographerEventDetail,
 } from "@/lib/api-photographer";
+import { captureAuthSession } from "@/lib/auth-session";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { describePricing, isOwnedEventLive } from "@/lib/photographer-events";
@@ -203,6 +208,7 @@ export default function FocusedSharePage() {
         <Hero event={event} />
         {ownedUi}
         {couponUi}
+        <EventMetadataVisibility event={liveDetail} />
         {uploadsOpen && (
           <>
             {liveDetail.photoCount > 0 && (
@@ -214,6 +220,80 @@ export default function FocusedSharePage() {
         )}
       </div>
     </main>
+  );
+}
+
+function EventMetadataVisibility({ event }: { event: PhotographerEventDetail }) {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
+  const visibility = usePhotographerEventMetadataVisibility(event.id);
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+  const [draft, setDraft] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const serverValue = visibility.data?.metadataPublic;
+  const sessionVersion = session.key[2];
+
+  useEffect(() => {
+    setDraft(visibility.isSuccess && serverValue !== undefined ? serverValue : null);
+    setSaving(false);
+  }, [event.id, sessionVersion, visibility.isSuccess, serverValue]);
+
+  async function save() {
+    if (!session.enabled || !visibility.isSuccess || draft === null || draft === visibility.data.metadataPublic || saving) return;
+    const isCurrent = captureAuthSession();
+    setSaving(true);
+    try {
+      const saved = await putEventMetadataVisibility(event.id, { metadataPublic: draft });
+      if (!isCurrent()) return;
+      queryClient.setQueryData<EventMetadataVisibilityDto>(
+        ["photographer", "events", event.id, "metadata-visibility", ...session.key], saved,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["events", event.slug, "photos"] });
+      if (event.handle) void queryClient.invalidateQueries({ queryKey: ["photographer", "public", event.handle, event.slug, "photos"] });
+      // M7's public photo metadata queries use this prefix; no M7 hook exists yet.
+      queryClient.removeQueries({ queryKey: ["photo", "metadata", "public"] });
+      setDraft(saved.metadataPublic);
+      showToast({ kind: "success", message: "Metadata visibility saved." });
+    } catch {
+      if (isCurrent()) showToast({ kind: "error", message: "Couldn't save metadata visibility." });
+    } finally {
+      if (isCurrent()) setSaving(false);
+    }
+  }
+
+  if (!session.enabled) return null;
+  return (
+    <section className="mb-10 md:mb-12 rounded-2xl border border-line bg-bone-deep/30 p-6 md:p-8">
+      <Kicker as="p" tone="soft">Photo metadata</Kicker>
+      {visibility.isError ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <p className="font-sans text-sm text-slate">Couldn&apos;t load metadata visibility.</p>
+          <button type="button" onClick={() => void visibility.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry metadata visibility</button>
+        </div>
+      ) : !visibility.isSuccess || draft === null ? (
+        <p className="mt-3 font-sans text-sm text-slate" role="status">Loading metadata visibility…</p>
+      ) : (
+        <>
+          <label className="mt-3 flex min-h-[44px] items-center gap-3 font-sans text-base font-semibold text-ink">
+            <input
+              type="checkbox"
+              checked={draft}
+              onChange={(change) => setDraft(change.target.checked)}
+              disabled={saving}
+              aria-describedby="event-metadata-help event-metadata-boundary"
+              className="size-5 shrink-0 accent-fresh disabled:cursor-not-allowed"
+            />
+            Show metadata publicly for my photos
+          </label>
+          <p id="event-metadata-help" className="mt-3 font-sans text-sm text-slate">Only your photos in this event. You can always view your own metadata.</p>
+          <p id="event-metadata-boundary" className="mt-2 font-sans text-sm text-slate">This controls the metadata popup. Original downloads keep their embedded metadata.</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <button type="button" onClick={() => void save()} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_PRIMARY, BTN_SIZE.sm)}>Save metadata visibility</button>
+            <button type="button" onClick={() => setDraft(visibility.data.metadataPublic)} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Cancel metadata change</button>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

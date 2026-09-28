@@ -12,7 +12,7 @@ import { useSelfiesList } from "./use-selfies";
 import { usePhotographerSettingsQueries } from "./use-photographer-settings";
 import { useAdminFlags, useAdminKpis, useAdminKpiTrend, useAdminSalesKpisLive, useAdminSalesByEventLive, useFlagActions } from "./use-admin-data";
 import {
-  usePhotographerEvents, usePhotographerEventDetail, usePhotographerEventPhotos,
+  usePhotographerEvents, usePhotographerEventDetail, usePhotographerEventPhotos, usePhotographerEventMetadataVisibility,
   usePhotographerEarnings, usePhotographerPerEventEarnings, usePhotographerPayouts,
   usePhotographerPayoutBalance, usePhotographerTransactions, usePublicPhotographer,
 } from "./use-photographer-data";
@@ -48,6 +48,7 @@ describe.each([
   { name: "covered events", role: "PHOTOGRAPHER", useRead: usePhotographerEvents, payload: page },
   { name: "event detail", role: "PHOTOGRAPHER", useRead: () => usePhotographerEventDetail("event-a"), payload: { id: "event-a" } },
   { name: "event photos", role: "PHOTOGRAPHER", useRead: () => usePhotographerEventPhotos("event-a"), payload: page },
+  { name: "event metadata visibility", role: "PHOTOGRAPHER", useRead: () => usePhotographerEventMetadataVisibility("event-a"), payload: { metadataPublic: false } },
   { name: "earnings", role: "PHOTOGRAPHER", useRead: usePhotographerEarnings, payload: { total: 100 } },
   { name: "per-event earnings", role: "PHOTOGRAPHER", useRead: usePhotographerPerEventEarnings, payload: page },
   { name: "payouts", role: "PHOTOGRAPHER", useRead: usePhotographerPayouts, payload: page },
