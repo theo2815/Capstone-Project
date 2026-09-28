@@ -14,6 +14,19 @@ import java.util.UUID
 
 interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPhotographerId> {
 
+    @Query("""
+        SELECT ep.id.photographerId FROM EventPhotographer ep
+        JOIN Event e ON e.id = ep.id.eventId
+        JOIN User u ON u.id = ep.id.photographerId
+        JOIN PhotographerSettings s ON s.userId = ep.id.photographerId
+        WHERE ep.id.eventId = :eventId AND ep.id.photographerId IN :photographerIds
+          AND ep.metadataPublic = true AND e.deletedAt IS NULL
+          AND e.status <> com.quickpitik.entity.EventStatus.DRAFT
+          AND u.suspendedAt IS NULL
+          AND s.verificationStatus = com.quickpitik.entity.VerificationStatus.APPROVED
+    """)
+    fun findPublicMetadataPhotographerIds(eventId: UUID, photographerIds: Collection<UUID>): List<UUID>
+
     @Query(
         """
         SELECT ep FROM EventPhotographer ep

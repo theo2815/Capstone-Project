@@ -50,6 +50,7 @@ data class PhotoDto(
     // is set for every visitor too. Both null on paid events unless owned.
     val free: Boolean = false,
     val downloadUrl: String? = null,
+    val metadataAccess: String = "none",
 )
 
 // Resolved attribution for one photo's photographer. Callers batch-load these
@@ -77,6 +78,7 @@ fun Photo.toDto(
     couponResolver: (Photo) -> CouponQuote? = { null },
     downloadUrlResolver: (Photo) -> String? = { null },
     free: Boolean = false,
+    metadataAccess: String = "none",
 ): PhotoDto {
     val photographer = photographerResolver(this)
     val coupon = couponResolver(this)
@@ -98,5 +100,6 @@ fun Photo.toDto(
         couponPrice = coupon?.price,
         free = free,
         downloadUrl = downloadUrlResolver(this),
+        metadataAccess = metadataAccess,
     )
 }

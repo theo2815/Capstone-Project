@@ -362,6 +362,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
 
+    fun findByIdAndPhotographerIdAndDeletionStartedAtIsNull(id: UUID, photographerId: UUID): Photo?
+
     fun existsByS3Key(s3Key: String): Boolean
 
     // Owner+event-scoped bulk load for trash / restore / permanent-delete. A

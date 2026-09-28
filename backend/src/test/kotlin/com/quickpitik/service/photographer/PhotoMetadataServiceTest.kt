@@ -1,14 +1,18 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.dto.photos.PhotoMetadataFields
+import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.repository.PhotoMetadataRepository
+import com.quickpitik.repository.EventPhotographerRepository
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.image.PhotoMetadataExtractor
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.SimpleTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
+import java.math.BigDecimal
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -17,13 +21,15 @@ import kotlin.test.*
 
 class PhotoMetadataServiceTest {
     private val repository = Mockito.mock(PhotoMetadataRepository::class.java)
+    private val photos = Mockito.mock(PhotoRepository::class.java)
+    private val coverage = Mockito.mock(EventPhotographerRepository::class.java)
     private val extractor = Mockito.mock(PhotoMetadataExtractor::class.java)
     private val manager = Mockito.mock(PlatformTransactionManager::class.java)
     private val clock = Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC)
     private fun <T> anyArg(): T = Mockito.any()
     private fun service(): PhotoMetadataService {
         Mockito.`when`(manager.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
-        return PhotoMetadataService(repository, extractor, TransactionTemplate(manager), clock)
+        return PhotoMetadataService(repository, photos, coverage, extractor, TransactionTemplate(manager), clock)
     }
 
     @Test
@@ -58,5 +64,30 @@ class PhotoMetadataServiceTest {
         Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())).thenThrow(IllegalStateException("database down"))
         service().extractIfDue(UUID.randomUUID(), byteArrayOf(1))
         Mockito.verify(repository, Mockito.times(1)).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `gallery access batches public policy and gives the real owner precedence`() {
+        val eventId = UUID.randomUUID()
+        val ownerId = UUID.randomUUID()
+        val publicId = UUID.randomUUID()
+        val privateId = UUID.randomUUID()
+        val gallery = List(100) { index ->
+            Photo(
+                eventId = eventId,
+                photographerId = listOf(ownerId, publicId, privateId)[index % 3],
+                s3Key = "photo-$index.jpg",
+                pricePhp = BigDecimal.ONE,
+            )
+        }
+        Mockito.`when`(coverage.findPublicMetadataPhotographerIds(anyArg(), anyArg()))
+            .thenReturn(listOf(ownerId, publicId))
+
+        val access = service().metadataAccess(eventId, gallery, ownerId)
+
+        assertEquals("owner", access.getValue(gallery[0].id))
+        assertEquals("public", access.getValue(gallery[1].id))
+        assertEquals("none", access.getValue(gallery[2].id))
+        Mockito.verify(coverage, Mockito.times(1)).findPublicMetadataPhotographerIds(anyArg(), anyArg())
     }
 }

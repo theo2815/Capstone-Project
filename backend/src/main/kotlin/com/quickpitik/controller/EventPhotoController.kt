@@ -19,6 +19,7 @@ import com.quickpitik.service.ratelimit.acquireOrThrow
 import com.quickpitik.service.ratelimit.clientIp
 import com.quickpitik.service.storage.StorageService
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -58,7 +59,9 @@ class EventPhotoController(
         @RequestParam(required = false) limit: Int?,
         @RequestParam(required = false) snapshotAt: OffsetDateTime?,
         request: HttpServletRequest,
+        response: HttpServletResponse,
     ): PaginatedResponse<PhotoDto> {
+        preventPersonalizedCaching(principal, response)
         // Throttle the *search* use of this endpoint only. Without a bib this
         // is the plain event grid that every visitor pages through, and a
         // 10/min cap would break ordinary browsing.
@@ -112,7 +115,9 @@ class EventPhotoController(
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
         request: HttpServletRequest,
+        response: HttpServletResponse,
     ): PaginatedResponse<PhotoDto> {
+        preventPersonalizedCaching(principal, response)
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
         validateSelfieUpload(selfie)
         val selfieBytes = selfie.bytes
@@ -150,7 +155,9 @@ class EventPhotoController(
         @PathVariable slug: String,
         @RequestBody body: SearchByFaceJsonRequest,
         request: HttpServletRequest,
+        response: HttpServletResponse,
     ): PaginatedResponse<PhotoDto> {
+        preventPersonalizedCaching(principal, response)
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
         if (principal == null) {
             throw UnauthorizedException(
@@ -224,6 +231,10 @@ class EventPhotoController(
     // the anonymous path unthrottled.
     private fun searchKey(principal: AuthPrincipal?, request: HttpServletRequest): String =
         principal?.userId?.toString() ?: clientIp(request)
+
+    private fun preventPersonalizedCaching(principal: AuthPrincipal?, response: HttpServletResponse) {
+        if (principal != null) response.setHeader(HttpHeaders.CACHE_CONTROL, "private, no-store")
+    }
 
     data class SearchByFaceJsonRequest(
         val selfieId: String? = null,
