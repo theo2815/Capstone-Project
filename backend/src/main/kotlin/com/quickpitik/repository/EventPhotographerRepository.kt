@@ -93,7 +93,10 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         value = """
         INSERT INTO event_photographer (event_id, photographer_id, photo_count, first_upload_at, last_upload_at, metadata_public)
         SELECT :eventId, :photographerId, 1, :now, :now,
-               COALESCE((SELECT metadata_public_by_default FROM photographer_settings WHERE user_id = :photographerId), false)
+               CASE WHEN (SELECT created_by FROM events WHERE id = :eventId) = :photographerId
+                    THEN false
+                    ELSE COALESCE((SELECT metadata_public_by_default FROM photographer_settings WHERE user_id = :photographerId), false)
+               END
         ON CONFLICT (event_id, photographer_id) DO UPDATE SET
             photo_count     = event_photographer.photo_count + 1,
             first_upload_at = COALESCE(event_photographer.first_upload_at, EXCLUDED.first_upload_at),
