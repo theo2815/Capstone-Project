@@ -4,6 +4,9 @@
 # JVM or doing background work while assertions run.
 
 spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 5
   jpa:
     hibernate:
       # Same as production. This is doing real work: with Flyway owning the
