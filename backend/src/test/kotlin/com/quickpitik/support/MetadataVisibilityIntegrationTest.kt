@@ -165,6 +165,24 @@ class MetadataVisibilityIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `first upload keeps legacy owned event private after the default becomes public`() {
+        val owner = photographer()
+        val legacyOwned = event(createdBy = owner.id)
+        val shared = event()
+        val ownedKey = EventPhotographerId(legacyOwned.id, owner.id)
+        val sharedKey = EventPhotographerId(shared.id, owner.id)
+
+        metadataSettings.setDefault(owner.id, true)
+        assertEquals(false, metadataSettings.getEvent(owner.id, legacyOwned.id).metadataPublic)
+        transactions.executeWithoutResult { coverage.upsertOnUpload(legacyOwned.id, owner.id, OffsetDateTime.now()) }
+        assertEquals(false, visibility(ownedKey))
+        assertEquals(false, metadataSettings.getEvent(owner.id, legacyOwned.id).metadataPublic)
+
+        transactions.executeWithoutResult { coverage.upsertOnUpload(shared.id, owner.id, OffsetDateTime.now()) }
+        assertEquals(true, visibility(sharedKey))
+    }
+
+    @Test
     fun `concurrent upload counter and preference writes preserve both values and other photographers choices`() {
         val a = photographer()
         val b = photographer()
