@@ -1,5 +1,6 @@
 package com.quickpitik.support
 
+import com.quickpitik.config.PhotoMetadataProperties
 import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.entity.*
 import com.quickpitik.repository.*
@@ -18,6 +19,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.io.ByteArrayInputStream
@@ -25,12 +27,17 @@ import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import kotlin.test.*
 
 class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var metadata: PhotoMetadataRepository
     @Autowired private lateinit var photos: PhotoRepository
+    @Autowired private lateinit var coverage: EventPhotographerRepository
+    @Autowired private lateinit var properties: PhotoMetadataProperties
+    @Autowired private lateinit var clock: Clock
     @Autowired private lateinit var events: EventRepository
     @Autowired private lateinit var transactions: TransactionTemplate
     @Autowired private lateinit var service: PhotoMetadataService
@@ -72,6 +79,19 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         val row = metadata.findById(id).orElse(null)
         fail("Expected $state/$attempts, got ${row?.state}/${row?.attempts}")
     }
+
+    private fun deferredExecutor(tasks: MutableList<Runnable>, capacity: Int = 1): ThreadPoolTaskExecutor {
+        val executor = Mockito.mock(ThreadPoolTaskExecutor::class.java)
+        val pool = Mockito.mock(ThreadPoolExecutor::class.java)
+        Mockito.`when`(executor.threadPoolExecutor).thenReturn(pool)
+        Mockito.`when`(pool.queue).thenReturn(LinkedBlockingQueue<Runnable>())
+        Mockito.`when`(executor.maxPoolSize).thenReturn(capacity)
+        Mockito.doAnswer { tasks += it.getArgument<Runnable>(0); null }.`when`(executor).execute(Mockito.any(Runnable::class.java))
+        return executor
+    }
+
+    private fun sweeper(photoRepository: PhotoRepository, executor: ThreadPoolTaskExecutor) =
+        PhotoMetadataService(metadata, photoRepository, coverage, extractor, storage, executor, properties, transactions, clock)
 
     private fun settle(id: UUID, token: UUID, version: Int = 1, model: String = "R6") =
         transactions.execute { metadata.settle(id, token, version, PhotoMetadataState.READY, PhotoMetadataFields(cameraModel = model), OffsetDateTime.now()) }!!
@@ -330,6 +350,76 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         service.recoverDue()
         awaitState(id, PhotoMetadataState.FAILED, 1)
         assertNotNull(metadata.findById(id).orElseThrow().nextAttemptAt)
+    }
+
+    @Test
+    fun `short GET settles retryable failure instead of parsing truncated bytes`() {
+        val id = fixture().also(::old)
+        val key = photos.findById(id).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 2, "image/jpeg"))
+        Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
+        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields())
+
+        service.recoverDue()
+        awaitState(id, PhotoMetadataState.FAILED, 1)
+        assertNotNull(metadata.findById(id).orElseThrow().nextAttemptAt)
+        Mockito.verifyNoInteractions(extractor)
+    }
+
+    @Test
+    fun `photo lookup failure takes retry schedule and fourth failure stays terminal`() {
+        val id = fixture().also(::old)
+        val brokenPhotos = Mockito.mock(PhotoRepository::class.java)
+        Mockito.`when`(brokenPhotos.findById(id)).thenThrow(IllegalStateException("lookup down"))
+        val tasks = mutableListOf<Runnable>()
+        val manual = sweeper(brokenPhotos, deferredExecutor(tasks))
+
+        for ((attempt, delay) in listOf(1L, 5L, 30L, 0L).withIndex()) {
+            val before = OffsetDateTime.now()
+            manual.recoverDue()
+            assertEquals(1, tasks.size)
+            tasks.removeAt(0).run()
+            val row = metadata.findById(id).orElseThrow()
+            assertEquals(PhotoMetadataState.FAILED, row.state)
+            assertEquals(attempt + 1, row.attempts)
+            if (delay == 0L) assertNull(row.nextAttemptAt)
+            else {
+                assertNotNull(row.nextAttemptAt)
+                assertTrue(row.nextAttemptAt!!.isAfter(before.plusMinutes(delay).minusSeconds(5)))
+                assertTrue(row.nextAttemptAt!!.isBefore(OffsetDateTime.now().plusMinutes(delay).plusSeconds(5)))
+                jdbc.update("UPDATE photo_metadata SET next_attempt_at = now() - interval '1 second' WHERE photo_id = ?", id)
+            }
+        }
+        manual.recoverDue()
+        assertTrue(tasks.isEmpty())
+        Mockito.verifyNoInteractions(storage)
+    }
+
+    @Test
+    fun `two sweepers selecting one photo still make one claim and fetch`() {
+        val id = fixture().also(::old)
+        val key = photos.findById(id).orElseThrow().s3Key
+        Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
+        Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
+        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "Winner"))
+        val first = mutableListOf<Runnable>()
+        val second = mutableListOf<Runnable>()
+        sweeper(photos, deferredExecutor(first)).recoverDue()
+        sweeper(photos, deferredExecutor(second)).recoverDue()
+        assertEquals(1, first.size)
+        assertEquals(1, second.size)
+
+        val start = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val workers = listOf(first.single(), second.single()).map { task -> pool.submit { start.await(); task.run() } }
+            start.countDown()
+            workers.forEach { it.get(10, TimeUnit.SECONDS) }
+        } finally { pool.shutdownNow() }
+        val row = metadata.findById(id).orElseThrow()
+        assertEquals(PhotoMetadataState.READY, row.state)
+        assertEquals(1, row.attempts)
+        Mockito.verify(storage, Mockito.times(1)).open(key)
     }
 
     @Test

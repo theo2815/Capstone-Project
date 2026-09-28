@@ -109,7 +109,10 @@ class PhotoMetadataService(
                 repository.claimIfDue(photoId, token, EXTRACTOR_VERSION, now, now.plusMinutes(LEASE_MINUTES), MAX_ATTEMPTS)
             }
             if (claimed != 1) return
-            val key = photos.findById(photoId).orElse(null)?.s3Key ?: return
+            val key = try { photos.findById(photoId).orElse(null)?.s3Key } catch (ex: Exception) {
+                settleStorageFailure(photoId, token)
+                return
+            } ?: return
             val head = try { storage.metadata(key) } catch (ex: Exception) {
                 settleStorageFailure(photoId, token)
                 return
@@ -126,8 +129,11 @@ class PhotoMetadataService(
                 else settleStorageFailure(photoId, token)
                 return
             }
-            if (bytes.size > MAX_ORIGINAL_BYTES) settleUnavailable(photoId, token, bytes.size.toLong())
-            else extractClaimed(photoId, token, bytes)
+            when {
+                bytes.size > MAX_ORIGINAL_BYTES -> settleUnavailable(photoId, token, bytes.size.toLong())
+                bytes.size.toLong() != head.sizeBytes -> settleStorageFailure(photoId, token)
+                else -> extractClaimed(photoId, token, bytes)
+            }
         } catch (ex: Exception) {
             log.warn("Metadata recovery failed for photo {} ({})", photoId, ex.javaClass.simpleName)
         }
