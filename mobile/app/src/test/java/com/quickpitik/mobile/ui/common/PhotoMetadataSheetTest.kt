@@ -1,0 +1,132 @@
+package com.quickpitik.mobile.ui.common
+
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import com.quickpitik.mobile.data.remote.PhotoDto
+import com.quickpitik.mobile.data.remote.PhotoMetadataDto
+import com.quickpitik.mobile.data.remote.PhotoMetadataFieldsDto
+import org.junit.Assert.assertEquals
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import java.util.concurrent.atomic.AtomicInteger
+
+@RunWith(RobolectricTestRunner::class)
+class PhotoMetadataSheetTest {
+    @get:Rule val compose = createComposeRule()
+
+    @Test fun `preview access follows owner mode or server hint only`() {
+        val photo = PhotoPreviewData(id = "remote-uuid", price = 0.0, imageUrl = null, eventName = null)
+        assertEquals("owner", metadataAccessFor(PhotoPreviewMode.OwnerReview, photo))
+        assertEquals(null, metadataAccessFor(PhotoPreviewMode.Browse, photo))
+        assertEquals(null, metadataAccessFor(PhotoPreviewMode.Owned, photo))
+        assertEquals(null, metadataAccessFor(PhotoPreviewMode.LocalReview, photo))
+        assertEquals("public", metadataAccessFor(PhotoPreviewMode.Owned, photo.copy(metadataAccess = "public")))
+        assertEquals("owner", metadataAccessFor(PhotoPreviewMode.Browse, photo.copy(metadataAccess = "owner")))
+        assertEquals(null, metadataAccessFor(PhotoPreviewMode.Browse, photo.copy(metadataAccess = "unexpected")))
+        val remote = PhotoDto(
+            id = "server-id", bib = null, km = null, time = "12:00", tone = 0, span = "portrait",
+            price = 0.0, imageUrl = null, alt = null, metadataAccess = "public",
+        )
+        assertEquals("public", remote.toPreviewData(null).metadataAccess)
+    }
+
+    @Test fun `preview fetches only on tap and refetches after sheet close`() {
+        val count = AtomicInteger()
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val vm = PhotoMetadataViewModel(app) { id, _ ->
+            count.incrementAndGet()
+            PhotoMetadataDto(id, "ready", "$id.jpg", 1024, null)
+        }
+        val index = androidx.compose.runtime.mutableIntStateOf(0)
+        compose.setContent {
+            PhotoPreview(
+                photos = listOf(
+                    PhotoPreviewData("remote-uuid", 0.0, null, null, metadataAccess = "public"),
+                    PhotoPreviewData("other-uuid", 0.0, null, null, metadataAccess = "public"),
+                ),
+                currentIndex = index.intValue, onClose = {}, onIndexChange = {}, metadataViewModel = vm,
+            )
+        }
+        compose.runOnIdle { assertEquals(0, count.get()) }
+        compose.onNode(hasText("Show Metadata") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(5000) { count.get() == 1 }
+        compose.onNode(hasText("Close metadata") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText("Photo metadata").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Close preview").assertExists()
+        compose.onNode(hasText("Show Metadata") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(5000) { count.get() == 2 }
+        compose.runOnIdle { index.intValue = 1 }
+        compose.waitForIdle()
+        compose.waitUntil(5000) { vm.state.value == PhotoMetadataState.Closed }
+        compose.onNodeWithText("Photo metadata").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(2, count.get()) }
+    }
+
+    @Test fun `ready sheet matches field order and formats camera date and size`() {
+        compose.setContent {
+            PhotoMetadataSheet(
+                state = PhotoMetadataState.Data(metadata("ready", PhotoMetadataFieldsDto(
+                    cameraMake = "Canon", cameraModel = "Canon EOS R6", lens = "A very long lens name that should wrap across the phone width",
+                    aperture = 2.8, exposureTime = "1/500 s", iso = 400, flash = null,
+                    exposureMode = "Manual", whiteBalance = "Auto", author = "Ana",
+                    copyright = "Copyright Ana", takenAtLocal = "2026-09-28T07:45:12",
+                    takenAtOffset = "+08:00",
+                ))),
+                onClose = {}, onRefresh = {}, secure = false,
+            )
+        }
+        compose.onNodeWithText("Canon EOS R6").assertIsDisplayed()
+        compose.onNodeWithText("Canon Canon EOS R6").assertDoesNotExist()
+        compose.onNodeWithText("A very long lens name that should wrap across the phone width").assertExists()
+        compose.onNodeWithText("f/2.8").assertExists()
+        compose.onNodeWithText("1/500 s").assertExists()
+        compose.onNodeWithText("Not recorded").assertExists()
+        compose.onNodeWithText("2026-09-28 07:45:12 +08:00").assertExists()
+        compose.onNodeWithText("1.5 MiB").assertExists()
+        compose.onNodeWithContentDescription("Original size, 1.5 MiB, 1,572,864 bytes").assertExists()
+    }
+
+    @Test fun `pending and failure offer only explicit refresh or retry`() {
+        var refreshes = 0
+        val state = androidx.compose.runtime.mutableStateOf<PhotoMetadataState>(PhotoMetadataState.Pending(metadata("pending")))
+        compose.setContent {
+            PhotoMetadataSheet(state.value, onClose = {}, onRefresh = { refreshes++ }, secure = false)
+        }
+        compose.onNodeWithText("Metadata is being prepared.").assertIsDisplayed()
+        compose.onNode(hasText("Refresh") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.runOnIdle { assertEquals(1, refreshes); state.value = PhotoMetadataState.Failed("offline") }
+        compose.onNodeWithText("Metadata could not be loaded.").assertIsDisplayed()
+        compose.onNode(hasText("Retry") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.runOnIdle { assertEquals(2, refreshes); state.value = PhotoMetadataState.Denied }
+        compose.onNodeWithText("Metadata is no longer available").assertIsDisplayed()
+        compose.onNodeWithText("Retry").assertDoesNotExist()
+    }
+
+    @Test fun `empty and unavailable copy differs while empty keeps file facts`() {
+        val state = androidx.compose.runtime.mutableStateOf<PhotoMetadataState>(PhotoMetadataState.Empty(metadata("empty")))
+        compose.setContent {
+            PhotoMetadataSheet(state.value, onClose = {}, onRefresh = {}, secure = false)
+        }
+        compose.onNodeWithText("No camera metadata was found.").assertIsDisplayed()
+        compose.onNodeWithText("race.jpg").assertExists()
+        compose.runOnIdle { state.value = PhotoMetadataState.Unavailable(metadata("unavailable")) }
+        compose.onNodeWithText("Metadata is unavailable for this photo.").assertIsDisplayed()
+        compose.onNodeWithText("race.jpg").assertExists()
+    }
+
+    private fun metadata(status: String, fields: PhotoMetadataFieldsDto? = null) = PhotoMetadataDto(
+        photoId = "server-id", status = status, originalFilename = "race.jpg",
+        fileSizeBytes = 1_572_864, fields = fields,
+    )
+}

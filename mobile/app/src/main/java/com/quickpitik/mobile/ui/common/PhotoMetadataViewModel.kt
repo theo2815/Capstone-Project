@@ -25,7 +25,7 @@ sealed interface PhotoMetadataState {
     data class Pending(val metadata: PhotoMetadataDto) : PhotoMetadataState
     data class Empty(val metadata: PhotoMetadataDto) : PhotoMetadataState
     data class Failed(val message: String) : PhotoMetadataState
-    data object Unavailable : PhotoMetadataState
+    data class Unavailable(val metadata: PhotoMetadataDto) : PhotoMetadataState
     data object Denied : PhotoMetadataState
 }
 
@@ -89,7 +89,7 @@ class PhotoMetadataViewModel @JvmOverloads constructor(
                     "pending" -> PhotoMetadataState.Pending(result)
                     "empty" -> PhotoMetadataState.Empty(result)
                     "failed" -> PhotoMetadataState.Failed("Could not prepare metadata. Try again.")
-                    else -> PhotoMetadataState.Unavailable
+                    else -> PhotoMetadataState.Unavailable(result)
                 })
             } catch (e: CancellationException) {
                 throw e
