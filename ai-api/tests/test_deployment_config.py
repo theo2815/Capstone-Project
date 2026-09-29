@@ -138,8 +138,11 @@ def test_timed_out_request_keeps_admission_until_native_work_exits():
     from src.utils.timeout import run_with_timeout, start_timeout_executor
 
     start_timeout_executor()
+    # 0.2 s, not less: the first request spends ~30 ms in middleware before the route
+    # runs, and native work still queued at the deadline is cancelled by design, so a
+    # shorter deadline makes `entered` race and fail.
     settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False,
-                        BLUR_MAX_ACTIVE_REQUESTS=1, BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
+                        BLUR_MAX_ACTIVE_REQUESTS=1, BLUR_REQUEST_TIMEOUT_SECONDS=0.2)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
 

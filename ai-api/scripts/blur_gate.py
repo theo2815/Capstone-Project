@@ -309,8 +309,10 @@ def collect_labelled(root: Path, limit: int,
     """Find (image_path, label, event) from class folders.
 
     root/<class>/image is one event named after root; root/<event>/<class>/image
-    keeps events apart so over-cull on one new event cannot hide in a pooled rate.
-    Other folders inside an event (e.g. a misspelt `motion_blur/`) go to `unknown`.
+    reports each event separately, so over-cull concentrated in one event shows up
+    (pass/fail still uses the pooled rates). Anything that would be skipped (an
+    unrecognised folder, a misspelt `motion_blur/`, a photo outside a class folder)
+    goes to `unknown`.
     """
     pairs: list[tuple[Path, str, str]] = []
 
@@ -328,9 +330,12 @@ def collect_labelled(root: Path, limit: int,
                     add(child / c, child.name)
             if unknown is not None:
                 unknown += [f"{child.name}/{p.name}" for p in sorted(child.iterdir())
-                            if p.is_dir() and p.name not in CLASSES]
+                            if p.name not in CLASSES
+                            and (p.is_dir() or p.suffix.lower() in IMAGE_EXTS)]
         else:
             print(f"  (skipping unrecognised dir: {child.name})", file=sys.stderr)
+            if unknown is not None and child.name != "__MACOSX":  # Mac ZIP metadata
+                unknown.append(child.name)
     if limit:
         # Stride-sample so a --limit stays balanced across classes instead of
         # taking every image from whichever class sorts first.
@@ -401,7 +406,7 @@ def main() -> int:
 
     issues: list[str] = []
     if unknown:  # skipping them would quietly shrink the holdout
-        issues.append(f"unrecognised folder(s) inside events: {', '.join(unknown)}")
+        issues.append(f"unrecognised holdout entries: {', '.join(unknown)}")
     model = {"version": None, "sha256": None}
     try:
         with args.model_file.open("rb") as f:

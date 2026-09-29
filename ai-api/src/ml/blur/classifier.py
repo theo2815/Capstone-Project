@@ -169,7 +169,9 @@ class BlurClassifier:
         downscale undersamples and manufactures high-frequency edges. Those fake
         edges make blurry photos read as `sharp`, the one error the cull must not
         make. Measured on 1057 labelled val images: blurry-called-sharp 10 -> 4,
-        accuracy 97.45% -> 98.30%, with sharp-called-blurry staying at 0.
+        accuracy 97.45% -> 98.30%, with sharp-called-blurry staying at 0. (That
+        historical split shares shoots with training, so these compare resizes;
+        they are not field accuracy.)
 
         The C++ `classify_preprocess` is deliberately NOT used here. It is also
         bilinear, so it aliases the same way, and it is not actually faster

@@ -96,7 +96,7 @@ def _rows(output: Path) -> list[dict]:
 def test_one_camera_day_never_straddles_the_split(tmp_path: Path) -> None:
     source = _sources(tmp_path)
     for i in range(10):
-        _jpeg(source / "Sharp event photos" / f"frame-{i}.jpg", "Canon EOS R6",
+        _jpeg(source / "Sharp_images" / f"frame-{i}.jpg", "Canon EOS R6",
               "2026:09:14 05:10:00", 10 * i)
     _filler(source)
     prepare_dataset(source, tmp_path / "clean")
@@ -173,9 +173,10 @@ def test_validation_lists_the_events_it_holds(tmp_path: Path) -> None:
     assert _manifest(tmp_path / "clean")["validation_events"] == held
 
 
-def test_misnamed_event_blur_photo_fails_loudly(tmp_path: Path) -> None:
+@pytest.mark.parametrize("folder", ["Event motion", "Sharp event photos"])
+def test_misnamed_event_photo_fails_loudly(tmp_path: Path, folder: str) -> None:
     source = _sources(tmp_path)
-    (source / "Event motion" / "Cebu_Run__IMG_1.jpg").write_bytes(b"misnamed")
+    (source / folder / "Cebu_Run__IMG_1.jpg").write_bytes(b"misnamed")
     _filler(source)
     with pytest.raises(ValueError, match="<event-id>__"):
         prepare_dataset(source, tmp_path / "clean")
@@ -196,3 +197,16 @@ def test_event_name_beats_other_evidence_for_the_same_photo(tmp_path: Path) -> N
         prepare_dataset(source, output, groups_file)
         row = next(r for r in _rows(output) if r["sha256"] == digest)
         assert row["group_id"] == "event:run-a"
+
+
+def test_a_class_with_no_validation_photos_fails_loudly(tmp_path: Path) -> None:
+    # Ultralytics numbers val classes by the folders it finds, so a missing class
+    # folder would silently relabel the rest of validation.
+    source = _sources(tmp_path)
+    for i in range(10):
+        (source / "Sharp_images" / f"other-{i}.jpg").write_bytes(f"sharp {i}".encode())
+        _jpeg(source / "motion_blurred" / f"staged-{i}.jpg", "Canon EOS R10",
+              "2026:03:04 20:00:00", 10 * i)
+    with pytest.raises(ValueError, match="no motion_blurred"):
+        prepare_dataset(source, tmp_path / "clean")
+    assert not (tmp_path / "clean").exists()
