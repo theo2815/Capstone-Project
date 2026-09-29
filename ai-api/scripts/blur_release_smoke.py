@@ -39,6 +39,14 @@ async def run(smoke_only: bool) -> None:
             if not math.isfinite(value) or not 0 <= value <= 1:
                 raise RuntimeError(f"{name} must be set to a number from 0 to 1")
             limits[name] = str(value)
+        for name in ("BLUR_MIN_SHARP", "BLUR_MIN_BLUR", "BLUR_MIN_EVENTS"):
+            try:
+                value = int(os.environ[name])
+            except (KeyError, ValueError):
+                raise RuntimeError(f"{name} must be set to a whole number of at least 1") from None
+            if value < 1:
+                raise RuntimeError(f"{name} must be set to a whole number of at least 1")
+            limits[name] = str(value)
 
     desktop = secrets.token_urlsafe(32)
     operator = secrets.token_urlsafe(32)
@@ -113,7 +121,10 @@ async def run(smoke_only: bool) -> None:
                  "--url", base, "--report-json", "/reports/blur-gate-report.json",
                  "--min-accuracy", limits["BLUR_MIN_ACCURACY"],
                  "--max-miss-rate", limits["BLUR_MAX_MISS_RATE"],
-                 "--max-overcull-rate", limits["BLUR_MAX_OVERCULL_RATE"]],
+                 "--max-overcull-rate", limits["BLUR_MAX_OVERCULL_RATE"],
+                 "--min-sharp", limits["BLUR_MIN_SHARP"],
+                 "--min-blur", limits["BLUR_MIN_BLUR"],
+                 "--min-events", limits["BLUR_MIN_EVENTS"]],
                 env=env, capture_output=True, text=True, check=False,
             )
             report = json.loads(Path("/reports/blur-gate-report.json").read_text(encoding="utf-8"))

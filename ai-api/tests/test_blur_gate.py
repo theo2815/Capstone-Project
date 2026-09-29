@@ -286,3 +286,125 @@ async def test_release_smoke_rejects_missing_approved_limits_before_db(tmp_path,
     monkeypatch.setattr(blur_release_smoke.asyncpg, "connect", no_database)
     with pytest.raises(RuntimeError, match="BLUR_MIN_ACCURACY"):
         await blur_release_smoke.run(False)
+
+
+def _nested(tmp_path, layout):
+    """layout {event: {label: count}} -> holdout/<event>/<label>/<k>.jpg; bytes name the file."""
+    root = tmp_path / "holdout"
+    for event, classes in layout.items():
+        for label, count in classes.items():
+            folder = root / event / label
+            folder.mkdir(parents=True)
+            for k in range(count):
+                (folder / f"{k}.jpg").write_bytes(f"{event}/{label}/{k}".encode())
+    return root
+
+
+def _gate(tmp_path, monkeypatch, root, predict, *flags):
+    """Run the gate on `root`; `predict(uploaded_bytes) -> class` plays the stream server."""
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"model")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"models": {"blur_classifier": {
+        "artifact_version": "test-model", "sha256": hashlib.sha256(b"model").hexdigest()}}}))
+    report = tmp_path / "report.json"
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def stream(self, *args, files=(), **kwargs):
+            rows = []
+            for index, (_, (name, data, _)) in enumerate(files):
+                label = predict(data)
+                rows.append({"index": index, "filename": name, "predicted_class": label,
+                             "confidence": 0.9,
+                             "probabilities": {c: (0.9 if c == label else 0.1 / 3)
+                                               for c in LABELS}})
+            rows.append({"_summary": True, "total": len(files), "successful": len(files),
+                         "errors": 0, "complete": True})
+
+            class Response:
+                status_code = 200
+
+                def iter_lines(self):
+                    for row in rows:
+                        yield json.dumps(row)
+
+            return nullcontext(Response())
+
+    monkeypatch.setattr(blur_gate.httpx, "Client", Client)
+    monkeypatch.setattr(blur_gate, "resize_bytes", lambda path, *args: path.read_bytes())
+    monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(root), "--model-file", str(model),
+                                      "--model-manifest", str(manifest),
+                                      "--report-json", str(report), *flags])
+    code = blur_gate.main()
+    return code, json.loads(report.read_text())
+
+
+def _truth(data):
+    return data.split(b"|")[0].decode().split("/")[1]
+
+
+def test_nested_events_are_reported_separately(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"dawn-run": {"sharp": 2, "motion_blurred": 1},
+                              "night-run": {"sharp": 2, "defocused_blurred": 1}})
+    code, report = _gate(tmp_path, monkeypatch, root,
+                         lambda d: "defocused_blurred" if d == b"dawn-run/sharp/0" else _truth(d))
+    assert report["events"]["dawn-run"] == {"sharp": 2, "blur": 1,
+                                            "sharp_overcull": 1, "blur_miss": 0}
+    assert report["events"]["night-run"] == {"sharp": 2, "blur": 1,
+                                             "sharp_overcull": 0, "blur_miss": 0}
+    assert code != 0 and report["status"] == "FAIL"
+
+
+def test_blur_subclass_confusion_passes_binary_gate_without_all_subclasses(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"event": {"sharp": 2, "motion_blurred": 1, "defocused_blurred": 1}})
+    code, report = _gate(tmp_path, monkeypatch, root,
+                         lambda d: "defocused_blurred" if b"motion" in d else _truth(d),
+                         "--min-accuracy", "1.0", "--max-overcull-rate", "0")
+    assert code == 0 and report["status"] == "PASS"
+    assert report["rates"]["binary_accuracy"] == 1.0
+    assert report["rates"]["accuracy"] == 0.75
+    assert report["coverage"]["defocused_object_portrait"] == 0
+
+
+def test_release_minimums_fail_a_small_holdout(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"event": {"sharp": 2, "motion_blurred": 2}})
+    code, report = _gate(tmp_path, monkeypatch, root, _truth,
+                         "--min-sharp", "3", "--min-blur", "2", "--min-events", "1")
+    assert code != 0
+    assert "below release minimums: 2 sharp, 2 blurry, 1 events" in report["issues"]
+
+
+def test_wilson_interval_matches_reference_values():
+    lo, hi = blur_gate.wilson(0, 150)
+    assert lo == 0.0 and 0.0249 < hi < 0.0251
+    lo, hi = blur_gate.wilson(5, 500)
+    assert 0.0042 < lo < 0.0044 and 0.0231 < hi < 0.0233
+    assert blur_gate.wilson(0, 0) is None
+
+
+@pytest.mark.asyncio
+async def test_release_smoke_requires_approved_minimum_counts(tmp_path, monkeypatch):
+    from scripts import blur_release_smoke
+
+    monkeypatch.setenv("BLUR_HOLDOUT_DIR", str(tmp_path))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://unused")
+    for name in ("BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE"):
+        monkeypatch.setenv(name, "0.02")
+    for name in ("BLUR_MIN_SHARP", "BLUR_MIN_BLUR", "BLUR_MIN_EVENTS"):
+        monkeypatch.delenv(name, raising=False)
+
+    async def no_database(*_args, **_kwargs):
+        raise AssertionError("release smoke reached the database without approved minimums")
+
+    monkeypatch.setattr(blur_release_smoke.asyncpg, "connect", no_database)
+    with pytest.raises(RuntimeError, match="BLUR_MIN_SHARP"):
+        await blur_release_smoke.run(False)

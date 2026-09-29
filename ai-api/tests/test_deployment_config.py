@@ -45,7 +45,8 @@ def test_release_workflow_forwards_approved_limits_into_smoke_container():
                    if "blur_release_smoke.py" in line)
     args = shlex.split(command)
     forwarded = {args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-e"}
-    assert {"BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE"} <= forwarded
+    assert {"BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE",
+            "BLUR_MIN_SHARP", "BLUR_MIN_BLUR", "BLUR_MIN_EVENTS"} <= forwarded
 
 
 PROD_COMPOSE = PROJECT_ROOT / "docker-compose.prod.yml"
