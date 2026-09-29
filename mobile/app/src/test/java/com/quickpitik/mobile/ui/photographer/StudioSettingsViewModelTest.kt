@@ -125,6 +125,24 @@ class StudioSettingsViewModelTest {
         vm.metadataDefault.awaitFirst { it.saved == true }
     }
 
+    @Test fun `settings re-entry refreshes a clean metadata default but preserves an unsaved draft`() {
+        val path = "/api/v1/me/photographer/metadata-settings"
+        route("GET $path") { ok("""{"metadataPublicByDefault":false}""") }
+        val vm = model()
+        vm.metadataDefault.awaitFirst { it.saved == false }
+        route("GET $path") { ok("""{"metadataPublicByDefault":true}""") }
+        vm.fetchSettings()
+        vm.metadataDefault.awaitFirst { it.saved == true }
+        assertEquals(2, count("GET", path))
+
+        vm.setMetadataDefaultDraft(false)
+        route("GET $path") { ok("""{"metadataPublicByDefault":false}""") }
+        vm.fetchSettings()
+        assertEquals(true, vm.metadataDefault.value.saved)
+        assertEquals(false, vm.metadataDefault.value.draft)
+        assertEquals(2, count("GET", path))
+    }
+
     @Test fun `old metadata response cannot hydrate a new account`() {
         val path = "/api/v1/me/photographer/metadata-settings"
         route("GET $path") { ok("""{"metadataPublicByDefault":true}""").setBodyDelay(300, TimeUnit.MILLISECONDS) }
