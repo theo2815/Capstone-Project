@@ -10,6 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -700,8 +702,8 @@ internal fun MetadataToggleCard(
                 GhostCta("Retry metadata visibility", onRetry)
             }
             else -> {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !state.saving) { onChange(state.draft != true) }) {
-                    Checkbox(checked = state.draft == true, onCheckedChange = if (state.saving) null else onChange)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = state.draft == true, enabled = !state.saving, role = Role.Checkbox, onValueChange = onChange)) {
+                    Checkbox(checked = state.draft == true, onCheckedChange = null)
                     Text(label, style = Typography.bodyMedium, color = Ink, modifier = Modifier.weight(1f))
                 }
                 Text(help, style = Typography.bodyMedium, color = Slate)
