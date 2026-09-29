@@ -32,7 +32,13 @@ class PhotoMetadataRepository(private val session: SessionManager) {
     suspend fun setEventVisibility(eventId: String, value: Boolean): EventMetadataVisibilityDto =
         owned { api.setEventMetadataVisibility(it, eventId, EventMetadataVisibilityDto(value)).toResult("Could not save metadata visibility").getOrThrow() }
 
-    suspend fun getPhotoMetadata(photoId: String, owner: Boolean): PhotoMetadataDto =
-        if (owner) owned { api.getOwnedPhotoMetadata(it, photoId).toResult("Could not load photo metadata").getOrThrow() }
-        else api.getPublicPhotoMetadata(photoId).toResult("Could not load photo metadata").getOrThrow()
+    suspend fun getPhotoMetadata(photoId: String, owner: Boolean): PhotoMetadataDto {
+        if (owner) return owned { api.getOwnedPhotoMetadata(it, photoId).toResult("Could not load photo metadata").getOrThrow() }
+        val backend = RetrofitClient.BASE_URL
+        val snapshot = session.getAccessToken()?.let { session.authSnapshot(it) ?: error("Session changed") }
+        val result = api.getPublicPhotoMetadata(photoId).toResult("Could not load photo metadata").getOrThrow()
+        check(backend == RetrofitClient.BASE_URL &&
+            (snapshot?.let(session::isCurrent) ?: (session.getAccessToken() == null))) { "Session changed" }
+        return result
+    }
 }

@@ -7,17 +7,22 @@ import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.ok
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import retrofit2.HttpException
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 class PhotoMetadataRepositoryTest {
@@ -120,6 +125,29 @@ class PhotoMetadataRepositoryTest {
             PhotoDto::class.java,
         )
         assertNull(photo.metadataAccess)
+    }
+
+    @Test fun `public metadata rejects a response from a previous session`() = runBlocking {
+        session.saveSession("first", "RUNNER", "Juan", "juan@x.com")
+        backend.enqueue(ok(METADATA).setBodyDelay(2, TimeUnit.SECONDS))
+        val pending = async(Dispatchers.IO) { runCatching { repo.getPhotoMetadata("photo-1", owner = false) } }
+        backend.server.takeRequest()
+        session.saveSession("second", "RUNNER", "Ana", "ana@x.com")
+        assertTrue(pending.await().exceptionOrNull() is IllegalStateException)
+    }
+
+    @Test fun `public metadata rejects a response from a previous backend`() = runBlocking {
+        session.clearSession()
+        backend.enqueue(ok(METADATA).setBodyDelay(2, TimeUnit.SECONDS))
+        val pending = async(Dispatchers.IO) { runCatching { repo.getPhotoMetadata("photo-1", owner = false) } }
+        backend.server.takeRequest()
+        val other = MockWebServer().apply { start() }
+        try {
+            assertTrue(RetrofitClient.setBaseUrl(other.url("/").toString()))
+            assertTrue(pending.await().exceptionOrNull() is IllegalStateException)
+        } finally {
+            other.shutdown()
+        }
     }
 
     private companion object {
