@@ -229,9 +229,10 @@ see `scripts/blur_gate.py --help`); the gate reports each event separately and
 passes on sharp-vs-blurry results. Missing artifacts fail. Set these approved
 limits in that environment's variables: `BLUR_MIN_ACCURACY`,
 `BLUR_MAX_MISS_RATE`, `BLUR_MAX_OVERCULL_RATE`, `BLUR_MAX_PHOTOMETRIC_FLIP_RATE`
-(0.02: the most decisions that brighter, darker or grayscale copies may
-change), and the holdout floor `BLUR_MIN_SHARP`, `BLUR_MIN_BLUR`,
-`BLUR_MIN_EVENTS` (500, 150, 3). Missing or invalid limits fail before the
+(the most decisions that brighter, darker or grayscale copies may change), and
+the holdout floor `BLUR_MIN_SHARP`, `BLUR_MIN_BLUR`, `BLUR_MIN_EVENTS`. The
+approved values are the owner decisions in the vault blur recovery plan
+(2026-09-29, D3 and D5). Missing or invalid limits fail before the
 release smoke creates database keys. It migrates disposable
 PostgreSQL/pgvector, starts Redis and the built image with async routes disabled,
 checks real inference, verifies batch/mega requests return `BLUR_ASYNC_DISABLED`,

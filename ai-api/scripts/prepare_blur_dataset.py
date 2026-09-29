@@ -1,7 +1,9 @@
 """Build a content-grouped blur ImageFolder split without changing source photos.
 
-Optional --groups CSV columns: sha256,group_id. Assign one group_id to all
-captures from an event or burst; hashes without metadata remain independent.
+Photos are grouped by their `<event-id>__` name, public-dataset scene, or camera
++ capture day (shoot_group), and each group stays on one side of the split.
+Optional --groups CSV columns: sha256,group_id; a CSV group replaces the automatic
+one for the hashes it lists, except that an event name always wins.
 Conflicting labels are excluded for review. Training adds augmentation later.
 """
 
@@ -31,9 +33,10 @@ CLASS_DIRS: dict[str, str | list[str]] = {
     "motion_blurred": ["motion_blurred", "Event motion", "Synthetic event motion"],
 }
 EVENT_PREFIX = re.compile(r"^([a-z0-9][a-z0-9-]*)__")
-# Real event blur must carry its event name, or its camera-day group could split
-# the event across train/val (synthesize_event_blur checks the sharp folder).
-EVENT_BLUR_DIRS = {"Event subject missed focus", "Event defocus", "Event motion"}
+# Event photos must carry their event name, or a camera-day group could split the
+# event across train/val.
+EVENT_DIRS = {"Sharp event photos", "Event subject missed focus", "Event defocus",
+              "Event motion"}
 PUBLIC_SCENE = re.compile(r"^(\d+_[A-Z0-9-]+)_[SFM]\.", re.IGNORECASE)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
 RANDOM_SEED = 42
@@ -86,7 +89,7 @@ def prepare_dataset(
                 raise FileNotFoundError(directory)
             for path in sorted(directory.iterdir()):
                 if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
-                    if folder in EVENT_BLUR_DIRS and not EVENT_PREFIX.match(path.name):
+                    if folder in EVENT_DIRS and not EVENT_PREFIX.match(path.name):
                         raise ValueError(f"{folder}/{path.name}: event photos must be named "
                                          "'<event-id>__<original name>'")
                     with path.open("rb") as stream:
@@ -160,6 +163,14 @@ def prepare_dataset(
         if use_val:
             validation.update(group_counts)
         remaining.subtract(group_counts)
+    # Ultralytics numbers val classes by the folders it finds, so a class with no
+    # validation photos would silently relabel every class after it.
+    empty = sorted(label for label, target in targets.items()
+                   if target and not validation[label])
+    if empty:
+        raise ValueError(f"validation has no {', '.join(empty)} photos: no group holding "
+                         f"that class fits the {VAL_RATIO:.0%} validation share; add "
+                         "smaller shoots or events of it")
     # Class counts alone can't show whether validation holds any real event: whole
     # events are big, so they often don't fit once small public groups fill it.
     validation_events = sorted(name for name, members in grouped.items()

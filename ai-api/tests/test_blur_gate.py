@@ -473,7 +473,18 @@ def test_misnamed_class_folder_inside_an_event_fails_a_release_run(tmp_path, mon
     (root / "event" / "motion_blur" / "0.jpg").write_bytes(b"event/motion_blurred/9")
     code, report = _gate(tmp_path, monkeypatch, root, _truth, "--max-overcull-rate", "0")
     assert code != 0 and report["status"] == "FAIL"
-    assert "unrecognised folder(s) inside events: event/motion_blur" in report["issues"]
+    assert "unrecognised holdout entries: event/motion_blur" in report["issues"]
+
+
+def test_misnamed_event_folder_and_loose_photo_fail_a_release_run(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"event": {"sharp": 2, "motion_blurred": 2}})
+    (root / "ev-b" / "sharpp").mkdir(parents=True)  # no real class folder: whole event skipped
+    (root / "ev-b" / "sharpp" / "0.jpg").write_bytes(b"ev-b/sharp/0")
+    (root / "event" / "stray.jpg").write_bytes(b"event/sharp/9")
+    (root / "__MACOSX").mkdir()  # ZIP metadata from a Mac is not a holdout event
+    code, report = _gate(tmp_path, monkeypatch, root, _truth, "--max-overcull-rate", "0")
+    assert code != 0 and report["status"] == "FAIL"
+    assert "unrecognised holdout entries: ev-b, event/stray.jpg" in report["issues"]
 
 
 @pytest.mark.parametrize("manifest", [None, "other-model"])
