@@ -81,7 +81,8 @@ class Settings(BaseSettings):
     # Holding preprocess constant and varying only this value:
     #   640  -> 4/698 blurry called sharp
     #   1280 -> 7/698 blurry called sharp
-    # (End-to-end served accuracy is 98.30% — `python scripts/blur_gate.py`.)
+    # (Measured on the historical val split, which shares shoots with training:
+    # a decode-size comparison, not field accuracy — see docs/ai-system-overview.md.)
     # Shared by /blur/classify, /blur/classify/stream and the blur_classify_batch
     # worker — keep all three on one value or they will disagree on the same
     # photo. Distinct from MAX_INFERENCE_DIMENSION (1280), which is sized for bib

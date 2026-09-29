@@ -88,7 +88,7 @@ Full integration contracts live in `ai-api/docs/integration-architecture.md` and
 
 ## AI Capabilities (ai-api)
 
-- **Blur Detection** — Laplacian variance + FFT analysis, and a CNN classifier (YOLOv8n-cls, 98.68% accuracy) for 4-class blur type classification.
+- **Blur Detection** — Laplacian variance + FFT analysis, and a CNN classifier (YOLOv8n-cls) for 4-class blur type classification. Real-event accuracy is not yet qualified; see `ai-api/docs/ai-system-overview.md`.
 - **Face Recognition** — InsightFace (RetinaFace + ArcFace) with pgvector cosine similarity search.
 - **Bib Number OCR** — PaddleOCR (PP-OCRv5) with optional YOLOv8 bib region detection.
 - **Async Batch Processing** — Celery + Redis for processing 100+ images per request.
