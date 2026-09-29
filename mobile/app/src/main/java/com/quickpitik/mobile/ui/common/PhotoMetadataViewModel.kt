@@ -8,10 +8,13 @@ import com.quickpitik.mobile.data.remote.PhotoMetadataDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.repository.PhotoMetadataRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 
@@ -26,14 +29,24 @@ sealed interface PhotoMetadataState {
     data object Denied : PhotoMetadataState
 }
 
-class PhotoMetadataViewModel(application: Application) : AndroidViewModel(application) {
+class PhotoMetadataViewModel @JvmOverloads constructor(
+    application: Application,
+    private val load: suspend (String, Boolean) -> PhotoMetadataDto =
+        PhotoMetadataRepository(SessionManager.getInstance(application))::getPhotoMetadata,
+) : AndroidViewModel(application) {
     private val session = SessionManager.getInstance(application)
-    private val repository = PhotoMetadataRepository(session)
     private val _state = MutableStateFlow<PhotoMetadataState>(PhotoMetadataState.Closed)
     val state: StateFlow<PhotoMetadataState> = _state
     @Volatile private var selected: Pair<String, String>? = null
     private var job: Job? = null
     @Volatile private var request = 0
+
+    init {
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            combine(session.authChanges, RetrofitClient.backendChanges) { auth, backend -> auth to backend }
+                .drop(1).collect { clear() }
+        }
+    }
 
     fun selectRemote(photoId: String, access: String) {
         clear()
@@ -70,7 +83,7 @@ class PhotoMetadataViewModel(application: Application) : AndroidViewModel(applic
         }
         job = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = repository.getPhotoMetadata(photoId, owner = access == "owner")
+                val result = load(photoId, access == "owner")
                 publish(when (result.status.lowercase()) {
                     "ready" -> PhotoMetadataState.Data(result)
                     "pending" -> PhotoMetadataState.Pending(result)
