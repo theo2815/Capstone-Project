@@ -127,7 +127,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         }
         val begin = try {
             RetrofitClient.apiService.beginDirectUpload(bearer(owner), record.eventId,
-                DirectUploadBeginRequest(hash, "image/jpeg", file.length()))
+                DirectUploadBeginRequest(hash, "image/jpeg", file.length(), record.originalFilename ?: file.name))
         } catch (e: HttpException) {
             if (e.code() == 404) return null
             throw e

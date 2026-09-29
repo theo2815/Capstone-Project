@@ -433,6 +433,7 @@ data class DirectUploadBeginRequest(
     val contentHash: String,
     val contentType: String,
     val sizeBytes: Long,
+    val originalFilename: String? = null,
 )
 
 data class DirectUploadBeginResponse(
