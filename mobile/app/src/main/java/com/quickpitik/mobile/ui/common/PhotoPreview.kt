@@ -33,7 +33,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import coil.compose.AsyncImage
@@ -121,6 +124,7 @@ data class PhotoPreviewData(
     val couponPrice: Double? = null,
     // LocalReview mode only — one line under the frame (filename · sync state).
     val caption: String? = null,
+    val metadataAccess: String? = null,
 )
 
 // PhotoPreview has four modes. Browse is the runner buy-flow (Add to cart /
@@ -132,6 +136,13 @@ data class PhotoPreviewData(
 // LocalReview: the photographer inspecting a frame still on the phone (the
 // Capture tab's sync strip) — imageUrl is a file:// URI, no server, no commerce.
 enum class PhotoPreviewMode { Browse, OwnerReview, Owned, LocalReview }
+
+internal fun metadataAccessFor(mode: PhotoPreviewMode, photo: PhotoPreviewData): String? =
+    when (mode) {
+        PhotoPreviewMode.OwnerReview -> "owner"
+        PhotoPreviewMode.LocalReview -> null
+        else -> photo.metadataAccess?.takeIf { it == "owner" || it == "public" }
+    }
 
 fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewData(
     id = id,
@@ -145,6 +156,7 @@ fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewD
     couponCode = couponCode,
     couponPercentOff = couponPercentOff,
     couponPrice = couponPrice,
+    metadataAccess = metadataAccess,
 )
 
 fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
@@ -258,6 +270,7 @@ fun PhotoPreview(
     // (ViewMode): the cart endpoints are RUNNER-role-gated server-side, so the
     // Add/Buy CTAs are hidden — price + byline stay.
     commerceEnabled: Boolean = true,
+    metadataViewModel: PhotoMetadataViewModel = viewModel(),
 ) {
     if (photos.isEmpty()) {
         onClose()
@@ -265,6 +278,25 @@ fun PhotoPreview(
     }
     val safeIndex = currentIndex.coerceIn(0, photos.size - 1)
     val activePhoto = photos[safeIndex]
+    val metadataAccess = metadataAccessFor(mode, activePhoto)
+    val metadataState by metadataViewModel.state.collectAsState()
+    var metadataOpen by remember { mutableStateOf(false) }
+    var openedPhotoId by remember { mutableStateOf<String?>(null) }
+    var deniedPhotoId by remember { mutableStateOf<String?>(null) }
+    fun closeMetadata() {
+        metadataOpen = false
+        openedPhotoId = null
+        metadataViewModel.clear()
+    }
+    LaunchedEffect(activePhoto.id, metadataAccess) {
+        closeMetadata()
+        deniedPhotoId = null
+    }
+    LaunchedEffect(metadataState) {
+        if (metadataState == PhotoMetadataState.Denied) deniedPhotoId = openedPhotoId
+        if (metadataOpen && metadataState == PhotoMetadataState.Closed) metadataOpen = false
+    }
+    DisposableEffect(metadataViewModel) { onDispose { metadataViewModel.clear() } }
     val photoInCart = isInCart(activePhoto)
     val hasMultiple = photos.size > 1
     val canPrev = safeIndex > 0
@@ -569,6 +601,19 @@ fun PhotoPreview(
                         }
                     }
 
+                    if (metadataAccess != null && deniedPhotoId != activePhoto.id) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        GhostCta(
+                            text = "Show Metadata",
+                            onClick = {
+                                metadataOpen = true
+                                openedPhotoId = activePhoto.id
+                                metadataViewModel.selectRemote(activePhoto.id, metadataAccess)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+
                     // Gesture hint — invisible gestures don't ship.
                     if (activePhoto.imageUrl != null) {
                         Spacer(modifier = Modifier.height(12.dp))
@@ -582,6 +627,14 @@ fun PhotoPreview(
                     }
                 }
             }
+        }
+        if (metadataOpen) {
+            PhotoMetadataSheet(
+                state = metadataState,
+                onClose = ::closeMetadata,
+                onRefresh = metadataViewModel::refresh,
+                secure = mode == PhotoPreviewMode.Browse,
+            )
         }
     }
 }

@@ -47,6 +47,16 @@ class PhotoMetadataViewModelTest {
         assertEquals(2, backend.server.requestCount)
     }
 
+    @Test fun `unavailable preserves file facts without camera fields`() {
+        signInAs("RUNNER")
+        backend.enqueue(ok("""{"photoId":"a","status":"unavailable","originalFilename":"race.jpg","fileSizeBytes":1572864,"fields":null}"""))
+        val vm = viewModel()
+        vm.selectRemote("a", "public")
+        val state = vm.state.awaitFirst { it is PhotoMetadataState.Unavailable } as PhotoMetadataState.Unavailable
+        assertEquals("race.jpg", state.metadata.originalFilename)
+        assertNull(state.metadata.fields)
+    }
+
     @Test fun `old photo response cannot replace newly selected photo`() {
         signInAs("RUNNER")
         backend.enqueue(ok(metadata("a", model = "old")).setBodyDelay(2, TimeUnit.SECONDS), ok(metadata("b", model = "new")))
