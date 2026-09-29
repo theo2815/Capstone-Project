@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.*
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -151,6 +152,7 @@ class PhotoUploadWorkerTest {
         filePath: String = "/definitely/not/a/real/file.jpg",
         status: String = "QUEUED",
         retryCount: Int = 0,
+        originalFilename: String? = null,
     ): Long = db.uploadQueueDao().insertRecord(
         UploadRecord(
             filePath = filePath,
@@ -159,6 +161,7 @@ class PhotoUploadWorkerTest {
             captureTimestamp = 1_700_000_000_000L,
             uploadStatus = status,
             retryCount = retryCount,
+            originalFilename = originalFilename,
         )
     )
 
@@ -294,6 +297,33 @@ class PhotoUploadWorkerTest {
         assertTrue(paths.any { it.startsWith("PUT /r2/") })
         assertTrue(paths.any { it.endsWith("/photos/direct/commit") })
         assertTrue(paths.none { it == "POST /api/v1/me/photographer/events/$EVENT/photos" })
+    }
+
+    @Test
+    fun `direct begin sends the retained camera filename`() = runTest {
+        signIn()
+        val http = startDirectServer()
+        enqueue(filePath = realJpeg().absolutePath, originalFilename = "IMG_0042.JPG")
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+
+        val begin = http.takeRequest()
+        assertEquals("/api/v1/me/photographer/events/$EVENT/photos/direct", begin.path)
+        assertEquals("IMG_0042.JPG", JSONObject(begin.body.readUtf8()).getString("originalFilename"))
+    }
+
+    @Test
+    fun `direct begin falls back to local file name when record name is absent`() = runTest {
+        signIn()
+        val http = startDirectServer()
+        val file = realJpeg()
+        enqueue(filePath = file.absolutePath)
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+
+        val begin = http.takeRequest()
+        assertEquals("/api/v1/me/photographer/events/$EVENT/photos/direct", begin.path)
+        assertEquals(file.name, JSONObject(begin.body.readUtf8()).getString("originalFilename"))
     }
 
     @Test
