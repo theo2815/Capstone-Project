@@ -16,6 +16,8 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 internal fun rewriteLoopbackUrl(url: HttpUrl, backend: HttpUrl): HttpUrl {
     if (url.host !in setOf("localhost", "127.0.0.1")) return url
@@ -45,6 +47,8 @@ object RetrofitClient {
     // the getters below — is unchanged.
     @Volatile
     private var _baseUrl: String = DEFAULT_BASE_URL
+    private val _backendChanges = MutableStateFlow(DEFAULT_BASE_URL)
+    val backendChanges: StateFlow<String> = _backendChanges
 
     val BASE_URL: String
         get() = _baseUrl
@@ -96,6 +100,7 @@ object RetrofitClient {
         if (BuildConfig.DEBUG) {
             readPersistedBaseUrl()?.let { _baseUrl = it }
         }
+        _backendChanges.value = _baseUrl
     }
 
     private fun prefs() =
@@ -118,6 +123,7 @@ object RetrofitClient {
         if (!BuildConfig.DEBUG) return false
         val normalized = normalizeBaseUrl(raw) ?: return false
         _baseUrl = normalized
+        _backendChanges.value = normalized
         prefs().edit().putString(KEY_BASE_URL, normalized).apply()
         return true
     }
@@ -126,6 +132,7 @@ object RetrofitClient {
     fun resetBaseUrl() {
         if (!BuildConfig.DEBUG) return
         _baseUrl = DEFAULT_BASE_URL
+        _backendChanges.value = DEFAULT_BASE_URL
         prefs().edit().remove(KEY_BASE_URL).apply()
     }
 

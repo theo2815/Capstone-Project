@@ -3,12 +3,18 @@ package com.quickpitik.mobile.ui.common
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.PhotoMetadataDto
+import com.quickpitik.mobile.data.remote.PhotoMetadataFieldsDto
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
 import com.quickpitik.mobile.support.signInAs
-import kotlinx.coroutines.runBlocking
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
 import okhttp3.mockwebserver.MockResponse
 import org.junit.Assert.*
 import org.junit.Rule
@@ -90,11 +96,53 @@ class PhotoMetadataViewModelTest {
         backend.server.takeRequest(5, TimeUnit.SECONDS)
         session.clearSession()
         Thread.sleep(2200)
-        assertFalse(vm.state.value is PhotoMetadataState.Data)
+        assertEquals(PhotoMetadataState.Closed, vm.state.value)
         vm.selectRemote("b", "public")
         backend.server.takeRequest(5, TimeUnit.SECONDS)
         assertTrue(RetrofitClient.setBaseUrl("http://127.0.0.1:12345/"))
         Thread.sleep(2200)
-        assertFalse(vm.state.value is PhotoMetadataState.Data)
+        assertEquals(PhotoMetadataState.Closed, vm.state.value)
+    }
+
+    @Test fun `logout clears metadata already displayed`() {
+        val session = signInAs("RUNNER")
+        backend.enqueue(ok(metadata("a")))
+        val vm = viewModel()
+        vm.selectRemote("a", "public")
+        vm.state.awaitFirst { it is PhotoMetadataState.Data }
+        session.clearSession()
+        assertEquals(PhotoMetadataState.Closed, vm.state.awaitFirst { it == PhotoMetadataState.Closed })
+    }
+
+    @Test fun `backend switch clears metadata already displayed`() {
+        signInAs("RUNNER")
+        backend.enqueue(ok(metadata("a")))
+        val vm = viewModel()
+        vm.selectRemote("a", "public")
+        vm.state.awaitFirst { it is PhotoMetadataState.Data }
+        assertTrue(RetrofitClient.setBaseUrl("http://127.0.0.1:12345/"))
+        assertEquals(PhotoMetadataState.Closed, vm.state.awaitFirst { it == PhotoMetadataState.Closed })
+    }
+
+    @Test fun `noncooperative canceled response cannot repaint a new photo`() {
+        signInAs("RUNNER")
+        val started = CountDownLatch(1)
+        val completed = CountDownLatch(1)
+        val old = AtomicReference<Continuation<PhotoMetadataDto>>()
+        fun dto(id: String) = PhotoMetadataDto(id, "ready", "$id.jpg", 1024,
+            PhotoMetadataFieldsDto("Canon", id, null, null, null, null, null, null, null, null, null, null, null))
+        val vm = PhotoMetadataViewModel(application) { id, _ ->
+            if (id == "a") suspendCoroutine<PhotoMetadataDto> { continuation -> old.set(continuation); started.countDown() }
+                .also { completed.countDown() }
+            else dto(id)
+        }
+        vm.selectRemote("a", "public")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        vm.selectRemote("b", "public")
+        vm.state.awaitFirst { it is PhotoMetadataState.Data && it.metadata.photoId == "b" }
+        old.get().resume(dto("a"))
+        assertTrue(completed.await(5, TimeUnit.SECONDS))
+        Thread.sleep(100)
+        assertEquals("b", (vm.state.value as PhotoMetadataState.Data).metadata.photoId)
     }
 }

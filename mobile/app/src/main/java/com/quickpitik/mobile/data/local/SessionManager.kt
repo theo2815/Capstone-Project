@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 // THE role check — every "is this a photographer?" branch goes through here.
 // Three call sites used to disagree (equals("PHOTOGRAPHER") in MainActivity vs
@@ -75,6 +77,8 @@ class SessionManager private constructor(context: Context) {
         check(legacy.edit().clear().commit()) { "Could not clear legacy session storage" }
     }
     private var authGeneration = 0L
+    private val _authChanges = MutableStateFlow(0L)
+    val authChanges: StateFlow<Long> = _authChanges
     private val accessTokens = LinkedHashSet<String>()
     data class AuthSession(val owner: String, val generation: Long)
 
@@ -140,6 +144,7 @@ class SessionManager private constructor(context: Context) {
         refreshToken: String? = null,
     ) {
         authGeneration++
+        _authChanges.value = authGeneration
         accessTokens.clear()
         memoryAccessToken = if (secureStorageAvailable) null else token
         memoryRefreshToken = if (secureStorageAvailable) null else refreshToken
@@ -218,6 +223,7 @@ class SessionManager private constructor(context: Context) {
     @Synchronized
     fun clearSession() {
         authGeneration++
+        _authChanges.value = authGeneration
         accessTokens.clear()
         memoryAccessToken = null
         memoryRefreshToken = null
