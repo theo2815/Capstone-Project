@@ -10,10 +10,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -24,7 +26,6 @@ import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.GhostCta
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Line
-import com.quickpitik.mobile.ui.theme.SecureScreen
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.Typography
 import java.text.NumberFormat
@@ -43,8 +44,10 @@ fun PhotoMetadataSheet(
         onDismissRequest = onClose,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Bone,
+        properties = ModalBottomSheetProperties(
+            securePolicy = if (secure) SecureFlagPolicy.SecureOn else SecureFlagPolicy.Inherit,
+        ),
     ) {
-        if (secure) SecureScreen() // ModalBottomSheet owns a second Window.
         Column(
             modifier = Modifier
                 .fillMaxWidth()

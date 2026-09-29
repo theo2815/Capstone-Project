@@ -1,6 +1,7 @@
 package com.quickpitik.mobile.ui.common
 
 import android.app.Application
+import android.view.WindowManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -15,11 +16,17 @@ import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotoMetadataDto
 import com.quickpitik.mobile.data.remote.PhotoMetadataFieldsDto
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.atomic.AtomicInteger
+import okhttp3.ResponseBody.Companion.toResponseBody
+import retrofit2.HttpException
+import retrofit2.Response
+import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 class PhotoMetadataSheetTest {
@@ -71,6 +78,60 @@ class PhotoMetadataSheetTest {
         compose.waitUntil(5000) { vm.state.value == PhotoMetadataState.Closed }
         compose.onNodeWithText("Photo metadata").assertDoesNotExist()
         compose.runOnIdle { assertEquals(2, count.get()) }
+    }
+
+    @Test fun `public denial remains hidden after visiting another photo`() {
+        val index = androidx.compose.runtime.mutableIntStateOf(0)
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val vm = PhotoMetadataViewModel(app) { id, _ ->
+            if (id == "a") throw HttpException(Response.error<PhotoMetadataDto>(404, "".toResponseBody()))
+            PhotoMetadataDto(id, "ready", "$id.jpg", 1024, null)
+        }
+        compose.setContent {
+            PhotoPreview(
+                photos = listOf(
+                    PhotoPreviewData("a", 0.0, null, null, metadataAccess = "public"),
+                    PhotoPreviewData("b", 0.0, null, null, metadataAccess = "public"),
+                ),
+                currentIndex = index.intValue, onClose = {}, onIndexChange = {}, metadataViewModel = vm,
+            )
+        }
+        compose.onNode(hasText("Show Metadata") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(5000) { vm.state.value == PhotoMetadataState.Denied }
+        compose.onNode(hasText("Close metadata") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.runOnIdle { index.intValue = 1 }
+        compose.waitForIdle()
+        compose.onNodeWithText("Show Metadata").assertExists()
+        compose.runOnIdle { index.intValue = 0 }
+        compose.waitForIdle()
+        compose.onNodeWithText("Show Metadata").assertDoesNotExist()
+    }
+
+    @Test fun `Back dismisses only metadata and both Browse windows are secure`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val vm = PhotoMetadataViewModel(app) { id, _ -> PhotoMetadataDto(id, "ready", null, null, null) }
+        compose.setContent {
+            PhotoPreview(
+                photos = listOf(PhotoPreviewData("a", 0.0, null, null, metadataAccess = "public")),
+                currentIndex = 0, onClose = {}, onIndexChange = {}, metadataViewModel = vm,
+            )
+        }
+        compose.waitForIdle()
+        val preview = ShadowDialog.getShownDialogs().last { it.isShowing }
+        assertTrue("preview=${preview.javaClass.name}, window=${System.identityHashCode(preview.window)}, flags=${preview.window!!.attributes.flags}, shown=${ShadowDialog.getShownDialogs().map { it.javaClass.name to it.window?.attributes?.flags }}",
+            preview.window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+        compose.onNode(hasText("Show Metadata") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNodeWithText("Photo metadata").assertExists()
+        compose.waitForIdle()
+        val sheet = ShadowDialog.getShownDialogs().last { it.isShowing }
+        assertFalse(sheet === preview)
+        assertTrue(sheet.window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+        compose.runOnIdle { sheet.onBackPressed() }
+        compose.waitForIdle()
+        compose.onNodeWithText("Photo metadata").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Close preview").assertExists()
+        assertTrue(preview.isShowing)
+        assertTrue(preview.window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
     }
 
     @Test fun `ready sheet matches field order and formats camera date and size`() {

@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -78,7 +79,6 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
 import com.quickpitik.mobile.ui.theme.Bone
-import com.quickpitik.mobile.ui.theme.SecureScreen
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
 import com.quickpitik.mobile.ui.theme.Ink
@@ -282,18 +282,27 @@ fun PhotoPreview(
     val metadataState by metadataViewModel.state.collectAsState()
     var metadataOpen by remember { mutableStateOf(false) }
     var openedPhotoId by remember { mutableStateOf<String?>(null) }
-    var deniedPhotoId by remember { mutableStateOf<String?>(null) }
+    var openedAccess by remember { mutableStateOf<String?>(null) }
+    val deniedAccess = remember { mutableStateMapOf<String, String>() }
     fun closeMetadata() {
         metadataOpen = false
         openedPhotoId = null
+        openedAccess = null
         metadataViewModel.clear()
+    }
+    LaunchedEffect(photos, mode) {
+        val current = photos.associate { it.id to metadataAccessFor(mode, it) }
+        deniedAccess.keys.toList().forEach { id ->
+            if (current[id] != deniedAccess[id]) deniedAccess.remove(id)
+        }
     }
     LaunchedEffect(activePhoto.id, metadataAccess) {
         closeMetadata()
-        deniedPhotoId = null
     }
     LaunchedEffect(metadataState) {
-        if (metadataState == PhotoMetadataState.Denied) deniedPhotoId = openedPhotoId
+        if (metadataState == PhotoMetadataState.Denied && openedPhotoId != null && openedAccess != null) {
+            deniedAccess[openedPhotoId!!] = openedAccess!!
+        }
         if (metadataOpen && metadataState == PhotoMetadataState.Closed) metadataOpen = false
     }
     DisposableEffect(metadataViewModel) { onDispose { metadataViewModel.clear() } }
@@ -342,11 +351,10 @@ fun PhotoPreview(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = true,
             dismissOnClickOutside = true,
+            securePolicy = if (mode == PhotoPreviewMode.Browse) SecureFlagPolicy.SecureOn else SecureFlagPolicy.Inherit,
         ),
     ) {
-        // The Dialog is its own Window: Browse = unpurchased preview, so block
-        // screenshots of it here (the host screen's flag doesn't reach it).
-        if (mode == PhotoPreviewMode.Browse) SecureScreen()
+        // The Dialog owns a Window; Browse's unpurchased photo stays secure there.
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
@@ -601,13 +609,14 @@ fun PhotoPreview(
                         }
                     }
 
-                    if (metadataAccess != null && deniedPhotoId != activePhoto.id) {
+                    if (metadataAccess != null && deniedAccess[activePhoto.id] != metadataAccess) {
                         Spacer(modifier = Modifier.height(12.dp))
                         GhostCta(
                             text = "Show Metadata",
                             onClick = {
                                 metadataOpen = true
                                 openedPhotoId = activePhoto.id
+                                openedAccess = metadataAccess
                                 metadataViewModel.selectRemote(activePhoto.id, metadataAccess)
                             },
                             modifier = Modifier.fillMaxWidth(),
