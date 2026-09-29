@@ -112,6 +112,7 @@ fun PhotographerEventShareScreen(
     val context = LocalContext.current
     val activeState by viewModel.sharePhotosState.collectAsState()
     val trashState by viewModel.trashPhotosState.collectAsState()
+    val metadataVisibility by viewModel.eventMetadataVisibility.collectAsState()
 
     var section by remember(event.id) { mutableStateOf(PhotoSection.Active) }
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
@@ -129,6 +130,7 @@ fun PhotographerEventShareScreen(
 
     LaunchedEffect(event.id) {
         viewModel.fetchSharePhotos(event.id)
+        viewModel.loadEventMetadataVisibility(event.id)
     }
     // The trash list is only fetched when its tab is first opened.
     LaunchedEffect(section, event.id) {
@@ -288,6 +290,17 @@ fun PhotographerEventShareScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Stats
+                MetadataToggleCard(
+                    state = metadataVisibility.takeIf { it.eventId == event.id } ?: MetadataToggleState(eventId = event.id),
+                    label = "Show metadata publicly for my photos",
+                    help = "Only your photos in this event. You can always view your own metadata.",
+                    saveLabel = "Save metadata visibility",
+                    onChange = viewModel::setEventMetadataVisibilityDraft,
+                    onSave = viewModel::saveEventMetadataVisibility,
+                    onCancel = viewModel::cancelEventMetadataVisibility,
+                    onRetry = { viewModel.loadEventMetadataVisibility(event.id) },
+                )
+                Spacer(modifier = Modifier.height(24.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(24.dp)

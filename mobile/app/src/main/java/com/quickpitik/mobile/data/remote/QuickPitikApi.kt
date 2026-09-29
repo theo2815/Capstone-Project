@@ -15,6 +15,24 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface QuickPitikApi {
+    @GET("api/v1/me/photographer/metadata-settings")
+    suspend fun getMetadataSettings(@Header("Authorization") token: String): ApiResponseEnvelope<MetadataSettingsDto>
+
+    @PUT("api/v1/me/photographer/metadata-settings")
+    suspend fun setMetadataSettings(@Header("Authorization") token: String, @Body request: MetadataSettingsDto): ApiResponseEnvelope<MetadataSettingsDto>
+
+    @GET("api/v1/me/photographer/events/{eventId}/metadata-visibility")
+    suspend fun getEventMetadataVisibility(@Header("Authorization") token: String, @Path("eventId") eventId: String): ApiResponseEnvelope<EventMetadataVisibilityDto>
+
+    @PUT("api/v1/me/photographer/events/{eventId}/metadata-visibility")
+    suspend fun setEventMetadataVisibility(@Header("Authorization") token: String, @Path("eventId") eventId: String, @Body request: EventMetadataVisibilityDto): ApiResponseEnvelope<EventMetadataVisibilityDto>
+
+    @GET("api/v1/me/photographer/photos/{photoId}/metadata")
+    suspend fun getOwnedPhotoMetadata(@Header("Authorization") token: String, @Path("photoId") photoId: String): ApiResponseEnvelope<PhotoMetadataDto>
+
+    @GET("api/v1/public/photos/{photoId}/metadata")
+    suspend fun getPublicPhotoMetadata(@Path("photoId") photoId: String): ApiResponseEnvelope<PhotoMetadataDto>
+
     @POST("api/v1/auth/login")
     suspend fun login(@Body request: LoginRequest): ApiResponseEnvelope<AuthResponse>
 
@@ -390,7 +408,8 @@ interface QuickPitikApi {
         @Path("handle") handle: String,
         @Path("slug") slug: String,
         @Query("offset") offset: Int = 0,
-        @Query("limit") limit: Int = 100
+        @Query("limit") limit: Int = 100,
+        @Header("Authorization") token: String? = null
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
 
     // "Whose photo is this?" reverse attribution (V42) — public, multipart, no
