@@ -833,6 +833,7 @@ class MainActivity : ComponentActivity() {
                                         PhotographerPublicProfileScreen(
                                             handle = brandSettings?.handle,
                                             viewModel = publicVm,
+                                            ownerReview = true,
                                             onBack = { navController.popBackStack() },
                                             // "|| brandSettings == null": the fetch
                                             // starts in a LaunchedEffect AFTER the

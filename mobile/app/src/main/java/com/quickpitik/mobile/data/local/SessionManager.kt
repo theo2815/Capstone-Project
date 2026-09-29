@@ -144,7 +144,6 @@ class SessionManager private constructor(context: Context) {
         refreshToken: String? = null,
     ) {
         authGeneration++
-        _authChanges.value = authGeneration
         accessTokens.clear()
         memoryAccessToken = if (secureStorageAvailable) null else token
         memoryRefreshToken = if (secureStorageAvailable) null else refreshToken
@@ -160,6 +159,7 @@ class SessionManager private constructor(context: Context) {
             remove(KEY_VIEW_MODE)
             apply()
         }
+        _authChanges.value = authGeneration
     }
 
     fun isRunnerView(): Boolean = prefs.getBoolean(KEY_VIEW_MODE, false)
@@ -223,13 +223,13 @@ class SessionManager private constructor(context: Context) {
     @Synchronized
     fun clearSession() {
         authGeneration++
-        _authChanges.value = authGeneration
         accessTokens.clear()
         memoryAccessToken = null
         memoryRefreshToken = null
         // Before the two calls below, which reach outside this class: if either
         // throws, the credentials must already be off the disk.
         prefs.edit().clear().apply()
+        _authChanges.value = authGeneration
         TetherWatchPrefs(appContext).clear()
         // A credential store reaching into service/ is the wrong shape, but a
         // signed-out phone must not keep ingesting to the old account and this
