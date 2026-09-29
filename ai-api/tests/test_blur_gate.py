@@ -451,3 +451,55 @@ def test_tone_stable_model_passes_the_photometric_check(tmp_path, monkeypatch):
     code, report = _gate(tmp_path, monkeypatch, root, _truth,
                          "--max-overcull-rate", "0", "--max-photometric-flip-rate", "0")
     assert code == 0 and report["photometric"]["flip_rate"] == 0.0
+
+
+def test_threshold_sweep_counts_both_flag_rules():
+    labels = {0: "sharp", 1: "motion_blurred"}
+    probs = {0: {"sharp": 0.5, "defocused_blurred": 0.3,
+                 "defocused_object_portrait": 0.1, "motion_blurred": 0.1},
+             1: {"sharp": 0.4, "defocused_blurred": 0.3,
+                 "defocused_object_portrait": 0.0, "motion_blurred": 0.3}}
+    sweep = blur_gate.threshold_sweep(labels, probs)
+    assert sweep["0.45"]["max_class"] == {"sharp_overcull": 0.0, "blur_miss": 1.0}
+    assert sweep["0.45"]["total"] == {"sharp_overcull": 1.0, "blur_miss": 0.0}
+
+
+def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypatch):
+    from src.ml.blur import classifier as classifier_module
+
+    root = _nested(tmp_path, {"event": {"sharp": 1, "motion_blurred": 1}})
+
+    def shaded_jpeg(path, *args):
+        buf = io.BytesIO()
+        shade = 255 if path.parent.name == "sharp" else 0
+        Image.new("RGB", (32, 16), (shade, shade, shade)).save(buf, "JPEG")
+        return buf.getvalue()
+
+    class FakeClassifier:
+        def __init__(self, model_path, class_names_path):
+            self.session = object()
+
+        def classify_batch(self, images):
+            out = []
+            for image in images:
+                label = "sharp" if image.mean() > 128 else "motion_blurred"
+                out.append({"predicted_class": label, "confidence": 0.9,
+                            "probabilities": {c: (0.9 if c == label else 0.1 / 3)
+                                              for c in LABELS}})
+            return out
+
+    monkeypatch.setattr(classifier_module, "BlurClassifier", FakeClassifier)
+    monkeypatch.setattr(blur_gate, "resize_bytes", shaded_jpeg)
+    model = tmp_path / "candidate.onnx"
+    model.write_bytes(b"candidate")
+    report_path = tmp_path / "report.json"
+    monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(root), "--offline",
+                                      "--model-file", str(model),
+                                      "--model-manifest", str(tmp_path / "absent.json"),
+                                      "--report-json", str(report_path),
+                                      "--max-overcull-rate", "0"])
+    code = blur_gate.main()
+    report = json.loads(report_path.read_text())
+    assert code == 2 and report["status"] == "DIAGNOSTIC"
+    assert report["counts"] == {"attempted": 2, "scored": 2, "failed": 0}
+    assert report["threshold_sweep"]["0.45"]["max_class"]["sharp_overcull"] == 0.0
