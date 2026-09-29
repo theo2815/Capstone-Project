@@ -11,6 +11,7 @@ import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
+import com.quickpitik.mobile.support.pointAppAt
 import com.quickpitik.mobile.support.signInAs
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -27,6 +28,7 @@ import org.robolectric.Shadows
 import java.io.ByteArrayInputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 
 /**
  * The settings tab's money and identity paths: which wallet a payout account
@@ -87,6 +89,60 @@ class StudioSettingsViewModelTest {
         val uri = Uri.parse("content://test/$name")
         Shadows.shadowOf(application.contentResolver).registerInputStream(uri, ByteArrayInputStream(ByteArray(bytes) { 1 }))
         return uri.toString()
+    }
+
+    @Test fun `metadata default hydrates, cancels, saves only changes, and retains draft on failure`() {
+        val path = "/api/v1/me/photographer/metadata-settings"
+        route("GET $path") { ok("""{"metadataPublicByDefault":false}""") }
+        val vm = model()
+        vm.metadataDefault.awaitFirst { it.saved == false }
+        vm.setMetadataDefaultDraft(true)
+        vm.cancelMetadataDefault()
+        assertEquals(false, vm.metadataDefault.value.draft)
+        vm.setMetadataDefaultDraft(true)
+        route("PUT $path") { MockResponse().setResponseCode(500) }
+        vm.saveMetadataDefault()
+        vm.metadataDefault.awaitFirst { it.error != null }
+        assertEquals(true, vm.metadataDefault.value.draft)
+        route("PUT $path") { ok("""{"metadataPublicByDefault":true}""") }
+        vm.saveMetadataDefault()
+        vm.metadataDefault.awaitFirst { it.saved == true }
+        assertEquals(2, count("PUT", path))
+        assertEquals("""{"metadataPublicByDefault":true}""", bodies("PUT", path).last())
+    }
+
+    @Test fun `failed metadata hydration cannot save and retry loads the backend value`() {
+        val path = "/api/v1/me/photographer/metadata-settings"
+        route("GET $path") { MockResponse().setResponseCode(500) }
+        val vm = model()
+        vm.metadataDefault.awaitFirst { it.error != null }
+        vm.setMetadataDefaultDraft(true)
+        vm.saveMetadataDefault()
+        assertEquals(null, vm.metadataDefault.value.draft)
+        assertEquals(0, count("PUT", path))
+        route("GET $path") { ok("""{"metadataPublicByDefault":true}""") }
+        vm.loadMetadataDefault()
+        vm.metadataDefault.awaitFirst { it.saved == true }
+    }
+
+    @Test fun `old metadata response cannot hydrate a new account`() {
+        val path = "/api/v1/me/photographer/metadata-settings"
+        route("GET $path") { ok("""{"metadataPublicByDefault":true}""").setBodyDelay(300, TimeUnit.MILLISECONDS) }
+        val vm = model()
+        awaitUntil { count("GET", path) == 1 }
+        SessionManager.getInstance(application).saveSession("other", "PHOTOGRAPHER", "Other", "other@x.com")
+        Thread.sleep(400)
+        assertEquals(null, vm.metadataDefault.value.saved)
+    }
+
+    @Test fun `old backend metadata response cannot hydrate current settings`() {
+        val path = "/api/v1/me/photographer/metadata-settings"
+        route("GET $path") { ok("""{"metadataPublicByDefault":true}""").setBodyDelay(300, TimeUnit.MILLISECONDS) }
+        val vm = model()
+        awaitUntil { count("GET", path) == 1 }
+        pointAppAt("http://127.0.0.1:9/")
+        Thread.sleep(400)
+        assertEquals(null, vm.metadataDefault.value.saved)
     }
 
     @Test fun `adding a payout account needs a QR up front, keeps an account whose QR failed, and reports success otherwise`() {
