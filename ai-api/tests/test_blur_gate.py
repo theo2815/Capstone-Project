@@ -464,7 +464,8 @@ def test_threshold_sweep_counts_both_flag_rules():
     assert sweep["0.45"]["total"] == {"sharp_overcull": 1.0, "blur_miss": 0.0}
 
 
-def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("manifest", [None, "other-model"])
+def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypatch, manifest):
     from src.ml.blur import classifier as classifier_module
 
     root = _nested(tmp_path, {"event": {"sharp": 1, "motion_blurred": 1}})
@@ -492,10 +493,14 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
     monkeypatch.setattr(blur_gate, "resize_bytes", shaded_jpeg)
     model = tmp_path / "candidate.onnx"
     model.write_bytes(b"candidate")
+    manifest_path = tmp_path / "manifest.json"
+    if manifest:  # a candidate is scored against the shipped model's manifest
+        manifest_path.write_text(json.dumps({"models": {"blur_classifier": {
+            "artifact_version": manifest, "sha256": "0" * 64}}}))
     report_path = tmp_path / "report.json"
     monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(root), "--offline",
                                       "--model-file", str(model),
-                                      "--model-manifest", str(tmp_path / "absent.json"),
+                                      "--model-manifest", str(manifest_path),
                                       "--report-json", str(report_path),
                                       "--max-overcull-rate", "0"])
     code = blur_gate.main()
@@ -503,3 +508,6 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
     assert code == 2 and report["status"] == "DIAGNOSTIC"
     assert report["counts"] == {"attempted": 2, "scored": 2, "failed": 0}
     assert report["threshold_sweep"]["0.45"]["max_class"]["sharp_overcull"] == 0.0
+    assert report["issues"] == []
+    assert report["model"] == {"version": None,
+                               "sha256": hashlib.sha256(b"candidate").hexdigest()}
