@@ -138,3 +138,17 @@ def test_shoot_group_ignores_unreadable_files(tmp_path: Path) -> None:
     junk = tmp_path / "junk.jpg"
     junk.write_bytes(b"not an image")
     assert shoot_group(junk) is None
+
+
+def test_a_large_event_never_overfills_validation(tmp_path: Path) -> None:
+    source = _sources(tmp_path)
+    for event in ("run-a", "run-b", "run-c"):
+        for i in range(10):
+            path = source / "Sharp event photos" / f"{event}__{i}.jpg"
+            path.write_bytes(f"{event} {i}".encode())
+    _filler(source)
+    prepare_dataset(source, tmp_path / "clean")
+    sharp_val = [r for r in _rows(tmp_path / "clean")
+                 if r["labels"] == ["sharp"] and r["split"] == "val"]
+    assert 0 < len(sharp_val) <= 8  # 20% of 40 sharp
+    assert not any(r["group_id"] for r in sharp_val)

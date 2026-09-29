@@ -138,8 +138,11 @@ def prepare_dataset(
     for group_name in group_names:
         members = grouped[group_name]
         group_counts = Counter(entry["labels"][0] for entry in members)
-        use_val = any(validation[label] < targets[label] for label in group_counts) and all(
-            remaining[label] > group_counts[label] for label in group_counts
+        # A whole shoot joins validation only if it fits under every class target;
+        # otherwise one large shoot can take most of a class out of training.
+        use_val = all(
+            validation[label] + n <= targets[label] and remaining[label] > n
+            for label, n in group_counts.items()
         )
         for entry in members:
             entry["split"] = "val" if use_val else "train"
