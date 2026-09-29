@@ -112,6 +112,29 @@ def resize_bytes(path: Path, max_dim: int, quality: int) -> bytes:
         return buf.getvalue()
 
 
+PHOTOMETRIC_VARIANTS = (("brighter", 0.6), ("darker", 1.6), ("grayscale", None))
+
+
+def photometric_variants(jpeg: bytes, quality: int) -> list[bytes]:
+    """Same pixels with a different tone or no colour: a blur decision must not move.
+
+    The 2026-08-14 model flagged sharp night photos 9% -> 56% as they were only
+    brightened, and grayscale cut its flags 32% -> 9% (2026-09-29 investigation).
+    """
+    out = []
+    with Image.open(io.BytesIO(jpeg)) as im:
+        rgb = im.convert("RGB")
+        for _, gamma in PHOTOMETRIC_VARIANTS:
+            if gamma is None:
+                variant = ImageOps.grayscale(rgb).convert("RGB")
+            else:
+                variant = rgb.point([round(255 * (v / 255) ** gamma) for v in range(256)] * 3)
+            buf = io.BytesIO()
+            variant.save(buf, format="JPEG", quality=quality)
+            out.append(buf.getvalue())
+    return out
+
+
 def classify_stream(client: httpx.Client, base: str, headers: dict,
                     items: list[tuple[int, bytes]], batch: int,
                     issues: list[str] | None = None) -> dict[int, str | None]:
@@ -263,6 +286,9 @@ def main() -> int:
                     help="Release minimum of blurry inputs, all blur classes together.")
     ap.add_argument("--min-events", type=int, default=0,
                     help="Release minimum of distinct events (nested layout).")
+    ap.add_argument("--max-photometric-flip-rate", type=float, default=None,
+                    help="Gate: max fraction of inputs whose sharp/blurry decision changes "
+                         "under brighter/darker/grayscale copies (setting it runs the check).")
     args = ap.parse_args()
 
     if (args.batch < 1 or args.limit < 0 or args.cand_dim < 1
@@ -270,7 +296,10 @@ def main() -> int:
             or min(args.min_sharp, args.min_blur, args.min_events) < 0
             or any(not math.isfinite(v) or not 0 <= v <= 1 for v in (
                 args.min_accuracy, args.max_miss_rate, args.max_overcull_rate,
-            )) or (args.limit and not args.diagnostic_subset)):
+            )) or (args.limit and not args.diagnostic_subset)
+            or (args.max_photometric_flip_rate is not None
+                and (not math.isfinite(args.max_photometric_flip_rate)
+                     or not 0 <= args.max_photometric_flip_rate <= 1))):
         ap.error("invalid gate settings; --limit requires --diagnostic-subset")
     if not args.labelled_dir.is_dir():
         print(f"Not a directory: {args.labelled_dir}", file=sys.stderr)
@@ -325,6 +354,20 @@ def main() -> int:
         except Exception:
             issues.append(f"input {i}: preparation failed")
 
+    variant_of: dict[int, int] = {}
+    if args.max_photometric_flip_rate is not None:
+        next_index = len(pairs)
+        for i, data in list(items):
+            try:
+                variants = photometric_variants(data, args.cand_quality)
+            except Exception:
+                issues.append(f"input {i}: photometric preparation failed")
+                continue
+            for variant in variants:
+                items.append((next_index, variant))
+                variant_of[next_index] = i
+                next_index += 1
+
     with httpx.Client(timeout=timeout) as client:
         preds = classify_stream(client, args.url, headers, items, args.batch, issues)
 
@@ -363,11 +406,27 @@ def main() -> int:
     if failed:
         issues.append(f"{failed} input(s) without valid predictions")
 
+    photometric = None
+    if args.max_photometric_flip_rate is not None:
+        flipped: dict[int, bool] = {}
+        for j, i in variant_of.items():
+            if preds.get(i) in CLASSES and preds.get(j) in CLASSES:
+                moved = (preds[j] in BLUR_CLASSES) != (preds[i] in BLUR_CLASSES)
+                flipped[i] = flipped.get(i, False) or moved
+        checked, flips = len(flipped), sum(flipped.values())
+        photometric = {"variants": [name for name, _ in PHOTOMETRIC_VARIANTS],
+                       "checked": checked, "flipped": flips,
+                       "flip_rate": flips / checked if checked else None,
+                       "interval_95": wilson(flips, checked)}
+
     quality_passed = (binary_accuracy >= args.min_accuracy
                       and (miss_rate is not None and miss_rate <= args.max_miss_rate
                            or args.diagnostic_subset and miss_rate is None)
                       and (overcull_rate is not None and overcull_rate <= args.max_overcull_rate
-                           or args.diagnostic_subset and overcull_rate is None))
+                           or args.diagnostic_subset and overcull_rate is None)
+                      and (photometric is None
+                           or photometric["flip_rate"] is not None
+                           and photometric["flip_rate"] <= args.max_photometric_flip_rate))
     status = "FAIL" if issues or not quality_passed else (
         "DIAGNOSTIC" if args.diagnostic_subset else "PASS"
     )
@@ -379,6 +438,7 @@ def main() -> int:
         "intervals_95": {"blur_miss": wilson(len(missed), n_blur),
                          "sharp_overcull": wilson(len(overcull), n_sharp)},
         "events": events,
+        "photometric": photometric,
         "coverage": {label: sum(pair[1] == label for pair in pairs) for label in CLASSES},
         "confusion": {label: {pred: confusion[(label, pred)] for pred in CLASSES}
                       for label in CLASSES},
@@ -399,7 +459,8 @@ def main() -> int:
                            "max_miss_rate": args.max_miss_rate,
                            "max_overcull_rate": args.max_overcull_rate,
                            "min_sharp": args.min_sharp, "min_blur": args.min_blur,
-                           "min_events": args.min_events, "accuracy_basis": "binary"},
+                           "min_events": args.min_events, "accuracy_basis": "binary",
+                           "max_photometric_flip_rate": args.max_photometric_flip_rate},
     }
     try:
         args.report_json.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n",
@@ -416,6 +477,9 @@ def main() -> int:
     print(f"4-class accuracy (reported):     {correct}/{len(pairs)} = {accuracy:.4f}")
     print(f"blurry called sharp (dangerous): {len(missed)}/{n_blur} = {miss_rate}")
     print(f"sharp called blurry (over-cull): {len(overcull)}/{n_sharp} = {overcull_rate}")
+    if photometric:
+        print(f"tone/colour-only flips:          {photometric['flipped']}/"
+              f"{photometric['checked']} = {photometric['flip_rate']}")
     print("confusion (label -> predicted):")
     for label in CLASSES:
         print(f"  {label:28s} " + " ".join(str(confusion[(label, pred)]) for pred in CLASSES))

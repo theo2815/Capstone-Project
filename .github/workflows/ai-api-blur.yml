@@ -50,6 +50,7 @@ jobs:
       BLUR_MIN_SHARP: ${{ vars.BLUR_MIN_SHARP }}
       BLUR_MIN_BLUR: ${{ vars.BLUR_MIN_BLUR }}
       BLUR_MIN_EVENTS: ${{ vars.BLUR_MIN_EVENTS }}
+      BLUR_MAX_PHOTOMETRIC_FLIP_RATE: ${{ vars.BLUR_MAX_PHOTOMETRIC_FLIP_RATE }}
     steps:
       - uses: actions/checkout@v4
       - name: Fetch private release artifacts
@@ -86,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --network host --name blur-smoke-api -e DATABASE_URL -e REDIS_URL -e MODEL_PROFILE=blur -e BLUR_ASYNC_ENABLED=false -e METRICS_ENABLED=true -e ENVIRONMENT=production -e DEBUG=false -e WORKERS=1 -e 'ALLOWED_ORIGINS=["https://example.invalid"]' quickpitik-blur:release
-          docker run --rm --network host -e DATABASE_URL -e BLUR_HOLDOUT_DIR=/holdout -e BLUR_MIN_ACCURACY -e BLUR_MAX_MISS_RATE -e BLUR_MAX_OVERCULL_RATE -e BLUR_MIN_SHARP -e BLUR_MIN_BLUR -e BLUR_MIN_EVENTS -v "$PWD/ai-api/scripts:/app/scripts:ro" -v "$PWD/ai-api/holdout:/holdout:ro" -v "$PWD/ai-api/reports:/reports" quickpitik-blur:release python /app/scripts/blur_release_smoke.py
+          docker run --rm --network host -e DATABASE_URL -e BLUR_HOLDOUT_DIR=/holdout -e BLUR_MIN_ACCURACY -e BLUR_MAX_MISS_RATE -e BLUR_MAX_OVERCULL_RATE -e BLUR_MIN_SHARP -e BLUR_MIN_BLUR -e BLUR_MIN_EVENTS -e BLUR_MAX_PHOTOMETRIC_FLIP_RATE -v "$PWD/ai-api/scripts:/app/scripts:ro" -v "$PWD/ai-api/holdout:/holdout:ro" -v "$PWD/ai-api/reports:/reports" quickpitik-blur:release python /app/scripts/blur_release_smoke.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

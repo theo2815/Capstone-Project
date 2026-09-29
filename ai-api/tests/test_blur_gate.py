@@ -1,11 +1,13 @@
 """Release-gate regressions against controlled stream responses."""
 
 import hashlib
+import io
 import json
 import sys
 from contextlib import nullcontext
 
 import pytest
+from PIL import Image
 
 from scripts import blur_gate
 
@@ -397,7 +399,8 @@ async def test_release_smoke_requires_approved_minimum_counts(tmp_path, monkeypa
 
     monkeypatch.setenv("BLUR_HOLDOUT_DIR", str(tmp_path))
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://unused")
-    for name in ("BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE"):
+    for name in ("BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE",
+                 "BLUR_MAX_PHOTOMETRIC_FLIP_RATE"):
         monkeypatch.setenv(name, "0.02")
     for name in ("BLUR_MIN_SHARP", "BLUR_MIN_BLUR", "BLUR_MIN_EVENTS"):
         monkeypatch.delenv(name, raising=False)
@@ -408,3 +411,43 @@ async def test_release_smoke_requires_approved_minimum_counts(tmp_path, monkeypa
     monkeypatch.setattr(blur_release_smoke.asyncpg, "connect", no_database)
     with pytest.raises(RuntimeError, match="BLUR_MIN_SHARP"):
         await blur_release_smoke.run(False)
+
+
+def test_photometric_variants_keep_size_and_change_only_tone_or_colour():
+    buf = io.BytesIO()
+    Image.new("RGB", (16, 8), (200, 40, 40)).save(buf, "JPEG", quality=95)
+    variants = blur_gate.photometric_variants(buf.getvalue(), 90)
+    assert len(variants) == 3
+    assert {Image.open(io.BytesIO(v)).size for v in variants} == {(16, 8)}
+    r, g, b = Image.open(io.BytesIO(variants[2])).convert("RGB").getpixel((8, 4))
+    assert abs(r - g) <= 2 and abs(g - b) <= 2
+    bright = Image.open(io.BytesIO(variants[0])).convert("L").getpixel((8, 4))
+    dark = Image.open(io.BytesIO(variants[1])).convert("L").getpixel((8, 4))
+    assert bright > dark
+
+
+def test_tone_only_flip_fails_the_gate(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"event": {"sharp": 2, "motion_blurred": 2}})
+    monkeypatch.setattr(blur_gate, "photometric_variants",
+                        lambda data, quality: [data + b"|brighter", data + b"|darker",
+                                               data + b"|grayscale"])
+
+    def server(data):
+        if data.endswith(b"|brighter") and b"/sharp/" in data:
+            return "defocused_blurred"   # brightness alone flips a sharp frame
+        return _truth(data)
+
+    code, report = _gate(tmp_path, monkeypatch, root, server,
+                         "--max-overcull-rate", "0", "--max-photometric-flip-rate", "0.02")
+    assert code != 0 and report["status"] == "FAIL"
+    assert report["photometric"]["checked"] == 4
+    assert report["photometric"]["flipped"] == 2
+
+
+def test_tone_stable_model_passes_the_photometric_check(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"event": {"sharp": 2, "motion_blurred": 2}})
+    monkeypatch.setattr(blur_gate, "photometric_variants",
+                        lambda data, quality: [data + b"|a", data + b"|b", data + b"|c"])
+    code, report = _gate(tmp_path, monkeypatch, root, _truth,
+                         "--max-overcull-rate", "0", "--max-photometric-flip-rate", "0")
+    assert code == 0 and report["photometric"]["flip_rate"] == 0.0
