@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
-from scripts.prepare_blur_dataset import CLASS_DIRS, prepare_dataset
+from scripts.prepare_blur_dataset import CLASS_DIRS, prepare_dataset, shoot_group
 
 
 def test_prepare_groups_duplicates_and_bursts_without_changing_sources(tmp_path: Path) -> None:
@@ -61,3 +62,79 @@ def test_prepare_groups_duplicates_and_bursts_without_changing_sources(tmp_path:
 
     with pytest.raises(FileExistsError):
         prepare_dataset(source, output, groups)
+
+
+def _sources(tmp_path: Path) -> Path:
+    source = tmp_path / "source"
+    for folders in CLASS_DIRS.values():
+        for folder in [folders] if isinstance(folders, str) else folders:
+            (source / folder).mkdir(parents=True)
+    return source
+
+
+def _jpeg(path: Path, camera: str, taken: str, shade: int) -> None:
+    exif = Image.Exif()
+    exif[272] = camera
+    exif.get_ifd(0x8769)[36867] = taken
+    Image.new("RGB", (8, 8), (shade, shade, shade)).save(path, "JPEG", exif=exif)
+
+
+def _filler(source: Path, n: int = 10) -> None:
+    for i in range(n):
+        (source / "Sharp_images" / f"other-{i}.jpg").write_bytes(f"sharp {i}".encode())
+        (source / "defocused_blurred" / f"blur-{i}.jpg").write_bytes(f"blur {i}".encode())
+
+
+def _rows(output: Path) -> list[dict]:
+    return json.loads((output / "split_manifest.json").read_text(encoding="utf-8"))["entries"]
+
+
+def test_one_camera_day_never_straddles_the_split(tmp_path: Path) -> None:
+    source = _sources(tmp_path)
+    for i in range(10):
+        _jpeg(source / "Sharp event photos" / f"frame-{i}.jpg", "Canon EOS R6",
+              "2026:09:14 05:10:00", 10 * i)
+    _filler(source)
+    prepare_dataset(source, tmp_path / "clean")
+    shoot = [r for r in _rows(tmp_path / "clean")
+             if r["group_id"] == "shoot:Canon EOS R6:2026:09:14"]
+    assert len(shoot) == 10
+    assert len({r["split"] for r in shoot}) == 1
+
+
+def test_event_prefix_keeps_two_cameras_of_one_event_together(tmp_path: Path) -> None:
+    source = _sources(tmp_path)
+    _jpeg(source / "Sharp event photos" / "cebu-run-2026__a.jpg", "Canon EOS R6",
+          "2026:09:14 05:10:00", 1)
+    _jpeg(source / "Sharp event photos" / "cebu-run-2026__b.jpg", "ILCE-7M4",
+          "2026:09:15 00:10:00", 2)
+    _filler(source)
+    prepare_dataset(source, tmp_path / "clean")
+    event = [r for r in _rows(tmp_path / "clean") if r["group_id"] == "event:cebu-run-2026"]
+    assert len(event) == 2 and len({r["split"] for r in event}) == 1
+
+
+def test_public_dataset_scene_variants_share_a_group(tmp_path: Path) -> None:
+    source = _sources(tmp_path)
+    (source / "Sharp_images" / "7_IPHONE-SE_S.jpg").write_bytes(b"scene 7 sharp")
+    (source / "defocused_blurred" / "7_IPHONE-SE_F.jpg").write_bytes(b"scene 7 soft")
+    _filler(source)
+    prepare_dataset(source, tmp_path / "clean")
+    scene = [r for r in _rows(tmp_path / "clean") if r["group_id"] == "scene:7_IPHONE-SE"]
+    assert len(scene) == 2 and len({r["split"] for r in scene}) == 1
+
+
+def test_holdout_image_in_training_sources_fails_loudly(tmp_path: Path) -> None:
+    source = _sources(tmp_path)
+    (source / "Sharp_images" / "leaked.jpg").write_bytes(b"holdout frame")
+    _filler(source)
+    with pytest.raises(ValueError, match="held-out"):
+        prepare_dataset(source, tmp_path / "clean",
+                        excluded=frozenset({hashlib.sha256(b"holdout frame").hexdigest()}))
+    assert not (tmp_path / "clean").exists()
+
+
+def test_shoot_group_ignores_unreadable_files(tmp_path: Path) -> None:
+    junk = tmp_path / "junk.jpg"
+    junk.write_bytes(b"not an image")
+    assert shoot_group(junk) is None
