@@ -1,15 +1,24 @@
 package com.quickpitik.mobile.ui.photographer
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.remote.ApiResponseEnvelope
 import com.quickpitik.mobile.data.remote.EventDetailDto
+import com.quickpitik.mobile.data.remote.PaginatedResponse
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerProfileDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.apiCall
 import com.quickpitik.mobile.data.remote.uiMessage
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 sealed class PublicProfileState {
@@ -31,15 +40,32 @@ sealed class ProfileEventPhotosState {
  * photographer-scoped fetches and opens the photographer inbox socket, none of
  * which a runner session may touch.
  *
- * Both endpoints are public — no Authorization header — so this works signed
- * out as well as under either role.
+ * The profile is anonymous; gallery photos carry optional session auth so the
+ * backend can return the viewer's metadata access hint.
  */
-class PublicPhotographerViewModel : ViewModel() {
+class PublicPhotographerViewModel @JvmOverloads constructor(
+    application: Application,
+    private val loadPhotos: suspend (String, String, String?) -> ApiResponseEnvelope<PaginatedResponse<PhotoDto>> =
+        { handle, slug, bearer -> RetrofitClient.apiService.getPublicPhotographerEventPhotos(handle, slug, token = bearer) },
+) : AndroidViewModel(application) {
+    private val session = SessionManager.getInstance(application)
     private val _publicProfileState = MutableStateFlow<PublicProfileState>(PublicProfileState.Loading)
     val publicProfileState: StateFlow<PublicProfileState> = _publicProfileState
 
     private val _profileEventPhotosState = MutableStateFlow<ProfileEventPhotosState>(ProfileEventPhotosState.Loading)
     val profileEventPhotosState: StateFlow<ProfileEventPhotosState> = _profileEventPhotosState
+    private var gallery: Pair<String, String>? = null
+    private var galleryJob: Job? = null
+    private var galleryRequest = 0L
+
+    init {
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            combine(session.authChanges, RetrofitClient.backendChanges) { auth, backend -> auth to backend }
+                .drop(1).collect {
+                    gallery?.let { (handle, slug) -> fetchProfileEventPhotos(handle, slug) }
+                }
+        }
+    }
 
     // The coverage row from /public/photographers/{handle} carries only the
     // SLUG — the real event name and the event id (which add-to-cart needs)
@@ -70,15 +96,38 @@ class PublicPhotographerViewModel : ViewModel() {
         }
     }
 
-    fun fetchProfileEventPhotos(handle: String, slug: String) {
-        viewModelScope.launch {
-            _profileEventPhotosState.value = ProfileEventPhotosState.Loading
-            apiCall("Failed to load photos.") {
-                RetrofitClient.apiService.getPublicPhotographerEventPhotos(handle, slug)
-            }.fold(
-                onSuccess = { _profileEventPhotosState.value = ProfileEventPhotosState.Success(it.items) },
-                onFailure = { _profileEventPhotosState.value = ProfileEventPhotosState.Error(it.uiMessage) },
-            )
+    @Synchronized fun fetchProfileEventPhotos(handle: String, slug: String) {
+        gallery = handle to slug
+        clearGalleryResult()
+        val request = galleryRequest
+        val backend = RetrofitClient.BASE_URL
+        val generation = session.authChanges.value
+        val token = session.getAccessToken()
+        val bearer = token?.let { "Bearer $it" }
+        galleryJob = viewModelScope.launch(Dispatchers.IO) {
+            val result = apiCall("Failed to load photos.") {
+                loadPhotos(handle, slug, bearer)
+            }
+            synchronized(this@PublicPhotographerViewModel) {
+                if (request != galleryRequest || gallery != (handle to slug) ||
+                    backend != RetrofitClient.BASE_URL || generation != session.authChanges.value
+                ) return@synchronized
+                result.fold(
+                    onSuccess = { _profileEventPhotosState.value = ProfileEventPhotosState.Success(it.items) },
+                    onFailure = { _profileEventPhotosState.value = ProfileEventPhotosState.Error(it.uiMessage) },
+                )
+            }
         }
+    }
+
+    @Synchronized fun clearGallery() {
+        gallery = null
+        clearGalleryResult()
+    }
+
+    @Synchronized private fun clearGalleryResult() {
+        galleryRequest++
+        galleryJob?.cancel()
+        _profileEventPhotosState.value = ProfileEventPhotosState.Loading
     }
 }

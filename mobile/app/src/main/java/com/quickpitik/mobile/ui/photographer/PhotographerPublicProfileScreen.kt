@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -58,6 +59,7 @@ import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerEventCoverageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.PhotoPreviewMode
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.runner.CartViewModel
@@ -97,12 +99,13 @@ fun PhotographerPublicProfileScreen(
     onBack: () -> Unit,
     onOpenEvent: ((EventDto) -> Unit)? = null,
     cartViewModel: CartViewModel? = null,
+    ownerReview: Boolean = false,
     isBrandSettingsLoading: Boolean = false,
     brandSettingsError: String? = null,
 ) {
     val profileState by viewModel.publicProfileState.collectAsState()
     val resolvedHandle = handle?.takeIf { it.isNotBlank() }
-    var selectedEventSlug by remember { mutableStateOf<String?>(null) }
+    var selectedEventSlug by remember(resolvedHandle) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(resolvedHandle) {
         if (resolvedHandle != null) viewModel.fetchPublicProfile(resolvedHandle)
@@ -116,6 +119,7 @@ fun PhotographerPublicProfileScreen(
             slug = gallerySlug,
             onBack = { selectedEventSlug = null },
             cartViewModel = cartViewModel,
+            ownerReview = ownerReview,
         )
         return
     }
@@ -341,18 +345,22 @@ private fun ProfileEventGalleryView(
     slug: String,
     onBack: () -> Unit,
     cartViewModel: CartViewModel? = null,
+    ownerReview: Boolean = false,
 ) {
-    // Runner context (cart present) = unpurchased previews → block screenshots.
-    // The photographer's own profile preview (no cart) stays unrestricted.
-    if (cartViewModel != null) SecureScreen()
+    // The photographer's explicit owner route stays unrestricted; public
+    // browsing keeps both preview windows secure even without a cart.
+    if (!ownerReview) SecureScreen()
 
     val photosState by viewModel.profileEventPhotosState.collectAsState()
     val eventDetail by viewModel.galleryEventDetail.collectAsState()
-    var selectedPhoto by remember { mutableStateOf<PhotoDto?>(null) }
+    var selectedPhoto by remember(handle, slug) { mutableStateOf<PhotoDto?>(null) }
     var bibFilter by rememberSaveable { mutableStateOf("") }
     var visiblePhotoLimit by rememberSaveable(slug) { mutableStateOf(20) }
 
-    LaunchedEffect(slug) {
+    DisposableEffect(viewModel, handle, slug) {
+        onDispose { viewModel.clearGallery() }
+    }
+    LaunchedEffect(handle, slug) {
         viewModel.fetchProfileEventPhotos(handle, slug)
         // Real event name + the event id add-to-cart needs — the coverage row
         // only carries the slug.
@@ -489,7 +497,7 @@ private fun ProfileEventGalleryView(
                 photos = previewPhotos,
                 currentIndex = currentIndex,
                 commerceEnabled = commerce,
-                mode = if (cartViewModel == null) com.quickpitik.mobile.ui.common.PhotoPreviewMode.OwnerReview else com.quickpitik.mobile.ui.common.PhotoPreviewMode.Browse,
+                mode = if (ownerReview) PhotoPreviewMode.OwnerReview else PhotoPreviewMode.Browse,
                 isInCart = { data -> cartItems.any { it.photoId == data.id } },
                 onToggleCart = onToggleCart@{ data ->
                     val cart = cartViewModel ?: return@onToggleCart
