@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -699,9 +700,9 @@ internal fun MetadataToggleCard(
                 GhostCta("Retry metadata visibility", onRetry)
             }
             else -> {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(48.dp).clickable(enabled = !state.saving) { onChange(state.draft != true) }) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !state.saving) { onChange(state.draft != true) }) {
                     Checkbox(checked = state.draft == true, onCheckedChange = if (state.saving) null else onChange)
-                    Text(label, style = Typography.bodyMedium, color = Ink)
+                    Text(label, style = Typography.bodyMedium, color = Ink, modifier = Modifier.weight(1f))
                 }
                 Text(help, style = Typography.bodyMedium, color = Slate)
                 Spacer(Modifier.height(8.dp))

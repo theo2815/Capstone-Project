@@ -152,7 +152,6 @@ class StudioSettingsViewModel(application: Application) : AndroidViewModel(appli
     val isSavingSettings: StateFlow<Boolean> = _isSavingSettings
 
     init {
-        loadMetadataDefault()
         // Load brand + socials / payouts / regions at startup, so the settings
         // editor shows what the photographer already has (these were previously
         // loaded only on the settings-tab tap, leaving the editor briefly
@@ -192,6 +191,8 @@ class StudioSettingsViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun fetchSettings() {
+        // Re-entry picks up web/device changes without replacing an unsaved edit.
+        if (_metadataDefault.value.let { it.draft == it.saved && !it.saving }) loadMetadataDefault()
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
             coroutineScope {
