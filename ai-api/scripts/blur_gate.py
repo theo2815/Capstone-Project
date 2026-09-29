@@ -17,13 +17,13 @@ proper anti-aliasing pass for free. See the 2026-08-14 journal entry.
 So the gate now asks the question that matters — "does the production path
 classify real photos correctly?" — instead of "does it agree with another path?"
 
-Layout: pass a directory whose immediate subdirectories are class names, e.g.
+Layout: pass a directory whose immediate subdirectories are class names, or
+event folders that each contain class folders (per-event results are reported):
 
-    Training-Images/dataset/val/
-        sharp/ defocused_blurred/ defocused_object_portrait/ motion_blurred/
+    holdout/<event-id>/{sharp,defocused_blurred,defocused_object_portrait,motion_blurred}/
 
-Three quality criteria, plus complete input coverage, must hold:
-  * overall accuracy            >= --min-accuracy
+Quality criteria, plus complete input coverage, must hold:
+  * binary (sharp vs any blur) accuracy >= --min-accuracy
   * blurry-called-sharp rate    <= --max-miss-rate   (the dangerous direction:
                                                       a blurry photo escaping
                                                       culling and reaching runners)
@@ -84,6 +84,17 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".heic"
 
 def _valid_probability(value: object) -> bool:
     return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
+
+
+def wilson(k: int, n: int, z: float = 1.96) -> list[float] | None:
+    """95% Wilson score interval: how far a rate measured on n images can be trusted."""
+    if not n:
+        return None
+    p = k / n
+    den = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / den
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return [max(0.0, centre - half), min(1.0, centre + half)]
 
 
 def resize_bytes(path: Path, max_dim: int, quality: int) -> bytes:
@@ -193,16 +204,28 @@ def classify_stream(client: httpx.Client, base: str, headers: dict,
     return out
 
 
-def collect_labelled(root: Path, limit: int) -> list[tuple[Path, str]]:
-    """Find (image_path, label) pairs from immediate class subdirectories."""
-    pairs: list[tuple[Path, str]] = []
-    for cls_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-        if cls_dir.name not in CLASSES:
-            print(f"  (skipping unrecognised class dir: {cls_dir.name})", file=sys.stderr)
-            continue
-        for p in sorted(cls_dir.iterdir()):
+def collect_labelled(root: Path, limit: int) -> list[tuple[Path, str, str]]:
+    """Find (image_path, label, event) from class folders.
+
+    root/<class>/image is one event named after root; root/<event>/<class>/image
+    keeps events apart so over-cull on one new event cannot hide in a pooled rate.
+    """
+    pairs: list[tuple[Path, str, str]] = []
+
+    def add(class_dir: Path, event: str) -> None:
+        for p in sorted(class_dir.iterdir()):
             if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
-                pairs.append((p, cls_dir.name))
+                pairs.append((p, class_dir.name, event))
+
+    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        if child.name in CLASSES:
+            add(child, root.name)
+        elif any((child / c).is_dir() for c in CLASSES):
+            for c in CLASSES:
+                if (child / c).is_dir():
+                    add(child / c, child.name)
+        else:
+            print(f"  (skipping unrecognised dir: {child.name})", file=sys.stderr)
     if limit:
         # Stride-sample so a --limit stays balanced across classes instead of
         # taking every image from whichever class sorts first.
@@ -234,10 +257,17 @@ def main() -> int:
                     help="Gate: max fraction of blurry photos predicted sharp.")
     ap.add_argument("--max-overcull-rate", type=float, default=0.0,
                     help="Gate: max fraction of sharp photos predicted blurry.")
+    ap.add_argument("--min-sharp", type=int, default=0,
+                    help="Release minimum of sharp inputs (owner-approved; 0 = none).")
+    ap.add_argument("--min-blur", type=int, default=0,
+                    help="Release minimum of blurry inputs, all blur classes together.")
+    ap.add_argument("--min-events", type=int, default=0,
+                    help="Release minimum of distinct events (nested layout).")
     args = ap.parse_args()
 
     if (args.batch < 1 or args.limit < 0 or args.cand_dim < 1
             or not 1 <= args.cand_quality <= 100
+            or min(args.min_sharp, args.min_blur, args.min_events) < 0
             or any(not math.isfinite(v) or not 0 <= v <= 1 for v in (
                 args.min_accuracy, args.max_miss_rate, args.max_overcull_rate,
             )) or (args.limit and not args.diagnostic_subset)):
@@ -280,9 +310,9 @@ def main() -> int:
     items: list[tuple[int, bytes]] = []
     labels: dict[int, str] = {}
     dataset_manifest = []
-    for i, (path, label) in enumerate(pairs):
+    for i, (path, label, event) in enumerate(pairs):
         entry = {"path": path.relative_to(args.labelled_dir).as_posix(),
-                 "label": label, "sha256": None}
+                 "label": label, "event": event, "sha256": None}
         try:
             with path.open("rb") as f:
                 entry["sha256"] = hashlib.file_digest(f, "sha256").hexdigest()
@@ -301,23 +331,39 @@ def main() -> int:
     scored = [i for i in labels if preds.get(i) in CLASSES]
     n = len(scored)
     correct = sum(1 for i in scored if preds[i] == labels[i])
-    n_blur = sum(label in BLUR_CLASSES for _, label in pairs)
-    n_sharp = sum(label == "sharp" for _, label in pairs)
-    missed = [i for i in scored if labels[i] in BLUR_CLASSES and preds[i] == "sharp"]
-    overcull = [i for i in scored if labels[i] == "sharp" and preds[i] in BLUR_CLASSES]
+    is_blur = [label in BLUR_CLASSES for _, label, _ in pairs]
+    binary_correct = sum(1 for i in scored if is_blur[i] == (preds[i] in BLUR_CLASSES))
+    n_blur = sum(is_blur)
+    n_sharp = len(pairs) - n_blur
+    missed = [i for i in scored if is_blur[i] and preds[i] == "sharp"]
+    overcull = [i for i in scored if not is_blur[i] and preds[i] in BLUR_CLASSES]
     confusion = Counter((labels[i], preds[i]) for i in scored)
     failed = len(pairs) - n
+    events: dict[str, dict[str, int]] = {}
+    for i, (_, _, event) in enumerate(pairs):
+        row = events.setdefault(event, {"sharp": 0, "blur": 0,
+                                        "sharp_overcull": 0, "blur_miss": 0})
+        row["blur" if is_blur[i] else "sharp"] += 1
+    for i in overcull:
+        events[pairs[i][2]]["sharp_overcull"] += 1
+    for i in missed:
+        events[pairs[i][2]]["blur_miss"] += 1
 
     accuracy = correct / len(pairs)
+    binary_accuracy = binary_correct / len(pairs)
     miss_rate = (len(missed) / n_blur) if n_blur else None
     overcull_rate = (len(overcull) / n_sharp) if n_sharp else None
-    missing_classes = set(CLASSES) - {label for _, label in pairs}
-    if missing_classes and not args.diagnostic_subset:
-        issues.append("missing class coverage: " + ", ".join(sorted(missing_classes)))
+    if not args.diagnostic_subset:
+        if not n_sharp or not n_blur:
+            issues.append("missing coverage: need both sharp and blurry inputs")
+        if (n_sharp < args.min_sharp or n_blur < args.min_blur
+                or len(events) < args.min_events):
+            issues.append(f"below release minimums: {n_sharp} sharp, {n_blur} blurry, "
+                          f"{len(events)} events")
     if failed:
         issues.append(f"{failed} input(s) without valid predictions")
 
-    quality_passed = (accuracy >= args.min_accuracy
+    quality_passed = (binary_accuracy >= args.min_accuracy
                       and (miss_rate is not None and miss_rate <= args.max_miss_rate
                            or args.diagnostic_subset and miss_rate is None)
                       and (overcull_rate is not None and overcull_rate <= args.max_overcull_rate
@@ -328,8 +374,12 @@ def main() -> int:
     report = {
         "status": status,
         "counts": {"attempted": len(pairs), "scored": n, "failed": failed},
-        "rates": {"accuracy": accuracy, "blur_miss": miss_rate,
-                  "sharp_overcull": overcull_rate},
+        "rates": {"accuracy": accuracy, "binary_accuracy": binary_accuracy,
+                  "blur_miss": miss_rate, "sharp_overcull": overcull_rate},
+        "intervals_95": {"blur_miss": wilson(len(missed), n_blur),
+                         "sharp_overcull": wilson(len(overcull), n_sharp)},
+        "events": events,
+        "coverage": {label: sum(pair[1] == label for pair in pairs) for label in CLASSES},
         "confusion": {label: {pred: confusion[(label, pred)] for pred in CLASSES}
                       for label in CLASSES},
         "issues": issues,
@@ -347,7 +397,9 @@ def main() -> int:
                            "diagnostic_subset": args.diagnostic_subset,
                            "min_accuracy": args.min_accuracy,
                            "max_miss_rate": args.max_miss_rate,
-                           "max_overcull_rate": args.max_overcull_rate},
+                           "max_overcull_rate": args.max_overcull_rate,
+                           "min_sharp": args.min_sharp, "min_blur": args.min_blur,
+                           "min_events": args.min_events, "accuracy_basis": "binary"},
     }
     try:
         args.report_json.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n",
@@ -360,12 +412,17 @@ def main() -> int:
     print("BLUR STREAM GATE — vs GROUND-TRUTH LABELS")
     print("=" * 68)
     print(f"attempted/scored/failed:         {len(pairs)}/{n}/{failed}")
-    print(f"accuracy:                        {correct}/{len(pairs)} = {accuracy:.4f}")
+    print(f"binary accuracy (gated):         {binary_correct}/{len(pairs)} = {binary_accuracy:.4f}")
+    print(f"4-class accuracy (reported):     {correct}/{len(pairs)} = {accuracy:.4f}")
     print(f"blurry called sharp (dangerous): {len(missed)}/{n_blur} = {miss_rate}")
     print(f"sharp called blurry (over-cull): {len(overcull)}/{n_sharp} = {overcull_rate}")
     print("confusion (label -> predicted):")
     for label in CLASSES:
         print(f"  {label:28s} " + " ".join(str(confusion[(label, pred)]) for pred in CLASSES))
+    print("per event (sharp over-cull | blur miss):")
+    for event, row in sorted(events.items()):
+        print(f"  {event[:30]:30s} {row['sharp_overcull']}/{row['sharp']} | "
+              f"{row['blur_miss']}/{row['blur']}")
     if issues:
         print(f"data/stream errors:             {len(issues)}")
         for issue in issues[:10]:
@@ -379,7 +436,7 @@ def main() -> int:
             print(f"  … and {len(missed) - 25} more")
 
     print("\n" + status
-          + f"  (accuracy >= {args.min_accuracy}, miss <= {args.max_miss_rate},"
+          + f"  (binary accuracy >= {args.min_accuracy}, miss <= {args.max_miss_rate},"
           + f" over-cull <= {args.max_overcull_rate})")
     print(f"report: {args.report_json}")
     print("=" * 68)
