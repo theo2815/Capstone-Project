@@ -23,6 +23,7 @@ import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.photographer.PhotographerAccessGuard
+import com.quickpitik.service.photographer.PhotoMetadataService
 import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
@@ -59,6 +60,7 @@ class PhotoServiceAttributionTest {
     private lateinit var storageService: StorageService
     private lateinit var couponRepository: PhotographerCouponRepository
     private lateinit var eventRepository: EventRepository
+    private lateinit var photoMetadataService: PhotoMetadataService
 
     private val eventId: UUID = UUID.randomUUID()
     private val pagination = PaginationParams.of(0, 240)
@@ -72,6 +74,10 @@ class PhotoServiceAttributionTest {
         storageService = Mockito.mock(StorageService::class.java)
         couponRepository = Mockito.mock(PhotographerCouponRepository::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
+        photoMetadataService = Mockito.mock(PhotoMetadataService::class.java)
+        Mockito.`when`(photoMetadataService.metadataAccess(anyArg(), anyArg(), anyArg())).thenAnswer { invocation ->
+            invocation.getArgument<Collection<Photo>>(1).associate { it.id to "none" }
+        }
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
     }
 
@@ -287,11 +293,11 @@ class PhotoServiceAttributionTest {
 
     @Test
     fun `a full page of photos costs one lookup per repository, not one per photo`() {
-        // The N+1 guard. Three photographers covering one event, 30 photos —
+        // The N+1 guard. Three photographers covering one event, 100 photos —
         // resolution must collapse to a single IN query each, the same shape
         // resolveOwnedIds already uses for ownership.
         val ids = List(3) { UUID.randomUUID() }
-        val photos = (0 until 30).map { photo(ids[it % 3]) }
+        val photos = (0 until 100).map { photo(ids[it % 3]) }
         stubPage(photos)
         stubPhotographers(
             ids.mapIndexed { i, id -> settings(id, handle = "shooter-$i") },
@@ -300,10 +306,11 @@ class PhotoServiceAttributionTest {
 
         val items = service().listForEvent(eventId, bib = null, pagination = pagination).items
 
-        assertEquals(30, items.size)
+        assertEquals(100, items.size)
         assertEquals(setOf("shooter-0", "shooter-1", "shooter-2"), items.mapNotNull { it.photographerHandle }.toSet())
         Mockito.verify(photographerSettingsRepository, Mockito.times(1)).findAllById(anyArg())
         Mockito.verify(userRepository, Mockito.times(1)).findAllById(anyArg())
+        Mockito.verify(photoMetadataService, Mockito.times(1)).metadataAccess(anyArg(), anyArg(), anyArg())
     }
 
     // 2026-08-27 perf pass: plain browsing must take the join-free fast path
@@ -358,6 +365,7 @@ class PhotoServiceAttributionTest {
         eventRepository,
         // Trailing slash on purpose — the builder must not emit `//events`.
         PublicProperties(apiBaseUrl = "https://api.test/api/v1/"),
+        photoMetadataService,
     )
 
     private fun stubPage(photos: List<Photo>) {

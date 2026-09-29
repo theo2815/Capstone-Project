@@ -276,12 +276,22 @@ class PhotoWatermarkServiceTest {
             parsed = true
             throw IllegalArgumentException("broken metadata")
         }
-        val extraction = PhotoMetadataService(metadata, extractor, TransactionTemplate(transactionManager), java.time.Clock.systemUTC())
+        val extraction = PhotoMetadataService(
+            metadata,
+            Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
+            Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java),
+            extractor,
+            Mockito.mock(com.quickpitik.service.storage.StorageService::class.java),
+            Mockito.mock(org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor::class.java),
+            com.quickpitik.config.PhotoMetadataProperties(),
+            TransactionTemplate(transactionManager),
+            java.time.Clock.systemUTC(),
+        )
 
         service(metadata = extraction).process(photoId)
 
         assertTrue(parsed)
-        Mockito.verify(metadata).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(metadata).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
         Mockito.verify(transactionManager, Mockito.never()).rollback(anyArg())
     }

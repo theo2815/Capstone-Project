@@ -31,11 +31,13 @@ export async function fetchPublicPhotographerEventPhotos(
   handle: string,
   eventSlug: string,
   args: PublicPhotographerPhotosArgs = {},
+  signal?: AbortSignal,
 ): Promise<PaginatedResponse<MockPhoto>> {
   const p = new URLSearchParams();
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 24));
   return api.get<PaginatedResponse<MockPhoto>>(
     `/public/photographers/${encodeURIComponent(handle)}/events/${encodeURIComponent(eventSlug)}/photos?${p.toString()}`,
+    { signal },
   );
 }

@@ -33,7 +33,7 @@ abstract class PostgresIntegrationTest {
 
     companion object {
         @JvmStatic
-        private val postgres: PostgreSQLContainer<*> =
+        internal val postgres: PostgreSQLContainer<*> =
             PostgreSQLContainer("postgres:16-alpine").apply {
                 withDatabaseName("quickpitik_test")
                 withUsername("quickpitik")

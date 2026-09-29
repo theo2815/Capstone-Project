@@ -1,15 +1,34 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import { OfflineUploadError, permanentDeletePhotographerPhotos, restorePhotographerPhotos, trashPhotographerPhotos, uploadPhotographerPhoto } from "./api-photographer";
+import { getEventMetadataVisibility, getMetadataSettings, OfflineUploadError, permanentDeletePhotographerPhotos, putEventMetadataVisibility, putMetadataSettings, restorePhotographerPhotos, trashPhotographerPhotos, uploadPhotographerPhoto } from "./api-photographer";
 import { fetchPhotographerPayoutReports } from "./api-photographer-earnings";
 import { report } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 
-const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api: { get, post }, refreshAccessToken: vi.fn() }));
-beforeEach(() => { get.mockReset(); post.mockReset(); });
+const { get, post, put } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }));
+vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api: { get, post, put }, refreshAccessToken: vi.fn() }));
+beforeEach(() => { get.mockReset(); post.mockReset(); put.mockReset(); });
 afterEach(() => { vi.restoreAllMocks(); });
 const ids = (count: number) => Array.from({ length: count }, (_, i) => `photo-${i}`);
+
+it("uses the typed account metadata routes and forwards GET cancellation", async () => {
+  const signal = new AbortController().signal;
+  get.mockResolvedValueOnce({ metadataPublicByDefault: false }).mockResolvedValueOnce({ metadataPublic: true });
+  put.mockResolvedValueOnce({ metadataPublicByDefault: true }).mockResolvedValueOnce({ metadataPublic: false });
+
+  expect(await getMetadataSettings(signal)).toEqual({ metadataPublicByDefault: false });
+  expect(await putMetadataSettings({ metadataPublicByDefault: true })).toEqual({ metadataPublicByDefault: true });
+  expect(await getEventMetadataVisibility("event/1", signal)).toEqual({ metadataPublic: true });
+  expect(await putEventMetadataVisibility("event/1", { metadataPublic: false })).toEqual({ metadataPublic: false });
+  expect(get.mock.calls).toEqual([
+    ["/me/photographer/metadata-settings", { signal }],
+    ["/me/photographer/events/event%2F1/metadata-visibility", { signal }],
+  ]);
+  expect(put.mock.calls).toEqual([
+    ["/me/photographer/metadata-settings", { metadataPublicByDefault: true }],
+    ["/me/photographer/events/event%2F1/metadata-visibility", { metadataPublic: false }],
+  ]);
+});
 
 it("unwraps the paginated photographer report response for report consumers", async () => {
   get.mockResolvedValue({ items: [report], total: 1, offset: 0, limit: 50 });
@@ -61,6 +80,8 @@ it("begins, sends raw bytes without credentials, then confirms the backend recei
   try {
     const result = await uploadPhotographerPhoto("event-1", file, undefined, { contentHash: "a".repeat(64) });
     expect(post.mock.calls.map(([path]) => path)).toEqual(["/me/photographer/events/event-1/photos/direct", "/me/photographer/events/event-1/photos/direct/commit"]);
+    expect(post.mock.calls[0][1]).toMatchObject({ originalFilename: "race.jpg" });
+    expect(post.mock.calls[1][1]).not.toHaveProperty("originalFilename");
     expect(sent.method).toBe("PUT");
     expect(sent.body).toBe(file);
     expect(sent.headers).toEqual({ "Content-Type": "image/jpeg" });

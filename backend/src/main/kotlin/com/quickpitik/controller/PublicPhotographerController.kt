@@ -4,12 +4,15 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.photographer.PhotographerProfileDto
 import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.photographer.PublicPhotographerService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
 import com.quickpitik.service.ratelimit.clientIp
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
+import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
@@ -33,17 +36,21 @@ class PublicPhotographerController(
 
     @GetMapping("/{handle}/events/{slug}/photos")
     fun listEventPhotos(
+        @AuthenticationPrincipal principal: AuthPrincipal?,
         @PathVariable handle: String,
         @PathVariable slug: String,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
         request: HttpServletRequest,
+        response: HttpServletResponse,
     ): PaginatedResponse<PhotoDto> {
         rateLimit(request)
+        if (principal != null) response.setHeader("Cache-Control", "private, no-store")
         return publicPhotographerService.listEventPhotos(
             handle = handle,
             eventSlug = slug,
             pagination = PaginationParams.of(offset, limit),
+            requesterUserId = principal?.userId,
         )
     }
 

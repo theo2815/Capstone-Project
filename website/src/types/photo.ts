@@ -1,3 +1,5 @@
+import type { PhotoMetadataAccess } from "./photo-metadata";
+
 export interface Photo {
   id: string;
   eventId: string;
@@ -10,6 +12,7 @@ export interface Photo {
 
 export interface MockPhoto {
   id: string;
+  metadataAccess?: PhotoMetadataAccess;
   bib: string | null;
   km: number | null;
   time: string;

@@ -9,9 +9,10 @@ import type { Role } from "@/types/user";
 import { useOrdersList, useOrderDetail } from "./use-orders";
 import { useOwnedPhotoIds } from "./use-owned-photo-ids";
 import { useSelfiesList } from "./use-selfies";
+import { usePhotographerSettingsQueries } from "./use-photographer-settings";
 import { useAdminFlags, useAdminKpis, useAdminKpiTrend, useAdminSalesKpisLive, useAdminSalesByEventLive, useFlagActions } from "./use-admin-data";
 import {
-  usePhotographerEvents, usePhotographerEventDetail, usePhotographerEventPhotos,
+  usePhotographerEvents, usePhotographerEventDetail, usePhotographerEventPhotos, usePhotographerEventMetadataVisibility,
   usePhotographerEarnings, usePhotographerPerEventEarnings, usePhotographerPayouts,
   usePhotographerPayoutBalance, usePhotographerTransactions, usePublicPhotographer,
 } from "./use-photographer-data";
@@ -47,6 +48,7 @@ describe.each([
   { name: "covered events", role: "PHOTOGRAPHER", useRead: usePhotographerEvents, payload: page },
   { name: "event detail", role: "PHOTOGRAPHER", useRead: () => usePhotographerEventDetail("event-a"), payload: { id: "event-a" } },
   { name: "event photos", role: "PHOTOGRAPHER", useRead: () => usePhotographerEventPhotos("event-a"), payload: page },
+  { name: "event metadata visibility", role: "PHOTOGRAPHER", useRead: () => usePhotographerEventMetadataVisibility("event-a"), payload: { metadataPublic: false } },
   { name: "earnings", role: "PHOTOGRAPHER", useRead: usePhotographerEarnings, payload: { total: 100 } },
   { name: "per-event earnings", role: "PHOTOGRAPHER", useRead: usePhotographerPerEventEarnings, payload: page },
   { name: "payouts", role: "PHOTOGRAPHER", useRead: usePhotographerPayouts, payload: page },
@@ -85,6 +87,29 @@ describe.each([
       expect(get).not.toHaveBeenCalled();
     });
   }
+});
+
+it("keeps a late metadata settings read out of a new photographer session", async () => {
+  const old = deferred<{ metadataPublicByDefault: boolean }>();
+  let metadataReads = 0;
+  const get = vi.spyOn(api, "get").mockImplementation((path) => {
+    if (path.endsWith("/metadata-settings")) {
+      metadataReads += 1;
+      return metadataReads === 1 ? old.promise : Promise.resolve({ metadataPublicByDefault: true });
+    }
+    return Promise.resolve(path.endsWith("/brand") ? {} : []);
+  });
+  const hook = renderHook(usePhotographerSettingsQueries, { wrapper });
+  expect(get).not.toHaveBeenCalled();
+  act(() => login("PHOTOGRAPHER"));
+  await waitFor(() => expect(metadataReads).toBe(1));
+  const signal = get.mock.calls.find(([path]) => path.endsWith("/metadata-settings"))?.[1]?.signal;
+  expect(signal).toBeInstanceOf(AbortSignal);
+  act(() => { useAuthStore.getState().logout(); client.clear(); login("PHOTOGRAPHER"); });
+  await waitFor(() => expect(hook.result.current.metadata.data).toEqual({ metadataPublicByDefault: true }));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => old.resolve({ metadataPublicByDefault: false }));
+  expect(hook.result.current.metadata.data).toEqual({ metadataPublicByDefault: true });
 });
 
 it("shares orders between receipts and owned-photo hints; invalidation refreshes both", async () => {

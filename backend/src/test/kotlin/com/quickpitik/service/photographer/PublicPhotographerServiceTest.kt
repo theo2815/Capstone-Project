@@ -69,6 +69,11 @@ class PublicPhotographerServiceTest {
         PublicProperties(),
         Mockito.mock(EventDtoMapper::class.java),
         Mockito.mock(UserDtoMapper::class.java),
+        Mockito.mock(PhotoMetadataService::class.java).also { metadata ->
+            Mockito.`when`(metadata.metadataAccess(anyArg(), anyArg(), anyArg())).thenAnswer { invocation ->
+                invocation.getArgument<Collection<Photo>>(1).associate { it.id to "none" }
+            }
+        },
     )
 
     private fun photographer(handle: String, status: VerificationStatus, suspended: Boolean) {
