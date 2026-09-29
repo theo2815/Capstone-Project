@@ -23,6 +23,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 
 /**
  * What the dashboard ViewModel still owns that a photographer can lose money
@@ -75,6 +76,57 @@ class PhotographerDashboardViewModelTest {
         val deadline = System.currentTimeMillis() + 5_000
         while (!check() && System.currentTimeMillis() < deadline) Thread.sleep(5)
         assertTrue(check())
+    }
+
+    @Test fun `event metadata visibility loads selected event, cancels, and saves its own setting`() {
+        val path = "$EVENTS/ev-1/metadata-visibility"
+        route("GET $path") { ok("""{"metadataPublic":false}""") }
+        val vm = model()
+        vm.loadEventMetadataVisibility("ev-1")
+        vm.eventMetadataVisibility.awaitFirst { it.eventId == "ev-1" && it.saved == false }
+        vm.setEventMetadataVisibilityDraft(true)
+        vm.cancelEventMetadataVisibility()
+        assertEquals(false, vm.eventMetadataVisibility.value.draft)
+        vm.setEventMetadataVisibilityDraft(true)
+        route("PUT $path") { ok("""{"metadataPublic":true}""") }
+        vm.saveEventMetadataVisibility()
+        vm.eventMetadataVisibility.awaitFirst { it.saved == true }
+        assertEquals("""{"metadataPublic":true}""", bodies("PUT", path).single())
+    }
+
+    @Test fun `event metadata visibility failure keeps draft and an event switch loads its own preference`() {
+        val first = "$EVENTS/ev-1/metadata-visibility"
+        val second = "$EVENTS/ev-2/metadata-visibility"
+        route("GET $first") { ok("""{"metadataPublic":false}""") }
+        route("GET $second") { ok("""{"metadataPublic":true}""") }
+        val vm = model()
+        vm.loadEventMetadataVisibility("ev-1")
+        vm.eventMetadataVisibility.awaitFirst { it.eventId == "ev-1" && it.saved == false }
+        vm.setEventMetadataVisibilityDraft(true)
+        route("PUT $first") { MockResponse().setResponseCode(500) }
+        vm.saveEventMetadataVisibility()
+        vm.eventMetadataVisibility.awaitFirst { it.error != null }
+        assertEquals(true, vm.eventMetadataVisibility.value.draft)
+        vm.loadEventMetadataVisibility("ev-2")
+        vm.eventMetadataVisibility.awaitFirst { it.eventId == "ev-2" && it.saved == true }
+        assertEquals(true, vm.eventMetadataVisibility.value.draft)
+        assertEquals(1, count("GET", second))
+        assertEquals(0, count("PUT", second))
+    }
+
+    @Test fun `late old event visibility does not replace selected event`() {
+        val first = "$EVENTS/ev-1/metadata-visibility"
+        val second = "$EVENTS/ev-2/metadata-visibility"
+        route("GET $first") { ok("""{"metadataPublic":true}""").setBodyDelay(300, TimeUnit.MILLISECONDS) }
+        route("GET $second") { ok("""{"metadataPublic":false}""") }
+        val vm = model()
+        vm.loadEventMetadataVisibility("ev-1")
+        awaitUntil { count("GET", first) == 1 }
+        vm.loadEventMetadataVisibility("ev-2")
+        vm.eventMetadataVisibility.awaitFirst { it.eventId == "ev-2" && it.saved == false }
+        Thread.sleep(400)
+        assertEquals("ev-2", vm.eventMetadataVisibility.value.eventId)
+        assertEquals(false, vm.eventMetadataVisibility.value.saved)
     }
 
     @Test fun `authoring an event reports the backend's words on a refusal and refreshes the list on a save`() {

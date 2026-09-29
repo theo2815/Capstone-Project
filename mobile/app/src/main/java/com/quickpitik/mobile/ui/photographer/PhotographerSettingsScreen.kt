@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -232,6 +233,7 @@ fun PhotographerSettingsScreen(
     val isSaving by settingsViewModel.isSavingSettings.collectAsState()
     val actionState by settingsViewModel.actionState.collectAsState()
     val settingsLoadError by settingsViewModel.settingsLoadError.collectAsState()
+    val metadataDefault by settingsViewModel.metadataDefault.collectAsState()
 
     // Hydration gate: with no cached brand payload and a failed fetch, the
     // form would render EMPTY but editable — and Save would overwrite real
@@ -550,6 +552,16 @@ fun PhotographerSettingsScreen(
             )
         }
         item("actions") {
+            MetadataToggleCard(
+                state = metadataDefault,
+                label = "Show metadata publicly for new events",
+                help = "Applies to events you create or start covering next. Existing events keep their settings.",
+                saveLabel = "Save metadata default",
+                onChange = settingsViewModel::setMetadataDefaultDraft,
+                onSave = settingsViewModel::saveMetadataDefault,
+                onCancel = settingsViewModel::cancelMetadataDefault,
+                onRetry = settingsViewModel::loadMetadataDefault,
+            )
             HairlineDivider()
             BottomActions(
                 isSaving = isSaving,
@@ -663,6 +675,46 @@ fun PhotographerSettingsScreen(
                 avatarUri = croppedUri.toString()
             }
         )
+    }
+}
+
+@Composable
+internal fun MetadataToggleCard(
+    state: MetadataToggleState,
+    label: String,
+    help: String,
+    saveLabel: String,
+    onChange: (Boolean) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    QpCard(modifier = Modifier.fillMaxWidth()) {
+        Kicker("Photo metadata")
+        Spacer(Modifier.height(12.dp))
+        when {
+            state.loading -> Text("Loading metadata visibility…", style = Typography.bodyMedium, color = Slate)
+            state.saved == null -> {
+                Text(state.error ?: "Couldn't load metadata visibility.", style = Typography.bodyMedium, color = ErrorRed)
+                GhostCta("Retry metadata visibility", onRetry)
+            }
+            else -> {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(48.dp).clickable(enabled = !state.saving) { onChange(state.draft != true) }) {
+                    Checkbox(checked = state.draft == true, onCheckedChange = if (state.saving) null else onChange)
+                    Text(label, style = Typography.bodyMedium, color = Ink)
+                }
+                Text(help, style = Typography.bodyMedium, color = Slate)
+                Spacer(Modifier.height(8.dp))
+                Text("This controls the metadata popup. Original downloads keep their embedded metadata.", style = Typography.bodyMedium, color = Slate)
+                state.error?.let { Text(it, style = Typography.bodyMedium, color = ErrorRed) }
+                if (state.draft != state.saved || state.saving) {
+                    Spacer(Modifier.height(12.dp))
+                    GhostCta(saveLabel, onSave, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    GhostCta("Cancel metadata change", onCancel, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
     }
 }
 
