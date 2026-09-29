@@ -394,8 +394,11 @@ def main() -> int:
         artifact = json.loads(args.model_manifest.read_text(encoding="utf-8"))["models"][
             "blur_classifier"
         ]
-        model["version"] = artifact["artifact_version"]
-        if model["sha256"] != artifact["sha256"] and not args.offline:
+        # The manifest names the shipped model; a different file (e.g. an offline
+        # candidate) must not be reported under that version.
+        if model["sha256"] == artifact["sha256"]:
+            model["version"] = artifact["artifact_version"]
+        elif not args.offline:
             issues.append("model digest differs from manifest")
     except (OSError, ValueError, KeyError, TypeError):
         if not args.offline or model["sha256"] is None:
