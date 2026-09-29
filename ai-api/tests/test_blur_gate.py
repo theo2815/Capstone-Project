@@ -440,6 +440,7 @@ def test_tone_only_flip_fails_the_gate(tmp_path, monkeypatch):
     code, report = _gate(tmp_path, monkeypatch, root, server,
                          "--max-overcull-rate", "0", "--max-photometric-flip-rate", "0.02")
     assert code != 0 and report["status"] == "FAIL"
+    assert report["issues"] == []  # the photometric check alone failed the run
     assert report["photometric"]["checked"] == 4
     assert report["photometric"]["flipped"] == 2
 
@@ -462,6 +463,17 @@ def test_threshold_sweep_counts_both_flag_rules():
     sweep = blur_gate.threshold_sweep(labels, probs)
     assert sweep["0.45"]["max_class"] == {"sharp_overcull": 0.0, "blur_miss": 1.0}
     assert sweep["0.45"]["total"] == {"sharp_overcull": 1.0, "blur_miss": 0.0}
+    # Low thresholds too: Task 9 may lower "strict" below today's 0.30.
+    assert sweep["0.10"]["max_class"] == {"sharp_overcull": 1.0, "blur_miss": 0.0}
+
+
+def test_misnamed_class_folder_inside_an_event_fails_a_release_run(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"event": {"sharp": 2, "motion_blurred": 2}})
+    (root / "event" / "motion_blur").mkdir()
+    (root / "event" / "motion_blur" / "0.jpg").write_bytes(b"event/motion_blurred/9")
+    code, report = _gate(tmp_path, monkeypatch, root, _truth, "--max-overcull-rate", "0")
+    assert code != 0 and report["status"] == "FAIL"
+    assert "unrecognised folder(s) inside events: event/motion_blur" in report["issues"]
 
 
 @pytest.mark.parametrize("manifest", [None, "other-model"])

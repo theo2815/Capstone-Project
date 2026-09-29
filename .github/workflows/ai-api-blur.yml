@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: ai-api/requirements-blur.lock
       - run: sudo apt-get update && sudo apt-get install -y libpq-dev libgl1 libglib2.0-0 libgomp1
       - run: python -m pip install -r requirements-blur.lock pytest pytest-asyncio pytest-cov
-      - run: python -m pytest tests/test_deployment_config.py tests/test_blur_gate.py tests/test_blur_endpoint.py -q
+      - run: python -m pytest tests/test_deployment_config.py tests/test_blur_gate.py tests/test_blur_endpoint.py tests/test_prepare_blur_dataset.py tests/test_synthesize_event_blur.py -q
 
   release-check:
     if: github.event_name == 'workflow_dispatch'

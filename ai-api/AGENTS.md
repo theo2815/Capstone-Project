@@ -291,7 +291,7 @@ Key worker files:
 
 Training scripts live in `scripts/`:
 
-- Blur classifier: `prepare_blur_dataset.py` → `train_blur_classifier.py` → `export_blur_classifier.py`
+- Blur classifier: `synthesize_event_blur.py` → `prepare_blur_dataset.py` → `train_blur_classifier.py` → `export_blur_classifier.py`
 - Bib detector (dedicated): `train_bib_detector.py` → `export_bib_detector.py`
 - Combined face+bib detector (archived path): `auto_annotate_face_bib.py` → `train_face_bib_detector.py` → `export_face_bib_detector.py`
 

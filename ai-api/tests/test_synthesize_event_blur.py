@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from scripts import synthesize_event_blur as synth
-from scripts.prepare_blur_dataset import CLASS_DIRS, shoot_group
+from scripts.prepare_blur_dataset import CLASS_DIRS, IMAGE_EXTENSIONS, shoot_group
 
 
 def _checker(path: Path) -> None:
@@ -81,7 +81,18 @@ def test_source_without_event_prefix_is_rejected(tmp_path):
         synth.synthesize(root)
 
 
+def test_a_misnamed_source_leaves_earlier_copies_alone(tmp_path):
+    root = _root(tmp_path, "cebu-run-2026__IMG_1.jpg")
+    first = synth.synthesize(root)
+    _checker(root / synth.SOURCE_DIR / "0001.jpg")  # sorts first on every OS
+    with pytest.raises(ValueError, match="<event-id>__"):
+        synth.synthesize(root)
+    assert all((root / r["output"]).exists() for r in first)
+
+
 def test_output_folders_feed_the_training_classes():
     assert synth.SOURCE_DIR in CLASS_DIRS["sharp"]
     assert synth.DEFOCUS_DIR in CLASS_DIRS["defocused_blurred"]
     assert synth.MOTION_DIR in CLASS_DIRS["motion_blurred"]
+    # Every sharp event photo that trains as sharp also gets its blurred pair.
+    assert synth.IMAGE_EXTENSIONS == IMAGE_EXTENSIONS

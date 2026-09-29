@@ -85,8 +85,12 @@ def _filler(source: Path, n: int = 10) -> None:
         (source / "defocused_blurred" / f"blur-{i}.jpg").write_bytes(f"blur {i}".encode())
 
 
+def _manifest(output: Path) -> dict:
+    return json.loads((output / "split_manifest.json").read_text(encoding="utf-8"))
+
+
 def _rows(output: Path) -> list[dict]:
-    return json.loads((output / "split_manifest.json").read_text(encoding="utf-8"))["entries"]
+    return _manifest(output)["entries"]
 
 
 def test_one_camera_day_never_straddles_the_split(tmp_path: Path) -> None:
@@ -140,7 +144,7 @@ def test_shoot_group_ignores_unreadable_files(tmp_path: Path) -> None:
     assert shoot_group(junk) is None
 
 
-def test_a_large_event_never_overfills_validation(tmp_path: Path) -> None:
+def test_a_large_event_never_overfills_validation(tmp_path: Path, capsys) -> None:
     source = _sources(tmp_path)
     for event in ("run-a", "run-b", "run-c"):
         for i in range(10):
@@ -152,3 +156,43 @@ def test_a_large_event_never_overfills_validation(tmp_path: Path) -> None:
                  if r["labels"] == ["sharp"] and r["split"] == "val"]
     assert 0 < len(sharp_val) <= 8  # 20% of 40 sharp
     assert not any(r["group_id"] for r in sharp_val)
+    # Every event is too big for validation: say so instead of printing only class counts.
+    assert _manifest(tmp_path / "clean")["validation_events"] == []
+    assert "WARNING: validation holds no event photos" in capsys.readouterr().out
+
+
+def test_validation_lists_the_events_it_holds(tmp_path: Path) -> None:
+    source = _sources(tmp_path)
+    for k in range(10):
+        (source / "Sharp event photos" / f"run-{k}__0.jpg").write_bytes(f"run {k}".encode())
+        (source / "defocused_blurred" / f"blur-{k}.jpg").write_bytes(f"blur {k}".encode())
+    prepare_dataset(source, tmp_path / "clean")
+    held = sorted(r["group_id"] for r in _rows(tmp_path / "clean")
+                  if r["split"] == "val" and r["labels"] == ["sharp"])
+    assert len(held) == 2  # 20% of 10 one-photo events
+    assert _manifest(tmp_path / "clean")["validation_events"] == held
+
+
+def test_misnamed_event_blur_photo_fails_loudly(tmp_path: Path) -> None:
+    source = _sources(tmp_path)
+    (source / "Event motion" / "Cebu_Run__IMG_1.jpg").write_bytes(b"misnamed")
+    _filler(source)
+    with pytest.raises(ValueError, match="<event-id>__"):
+        prepare_dataset(source, tmp_path / "clean")
+    assert not (tmp_path / "clean").exists()
+
+
+def test_event_name_beats_other_evidence_for_the_same_photo(tmp_path: Path) -> None:
+    # Its synthetic copies are grouped by the event name, so the source must be too.
+    source = _sources(tmp_path)
+    _jpeg(source / "Sharp_images" / "legacy.jpg", "Canon EOS R6", "2026:09:14 05:10:00", 5)
+    data = (source / "Sharp_images" / "legacy.jpg").read_bytes()
+    (source / "Sharp event photos" / "run-a__legacy.jpg").write_bytes(data)
+    _filler(source)
+    digest = hashlib.sha256(data).hexdigest()
+    groups = tmp_path / "groups.csv"
+    groups.write_text(f"sha256,group_id\n{digest},burst-1\n", encoding="utf-8")
+    for output, groups_file in ((tmp_path / "exif", None), (tmp_path / "csv", groups)):
+        prepare_dataset(source, output, groups_file)
+        row = next(r for r in _rows(output) if r["sha256"] == digest)
+        assert row["group_id"] == "event:run-a"
