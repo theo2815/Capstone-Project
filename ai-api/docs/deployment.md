@@ -223,11 +223,16 @@ GitHub Actions `ai-api-blur` runs deterministic regressions on pushes and PRs.
 The manual `release-check` job builds from a clean checkout after fetching
 private ONNX, labels, and an approved labelled holdout through the
 `blur-release` environment's `BLUR_MODEL_URL`, `BLUR_LABELS_URL`, and
-`BLUR_HOLDOUT_URL` secrets. The holdout ZIP must have the four class
-directories at its root (see `scripts/blur_gate.py --help`). Missing
-artifacts fail. Set the approved `BLUR_MIN_ACCURACY`, `BLUR_MAX_MISS_RATE`,
-and `BLUR_MAX_OVERCULL_RATE` in that environment's variables; missing or
-invalid limits fail before the release smoke creates database keys. It migrates disposable
+`BLUR_HOLDOUT_URL` secrets. The holdout ZIP holds one folder per event, each
+with class directories (`<event-id>/sharp/`, `<event-id>/motion_blurred/`, …;
+see `scripts/blur_gate.py --help`); the gate reports each event separately and
+passes on sharp-vs-blurry results. Missing artifacts fail. Set these approved
+limits in that environment's variables: `BLUR_MIN_ACCURACY`,
+`BLUR_MAX_MISS_RATE`, `BLUR_MAX_OVERCULL_RATE`, `BLUR_MAX_PHOTOMETRIC_FLIP_RATE`
+(0.02: the most decisions that brighter, darker or grayscale copies may
+change), and the holdout floor `BLUR_MIN_SHARP`, `BLUR_MIN_BLUR`,
+`BLUR_MIN_EVENTS` (500, 150, 3). Missing or invalid limits fail before the
+release smoke creates database keys. It migrates disposable
 PostgreSQL/pgvector, starts Redis and the built image with async routes disabled,
 checks real inference, verifies batch/mega requests return `BLUR_ASYNC_DISABLED`,
 denies desktop access to `/metrics`, and runs the complete `blur_gate.py`

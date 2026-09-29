@@ -112,9 +112,37 @@ def resize_bytes(path: Path, max_dim: int, quality: int) -> bytes:
         return buf.getvalue()
 
 
+PHOTOMETRIC_VARIANTS = (("brighter", 0.6), ("darker", 1.6), ("grayscale", None))
+
+
+def photometric_variants(jpeg: bytes, quality: int) -> list[bytes]:
+    """Same pixels with a different tone or no colour: a blur decision must not move.
+
+    The 2026-08-14 model flagged sharp night photos 9% -> 56% as they were only
+    brightened, and grayscale cut its flags 32% -> 9% (2026-09-29 investigation).
+
+    Each copy is re-encoded from the upload, one JPEG generation after it, so a few
+    flips may come from re-compression rather than tone. That errs toward FAIL: if a
+    candidate misses the limit narrowly, check whether a plain re-encode flips it too.
+    """
+    out = []
+    with Image.open(io.BytesIO(jpeg)) as im:
+        rgb = im.convert("RGB")
+        for _, gamma in PHOTOMETRIC_VARIANTS:
+            if gamma is None:
+                variant = ImageOps.grayscale(rgb).convert("RGB")
+            else:
+                variant = rgb.point([round(255 * (v / 255) ** gamma) for v in range(256)] * 3)
+            buf = io.BytesIO()
+            variant.save(buf, format="JPEG", quality=quality)
+            out.append(buf.getvalue())
+    return out
+
+
 def classify_stream(client: httpx.Client, base: str, headers: dict,
                     items: list[tuple[int, bytes]], batch: int,
-                    issues: list[str] | None = None) -> dict[int, str | None]:
+                    issues: list[str] | None = None,
+                    probabilities_out: dict[int, dict] | None = None) -> dict[int, str | None]:
     """Stream items (global_index, bytes) through /blur/classify/stream in chunks.
 
     Returns {global_index: predicted_class or None}. Results map back by the
@@ -181,6 +209,8 @@ def classify_stream(client: httpx.Client, base: str, headers: dict,
                         continue
                     successes += 1
                     out[gi] = predicted
+                    if probabilities_out is not None:
+                        probabilities_out[gi] = probabilities
                 if len(seen) != len(chunk):
                     issues.append(f"chunk @{start}: {len(seen)}/{len(chunk)} result rows")
                 if summaries != 1 or summary is None:
@@ -204,11 +234,83 @@ def classify_stream(client: httpx.Client, base: str, headers: dict,
     return out
 
 
-def collect_labelled(root: Path, limit: int) -> list[tuple[Path, str, str]]:
+# Below 0.30 too: calibration may lower the desktop's strict setting (plan Task 9).
+SWEEP_THRESHOLDS = (0.05, 0.10, 0.15, 0.20, 0.30, 0.45, 0.65, 0.80, 0.90, 0.95, 0.99)
+
+
+def threshold_sweep(labels: dict[int, str], probabilities: dict[int, dict]) -> dict:
+    """Over-cull/miss per flag threshold, mirroring the desktop rules (calibration only).
+
+    max_class: best single blur class >= t (desktop today).
+    total:     1 - P(sharp) >= t (candidate rule, plan decision D7).
+    """
+    sweep = {}
+    for t in SWEEP_THRESHOLDS:
+        row = {}
+        for rule in ("max_class", "total"):
+            over = miss = n_sharp = n_blur = 0
+            for i, label in labels.items():
+                p = probabilities.get(i)
+                if p is None:
+                    continue
+                score = (max(p[c] for c in BLUR_CLASSES) if rule == "max_class"
+                         else 1 - p["sharp"])
+                if label == "sharp":
+                    n_sharp += 1
+                    over += score >= t
+                else:
+                    n_blur += 1
+                    miss += score < t
+            row[rule] = {"sharp_overcull": over / n_sharp if n_sharp else None,
+                         "blur_miss": miss / n_blur if n_blur else None}
+        sweep[f"{t:.2f}"] = row
+    return sweep
+
+
+def classify_offline(model_file: Path, labels_file: Path, items: list[tuple[int, bytes]],
+                     batch: int, issues: list[str],
+                     probabilities_out: dict[int, dict]) -> dict[int, str | None]:
+    """Production decode + BlurClassifier in-process, to score candidates without a server.
+
+    Diagnostic only: a release must still pass through the deployed HTTP path.
+    """
+    root = str(Path(__file__).resolve().parent.parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from src.api.v1.blur import _decode_bgr_for_classify
+    from src.config import get_settings
+    from src.ml.blur.classifier import BlurClassifier
+
+    classifier = BlurClassifier(model_path=str(model_file), class_names_path=str(labels_file))
+    out: dict[int, str | None] = {gi: None for gi, _ in items}
+    if classifier.session is None:
+        issues.append("offline model could not be loaded")
+        return out
+    dim = get_settings().BLUR_CLASSIFY_DECODE_DIM
+    for start in range(0, len(items), batch):
+        chunk = items[start:start + batch]
+        images = []
+        for _, data in chunk:
+            try:
+                images.append(_decode_bgr_for_classify(data, dim))
+            except Exception:
+                images.append(None)
+        for (gi, _), result in zip(chunk, classifier.classify_batch(images), strict=True):
+            if result is None:
+                issues.append(f"offline: input {gi} failed")
+                continue
+            out[gi] = result["predicted_class"]
+            probabilities_out[gi] = result["probabilities"]
+    return out
+
+
+def collect_labelled(root: Path, limit: int,
+                     unknown: list[str] | None = None) -> list[tuple[Path, str, str]]:
     """Find (image_path, label, event) from class folders.
 
     root/<class>/image is one event named after root; root/<event>/<class>/image
     keeps events apart so over-cull on one new event cannot hide in a pooled rate.
+    Other folders inside an event (e.g. a misspelt `motion_blur/`) go to `unknown`.
     """
     pairs: list[tuple[Path, str, str]] = []
 
@@ -224,6 +326,9 @@ def collect_labelled(root: Path, limit: int) -> list[tuple[Path, str, str]]:
             for c in CLASSES:
                 if (child / c).is_dir():
                     add(child / c, child.name)
+            if unknown is not None:
+                unknown += [f"{child.name}/{p.name}" for p in sorted(child.iterdir())
+                            if p.is_dir() and p.name not in CLASSES]
         else:
             print(f"  (skipping unrecognised dir: {child.name})", file=sys.stderr)
     if limit:
@@ -238,7 +343,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Blur stream gate: /blur/classify/stream vs ground-truth labels.")
     ap.add_argument("labelled_dir", type=Path,
-                    help="Directory whose subdirectories are class names.")
+                    help="Directory of class folders, or of event folders that each "
+                         "contain class folders (<event-id>/sharp/, <event-id>/motion_blurred/).")
     ap.add_argument("--url", default="http://localhost:8000", help="ai-api base URL.")
     ap.add_argument("--api-key-file", type=Path,
                     help="Untracked X-API-Key file; otherwise use AI_API_KEY environment variable.")
@@ -252,7 +358,8 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="Cap number of images (0 = all).")
     ap.add_argument("--diagnostic-subset", action="store_true",
                     help="Allow --limit or partial class coverage; output is not a release PASS.")
-    ap.add_argument("--min-accuracy", type=float, default=0.97, help="Gate: min overall accuracy.")
+    ap.add_argument("--min-accuracy", type=float, default=0.97,
+                    help="Gate: min sharp-vs-blurry accuracy (blur subtype is reported only).")
     ap.add_argument("--max-miss-rate", type=float, default=0.02,
                     help="Gate: max fraction of blurry photos predicted sharp.")
     ap.add_argument("--max-overcull-rate", type=float, default=0.0,
@@ -263,6 +370,13 @@ def main() -> int:
                     help="Release minimum of blurry inputs, all blur classes together.")
     ap.add_argument("--min-events", type=int, default=0,
                     help="Release minimum of distinct events (nested layout).")
+    ap.add_argument("--max-photometric-flip-rate", type=float, default=None,
+                    help="Gate: max fraction of inputs whose sharp/blurry decision changes "
+                         "under brighter/darker/grayscale copies (setting it runs the check).")
+    ap.add_argument("--offline", action="store_true",
+                    help="Score --model-file in-process with the production decode; never PASS.")
+    ap.add_argument("--labels-file", type=Path,
+                    default=Path("models/blur_classifier/class_names.json"))
     args = ap.parse_args()
 
     if (args.batch < 1 or args.limit < 0 or args.cand_dim < 1
@@ -270,30 +384,40 @@ def main() -> int:
             or min(args.min_sharp, args.min_blur, args.min_events) < 0
             or any(not math.isfinite(v) or not 0 <= v <= 1 for v in (
                 args.min_accuracy, args.max_miss_rate, args.max_overcull_rate,
-            )) or (args.limit and not args.diagnostic_subset)):
+            )) or (args.limit and not args.diagnostic_subset)
+            or (args.max_photometric_flip_rate is not None
+                and (not math.isfinite(args.max_photometric_flip_rate)
+                     or not 0 <= args.max_photometric_flip_rate <= 1))):
         ap.error("invalid gate settings; --limit requires --diagnostic-subset")
     if not args.labelled_dir.is_dir():
         print(f"Not a directory: {args.labelled_dir}", file=sys.stderr)
         return 2
 
-    pairs = collect_labelled(args.labelled_dir, args.limit)
+    unknown: list[str] = []
+    pairs = collect_labelled(args.labelled_dir, args.limit, unknown)
     if not pairs:
         print(f"No labelled images found under {args.labelled_dir}", file=sys.stderr)
         return 2
 
     issues: list[str] = []
+    if unknown:  # skipping them would quietly shrink the holdout
+        issues.append(f"unrecognised folder(s) inside events: {', '.join(unknown)}")
     model = {"version": None, "sha256": None}
     try:
+        with args.model_file.open("rb") as f:
+            model["sha256"] = hashlib.file_digest(f, "sha256").hexdigest()
         artifact = json.loads(args.model_manifest.read_text(encoding="utf-8"))["models"][
             "blur_classifier"
         ]
-        model["version"] = artifact["artifact_version"]
-        with args.model_file.open("rb") as f:
-            model["sha256"] = hashlib.file_digest(f, "sha256").hexdigest()
-        if model["sha256"] != artifact["sha256"]:
+        # The manifest names the shipped model; a different file (e.g. an offline
+        # candidate) must not be reported under that version.
+        if model["sha256"] == artifact["sha256"]:
+            model["version"] = artifact["artifact_version"]
+        elif not args.offline:
             issues.append("model digest differs from manifest")
     except (OSError, ValueError, KeyError, TypeError):
-        issues.append("model file or manifest unavailable/invalid")
+        if not args.offline or model["sha256"] is None:
+            issues.append("model file or manifest unavailable/invalid")
 
     try:
         key = (args.api_key_file.read_text(encoding="utf-8").strip()
@@ -304,8 +428,10 @@ def main() -> int:
     headers = {"X-API-Key": key} if key else {}
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=300.0, pool=10.0)
 
-    print(f"Testing {len(pairs)} labelled images against {args.url}")
-    print(f"  candidate: fit {args.cand_dim}px q{args.cand_quality} -> /blur/classify/stream\n")
+    endpoint = "in-process" if args.offline else "/api/v1/blur/classify/stream"
+    print(f"Testing {len(pairs)} labelled images against "
+          f"{'--model-file (offline)' if args.offline else args.url}")
+    print(f"  candidate: fit {args.cand_dim}px q{args.cand_quality} -> {endpoint}\n")
 
     items: list[tuple[int, bytes]] = []
     labels: dict[int, str] = {}
@@ -325,8 +451,28 @@ def main() -> int:
         except Exception:
             issues.append(f"input {i}: preparation failed")
 
-    with httpx.Client(timeout=timeout) as client:
-        preds = classify_stream(client, args.url, headers, items, args.batch, issues)
+    variant_of: dict[int, int] = {}
+    if args.max_photometric_flip_rate is not None:
+        next_index = len(pairs)
+        for i, data in list(items):
+            try:
+                variants = photometric_variants(data, args.cand_quality)
+            except Exception:
+                issues.append(f"input {i}: photometric preparation failed")
+                continue
+            for variant in variants:
+                items.append((next_index, variant))
+                variant_of[next_index] = i
+                next_index += 1
+
+    probabilities: dict[int, dict] = {}
+    if args.offline:
+        preds = classify_offline(args.model_file, args.labels_file, items, args.batch,
+                                 issues, probabilities)
+    else:
+        with httpx.Client(timeout=timeout) as client:
+            preds = classify_stream(client, args.url, headers, items, args.batch, issues,
+                                    probabilities)
 
     scored = [i for i in labels if preds.get(i) in CLASSES]
     n = len(scored)
@@ -363,13 +509,29 @@ def main() -> int:
     if failed:
         issues.append(f"{failed} input(s) without valid predictions")
 
+    photometric = None
+    if args.max_photometric_flip_rate is not None:
+        flipped: dict[int, bool] = {}
+        for j, i in variant_of.items():
+            if preds.get(i) in CLASSES and preds.get(j) in CLASSES:
+                moved = (preds[j] in BLUR_CLASSES) != (preds[i] in BLUR_CLASSES)
+                flipped[i] = flipped.get(i, False) or moved
+        checked, flips = len(flipped), sum(flipped.values())
+        photometric = {"variants": [name for name, _ in PHOTOMETRIC_VARIANTS],
+                       "checked": checked, "flipped": flips,
+                       "flip_rate": flips / checked if checked else None,
+                       "interval_95": wilson(flips, checked)}
+
     quality_passed = (binary_accuracy >= args.min_accuracy
                       and (miss_rate is not None and miss_rate <= args.max_miss_rate
                            or args.diagnostic_subset and miss_rate is None)
                       and (overcull_rate is not None and overcull_rate <= args.max_overcull_rate
-                           or args.diagnostic_subset and overcull_rate is None))
+                           or args.diagnostic_subset and overcull_rate is None)
+                      and (photometric is None
+                           or photometric["flip_rate"] is not None
+                           and photometric["flip_rate"] <= args.max_photometric_flip_rate))
     status = "FAIL" if issues or not quality_passed else (
-        "DIAGNOSTIC" if args.diagnostic_subset else "PASS"
+        "DIAGNOSTIC" if args.diagnostic_subset or args.offline else "PASS"
     )
     report = {
         "status": status,
@@ -379,6 +541,8 @@ def main() -> int:
         "intervals_95": {"blur_miss": wilson(len(missed), n_blur),
                          "sharp_overcull": wilson(len(overcull), n_sharp)},
         "events": events,
+        "photometric": photometric,
+        "threshold_sweep": threshold_sweep(labels, probabilities),
         "coverage": {label: sum(pair[1] == label for pair in pairs) for label in CLASSES},
         "confusion": {label: {pred: confusion[(label, pred)] for pred in CLASSES}
                       for label in CLASSES},
@@ -386,7 +550,7 @@ def main() -> int:
         "model": model,
         "preprocessing": {"client_max_dimension": args.cand_dim,
                           "client_jpeg_quality": args.cand_quality,
-                          "endpoint": "/api/v1/blur/classify/stream"},
+                          "endpoint": endpoint},
         "dataset_manifest": dataset_manifest,
         "dataset_manifest_sha256": hashlib.sha256(json.dumps(
             dataset_manifest, sort_keys=True, separators=(",", ":")
@@ -399,7 +563,9 @@ def main() -> int:
                            "max_miss_rate": args.max_miss_rate,
                            "max_overcull_rate": args.max_overcull_rate,
                            "min_sharp": args.min_sharp, "min_blur": args.min_blur,
-                           "min_events": args.min_events, "accuracy_basis": "binary"},
+                           "min_events": args.min_events, "accuracy_basis": "binary",
+                           "max_photometric_flip_rate": args.max_photometric_flip_rate,
+                           "offline": args.offline},
     }
     try:
         args.report_json.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n",
@@ -416,6 +582,9 @@ def main() -> int:
     print(f"4-class accuracy (reported):     {correct}/{len(pairs)} = {accuracy:.4f}")
     print(f"blurry called sharp (dangerous): {len(missed)}/{n_blur} = {miss_rate}")
     print(f"sharp called blurry (over-cull): {len(overcull)}/{n_sharp} = {overcull_rate}")
+    if photometric:
+        print(f"tone/colour-only flips:          {photometric['flipped']}/"
+              f"{photometric['checked']} = {photometric['flip_rate']}")
     print("confusion (label -> predicted):")
     for label in CLASSES:
         print(f"  {label:28s} " + " ".join(str(confusion[(label, pred)]) for pred in CLASSES))

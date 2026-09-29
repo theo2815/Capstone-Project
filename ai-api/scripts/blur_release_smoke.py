@@ -31,7 +31,8 @@ async def run(smoke_only: bool) -> None:
         raise RuntimeError("BLUR_HOLDOUT_DIR must contain the approved labelled holdout")
     limits = {}
     if not smoke_only:
-        for name in ("BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE"):
+        for name in ("BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE",
+                     "BLUR_MAX_PHOTOMETRIC_FLIP_RATE"):
             try:
                 value = float(os.environ[name])
             except (KeyError, ValueError):
@@ -122,6 +123,7 @@ async def run(smoke_only: bool) -> None:
                  "--min-accuracy", limits["BLUR_MIN_ACCURACY"],
                  "--max-miss-rate", limits["BLUR_MAX_MISS_RATE"],
                  "--max-overcull-rate", limits["BLUR_MAX_OVERCULL_RATE"],
+                 "--max-photometric-flip-rate", limits["BLUR_MAX_PHOTOMETRIC_FLIP_RATE"],
                  "--min-sharp", limits["BLUR_MIN_SHARP"],
                  "--min-blur", limits["BLUR_MIN_BLUR"],
                  "--min-events", limits["BLUR_MIN_EVENTS"]],

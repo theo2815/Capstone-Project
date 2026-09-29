@@ -302,6 +302,7 @@ ai-api/
 │   ├── benchmark.py                # Performance benchmarks.
 │   ├── backup_db.sh                # pg_dump helper.
 │   │
+│   ├── synthesize_event_blur.py    # Blurred training copies of sharp event photos.
 │   ├── prepare_blur_dataset.py     # Builds train/val splits for the blur classifier.
 │   ├── train_blur_classifier.py    # YOLOv8n-cls fine-tune script.
 │   ├── export_blur_classifier.py   # Exports best.pt → ONNX → models/blur_classifier/.
