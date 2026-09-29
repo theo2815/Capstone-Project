@@ -23,9 +23,9 @@ import numpy as np
 from PIL import Image, ImageOps
 
 try:
-    from scripts.prepare_blur_dataset import EVENT_PREFIX
+    from scripts.prepare_blur_dataset import EVENT_PREFIX, IMAGE_EXTENSIONS
 except ImportError:  # run as a plain script from ai-api/scripts
-    from prepare_blur_dataset import EVENT_PREFIX
+    from prepare_blur_dataset import EVENT_PREFIX, IMAGE_EXTENSIONS
 
 TRAINING_DIR = Path(__file__).resolve().parent.parent / "Training-Images"
 SOURCE_DIR = "Sharp event photos"
@@ -36,7 +36,6 @@ WORK_LONG_EDGE = 2560          # 2x the desktop's 1280 upload, so kernels stay e
 DISPLAY_EDGE = 2048            # copies look blurry even at a 2048-px view, so surely at 100% (D6)
 DEFOCUS_RADIUS = (2.0, 9.0)    # px at a 2048-px long edge: clearly soft, never borderline
 MOTION_LENGTH = (5.0, 24.0)    # px streak at a 2048-px long edge; short streaks cover subtle motion
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
 _LEVELS = np.arange(256) / 255.0
 _TO_LINEAR = np.where(_LEVELS <= 0.04045, _LEVELS / 12.92,
@@ -93,17 +92,19 @@ def synthesize(root: Path = TRAINING_DIR, seed: int = 42) -> list[dict]:
     """Write one defocus and one motion copy per sharp event frame; return provenance."""
     rng = random.Random(seed)
     noise = np.random.default_rng(seed)
+    sources = sorted(p for p in (root / SOURCE_DIR).iterdir()
+                     if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
+    for src in sources:   # check every name before deleting the previous copies
+        if not EVENT_PREFIX.match(src.name):
+            raise ValueError(f"{src.name}: event photos must be named "
+                             "'<event-id>__<original name>'")
     for folder in (DEFOCUS_DIR, MOTION_DIR):     # generated only; rebuilt every run
         (root / folder).mkdir(parents=True, exist_ok=True)
         for old in (root / folder).glob("*.jpg"):
             old.unlink()
     records = []
-    for src in sorted(p for p in (root / SOURCE_DIR).iterdir()
-                      if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS):
+    for src in sources:
         event = EVENT_PREFIX.match(src.name)
-        if not event:
-            raise ValueError(f"{src.name}: event photos must be named "
-                             "'<event-id>__<original name>'")
         with Image.open(src) as im:
             rgb = ImageOps.exif_transpose(im).convert("RGB")
         scale = min(1.0, WORK_LONG_EDGE / max(rgb.size))

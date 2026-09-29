@@ -31,6 +31,9 @@ CLASS_DIRS: dict[str, str | list[str]] = {
     "motion_blurred": ["motion_blurred", "Event motion", "Synthetic event motion"],
 }
 EVENT_PREFIX = re.compile(r"^([a-z0-9][a-z0-9-]*)__")
+# Real event blur must carry its event name, or its camera-day group could split
+# the event across train/val (synthesize_event_blur checks the sharp folder).
+EVENT_BLUR_DIRS = {"Event subject missed focus", "Event defocus", "Event motion"}
 PUBLIC_SCENE = re.compile(r"^(\d+_[A-Z0-9-]+)_[SFM]\.", re.IGNORECASE)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
 RANDOM_SEED = 42
@@ -83,11 +86,16 @@ def prepare_dataset(
                 raise FileNotFoundError(directory)
             for path in sorted(directory.iterdir()):
                 if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+                    if folder in EVENT_BLUR_DIRS and not EVENT_PREFIX.match(path.name):
+                        raise ValueError(f"{folder}/{path.name}: event photos must be named "
+                                         "'<event-id>__<original name>'")
                     with path.open("rb") as stream:
                         digest = hashlib.file_digest(stream, "sha256").hexdigest()
                     by_hash[digest].append((label, path))
-                    group = auto_groups.get(digest) or shoot_group(path)
-                    if group:
+                    # For a photo stored twice, the event name beats a camera-day
+                    # group: its synthetic copies are grouped by the event name.
+                    group = shoot_group(path)
+                    if group and (digest not in auto_groups or group.startswith("event:")):
                         auto_groups[digest] = group
 
     leaked = excluded.intersection(by_hash)
@@ -112,11 +120,14 @@ def prepare_dataset(
     grouped: dict[str, list[dict]] = defaultdict(list)
     for digest, copies in sorted(by_hash.items()):
         labels = sorted({label for label, _ in copies})
+        group_id = auto_groups.get(digest)
+        if not (group_id or "").startswith("event:"):  # the event name beats the CSV too
+            group_id = group_ids.get(digest) or group_id
         entry = {
             "sha256": digest,
             "labels": labels,
             "sources": sorted(path.relative_to(source_dir).as_posix() for _, path in copies),
-            "group_id": group_ids.get(digest) or auto_groups.get(digest),
+            "group_id": group_id,
         }
         if len(labels) != 1:
             entry.update(split="excluded", reason="conflicting labels require review")
@@ -149,6 +160,10 @@ def prepare_dataset(
         if use_val:
             validation.update(group_counts)
         remaining.subtract(group_counts)
+    # Class counts alone can't show whether validation holds any real event: whole
+    # events are big, so they often don't fit once small public groups fill it.
+    validation_events = sorted(name for name, members in grouped.items()
+                               if name.startswith("event:") and members[0]["split"] == "val")
 
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="blur-clean-", dir=output_dir.parent) as tmp:
@@ -171,6 +186,7 @@ def prepare_dataset(
             "validation_ratio": VAL_RATIO,
             "event_burst_metadata": "partial" if group_ids else "not supplied",
             "auto_grouped_identities": len(auto_groups),
+            "validation_events": validation_events,
             "entries": entries,
         }
         (staging / "split_manifest.json").write_text(
@@ -187,6 +203,10 @@ def prepare_dataset(
     print(
         f"Validation: {dict(validation)}; event/burst metadata: {manifest['event_burst_metadata']}"
     )
+    print(f"Validation events: {', '.join(validation_events) or 'none'}")
+    if not validation_events and any(name.startswith("event:") for name in grouped):
+        print("WARNING: validation holds no event photos, so it cannot measure over-cull "
+              "on real events")
 
 
 if __name__ == "__main__":

@@ -120,6 +120,10 @@ def photometric_variants(jpeg: bytes, quality: int) -> list[bytes]:
 
     The 2026-08-14 model flagged sharp night photos 9% -> 56% as they were only
     brightened, and grayscale cut its flags 32% -> 9% (2026-09-29 investigation).
+
+    Each copy is re-encoded from the upload, one JPEG generation after it, so a few
+    flips may come from re-compression rather than tone. That errs toward FAIL: if a
+    candidate misses the limit narrowly, check whether a plain re-encode flips it too.
     """
     out = []
     with Image.open(io.BytesIO(jpeg)) as im:
@@ -230,7 +234,8 @@ def classify_stream(client: httpx.Client, base: str, headers: dict,
     return out
 
 
-SWEEP_THRESHOLDS = (0.30, 0.45, 0.65, 0.80, 0.90, 0.95, 0.99)
+# Below 0.30 too: calibration may lower the desktop's strict setting (plan Task 9).
+SWEEP_THRESHOLDS = (0.05, 0.10, 0.15, 0.20, 0.30, 0.45, 0.65, 0.80, 0.90, 0.95, 0.99)
 
 
 def threshold_sweep(labels: dict[int, str], probabilities: dict[int, dict]) -> dict:
@@ -299,11 +304,13 @@ def classify_offline(model_file: Path, labels_file: Path, items: list[tuple[int,
     return out
 
 
-def collect_labelled(root: Path, limit: int) -> list[tuple[Path, str, str]]:
+def collect_labelled(root: Path, limit: int,
+                     unknown: list[str] | None = None) -> list[tuple[Path, str, str]]:
     """Find (image_path, label, event) from class folders.
 
     root/<class>/image is one event named after root; root/<event>/<class>/image
     keeps events apart so over-cull on one new event cannot hide in a pooled rate.
+    Other folders inside an event (e.g. a misspelt `motion_blur/`) go to `unknown`.
     """
     pairs: list[tuple[Path, str, str]] = []
 
@@ -319,6 +326,9 @@ def collect_labelled(root: Path, limit: int) -> list[tuple[Path, str, str]]:
             for c in CLASSES:
                 if (child / c).is_dir():
                     add(child / c, child.name)
+            if unknown is not None:
+                unknown += [f"{child.name}/{p.name}" for p in sorted(child.iterdir())
+                            if p.is_dir() and p.name not in CLASSES]
         else:
             print(f"  (skipping unrecognised dir: {child.name})", file=sys.stderr)
     if limit:
@@ -333,7 +343,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Blur stream gate: /blur/classify/stream vs ground-truth labels.")
     ap.add_argument("labelled_dir", type=Path,
-                    help="Directory whose subdirectories are class names.")
+                    help="Directory of class folders, or of event folders that each "
+                         "contain class folders (<event-id>/sharp/, <event-id>/motion_blurred/).")
     ap.add_argument("--url", default="http://localhost:8000", help="ai-api base URL.")
     ap.add_argument("--api-key-file", type=Path,
                     help="Untracked X-API-Key file; otherwise use AI_API_KEY environment variable.")
@@ -347,7 +358,8 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="Cap number of images (0 = all).")
     ap.add_argument("--diagnostic-subset", action="store_true",
                     help="Allow --limit or partial class coverage; output is not a release PASS.")
-    ap.add_argument("--min-accuracy", type=float, default=0.97, help="Gate: min overall accuracy.")
+    ap.add_argument("--min-accuracy", type=float, default=0.97,
+                    help="Gate: min sharp-vs-blurry accuracy (blur subtype is reported only).")
     ap.add_argument("--max-miss-rate", type=float, default=0.02,
                     help="Gate: max fraction of blurry photos predicted sharp.")
     ap.add_argument("--max-overcull-rate", type=float, default=0.0,
@@ -381,12 +393,15 @@ def main() -> int:
         print(f"Not a directory: {args.labelled_dir}", file=sys.stderr)
         return 2
 
-    pairs = collect_labelled(args.labelled_dir, args.limit)
+    unknown: list[str] = []
+    pairs = collect_labelled(args.labelled_dir, args.limit, unknown)
     if not pairs:
         print(f"No labelled images found under {args.labelled_dir}", file=sys.stderr)
         return 2
 
     issues: list[str] = []
+    if unknown:  # skipping them would quietly shrink the holdout
+        issues.append(f"unrecognised folder(s) inside events: {', '.join(unknown)}")
     model = {"version": None, "sha256": None}
     try:
         with args.model_file.open("rb") as f:
@@ -413,8 +428,10 @@ def main() -> int:
     headers = {"X-API-Key": key} if key else {}
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=300.0, pool=10.0)
 
-    print(f"Testing {len(pairs)} labelled images against {args.url}")
-    print(f"  candidate: fit {args.cand_dim}px q{args.cand_quality} -> /blur/classify/stream\n")
+    endpoint = "in-process" if args.offline else "/api/v1/blur/classify/stream"
+    print(f"Testing {len(pairs)} labelled images against "
+          f"{'--model-file (offline)' if args.offline else args.url}")
+    print(f"  candidate: fit {args.cand_dim}px q{args.cand_quality} -> {endpoint}\n")
 
     items: list[tuple[int, bytes]] = []
     labels: dict[int, str] = {}
@@ -533,8 +550,7 @@ def main() -> int:
         "model": model,
         "preprocessing": {"client_max_dimension": args.cand_dim,
                           "client_jpeg_quality": args.cand_quality,
-                          "endpoint": "in-process" if args.offline
-                          else "/api/v1/blur/classify/stream"},
+                          "endpoint": endpoint},
         "dataset_manifest": dataset_manifest,
         "dataset_manifest_sha256": hashlib.sha256(json.dumps(
             dataset_manifest, sort_keys=True, separators=(",", ":")
