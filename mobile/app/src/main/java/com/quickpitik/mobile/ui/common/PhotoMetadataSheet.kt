@@ -72,6 +72,7 @@ fun PhotoMetadataSheet(
                     metadataDetails(state.metadata.fields, state.metadata.originalFilename, state.metadata.fileSizeBytes)
                 }
                 is PhotoMetadataState.LocalEmpty -> {
+                    Text("From phone original", style = Typography.bodySmall, color = Slate)
                     Text("No camera metadata was found.", style = Typography.bodyMedium, color = Slate)
                     fileFacts(state.metadata.originalFilename, state.metadata.fileSizeBytes)
                 }

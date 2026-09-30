@@ -884,7 +884,7 @@ private const val RECENT_STRIP_MAX_TILES = 30
  * precedent — semantic state, not accent CTAs, so the one-Fresh rule holds.
  */
 @Composable
-private fun SyncQueueTile(record: UploadRecord, onClick: () -> Unit = {}) {
+internal fun SyncQueueTile(record: UploadRecord, onClick: () -> Unit = {}) {
     val stateLabel = when (record.uploadStatus) {
         "UPLOADING" -> "uploading"
         "COMPLETED" -> "synced"
@@ -907,7 +907,7 @@ private fun SyncQueueTile(record: UploadRecord, onClick: () -> Unit = {}) {
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Text("Cloud", color = Slate, style = Typography.labelSmall, modifier = Modifier.align(Alignment.Center))
+            Text("No file", color = Slate, style = Typography.labelSmall, modifier = Modifier.align(Alignment.Center))
         }
         // QUEUED gets no badge — the quiet default; it flips to a spinner
         // within seconds of the worker picking the row up.
