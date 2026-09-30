@@ -125,6 +125,7 @@ data class PhotoPreviewData(
     // LocalReview mode only — one line under the frame (filename · sync state).
     val caption: String? = null,
     val metadataAccess: String? = null,
+    val localUploadRecordId: Long? = null,
 )
 
 // PhotoPreview has four modes. Browse is the runner buy-flow (Add to cart /
@@ -296,7 +297,7 @@ fun PhotoPreview(
             if (current[id] != deniedAccess[id]) deniedAccess.remove(id)
         }
     }
-    LaunchedEffect(activePhoto.id, metadataAccess) {
+    LaunchedEffect(activePhoto.id, metadataAccess, activePhoto.localUploadRecordId) {
         closeMetadata()
     }
     LaunchedEffect(metadataState) {
@@ -609,7 +610,8 @@ fun PhotoPreview(
                         }
                     }
 
-                    if (metadataAccess != null && deniedAccess[activePhoto.id] != metadataAccess) {
+                    if ((metadataAccess != null && deniedAccess[activePhoto.id] != metadataAccess) ||
+                        (mode == PhotoPreviewMode.LocalReview && activePhoto.localUploadRecordId != null)) {
                         Spacer(modifier = Modifier.height(12.dp))
                         GhostCta(
                             text = "Show Metadata",
@@ -617,7 +619,8 @@ fun PhotoPreview(
                                 metadataOpen = true
                                 openedPhotoId = activePhoto.id
                                 openedAccess = metadataAccess
-                                metadataViewModel.selectRemote(activePhoto.id, metadataAccess)
+                                if (mode == PhotoPreviewMode.LocalReview) metadataViewModel.selectLocal(activePhoto.localUploadRecordId!!)
+                                else metadataViewModel.selectRemote(activePhoto.id, metadataAccess!!)
                             },
                             modifier = Modifier.fillMaxWidth(),
                         )

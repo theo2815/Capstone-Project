@@ -115,6 +115,7 @@ android {
             isIncludeAndroidResources = true
         }
     }
+    sourceSets["test"].resources.srcDir(rootProject.file("../backend/src/test/resources"))
 }
 
 kapt {
@@ -140,6 +141,7 @@ dependencies {
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging.interceptor)
+    implementation("com.drewnoakes:metadata-extractor:2.19.0")
 
     // SQLite Persistence (Room)
     implementation(libs.room.runtime)
