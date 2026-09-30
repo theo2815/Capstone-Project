@@ -1,0 +1,524 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo:wght@400;500;600;700;800;900&family=Geist+Mono:wght@400;500;600&display=block" rel="stylesheet">
+<style>
+:root{
+  --paper:#F8F5EE; --paper-deep:#EFEAE0; --ink:#111111; --ink-soft:#2A2A28;
+  --fresh:#1B7A46; --fresh-deep:#14562F; --fresh-tint:#E6F1E9; --pine:#0C3321;
+  --slate:#475569; --slate-soft:#64748B; --line:#E5E2D9; --line-strong:#D4D2C8; --surface:#fff;
+  --shadow-card:0 1px 2px rgba(17,17,20,.04),0 8px 24px -12px rgba(17,17,20,.12);
+  --shadow-lift:0 2px 4px rgba(17,17,20,.05),0 30px 60px -20px rgba(17,17,20,.28);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:var(--paper)}
+body{font-family:Archivo,system-ui,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased;letter-spacing:-.006em}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--paper)}
+.abs{position:absolute}
+.scene{position:absolute;inset:0;opacity:0}
+.hero{font-family:Anton,sans-serif;text-transform:uppercase;line-height:.92;letter-spacing:.005em;font-weight:400}
+.mono{font-family:"Geist Mono",ui-monospace,monospace}
+.kicker{font-family:"Geist Mono",monospace;text-transform:uppercase;letter-spacing:.14em;font-size:22px;color:var(--slate)}
+.tnum{font-variant-numeric:tabular-nums}
+.stripe{display:inline-flex;gap:6px;align-items:center}
+.stripe>span{display:block;width:34px;height:6px;border-radius:3px}
+.line{will-change:transform,opacity}
+
+/* photo tile (mirrors photo-mosaic-tile fallback) */
+.tile{position:absolute;border-radius:14px;overflow:hidden}
+.tile .fig{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center}
+.tile svg.runner{width:78%;height:78%;color:var(--paper);opacity:.28}
+.tile .bib{position:absolute;left:12px;top:12px;background:rgba(248,245,238,.92);color:var(--ink);font-family:"Geist Mono",monospace;font-size:14px;letter-spacing:.1em;padding:3px 8px;border-radius:6px}
+.tile .road{position:absolute;left:0;right:0;bottom:0;height:22%;background:linear-gradient(to top,rgba(0,0,0,.25),transparent)}
+.pills{position:absolute;right:12px;bottom:12px;display:flex;gap:7px}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:999px;font-weight:700;font-size:15px;white-space:nowrap;box-shadow:0 4px 12px -2px rgba(0,0,0,.25)}
+.pill.cart{background:rgba(255,255,255,.95);color:var(--ink);border:1px solid var(--line-strong)}
+.pill.cart.on{background:var(--fresh);color:#fff;border-color:var(--fresh)}
+.pill.buy{background:rgba(17,17,17,.85);color:#fff}
+
+.card{position:absolute;background:var(--surface);border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow-lift)}
+.action{position:absolute;left:48px;right:48px;height:124px;border-radius:18px;border:1px solid var(--line);display:flex;align-items:center;gap:26px;padding:0 30px;background:var(--surface)}
+.action .gl{width:64px;height:64px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:var(--paper)}
+.action.primary{border-color:var(--fresh);background:var(--fresh-tint)}
+.action.primary .gl{background:var(--fresh);color:#fff}
+.action h4{font-weight:800;font-size:30px;letter-spacing:-.01em}
+.action p{font-size:21px;color:var(--slate);margin-top:2px}
+.btn{display:inline-flex;align-items:center;gap:10px;border-radius:999px;font-weight:700}
+.wm{position:absolute;inset:-30%;display:flex;flex-wrap:wrap;gap:34px 46px;align-content:center;justify-content:center;transform:rotate(-24deg);font-weight:800;font-size:var(--wm,15px);color:rgba(248,245,238,.38);pointer-events:none;white-space:nowrap}
+#cursor{position:absolute;width:44px;height:44px;left:0;top:0;z-index:50;opacity:0;filter:drop-shadow(0 4px 8px rgba(0,0,0,.25))}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- ─────────── Scene 1: the haystack ─────────── -->
+  <div id="s1" class="scene" style="background:var(--ink)">
+    <div id="wall" class="abs" style="left:-40px;top:0;width:2000px"></div>
+    <div id="wallShade" class="abs" style="inset:0;background:radial-gradient(ellipse at center,rgba(17,17,17,.55) 0%,rgba(17,17,17,.82) 70%)"></div>
+    <div class="abs" style="left:0;right:0;top:300px;text-align:center">
+      <div id="h1a" class="hero line" style="font-size:190px;color:var(--paper)">15,000 race photos.</div>
+      <div id="h1b" class="hero line" style="font-size:190px;color:var(--paper);margin-top:26px">Which ones are <span style="background:var(--fresh);padding:0 22px;border-radius:12px">you?</span></div>
+    </div>
+  </div>
+
+  <!-- ─────────── Scene 2: reveal ─────────── -->
+  <div id="s2" class="scene">
+    <div id="hdr" class="abs" style="left:0;right:0;top:0;height:132px;border-bottom:1px solid var(--line)">
+      <img id="hdrLogo" src="logo.png" class="abs" style="left:120px;top:30px;height:72px">
+      <div class="kicker abs" id="hdrK" style="right:120px;top:52px">Cebu · Philippines</div>
+      <div class="abs" style="left:0;right:0;bottom:-7px;height:6px;display:flex">
+        <span id="st1" style="height:6px;background:var(--fresh);width:0"></span>
+        <span id="st2" style="height:6px;background:var(--fresh-deep);width:0"></span>
+        <span id="st3" style="height:6px;background:var(--pine);width:0"></span>
+      </div>
+    </div>
+    <div class="abs" style="left:120px;top:250px">
+      <div id="k2" class="line" style="display:flex;align-items:center;gap:18px">
+        <span class="stripe"><span style="background:var(--fresh)"></span><span style="background:var(--fresh-deep)"></span><span style="background:var(--ink)"></span></span>
+        <span class="kicker">Race photo marketplace</span>
+      </div>
+      <div class="hero" style="font-size:196px;margin-top:34px">
+        <div id="l2a" class="line">Find your</div>
+        <div id="l2b" class="line" style="color:var(--fresh)">race photos.</div>
+        <div id="l2c" class="line" style="color:var(--slate-soft)">Or sell yours.</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="fan" class="abs" style="left:0;top:0;width:1920px;height:1080px;pointer-events:none"></div>
+  <!-- ─────────── Scene 3: face search ─────────── -->
+  <div id="s3" class="scene">
+    <div class="abs" style="left:130px;top:250px;width:760px">
+      <div id="k3" class="kicker line" style="color:var(--fresh)">For runners · after the finish</div>
+      <div id="h3" class="hero line" style="font-size:150px;margin-top:26px">Snap a selfie.</div>
+      <div id="p3" class="line" style="font-size:40px;font-weight:500;color:var(--ink-soft);margin-top:30px;line-height:1.25">We surface every shot of you.</div>
+      <div id="stat3" class="line" style="margin-top:64px">
+        <div class="mono tnum" style="font-size:24px;color:var(--slate)">Search time</div>
+        <div class="hero tnum" style="font-size:150px;color:var(--fresh);margin-top:8px">5–10<span style="font-size:60px;margin-left:14px;vertical-align:top">sec</span></div>
+      </div>
+    </div>
+    <div id="card3" class="card" style="left:960px;top:150px;width:840px;height:790px">
+      <div class="abs" style="left:48px;top:44px;right:48px;display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:800;font-size:38px;letter-spacing:-.015em">Find your photos</div>
+        <svg width="26" height="26" viewBox="0 0 16 16" fill="none"><path d="M3 3 L13 13 M13 3 L13 3 M13 3 L3 13" stroke="#475569" stroke-width="1.75" stroke-linecap="round"/></svg>
+      </div>
+      <div class="abs" style="left:48px;right:48px;top:112px;height:1px;background:var(--line)"></div>
+      <!-- state A: chooser -->
+      <div id="c3a" class="abs" style="inset:0">
+        <div class="kicker abs" style="left:48px;top:160px;font-size:18px">Selfie match · fastest way</div>
+        <div id="actTake" class="action primary" style="top:216px">
+          <div class="gl"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></div>
+          <div><h4>Take a selfie</h4><p>Use your camera to snap one now.</p></div>
+        </div>
+        <div id="actUp" class="action" style="top:362px">
+          <div class="gl"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#111" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0l-5 5m5-5l5 5M4 20h16"/></svg></div>
+          <div><h4>Upload a selfie</h4><p>Pick an existing photo from your device.</p></div>
+        </div>
+        <div class="abs" style="left:48px;right:48px;top:540px;display:flex;align-items:center;gap:18px">
+          <span style="height:1px;flex:1;background:var(--line)"></span><span class="kicker" style="font-size:15px;color:var(--slate-soft)">or</span><span style="height:1px;flex:1;background:var(--line)"></span>
+        </div>
+        <div class="abs mono" style="left:48px;top:600px;border:1px solid var(--ink);border-radius:999px;padding:18px 32px;font-size:19px;letter-spacing:.14em;text-transform:uppercase">Search by bib number</div>
+      </div>
+      <!-- state B: selfie + scan -->
+      <div id="c3b" class="abs" style="inset:0;opacity:0">
+        <div class="abs" style="left:50%;top:190px;width:340px;height:340px;margin-left:-170px;border-radius:50%;overflow:hidden;background:var(--fresh-tint)">
+          <svg viewBox="0 0 200 200" width="340" height="340"><circle cx="100" cy="82" r="38" fill="#1B7A46" opacity=".85"/><path d="M28 200 C34 140 70 124 100 124 C130 124 166 140 172 200Z" fill="#1B7A46" opacity=".85"/></svg>
+          <div id="scanBar" class="abs" style="left:0;right:0;height:6px;background:var(--fresh);box-shadow:0 0 24px 6px rgba(27,122,70,.45)"></div>
+        </div>
+        <svg id="ring" class="abs" style="left:50%;top:170px;margin-left:-190px" width="380" height="380" viewBox="0 0 380 380"><circle cx="190" cy="190" r="184" fill="none" stroke="#1B7A46" stroke-width="5" stroke-linecap="round" stroke-dasharray="1156" stroke-dashoffset="1156" transform="rotate(-90 190 190)"/></svg>
+        <div id="flash" class="abs" style="inset:0;border-radius:28px;background:#fff;opacity:0"></div>
+        <div class="abs mono" style="left:0;right:0;top:600px;text-align:center;font-size:24px;letter-spacing:.14em;text-transform:uppercase;color:var(--slate)">Matching your face…</div>
+      </div>
+      <!-- state C: results -->
+      <div id="c3c" class="abs" style="inset:0;opacity:0">
+        <div class="abs" style="left:48px;top:150px;display:flex;align-items:baseline;gap:16px">
+          <span class="hero tnum" style="font-size:64px;color:var(--fresh)">6</span>
+          <span style="font-weight:800;font-size:30px">photos of you</span>
+          <span class="kicker" style="font-size:17px;margin-left:10px">Cebu Marathon 2026</span>
+        </div>
+        <div id="grid3" class="abs" style="left:48px;top:250px;width:744px;height:500px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────── Scene 4: bib search ─────────── -->
+  <div id="s4" class="scene">
+    <div class="abs" style="left:130px;top:300px;width:760px">
+      <div id="k4" class="kicker line">No selfie? Fine.</div>
+      <div id="h4" class="hero line" style="font-size:150px;margin-top:26px">Or type<br>your bib.</div>
+    </div>
+    <div id="card4" class="card" style="left:960px;top:150px;width:840px;height:790px">
+      <div class="abs" style="left:48px;top:44px;font-weight:800;font-size:38px;letter-spacing:-.015em">Find your photos</div>
+      <div class="abs" style="left:48px;right:48px;top:112px;height:1px;background:var(--line)"></div>
+      <div id="bibBox" class="abs" style="left:48px;right:48px;top:160px;height:104px;border-radius:16px;border:2px solid var(--line)">
+        <div id="bibLabel" class="abs" style="left:26px;color:var(--slate-soft);font-size:28px">Enter your bib number</div>
+        <div id="bibText" class="abs mono" style="left:26px;top:42px;font-size:40px;letter-spacing:.14em"></div>
+      </div>
+      <div id="bibBtn" class="abs btn" style="left:48px;top:296px;background:var(--fresh);color:#fff;padding:18px 34px;font-size:24px">Search by bib →</div>
+      <div id="bibRes" class="abs" style="left:48px;top:390px;width:744px;height:360px;opacity:0">
+        <div class="kicker" style="font-size:17px"><span class="tnum">4</span> photos · bib 1042</div>
+        <div id="grid4" class="abs" style="left:0;top:46px;width:744px;height:310px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────── Scene T: photographer tether ─────────── -->
+  <div id="sT" class="scene">
+    <div class="abs" style="left:130px;top:220px;width:720px">
+      <div id="kT" class="kicker line" style="color:var(--fresh-deep)">For photographers</div>
+      <div id="hT" class="hero line" style="font-size:124px;margin-top:26px">Connect your<br>phone to<br>your camera.</div>
+      <div id="pT" class="line" style="font-size:40px;font-weight:500;color:var(--ink-soft);margin-top:34px;line-height:1.25">Every shot lands in the marketplace.</div>
+    </div>
+    <svg class="abs" style="left:0;top:0;pointer-events:none" width="1920" height="1080"><path id="cable" d="M1228 380 C1350 380 1330 765 1480 765 L1550 765 C1595 765 1605 752 1605 722" fill="none" stroke="#111" stroke-width="9" stroke-linecap="round" stroke-dasharray="820" stroke-dashoffset="820"/></svg>
+    <div id="cam" class="abs" style="left:900px;top:250px;width:330px;height:250px">
+      <svg width="330" height="250" viewBox="0 0 330 250">
+        <path d="M100 52 L122 14 L208 14 L230 52 Z" fill="#111"/>
+        <rect id="camBtn" x="38" y="32" width="50" height="18" rx="6" fill="#475569"/>
+        <rect x="10" y="48" width="310" height="192" rx="26" fill="#111"/>
+        <rect x="318" y="118" width="12" height="28" rx="3" fill="#475569"/>
+        <circle cx="165" cy="145" r="76" fill="#2A2A28"/>
+        <circle cx="165" cy="145" r="56" fill="#0b0b0b" stroke="#475569" stroke-width="4"/>
+        <circle cx="165" cy="145" r="24" fill="#1B7A46"/>
+        <circle cx="150" cy="130" r="9" fill="#fff" opacity=".35"/>
+      </svg>
+      <div id="camFlash" class="abs" style="left:65px;top:45px;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,#fff 0%,rgba(255,255,255,.6) 35%,rgba(255,255,255,0) 70%);opacity:0"></div>
+    </div>
+    <div id="phone" class="abs" style="left:1450px;top:80px;width:310px;height:650px;border-radius:48px;background:#111;padding:12px;box-shadow:var(--shadow-lift)">
+      <div style="position:relative;width:100%;height:100%;border-radius:38px;background:var(--paper);overflow:hidden">
+        <div class="abs" style="left:50%;top:12px;width:72px;height:20px;margin-left:-36px;border-radius:10px;background:#111"></div>
+        <div class="abs kicker" style="left:22px;top:54px;font-size:12px">Event · Open for uploads</div>
+        <div class="abs" style="left:22px;top:74px;font-weight:800;font-size:22px">Cebu Marathon 2026</div>
+        <div class="abs" style="left:22px;right:22px;top:120px;padding:13px 14px;border-radius:14px;border:1px solid var(--line);background:#fff;display:flex;align-items:center;gap:10px">
+          <span id="camDot" style="width:10px;height:10px;border-radius:50%;background:#64748B;flex:none"></span>
+          <span id="camTxt" class="mono" style="font-size:13px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap">Camera · searching</span>
+        </div>
+        <div class="abs" style="left:22px;right:22px;top:190px;height:300px;border-radius:18px;background:#fff;border:1px solid var(--line)">
+          <div id="autoLbl" class="abs mono" style="left:18px;top:18px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--slate);white-space:nowrap">Auto-upload</div>
+          <div id="autoCount" class="abs hero tnum" style="left:18px;top:52px;font-size:120px;color:var(--fresh);transform-origin:left bottom">0</div>
+          <div class="abs" style="left:18px;top:180px;font-size:14px;color:var(--slate)">Saved on phone this session</div>
+          <div class="abs" style="left:18px;right:18px;top:214px;height:1px;background:var(--line)"></div>
+          <div id="lastCap" class="abs mono" style="left:18px;top:232px;font-size:14px;color:var(--ink)">Last capture: —</div>
+        </div>
+        <div id="startBtn" class="abs btn" style="left:22px;right:22px;top:516px;justify-content:center;padding:17px 0;background:var(--fresh);color:#fff;font-size:18px">Start auto-upload</div>
+        <div id="tap" class="abs" style="left:108px;top:512px;width:70px;height:70px;border-radius:50%;background:rgba(255,255,255,.45);opacity:0"></div>
+      </div>
+    </div>
+    <div id="web" class="card" style="left:900px;top:800px;width:860px;height:236px;border-radius:20px">
+      <div class="abs" style="left:0;right:0;top:0;height:42px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding-left:18px">
+        <span style="width:11px;height:11px;border-radius:50%;background:var(--line-strong)"></span><span style="width:11px;height:11px;border-radius:50%;background:var(--line-strong)"></span><span style="width:11px;height:11px;border-radius:50%;background:var(--line-strong)"></span>
+        <span class="mono" style="margin-left:16px;font-size:14px;color:var(--slate);background:var(--paper);padding:4px 14px;border-radius:999px">quickpitik.com/events/cebu-marathon-2026</span>
+      </div>
+      <div class="abs kicker" style="left:22px;top:56px;font-size:14px">Cebu Marathon 2026 · <span style="color:var(--fresh)">new photos</span></div>
+      <div id="webGrid" class="abs" style="left:22px;top:88px;width:816px;height:130px"></div>
+    </div>
+    <div id="flyLayer" class="abs" style="inset:0;pointer-events:none"></div>
+  </div>
+
+  <!-- ─────────── Scene 5: buy + download ─────────── -->
+  <div id="s5" class="scene">
+    <div class="abs" style="left:130px;top:300px;width:760px">
+      <div id="k5" class="kicker line" style="color:var(--fresh)">Checkout · QR Ph</div>
+      <div id="h5" class="hero line" style="font-size:170px;margin-top:26px">All yours.</div>
+      <div id="p5" class="line" style="font-size:40px;font-weight:500;color:var(--ink-soft);margin-top:30px;line-height:1.25">Scan to pay with any bank or e-wallet.</div>
+    </div>
+    <div id="card5" class="card" style="left:960px;top:150px;width:840px;height:790px">
+      <div id="c5a" class="abs" style="inset:0">
+        <div class="abs" style="left:48px;top:44px;font-weight:800;font-size:38px;letter-spacing:-.015em">Cebu Marathon 2026</div>
+        <div id="paid" class="abs" style="right:48px;top:40px;display:flex;align-items:center;gap:10px;background:var(--fresh-tint);color:var(--fresh-deep);padding:10px 20px;border-radius:999px;font-weight:800;font-size:24px;opacity:0">
+          <svg width="22" height="22" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 L6.5 12 L13 4.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>All yours.
+        </div>
+        <div id="pvWrap" class="abs" style="left:48px;top:120px;width:744px;height:520px"></div>
+        <div id="buyBtn" class="abs btn" style="left:48px;top:672px;background:var(--ink);color:#fff;padding:18px 36px;font-size:24px">Buy →</div>
+        <div id="saveBtn" class="abs btn" style="left:48px;top:672px;background:var(--fresh);color:#fff;padding:18px 36px;font-size:24px;opacity:0">Save photo ↓</div>
+        <div id="toast" class="abs mono" style="right:48px;top:686px;font-size:20px;color:var(--ink);background:var(--paper);border:1px solid var(--line);padding:10px 18px;border-radius:12px;opacity:0">R6T_1083.JPG · saved</div>
+      </div>
+      <div id="c5b" class="abs" style="inset:0;opacity:0">
+        <div class="abs" style="left:48px;top:44px;font-weight:800;font-size:38px;letter-spacing:-.015em">Checkout</div>
+        <div class="abs" style="left:48px;right:48px;top:112px;height:1px;background:var(--line)"></div>
+        <div class="abs hero" style="left:0;right:0;top:150px;text-align:center;font-size:96px">Scan to pay.</div>
+        <div class="abs" style="left:50%;top:268px;margin-left:-170px;width:340px;height:340px;padding:18px;border:1px solid var(--line);border-radius:20px;background:#fff"><svg id="qr" width="302" height="302"></svg></div>
+        <div class="abs mono" style="left:0;right:0;top:636px;text-align:center;font-size:20px;letter-spacing:.12em;text-transform:uppercase;color:var(--slate)">QR Ph · any bank or e-wallet</div>
+        <div id="confirming" class="abs" style="left:0;right:0;top:690px;text-align:center;font-size:24px;color:var(--ink-soft);opacity:0">Confirming your payment.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────── Scene 6: outro ─────────── -->
+  <div id="s6" class="scene">
+    <div class="abs" style="left:0;right:0;top:300px;text-align:center">
+      <img id="oLogo" src="logo.png" style="width:1000px">
+      <div id="oTag" class="line" style="font-weight:800;font-size:64px;letter-spacing:-.02em;margin-top:40px">Race photos, delivered in minutes.</div>
+      <div id="oRow" class="line" style="margin-top:44px;display:flex;justify-content:center;align-items:center;gap:26px">
+        <span class="stripe"><span style="background:var(--fresh)"></span><span style="background:var(--fresh-deep)"></span><span style="background:var(--ink)"></span></span>
+        <span class="kicker" style="font-size:26px">Cebu · Philippines</span>
+        <span class="kicker" style="font-size:26px;color:var(--line-strong)">/</span>
+        <span class="mono" style="font-size:30px;font-weight:600;color:var(--ink)">quickpitik.com</span>
+      </div>
+    </div>
+    <div class="abs" style="left:0;right:0;bottom:0;height:14px;display:flex">
+      <span id="ob1" style="background:var(--fresh);width:0"></span>
+      <span id="ob2" style="background:var(--fresh-deep);width:0"></span>
+      <span id="ob3" style="background:var(--pine);width:0"></span>
+    </div>
+  </div>
+
+  <!-- wipe panel between hook and reveal -->
+  <div id="wipe" class="abs" style="left:0;right:0;top:1080px;height:1200px;background:var(--paper);z-index:40"></div>
+
+  <svg id="cursor" viewBox="0 0 24 24"><path d="M4 2 L4 19 L8.5 15 L11.5 22 L14.5 20.7 L11.5 14 L18 14 Z" fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const RUNNER = `<svg class="runner" viewBox="0 0 80 80" fill="none"><path d="M6 36 L22 36" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M10 46 L24 46" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".5"/><circle cx="50" cy="14" r="6" fill="currentColor"/><path d="M50 22 L46 40" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M48 26 L62 22" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M48 28 L36 32" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M46 40 L58 50 L52 64" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M46 40 L34 56 L26 64" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const TONES = ["#111111","#2A2A28","#475569","#64748B"];
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+function tileHTML({bib, pills, cartOn, blur, wm} = {}) {
+  const flip = rnd() < .5 ? -1 : 1, dx = Math.round((rnd()-.5)*30), sc = .85 + rnd()*.3;
+  return `<div class="road"></div><div class="fig" style="transform:translateX(${dx}%) scale(${flip*sc},${sc});${blur?'filter:blur(7px)':''}">${RUNNER}</div>`
+    + (wm ? `<div class="wm">${"<span>QuickPitik</span>".repeat(40)}</div>` : "")
+    + (bib ? `<div class="bib tnum">${bib}</div>` : "")
+    + (pills ? `<div class="pills"><span class="pill cart${cartOn?' on':''}">${cartOn?'✓':'+'} Cart</span><span class="pill buy">Buy →</span></div>` : "")
+    ;
+}
+function makeTile(parent, x, y, w, h, opts) {
+  const d = document.createElement("div");
+  d.className = "tile";
+  d.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+  d.style.background = TONES[Math.floor(rnd()*4)];
+  d.innerHTML = tileHTML(opts || {});
+  parent.appendChild(d);
+  return d;
+}
+
+// wall: 13 cols x 16 rows, scrolls up
+const wall = document.getElementById("wall");
+const WT = [];
+for (let r = 0; r < 16; r++) for (let c = 0; c < 13; c++) {
+  const t = makeTile(wall, c*154, r*196, 142, 184, {bib: String(1000 + Math.floor(rnd()*8999))});
+  t.style.opacity = .55 + rnd()*.35; WT.push(t);
+}
+
+// reveal fan (lives inside s2)
+const fan = $("fan"); $("s2").appendChild(fan); const TF = [];
+[[1300,300,-9],[1480,270,4],[1400,420,-2]].forEach(([x,y,r],i) => {
+  const t = makeTile(fan, x, y, 300, 400, {bib: ["0417","1042","2231"][i], pills: i === 2, cartOn: true});
+  t.style.boxShadow = "0 30px 60px -20px rgba(17,17,20,.35)"; t._r = r; TF.push(t);
+});
+// face results 3x2
+const g3 = document.getElementById("grid3"); const T3 = [];
+const bibs3 = ["0417","0417","0417","0417","0417","0417"];
+for (let i = 0; i < 6; i++) T3.push(makeTile(g3, (i%3)*252, Math.floor(i/3)*252, 240, 240, {bib: bibs3[i], pills: i < 3, cartOn: i === 0, wm: true}));
+// bib results 4
+const g4 = document.getElementById("grid4"); const T4 = [];
+for (let i = 0; i < 4; i++) T4.push(makeTile(g4, i*188, 0, 176, 300, {bib: "1042", wm: true}));
+// tether: website gallery, 3 earlier shots + 3 flying in
+const webGrid = $("webGrid");
+for (let i = 0; i < 3; i++) makeTile(webGrid, i*136, 0, 124, 130, {bib: String(1070 + i*4)});
+const FLY = [0,1,2].map(i => { const d = makeTile($("flyLayer"), 0, 0, 124, 130, {bib: ["0417","1042","2231"][i]}); d.style.opacity = 0; return d; });
+// buy: big watermarked preview
+const PV = makeTile($("pvWrap"), 0, 0, 744, 520, {bib: "0417", wm: true});
+PV.style.setProperty("--wm", "30px"); PV.style.background = "#475569";
+const WM = PV.querySelector(".wm");
+// QR Ph code (decorative pattern with finder squares)
+{
+  const q = $("qr"), n = 29, c = 302 / n; let h = "";
+  const inFinder = (x, y) => x >= 0 && x < 7 && y >= 0 && y < 7;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const f = [[0,0],[n-7,0],[0,n-7]].find(([fx,fy]) => inFinder(x-fx, y-fy));
+    let on;
+    if (f) { const dx = x-f[0], dy = y-f[1]; on = dx===0||dy===0||dx===6||dy===6||(dx>=2&&dx<=4&&dy>=2&&dy<=4); }
+    else on = rnd() < .47;
+    if (on) h += `<rect x="${(x*c).toFixed(2)}" y="${(y*c).toFixed(2)}" width="${(c+.4).toFixed(2)}" height="${(c+.4).toFixed(2)}" fill="#111"/>`;
+  }
+  q.innerHTML = h;
+}
+
+/* ── timing helpers ── */
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const p = (t, a, b) => clamp((t - a) / (b - a));
+const eo = x => 1 - Math.pow(1 - x, 3);
+const eo5 = x => 1 - Math.pow(1 - x, 5);
+const eio = x => x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3)/2;
+const back = x => { const c = 1.6; return 1 + (c+1)*Math.pow(x-1,3) + c*Math.pow(x-1,2); };
+
+// rise in at `a`, lift out at `z` (scene-level stagger)
+function rise(el, t, a, z = 99, dist = 40) {
+  const i = eo5(p(t, a, a + .5)), o = eio(p(t, z, z + .22));
+  el.style.opacity = i * (1 - o);
+  el.style.transform = `translateY(${(1 - i) * dist - o * 24}px)`;
+}
+function sceneOn(id, t, a, z) { $(id).style.opacity = (t >= a && t < z) ? 1 : 0; }
+function popT(el, t, a) { const k = p(t, a, a + .4); el.style.opacity = clamp(k*3); el.style.transform = `scale(${.7 + .3*back(k)})`; }
+
+function cursorAt(t, keys) { // keys: [time, x, y]
+  const c = $("cursor");
+  if (t < keys[0][0] - .2 || t > keys[keys.length-1][0] + .6) return;
+  let x = keys[0][1], y = keys[0][2];
+  for (let i = 0; i < keys.length - 1; i++) {
+    const [t0,x0,y0] = keys[i], [t1,x1,y1] = keys[i+1];
+    if (t >= t0) { const k = eio(p(t, t0, t1)); x = x0 + (x1-x0)*k; y = y0 + (y1-y0)*k; }
+  }
+  c.style.opacity = clamp((t - keys[0][0] + .2) / .2) * (1 - p(t, keys[keys.length-1][0] + .3, keys[keys.length-1][0] + .6));
+  c.style.transform = `translate(${x}px,${y}px)`;
+}
+function press(t, at) { const k = p(t, at, at + .22); return 1 - Math.sin(k * Math.PI) * .04; }
+
+window.render = function (t) {
+  $("cursor").style.opacity = 0;
+  /* Scene 1: hook 0–3 */
+  sceneOn("s1", t, 0, 3.1);
+  const scroll = 1800 * eo(p(t, 0, 3.1)) + 120 * t;
+  wall.style.transform = `translateY(${-scroll}px) rotate(-4deg) scale(1.08)`;
+  rise($("h1a"), t, .15, 99, 60);
+  rise($("h1b"), t, 1.2, 99, 60);
+  // wipe up
+  const w = eio(p(t, 2.72, 3.05)), wo = p(t, 3.05, 3.06);
+  $("wipe").style.transform = `translateY(${-w * 1080 - wo * 2400}px)`;
+
+  /* Scene 2: reveal 3–6 */
+  sceneOn("s2", t, 3.0, 6.05);
+  rise($("hdrLogo"), t, 3.05, 5.72, 20);
+  rise($("hdrK"), t, 3.15, 5.72, 20);
+  const sw = eio(p(t, 3.1, 3.9)) * (1 - eio(p(t, 5.72, 5.95)));
+  ["st1","st2","st3"].forEach(id => $(id).style.width = (640 * sw) + "px");
+  rise($("k2"), t, 3.15, 5.72);
+  rise($("l2a"), t, 3.25, 5.75, 80);
+  rise($("l2b"), t, 3.42, 5.78, 80);
+  rise($("l2c"), t, 3.7, 5.81, 80);
+  TF.forEach((el, i) => {
+    const k = back(p(t, 3.5 + i*.15, 3.95 + i*.15)), o = eio(p(t, 5.72 + i*.03, 5.95 + i*.03));
+    el.style.opacity = clamp(p(t, 3.5 + i*.15, 3.65 + i*.15)) * (1 - o);
+    el.style.transform = `translateY(${(1-k)*120 - o*30 - (t-3.5)*6}px) rotate(${el._r * k}deg)`;
+  });
+
+  /* Scene T: photographer tether 6–10.5 */
+  sceneOn("sT", t, 6.0, 10.55);
+  rise($("kT"), t, 6.05, 10.22);
+  rise($("hT"), t, 6.15, 10.24, 70);
+  rise($("pT"), t, 6.9, 10.26);
+  const oT = eio(p(t, 10.25, 10.47));
+  [["cam", 6.1], ["phone", 6.2], ["web", 6.35]].forEach(([id, a]) => {
+    const i = eo5(p(t, a, a + .5));
+    $(id).style.opacity = i * (1 - oT);
+    $(id).style.transform = `translateY(${(1 - i) * 60 - oT * 24}px)`;
+  });
+  $("cable").setAttribute("stroke-dashoffset", 820 * (1 - eio(p(t, 6.45, 6.95))));
+  $("cable").style.opacity = 1 - oT;
+  const linked = t >= 7.0, watching = t >= 7.5;
+  $("camDot").style.background = linked ? "#1B7A46" : "#64748B";
+  $("camTxt").textContent = linked ? "Camera · USB connected" : "Camera · searching";
+  const tk = p(t, 7.42, 7.72);
+  $("tap").style.opacity = tk > 0 && tk < 1 ? .9 * (1 - tk) : 0;
+  $("tap").style.transform = `scale(${.4 + tk * 1.6})`;
+  $("startBtn").style.transform = `scale(${press(t, 7.42)})`;
+  $("startBtn").textContent = watching ? "Stop auto-upload" : "Start auto-upload";
+  $("startBtn").style.background = watching ? "#111" : "#1B7A46";
+  $("autoLbl").textContent = watching ? "Auto-upload · watching" : "Auto-upload";
+  $("autoLbl").style.color = watching ? "#1B7A46" : "#475569";
+  const SHOTS = [8.0, 8.5, 9.0];
+  const count = SHOTS.filter(s => t >= s + .1).length;
+  $("autoCount").textContent = count;
+  const bump = SHOTS.reduce((m, s) => Math.max(m, t >= s + .1 ? 1 - p(t, s + .1, s + .4) : 0), 0);
+  $("autoCount").style.transform = `scale(${1 + .18 * bump})`;
+  $("lastCap").textContent = count ? `Last capture: R6T_${1082 + count}.JPG` : "Last capture: —";
+  $("camBtn").setAttribute("y", SHOTS.some(s => t >= s && t < s + .12) ? 38 : 32);
+  $("camFlash").style.opacity = SHOTS.reduce((m, s) => Math.max(m, t >= s ? 1 - p(t, s, s + .28) : 0), 0);
+  FLY.forEach((el, i) => {
+    const s = SHOTS[i], k = eio(p(t, s + .1, s + .62));
+    const x0 = 1543, y0 = 500, x1 = 922 + (3 + i) * 136, y1 = 888;
+    el.style.opacity = t < s + .1 ? 0 : clamp(p(t, s + .1, s + .2)) * (1 - oT);
+    el.style.left = (x0 + (x1 - x0) * k) + "px";
+    el.style.top = (y0 + (y1 - y0) * k - Math.sin(k * Math.PI) * 120) + "px";
+    el.style.transform = `translateY(${-oT * 24}px) scale(${.55 + .45 * k}) rotate(${(1 - k) * -8}deg)`;
+    el.style.boxShadow = `0 ${20 * (1 - k) + 4}px ${40 * (1 - k) + 10}px -8px rgba(0,0,0,.35)`;
+  });
+
+  /* Scene 3: runner selfie 10.5–14.5 (rev-1 choreography, shifted 4.5s) */
+  {
+    const u = t - 4.5;
+    sceneOn("s3", u, 6.0, 10.05);
+    rise($("k3"), u, 6.05, 9.72);
+    rise($("h3"), u, 6.15, 9.74, 70);
+    rise($("p3"), u, 6.5, 9.76);
+    rise($("stat3"), u, 8.55, 9.78);
+    const i = eo5(p(u, 6.1, 6.7)), o = eio(p(u, 9.75, 9.97));
+    $("card3").style.opacity = i * (1 - o);
+    $("card3").style.transform = `translateY(${(1-i)*80 - o*24}px)`;
+    cursorAt(u, [[6.7, 1700, 980], [7.15, 1420, 560], [7.35, 1420, 560]]);
+    $("actUp").style.transform = `scale(${press(u, 7.2)})`;
+    $("actUp").style.borderColor = u >= 7.2 ? "#1B7A46" : "";
+    $("c3a").style.opacity = 1 - eio(p(u, 7.35, 7.5));
+    const bIn = eo(p(u, 7.5, 7.7)), bOut = eio(p(u, 8.35, 8.5));
+    $("c3b").style.opacity = bIn * (1 - bOut);
+    $("c3b").style.transform = `scale(${.94 + .06*bIn})`;
+    $("flash").style.opacity = u >= 7.62 ? .9 * (1 - p(u, 7.62, 7.9)) : 0;
+    $("scanBar").style.top = (20 + 300 * (0.5 - 0.5*Math.cos(p(u, 7.7, 8.35) * Math.PI * 2))) + "px";
+    $("ring").querySelector("circle").setAttribute("stroke-dashoffset", 1156 * (1 - eio(p(u, 7.7, 8.35))));
+    $("c3c").style.opacity = eo(p(u, 8.5, 8.65));
+    T3.forEach((el, k) => popT(el, u, 8.55 + k * .09));
+  }
+
+  /* Scene 4: runner bib 14.5–17 */
+  sceneOn("s4", t, 14.5, 17.05);
+  rise($("k4"), t, 14.55, 16.72);
+  rise($("h4"), t, 14.62, 16.75, 70);
+  {
+    const i = eo5(p(t, 14.55, 15.0)), o = eio(p(t, 16.75, 16.97));
+    $("card4").style.opacity = i * (1 - o);
+    $("card4").style.transform = `translateY(${(1-i)*80 - o*24}px)`;
+  }
+  const typed = "1042".slice(0, Math.floor(clamp((t - 14.85) / .12, 0, 4)));
+  const focus = eo(p(t, 14.75, 14.85));
+  $("bibBox").style.borderColor = focus > .5 ? "#1B7A46" : "#E5E2D9";
+  $("bibLabel").style.top = (36 - 24 * focus) + "px";
+  $("bibLabel").style.fontSize = (28 - 8 * focus) + "px";
+  $("bibText").textContent = typed + ((t > 14.8 && t < 15.45 && Math.floor(t * 3) % 2 === 0) ? "▏" : "");
+  cursorAt(t, [[15.1, 1400, 700], [15.4, 1140, 480], [15.52, 1140, 480]]);
+  $("bibBtn").style.transform = `scale(${press(t, 15.48)})`;
+  $("bibBtn").style.background = (t > 15.48 && t < 15.68) ? "#14562F" : "#1B7A46";
+  $("bibRes").style.opacity = eo(p(t, 15.62, 15.77));
+  T4.forEach((el, i) => popT(el, t, 15.65 + i * .08));
+
+  /* Scene 5: buy + download 17–20 */
+  sceneOn("s5", t, 17.0, 20.05);
+  rise($("k5"), t, 17.05, 19.72);
+  rise($("h5"), t, 17.12, 19.74, 70);
+  rise($("p5"), t, 17.35, 19.76);
+  {
+    const i = eo5(p(t, 17.05, 17.5)), o = eio(p(t, 19.75, 19.97));
+    $("card5").style.opacity = i * (1 - o);
+    $("card5").style.transform = `translateY(${(1-i)*80 - o*24}px)`;
+  }
+  cursorAt(t, [[17.3, 1500, 1000], [17.5, 1090, 840], [17.62, 1090, 840]]);
+  $("buyBtn").style.transform = `scale(${press(t, 17.55)})`;
+  const paid = t >= 18.72;
+  $("c5a").style.opacity = (1 - eio(p(t, 17.62, 17.72))) + eo(p(t, 18.72, 18.84));
+  $("c5b").style.opacity = eo(p(t, 17.72, 17.87)) * (1 - eio(p(t, 18.6, 18.7)));
+  $("c5b").style.transform = `scale(${.96 + .04 * eo(p(t, 17.72, 17.9))})`;
+  $("confirming").style.opacity = eo(p(t, 18.25, 18.35));
+  $("buyBtn").style.opacity = paid ? 0 : 1;
+  $("saveBtn").style.opacity = paid ? 1 : 0;
+  popT($("paid"), t, 18.75);
+  cursorAt(t, [[18.8, 1500, 1000], [19.02, 1120, 840], [19.15, 1120, 840]]);
+  $("saveBtn").style.transform = `scale(${press(t, 19.08)})`;
+  const lift = eio(p(t, 19.12, 19.45));
+  WM.style.opacity = 1 - lift;
+  WM.style.transform = `rotate(-24deg) translateY(${-lift * 40}px)`;
+  popT($("toast"), t, 19.22);
+
+  /* Scene 6: outro 20–23 */
+  sceneOn("s6", t, 20.0, 99);
+  popT($("oLogo"), t, 20.05);
+  rise($("oTag"), t, 20.35);
+  rise($("oRow"), t, 20.6);
+  const ob = eio(p(t, 20.0, 20.8));
+  ["ob1","ob2","ob3"].forEach(id => $(id).style.width = (640 * ob) + "px");
+};
+window.ready = Promise.all([document.fonts.ready, ...[...document.images].map(i => i.complete ? 0 : new Promise(r => i.onload = r))]);
+render(0);
+</script>
+</body>
+</html>
