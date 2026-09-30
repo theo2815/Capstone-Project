@@ -172,7 +172,7 @@ private fun TetherConsoleView(
     // (any event) still keeps the sync card visible below.
     val recentForEvent = remember(queueStats.recentRecords, activeEvent?.id) {
         queueStats.recentRecords.asSequence()
-            .filter { it.eventId == activeEvent?.id && it.localDeletedAt == null }
+            .filter { it.eventId == activeEvent?.id }
             .take(RECENT_STRIP_MAX_TILES)
             .toList()
     }
@@ -190,8 +190,9 @@ private fun TetherConsoleView(
                     PhotoPreviewData(
                         id = record.id.toString(),
                         price = 0.0,
-                        imageUrl = File(record.filePath).toURI().toString(),
+                        imageUrl = File(record.filePath).takeIf(File::isFile)?.toURI()?.toString(),
                         eventName = activeEvent?.name,
+                        localUploadRecordId = record.id,
                         // dslr_import_<ts>_<original> → <original>; other spool names as-is.
                         caption = "${record.originalFilename ?: File(record.filePath).name} · " +
                             when (record.uploadStatus) {
@@ -327,7 +328,7 @@ private fun TetherConsoleView(
                 vendorId = cam.vendorId,
                 productId = cam.productId,
                 watchState = watchState,
-                latestCaptureFile = recentForEvent.firstOrNull()?.let { File(it.filePath) },
+                latestCaptureFile = recentForEvent.firstNotNullOfOrNull { File(it.filePath).takeIf(File::isFile) },
                 canStartWatch = activeEvent?.let { canUploadToEvent(it) } == true,
                 onStartWatch = {
                     ensureNotificationPermission()
@@ -898,12 +899,16 @@ private fun SyncQueueTile(record: UploadRecord, onClick: () -> Unit = {}) {
             .background(BoneDeep)
             .clickable(onClick = onClick)
     ) {
-        AsyncImage(
-            model = File(record.filePath),
-            contentDescription = "Photo $stateLabel",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        if (File(record.filePath).isFile) {
+            AsyncImage(
+                model = File(record.filePath),
+                contentDescription = "Photo $stateLabel",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Text("Cloud", color = Slate, style = Typography.labelSmall, modifier = Modifier.align(Alignment.Center))
+        }
         // QUEUED gets no badge — the quiet default; it flips to a spinner
         // within seconds of the worker picking the row up.
         if (record.uploadStatus != "QUEUED") {
