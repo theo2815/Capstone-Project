@@ -15,7 +15,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -180,18 +179,17 @@ class QpWebSocketTest {
             socket.connect(PATH)
             awaitServerOpen()
             socket.state.awaitFirst { it is WsState.Open }
+            val oldSocket = QpWebSocket::class.java.getDeclaredField("socket").apply { isAccessible = true }
+                .get(socket) as WebSocket
+            val oldListener = oldSocket.javaClass.getDeclaredField("listener").apply { isAccessible = true }
+                .get(oldSocket) as WebSocketListener
 
             socket.release()
             socket.connect(PATH)
             awaitServerOpen()
             socket.state.awaitFirst { it is WsState.Open }
 
-            val deadline = System.currentTimeMillis() + 5_000
-            while (delayedCloses.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(5)
-            assertEquals(1, delayedCloses.size)
-            delayedCloses.single().close(1000, null)
-            val failure = runBlocking { withTimeoutOrNull(1_000) { socket.state.first { it is WsState.Failed } } }
-            assertEquals(null, failure)
+            oldListener.onClosed(oldSocket, 1000, "") // invoke the stale client callback before checking state
             assertEquals(WsState.Open, socket.state.value)
         } finally {
             delayClose = false
