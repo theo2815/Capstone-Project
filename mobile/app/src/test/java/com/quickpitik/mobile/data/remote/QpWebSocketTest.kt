@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -55,7 +56,9 @@ class QpWebSocketTest {
     private val serverSockets = CopyOnWriteArrayList<WebSocket>()
     private val opens = Semaphore(0)
     private val clientCloses = CopyOnWriteArrayList<Int>()
+    private val delayedCloses = CopyOnWriteArrayList<WebSocket>()
     @Volatile private var accept = true
+    @Volatile private var delayClose = false
 
     @Before fun setUp() {
         session = SessionManager.getInstance(ApplicationProvider.getApplicationContext()).also { it.clearSession() }
@@ -69,7 +72,7 @@ class QpWebSocketTest {
                     }
                     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                         clientCloses += code
-                        webSocket.close(code, reason)
+                        if (delayClose) delayedCloses += webSocket else webSocket.close(code, reason)
                     }
                 })
         }
@@ -168,6 +171,32 @@ class QpWebSocketTest {
         socket.connect(PATH) // a later subscriber dials fresh
         awaitServerOpen()
         assertEquals(2, backend.server.requestCount)
+    }
+
+    @Test fun `late close from released socket cannot replace the new connection`() {
+        signIn("tok-a")
+        delayClose = true
+        try {
+            socket.connect(PATH)
+            awaitServerOpen()
+            socket.state.awaitFirst { it is WsState.Open }
+
+            socket.release()
+            socket.connect(PATH)
+            awaitServerOpen()
+            socket.state.awaitFirst { it is WsState.Open }
+
+            val deadline = System.currentTimeMillis() + 5_000
+            while (delayedCloses.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(5)
+            assertEquals(1, delayedCloses.size)
+            delayedCloses.single().close(1000, null)
+            val failure = runBlocking { withTimeoutOrNull(1_000) { socket.state.first { it is WsState.Failed } } }
+            assertEquals(null, failure)
+            assertEquals(WsState.Open, socket.state.value)
+        } finally {
+            delayClose = false
+            delayedCloses.forEach { it.close(1000, null) }
+        }
     }
 
     private companion object {
