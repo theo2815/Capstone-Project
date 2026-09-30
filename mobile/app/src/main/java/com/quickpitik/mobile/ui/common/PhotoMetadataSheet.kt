@@ -59,40 +59,31 @@ fun PhotoMetadataSheet(
             Text("Photo metadata", style = Typography.titleLarge, color = Ink)
             when (state) {
                 is PhotoMetadataState.Loading -> Text("Loading metadata…", style = Typography.bodyMedium, color = Slate)
+                is PhotoMetadataState.LocalLoading -> Text("Loading metadata…", style = Typography.bodyMedium, color = Slate)
                 is PhotoMetadataState.Pending -> {
                     Text("Metadata is being prepared.", style = Typography.bodyMedium, color = Slate)
                     GhostCta("Refresh", onRefresh, Modifier.fillMaxWidth())
                 }
                 is PhotoMetadataState.Data -> {
-                    val fields = state.metadata.fields
-                    metadataSection("Camera") {
-                        metadataRow("Model", cameraModel(fields))
-                        metadataRow("Lens", fields?.lens)
-                    }
-                    metadataSection("Exposure") {
-                        metadataRow("Aperture", fields?.aperture?.let { "f/$it" })
-                        metadataRow("Exposure", fields?.exposureTime)
-                        metadataRow("ISO", fields?.iso?.toString())
-                        metadataRow("Flash", fields?.flash)
-                        metadataRow("Exposure mode", fields?.exposureMode)
-                        metadataRow("White balance", fields?.whiteBalance)
-                    }
-                    metadataSection("Attribution and capture") {
-                        metadataRow("Author", fields?.author)
-                        metadataRow("Copyright", fields?.copyright)
-                        metadataRow("Date", fields?.takenAtLocal?.replaceFirst('T', ' ')?.let {
-                            it + (fields.takenAtOffset?.let { offset -> " $offset" } ?: "")
-                        })
-                    }
-                    fileFacts(state.metadata)
+                    metadataDetails(state.metadata.fields, state.metadata.originalFilename, state.metadata.fileSizeBytes)
                 }
+                is PhotoMetadataState.LocalData -> {
+                    Text("From phone original", style = Typography.bodySmall, color = Slate)
+                    metadataDetails(state.metadata.fields, state.metadata.originalFilename, state.metadata.fileSizeBytes)
+                }
+                is PhotoMetadataState.LocalEmpty -> {
+                    Text("From phone original", style = Typography.bodySmall, color = Slate)
+                    Text("No camera metadata was found.", style = Typography.bodyMedium, color = Slate)
+                    fileFacts(state.metadata.originalFilename, state.metadata.fileSizeBytes)
+                }
+                is PhotoMetadataState.LocalUnavailable -> Text("Metadata is unavailable for this photo.", style = Typography.bodyMedium, color = Slate)
                 is PhotoMetadataState.Empty -> {
                     Text("No camera metadata was found.", style = Typography.bodyMedium, color = Slate)
-                    fileFacts(state.metadata)
+                    fileFacts(state.metadata.originalFilename, state.metadata.fileSizeBytes)
                 }
                 is PhotoMetadataState.Unavailable -> {
                     Text("Metadata is unavailable for this photo.", style = Typography.bodyMedium, color = Slate)
-                    fileFacts(state.metadata)
+                    fileFacts(state.metadata.originalFilename, state.metadata.fileSizeBytes)
                 }
                 PhotoMetadataState.Denied -> Text("Metadata is no longer available", style = Typography.bodyMedium, color = Slate)
                 is PhotoMetadataState.Failed -> {
@@ -104,6 +95,30 @@ fun PhotoMetadataSheet(
             GhostCta("Close metadata", onClose, Modifier.fillMaxWidth())
         }
     }
+}
+
+@Composable
+private fun metadataDetails(fields: PhotoMetadataFieldsDto?, filename: String?, size: Long?) {
+    metadataSection("Camera") {
+        metadataRow("Model", cameraModel(fields))
+        metadataRow("Lens", fields?.lens)
+    }
+    metadataSection("Exposure") {
+        metadataRow("Aperture", fields?.aperture?.let { "f/$it" })
+        metadataRow("Exposure", fields?.exposureTime)
+        metadataRow("ISO", fields?.iso?.toString())
+        metadataRow("Flash", fields?.flash)
+        metadataRow("Exposure mode", fields?.exposureMode)
+        metadataRow("White balance", fields?.whiteBalance)
+    }
+    metadataSection("Attribution and capture") {
+        metadataRow("Author", fields?.author)
+        metadataRow("Copyright", fields?.copyright)
+        metadataRow("Date", fields?.takenAtLocal?.replaceFirst('T', ' ')?.let {
+            it + (fields.takenAtOffset?.let { offset -> " $offset" } ?: "")
+        })
+    }
+    fileFacts(filename, size)
 }
 
 private fun cameraModel(fields: PhotoMetadataFieldsDto?): String? {
@@ -132,10 +147,9 @@ private fun metadataRow(label: String, value: String?, modifier: Modifier = Modi
 }
 
 @Composable
-private fun fileFacts(metadata: PhotoMetadataDto) {
+private fun fileFacts(filename: String?, size: Long?) {
     metadataSection("File") {
-        metadataRow("Name", metadata.originalFilename)
-        val size = metadata.fileSizeBytes
+        metadataRow("Name", filename)
         val formatted = size?.let { String.format(Locale.US, "%.1f MiB", it / 1_048_576.0) }
         val exact = size?.let { NumberFormat.getIntegerInstance(Locale.US).format(it) }
         metadataRow("Original size", formatted,

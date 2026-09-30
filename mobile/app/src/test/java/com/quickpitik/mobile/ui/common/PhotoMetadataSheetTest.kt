@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import com.quickpitik.mobile.data.remote.PhotoDto
+import com.quickpitik.mobile.data.local.LocalPhotoMetadata
 import com.quickpitik.mobile.data.remote.PhotoMetadataDto
 import com.quickpitik.mobile.data.remote.PhotoMetadataFieldsDto
 import org.junit.Assert.assertEquals
@@ -183,6 +184,18 @@ class PhotoMetadataSheetTest {
         compose.onNodeWithText("race.jpg").assertExists()
         compose.runOnIdle { state.value = PhotoMetadataState.Unavailable(metadata("unavailable")) }
         compose.onNodeWithText("Metadata is unavailable for this photo.").assertIsDisplayed()
+        compose.onNodeWithText("race.jpg").assertExists()
+    }
+
+    @Test fun `local empty camera tags still identify the phone original`() {
+        compose.setContent {
+            PhotoMetadataSheet(
+                state = PhotoMetadataState.LocalEmpty(LocalPhotoMetadata("empty", null, "race.jpg", 1_572_864)),
+                onClose = {}, onRefresh = {}, secure = false,
+            )
+        }
+        compose.onNodeWithText("From phone original").assertIsDisplayed()
+        compose.onNodeWithText("No camera metadata was found.").assertIsDisplayed()
         compose.onNodeWithText("race.jpg").assertExists()
     }
 

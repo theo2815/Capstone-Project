@@ -5,6 +5,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.PhotoMetadataDto
 import com.quickpitik.mobile.data.remote.PhotoMetadataFieldsDto
+import com.quickpitik.mobile.data.local.LocalPhotoMetadata
+import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
@@ -34,6 +36,97 @@ class PhotoMetadataViewModelTest {
     private fun viewModel() = PhotoMetadataViewModel(application)
     private fun metadata(id: String, status: String = "ready", model: String = id) =
         """{"photoId":"$id","status":"$status","originalFilename":"$id.jpg","fileSizeBytes":1024,"fields":{"cameraMake":"Canon","cameraModel":"$model","lens":null,"aperture":null,"exposureTime":null,"iso":null,"author":null,"copyright":null,"takenAtLocal":null,"takenAtOffset":null,"flash":null,"exposureMode":null,"whiteBalance":null}}"""
+
+    @Test fun `local record shows its own metadata without using Room ID as photo ID`() {
+        signInAs("PHOTOGRAPHER")
+        val row = UploadRecord(id = 7, filePath = "ignored", eventId = "event", photographerId = "juan@x.com", captureTimestamp = 1)
+        val vm = PhotoMetadataViewModel(application,
+            getRecord = { if (it == 7L) row else null },
+            readLocal = { LocalPhotoMetadata("ready", PhotoMetadataFieldsDto("Canon", "EOS R6", null, null, null, null, null, null, null, null, null, null, null), "race.jpg", 1024) })
+        vm.selectLocal(7)
+        val state = vm.state.awaitFirst { it is PhotoMetadataState.LocalData } as PhotoMetadataState.LocalData
+        assertEquals("EOS R6", state.metadata.fields?.cameraModel)
+        assertEquals("race.jpg", state.metadata.originalFilename)
+        assertEquals(0, backend.server.requestCount)
+    }
+
+    @Test fun `cleaned matching receipt requests owner metadata by uploaded photo ID`() {
+        signInAs("PHOTOGRAPHER")
+        val row = UploadRecord(id = 7, filePath = "gone", eventId = "event", photographerId = "juan@x.com",
+            captureTimestamp = 1, uploadStatus = "COMPLETED", uploadedPhotoId = "cloud-photo",
+            uploadedBackend = RetrofitClient.BASE_URL, localDeletedAt = 1)
+        backend.enqueue(ok(metadata("cloud-photo")))
+        val vm = PhotoMetadataViewModel(application, getRecord = { row },
+            readLocal = { LocalPhotoMetadata("unavailable", null, null, null) })
+        vm.selectLocal(7)
+        val state = vm.state.awaitFirst { it is PhotoMetadataState.Data } as PhotoMetadataState.Data
+        assertEquals("cloud-photo", state.metadata.photoId)
+        assertTrue(backend.server.takeRequest().path!!.contains("cloud-photo"))
+    }
+
+    @Test fun `foreign backend receipt and foreign account never call owner API`() {
+        signInAs("PHOTOGRAPHER")
+        val row = UploadRecord(id = 7, filePath = "gone", eventId = "event", photographerId = "juan@x.com",
+            captureTimestamp = 1, uploadStatus = "COMPLETED", uploadedPhotoId = "cloud-photo",
+            uploadedBackend = "https://other.invalid/", localDeletedAt = 1)
+        val vm = PhotoMetadataViewModel(application, getRecord = { row },
+            readLocal = { LocalPhotoMetadata("unavailable", null, null, null) })
+        vm.selectLocal(7)
+        vm.state.awaitFirst { it is PhotoMetadataState.LocalUnavailable }
+        assertEquals(0, backend.server.requestCount)
+        val foreign = PhotoMetadataViewModel(application, getRecord = { row.copy(photographerId = "other") },
+            readLocal = { error("foreign record was opened") })
+        foreign.selectLocal(7)
+        foreign.state.awaitFirst { it is PhotoMetadataState.LocalUnavailable }
+        assertEquals(0, backend.server.requestCount)
+    }
+
+    @Test fun `late local parse cannot repaint a newly selected upload row`() {
+        signInAs("PHOTOGRAPHER")
+        val old = AtomicReference<Continuation<LocalPhotoMetadata>>()
+        val started = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val vm = PhotoMetadataViewModel(application,
+            getRecord = { id -> UploadRecord(id = id, filePath = "unused", eventId = "event",
+                photographerId = "juan@x.com", captureTimestamp = 1) },
+            readLocal = { row ->
+                if (row.id == 1L) suspendCoroutine<LocalPhotoMetadata> { old.set(it); started.countDown() }
+                    .also { finished.countDown() }
+                else LocalPhotoMetadata("ready", PhotoMetadataFieldsDto("Canon", "new", null, null, null,
+                    null, null, null, null, null, null, null, null), "new.jpg", 4)
+            })
+        vm.selectLocal(1)
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        vm.selectLocal(2)
+        vm.state.awaitFirst { it is PhotoMetadataState.LocalData && it.metadata.originalFilename == "new.jpg" }
+        old.get().resume(LocalPhotoMetadata("ready", null, "old.jpg", 4))
+        assertTrue(finished.await(5, TimeUnit.SECONDS))
+        Thread.sleep(100)
+        assertEquals("new.jpg", (vm.state.value as PhotoMetadataState.LocalData).metadata.originalFilename)
+    }
+
+    @Test fun `backend switch while local file disappears cannot send receipt to new backend`() {
+        signInAs("PHOTOGRAPHER")
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val row = UploadRecord(id = 7, filePath = "gone", eventId = "event", photographerId = "juan@x.com",
+            captureTimestamp = 1, uploadStatus = "COMPLETED", uploadedPhotoId = "cloud-photo",
+            uploadedBackend = RetrofitClient.BASE_URL)
+        val started = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val suspended = AtomicReference<Continuation<LocalPhotoMetadata>>()
+        val vm = PhotoMetadataViewModel(application, getRecord = { row }, readLocal = {
+            suspendCoroutine<LocalPhotoMetadata> { suspended.set(it); started.countDown() }
+                .also { finished.countDown() }
+        }, load = { _, _ -> calls.incrementAndGet(); PhotoMetadataDto("cloud-photo", "ready", null, null, null) })
+        vm.selectLocal(7)
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        assertTrue(RetrofitClient.setBaseUrl("http://127.0.0.1:12345/"))
+        vm.state.awaitFirst { it == PhotoMetadataState.Closed }
+        suspended.get().resume(LocalPhotoMetadata("unavailable", null, null, null))
+        assertTrue(finished.await(5, TimeUnit.SECONDS))
+        Thread.sleep(100)
+        assertEquals(0, calls.get())
+    }
 
     @Test fun `one fetch on open and explicit refresh for pending`() {
         signInAs("RUNNER")
