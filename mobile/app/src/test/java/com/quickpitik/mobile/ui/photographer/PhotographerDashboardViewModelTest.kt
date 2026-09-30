@@ -22,6 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
@@ -194,9 +195,19 @@ class PhotographerDashboardViewModelTest {
         vm.fetchVerificationStatus()
         assertFalse(vm.dashboardApproved.awaitFirst { !it })
 
-        route("GET /api/v1/me/photographer/verification") { ok(verification("approved")) }
-        vm.fetchVerificationStatus()
-        assertTrue(vm.dashboardApproved.value) // loading again: never blocks while the answer is unknown
+        val approvedReply = CountDownLatch(1)
+        route("GET /api/v1/me/photographer/verification") {
+            approvedReply.await()
+            ok(verification("approved"))
+        }
+        try {
+            vm.fetchVerificationStatus()
+            vm.verificationState.awaitFirst { it is VerificationUiState.Loading }
+            assertTrue(vm.dashboardApproved.awaitFirst { it }) // loading never blocks while the answer is unknown
+        } finally {
+            approvedReply.countDown()
+        }
+        vm.verificationState.awaitFirst { it is VerificationUiState.Success && it.verification.status == "approved" }
         assertTrue(vm.dashboardApproved.awaitFirst { it })
 
         route("GET /api/v1/me/photographer/verification") { ok(verification("pending")) }
