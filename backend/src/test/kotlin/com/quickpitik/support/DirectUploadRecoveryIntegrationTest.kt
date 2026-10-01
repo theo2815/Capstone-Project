@@ -5,6 +5,7 @@ import com.quickpitik.entity.EventPhotographerId
 import com.quickpitik.entity.EventPricingMode
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.entity.PhotoUploadIntent
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
@@ -15,6 +16,7 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotoMetadataRepository
 import com.quickpitik.repository.PhotoUploadIntentRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
@@ -24,6 +26,8 @@ import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Import
@@ -32,6 +36,10 @@ import org.springframework.transaction.event.TransactionPhase
 import org.springframework.transaction.event.TransactionalEventListener
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -51,6 +59,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 @Import(DirectUploadRecoveryIntegrationTest.EventCounterConfig::class)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class DirectUploadRecoveryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var uploads: PhotoUploadService
     @Autowired private lateinit var storage: StorageService
@@ -58,12 +67,43 @@ class DirectUploadRecoveryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var settings: PhotographerSettingsRepository
     @Autowired private lateinit var events: EventRepository
     @Autowired private lateinit var photos: PhotoRepository
+    @Autowired private lateinit var metadata: PhotoMetadataRepository
     @Autowired private lateinit var intents: PhotoUploadIntentRepository
     @Autowired private lateinit var eventPhotographers: EventPhotographerRepository
     @Autowired private lateinit var registrationEvents: RegistrationEvents
+    @LocalServerPort private var port: Int = 0
 
     @BeforeEach
     fun resetRegistrationEvents() = registrationEvents.reset()
+
+    @Test
+    fun `multipart fixtures publish and extract metadata without changing originals`() {
+        for ((name, type, state, make) in listOf(
+            FixtureCase("complete-exif.jpg", "image/jpeg", PhotoMetadataState.READY, "Canon"),
+            FixtureCase("edited-iptc-xmp.jpg", "image/jpeg", PhotoMetadataState.READY, "Canon"),
+            FixtureCase("no-tags.jpg", "image/jpeg", PhotoMetadataState.EMPTY, null),
+            FixtureCase("xmp.png", "image/png", PhotoMetadataState.READY, "Fujifilm"),
+        )) {
+            val fixture = fixture()
+            val bytes = javaClass.getResourceAsStream("/photo-metadata/$name")!!.use { it.readAllBytes() }
+            val uploaded = uploads.upload(fixture.owner, fixture.event.id, MockMultipartFile("file", name, type, bytes))
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (metadata.findById(uploaded.id).orElseThrow().state != state && System.nanoTime() < deadline) {
+                Thread.sleep(50)
+            }
+            val row = metadata.findById(uploaded.id).orElseThrow()
+            assertEquals(state, row.state, name)
+            assertEquals(make, row.fields?.cameraMake, name)
+            assertEquals(PhotoStatus.LIVE, photos.findById(uploaded.id).orElseThrow().status, name)
+            val download = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/events/${fixture.event.id}/photos/${uploaded.id}/download")).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray(),
+            )
+            assertEquals(200, download.statusCode(), name)
+            assertEquals(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)),
+                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(download.body())), name)
+        }
+    }
 
     @Test
     fun `concurrent direct slots preserve one original and one marketplace photo`() {
@@ -275,7 +315,15 @@ class DirectUploadRecoveryIntegrationTest : PostgresIntegrationTest() {
         while (photos.findById(winner).orElseThrow().status != PhotoStatus.LIVE && System.nanoTime() < deadline) {
             Thread.sleep(50)
         }
-        assertEquals(PhotoStatus.LIVE, photos.findById(winner).orElseThrow().status)
+        val livePhoto = photos.findById(winner).orElseThrow()
+        assertEquals(PhotoStatus.LIVE, livePhoto.status)
+        val metadataDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (metadata.findById(winner).orElseThrow().state != PhotoMetadataState.EMPTY && System.nanoTime() < metadataDeadline) {
+            Thread.sleep(50)
+        }
+        assertEquals(PhotoMetadataState.EMPTY, metadata.findById(winner).orElseThrow().state)
+        val original = storage.getBytes(livePhoto.s3Key)
+        assertEquals(fixture.hash, HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(original)))
     }
 
     private fun jpeg(rgb: Int = 0x123456): ByteArray = ByteArrayOutputStream().use { output ->
@@ -295,6 +343,8 @@ class DirectUploadRecoveryIntegrationTest : PostgresIntegrationTest() {
         val bytes: ByteArray,
         val hash: String,
     )
+
+    private data class FixtureCase(val name: String, val type: String, val state: PhotoMetadataState, val make: String?)
 
     @TestConfiguration(proxyBeanMethods = false)
     class EventCounterConfig {
