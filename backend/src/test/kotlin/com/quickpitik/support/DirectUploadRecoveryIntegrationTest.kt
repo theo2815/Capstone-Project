@@ -94,6 +94,11 @@ class DirectUploadRecoveryIntegrationTest : PostgresIntegrationTest() {
             val row = metadata.findById(uploaded.id).orElseThrow()
             assertEquals(state, row.state, name)
             assertEquals(make, row.fields?.cameraMake, name)
+            if (name == "edited-iptc-xmp.jpg") {
+                assertEquals("XF 23mm F2", row.fields?.lens)
+                assertEquals("Élodie Cebu", row.fields?.author)
+                assertEquals("+08:00", row.fields?.takenAtOffset)
+            }
             assertEquals(PhotoStatus.LIVE, photos.findById(uploaded.id).orElseThrow().status, name)
             val download = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/events/${fixture.event.id}/photos/${uploaded.id}/download")).GET().build(),
