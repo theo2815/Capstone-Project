@@ -148,9 +148,13 @@ it.each(["brand", "socials", "payouts"] as const)("keeps editing blocked and ret
       regionCode: "", provinceCode: "", avatarUrl: null, coverUrl: "", watermarkUrl: "", watermarkSettings: null,
     } : []);
   });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AuthHydrator /><SettingsPage /></QueryClientProvider>);
 
-  expect(await screen.findByRole("alert", undefined, { timeout: 6_000 })).toHaveTextContent("Couldn't load settings");
+  // Advance the query's two retry delays without spending wall time on them.
+  await act(async () => { await vi.advanceTimersByTimeAsync(4_001); });
+  vi.useRealTimers();
+  expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load settings");
   screen.getAllByRole("button", { name: /Edit settings/ }).forEach((button) => expect(button).toBeDisabled());
   recovered = true;
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -186,8 +190,11 @@ it("retries a failed metadata read before making the default editable", async ()
   vi.spyOn(api, "get").mockImplementation((path) => path.endsWith("/metadata-settings")
     ? recovered ? Promise.resolve({ metadataPublicByDefault: true }) : Promise.reject(new Error("Offline"))
     : Promise.resolve([]));
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SettingsPage /></QueryClientProvider>);
-  expect(await screen.findByRole("alert", undefined, { timeout: 6_000 })).toHaveTextContent("Couldn't load settings");
+  await act(async () => { await vi.advanceTimersByTimeAsync(4_001); });
+  vi.useRealTimers();
+  expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load settings");
   expect(screen.getByRole("button", { name: /Edit settings/ })).toBeDisabled();
   expect(screen.getByRole("checkbox", { name: "Show metadata publicly for new events" })).not.toBeChecked();
   recovered = true;
@@ -471,6 +478,7 @@ it("saves a changed number before its QR and only retries the failed upload", as
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   useAuthStore.getState().logout();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
