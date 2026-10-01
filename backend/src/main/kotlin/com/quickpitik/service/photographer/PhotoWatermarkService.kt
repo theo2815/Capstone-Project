@@ -204,7 +204,7 @@ class PhotoWatermarkService(
         if (published == true) {
             // Publication and its AFTER_COMMIT WebSocket frame complete first.
             try {
-                metadataService.extractIfDue(photoId, original)
+                metadataService.dispatchExtraction(photoId, original)
             } catch (ex: Exception) {
                 log.warn("Metadata extraction failed after publishing photo {} ({})", photoId, ex.javaClass.simpleName)
             }

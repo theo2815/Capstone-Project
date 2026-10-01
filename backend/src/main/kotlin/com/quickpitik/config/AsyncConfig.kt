@@ -45,6 +45,20 @@ class AsyncConfig {
         initialize()
     }
 
+    // Originals are reused after LIVE. Keep metadata off the watermark workers
+    // with at most three 25 MiB originals retained; saturation recovers from DB.
+    @Bean(name = ["metadataProcessing"])
+    fun metadataProcessingExecutor(): ThreadPoolTaskExecutor = ThreadPoolTaskExecutor().apply {
+        // ponytail: one worker/two queued originals; saturation uses fenced recovery.
+        corePoolSize = 1
+        maxPoolSize = 1
+        queueCapacity = 2
+        setThreadNamePrefix("metadata-")
+        setWaitForTasksToCompleteOnShutdown(true)
+        setAwaitTerminationSeconds(30)
+        initialize()
+    }
+
     // Email (Resend) gets its own pool for the same reason, one failure mode
     // further out: a Resend outage costs 3 attempts with sleeps per send, so on
     // the shared pool a race-finish burst of receipts could occupy every
