@@ -46,6 +46,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var service: PhotoMetadataService
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired @Qualifier("watermarkProcessing") private lateinit var watermarkPool: ThreadPoolTaskExecutor
+    @Autowired @Qualifier("metadataProcessing") private lateinit var metadataPool: ThreadPoolTaskExecutor
     @MockitoBean private lateinit var extractor: PhotoMetadataExtractor
     @MockitoBean private lateinit var storage: StorageService
 
@@ -54,7 +55,8 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @BeforeEach
     fun clearPriorMetadataFixtures() {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-        while ((watermarkPool.activeCount != 0 || watermarkPool.threadPoolExecutor.queue.isNotEmpty()) && System.nanoTime() < deadline) Thread.sleep(20)
+        while ((watermarkPool.activeCount != 0 || watermarkPool.threadPoolExecutor.queue.isNotEmpty() ||
+                metadataPool.activeCount != 0 || metadataPool.threadPoolExecutor.queue.isNotEmpty()) && System.nanoTime() < deadline) Thread.sleep(20)
         jdbc.update("DELETE FROM photo_metadata")
     }
 
@@ -94,7 +96,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     }
 
     private fun sweeper(photoRepository: PhotoRepository, executor: ThreadPoolTaskExecutor) =
-        PhotoMetadataService(metadata, photoRepository, coverage, extractor, storage, executor, properties, transactions, clock)
+        PhotoMetadataService(metadata, photoRepository, coverage, extractor, storage, executor, properties, transactions, clock, executor)
 
     private fun settle(id: UUID, token: UUID, version: Int = 1, model: String = "R6") =
         transactions.execute { metadata.settle(id, token, version, PhotoMetadataState.READY, PhotoMetadataFields(cameraModel = model), OffsetDateTime.now()) }!!
@@ -311,6 +313,71 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `bounded dispatch drains on shutdown and rejected work recovers with purge fencing`() {
+        val ids = List(5) { fixture() }
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+            started.countDown()
+            assertTrue(release.await(10, TimeUnit.SECONDS))
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            assertTrue(Thread.currentThread().name.startsWith("metadata-"))
+            PhotoMetadataFields(cameraModel = "Recovered")
+        }
+        val pool = com.quickpitik.config.AsyncConfig().metadataProcessingExecutor()
+        fun worker(executor: ThreadPoolTaskExecutor) = PhotoMetadataService(metadata, photos, coverage, extractor, storage,
+            watermarkPool, properties, transactions, clock, executor)
+        val dispatch = worker(pool)
+        try {
+            dispatch.dispatchExtraction(ids[0], byteArrayOf(1))
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            ids.drop(1).take(3).forEach { dispatch.dispatchExtraction(it, byteArrayOf(1)) }
+            assertEquals(1, pool.activeCount)
+            assertEquals(2, pool.threadPoolExecutor.queue.size)
+            assertEquals(0, metadata.findById(ids[3]).orElseThrow().attempts)
+            assertEquals(PhotoMetadataState.PENDING, metadata.findById(ids[3]).orElseThrow().state)
+            Mockito.verifyNoInteractions(storage)
+            jdbc.update("UPDATE photos SET deleted_at = now(), deletion_started_at = now() WHERE id = ?", ids[1])
+            release.countDown()
+            pool.shutdown()
+            assertTrue(pool.threadPoolExecutor.awaitTermination(10, TimeUnit.SECONDS))
+            awaitState(ids[0], PhotoMetadataState.READY, 1)
+            awaitState(ids[2], PhotoMetadataState.READY, 1)
+            assertEquals(0, metadata.findById(ids[1]).orElseThrow().attempts)
+            Mockito.verify(extractor, Mockito.times(2)).extract(anyArg())
+
+            dispatch.dispatchExtraction(ids[4], byteArrayOf(1))
+            assertEquals(0, metadata.findById(ids[4]).orElseThrow().attempts)
+            assertEquals(PhotoMetadataState.PENDING, metadata.findById(ids[4]).orElseThrow().state)
+            ids.drop(3).forEach(::old)
+            dispatch.recoverDue() // A stopped executor must also reject without claiming.
+            assertEquals(0, metadata.findById(ids[3]).orElseThrow().attempts)
+        } finally {
+            release.countDown()
+            pool.shutdown()
+        }
+        val restarted = com.quickpitik.config.AsyncConfig().metadataProcessingExecutor()
+        try {
+            val recovery = worker(restarted)
+            for (id in ids.drop(3)) {
+                val key = photos.findById(id).orElseThrow().s3Key
+                Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
+                Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
+            }
+            repeat(2) {
+                recovery.recoverDue()
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                while ((restarted.activeCount != 0 || restarted.threadPoolExecutor.queue.isNotEmpty()) && System.nanoTime() < deadline) Thread.sleep(20)
+            }
+            ids.drop(3).forEach { awaitState(it, PhotoMetadataState.READY, 1) }
+            Mockito.verify(storage, Mockito.times(2)).open(anyArg())
+            ids.forEach { assertEquals(PhotoStatus.LIVE, photos.findById(it).orElseThrow().status) }
+        } finally {
+            restarted.shutdown()
+        }
+    }
+
+    @Test
     fun `recovery reads retained original while watermark photo is still processing`() {
         val id = fixture().also(::old)
         jdbc.update("UPDATE photos SET status = 'PROCESSING' WHERE id = ?", id)
@@ -439,6 +506,8 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
 
         service.recoverDue()
         awaitState(missing, PhotoMetadataState.UNAVAILABLE, 1)
+        while (metadataPool.activeCount != 0) Thread.sleep(20)
+        service.recoverDue()
         awaitState(oversized, PhotoMetadataState.UNAVAILABLE, 1)
         assertEquals(25L * 1024 * 1024 + 1, metadata.findById(oversized).orElseThrow().originalSizeBytes)
         Mockito.verify(storage, Mockito.never()).open(Mockito.anyString())
@@ -579,11 +648,11 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
 
         service.recoverDue()
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-        while (metadata.findAllById(ids).count { it.state == PhotoMetadataState.UNAVAILABLE } < 2 && System.nanoTime() < deadline) Thread.sleep(20)
+        while (metadata.findAllById(ids).count { it.state == PhotoMetadataState.UNAVAILABLE } < 1 && System.nanoTime() < deadline) Thread.sleep(20)
         val rows = metadata.findAllById(ids)
-        assertEquals(2, rows.count { it.state == PhotoMetadataState.UNAVAILABLE })
-        assertEquals(10, rows.count { it.state == PhotoMetadataState.PENDING })
-        Mockito.verify(storage, Mockito.times(2)).metadata(Mockito.anyString())
+        assertEquals(1, rows.count { it.state == PhotoMetadataState.UNAVAILABLE })
+        assertEquals(11, rows.count { it.state == PhotoMetadataState.PENDING })
+        Mockito.verify(storage, Mockito.times(1)).metadata(Mockito.anyString())
     }
 
     @Test

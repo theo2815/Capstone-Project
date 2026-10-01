@@ -26,6 +26,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
+import java.util.concurrent.RejectedExecutionException
 
 @Service
 class PhotoMetadataService(
@@ -38,6 +39,7 @@ class PhotoMetadataService(
     private val properties: PhotoMetadataProperties,
     private val transactions: TransactionTemplate,
     private val clock: Clock,
+    @Qualifier("metadataProcessing") private val metadataPool: ThreadPoolTaskExecutor,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -73,6 +75,17 @@ class PhotoMetadataService(
 
     private fun notFound() = NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photo not found")
 
+    fun dispatchExtraction(photoId: UUID, originalBytes: ByteArray) {
+        // Enforce the retained-byte ceiling even for legacy/oversized originals.
+        // No claim before submission: rejection/shutdown leaves PENDING recoverable.
+        if (originalBytes.size > MAX_ORIGINAL_BYTES) return
+        try {
+            metadataPool.execute { extractIfDue(photoId, originalBytes) }
+        } catch (_: RejectedExecutionException) {
+            log.debug("Metadata submission deferred for photo {}", photoId)
+        }
+    }
+
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun extractIfDue(photoId: UUID, originalBytes: ByteArray) {
         try {
@@ -91,13 +104,18 @@ class PhotoMetadataService(
     @Scheduled(fixedDelayString = "\${app.photo-metadata.recovery-interval-ms:60000}")
     fun recoverDue() {
         if (!properties.recoveryEnabled || watermarkPool.activeCount != 0 ||
-            watermarkPool.threadPoolExecutor.queue.isNotEmpty()) return
-        val capacity = minOf(RECOVERY_BATCH_SIZE, watermarkPool.maxPoolSize - watermarkPool.activeCount)
+            watermarkPool.threadPoolExecutor.queue.isNotEmpty() || metadataPool.activeCount != 0 ||
+            metadataPool.threadPoolExecutor.queue.isNotEmpty()) return
+        val capacity = minOf(RECOVERY_BATCH_SIZE, metadataPool.maxPoolSize - metadataPool.activeCount)
         if (capacity <= 0) return
         val now = OffsetDateTime.now(clock)
         repository.findDueCandidateIds(EXTRACTOR_VERSION, MAX_ATTEMPTS, now.minusMinutes(PENDING_GRACE_MINUTES), now,
             PageRequest.of(0, capacity)).forEach { photoId ->
-            watermarkPool.execute { recoverOne(photoId) }
+            try {
+                metadataPool.execute { recoverOne(photoId) }
+            } catch (_: RejectedExecutionException) {
+                log.debug("Metadata recovery deferred for photo {}", photoId)
+            }
         }
     }
 

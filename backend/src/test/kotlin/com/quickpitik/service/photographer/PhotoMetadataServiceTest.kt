@@ -37,7 +37,25 @@ class PhotoMetadataServiceTest {
     private fun service(recoveryEnabled: Boolean = true): PhotoMetadataService {
         Mockito.`when`(manager.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
         return PhotoMetadataService(repository, photos, coverage, extractor, storage, watermarkPool,
-            PhotoMetadataProperties(recoveryEnabled = recoveryEnabled), TransactionTemplate(manager), clock)
+            PhotoMetadataProperties(recoveryEnabled = recoveryEnabled), TransactionTemplate(manager), clock, watermarkPool)
+    }
+
+    @Test
+    fun `dispatch defers claims and oversized or rejected originals remain recoverable`() {
+        val service = service()
+        val pending = mutableListOf<Runnable>()
+        Mockito.doAnswer { pending += it.getArgument<Runnable>(0); null }.`when`(watermarkPool).execute(Mockito.any(Runnable::class.java))
+        service.dispatchExtraction(UUID.randomUUID(), byteArrayOf(1))
+        assertEquals(1, pending.size)
+        Mockito.verifyNoInteractions(repository, extractor, storage)
+
+        service.dispatchExtraction(UUID.randomUUID(), ByteArray(25 * 1024 * 1024 + 1))
+        assertEquals(1, pending.size)
+        Mockito.doThrow(java.util.concurrent.RejectedExecutionException()).`when`(watermarkPool).execute(Mockito.any(Runnable::class.java))
+        service.dispatchExtraction(UUID.randomUUID(), byteArrayOf(2))
+        Mockito.verifyNoInteractions(repository, extractor, storage)
+        pending.single().run()
+        Mockito.verify(repository).claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())
     }
 
     @Test

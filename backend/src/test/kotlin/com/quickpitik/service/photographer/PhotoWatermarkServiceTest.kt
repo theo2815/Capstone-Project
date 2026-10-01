@@ -251,7 +251,7 @@ class PhotoWatermarkServiceTest {
             assertTrue(lastOriginal === invocation.getArgument<ByteArray>(1))
             extracted = true
             throw IllegalStateException("metadata database unavailable")
-        }.`when`(metadataService).extractIfDue(anyArg(), anyArg())
+        }.`when`(metadataService).dispatchExtraction(anyArg(), anyArg())
 
         service().process(photoId)
 
@@ -259,6 +259,37 @@ class PhotoWatermarkServiceTest {
         Mockito.verify(storageService, Mockito.times(1)).getBytes("events/$eventId/photos/$photoId/original.jpg")
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
         Mockito.verify(transactionManager, Mockito.never()).rollback(anyArg())
+    }
+
+    @Test
+    fun `blocked metadata releases both watermark workers after publication`() {
+        stubHappyPath()
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        val metadata = Mockito.mock(com.quickpitik.repository.PhotoMetadataRepository::class.java)
+        val extractor = Mockito.mock(com.quickpitik.service.image.PhotoMetadataExtractor::class.java)
+        Mockito.`when`(metadata.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
+        val parsing = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val returned = java.util.concurrent.CountDownLatch(2)
+        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+            parsing.countDown()
+            assertTrue(release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            com.quickpitik.dto.photos.PhotoMetadataFields()
+        }
+        val workers = com.quickpitik.config.AsyncConfig().watermarkProcessingExecutor()
+        val metadataWorkers = com.quickpitik.config.AsyncConfig().metadataProcessingExecutor()
+        val extraction = PhotoMetadataService(metadata, photoRepository,
+            Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java), extractor, storageService,
+            workers, com.quickpitik.config.PhotoMetadataProperties(), TransactionTemplate(transactionManager), java.time.Clock.systemUTC(), metadataWorkers)
+        try {
+            repeat(2) { workers.execute { service(metadata = extraction).process(photoId); returned.countDown() } }
+            assertTrue(parsing.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(returned.await(1, java.util.concurrent.TimeUnit.SECONDS), "blocked metadata occupied watermark workers")
+        } finally {
+            release.countDown()
+            workers.shutdown()
+            metadataWorkers.shutdown()
+        }
     }
 
     @Test
@@ -286,6 +317,9 @@ class PhotoWatermarkServiceTest {
             com.quickpitik.config.PhotoMetadataProperties(),
             TransactionTemplate(transactionManager),
             java.time.Clock.systemUTC(),
+            Mockito.mock(org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor::class.java).also { pool ->
+                Mockito.doAnswer { it.getArgument<Runnable>(0).run(); null }.`when`(pool).execute(Mockito.any(Runnable::class.java))
+            },
         )
 
         service(metadata = extraction).process(photoId)
