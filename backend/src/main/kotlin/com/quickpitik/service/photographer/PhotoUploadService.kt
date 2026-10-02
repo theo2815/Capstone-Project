@@ -202,6 +202,13 @@ class PhotoUploadService(
             return DirectUploadBeginResponse(mode = "multipart")
         }
 
+        if (requestId == null) {
+            val now = OffsetDateTime.now(clock)
+            photoUploadIntentRepository.findReusablePending(
+                photographerId, eventId, hash, type, sizeBytes, now.plus(MIN_REUSABLE_PUT_LIFETIME), now,
+            )?.let { return presign(it) }
+        }
+
         val intent = try {
             reserveIntent(photographerId, eventId, requestId, hash, type, sizeBytes, originalFilename)
         } catch (error: DataIntegrityViolationException) {
@@ -1057,6 +1064,7 @@ class PhotoUploadService(
         // month after the event date (before/during/after), then it closes.
         const val OWNER_UPLOAD_GRACE_MONTHS = 1L
         const val WEBSITE_CLIENT = "website"
+        val MIN_REUSABLE_PUT_LIFETIME: Duration = Duration.ofMinutes(5)
         val TERMINAL_VALIDATION_CODES = setOf(
             ErrorCodes.PAYLOAD_TOO_LARGE,
             ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
