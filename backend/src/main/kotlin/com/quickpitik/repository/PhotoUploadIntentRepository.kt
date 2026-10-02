@@ -40,6 +40,31 @@ interface PhotoUploadIntentRepository : JpaRepository<PhotoUploadIntent, UUID> {
 
     fun findByPhotographerIdAndRequestId(photographerId: UUID, requestId: UUID): PhotoUploadIntent?
 
+    // Native clients send no request id and begin again after a failed PUT.
+    // Give them the same reservation while its signed PUT still has time left,
+    // instead of reserving a new one on every retry.
+    @Query(
+        value = """
+            SELECT * FROM photo_upload_intents
+            WHERE photographer_id = :ownerId AND event_id = :eventId
+              AND content_hash = :contentHash AND content_type = :contentType
+              AND size_bytes = :sizeBytes AND request_id IS NULL
+              AND state = 'PENDING' AND put_expires_at > :minPutExpiry AND expires_at > :now
+            ORDER BY put_expires_at DESC, photo_id
+            LIMIT 1
+        """,
+        nativeQuery = true,
+    )
+    fun findReusablePending(
+        @Param("ownerId") ownerId: UUID,
+        @Param("eventId") eventId: UUID,
+        @Param("contentHash") contentHash: String,
+        @Param("contentType") contentType: String,
+        @Param("sizeBytes") sizeBytes: Long,
+        @Param("minPutExpiry") minPutExpiry: OffsetDateTime,
+        @Param("now") now: OffsetDateTime,
+    ): PhotoUploadIntent?
+
     // Admission counts only reservations that can still take bytes or are being
     // verified now. An abandoned PENDING row stays committable for its 24 h intent
     // TTL but must not hold one of the owner's slots after its signed PUT expires.

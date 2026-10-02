@@ -156,6 +156,26 @@ class PhotoUploadIntentIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `reuse finds only the owner's open request-id-less reservation for identical bytes`() {
+        val owner = photographer()
+        val other = photographer()
+        val event = event()
+        val open = intents.saveAndFlush(newIntent(owner.id, event.id, createdAt = NOW.minusMinutes(5)))
+        intents.saveAndFlush(newIntent(owner.id, event.id, createdAt = NOW.minusMinutes(13)))   // 2 min left: too short
+        intents.saveAndFlush(newIntent(owner.id, event.id, UUID.randomUUID()))                  // website request id
+        intents.saveAndFlush(newIntent(other.id, event.id))                                      // another photographer
+
+        val found = intents.findReusablePending(
+            owner.id, event.id, "a".repeat(64), "image/jpeg", FILE_SIZE, NOW.plusMinutes(5), NOW,
+        )
+
+        assertEquals(open.photoId, found?.photoId)
+        assertNull(intents.findReusablePending(
+            owner.id, event.id, "b".repeat(64), "image/jpeg", FILE_SIZE, NOW.plusMinutes(5), NOW,
+        ))
+    }
+
+    @Test
     fun `only the current verification lease can complete an intent`() {
         val owner = photographer()
         val event = event()
