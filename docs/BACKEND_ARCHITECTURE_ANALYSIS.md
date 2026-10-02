@@ -346,7 +346,12 @@ terminal conflict. Unissued or foreign staging keys are never read or deleted.
 The per-photographer reservation quota (`STORAGE_DIRECT_UPLOAD_MAX_PENDING_PER_USER`,
 bytes cap beside it) counts only reservations whose signed PUT is still open or
 that are being verified; an abandoned reservation stays committable for 24 hours
-but stops holding a slot when its PUT expires.
+but stops holding a slot when its PUT expires. A begin without `requestId` (the
+Android worker) reuses that photographer's open `PENDING` reservation for the same
+event and bytes when at least five minutes of PUT lifetime remain, so a retry
+after a failed PUT takes no new slot. Two concurrent begins without `requestId`
+for the same bytes may both reserve (no lock; the quota bounds it), and
+`qp.upload.direct{outcome=begun}` counts a reuse as another grant.
 
 `PhotoUploadCleanupTrigger` runs bounded fixed-delay sweeps without holding a
 database connection across storage I/O. It expires abandoned intents, claims due

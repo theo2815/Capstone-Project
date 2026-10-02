@@ -273,6 +273,43 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `a native begin without a request id reuses its open reservation for the same bytes`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+        val open = intent(helloBytes.size.toLong(), requestId = null)
+        Mockito.`when`(photoUploadIntentRepository.findReusablePending(
+            eqArg(photographerId), eqArg(eventId), eqArg(helloSha256), eqArg("image/jpeg"),
+            eqArg(helloBytes.size.toLong()), anyArg(), anyArg(),
+        )).thenReturn(open)
+
+        val result = service(AiApiProperties(enabled = false)).beginDirectUpload(
+            photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(),
+        )
+
+        assertEquals("direct", result.mode)
+        assertEquals(open.photoId, result.photoId)
+        assertEquals(open.stagingKey, result.key)
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).saveAndFlush(anyArg())
+    }
+
+    @Test
+    fun `a website begin with a request id never takes another reservation`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+
+        service(AiApiProperties(enabled = false)).beginDirectUpload(
+            photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(), UUID.randomUUID(), "website",
+        )
+
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).findReusablePending(
+            anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyLong(), anyArg(), anyArg(),
+        )
+        Mockito.verify(photoUploadIntentRepository).saveAndFlush(anyArg())
+    }
+
+    @Test
     fun `direct begin rejects a request id replay with different metadata`() {
         stubValidationsPass()
         val requestId = UUID.randomUUID()
