@@ -40,6 +40,9 @@ interface PhotoUploadIntentRepository : JpaRepository<PhotoUploadIntent, UUID> {
 
     fun findByPhotographerIdAndRequestId(photographerId: UUID, requestId: UUID): PhotoUploadIntent?
 
+    // Admission counts only reservations that can still take bytes or are being
+    // verified now. An abandoned PENDING row stays committable for its 24 h intent
+    // TTL but must not hold one of the owner's slots after its signed PUT expires.
     @Query(
         value = """
             SELECT COUNT(*) AS slots, COALESCE(SUM(size_bytes), 0)::bigint AS bytes
@@ -47,6 +50,7 @@ interface PhotoUploadIntentRepository : JpaRepository<PhotoUploadIntent, UUID> {
             WHERE photographer_id = :ownerId
               AND state IN ('PENDING', 'VERIFYING')
               AND expires_at > :now
+              AND (put_expires_at > :now OR (state = 'VERIFYING' AND lease_until > :now))
         """,
         nativeQuery = true,
     )
