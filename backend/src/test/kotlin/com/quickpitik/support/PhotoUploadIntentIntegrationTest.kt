@@ -129,6 +129,33 @@ class PhotoUploadIntentIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `quota counts only reservations that can still receive bytes or are being verified`() {
+        val owner = photographer()
+        val event = event()
+        // Signed PUT still open: counts.
+        intents.saveAndFlush(newIntent(owner.id, event.id, createdAt = NOW.minusMinutes(5)))
+        // PUT window closed five minutes ago; still committable for a day, but must not hold a slot.
+        intents.saveAndFlush(newIntent(owner.id, event.id, createdAt = NOW.minusMinutes(20)))
+        // Verification in progress after the PUT window: counts.
+        intents.saveAndFlush(newIntent(owner.id, event.id, createdAt = NOW.minusMinutes(30)).apply {
+            state = PhotoUploadIntentState.VERIFYING
+            leaseToken = UUID.randomUUID()
+            leaseUntil = NOW.plusMinutes(2)
+        })
+        // Stale verification lease after the PUT window: must not count.
+        intents.saveAndFlush(newIntent(owner.id, event.id, createdAt = NOW.minusMinutes(40)).apply {
+            state = PhotoUploadIntentState.VERIFYING
+            leaseToken = UUID.randomUUID()
+            leaseUntil = NOW.minusMinutes(1)
+        })
+
+        val quota = intents.activeQuota(owner.id, NOW)
+
+        assertEquals(2, quota.slots)
+        assertEquals(FILE_SIZE * 2, quota.bytes)
+    }
+
+    @Test
     fun `only the current verification lease can complete an intent`() {
         val owner = photographer()
         val event = event()
