@@ -308,6 +308,8 @@ export interface UploadRetryState {
   transferRetries?: number;
   commitRetries?: number;
   transferDeadline?: number;
+  /** Grant (photoId) that transferDeadline belongs to; a renewed grant gets its own cap. */
+  transferGrant?: string;
 }
 
 export interface PhotographerUploadOptions {
@@ -555,6 +557,10 @@ export async function uploadPhotographerPhoto(
     let recovered: UploadedPhoto | undefined;
     let confirmationUnknown = false;
     let renewAfterPut = false;
+    if (retryState.transferGrant !== begin.photoId) {
+      retryState.transferGrant = begin.photoId;
+      retryState.transferDeadline = undefined;
+    }
     const transferDeadline = retryState.transferDeadline ??= Date.now() + 15 * 60_000;
     try {
       await retryUpload(async () => {
@@ -579,8 +585,10 @@ export async function uploadPhotographerPhoto(
                 throw commitError;
               }
               if (begin.expiresAt && Date.parse(begin.expiresAt) <= Date.now()) {
-                if (storageDenied) { renewAfterPut = true; throw error; }
-                throw commitError;
+                // The grant expired and storage confirms nothing arrived: only a
+                // fresh reservation can finish this file, whatever failed the PUT.
+                renewAfterPut = true;
+                throw error;
               }
               options.onPhase?.("uploading");
             }
