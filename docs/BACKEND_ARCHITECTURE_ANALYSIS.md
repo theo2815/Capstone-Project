@@ -343,6 +343,11 @@ constraint races resolve only after rollback. Concurrent same-event duplicates
 return the winner without extra counters/events; cross-event dedup remains a
 terminal conflict. Unissued or foreign staging keys are never read or deleted.
 
+The per-photographer reservation quota (`STORAGE_DIRECT_UPLOAD_MAX_PENDING_PER_USER`,
+bytes cap beside it) counts only reservations whose signed PUT is still open or
+that are being verified; an abandoned reservation stays committable for 24 hours
+but stops holding a slot when its PUT expires.
+
 `PhotoUploadCleanupTrigger` runs bounded fixed-delay sweeps without holding a
 database connection across storage I/O. It expires abandoned intents, claims due
 terminal receipts, removes staging and only deletes an original after checking
