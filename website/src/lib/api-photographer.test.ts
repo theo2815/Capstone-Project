@@ -665,3 +665,69 @@ it("parks multipart after a connection loss and resumes with the same retry budg
   expect(await uploadPhotographerPhoto("event", file, undefined, options)).toMatchObject({ id: "saved" });
   expect(sends).toBe(2);
 });
+
+it("gives a renewed grant its own fifteen-minute transfer cap", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  const caps: number[] = [];
+  const clock = 5_000_000;
+  vi.spyOn(Date, "now").mockReturnValue(clock);
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (ms && ms >= 800_000) caps.push(ms);
+    return nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args);
+  }) as typeof setTimeout);
+  class OkXhr {
+    status = 200; upload = { onprogress: null }; onload?: () => void;
+    open() {} setRequestHeader() {}
+    send() { queueMicrotask(() => this.onload?.()); }
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", OkXhr);
+  const receipt = { id: "new", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  post.mockRejectedValueOnce(new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Missing" }], 422))
+    .mockResolvedValueOnce({ mode: "direct", photoId: "new", key: "new-key", uploadUrl: "https://uploads.example.test/new", expiresAt: new Date(clock + 900_000).toISOString() })
+    .mockResolvedValueOnce(receipt);
+  // The cap left behind by a grant that expired while the tab was offline.
+  const retryState = { transferDeadline: clock - 60_000 };
+  try {
+    expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+      contentHash: "a".repeat(64), retryState,
+      checkpoint: { requestId: "old-request", photoId: "old", key: "old-key", putExpiresAt: new Date(clock - 1).toISOString() },
+    })).toEqual(receipt);
+    expect(caps).toEqual([900_000]);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
+
+it("renews after any transfer failure once storage confirms the expired grant is empty", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) =>
+    nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args)) as typeof setTimeout);
+  let now = 7_000_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  let puts = 0;
+  class Xhr {
+    status = 200; upload = { onprogress: null }; onload?: () => void; onerror?: () => void;
+    open() {} setRequestHeader() {}
+    send() {
+      puts++;
+      if (puts === 1) { now += 16 * 60_000; queueMicrotask(() => this.onerror?.()); }
+      else queueMicrotask(() => this.onload?.());
+    }
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", Xhr);
+  const missing = new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Missing" }], 422);
+  const receipt = { id: "second", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  post.mockResolvedValueOnce({ mode: "direct", photoId: "first", key: "k1", uploadUrl: "https://uploads.example.test/1", expiresAt: new Date(now + 15 * 60_000).toISOString() })
+    .mockRejectedValueOnce(missing)
+    .mockResolvedValueOnce({ mode: "direct", photoId: "second", key: "k2", uploadUrl: "https://uploads.example.test/2", expiresAt: new Date(now + 31 * 60_000).toISOString() })
+    .mockResolvedValueOnce(receipt);
+  try {
+    expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, { contentHash: "a".repeat(64) })).toEqual(receipt);
+    expect(puts).toBe(2);
+    expect(post.mock.calls[2][1].requestId).not.toBe(post.mock.calls[0][1].requestId);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
