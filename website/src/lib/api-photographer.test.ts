@@ -248,7 +248,46 @@ it("waits for Retry-After on verification contention and bounded 429s", async ()
   expect(post).toHaveBeenCalledTimes(3);
   expect(delays.filter((delay) => delay === 5000)).toHaveLength(3);
   post.mockReset().mockRejectedValue(new ApiError([{ code: "RATE_LIMITED", message: "Busy" }], 429, 5));
-  await expect(uploadPhotographerPhoto("event", file, undefined, { contentHash: "a".repeat(64), checkpoint })).rejects.toMatchObject({ status: 429 });
+  await expect(uploadPhotographerPhoto("event", file, undefined, {
+    contentHash: "a".repeat(64), checkpoint, retryState: { commitBusyUntil: Date.now() - 1 },
+  })).rejects.toMatchObject({ status: 429 });
+  expect(post).toHaveBeenCalledTimes(4);
+});
+
+it("waits out commit verification backpressure without spending the retry budget", async () => {
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  const delays: number[] = [];
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (ms) delays.push(ms);
+    return nativeTimer(callback, 0, ...args);
+  }) as typeof setTimeout);
+  const busy = new ApiError([{ code: "RATE_LIMITED", message: "Upload verification is busy. Try again shortly." }], 429, 1);
+  const receipt = { id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  for (let i = 0; i < 6; i++) post.mockRejectedValueOnce(busy);
+  post.mockResolvedValueOnce(receipt);
+  const retryState: { commitRetries?: number; commitBusyWaits?: number } = {};
+  expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+    contentHash: "a".repeat(64), retryState, checkpoint: { requestId: "request", photoId: "saved", key: "slot" },
+  })).toEqual(receipt);
+  expect(post).toHaveBeenCalledTimes(7);
+  expect(retryState.commitRetries ?? 0).toBe(0);
+  expect(retryState.commitBusyWaits).toBe(6);
+  expect(Math.max(...delays)).toBeLessThanOrEqual(15_000);
+});
+
+it("surfaces commit backpressure once the ten-minute busy window has passed", async () => {
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, _ms?: number, ...args: unknown[]) =>
+    nativeTimer(callback, 0, ...args)) as typeof setTimeout);
+  vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const busy = new ApiError([{ code: "UPLOAD_IN_PROGRESS", message: "Upload verification is already in progress." }], 409, 1);
+  post.mockRejectedValue(busy);
+  await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+    contentHash: "a".repeat(64), retryState: { commitBusyUntil: 999_999 },
+    checkpoint: { requestId: "request", photoId: "saved", key: "slot" },
+  })).rejects.toBe(busy);
   expect(post).toHaveBeenCalledTimes(4);
 });
 
