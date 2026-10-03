@@ -1400,6 +1400,26 @@ class PhotoUploadServiceTest {
         Mockito.verify(eventRepository, Mockito.never()).incrementPhotoCount(anyArg())
     }
 
+    @Test
+    fun `a multipart upload that loses a cross event race removes its stored original`() {
+        stubValidationsPass()
+        val otherEvent = UUID.randomUUID()
+        Mockito.`when`(eventRepository.findById(otherEvent)).thenReturn(Optional.of(event(otherEvent, "Other Run")))
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
+            .thenReturn(null, existingPhoto(otherEvent))
+        Mockito.doThrow(dataIntegrityViolation("uq_photos_photographer_content_hash"))
+            .`when`(entityManager).flush()
+
+        assertFailsWith<ConflictException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+
+        val stored = ArgumentCaptor.forClass(Photo::class.java)
+        Mockito.verify(entityManager).persist(capture(stored))
+        Mockito.verify(storageService).put(eqArg(stored.value.s3Key), anyArg<ByteArray>(), anyArg<String>())
+        Mockito.verify(storageService).delete(stored.value.s3Key)
+    }
+
     // A genuinely-unexpected constraint (e.g. a future FK) must surface as the
     // integrity fault it is — NOT be swallowed and mislabeled a duplicate.
     @Test
