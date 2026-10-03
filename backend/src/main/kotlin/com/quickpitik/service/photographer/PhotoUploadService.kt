@@ -944,9 +944,15 @@ class PhotoUploadService(
                 .filterIsInstance<ConstraintViolationException>().firstOrNull()?.constraintName
             if (violated !in setOf(CONTENT_HASH_CONSTRAINT, "photos_pkey")) throw ex
             // Resolve only AFTER rollback: PostgreSQL rejects reads in an aborted transaction.
-            val existing = legacyCommittedPhoto(photoId, photographerId, eventId, originalKey, contentHash)
-                ?: duplicateOf(photographerId, eventId, contentHash)
-                ?: throw ex
+            val existing = try {
+                legacyCommittedPhoto(photoId, photographerId, eventId, originalKey, contentHash)
+                    ?: duplicateOf(photographerId, eventId, contentHash)
+                    ?: throw ex
+            } catch (conflict: ConflictException) {
+                // Multipart has no intent ledger: nothing else would ever remove this object.
+                if (intent == null) runCatching { storageService.delete(originalKey) }
+                throw conflict
+            }
             if (intent == null) {
                 if (originalKey != existing.s3Key) runCatching { storageService.delete(originalKey) }
             } else {
