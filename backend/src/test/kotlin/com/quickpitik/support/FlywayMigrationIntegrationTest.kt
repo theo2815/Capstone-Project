@@ -86,6 +86,15 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `photos s3_key is indexed for the upload cleanup reference check`() {
+        val definition = jdbcTemplate.queryForObject(
+            "SELECT indexdef FROM pg_indexes WHERE tablename = 'photos' AND indexname = 'idx_photos_s3_key'",
+            String::class.java,
+        )
+        assertTrue(definition!!.contains("(s3_key)"))
+    }
+
+    @Test
     fun `V63 backfills delivered receipts before creating the stale claim index`() {
         val schema = "receipt_v63_${UUID.randomUUID().toString().replace("-", "")}"
         dataSource.connection.use { connection ->
