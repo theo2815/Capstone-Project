@@ -357,10 +357,14 @@ class PhotoUploadService(
 
         val cleanedAt = intent.cleanedAt ?: now
         val recheckUntil = cleanedAt.plus(storageProperties.directUpload.cleanupRecheckWindow)
+        // Recheck at doubling intervals (1 h, 2 h, 4 h … capped at the window):
+        // about ten passes per receipt over seven days instead of one per hour.
+        // The staging lifecycle rule remains the backstop for anything later.
+        val interval = maxOf(storageProperties.directUpload.cleanupDelay, Duration.between(cleanedAt, now))
         val nextCleanup = if (now >= recheckUntil) {
             null
         } else {
-            minOf(now.plus(storageProperties.directUpload.cleanupDelay), recheckUntil)
+            minOf(now.plus(interval), recheckUntil)
         }
         val completed = transactionTemplate.execute {
             photoUploadIntentRepository.completeCleanup(
