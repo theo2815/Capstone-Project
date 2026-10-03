@@ -307,6 +307,8 @@ export interface UploadRetryState {
   beginRetries?: number;
   transferRetries?: number;
   commitRetries?: number;
+  commitBusyUntil?: number;
+  commitBusyWaits?: number;
   transferDeadline?: number;
   /** Grant (photoId) that transferDeadline belongs to; a renewed grant gets its own cap. */
   transferGrant?: string;
@@ -355,6 +357,15 @@ function retryDelay(error: unknown, attempt: number): number {
   return Math.max(jittered, error instanceof ApiError ? (error.retryAfterSeconds ?? 0) * 1000 : 0);
 }
 
+// Commit is idempotent and the original is already staged: verification
+// backpressure is a wait, not a failure. Bounded per entry.
+const COMMIT_BUSY_WINDOW_MS = 10 * 60_000;
+
+function verificationBusy(error: unknown): boolean {
+  return error instanceof ApiError && error.errors.some((item) =>
+    item.code === "UPLOAD_IN_PROGRESS" || (item.code === "RATE_LIMITED" && error.status === 429));
+}
+
 function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException("Upload cancelled", "AbortError")); return; }
@@ -373,6 +384,16 @@ async function scheduleUploadRetry(
   phase: "beginRetries" | "transferRetries" | "commitRetries",
 ): Promise<void> {
   if (signal?.aborted || !isCurrent()) assertUploadActive(signal, isCurrent);
+  if (phase === "commitRetries" && verificationBusy(error)) {
+    const until = retryState.commitBusyUntil ??= Date.now() + COMMIT_BUSY_WINDOW_MS;
+    if (Date.now() < until) {
+      const waits = (retryState.commitBusyWaits ?? 0) + 1;
+      retryState.commitBusyWaits = waits;
+      assertUploadActive(signal, isCurrent);
+      await waitForRetry(Math.min(15_000, retryDelay(error, Math.min(waits - 1, 4))), signal);
+      return;
+    }
+  }
   const attempt = retryState[phase] ?? 0;
   if (attempt >= 3) throw error;
   retryState[phase] = attempt + 1;
