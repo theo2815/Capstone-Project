@@ -356,8 +356,9 @@ for the same bytes may both reserve (no lock; the quota bounds it), and
 `PhotoUploadCleanupTrigger` runs bounded fixed-delay sweeps without holding a
 database connection across storage I/O. It expires abandoned intents, claims due
 terminal receipts, removes staging and only deletes an original after checking
-that no `Photo.s3Key` references it. Successful deletes are rechecked for seven
-days to catch late PUT/copy completion; terminal receipts are retained. Permanent
+that no `Photo.s3Key` references it. Successful deletes are rechecked at doubling
+intervals (1 h, 2 h, 4 h …) for seven days to catch late PUT/copy completion;
+terminal receipts are retained. Permanent
 photo deletion nulls the result FK and reschedules that receipt in the same short
 transaction, so later commit retries remain terminal `PHOTO_NOT_FOUND` and cannot
 recreate the photo. Cleanup is idempotent and a failed object is retried without

@@ -598,6 +598,33 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `cleanup rechecks back off by doubling within the recheck window`() {
+        val cleanedAt = CLEANUP_NOW.minusHours(4)
+        val current = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.EXPIRED
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+            this.cleanedAt = cleanedAt
+        }
+        Mockito.`when`(photoUploadIntentRepository.findCleanupCandidateIds(anyArg(), anyArg(), anyArg()))
+            .thenReturn(listOf(current.photoId))
+        Mockito.`when`(photoUploadIntentRepository.claimCleanup(anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.findById(current.photoId)).thenReturn(Optional.of(current))
+        Mockito.`when`(photoRepository.existsByS3Key(current.originalKey)).thenReturn(false)
+        Mockito.`when`(photoUploadIntentRepository.completeCleanup(anyArg(), anyArg(), anyArg(), nullableArg(), anyArg()))
+            .thenReturn(1)
+
+        service(AiApiProperties(enabled = false), clock = CLEANUP_CLOCK).cleanupDirectUploads()
+
+        Mockito.verify(photoUploadIntentRepository).completeCleanup(
+            eqArg(current.photoId),
+            eqArg(CLEANUP_NOW.plus(storageProperties.directUpload.cleanupDelay)),
+            eqArg(cleanedAt),
+            eqArg(CLEANUP_NOW.plusHours(4)),
+            eqArg(CLEANUP_NOW),
+        )
+    }
+
+    @Test
     fun `cleanup rechecks and removes an object that arrived after an earlier missing delete`() {
         val current = intent(helloBytes.size.toLong()).apply {
             state = PhotoUploadIntentState.EXPIRED
