@@ -75,6 +75,7 @@ data class PhotographerEventDetailDto(
     val description: String = "",
     val organizerName: String = "",
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
+    val deletedAt: OffsetDateTime? = null,
 )
 
 // POST /me/photographer/events — bound off the multipart form as a `@Valid
@@ -307,6 +308,7 @@ fun detailDto(
         description = event.description,
         organizerName = event.organizerName,
         pricePerPhoto = event.pricePerPhoto,
+        deletedAt = event.deletedAt,
     )
 
 fun Photo.toLibraryDto(

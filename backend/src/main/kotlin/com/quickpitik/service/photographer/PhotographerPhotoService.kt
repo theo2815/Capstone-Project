@@ -1,7 +1,9 @@
 package com.quickpitik.service.photographer
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.photographer.PermanentDeleteResponse
 import com.quickpitik.entity.Photo
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -40,6 +42,7 @@ class PhotographerPhotoService(
     // Returns the number affected (already-trashed ids are no-ops).
     @Transactional
     fun trash(photographerId: UUID, eventId: UUID, photoIds: List<UUID>): Int {
+        requireNotRemovedEvent(eventId)
         if (photoIds.isEmpty()) return 0
         val affected = photoRepository.trashOwned(photographerId, eventId, photoIds, OffsetDateTime.now())
         if (affected > 0) adjustPhotoCount(eventId, photographerId, -affected)
@@ -51,6 +54,7 @@ class PhotographerPhotoService(
     // lifecycle status (LIVE/PROCESSING/HIDDEN) untouched.
     @Transactional
     fun restore(photographerId: UUID, eventId: UUID, photoIds: List<UUID>): Int {
+        requireNotRemovedEvent(eventId)
         if (photoIds.isEmpty()) return 0
         val affected = photoRepository.restoreOwned(photographerId, eventId, photoIds)
         if (affected > 0) adjustPhotoCount(eventId, photographerId, affected)
@@ -65,6 +69,7 @@ class PhotographerPhotoService(
     // retryable, but cannot masquerade as recoverable trash. No transaction is
     // held during provider or storage calls.
     fun permanentDelete(photographerId: UUID, eventId: UUID, photoIds: List<UUID>): PermanentDeleteResponse {
+        requireNotRemovedEvent(eventId)
         val trashed = load(photographerId, eventId, photoIds).filter { it.deletedAt != null }
         if (trashed.isEmpty()) return PermanentDeleteResponse(deleted = emptyList(), blockedSold = emptyList())
 
@@ -132,6 +137,12 @@ class PhotographerPhotoService(
         } else {
             photoRepository.findAllByIdInAndPhotographerIdAndEventId(photoIds, photographerId, eventId)
         }
+
+    private fun requireNotRemovedEvent(eventId: UUID) {
+        if (eventRepository.findById(eventId).orElse(null)?.deletedAt != null) {
+            throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        }
+    }
 
     private fun adjustPhotoCount(eventId: UUID, photographerId: UUID, delta: Int) {
         // Match the upload transaction's lock order.
