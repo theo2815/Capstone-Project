@@ -45,7 +45,6 @@ import {
 } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
 import {
-  ACCEPTED_IMAGE_MIME,
   HEIC_GUIDANCE,
   HEIC_REJECTION,
   isHeicFile,
@@ -54,6 +53,11 @@ import {
 } from "@/lib/image-utils";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
+
+// The server image decoder reads JPEG and PNG event photos (no WebP reader in
+// the backend runtime). Avatar, cover and watermark uploads re-encode in the
+// browser and keep ACCEPTED_IMAGE_MIME.
+const EVENT_PHOTO_MIME = ["image/jpeg", "image/png"];
 
 // Auto-upload mode. Photos are confirmed by the backend after transfer; there
 // is no separate "publish" step. The page never redirects after a batch
@@ -947,7 +951,7 @@ function UploadForm({
           <input
             ref={inputRef}
             type="file"
-            accept={ACCEPTED_IMAGE_MIME.join(",")}
+            accept={EVENT_PHOTO_MIME.join(",")}
             multiple
             onChange={handleSelect}
             className="sr-only"
@@ -1338,8 +1342,8 @@ function validate(file: File): string | undefined {
   if (looksLikeHeic(file)) {
     return HEIC_REJECTION;
   }
-  if (!ACCEPTED_IMAGE_MIME.includes(file.type)) {
-    return "JPEG, PNG, or WebP only.";
+  if (!EVENT_PHOTO_MIME.includes(file.type)) {
+    return "JPEG or PNG only.";
   }
   if (file.size > MAX_UPLOAD_BYTES) {
     return "Larger than 8 MB.";

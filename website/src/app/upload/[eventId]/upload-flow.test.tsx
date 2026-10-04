@@ -22,10 +22,50 @@ vi.mock("@/lib/api-photographer", async (importOriginal) => ({ ...(await importO
 
 beforeEach(() => {
   vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: vi.fn(() => "blob:test"), revokeObjectURL: vi.fn() }));
+  upload.mockResolvedValue({ id: "photo-1", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" });
   check.mockResolvedValue([{ hash: "a".repeat(64), status: "new", eventName: null }]);
   hash.mockResolvedValue("a".repeat(64));
 });
 afterEach(() => { upload.mockReset(); check.mockReset(); hash.mockReset(); vi.unstubAllGlobals(); });
+
+it("rejects a WebP event photo before hashing or upload", async () => {
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "frame.webp", { type: "image/webp" })] },
+  });
+  expect(await screen.findByText("JPEG or PNG only.")).toBeInTheDocument();
+  expect(hash).not.toHaveBeenCalled();
+  expect(upload).not.toHaveBeenCalled();
+});
+
+it("offers only JPEG and PNG in the event-photo picker", () => {
+  render(<FocusedUploadPage />);
+  const input = screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!;
+  expect(input).toHaveAttribute("accept", "image/jpeg,image/png");
+});
+
+it.each([
+  ["image/jpeg", "race.jpg"],
+  ["image/png", "race.png"],
+])("uploads supported event photos (%s)", async (type, name) => {
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], name, { type })] },
+  });
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+  expect(upload.mock.calls[0][1].type).toBe(type);
+  expect(await screen.findByText("Uploaded — preparing preview")).toBeInTheDocument();
+});
+
+it("shows HEIC guidance before the WebP format rejection", async () => {
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "frame.heic", { type: "image/webp" })] },
+  });
+  expect(await screen.findByText("HEIC — export as JPEG.")).toBeInTheDocument();
+  expect(hash).not.toHaveBeenCalled();
+  expect(upload).not.toHaveBeenCalled();
+});
 
 it("keeps the row confirming after byte progress and shows the backend processing receipt", async () => {
   let finish!: (value: unknown) => void;
