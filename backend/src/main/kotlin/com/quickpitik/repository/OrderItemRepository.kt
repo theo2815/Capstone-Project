@@ -38,6 +38,27 @@ interface OrderItemRepository : JpaRepository<OrderItem, OrderItemId> {
         """,
     )
     fun countSalesByPhotoIds(@Param("photoIds") photoIds: Collection<UUID>): List<PhotoSalesProjection>
+
+    @Query(
+        """
+        SELECT CASE WHEN COUNT(oi) > 0 THEN true ELSE false END
+        FROM OrderItem oi, Photo p, Order o
+        WHERE oi.id.photoId = p.id
+          AND oi.id.orderId = o.id
+          AND p.photographerId = :photographerId
+          AND p.eventId = :eventId
+          AND o.eventId = :eventId
+          AND (o.paidAt IS NOT NULL OR o.status IN (
+              com.quickpitik.entity.OrderStatus.PAID,
+              com.quickpitik.entity.OrderStatus.FULFILLED,
+              com.quickpitik.entity.OrderStatus.REFUNDED
+          ))
+        """,
+    )
+    fun existsSettledPurchaseForEvent(
+        @Param("photographerId") photographerId: UUID,
+        @Param("eventId") eventId: UUID,
+    ): Boolean
 }
 
 interface PhotoSalesProjection {

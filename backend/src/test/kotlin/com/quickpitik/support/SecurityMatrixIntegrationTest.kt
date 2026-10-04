@@ -161,6 +161,14 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `private removed event history keeps photographer role gate`() {
+        val path = "/api/v1/me/photographer/events/${UUID.randomUUID()}?includeRemoved=true"
+        assertEquals(401, get(path).statusCode())
+        assertEquals(403, get(path, register(Role.RUNNER)).statusCode())
+        assertEquals(404, get(path, register(Role.PHOTOGRAPHER)).statusCode())
+    }
+
+    @Test
     fun `metadata routes obey photographer and anonymous gates with no store`() {
         val id = UUID.randomUUID()
         val ownerPath = "/api/v1/me/photographer/photos/$id/metadata"

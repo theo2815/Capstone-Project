@@ -157,10 +157,12 @@ class MePhotographerController(
     fun getEvent(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
+        @RequestParam(defaultValue = "false") includeRemoved: Boolean,
     ): PhotographerEventDetailDto =
         photographerEventService.getEventDetail(
             photographerId = principal.userId,
             eventId = eventId,
+            includeRemoved = includeRemoved,
         )
 
     @GetMapping("/events/{eventId}/photos")

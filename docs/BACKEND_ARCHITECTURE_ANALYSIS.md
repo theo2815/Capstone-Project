@@ -425,6 +425,15 @@ succeeds, so retry and Cancel retain the saved placement.
 
 ---
 
+**Photographer removed-event history:**
+`GET /api/v1/me/photographer/events/{eventId}` keeps removed events hidden by
+default. `?includeRemoved=true` returns a removed event's detail, including
+`deletedAt`, only to its owner or a photographer with existing coverage. An own
+settled purchase also proves legacy coverage when its counters are empty.
+Other photographers and unknown events receive 404.
+Live and archived event detail is unchanged. This opt-in does not reopen the
+event's photo list, public detail, uploads, or photo management actions.
+
 **Photographer photo management — website/mobile integration:**
 `GET /api/v1/me/photographer/events/{id}/photos?deleted=true` lists trash using
 the same `items`, `offset`, `limit`, and `total` pagination envelope as the active
