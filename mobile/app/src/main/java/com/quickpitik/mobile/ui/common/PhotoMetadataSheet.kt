@@ -63,6 +63,7 @@ fun PhotoMetadataSheet(
                 is PhotoMetadataState.Pending -> {
                     Text("Metadata is being prepared.", style = Typography.bodyMedium, color = Slate)
                     GhostCta("Refresh", onRefresh, Modifier.fillMaxWidth())
+                    fileFacts(state.metadata.originalFilename, state.metadata.fileSizeBytes)
                 }
                 is PhotoMetadataState.Data -> {
                     metadataDetails(state.metadata.fields, state.metadata.originalFilename, state.metadata.fileSizeBytes)
@@ -89,6 +90,7 @@ fun PhotoMetadataSheet(
                 is PhotoMetadataState.Failed -> {
                     Text("Metadata could not be loaded.", style = Typography.bodyMedium, color = Slate)
                     GhostCta("Retry", onRefresh, Modifier.fillMaxWidth())
+                    state.metadata?.let { fileFacts(it.originalFilename, it.fileSizeBytes) }
                 }
                 PhotoMetadataState.Closed -> Unit
             }

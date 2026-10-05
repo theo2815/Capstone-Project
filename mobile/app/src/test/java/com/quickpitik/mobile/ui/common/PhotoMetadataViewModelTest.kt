@@ -140,6 +140,15 @@ class PhotoMetadataViewModelTest {
         assertEquals(2, backend.server.requestCount)
     }
 
+    @Test fun `server failed status keeps its file facts for the sheet`() {
+        signInAs("RUNNER")
+        backend.enqueue(ok("""{"photoId":"a","status":"failed","originalFilename":"race.jpg","fileSizeBytes":1572864,"fields":null}"""))
+        val vm = viewModel()
+        vm.selectRemote("a", "public")
+        val state = vm.state.awaitFirst { it is PhotoMetadataState.Failed } as PhotoMetadataState.Failed
+        assertEquals("race.jpg", state.metadata?.originalFilename)
+    }
+
     @Test fun `unavailable preserves file facts without camera fields`() {
         signInAs("RUNNER")
         backend.enqueue(ok("""{"photoId":"a","status":"unavailable","originalFilename":"race.jpg","fileSizeBytes":1572864,"fields":null}"""))
