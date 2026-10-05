@@ -47,7 +47,8 @@ def test_small_images_are_measured_without_enlarging():
 
 
 def test_large_images_are_measured_on_a_640_area_averaged_copy():
-    gray = cv2.cvtColor(_texture(height=1280, width=853), cv2.COLOR_BGR2GRAY)
+    # 853 is odd on purpose: at an exact 2x shrink OpenCV's bilinear equals area-averaging.
+    gray =cv2.cvtColor(_texture(height=1280, width=853), cv2.COLOR_BGR2GRAY)
     at_640 = cv2.resize(gray, (426, 640), interpolation=cv2.INTER_AREA)
     expected = BlurDetector().detect_fast(at_640)["laplacian_variance"]
     assert round(whole_frame.measure(gray)[0], 2) == expected
