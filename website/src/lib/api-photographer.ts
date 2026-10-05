@@ -99,6 +99,7 @@ export interface UploadedPhoto {
   thumbnailUrl: string;
   span: "default" | "wide";
   aiDetectionStatus?: UploadedPhotoAiDetectionStatus;
+  inTrash?: boolean;
 }
 
 export interface PhotographerEventListArgs {
@@ -744,6 +745,7 @@ export interface PhotoExistsResult {
   hash: string;
   status: PhotoExistsStatus;
   eventName: string | null;
+  inTrash?: boolean;
 }
 
 interface PhotoExistsResponse {
