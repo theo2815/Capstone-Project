@@ -296,6 +296,12 @@ export interface PhotographerTransaction {
   buyer: string;
   /** ₱ kept by the photographer after platform cut. */
   amountKept: number;
+  /** Additive ledger fields; absent on older cached responses. */
+  orderId?: string;
+  isRefund?: boolean;
+  refundOf?: string | null;
+  recordedAt?: string;
+  thumbnailUrl?: string | null;
 }
 
 // Most recent first. 6 cycles total — 4 paid, 1 pending, 1 scheduled. Adds up

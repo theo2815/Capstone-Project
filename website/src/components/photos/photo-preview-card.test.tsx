@@ -93,6 +93,14 @@ function withQuery(card: React.ReactElement) {
 afterEach(() => { vi.restoreAllMocks(); useAuthStore.getState().logout(); });
 
 describe("PhotoPreviewCard metadata access", () => {
+  it("renders owner details and disables download while ownership resolves", async () => {
+    const onDownload = vi.fn();
+    render(withQuery(<PhotoPreviewCard photo={photo} mode="owned" eventName="Cebu Run" index={1} total={1}
+      onClose={vi.fn()} onDownload={onDownload} downloadDisabled details={<p>Paid for this photo</p>} />));
+    expect(await screen.findByText("Paid for this photo")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Download photo" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /buy now/i })).not.toBeInTheDocument();
+  });
   it("shows no metadata action for sibling callers or modes without explicit access", async () => {
     const get = vi.spyOn(api, "get");
     const base = { photo, eventName: "Cebu Run", index: 1, total: 1, onClose: vi.fn() };
