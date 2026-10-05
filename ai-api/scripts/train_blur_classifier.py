@@ -26,7 +26,7 @@ TRAIN_ARGS = {
     "epochs": 40,
     "batch": 32,
     "patience": 0,          # never stop early on the validation folder
-    "lr0": 0.001,
+    # No "lr0": Ultralytics' default "auto" optimizer ignores it and uses AdamW at 0.001667.
     "lrf": 0.01,
     "weight_decay": 0.001,
     "dropout": 0.3,
