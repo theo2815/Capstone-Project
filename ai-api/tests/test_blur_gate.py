@@ -616,3 +616,19 @@ def test_a_photo_with_an_unscored_tone_copy_has_no_tone_scores(tmp_path, monkeyp
     _, rows = _predictions(tmp_path, monkeypatch, *TONE, shade=GRAY, unscored=range(50, 120))
     assert rows[0]["tone_scores"] is None       # its darker copy got no answer
     assert len(rows[1]["tone_scores"]) == 3
+
+
+def test_a_failing_gate_still_writes_label_and_prediction_apart(tmp_path, monkeypatch):
+    code, rows = _predictions(tmp_path, monkeypatch, always="sharp")
+    assert code == 1
+    assert [(r["label"], r["predicted"]) for r in rows] == [
+        ("sharp", "sharp"), ("motion_blurred", "sharp")]
+    assert rows[1]["probabilities"]["sharp"] < 0.1
+
+
+def test_an_unprepared_photo_is_listed_with_nulls(tmp_path, monkeypatch):
+    code, rows = _predictions(tmp_path, monkeypatch, *TONE, unreadable="motion_blurred")
+    assert code == 1
+    assert rows[1] == {"path": "event/motion_blurred/0.jpg", "label": "motion_blurred",
+                       "event": "event", "predicted": None, "probabilities": None,
+                       "tone_scores": None}

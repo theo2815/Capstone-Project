@@ -133,3 +133,84 @@ def test_a_group_with_no_photos_reads_not_measured_and_does_not_fail(tmp_path, m
     assert code == 0
     assert summary["results"][0]["whole_frame_missed"] == [0, 0]
     assert "not measured" in capsys.readouterr().out
+
+
+def test_a_probability_equal_to_the_threshold_is_flagged():
+    result = _by_threshold(_clean_rows() + [_row("sharp", "big-event", 0.5)])[0.50]
+    assert result["sharp_flagged"] == [1, 121]
+    assert result["tone_flips"] == [0, 221]               # its copies sit at 0.50 too
+
+
+def test_blur_spread_over_two_classes_is_judged_by_the_strongest_one():
+    row = _row("sharp", "big-event", 0.2)
+    row["probabilities"].update(defocused_blurred=0.2, sharp=0.6)
+    assert _by_threshold(_clean_rows() + [row])[0.30]["sharp_flagged"] == [0, 121]
+
+
+def test_an_event_with_99_sharp_photos_cannot_fail_the_event_limit():
+    rows = _clean_rows() + [_row("sharp", "calm-event", 0.01) for _ in range(900)]
+    rows += [_row("sharp", "small", 0.99) for _ in range(8)]
+    rows += [_row("sharp", "small", 0.01) for _ in range(91)]
+    assert blur_cv_report.summarise(rows)["passing_thresholds"] == ALL
+
+
+@pytest.mark.parametrize("missed, passing", [(2, ALL), (3, [])])
+def test_whole_frame_limit_is_two_percent_inclusive(missed, passing):
+    rows = _clean_rows() + [_row("motion_blurred", "soft-event", 1.0, "motion_blurred")
+                            for _ in range(40 - missed)]
+    rows += [_row("motion_blurred", "soft-event", 0.0, "motion_blurred") for _ in range(missed)]
+    summary = blur_cv_report.summarise(rows)
+    assert summary["results"][0]["whole_frame_missed"] == [missed, 100]
+    assert summary["passing_thresholds"] == passing
+
+
+@pytest.mark.parametrize("flagged, passing", [(3, ALL), (4, [])])
+def test_pooled_sharp_limit_is_two_percent_inclusive(flagged, passing):
+    rows = _clean_rows() + [_row("sharp", "big-event", 0.99) for _ in range(flagged)]
+    rows += [_row("sharp", "big-event", 0.01) for _ in range(30 - flagged)]   # 150 sharp
+    assert blur_cv_report.summarise(rows)["passing_thresholds"] == passing
+
+
+@pytest.mark.parametrize("bridge_flagged, passing", [(5, ALL), (6, [])])
+def test_event_limit_is_five_percent_inclusive_and_judged_by_rate(bridge_flagged, passing):
+    rows = _clean_rows() + [_row("sharp", "calm-event", 0.99) for _ in range(9)]
+    rows += [_row("sharp", "calm-event", 0.01) for _ in range(891)]       # 1%, but 9 photos
+    rows += [_row("sharp", "bridge-event", 0.99) for _ in range(bridge_flagged)]
+    rows += [_row("sharp", "bridge-event", 0.01) for _ in range(100 - bridge_flagged)]
+    summary = blur_cv_report.summarise(rows)
+    assert summary["results"][0]["worst_event"] == ["bridge-event", bridge_flagged, 100]
+    assert summary["passing_thresholds"] == passing
+
+
+@pytest.mark.parametrize("missed, passing", [(10, ALL), (11, [])])
+def test_missed_focus_limit_is_ten_percent_inclusive(missed, passing):
+    rows = _clean_rows() + [_row("defocused_object_portrait", "big-event", 0.97)
+                            for _ in range(60 - missed)]
+    rows += [_row("defocused_object_portrait", "big-event", 0.02) for _ in range(missed)]
+    assert blur_cv_report.summarise(rows)["passing_thresholds"] == passing
+
+
+def test_main_pools_every_file_and_a_pass_exits_zero(tmp_path, monkeypatch):
+    rows = _clean_rows()
+    code, summary = _main(tmp_path, monkeypatch, rows[:100], rows[100:])
+    assert code == 0
+    assert summary["photos"] == 220
+
+
+def test_thresholds_are_the_published_list():
+    assert blur_cv_report.THRESHOLDS == (
+        0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95)
+
+
+def test_the_photo_count_includes_unscored_photos():
+    rows = _clean_rows()
+    rows[0]["probabilities"] = None
+    assert blur_cv_report.summarise(rows)["photos"] == 220
+
+
+def test_the_printed_table_marks_each_threshold(tmp_path, monkeypatch, capsys):
+    rows = _clean_rows() + [_row("sharp", "big-event", 0.35) for _ in range(5)]
+    _main(tmp_path, monkeypatch, rows)
+    marks = {line.split()[0]: line.split()[-1] for line in capsys.readouterr().out.splitlines()
+             if line.split()[:1] in (["0.30"], ["0.40"])}
+    assert marks == {"0.30": "no", "0.40": "yes"}
