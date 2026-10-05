@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -46,6 +50,21 @@ def test_the_crop_always_returns_the_whole_frame():
 
 def test_the_run_cannot_stop_early_on_the_validation_folder():
     assert TRAIN_ARGS["patience"] == 0
+
+
+def test_train_passes_the_safe_settings_and_returns_the_last_weights(tmp_path, monkeypatch):
+    calls = []
+    model = SimpleNamespace(train=lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda name: model))
+    (tmp_path / "train").mkdir()
+    (tmp_path / "val").mkdir()
+
+    last = train("run", tmp_path, tmp_path / "runs")
+
+    (kwargs,) = calls
+    assert kwargs.items() >= TRAIN_ARGS.items()
+    assert kwargs["data"] == str(tmp_path)
+    assert last == Path(kwargs["project"]) / kwargs["name"] / "weights" / "last.pt"
 
 
 def test_train_refuses_a_folder_without_train_and_val(tmp_path):
