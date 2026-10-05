@@ -18,7 +18,6 @@ import argparse
 import csv
 import hashlib
 import os
-import shutil
 from collections import Counter
 from pathlib import Path
 
@@ -60,9 +59,9 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def build(training_dir: Path = TRAINING_DIR, out_name: str = "blur_v2") -> Counter:
+def build(training_dir: Path = TRAINING_DIR) -> Counter:
     """Link every labelled photo into its fold; return photo counts per (fold, class)."""
-    out = training_dir / out_name
+    out = training_dir / "blur_v2"
     if any(out.glob("fold_*")):
         raise FileExistsError(f"Refusing to replace existing folds under {out}")
     with (training_dir / LABELS).open(encoding="utf-8-sig", newline="") as stream:
@@ -88,10 +87,7 @@ def build(training_dir: Path = TRAINING_DIR, out_name: str = "blur_v2") -> Count
         target = (out / f"fold_{fold}" / row["event"] / row["final_label"]
                   / f"{row['sha256'][:16]}.jpg")
         target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.link(by_hash[row["sha256"]], target)
-        except OSError:  # another volume, or a filesystem without hard links
-            shutil.copy2(by_hash[row["sha256"]], target)
+        os.link(by_hash[row["sha256"]], target)
         counts[(fold, row["final_label"])] += 1
     return counts
 
