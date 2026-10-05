@@ -91,7 +91,7 @@ export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, onDenied
   const loading = query.isPending || query.isFetching;
   const status = !loading && !query.isError ? data?.status : undefined;
   const fields = status === "ready" ? data?.fields : null;
-  const fileFacts = (status === "ready" || status === "empty" || status === "unavailable") && data;
+  const fileFacts = status !== undefined && data;
 
   return <Modal isOpen={isOpen} onClose={onClose} title="Photo metadata" hideClose
     className="max-w-md p-5 md:p-7 [&>h2]:font-display [&>h2]:text-xl [&>h2]:font-bold [&>h2]:normal-case [&>h2]:tracking-normal [&>h2]:text-ink">
@@ -107,10 +107,14 @@ export function PhotoMetadataDialog({ photoId, access, isOpen, onClose, onDenied
         <div aria-hidden="true" className="h-16 animate-pulse rounded-lg bg-bone-deep" />
         <div aria-hidden="true" className="h-16 animate-pulse rounded-lg bg-bone-deep" />
       </div> : missing ? <p className="font-sans text-base text-slate">Metadata is no longer available</p>
-        : query.isError || status === "failed" ? <div className="space-y-4">
+        : query.isError ? <div className="space-y-4">
           <p className="font-sans text-base text-slate">Metadata could not be loaded.</p>
           <button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
         </div> : <>
+          {status === "failed" && <div className="space-y-4">
+            <p className="font-sans text-base text-slate">Metadata could not be loaded.</p>
+            <button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
+          </div>}
           {status === "pending" && <div className="space-y-4">
             <p className="font-sans text-base text-slate">Metadata is being prepared.</p>
             <button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Refresh</button>
