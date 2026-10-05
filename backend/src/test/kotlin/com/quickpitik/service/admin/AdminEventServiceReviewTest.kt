@@ -78,7 +78,7 @@ class AdminEventServiceReviewTest {
             eventRepository,
             photoRepository,
             decisions,
-            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties()),
+            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), photoRepository),
             covers,
             provider,
             aiProperties,

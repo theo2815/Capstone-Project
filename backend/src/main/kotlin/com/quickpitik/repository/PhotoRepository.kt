@@ -18,8 +18,26 @@ import java.util.UUID
 interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT DISTINCT p FROM Photo p WHERE p.id IN :ids ORDER BY p.id")
+    // DISTINCT forces follow-on locking: checkout could hydrate availability
+    // before waiting for a review's lock. Lock the row in the initial read.
+    @Query("SELECT p FROM Photo p WHERE p.id IN :ids ORDER BY p.id")
     fun findAllByIdForUpdate(@Param("ids") ids: Collection<UUID>): List<Photo>
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """
+        UPDATE photos p
+        SET removal_state = CASE WHEN EXISTS (
+            SELECT 1 FROM photo_removal_items i
+            WHERE i.photo_id_snapshot = p.id AND i.state IN ('VERIFIED', 'RETAINED_RESTRICTED')
+        ) THEN 'REVIEW' ELSE 'NONE' END
+        WHERE p.id IN :ids AND p.removal_state <> 'REMOVED'
+        """, nativeQuery = true)
+    fun refreshRemovalState(@Param("ids") ids: Collection<UUID>): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Photo p SET p.removalState = com.quickpitik.entity.RemovalState.REMOVED " +
+        "WHERE p.id = :id AND p.removalState <> com.quickpitik.entity.RemovalState.REMOVED")
+    fun authorizeRemoval(@Param("id") id: UUID): Int
 
     @Modifying
     @Query("UPDATE Photo p SET p.deletedAt = :now WHERE p.photographerId = :photographerId " +
@@ -157,7 +175,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // Returns [photographer_id, event_id, distance] — deliberately no photo
     // id, so the answer can never become a photo URL.
     // ponytail: full scan of LIVE rows; a BK-tree or pg extension when photos > ~1M.
-    // `LIVE and not trashed` = Photo.isSellable — JPQL/SQL cannot call the
+    // `LIVE, not trashed, removal NONE` = Photo.isSellable — JPQL/SQL cannot call the
     // Kotlin helper, so this copy changes with it.
     @Query(
         value = """
@@ -168,7 +186,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
                  COALESCE(bit_count(CAST((p.phash_centre # :h) AS bit(64))), 64)
                ) AS d
         FROM photos p
-        WHERE p.status = 'LIVE' AND p.deleted_at IS NULL AND p.phash IS NOT NULL
+        WHERE p.status = 'LIVE' AND p.deleted_at IS NULL AND p.removal_state = 'NONE' AND p.phash IS NOT NULL
         ORDER BY d ASC
         LIMIT 1
         """,
@@ -181,7 +199,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // while the visitor pages; the seeded hash only varies near-equal rows.
     // ponytail: this window ranks the event's LIVE rows; materialize only if
     // EXPLAIN shows it hurting at real event scale.
-    // `LIVE and not trashed` = Photo.isSellable — JPQL/SQL cannot call the
+    // `LIVE, not trashed, removal NONE` = Photo.isSellable — JPQL/SQL cannot call the
     // Kotlin helper, so this copy changes with it.
     @Query(
         value = """
@@ -199,6 +217,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
             WHERE p.event_id = :eventId
               AND p.status = 'LIVE'
               AND p.deleted_at IS NULL
+              AND p.removal_state = 'NONE'
               AND p.published_at <= :snapshotAt
         )
         SELECT p.*
@@ -217,6 +236,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.event_id = :eventId
           AND p.status = 'LIVE'
           AND p.deleted_at IS NULL
+          AND p.removal_state = 'NONE'
           AND p.published_at <= :snapshotAt
         """,
         nativeQuery = true,
@@ -240,6 +260,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
@@ -249,6 +270,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
         """,
     )
@@ -266,6 +288,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND fp.aiPersonId IN :aiPersonIds
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
@@ -275,6 +298,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND fp.aiPersonId IN :aiPersonIds
         """,
     )
@@ -344,6 +368,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.photographerId = :photographerId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
         """,
         countQuery = """
         SELECT COUNT(p) FROM Photo p
@@ -351,6 +376,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.photographerId = :photographerId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
         """,
     )
     fun findPhotographerLibraryByStatus(
@@ -359,6 +385,25 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("status") status: PhotoStatus,
         pageable: Pageable,
     ): Page<Photo>
+
+    // Public catalog counts use the same predicate as Photo.isSellable;
+    // upload/owner/admin counters retain their existing meaning.
+    @Query("SELECT COUNT(p) FROM Photo p WHERE p.eventId = :eventId " +
+        "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE")
+    fun countPublicForEvent(@Param("eventId") eventId: UUID): Long
+
+    @Query("SELECT p.eventId AS eventId, COUNT(p) AS photoCount FROM Photo p WHERE p.eventId IN :eventIds " +
+        "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE GROUP BY p.eventId")
+    fun countPublicByEventIds(@Param("eventIds") eventIds: Collection<UUID>): List<PublicEventPhotoCount>
+
+    @Query("SELECT p.eventId AS eventId, COUNT(p) AS photoCount FROM Photo p WHERE p.eventId IN :eventIds " +
+        "AND p.photographerId = :photographerId " +
+        "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE GROUP BY p.eventId")
+    fun countPublicForPhotographerByEventIds(@Param("eventIds") eventIds: Collection<UUID>,
+        @Param("photographerId") photographerId: UUID): List<PublicEventPhotoCount>
 
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
 
@@ -512,4 +557,9 @@ interface PhotoBundleRow {
     val id: UUID
     val s3Key: String
     val bib: String?
+}
+
+interface PublicEventPhotoCount {
+    val eventId: UUID
+    val photoCount: Long
 }
