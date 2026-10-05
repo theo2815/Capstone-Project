@@ -50,8 +50,6 @@ def square_gray_view(image: np.ndarray, size: int) -> np.ndarray:
     canvas = np.zeros((side, side), dtype=np.uint8)
     top, left = (side - h) // 2, (side - w) // 2
     canvas[top:top + h, left:left + w] = gray
-    if side == size:
-        return canvas
     # Area-averaging when shrinking: point-sampling would fake sharp edges (2026-08-14 ADR).
     interpolation = cv2.INTER_AREA if side > size else cv2.INTER_LINEAR
     return cv2.resize(canvas, (size, size), interpolation=interpolation)
