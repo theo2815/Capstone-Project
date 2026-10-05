@@ -534,3 +534,48 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
     assert report["issues"] == []
     assert report["model"] == {"version": None,
                                "sha256": hashlib.sha256(b"candidate").hexdigest()}
+
+
+def test_predictions_json_lists_every_input_for_the_cv_report(tmp_path, monkeypatch):
+    from src.ml.blur import classifier as classifier_module
+
+    root = _nested(tmp_path, {"event": {"sharp": 1, "motion_blurred": 1}})
+
+    def shaded_jpeg(path, *args):
+        buf = io.BytesIO()
+        shade = 255 if path.parent.name == "sharp" else 0
+        Image.new("RGB", (32, 16), (shade, shade, shade)).save(buf, "JPEG")
+        return buf.getvalue()
+
+    class FakeClassifier:
+        def __init__(self, model_path, class_names_path):
+            self.session = object()
+
+        def classify_batch(self, images):
+            out = []
+            for image in images:
+                label = "sharp" if image.mean() > 128 else "motion_blurred"
+                out.append({"predicted_class": label, "confidence": 0.9,
+                            "probabilities": {c: (0.9 if c == label else 0.1 / 3)
+                                              for c in LABELS}})
+            return out
+
+    monkeypatch.setattr(classifier_module, "BlurClassifier", FakeClassifier)
+    monkeypatch.setattr(blur_gate, "resize_bytes", shaded_jpeg)
+    model = tmp_path / "candidate.onnx"
+    model.write_bytes(b"candidate")
+    predictions = tmp_path / "predictions.json"
+    monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(root), "--offline",
+                                      "--model-file", str(model),
+                                      "--model-manifest", str(tmp_path / "manifest.json"),
+                                      "--report-json", str(tmp_path / "report.json"),
+                                      "--predictions-json", str(predictions),
+                                      "--max-photometric-flip-rate", "0.02"])
+    blur_gate.main()
+
+    rows = json.loads(predictions.read_text())
+    assert [(r["path"], r["label"], r["event"], r["predicted"]) for r in rows] == [
+        ("event/sharp/0.jpg", "sharp", "event", "sharp"),
+        ("event/motion_blurred/0.jpg", "motion_blurred", "event", "motion_blurred")]
+    assert rows[0]["probabilities"]["sharp"] == 0.9
+    assert [r["tone_flip"] for r in rows] == [False, False]
