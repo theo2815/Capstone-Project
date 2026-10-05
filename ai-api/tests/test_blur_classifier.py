@@ -500,16 +500,21 @@ class TestBlurClassifierTwoStage:
         assert clf.motion_min_ratio == settings.BLUR_MOTION_MIN_RATIO
         assert clf.motion_max_detail == settings.BLUR_MOTION_MAX_DETAIL
 
-    def test_each_limit_is_used_for_its_own_blur_type(self, tmp_path):
-        """With a soft limit below _soft_frame's detail (about 1.9) only the smear is caught."""
+    @pytest.mark.parametrize(("limits", "soft", "smear"), [
+        ((1.0, 2.63, 52.4), "sharp", "motion_blurred"),  # soft limit below the soft frame
+        ((34.1, 100.0, 52.4), "defocused_blurred", "defocused_blurred"),  # ratio above the smear
+        ((34.1, 2.63, 1.0), "defocused_blurred", "sharp"),  # motion limit below the smear
+    ])
+    def test_each_limit_is_used_for_its_own_blur_type(self, tmp_path, limits, soft, smear):
+        """_soft_frame has detail ~1.9; _smeared_frame has detail ~1.25 and ratio ~13."""
         clf = BlurClassifier(
             model_path=str(tmp_path / "nonexistent.onnx"),
             class_names_path=str(tmp_path / "nonexistent.json"),
-            soft_max_detail=1.0, motion_min_ratio=2.63, motion_max_detail=52.4,
+            soft_max_detail=limits[0], motion_min_ratio=limits[1], motion_max_detail=limits[2],
         )
         clf.session = _counting_session()
-        assert clf.classify(_soft_frame())["predicted_class"] == "sharp"
-        assert clf.classify(_smeared_frame())["predicted_class"] == "motion_blurred"
+        assert clf.classify(_soft_frame())["predicted_class"] == soft
+        assert clf.classify(_smeared_frame())["predicted_class"] == smear
 
     def test_stage_two_output_fills_the_four_class_result(self, classifier):
         result = classifier.classify(_make_bgr_image())
@@ -552,9 +557,11 @@ class TestBlurClassifierTwoStage:
         classifier.session.run = run
         classifier._dynamic_batch = dynamic_batch
         dark, bright = _make_bgr_image() // 4, 192 + _make_bgr_image() // 4
-        results = classifier.classify_batch([_soft_frame(), dark, bright])
+        # Nine photos for the model: the last one sits alone in a second chunk.
+        results = classifier.classify_batch([_soft_frame(), dark, bright] + [dark] * 6 + [bright])
         assert [r["predicted_class"] for r in results] == [
-            "defocused_blurred", "defocused_object_portrait", "sharp"]
+            "defocused_blurred", "defocused_object_portrait", "sharp",
+            *["defocused_object_portrait"] * 6, "sharp"]
 
     def test_batch_feeds_the_model_in_small_chunks(self, classifier):
         """A 50-photo sub-batch must not become one ~250 MB tensor."""

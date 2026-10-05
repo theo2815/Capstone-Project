@@ -285,7 +285,7 @@ class BlurClassifier:
 
         Returns:
             List of result dicts (same format as classify()), with None at
-            positions where the input image was None or preprocessing failed.
+            positions where the input image was None or unreadable.
         """
         if self.session is None:
             return [None] * len(images)
