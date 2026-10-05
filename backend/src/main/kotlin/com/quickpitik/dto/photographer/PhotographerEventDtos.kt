@@ -197,6 +197,9 @@ data class UploadedPhotoDto(
     val thumbnailUrl: String,
     val span: String,
     val aiDetectionStatus: String? = null,
+    // True when these bytes already belong to a photo in the photographer's trash
+    // (including one being permanently deleted). Nothing new was published.
+    val inTrash: Boolean = false,
 )
 
 // Pre-flight duplicate check (dedup Phase 2). The photographer's client hashes
@@ -225,6 +228,9 @@ data class PhotoExistsResult(
     val hash: String,
     val status: String,
     val eventName: String? = null,
+    // True when these bytes already belong to a photo in the photographer's trash
+    // (including one being permanently deleted). Nothing new was published.
+    val inTrash: Boolean = false,
 )
 
 data class PhotoExistsResponse(
