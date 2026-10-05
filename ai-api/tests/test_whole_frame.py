@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from src.ml.blur import whole_frame
+from src.ml.blur.detector import BlurDetector
 
 RULE = {"soft_max_detail": 34.0, "motion_min_ratio": 2.6, "motion_max_detail": 52.0}
 
@@ -43,6 +44,13 @@ def test_small_images_are_measured_without_enlarging():
     gray = cv2.cvtColor(_texture(height=300, width=200), cv2.COLOR_BGR2GRAY)
     expected = float(cv2.Laplacian(gray, cv2.CV_64F).var()) * 640 / 300
     assert whole_frame.measure(gray)[0] == expected
+
+
+def test_large_images_are_measured_on_a_640_area_averaged_copy():
+    gray = cv2.cvtColor(_texture(height=1280, width=853), cv2.COLOR_BGR2GRAY)
+    at_640 = cv2.resize(gray, (426, 640), interpolation=cv2.INTER_AREA)
+    expected = BlurDetector().detect_fast(at_640)["laplacian_variance"]
+    assert round(whole_frame.measure(gray)[0], 2) == expected
 
 
 @pytest.mark.parametrize(("detail", "ratio", "expected"), [
