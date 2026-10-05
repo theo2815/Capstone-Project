@@ -342,6 +342,9 @@ events and intent completion commit atomically. Photo-ID and photographer/hash
 constraint races resolve only after rollback. Concurrent same-event duplicates
 return the winner without extra counters/events; cross-event dedup remains a
 terminal conflict. Unissued or foreign staging keys are never read or deleted.
+Duplicate receipts and preflight results include `inTrash` when the existing
+photo is trashed or being purged; the hash remains reserved and re-uploading
+never restores, unhides or republishes it.
 
 The per-photographer reservation quota (`STORAGE_DIRECT_UPLOAD_MAX_PENDING_PER_USER`,
 bytes cap beside it) counts only reservations whose signed PUT is still open or

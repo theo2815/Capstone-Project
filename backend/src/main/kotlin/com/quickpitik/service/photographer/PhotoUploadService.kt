@@ -1020,11 +1020,14 @@ class PhotoUploadService(
             val photo = existingByHash[hash]
             when {
                 photo == null -> PhotoExistsResult(hash = hash, status = "new")
-                photo.eventId == eventId -> PhotoExistsResult(hash = hash, status = "same_event")
+                photo.eventId == eventId -> PhotoExistsResult(
+                    hash = hash, status = "same_event", inTrash = photo.deletedAt != null,
+                )
                 else -> PhotoExistsResult(
                     hash = hash,
                     status = "different_event",
                     eventName = otherEventNames[photo.eventId],
+                    inTrash = photo.deletedAt != null,
                 )
             }
         }
@@ -1053,6 +1056,7 @@ class PhotoUploadService(
             thumbnailUrl = thumbnailUrl,
             span = photo.span.wire,
             aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none",
+            inTrash = photo.deletedAt != null,
         )
     }
 
