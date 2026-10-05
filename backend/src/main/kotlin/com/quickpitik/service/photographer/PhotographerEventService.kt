@@ -11,7 +11,6 @@ import com.quickpitik.dto.photographer.PhotographerEventSummaryDto
 import com.quickpitik.dto.photographer.PhotographerLibraryPhotoDto
 import com.quickpitik.dto.photographer.detailDto
 import com.quickpitik.dto.photographer.summaryDto
-import com.quickpitik.dto.photographer.toLibraryDto
 import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
@@ -34,6 +33,7 @@ class PhotographerEventService(
     private val eventRepository: EventRepository,
     private val photoRepository: PhotoRepository,
     private val orderItemRepository: OrderItemRepository,
+    private val photoDtoMapper: PhotographerPhotoDtoMapper,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val eventDtoMapper: EventDtoMapper,
@@ -131,25 +131,14 @@ class PhotographerEventService(
         } else {
             orderItemRepository.countSalesByPhotoIds(photoIds).associate { it.photoId to it.salesCount }
         }
-        val resolver = ::resolveThumbnailUrl
         return PaginatedResponse(
             items = page.content.map {
-                it.toLibraryDto(salesByPhoto[it.id] ?: 0L, resolver)
+                photoDtoMapper.toLibraryDto(it, salesByPhoto[it.id] ?: 0L)
             },
             total = page.totalElements,
             offset = pagination.offset,
             limit = pagination.limit,
         )
-    }
-
-    // Mirrors PhotoService.resolveThumbnailUrl — same watermarked-thumbnail-
-    // first preference order so runner-side and photographer-side galleries
-    // pull the same S3 object. Falls back to the original (uncomposited) key
-    // only if both thumbnail + watermark keys are unset (legacy rows).
-    private fun resolveThumbnailUrl(photo: com.quickpitik.entity.Photo): String? {
-        if (photo.deletionStartedAt != null) return null
-        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
-        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 
     fun getDownload(photographerId: UUID, photoId: UUID): PhotographerDownloadDto {

@@ -342,6 +342,9 @@ events and intent completion commit atomically. Photo-ID and photographer/hash
 constraint races resolve only after rollback. Concurrent same-event duplicates
 return the winner without extra counters/events; cross-event dedup remains a
 terminal conflict. Unissued or foreign staging keys are never read or deleted.
+Duplicate receipts and preflight results include `inTrash` when the existing
+photo is trashed or being purged; the hash remains reserved and re-uploading
+never restores, unhides or republishes it.
 
 The per-photographer reservation quota (`STORAGE_DIRECT_UPLOAD_MAX_PENDING_PER_USER`,
 bytes cap beside it) counts only reservations whose signed PUT is still open or
@@ -587,17 +590,49 @@ flowchart TD
         T2["PhotoWatermarkTrigger (Every 60s)"]
         T3["PhotoIndexingTrigger (Every 60s)"]
         T4["PhotoBatchIndexingScheduler (Every 30s)"]
-        T5["PhotoOrphanReaper (Every 30m)"]
+        T5["PhotoOrphanReaper"]
         T6["Bucket4j Eviction Sweep (Every 1h)"]
+        T7["PhotoUploadCleanupTrigger (Default 1m)"]
     end
 
     T1 -->|Polls PayMongo API| SettleMissedWebhooks["Settles missed payments & expires stale checkouts"]
     T2 -->|Scans DB Photo table| RecoverProcessingPhotos["Re-drives photos stuck in PROCESSING status"]
     T3 -->|Scans Photo table| RetryAiIndexing["Retries failed face/bib AI indexing"]
     T4 -->|Batches pending photos| BatchAiDrain["Drains photos into batch AI jobs"]
-    T5 -->|Inspects Object Storage| CleanOrphanFiles["Deletes unreferenced raw storage uploads"]
+    T5 -->|ai-api persons| ReapPersons["Deletes unreferenced ai-api face persons"]
     T6 -->|Scans in-memory buckets| EvictStaleBuckets["Frees idle client rate-limit buckets"]
+    T7 -->|intent ledger| CleanStaging["Expires abandoned direct uploads; deletes staging and unreferenced originals"]
 ```
+
+[`PhotoOrphanReaper`](../backend/src/main/kotlin/com/quickpitik/service/photographer/PhotoOrphanReaper.kt) removes ai-api face persons no live photo references, including leftovers from reindexing or batch rollback. It requires both `app.ai-api.enabled` and `app.ai-api.reaper-enabled`; its configurable fixed delay is `app.ai-api.reaper-interval-ms` (default 30 minutes in [`AiApiProperties`](../backend/src/main/kotlin/com/quickpitik/config/AiApiProperties.kt)). A separate 30-minute age gate protects newly enrolled persons while their photo references commit. [`PhotoUploadCleanupTrigger`](../backend/src/main/kotlin/com/quickpitik/service/photographer/PhotoUploadCleanupTrigger.kt) delegates ledger cleanup to [`PhotoUploadService.cleanupDirectUploads`](../backend/src/main/kotlin/com/quickpitik/service/photographer/PhotoUploadService.kt); `STORAGE_DIRECT_UPLOAD_CLEANUP_INTERVAL` defaults to one minute in [`application.yml`](../backend/src/main/resources/application.yml). Original deletion checks all photo references, regardless of lifecycle state.
+
+### Legacy original inventory (read-only)
+
+Run in Bash in a fresh local directory with a read-only database account (`READ_ONLY_DATABASE_URL`) and bucket-list credentials. Set `STORAGE_BUCKET` to the target backend's configured bucket and `R2_ENDPOINT` to its configured `STORAGE_ENDPOINT`. The protected set includes every photo's original reference (including hidden, processing, trashed and purging photos) and every `PENDING`/`VERIFYING` intent's `original_key`, without expiry filters; see the [`V65` schema](../backend/src/main/resources/db/migration/V65__photo_upload_intents.sql) and [`intent states`](../backend/src/main/kotlin/com/quickpitik/entity/PhotoUploadIntent.kt).
+
+```bash
+set -euo pipefail
+export LC_ALL=C
+
+# 1. Protect photo references and all non-terminal intent originals.
+psql "$READ_ONLY_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -c "
+SELECT s3_key FROM photos WHERE s3_key LIKE 'events/%/original.jpg'
+UNION
+SELECT original_key FROM photo_upload_intents
+WHERE state IN ('PENDING', 'VERIFYING') AND original_key LIKE 'events/%/original.jpg'
+" | sort -u > referenced.txt
+
+# 2. Keep automatic CLI pagination; filter empty/None text output.
+aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$STORAGE_BUCKET" --prefix events/ \
+  --query "Contents[?ends_with(Key, '/original.jpg')].Key" --output text \
+  | tr '\t' '\n' | awk '/^events\/.*\/original[.]jpg$/' | sort -u > stored.txt
+
+# 3. Count candidates only; these commands delete nothing.
+comm -13 referenced.txt stored.txt > unreferenced.txt
+wc -l < unreferenced.txt
+```
+
+Record only the candidate count. This comparison is an observation while uploads may continue, not an atomic inventory or permission to delete. Production execution belongs to the separately authorized post-release inventory; any destructive cleanup needs a separate owner decision and fresh reference checks.
 
 ---
 

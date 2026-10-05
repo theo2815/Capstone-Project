@@ -61,6 +61,7 @@ import java.util.HexFormat
 import java.util.UUID
 import javax.imageio.ImageIO
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -757,6 +758,67 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `a same event re-upload of a trashed photo reports it is in the trash`() {
+        stubValidationsPass()
+        val trashed = existingPhoto(eventId).apply { deletedAt = OffsetDateTime.now() }
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(trashed)
+
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        assertEquals(trashed.id, dto.id)
+        assertTrue(dto.inTrash)
+        Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+    }
+
+    @Test
+    fun `preflight marks a trashed same event photo`() {
+        val trashed = existingPhoto(eventId).apply { deletedAt = OffsetDateTime.now() }
+        Mockito.`when`(photoRepository.findByPhotographerIdAndContentHashIn(anyArg(), anyArg())).thenReturn(listOf(trashed))
+
+        val result = service(AiApiProperties(enabled = false)).checkExisting(photographerId, eventId, listOf(helloSha256))
+
+        assertEquals("same_event", result.results.single().status)
+        assertTrue(result.results.single().inTrash)
+    }
+
+    @Test
+    fun `direct begin reports a purging duplicate without reserving or publishing again`() {
+        stubValidationsPass()
+        val purging = existingPhoto(eventId).apply {
+            deletedAt = OffsetDateTime.now().minusMinutes(1)
+            deletionStartedAt = OffsetDateTime.now()
+        }
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(purging)
+
+        val result = service(AiApiProperties(enabled = false)).beginDirectUpload(
+            photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(),
+        )
+
+        assertEquals("existing", result.mode)
+        assertEquals(purging.id, result.existing?.id)
+        assertTrue(result.existing!!.inTrash)
+        assertEquals("live", result.existing!!.status)
+        assertTrue(purging.deletedAt != null)
+        assertTrue(purging.deletionStartedAt != null)
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<PhotoUploadIntent>())
+        Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
+    }
+
+    @Test
+    fun `preflight preserves another events reservation while reporting its trash state`() {
+        val otherEventId = UUID.randomUUID()
+        val trashed = existingPhoto(otherEventId).apply { deletedAt = OffsetDateTime.now() }
+        Mockito.`when`(photoRepository.findByPhotographerIdAndContentHashIn(anyArg(), anyArg())).thenReturn(listOf(trashed))
+        Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(event(otherEventId, "Other race")))
+
+        val result = service(AiApiProperties(enabled = false)).checkExisting(photographerId, eventId, listOf(helloSha256))
+
+        assertEquals("different_event", result.results.single().status)
+        assertEquals("Other race", result.results.single().eventName)
+        assertTrue(result.results.single().inTrash)
+    }
+
+    @Test
     fun `same-event duplicate returns the existing photo and writes nothing`() {
         stubValidationsPass()
         val existing = existingPhoto(inEvent = eventId)
@@ -768,6 +830,7 @@ class PhotoUploadServiceTest {
 
         assertEquals(existing.id, dto.id)
         assertEquals("https://thumb", dto.thumbnailUrl)
+        assertFalse(dto.inTrash)
         // No new photo, no S3 write, no events fired — the re-upload is a no-op.
         Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
         Mockito.verify(storageService, Mockito.never())
@@ -1218,6 +1281,7 @@ class PhotoUploadServiceTest {
         assertEquals("different_event", byHash[otherEventHash]?.status)
         assertEquals("Cebu Night Run", byHash[otherEventHash]?.eventName)
         assertEquals("new", byHash[newHash]?.status)
+        assertTrue(resp.results.all { !it.inTrash })
     }
 
     // ── Photographer-owned events (V46) ──────────────────────────────────

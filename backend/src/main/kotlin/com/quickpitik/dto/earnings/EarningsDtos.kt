@@ -230,6 +230,18 @@ fun privacyBuyerDisplay(name: String?): String {
     return "$first $lastInitial."
 }
 
+fun privacyGuestBuyerDisplay(email: String): String {
+    if (email.isBlank()) return ""
+    val local = email.substringBefore('@').trim()
+    if (local.isEmpty()) return ""
+    val parts = local.split(Regex("[._\\-]")).filter { it.isNotBlank() }
+    if (parts.isEmpty()) return local.replaceFirstChar { it.uppercase() }
+    if (parts.size == 1) return parts[0].replaceFirstChar { it.uppercase() }
+    val first = parts[0].replaceFirstChar { it.uppercase() }
+    val lastInitial = parts.last().firstOrNull()?.uppercase() ?: return first
+    return "$first $lastInitial."
+}
+
 // Internal: builds the legacy week-based cycle id `PAY-{YYYY}W{NN}-{HANDLE}` —
 // kept for the smoke-test seed helper (one cycle per week per photographer).
 // The live request-based flow uses buildSequencedCycleId instead so multiple

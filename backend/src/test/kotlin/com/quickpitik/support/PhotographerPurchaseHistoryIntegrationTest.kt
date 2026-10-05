@@ -10,6 +10,7 @@ import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.repository.EventPhotographerRepository
@@ -18,6 +19,10 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.repository.TransactionRepository
+import com.quickpitik.repository.DisputeRepository
+import com.quickpitik.entity.Transaction
+import com.quickpitik.entity.Dispute
 import com.quickpitik.security.JwtTokenProvider
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -32,6 +37,8 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
@@ -41,10 +48,201 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var photos: PhotoRepository
     @Autowired private lateinit var orders: OrderRepository
     @Autowired private lateinit var items: OrderItemRepository
+    @Autowired private lateinit var transactions: TransactionRepository
+    @Autowired private lateinit var disputes: DisputeRepository
+
     @Autowired private lateinit var tokens: JwtTokenProvider
     @LocalServerPort private var port: Int = 0
     private val client = HttpClient.newHttpClient()
     private val json = ObjectMapper()
+
+    @Test
+    fun `purchased gallery and history use settled item identities and private money`() {
+        val owner = seller()
+        val other = seller()
+        val buyer = users.save(User(email = "aira.${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Aira Santos", role = Role.RUNNER))
+        val event = event(EventStatus.ACTIVE, owner.id)
+        val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, s3Key = "history/sold.jpg", pricePhp = BigDecimal("999.00")))
+        val otherPhoto = photos.save(Photo(eventId = event.id, photographerId = other.id, s3Key = "history/other.jpg", pricePhp = BigDecimal("999.00")))
+        val paidAt = OffsetDateTime.parse("2026-09-01T10:00:00Z")
+        fun purchase(status: OrderStatus, price: String, discount: String, paid: OffsetDateTime? = paidAt): Order {
+            val order = orders.save(Order(userId = buyer.id, eventId = event.id, recipientEmail = buyer.email, paymentMethodWire = "gcash", status = status, totalPhp = BigDecimal("900.00"), paidAt = paid))
+            items.save(OrderItem(OrderItemId(order.id, photo.id), BigDecimal(price), BigDecimal(discount)))
+            return order
+        }
+        val paid = purchase(OrderStatus.FULFILLED, "100.00", "20.00")
+        items.save(OrderItem(OrderItemId(paid.id, otherPhoto.id), BigDecimal("800.00")))
+        val free = purchase(OrderStatus.FULFILLED, "100.00", "100.00")
+        val refunded = purchase(OrderStatus.REFUNDED, "100.00", "0.00")
+        purchase(OrderStatus.PENDING, "100.00", "0.00", null)
+        transactions.save(Transaction(paidAt = paidAt, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = paid.id, buyerId = buyer.id, buyerDisplayName = "Aira S.", amountKeptPhp = BigDecimal("55.00")))
+        val sale = transactions.save(Transaction(paidAt = paidAt, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = refunded.id, buyerDisplayName = "Aira S.", amountKeptPhp = BigDecimal("75.00")))
+        transactions.save(Transaction(paidAt = paidAt, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = refunded.id, buyerDisplayName = "Aira S.", amountKeptPhp = BigDecimal("-75.00"), isRefund = true, refundOf = sale.id))
+        disputes.save(Dispute(orderId = refunded.id, photoId = photo.id, reasonWire = "other", statusWire = "resolved", resolutionWire = "refund_full", refundStatus = "succeeded", refundAmountPhp = BigDecimal("100.00"), refundedAt = paidAt.plusDays(1)))
+
+        val token = tokens.createAccessToken(owner)
+        val galleryResponse = get("/api/v1/me/photographer/events/${event.id}/purchased-photos", token)
+        assertEquals(200, galleryResponse.statusCode())
+        val gallery = json.readTree(galleryResponse.body()).path("data")
+        assertEquals(1, gallery.path("total").asInt())
+        assertEquals(3, gallery.path("items")[0].path("purchaseCount").asInt())
+        val historyResponse = get("/api/v1/me/photographer/photos/${photo.id}/purchases?orderId=${paid.id}", token)
+        assertEquals(200, historyResponse.statusCode())
+        val history = json.readTree(historyResponse.body()).path("data")
+        assertEquals(3, history.path("total").asInt())
+        val selected = history.path("selectedPurchase")
+        assertEquals(0, BigDecimal("80.00").compareTo(selected.path("paidPhp").decimalValue()))
+        assertEquals(0, BigDecimal("55.00").compareTo(selected.path("netKeptPhp").decimalValue()))
+        assertEquals("Aira S.", selected.path("buyer").asText())
+        val rows = history.path("items").associateBy { it.path("orderId").asText() }
+        assertEquals("free", rows.getValue(free.id.toString()).path("kind").asText())
+        assertEquals(0, BigDecimal.ZERO.compareTo(rows.getValue(free.id.toString()).path("netKeptPhp").decimalValue()))
+        assertEquals("full", rows.getValue(refunded.id.toString()).path("refundStatus").asText())
+        assertEquals(2, rows.getValue(refunded.id.toString()).path("transactions").size())
+        for (secret in listOf("recipientEmail", "buyerId", "userId", "totalPhp", "shareToken", otherPhoto.id.toString())) {
+            assertFalse(historyResponse.body().contains(secret), secret)
+        }
+        assertEquals(404, get("/api/v1/me/photographer/photos/${otherPhoto.id}/purchases", token).statusCode())
+        assertEquals(404, get("/api/v1/me/photographer/photos/${photo.id}/purchases?orderId=${UUID.randomUUID()}", token).statusCode())
+        val runnerToken = tokens.createAccessToken(buyer)
+        assertEquals(403, get("/api/v1/me/photographer/events/${event.id}/purchased-photos", runnerToken).statusCode())
+        assertEquals(403, get("/api/v1/me/photographer/photos/${photo.id}/purchases", runnerToken).statusCode())
+        assertEquals(401, get("/api/v1/me/photographer/photos/${photo.id}/purchases").statusCode())
+    }
+
+    @Test
+    fun `history pages tied purchases and pins an order outside first page`() {
+        val owner = seller()
+        val event = event(EventStatus.ACTIVE, owner.id)
+        val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, s3Key = "history/paged.jpg", pricePhp = BigDecimal("10.00")))
+        val at = OffsetDateTime.parse("2026-09-01T10:00:00Z")
+        val orderIds = (0 until 51).map {
+            val order = orders.save(Order(eventId = event.id, recipientEmail = "guest@test.local", paymentMethodWire = "gcash", status = OrderStatus.FULFILLED, totalPhp = BigDecimal("10.00"), paidAt = at))
+            items.save(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("10.00")))
+            order.id
+        }.sortedBy { it.toString() }
+        val token = tokens.createAccessToken(owner)
+        val path = "/api/v1/me/photographer/photos/${photo.id}/purchases"
+        val first = get("$path?limit=50&orderId=${orderIds.last()}", token)
+        assertEquals(200, first.statusCode())
+        val firstData = json.readTree(first.body()).path("data")
+        assertEquals(51, firstData.path("total").asInt())
+        assertEquals(orderIds.last().toString(), firstData.path("selectedPurchase").path("orderId").asText())
+        assertEquals(orderIds.first().toString(), firstData.path("items")[0].path("orderId").asText())
+        val second = json.readTree(get("$path?offset=50&limit=1", token).body()).path("data")
+        assertEquals(orderIds.last().toString(), second.path("items")[0].path("orderId").asText())
+    }
+
+    @Test
+    fun `removed and purging photos retain private receipts without an image`() {
+        val owner = seller()
+        val foreign = seller()
+        val removedAt = OffsetDateTime.parse("2026-09-04T21:36:27Z")
+        val removedEvent = event(EventStatus.ARCHIVED, owner.id, removedAt)
+        val photo = photos.save(Photo(
+            eventId = removedEvent.id, photographerId = owner.id, s3Key = "history/purging.jpg",
+            pricePhp = BigDecimal("100.00"), deletedAt = removedAt, deletionStartedAt = removedAt,
+        ))
+        val hidden = photos.save(Photo(
+            eventId = removedEvent.id, photographerId = owner.id, s3Key = "history/hidden.jpg",
+            pricePhp = BigDecimal("100.00"), status = PhotoStatus.HIDDEN,
+        ))
+        val trashed = photos.save(Photo(
+            eventId = removedEvent.id, photographerId = owner.id, s3Key = "history/trashed.jpg",
+            pricePhp = BigDecimal("100.00"), deletedAt = removedAt,
+        ))
+        val order = orders.save(Order(
+            eventId = removedEvent.id, recipientEmail = "guest.runner@test.local", paymentMethodWire = "gcash",
+            status = OrderStatus.FULFILLED, totalPhp = BigDecimal("300.00"), paidAt = removedAt,
+        ))
+        items.save(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("100.00")))
+        items.save(OrderItem(OrderItemId(order.id, hidden.id), BigDecimal("100.00")))
+        items.save(OrderItem(OrderItemId(order.id, trashed.id), BigDecimal("100.00")))
+        val token = tokens.createAccessToken(owner)
+        val gallery = json.readTree(get("/api/v1/me/photographer/events/${removedEvent.id}/purchased-photos", token).body()).path("data")
+        assertEquals(3, gallery.path("total").asInt())
+        val galleryRows = gallery.path("items").associateBy { it.path("photo").path("id").asText() }
+        assertTrue(galleryRows.getValue(photo.id.toString()).path("photo").path("thumbnailUrl").isNull)
+        assertEquals("hidden", galleryRows.getValue(hidden.id.toString()).path("photo").path("status").asText())
+        assertEquals(200, get("/api/v1/me/photographer/photos/${hidden.id}/purchases", token).statusCode())
+        assertEquals(200, get("/api/v1/me/photographer/photos/${trashed.id}/purchases", token).statusCode())
+        val history = json.readTree(get("/api/v1/me/photographer/photos/${photo.id}/purchases", token).body()).path("data")
+        assertEquals(1, history.path("total").asInt())
+        assertEquals(removedAt.toString(), history.path("event").path("deletedAt").asText())
+        assertEquals("Guest R.", history.path("items")[0].path("buyer").asText())
+        assertEquals(404, get("/api/v1/me/photographer/photos/${photo.id}/purchases", tokens.createAccessToken(foreign)).statusCode())
+
+        val emptyEvent = event(EventStatus.ACTIVE, owner.id)
+        val emptyPhoto = photos.save(Photo(eventId = emptyEvent.id, photographerId = owner.id, s3Key = "history/empty.jpg", pricePhp = BigDecimal("0.00")))
+        val emptyGallery = json.readTree(get("/api/v1/me/photographer/events/${emptyEvent.id}/purchased-photos", token).body()).path("data")
+        assertEquals(0, emptyGallery.path("total").asInt())
+        val emptyHistory = json.readTree(get("/api/v1/me/photographer/photos/${emptyPhoto.id}/purchases", token).body()).path("data")
+        assertEquals(0, emptyHistory.path("total").asInt())
+    }
+
+    @Test
+    fun `pending refund and missing ledger never invent refunded or kept money`() {
+        val owner = seller()
+        val buyer = users.save(User(email = "buyer.${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Aira Santos", role = Role.RUNNER))
+        val event = event(EventStatus.ACTIVE, owner.id)
+        val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, s3Key = "history/refund.jpg", pricePhp = BigDecimal("100.00")))
+        val at = OffsetDateTime.parse("2026-09-01T10:00:00Z")
+        fun order(): Order {
+            val saved = orders.save(Order(userId = buyer.id, eventId = event.id, recipientEmail = buyer.email, paymentMethodWire = "card", status = OrderStatus.FULFILLED, totalPhp = BigDecimal("100.00"), paidAt = at))
+            items.save(OrderItem(OrderItemId(saved.id, photo.id), BigDecimal("100.00")))
+            return saved
+        }
+        val pending = order()
+        val missingLedger = order()
+        transactions.save(Transaction(paidAt = at, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = pending.id, buyerId = buyer.id, amountKeptPhp = BigDecimal("75.00")))
+        disputes.save(Dispute(orderId = pending.id, photoId = photo.id, reasonWire = "other", refundStatus = "pending", refundAmountPhp = BigDecimal("100.00")))
+        val token = tokens.createAccessToken(owner)
+        val path = "/api/v1/me/photographer/photos/${photo.id}/purchases"
+        val pendingPurchase = json.readTree(get("$path?orderId=${pending.id}", token).body()).path("data").path("selectedPurchase")
+        assertEquals("Aira S.", pendingPurchase.path("buyer").asText())
+        assertEquals("pending", pendingPurchase.path("refundStatus").asText())
+        assertTrue(pendingPurchase.path("refundPending").asBoolean())
+        assertEquals(0, BigDecimal.ZERO.compareTo(pendingPurchase.path("refundedPhp").decimalValue()))
+        val noLedger = json.readTree(get("$path?orderId=${missingLedger.id}", token).body()).path("data").path("selectedPurchase")
+        assertTrue(noLedger.path("netKeptPhp").isNull)
+    }
+
+    @Test
+    fun `partial legacy recorded and denied refunds use only completed item facts`() {
+        val owner = seller()
+        val event = event(EventStatus.ACTIVE, owner.id)
+        val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, s3Key = "history/refund-cases.jpg", pricePhp = BigDecimal("100.00")))
+        val at = OffsetDateTime.parse("2026-09-01T10:00:00Z")
+        fun purchase(): Order {
+            val order = orders.save(Order(eventId = event.id, recipientEmail = "guest@test.local", paymentMethodWire = "gcash", status = OrderStatus.FULFILLED, totalPhp = BigDecimal("100.00"), paidAt = at))
+            items.save(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("100.00")))
+            return order
+        }
+        val partial = purchase()
+        val legacy = purchase()
+        val recorded = purchase()
+        val denied = purchase()
+        disputes.save(Dispute(orderId = partial.id, photoId = photo.id, reasonWire = "other", statusWire = "resolved", resolutionWire = "refund_partial", refundStatus = "succeeded", refundAmountPhp = BigDecimal("25.00"), refundedAt = at.plusDays(1)))
+        disputes.save(Dispute(orderId = legacy.id, photoId = photo.id, reasonWire = "other", statusWire = "resolved", resolutionWire = "refund_partial", refundAmountPhp = BigDecimal("10.00"), refundedAt = at.plusDays(2)))
+        disputes.save(Dispute(orderId = denied.id, photoId = photo.id, reasonWire = "other", statusWire = "denied", refundStatus = "failed", refundAmountPhp = BigDecimal("100.00")))
+        transactions.save(Transaction(paidAt = at, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = recorded.id, amountKeptPhp = BigDecimal("-25.00"), isRefund = true))
+
+        val response = get("/api/v1/me/photographer/photos/${photo.id}/purchases", tokens.createAccessToken(owner))
+        assertEquals(200, response.statusCode())
+        val rows = json.readTree(response.body()).path("data").path("items").associateBy { it.path("orderId").asText() }
+        assertEquals(4, rows.size)
+        for ((order, amount) in listOf(partial to "25.00", legacy to "10.00")) {
+            val row = rows.getValue(order.id.toString())
+            assertEquals("partial", row.path("refundStatus").asText())
+            assertEquals(0, BigDecimal(amount).compareTo(row.path("refundedPhp").decimalValue()))
+        }
+        assertEquals("recorded", rows.getValue(recorded.id.toString()).path("refundStatus").asText())
+        assertTrue(rows.getValue(recorded.id.toString()).path("refundedPhp").isNull)
+        val deniedRow = rows.getValue(denied.id.toString())
+        assertEquals("none", deniedRow.path("refundStatus").asText())
+        assertFalse(deniedRow.path("refundPending").asBoolean())
+        assertEquals(0, BigDecimal.ZERO.compareTo(deniedRow.path("refundedPhp").decimalValue()))
+    }
 
     @Test
     fun `removed event is visible only through an authorized history read`() {

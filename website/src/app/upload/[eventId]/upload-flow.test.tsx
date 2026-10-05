@@ -28,6 +28,54 @@ beforeEach(() => {
 });
 afterEach(() => { upload.mockReset(); check.mockReset(); hash.mockReset(); vi.unstubAllGlobals(); });
 
+it("labels a preflight duplicate that sits in the photographer's trash", async () => {
+  check.mockReset();
+  check.mockResolvedValue([{ hash: "a".repeat(64), status: "same_event", eventName: null, inTrash: true }]);
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "trashed.jpg", { type: "image/jpeg" })] },
+  });
+  expect(await screen.findByText("In your trash")).toBeInTheDocument();
+  expect(upload).not.toHaveBeenCalled();
+});
+
+it("labels an upload receipt for trashed bytes instead of claiming Live", async () => {
+  upload.mockResolvedValue({ id: "photo-1", status: "live", uploadedAt: "now", thumbnailUrl: "", span: "default", inTrash: true });
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "again.jpg", { type: "image/jpeg" })] },
+  });
+  expect(await screen.findByText("In your trash")).toBeInTheDocument();
+  expect(screen.queryByText(/^Live$/)).not.toBeInTheDocument();
+});
+
+it.each([
+  ["Other race", 'Already uploaded to "Other race" (in your trash).'],
+  [null, "Already uploaded to another event (in your trash)."],
+])("explains a trashed cross-event duplicate (%s)", async (eventName, message) => {
+  check.mockResolvedValue([{ hash: "a".repeat(64), status: "different_event", eventName, inTrash: true }]);
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "other-race.jpg", { type: "image/jpeg" })] },
+  });
+  expect(await screen.findByText(message)).toBeInTheDocument();
+  expect(upload).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+});
+
+it.each([undefined, false])("keeps legacy duplicate and receipt labels when inTrash is %s", async (inTrash) => {
+  check.mockResolvedValueOnce([{ hash: "a".repeat(64), status: "same_event", eventName: null, inTrash }]);
+  upload.mockResolvedValue({ id: "photo-1", status: "live", uploadedAt: "now", thumbnailUrl: "", span: "default", inTrash });
+  render(<FocusedUploadPage />);
+  const input = screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!;
+  fireEvent.change(input, { target: { files: [new File(["a"], "duplicate.jpg", { type: "image/jpeg" })] } });
+  expect(await screen.findByText("Already uploaded")).toBeInTheDocument();
+  expect(upload).not.toHaveBeenCalled();
+  fireEvent.change(input, { target: { files: [new File(["b"], "new.jpg", { type: "image/jpeg" })] } });
+  expect(await screen.findByText(/^Live$/)).toBeInTheDocument();
+  expect(screen.queryByText("In your trash")).not.toBeInTheDocument();
+});
+
 it("rejects a WebP event photo before hashing or upload", async () => {
   render(<FocusedUploadPage />);
   fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
@@ -103,7 +151,7 @@ it.each(["offline", "429", "malformed"])("continues with server authority when d
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
   expect(check).toHaveBeenCalledTimes(1);
   expect(upload.mock.calls[0][3].contentHash).toBe("a".repeat(64));
-  expect(screen.getByText("Uploaded — preparing preview")).toBeInTheDocument();
+  expect(await screen.findByText("Uploaded — preparing preview")).toBeInTheDocument();
 });
 
 it("keeps a long-running watermark receipt in processing status", async () => {
