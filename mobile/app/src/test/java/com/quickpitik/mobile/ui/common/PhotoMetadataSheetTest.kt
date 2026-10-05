@@ -159,6 +159,15 @@ class PhotoMetadataSheetTest {
         compose.onNodeWithContentDescription("Original size, 1.5 MiB, 1,572,864 bytes").assertExists()
     }
 
+    @Test fun `pending and server failed metadata still show file facts`() {
+        val state = androidx.compose.runtime.mutableStateOf<PhotoMetadataState>(PhotoMetadataState.Pending(metadata("pending")))
+        compose.setContent { PhotoMetadataSheet(state.value, onClose = {}, onRefresh = {}, secure = false) }
+        compose.onNodeWithText("race.jpg").assertExists()
+        compose.runOnIdle { state.value = PhotoMetadataState.Failed("Could not prepare metadata. Try again.", metadata("failed")) }
+        compose.onNodeWithText("Metadata could not be loaded.").assertIsDisplayed()
+        compose.onNodeWithText("race.jpg").assertExists()
+    }
+
     @Test fun `pending and failure offer only explicit refresh or retry`() {
         var refreshes = 0
         val state = androidx.compose.runtime.mutableStateOf<PhotoMetadataState>(PhotoMetadataState.Pending(metadata("pending")))
