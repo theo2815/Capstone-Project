@@ -562,6 +562,15 @@ class TestBlurClassifierTwoStage:
         assert all(r["predicted_class"] == "sharp" for r in results)
         assert classifier.session.calls == [(8, 3, 640, 640), (8, 3, 640, 640), (4, 3, 640, 640)]
 
+    def test_batch_makes_model_inputs_one_chunk_at_a_time(self, classifier):
+        """Each model input is ~5 MB: 50 held at once is the ~250 MB the chunks exist to avoid."""
+        events = []
+        preprocess, run = classifier._preprocess, classifier.session.run
+        classifier._preprocess = lambda image: events.append("input") or preprocess(image)
+        classifier.session.run = lambda *args: events.append("run") or run(*args)
+        classifier.classify_batch([_make_bgr_image() for _ in range(20)])
+        assert events == (["input"] * 8 + ["run"]) * 2 + ["input"] * 4 + ["run"]
+
     def test_batch_of_only_whole_frame_blur_skips_the_model(self, classifier):
         results = classifier.classify_batch([_soft_frame(), _smeared_frame()])
         assert [r["predicted_class"] for r in results] == ["defocused_blurred", "motion_blurred"]

@@ -292,7 +292,6 @@ class BlurClassifier:
 
         # Stage 1 answers whole-frame blur on the spot; only the rest reach the model.
         results: list[dict | None] = [None] * len(images)
-        tensors: list[np.ndarray] = []
         valid_indices: list[int] = []
         for i, img in enumerate(images):
             if img is None:
@@ -300,12 +299,11 @@ class BlurClassifier:
             try:
                 results[i] = self._whole_frame_result(img)
                 if results[i] is None:
-                    tensors.append(self._preprocess(img))
                     valid_indices.append(i)
             except Exception:
-                pass  # treat preprocessing failure same as None input
+                pass  # treat an unreadable image the same as None input
 
-        if not tensors:
+        if not valid_indices:
             return results
 
         input_name = self.session.get_inputs()[0].name
@@ -315,13 +313,16 @@ class BlurClassifier:
             from src.utils.timeout import run_with_timeout
 
             _s = get_settings()
-            for start in range(0, len(tensors), self.INFERENCE_CHUNK):
-                chunk = tensors[start:start + self.INFERENCE_CHUNK]
-                # True batch: stack (1, 3, H, W) -> (n, 3, H, W), one call per chunk
-                batch_tensor = np.concatenate(chunk, axis=0)
+            for start in range(0, len(valid_indices), self.INFERENCE_CHUNK):
+                chunk_indices = valid_indices[start:start + self.INFERENCE_CHUNK]
+                # True batch: stack (1, 3, H, W) -> (n, 3, H, W), one call per chunk.
+                # The inputs are made here, a chunk at a time: each one is ~5 MB.
+                batch_tensor = np.concatenate(
+                    [self._preprocess(images[i]) for i in chunk_indices], axis=0
+                )
                 timeout = min(
                     _s.INFERENCE_BATCH_TIMEOUT,
-                    _s.INFERENCE_TIMEOUT + len(chunk) * 2,
+                    _s.INFERENCE_TIMEOUT + len(chunk_indices) * 2,
                 )
                 if _s.MODEL_PROFILE == "blur":
                     timeout = min(timeout, _s.BLUR_INFERENCE_TIMEOUT_SECONDS)
@@ -330,7 +331,6 @@ class BlurClassifier:
                     args=(None, {input_name: batch_tensor}),
                     timeout_seconds=timeout,
                 )[0]  # shape: (n, 2)
-                chunk_indices = valid_indices[start:start + self.INFERENCE_CHUNK]
                 for batch_i, img_i in enumerate(chunk_indices):
                     results[img_i] = self._logits_to_result(batch_logits[batch_i])
         else:
@@ -341,9 +341,9 @@ class BlurClassifier:
             settings = get_settings()
             runner = run_with_timeout if settings.MODEL_PROFILE == "blur" else run_direct
 
-            for tensor, img_i in zip(tensors, valid_indices):
+            for img_i in valid_indices:
                 logits = runner(
-                    self.session.run, args=(None, {input_name: tensor}),
+                    self.session.run, args=(None, {input_name: self._preprocess(images[img_i])}),
                     timeout_seconds=(settings.BLUR_INFERENCE_TIMEOUT_SECONDS
                                      if settings.MODEL_PROFILE == "blur" else 0),
                 )
