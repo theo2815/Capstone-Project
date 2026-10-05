@@ -85,14 +85,20 @@ class PublicPhotographerService(
                 .filter { it.deletedAt == null }
                 .associateBy(Event::id)
         }
+        val publicCounts = if (eventsById.isEmpty()) emptyMap() else photoRepository
+            .countPublicForPhotographerByEventIds(eventsById.keys, settings.userId)
+            .associate { it.eventId to it.photoCount.toInt() }
+        val eventDtos = eventDtoMapper.toListDtos(eventsById.values.toList()).associateBy { it.id }
         val events = coverage.mapNotNull { ep ->
             val event = eventsById[ep.id.eventId] ?: return@mapNotNull null
+            val publicPhotoCount = publicCounts[event.id] ?: 0
+            if (publicPhotoCount == 0) return@mapNotNull null
             PhotographerEventCoverageDto(
                 eventSlug = event.slug,
                 state = deriveEventState(event),
-                photoCount = ep.photoCount,
+                photoCount = publicPhotoCount,
                 salesCount = ep.salesCount,
-                event = eventDtoMapper.toListDto(event),
+                event = eventDtos.getValue(event.id),
                 visibility = event.visibility.wire,
                 pricingMode = event.pricingMode.wire,
             )

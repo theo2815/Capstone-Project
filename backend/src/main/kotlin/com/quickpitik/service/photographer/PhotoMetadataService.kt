@@ -6,7 +6,6 @@ import com.quickpitik.dto.photos.PhotoMetadataDto
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoMetadataState
-import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.PhotoMetadataRepository
@@ -52,7 +51,7 @@ class PhotoMetadataService(
     @Transactional(readOnly = true)
     fun getPublic(photoId: UUID): PhotoMetadataDto {
         val photo = photos.findById(photoId).orElse(null)
-        if (photo == null || photo.status != PhotoStatus.LIVE || photo.deletedAt != null || photo.deletionStartedAt != null ||
+        if (photo == null || !photo.isSellable || photo.deletionStartedAt != null ||
             metadataAccess(photo.eventId, listOf(photo), null)[photo.id] != "public") {
             throw notFound()
         }
@@ -67,7 +66,7 @@ class PhotoMetadataService(
         return photos.associate { photo ->
             photo.id to when {
                 requesterUserId != null && photo.photographerId == requesterUserId -> "owner"
-                photo.photographerId in publicIds -> "public"
+                photo.isSellable && photo.photographerId in publicIds -> "public"
                 else -> "none"
             }
         }

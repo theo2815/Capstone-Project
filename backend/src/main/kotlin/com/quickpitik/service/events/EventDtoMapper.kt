@@ -7,6 +7,7 @@ import com.quickpitik.dto.events.EventDto
 import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import java.time.LocalDate
@@ -25,15 +26,22 @@ import java.time.ZoneId
 class EventDtoMapper(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
+    private val photoRepository: PhotoRepository,
 ) {
-    fun toListDto(event: Event): EventDto = EventDto(
+    fun toListDtos(events: List<Event>): List<EventDto> {
+        if (events.isEmpty()) return emptyList()
+        val counts = photoRepository.countPublicByEventIds(events.map { it.id }).associate { it.eventId to it.photoCount.toInt() }
+        return events.map { toListDto(it, counts[it.id] ?: 0) }
+    }
+
+    fun toListDto(event: Event, publicPhotoCount: Int = photoRepository.countPublicForEvent(event.id).toInt()): EventDto = EventDto(
         id = event.id,
         slug = event.slug,
         name = event.name,
         date = event.date,
         location = event.location,
         bannerUrl = resolveBannerUrl(event),
-        photoCount = event.photoCount,
+        photoCount = publicPhotoCount,
         participantCount = event.participantCount,
         status = event.status,
         visibility = event.visibility.wire,
@@ -49,7 +57,7 @@ class EventDtoMapper(
         date = event.date,
         location = event.location,
         bannerUrl = resolveBannerUrl(event),
-        photoCount = event.photoCount,
+        photoCount = photoRepository.countPublicForEvent(event.id).toInt(),
         participantCount = event.participantCount,
         status = event.status,
         description = event.description,
