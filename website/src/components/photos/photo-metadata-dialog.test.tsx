@@ -59,10 +59,10 @@ it("names loading, hides previous values, and shows a single ordered column when
 });
 
 it.each([
-  ["pending", "Metadata is being prepared.", true, false],
+  ["pending", "Metadata is being prepared.", true, true],
   ["empty", "No camera metadata was found.", false, true],
   ["unavailable", "Metadata is unavailable for this photo.", false, true],
-  ["failed", "Metadata could not be loaded.", false, false],
+  ["failed", "Metadata could not be loaded.", false, true],
 ] as const)("shows %s without stale camera values", async (status, message, refresh, fileFacts) => {
   vi.spyOn(api, "get").mockResolvedValue({ ...ready, status, fields: ready.fields });
   const user = userEvent.setup(); setup();
