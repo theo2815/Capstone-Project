@@ -62,6 +62,7 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
         val other = seller()
         val buyer = users.save(User(email = "aira.${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Aira Santos", role = Role.RUNNER))
         val event = event(EventStatus.ACTIVE, owner.id)
+        coverage.save(EventPhotographer(EventPhotographerId(event.id, owner.id)))
         val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, s3Key = "history/sold.jpg", pricePhp = BigDecimal("999.00")))
         val otherPhoto = photos.save(Photo(eventId = event.id, photographerId = other.id, s3Key = "history/other.jpg", pricePhp = BigDecimal("999.00")))
         val paidAt = OffsetDateTime.parse("2026-09-01T10:00:00Z")
@@ -77,7 +78,8 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
         purchase(OrderStatus.PENDING, "100.00", "0.00", null)
         transactions.save(Transaction(paidAt = paidAt, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = paid.id, buyerId = buyer.id, buyerDisplayName = "Aira S.", amountKeptPhp = BigDecimal("55.00")))
         val sale = transactions.save(Transaction(paidAt = paidAt, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = refunded.id, buyerDisplayName = "Aira S.", amountKeptPhp = BigDecimal("75.00")))
-        transactions.save(Transaction(paidAt = paidAt, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = refunded.id, buyerDisplayName = "Aira S.", amountKeptPhp = BigDecimal("-75.00"), isRefund = true, refundOf = sale.id))
+        val refundCreatedAt = paidAt.plusDays(2)
+        val refund = transactions.save(Transaction(paidAt = paidAt, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = refunded.id, buyerDisplayName = "Aira S.", amountKeptPhp = BigDecimal("-75.00"), isRefund = true, refundOf = sale.id, createdAt = refundCreatedAt))
         disputes.save(Dispute(orderId = refunded.id, photoId = photo.id, reasonWire = "other", statusWire = "resolved", resolutionWire = "refund_full", refundStatus = "succeeded", refundAmountPhp = BigDecimal("100.00"), refundedAt = paidAt.plusDays(1)))
 
         val token = tokens.createAccessToken(owner)
@@ -108,6 +110,20 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(403, get("/api/v1/me/photographer/events/${event.id}/purchased-photos", runnerToken).statusCode())
         assertEquals(403, get("/api/v1/me/photographer/photos/${photo.id}/purchases", runnerToken).statusCode())
         assertEquals(401, get("/api/v1/me/photographer/photos/${photo.id}/purchases").statusCode())
+
+        val earnings = json.readTree(get("/api/v1/me/photographer/earnings/per-event?limit=200", token).body()).path("data")
+        val earning = earnings.path("items").single { it.path("eventId").asText() == event.id.toString() }
+        assertEquals(3, earning.path("purchaseCount").asInt())
+        assertTrue(earning.path("deletedAt").isNull)
+
+        val ledger = json.readTree(get("/api/v1/me/photographer/billing/transactions?limit=50", token).body()).path("data")
+        val refundRow = ledger.path("items").single { it.path("id").asText() == refund.id.toString() }
+        assertEquals(refunded.id.toString(), refundRow.path("orderId").asText())
+        assertTrue(refundRow.path("isRefund").asBoolean())
+        assertEquals(sale.id.toString(), refundRow.path("refundOf").asText())
+        assertEquals(paidAt, OffsetDateTime.parse(refundRow.path("paidAt").asText()))
+        assertEquals(refundCreatedAt, OffsetDateTime.parse(refundRow.path("recordedAt").asText()))
+        assertFalse(refundRow.path("thumbnailUrl").isNull)
     }
 
     @Test

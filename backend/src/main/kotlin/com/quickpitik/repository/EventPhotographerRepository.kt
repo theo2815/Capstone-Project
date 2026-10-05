@@ -50,21 +50,44 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
     // which caps at its own MAX_PUBLIC_EVENTS (newest coverage first).
     fun findAllByIdPhotographerId(photographerId: UUID, pageable: Pageable): List<EventPhotographer>
 
-    // Per-event earnings list — filters out events with no revenue so the FE
-    // tile doesn't show ₱0 rows (matches the mock filter
-    // `PHOTOGRAPHER_EVENTS.filter(e => e.revenueKept > 0)`). Sorted by revenue
-    // DESC so highest-grossing events surface first.
+    // Positive-revenue legacy rows stay visible; settled own-photo purchases
+    // also retain giveaways and fully refunded sales. EXISTS avoids multiplying
+    // revenue through item joins.
     @Query(
         """
         SELECT ep FROM EventPhotographer ep
         WHERE ep.id.photographerId = :photographerId
-          AND ep.revenueKeptPhp > 0
+          AND (ep.revenueKeptPhp > 0 OR EXISTS (
+              SELECT oi.id.photoId FROM OrderItem oi, Photo p, Order o
+              WHERE oi.id.photoId = p.id
+                AND oi.id.orderId = o.id
+                AND p.photographerId = :photographerId
+                AND p.eventId = ep.id.eventId
+                AND o.eventId = ep.id.eventId
+                AND (o.paidAt IS NOT NULL OR o.status IN (
+                    com.quickpitik.entity.OrderStatus.PAID,
+                    com.quickpitik.entity.OrderStatus.FULFILLED,
+                    com.quickpitik.entity.OrderStatus.REFUNDED
+                ))
+          ))
         ORDER BY ep.revenueKeptPhp DESC, ep.id.eventId ASC
         """,
         countQuery = """
         SELECT COUNT(ep) FROM EventPhotographer ep
         WHERE ep.id.photographerId = :photographerId
-          AND ep.revenueKeptPhp > 0
+          AND (ep.revenueKeptPhp > 0 OR EXISTS (
+              SELECT oi.id.photoId FROM OrderItem oi, Photo p, Order o
+              WHERE oi.id.photoId = p.id
+                AND oi.id.orderId = o.id
+                AND p.photographerId = :photographerId
+                AND p.eventId = ep.id.eventId
+                AND o.eventId = ep.id.eventId
+                AND (o.paidAt IS NOT NULL OR o.status IN (
+                    com.quickpitik.entity.OrderStatus.PAID,
+                    com.quickpitik.entity.OrderStatus.FULFILLED,
+                    com.quickpitik.entity.OrderStatus.REFUNDED
+                ))
+          ))
         """,
     )
     fun pageEarningsForPhotographer(

@@ -7,8 +7,10 @@ import com.quickpitik.dto.earnings.TransactionsLedgerResponse
 import com.quickpitik.dto.earnings.privacyBuyerDisplay
 import com.quickpitik.dto.earnings.toDto
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.photographer.PhotographerPhotoDtoMapper
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -33,6 +35,8 @@ class TransactionsLedgerService(
     private val transactionRepository: TransactionRepository,
     private val userRepository: UserRepository,
     private val eventRepository: EventRepository,
+    private val photoRepository: PhotoRepository,
+    private val photoDtoMapper: PhotographerPhotoDtoMapper,
 ) {
     fun list(photographerId: UUID, params: PaginationParams): TransactionsLedgerResponse {
         val page = transactionRepository.pageForPhotographer(
@@ -52,13 +56,20 @@ class TransactionsLedgerService(
             emptyMap()
         }
 
-        // Resolve event name/slug per row so the FE billing ledger can show
-        // the event title without a parallel events lookup. Soft-deleted
-        // events still resolve (findAllById ignores the deletedAt filter) —
-        // the FE renders the snapshot title regardless of admin archive state.
+        // Resolve current retained event name/slug per row so the FE billing
+        // ledger can show the title without a parallel events lookup.
         val eventIds = page.content.map { it.eventId }.toSet()
         val eventsById = if (eventIds.isNotEmpty()) {
             eventRepository.findAllById(eventIds).associateBy { it.id }
+        } else {
+            emptyMap()
+        }
+
+        val photoIds = page.content.map { it.photoId }.toSet()
+        val thumbnailsByPhotoId = if (photoIds.isNotEmpty()) {
+            photoRepository.findAllById(photoIds)
+                .filter { it.photographerId == photographerId }
+                .associate { it.id to photoDtoMapper.thumbnailUrl(it) }
         } else {
             emptyMap()
         }
@@ -72,6 +83,7 @@ class TransactionsLedgerService(
                 buyerDisplay = display,
                 eventName = event?.name,
                 eventSlug = event?.slug,
+                thumbnailUrl = thumbnailsByPhotoId[tx.photoId],
             )
         }
 

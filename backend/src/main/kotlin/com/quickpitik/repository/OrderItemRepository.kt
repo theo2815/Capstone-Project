@@ -44,6 +44,28 @@ interface OrderItemRepository : JpaRepository<OrderItem, OrderItemId> {
 
     @Query(
         """
+        SELECT p.eventId AS eventId, COUNT(oi) AS purchaseCount
+        FROM OrderItem oi, Photo p, Order o
+        WHERE oi.id.photoId = p.id
+          AND oi.id.orderId = o.id
+          AND p.photographerId = :photographerId
+          AND p.eventId IN :eventIds
+          AND o.eventId = p.eventId
+          AND (o.paidAt IS NOT NULL OR o.status IN (
+              com.quickpitik.entity.OrderStatus.PAID,
+              com.quickpitik.entity.OrderStatus.FULFILLED,
+              com.quickpitik.entity.OrderStatus.REFUNDED
+          ))
+        GROUP BY p.eventId
+        """,
+    )
+    fun countPurchasesByEventIds(
+        @Param("photographerId") photographerId: UUID,
+        @Param("eventIds") eventIds: Collection<UUID>,
+    ): List<EventPurchaseCountProjection>
+
+    @Query(
+        """
         SELECT CASE WHEN COUNT(oi) > 0 THEN true ELSE false END
         FROM OrderItem oi, Photo p, Order o
         WHERE oi.id.photoId = p.id
@@ -146,6 +168,11 @@ interface OrderItemRepository : JpaRepository<OrderItem, OrderItemId> {
 interface PhotoSalesProjection {
     val photoId: UUID
     val salesCount: Long
+}
+
+interface EventPurchaseCountProjection {
+    val eventId: UUID
+    val purchaseCount: Long
 }
 
 interface PurchasedPhotoProjection {
