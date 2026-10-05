@@ -1,7 +1,7 @@
 "use client";
 
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { ApiError } from "@/lib/api";
 import { dedupeItems } from "@/hooks/use-infinite-list";
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
@@ -21,7 +21,7 @@ export function usePhotographerPurchasedPhotos(eventId: string | null, enabled: 
   const session = usePrivateQuerySession("PHOTOGRAPHER");
   const active = session.enabled && enabled && !!eventId;
   const activeRef = useRef(active);
-  useEffect(() => { activeRef.current = active; return () => { activeRef.current = false; }; }, [active]);
+  useLayoutEffect(() => { activeRef.current = active; return () => { activeRef.current = false; }; }, [active]);
   const canRead = () => {
     const auth = useAuthStore.getState();
     return activeRef.current && auth.isAuthenticated && auth.user?.id === session.key[0]
@@ -57,7 +57,7 @@ export function usePhotographerPhotoPurchases(photoId: string | null, orderId?: 
   const session = usePrivateQuerySession("PHOTOGRAPHER");
   const active = session.enabled && enabled && !!photoId;
   const activeRef = useRef(active);
-  useEffect(() => { activeRef.current = active; return () => { activeRef.current = false; }; }, [active]);
+  useLayoutEffect(() => { activeRef.current = active; return () => { activeRef.current = false; }; }, [active]);
   const canRead = () => {
     const auth = useAuthStore.getState();
     return activeRef.current && auth.isAuthenticated && auth.user?.id === session.key[0]

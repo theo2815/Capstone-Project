@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
@@ -81,5 +81,28 @@ it("stale manual controls cannot read seller data after a role switch", async ()
     await oldControls.receipts.refetch();
     await oldControls.receipts.fetchNextPage();
   });
+  expect(get).toHaveBeenCalledTimes(2);
+});
+
+it("layout-effect controls cannot fetch after both seller lists are disabled", async () => {
+  login();
+  const get = vi.spyOn(api, "get").mockImplementation((path) => Promise.resolve(path.includes("purchased-photos")
+    ? envelope([{ photo: { id: "photo-a" }, purchaseCount: 1 }])
+    : { ...envelope([{ orderId: "order-a", photoId: "photo-a" }]), photo: { id: "photo-a" }, event: { id: "event-a" }, selectedPurchase: null }));
+  const { rerender } = renderHook(({ enabled }) => {
+    const photos = usePhotographerPurchasedPhotos("event-a", enabled);
+    const receipts = usePhotographerPhotoPurchases("photo-a", "order-a", enabled);
+    useLayoutEffect(() => {
+      if (!enabled) {
+        void photos.refetch();
+        void photos.fetchNextPage();
+        void receipts.refetch();
+        void receipts.fetchNextPage();
+      }
+    }, [enabled, photos, receipts]);
+    return { photos, receipts };
+  }, { initialProps: { enabled: true }, wrapper });
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  await act(async () => { rerender({ enabled: false }); await Promise.resolve(); });
   expect(get).toHaveBeenCalledTimes(2);
 });
