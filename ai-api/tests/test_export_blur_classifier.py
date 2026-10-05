@@ -15,12 +15,14 @@ def test_update_manifest_records_the_new_artifact_only(tmp_path):
     onnx = tmp_path / "m.onnx"
     onnx.write_bytes(b"model")
     labels = tmp_path / "l.json"
-    labels.write_text("[]", encoding="utf-8")
+    labels.write_text('["defocused_object_portrait", "sharp"]', encoding="utf-8")
     update_manifest(manifest, onnx, labels, "2026-10-15-event")
     data = json.loads(manifest.read_text(encoding="utf-8"))
     entry = data["models"]["blur_classifier"]
     assert entry["sha256"] == hashlib.sha256(b"model").hexdigest()
-    assert entry["labels_sha256"] == hashlib.sha256(b"[]").hexdigest()
+    assert entry["labels_sha256"] == hashlib.sha256(
+        b'["defocused_object_portrait", "sharp"]').hexdigest()
     assert entry["artifact_version"] == "2026-10-15-event"
-    assert entry["classes"] == ["x"]
+    assert entry["classes"] == ["defocused_object_portrait", "sharp"]
+    assert entry["export"] == {"imgsz": 640, "dynamic": True, "simplify": False}
     assert data["models"]["face_detection"] == {"file": "keep"}
