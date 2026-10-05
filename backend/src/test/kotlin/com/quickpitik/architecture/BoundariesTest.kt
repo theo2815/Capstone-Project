@@ -1,6 +1,7 @@
 package com.quickpitik.architecture
 
 import com.quickpitik.repository.PayoutCycleRepository
+import com.quickpitik.repository.PhotoRemovalHistoryRepository
 import com.tngtech.archunit.base.DescribedPredicate
 import com.tngtech.archunit.core.domain.JavaClasses
 import com.tngtech.archunit.core.domain.JavaMethodCall
@@ -89,7 +90,29 @@ class BoundariesTest {
             .check(production)
     }
 
+    @Test
+    fun `only the removal history recorder appends removal history`() {
+        assertTrue(production.any { it.simpleName == "PhotoRemovalHistoryRecorder" })
+        noClasses().that().doNotHaveFullyQualifiedName("com.quickpitik.service.removal.PhotoRemovalHistoryRecorder")
+            .should().callMethodWhere(WRITES_REMOVAL_HISTORY)
+            .because("photo removal history is append-only and has one writing service")
+            .check(production)
+    }
+
+    @Test
+    fun `removal history exposes no application update delete or save method`() {
+        assertTrue(PhotoRemovalHistoryRepository::class.java.methods.none {
+            it.name.startsWith("save") || it.name.startsWith("delete") || it.name.startsWith("update")
+        })
+    }
+
     private companion object {
+        val WRITES_REMOVAL_HISTORY =
+            object : DescribedPredicate<JavaMethodCall>("an append call on PhotoRemovalHistoryRepository") {
+                override fun test(call: JavaMethodCall): Boolean =
+                    call.targetOwner.isAssignableTo(PhotoRemovalHistoryRepository::class.java) &&
+                        call.target.name == "append"
+            }
         /**
          * The AdminPayoutService methods that still save `payout_cycles` directly,
          * none of them a status move: `generateForWeek` creates cycles and refreshes
