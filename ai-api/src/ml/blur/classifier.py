@@ -4,34 +4,46 @@ import hashlib
 import json
 from pathlib import Path
 
-import cv2
 import numpy as np
 
+from src.ml.blur import whole_frame
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 class BlurClassifier:
-    """Classify images into blur categories using an ONNX model.
+    """Classify images into blur categories in two stages.
 
-    Classes: sharp, defocused_object_portrait, defocused_blurred, motion_blurred.
-    Falls back gracefully if the model file is not found.
+    Stage 1 (no model): whole-frame measurements decide `defocused_blurred` and
+    `motion_blurred`, the photos in which nothing is sharp (whole_frame.py).
+    Stage 2 (ONNX): a two-class model that sees the whole frame decides `sharp`
+    versus `defocused_object_portrait` (subject missed focus).
+    Callers still get all four classes. Falls back gracefully if the model file
+    is not found.
     """
 
     DEFAULT_MIN_DETECTION_CONFIDENCE = 0.5
     CLASSES = [
         "defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp",
     ]
+    # What the stage-2 model outputs, in the order Ultralytics sorts class folders.
+    MODEL_CLASSES = ["defocused_object_portrait", "sharp"]
+    # Images per ONNX call. One (50, 3, 640, 640) float batch is ~250 MB before
+    # activations: too much for the 2 GiB blur service with two active requests.
+    INFERENCE_CHUNK = 8
 
     def __init__(
         self,
         model_path: str = "./models/blur_classifier/blur_classifier.onnx",
         class_names_path: str = "./models/blur_classifier/class_names.json",
-        input_size: int = 224,
+        input_size: int = 640,
         use_gpu: bool = False,
         min_detection_confidence: float = DEFAULT_MIN_DETECTION_CONFIDENCE,
         manifest_path: str | None = None,
+        soft_max_detail: float | None = None,
+        motion_min_ratio: float | None = None,
+        motion_max_detail: float | None = None,
     ) -> None:
         self.model_path = model_path
         self.class_names_path = class_names_path
@@ -39,12 +51,24 @@ class BlurClassifier:
         self.use_gpu = use_gpu
         self.min_detection_confidence = min_detection_confidence
         self.manifest_path = manifest_path
+        from src.config import get_settings
+
+        settings = get_settings()
+        self.soft_max_detail = (
+            settings.BLUR_SOFT_MAX_DETAIL if soft_max_detail is None else soft_max_detail
+        )
+        self.motion_min_ratio = (
+            settings.BLUR_MOTION_MIN_RATIO if motion_min_ratio is None else motion_min_ratio
+        )
+        self.motion_max_detail = (
+            settings.BLUR_MOTION_MAX_DETAIL if motion_max_detail is None else motion_max_detail
+        )
         self.session = None
         self.class_names: list[str] = []
         self._load_model()
 
     def _load_model(self) -> None:
-        # Default class ordering (alphabetical, as YOLOv8 sorts)
+        # The four classes callers see; the model itself only knows MODEL_CLASSES.
         self.class_names = self.CLASSES.copy()
 
         try:
@@ -62,7 +86,7 @@ class BlurClassifier:
                     "models"
                 ]["blur_classifier"]
                 names_path = Path(self.class_names_path)
-                if not names_path.is_file() or artifact["classes"] != self.CLASSES:
+                if not names_path.is_file() or artifact["classes"] != self.MODEL_CLASSES:
                     raise ValueError("Blur classifier labels are missing or unordered")
                 for path, digest in (
                     (Path(self.model_path), artifact["sha256"]),
@@ -71,7 +95,7 @@ class BlurClassifier:
                     with path.open("rb") as f:
                         if hashlib.file_digest(f, "sha256").hexdigest() != digest:
                             raise ValueError("Blur classifier artifact digest mismatch")
-                if json.loads(names_path.read_text(encoding="utf-8")) != self.CLASSES:
+                if json.loads(names_path.read_text(encoding="utf-8")) != self.MODEL_CLASSES:
                     raise ValueError("Blur classifier label order mismatch")
 
             providers = (
@@ -99,21 +123,21 @@ class BlurClassifier:
                 providers=providers,
             )
 
-            # Load class names from file (overrides defaults)
+            # The label file and the output size must both describe the two-class
+            # stage-2 model. A four-class artifact from before the two-stage design
+            # is refused here, so /blur/classify answers 503 instead of mislabelling.
             names_path = Path(self.class_names_path)
+            model_names = self.MODEL_CLASSES
             if names_path.exists():
                 with open(names_path) as f:
-                    self.class_names = json.load(f)
-
-            # Validate class names count matches model output dimension
+                    model_names = json.load(f)
             output_shape = self.session.get_outputs()[0].shape
             num_classes = output_shape[-1]
-            if len(self.class_names) != num_classes:
+            if model_names != self.MODEL_CLASSES or num_classes != len(self.MODEL_CLASSES):
                 logger.error(
-                    "Class names count does not match model output dimension",
-                    class_names_count=len(self.class_names),
+                    "Blur classifier is not the two-class sharp / missed-focus model",
+                    class_names=model_names,
                     model_output_classes=num_classes,
-                    class_names=self.class_names,
                 )
                 self.session = None
                 return
@@ -126,7 +150,7 @@ class BlurClassifier:
                 sample = np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8)
                 warm = self.session.run(None, {input_name: self._preprocess(sample)})[0]
                 if (
-                    warm.shape != (1, len(self.CLASSES))
+                    warm.shape != (1, len(self.MODEL_CLASSES))
                     or not np.isfinite(warm).all()
                     or (warm < -1e-5).any()
                     or (warm > 1 + 1e-5).any()
@@ -156,61 +180,50 @@ class BlurClassifier:
             self.session = None
 
     def _preprocess(self, image: np.ndarray) -> np.ndarray:
-        """Preprocess BGR image for ONNX inference.
+        """Whole frame -> (1, 3, input_size, input_size) float tensor in [0, 1].
 
-        1. Center-crop to square (using shorter dimension)
-        2. Area-average down to input_size x input_size
-        3. BGR -> RGB, normalize to [0, 1]
-        4. HWC -> CHW, add batch dimension
-
-        INTER_AREA, not INTER_LINEAR: the model was trained and validated by
-        Ultralytics on PIL/torchvision resizes, which anti-alias. OpenCV's
-        INTER_LINEAR does not — it point-samples a 2x2 neighbourhood, so a large
-        downscale undersamples and manufactures high-frequency edges. Those fake
-        edges make blurry photos read as `sharp`, the one error the cull must not
-        make. Measured on 1057 labelled val images: blurry-called-sharp 10 -> 4,
-        accuracy 97.45% -> 98.30%, with sharp-called-blurry staying at 0. (That
-        historical split shares shoots with training, so these compare resizes;
-        they are not field accuracy.)
-
-        The C++ `classify_preprocess` is deliberately NOT used here. It is also
-        bilinear, so it aliases the same way, and it is not actually faster
-        (measured 0.485 vs 0.481 ms — see docs/cpp-integration.md, which already
-        rates it "neutral to slower"). It also ships in no deployment: the
-        package builds with the setuptools backend and no ext_modules, and the
-        Dockerfile copies only src/ and models/. Keeping the branch meant a dev
-        box with a locally built .pyd classified photos differently from
-        production. See the 2026-08-14 ADR.
+        The frame is never cropped: it is padded to a square and area-averaged
+        down (whole_frame.square_gray_view). Gray on purpose: the 2026-08-14
+        model keyed on colour and brightness instead of blur. The training
+        pictures are written by the same function (scripts/package_blur_stage2.py),
+        so training and serving see identical pixels.
         """
-        h, w = image.shape[:2]
-        # Center-crop to square (matches YOLOv8 CenterCrop)
-        m = min(h, w)
-        top, left = (h - m) // 2, (w - m) // 2
-        cropped = image[top : top + m, left : left + m]
-        # Resize to target size
-        resized = cv2.resize(
-            cropped, (self.input_size, self.input_size), interpolation=cv2.INTER_AREA
-        )
-        # BGR -> RGB, normalize to [0, 1]
-        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        # HWC -> CHW
-        chw = np.transpose(rgb, (2, 0, 1))
-        # Add batch dimension: (1, 3, H, W)
+        gray = whole_frame.square_gray_view(image, self.input_size)
+        chw = np.repeat(gray[np.newaxis, :, :], 3, axis=0).astype(np.float32) / 255.0
         return np.expand_dims(chw, axis=0)
 
-    def _logits_to_result(self, probs: np.ndarray) -> dict:
-        """Convert model output into a classification result dict.
+    def _whole_frame_result(self, image: np.ndarray) -> dict | None:
+        """Stage 1: a finished result when nothing in the frame is sharp, else None."""
+        kind = whole_frame.decide(
+            *whole_frame.measure(image),
+            soft_max_detail=self.soft_max_detail,
+            motion_min_ratio=self.motion_min_ratio,
+            motion_max_detail=self.motion_max_detail,
+        )
+        if kind is None:
+            return None
+        # ponytail: a rule gives a hard 1.0. Fit a curve on the distance to the
+        # thresholds if callers ever need graded confidence for whole-frame blur.
+        return {
+            "predicted_class": kind,
+            "confidence": 1.0,
+            "probabilities": {name: float(name == kind) for name in self.CLASSES},
+        }
 
-        The exported ONNX model includes a Softmax node (Gemm → Softmax → output0),
-        so the values are already probabilities that sum to 1. Do not re-apply softmax.
+    def _logits_to_result(self, probs: np.ndarray) -> dict:
+        """Turn the stage-2 output into the four-class result callers expect.
+
+        The exported ONNX model includes a Softmax node (Gemm -> Softmax -> output0),
+        so the two values are already probabilities that sum to 1. Do not re-apply
+        softmax. The whole-frame classes are 0.0 here: stage 1 already ruled them out.
         """
-        predicted_idx = int(np.argmax(probs))
-        predicted_class = self.class_names[predicted_idx]
-        confidence = float(probs[predicted_idx])
-        prob_dict = {name: float(probs[i]) for i, name in enumerate(self.class_names)}
+        prob_dict = {name: 0.0 for name in self.CLASSES}
+        for name, value in zip(self.MODEL_CLASSES, probs, strict=True):
+            prob_dict[name] = float(value)
+        predicted_class = max(prob_dict, key=prob_dict.get)
         return {
             "predicted_class": predicted_class,
-            "confidence": confidence,
+            "confidence": prob_dict[predicted_class],
             "probabilities": prob_dict,
         }
 
@@ -226,6 +239,10 @@ class BlurClassifier:
         """
         if self.session is None:
             return None
+
+        whole_frame_blur = self._whole_frame_result(image)
+        if whole_frame_blur is not None:
+            return whole_frame_blur
 
         input_tensor = self._preprocess(image)
         input_name = self.session.get_inputs()[0].name
@@ -245,9 +262,9 @@ class BlurClassifier:
     def classify_batch(self, images: list[np.ndarray]) -> list[dict | None]:
         """Classify multiple images, using true batch inference when possible.
 
-        If the ONNX model supports dynamic batch (detected at load time),
-        preprocesses all images, stacks into (N, 3, H, W), and runs one
-        session.run() call.
+        Whole-frame blur is answered by stage 1 without the model. For the rest,
+        if the ONNX model supports dynamic batch (detected at load time), images
+        are stacked INFERENCE_CHUNK at a time into (n, 3, H, W) session.run() calls.
 
         If the model is static batch=1 (the default YOLOv8 export — pass
         dynamic=True, see scripts/export_blur_classifier.py), runs per-image
@@ -273,46 +290,49 @@ class BlurClassifier:
         if self.session is None:
             return [None] * len(images)
 
-        # Preprocess valid images and track their original indices
+        # Stage 1 answers whole-frame blur on the spot; only the rest reach the model.
+        results: list[dict | None] = [None] * len(images)
         tensors: list[np.ndarray] = []
         valid_indices: list[int] = []
         for i, img in enumerate(images):
             if img is None:
                 continue
             try:
-                tensors.append(self._preprocess(img))
-                valid_indices.append(i)
+                results[i] = self._whole_frame_result(img)
+                if results[i] is None:
+                    tensors.append(self._preprocess(img))
+                    valid_indices.append(i)
             except Exception:
                 pass  # treat preprocessing failure same as None input
 
         if not tensors:
-            return [None] * len(images)
+            return results
 
         input_name = self.session.get_inputs()[0].name
-        results: list[dict | None] = [None] * len(images)
 
         if getattr(self, "_dynamic_batch", False):
-            # True batch: stack (1, 3, H, W) → (N, 3, H, W), single inference call
-            batch_tensor = np.concatenate(tensors, axis=0)
-
             from src.config import get_settings
             from src.utils.timeout import run_with_timeout
 
             _s = get_settings()
-            timeout = min(
-                _s.INFERENCE_BATCH_TIMEOUT,
-                _s.INFERENCE_TIMEOUT + len(tensors) * 2,
-            )
-            if _s.MODEL_PROFILE == "blur":
-                timeout = min(timeout, _s.BLUR_INFERENCE_TIMEOUT_SECONDS)
-            batch_logits = run_with_timeout(
-                self.session.run,
-                args=(None, {input_name: batch_tensor}),
-                timeout_seconds=timeout,
-            )[0]  # shape: (N, num_classes)
-
-            for batch_i, img_i in enumerate(valid_indices):
-                results[img_i] = self._logits_to_result(batch_logits[batch_i])
+            for start in range(0, len(tensors), self.INFERENCE_CHUNK):
+                chunk = tensors[start:start + self.INFERENCE_CHUNK]
+                # True batch: stack (1, 3, H, W) -> (n, 3, H, W), one call per chunk
+                batch_tensor = np.concatenate(chunk, axis=0)
+                timeout = min(
+                    _s.INFERENCE_BATCH_TIMEOUT,
+                    _s.INFERENCE_TIMEOUT + len(chunk) * 2,
+                )
+                if _s.MODEL_PROFILE == "blur":
+                    timeout = min(timeout, _s.BLUR_INFERENCE_TIMEOUT_SECONDS)
+                batch_logits = run_with_timeout(
+                    self.session.run,
+                    args=(None, {input_name: batch_tensor}),
+                    timeout_seconds=timeout,
+                )[0]  # shape: (n, 2)
+                chunk_indices = valid_indices[start:start + self.INFERENCE_CHUNK]
+                for batch_i, img_i in enumerate(chunk_indices):
+                    results[img_i] = self._logits_to_result(batch_logits[batch_i])
         else:
             # Static batch=1: run per-image (no noisy exception per sub-batch)
             from src.config import get_settings

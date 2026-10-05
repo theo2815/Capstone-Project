@@ -304,8 +304,8 @@ def _files(datas: list[bytes]):
 class TestDecodeForClassify:
     """_decode_bgr_for_classify honours BLUR_CLASSIFY_DECODE_DIM.
 
-    The cap is accuracy-relevant (640 beats 1280 on the labelled val set), so it
-    is a calibrated setting rather than an arbitrary constant — worth pinning.
+    The two-stage classifier needs the whole desktop upload (1280): it makes its
+    own smaller views. The setting is pinned so a change is always deliberate.
     """
 
     def test_downscales_long_edge_to_max_dim(self):
@@ -344,10 +344,10 @@ class TestDecodeForClassify:
         )
         assert np.array_equal(_decode_bgr_for_classify(data, 640), expected)
 
-    def test_default_setting_is_the_calibrated_640(self):
+    def test_default_setting_is_the_full_desktop_upload(self):
         from src.config import Settings
 
-        assert Settings().BLUR_CLASSIFY_DECODE_DIM == 640
+        assert Settings().BLUR_CLASSIFY_DECODE_DIM == 1280
 
 
 class TestClassifyStream:

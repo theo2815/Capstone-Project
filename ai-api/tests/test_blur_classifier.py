@@ -8,6 +8,7 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
@@ -33,33 +34,35 @@ def _make_bgr_image(width: int = 256, height: int = 256) -> np.ndarray:
     return np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
 
 
-def _make_mock_onnx_session(num_classes: int = 4):
-    """Create a mock ONNX InferenceSession returning fake class probabilities.
+def _make_mock_onnx_session():
+    """Create a mock ONNX InferenceSession returning fake stage-2 probabilities.
 
-    The exported YOLOv8-cls graph ends in Softmax, so the session already emits
-    probabilities that sum to 1 — `_logits_to_result` deliberately does NOT
-    re-apply softmax. The mock must match that, or confidence comes back > 1.0.
+    The stage-2 model has two outputs in BlurClassifier.MODEL_CLASSES order:
+    [defocused_object_portrait, sharp]. The exported YOLOv8-cls graph ends in
+    Softmax, so the session already emits probabilities that sum to 1 —
+    `_logits_to_result` deliberately does NOT re-apply softmax. The mock must
+    match that, or confidence comes back > 1.0.
     """
     session = MagicMock()
-    session.get_inputs.return_value = [MagicMock(name="images", shape=[1, 3, 224, 224])]
+    session.get_inputs.return_value = [MagicMock(name="images", shape=[1, 3, 640, 640])]
 
     def mock_run(output_names, input_feed):
-        # Probabilities where class 3 (sharp) is the argmax; sums to 1.0
-        probs = np.array([[0.10, 0.05, 0.15, 0.70]], dtype=np.float32)
+        # sharp (index 1) is the argmax; sums to 1.0
+        probs = np.array([[0.30, 0.70]], dtype=np.float32)
         return [probs]
 
     session.run = mock_run
     return session
 
 
-def _make_mock_onnx_session_for_class(class_idx: int, num_classes: int = 4):
+def _make_mock_onnx_session_for_class(class_idx: int, num_classes: int = 2):
     """Create a mock ONNX session that predicts a specific class index.
 
     Emits probabilities (post-Softmax), matching the real graph — see
     _make_mock_onnx_session.
     """
     session = MagicMock()
-    session.get_inputs.return_value = [MagicMock(name="images", shape=[1, 3, 224, 224])]
+    session.get_inputs.return_value = [MagicMock(name="images", shape=[1, 3, 640, 640])]
 
     def mock_run(output_names, input_feed):
         remainder = 0.3 / (num_classes - 1)
@@ -81,13 +84,11 @@ class TestBlurClassifierInit:
         labels = tmp_path / "class_names.json"
         manifest = tmp_path / "manifest.json"
         model.write_bytes(b"audited model")
-        labels.write_text(json.dumps([
-            "sharp", "motion_blurred", "defocused_blurred", "defocused_object_portrait",
-        ]))
+        labels.write_text(json.dumps(["sharp", "defocused_object_portrait"]))  # wrong order
         manifest.write_text(json.dumps({"models": {"blur_classifier": {
             "sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
             "labels_sha256": hashlib.sha256(labels.read_bytes()).hexdigest(),
-            "classes": BlurClassifier.CLASSES,
+            "classes": BlurClassifier.MODEL_CLASSES,
         }}}))
         classifier = BlurClassifier(
             model_path=str(model), class_names_path=str(labels),
@@ -99,7 +100,7 @@ class TestBlurClassifierInit:
         manifest = tmp_path / "manifest.json"
         manifest.write_text(json.dumps({"models": {"blur_classifier": {
             "sha256": "0" * 64, "labels_sha256": "0" * 64,
-            "classes": BlurClassifier.CLASSES,
+            "classes": BlurClassifier.MODEL_CLASSES,
         }}}))
         classifier = BlurClassifier(
             model_path=str(tmp_path / "missing.onnx"),
@@ -109,8 +110,8 @@ class TestBlurClassifierInit:
         assert classifier.session is None
 
     @pytest.mark.parametrize("probs", [
-        [[float("nan"), 0.0, 0.0, 1.0]],
-        [[0.1, 0.1, 0.1, 0.1]],
+        [[float("nan"), 1.0]],
+        [[0.1, 0.1]],
         [[1.0, 0.0, 0.0]],
     ])
     def test_verified_artifact_rejects_bad_warm_inference(self, tmp_path, monkeypatch, probs):
@@ -120,19 +121,19 @@ class TestBlurClassifierInit:
         labels = tmp_path / "class_names.json"
         manifest = tmp_path / "manifest.json"
         model.write_bytes(b"model")
-        labels.write_text(json.dumps(BlurClassifier.CLASSES))
+        labels.write_text(json.dumps(BlurClassifier.MODEL_CLASSES))
         manifest.write_text(json.dumps({"models": {"blur_classifier": {
             "sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
             "labels_sha256": hashlib.sha256(labels.read_bytes()).hexdigest(),
-            "classes": BlurClassifier.CLASSES,
+            "classes": BlurClassifier.MODEL_CLASSES,
         }}}))
 
         class Session:
             def get_inputs(self):
-                return [SimpleNamespace(name="images", shape=["batch", 3, 224, 224])]
+                return [SimpleNamespace(name="images", shape=["batch", 3, 640, 640])]
 
             def get_outputs(self):
-                return [SimpleNamespace(shape=["batch", 4])]
+                return [SimpleNamespace(shape=["batch", 2])]
 
             def run(self, *_args):
                 return [np.array(probs, dtype=np.float32)]
@@ -215,7 +216,7 @@ class TestBlurClassifierClassify:
         def slow_run(*_args):
             release.wait(1)
             completed.set()
-            return [np.array([[0.1, 0.05, 0.15, 0.7]], dtype=np.float32)]
+            return [np.array([[0.3, 0.7]], dtype=np.float32)]
 
         classifier.session.run = slow_run
         try:
@@ -240,7 +241,7 @@ class TestBlurClassifierClassify:
         def slow_run(*_args):
             release.wait(1)
             completed.set()
-            return [np.array([[0.1, 0.05, 0.15, 0.7]], dtype=np.float32)]
+            return [np.array([[0.3, 0.7]], dtype=np.float32)]
 
         classifier.session.run = slow_run
         try:
@@ -311,10 +312,21 @@ class TestBlurClassifierPreprocess:
         return clf
 
     def test_output_shape(self, classifier):
-        """Preprocessed output should be (1, 3, 224, 224)."""
+        """Preprocessed output should be (1, 3, 640, 640)."""
         image = _make_bgr_image(width=640, height=480)
         result = classifier._preprocess(image)
-        assert result.shape == (1, 3, 224, 224)
+        assert result.shape == (1, 3, 640, 640)
+
+    def test_whole_frame_is_kept_and_gray(self, classifier):
+        """No centre crop: both ends of an upright frame survive, as three equal channels."""
+        upright = np.zeros((1280, 853, 3), dtype=np.uint8)
+        upright[:40] = 255      # top edge
+        upright[-40:] = 255     # bottom edge: a centre crop would lose both
+        result = classifier._preprocess(upright)[0]
+        assert result[0, :15].max() == 1.0
+        assert result[0, -15:].max() == 1.0
+        assert np.array_equal(result[0], result[1])
+        assert np.array_equal(result[1], result[2])
 
     def test_output_dtype(self, classifier):
         """Preprocessed output should be float32."""
@@ -330,7 +342,7 @@ class TestBlurClassifierPreprocess:
         assert result.max() <= 1.0
 
     def test_downscale_is_anti_aliased(self, classifier):
-        """The resize to 224 must area-average, not point-sample.
+        """The resize to 640 must area-average, not point-sample.
 
         This is an accuracy property, not a style preference. A non-anti-aliased
         downscale undersamples high-frequency detail and manufactures fake sharp
@@ -341,16 +353,16 @@ class TestBlurClassifierPreprocess:
         Period-3 stripes are pure high frequency at this scale. Area-averaging
         collapses them toward their mean; bilinear keeps sampling individual
         stripes and the output swings with the sampling phase. The mean survives
-        either way — only the variance separates them (measured: 0.086 area vs
-        0.342 bilinear), so this asserts on variance.
+        either way — only the variance separates them (measured for 1500 -> 640:
+        0.109 area vs 0.333 bilinear), so this asserts on variance.
         """
-        stripes = np.zeros((1000, 1000, 3), dtype=np.uint8)
+        stripes = np.zeros((1500, 1500, 3), dtype=np.uint8)
         stripes[:, ::3] = 255
 
         result = classifier._preprocess(stripes)
 
         assert result.std() < 0.15, (
-            f"std={result.std():.4f} — the 224 resize is point-sampling instead "
+            f"std={result.std():.4f} — the 640 resize is point-sampling instead "
             "of area-averaging, so high-frequency detail is aliasing through"
         )
         # Brightness is preserved; only the aliasing is gone.
@@ -364,13 +376,13 @@ class TestBlurClassifierPreprocess:
 class TestBlurClassifierDetectBlurType:
     @pytest.fixture
     def classifier(self, tmp_path):
-        """Create a classifier with mock session predicting sharp (index 3)."""
+        """Create a classifier with mock session predicting sharp (index 1)."""
         names = ["defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp"]
         clf = BlurClassifier(
             model_path=str(tmp_path / "nonexistent.onnx"),
             class_names_path=str(tmp_path / "nonexistent.json"),
         )
-        clf.session = _make_mock_onnx_session()  # predicts sharp (index 3)
+        clf.session = _make_mock_onnx_session()  # predicts sharp (index 1)
         clf.class_names = names
         return clf
 
@@ -389,8 +401,8 @@ class TestBlurClassifierDetectBlurType:
             model_path=str(tmp_path / "nonexistent.onnx"),
             class_names_path=str(tmp_path / "nonexistent.json"),
         )
-        # Mock session that predicts defocused_object_portrait (index 1)
-        clf.session = _make_mock_onnx_session_for_class(1)
+        # Mock session that predicts defocused_object_portrait (index 0)
+        clf.session = _make_mock_onnx_session_for_class(0)
         clf.class_names = names
 
         result = clf.detect_blur_type(_make_bgr_image(), "defocused_object_portrait")
@@ -400,7 +412,7 @@ class TestBlurClassifierDetectBlurType:
 
     def test_not_detected_when_prediction_differs(self, classifier):
         """detect_blur_type() returns detected=False when prediction doesn't match."""
-        # Default mock predicts sharp (index 3)
+        # Default mock predicts sharp (index 1)
         result = classifier.detect_blur_type(_make_bgr_image(), "defocused_object_portrait")
         assert result is not None
         assert result["detected"] is False
@@ -432,6 +444,128 @@ class TestBlurClassifierDetectBlurType:
             assert result is not None
             assert result["blur_type"] == bt
             assert isinstance(result["detected"], bool)
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: the two stages
+# ---------------------------------------------------------------------------
+
+def _counting_session(probs=(0.30, 0.70)):
+    """Mock stage-2 session that records the shape of every batch it is given."""
+    session = MagicMock()
+    session.get_inputs.return_value = [MagicMock(name="images", shape=["batch", 3, 640, 640])]
+    session.calls = []
+
+    def run(output_names, input_feed):
+        batch = next(iter(input_feed.values()))
+        session.calls.append(batch.shape)
+        return [np.tile(np.array([probs], dtype=np.float32), (batch.shape[0], 1))]
+
+    session.run = run
+    return session
+
+
+def _soft_frame() -> np.ndarray:
+    """Nothing sharp anywhere, no direction: whole-frame soft."""
+    return cv2.GaussianBlur(_make_bgr_image(width=600, height=900), (0, 0), 8)
+
+
+def _smeared_frame() -> np.ndarray:
+    """Nothing sharp anywhere, smeared left-right: motion."""
+    return cv2.blur(cv2.GaussianBlur(_make_bgr_image(width=600, height=900), (0, 0), 3), (121, 1))
+
+
+class TestBlurClassifierTwoStage:
+    @pytest.fixture
+    def classifier(self, tmp_path):
+        clf = BlurClassifier(
+            model_path=str(tmp_path / "nonexistent.onnx"),
+            class_names_path=str(tmp_path / "nonexistent.json"),
+            soft_max_detail=34.1, motion_min_ratio=2.63, motion_max_detail=52.4,
+        )
+        clf.session = _counting_session()
+        clf._dynamic_batch = True
+        return clf
+
+    def test_thresholds_default_to_the_settings(self, tmp_path):
+        from src.config import get_settings
+
+        clf = BlurClassifier(
+            model_path=str(tmp_path / "nonexistent.onnx"),
+            class_names_path=str(tmp_path / "nonexistent.json"),
+        )
+        settings = get_settings()
+        assert clf.soft_max_detail == settings.BLUR_SOFT_MAX_DETAIL
+        assert clf.motion_min_ratio == settings.BLUR_MOTION_MIN_RATIO
+        assert clf.motion_max_detail == settings.BLUR_MOTION_MAX_DETAIL
+
+    def test_stage_two_output_fills_the_four_class_result(self, classifier):
+        result = classifier.classify(_make_bgr_image())
+        assert result["predicted_class"] == "sharp"
+        assert result["confidence"] == pytest.approx(0.70)
+        assert result["probabilities"] == pytest.approx({
+            "defocused_blurred": 0.0, "defocused_object_portrait": 0.30,
+            "motion_blurred": 0.0, "sharp": 0.70,
+        })
+
+    def test_whole_frame_soft_never_reaches_the_model(self, classifier):
+        result = classifier.classify(_soft_frame())
+        assert result == {
+            "predicted_class": "defocused_blurred", "confidence": 1.0,
+            "probabilities": {"defocused_blurred": 1.0, "defocused_object_portrait": 0.0,
+                              "motion_blurred": 0.0, "sharp": 0.0},
+        }
+        assert classifier.session.calls == []
+
+    def test_sideways_smear_is_motion_and_never_reaches_the_model(self, classifier):
+        result = classifier.classify(_smeared_frame())
+        assert result["predicted_class"] == "motion_blurred"
+        assert result["confidence"] == 1.0
+        assert classifier.session.calls == []
+
+    def test_batch_mixes_both_stages_and_keeps_positions(self, classifier):
+        images = [_make_bgr_image(), _soft_frame(), None, _smeared_frame(), _make_bgr_image()]
+        results = classifier.classify_batch(images)
+        assert [r and r["predicted_class"] for r in results] == [
+            "sharp", "defocused_blurred", None, "motion_blurred", "sharp"]
+        assert classifier.session.calls == [(2, 3, 640, 640)]
+
+    def test_batch_feeds_the_model_in_small_chunks(self, classifier):
+        """A 50-photo sub-batch must not become one ~250 MB tensor."""
+        results = classifier.classify_batch([_make_bgr_image() for _ in range(20)])
+        assert all(r["predicted_class"] == "sharp" for r in results)
+        assert classifier.session.calls == [(8, 3, 640, 640), (8, 3, 640, 640), (4, 3, 640, 640)]
+
+    def test_batch_of_only_whole_frame_blur_skips_the_model(self, classifier):
+        results = classifier.classify_batch([_soft_frame(), _smeared_frame()])
+        assert [r["predicted_class"] for r in results] == ["defocused_blurred", "motion_blurred"]
+        assert classifier.session.calls == []
+
+    def test_targeted_detection_sees_whole_frame_blur(self, classifier):
+        result = classifier.detect_blur_type(_soft_frame(), "defocused_blurred")
+        assert result["detected"] is True
+        assert result["blur_type_probability"] == 1.0
+
+    def test_a_four_class_model_from_before_the_two_stage_design_is_refused(
+        self, tmp_path, monkeypatch,
+    ):
+        import onnxruntime
+
+        model = tmp_path / "blur_classifier.onnx"
+        model.write_bytes(b"old four-class model")
+        labels = tmp_path / "class_names.json"
+        labels.write_text(json.dumps(BlurClassifier.CLASSES))
+
+        class Session:
+            def get_inputs(self):
+                return [SimpleNamespace(name="images", shape=["batch", 3, 224, 224])]
+
+            def get_outputs(self):
+                return [SimpleNamespace(shape=["batch", 4])]
+
+        monkeypatch.setattr(onnxruntime, "InferenceSession", lambda *_args, **_kwargs: Session())
+        clf = BlurClassifier(model_path=str(model), class_names_path=str(labels))
+        assert clf.session is None
 
 
 # ---------------------------------------------------------------------------
