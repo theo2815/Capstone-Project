@@ -619,16 +619,34 @@ def test_a_photo_with_an_unscored_tone_copy_has_no_tone_scores(tmp_path, monkeyp
 
 
 def test_a_failing_gate_still_writes_label_and_prediction_apart(tmp_path, monkeypatch):
-    code, rows = _predictions(tmp_path, monkeypatch, always="sharp")
+    code, rows = _predictions(tmp_path, monkeypatch, *TONE, always="sharp")
     assert code == 1
     assert [(r["label"], r["predicted"]) for r in rows] == [
         ("sharp", "sharp"), ("motion_blurred", "sharp")]
     assert rows[1]["probabilities"]["sharp"] < 0.1
+    assert len(rows[1]["tone_scores"]) == 3     # a wrong prediction keeps its tone scores
 
 
 def test_an_unprepared_photo_is_listed_with_nulls(tmp_path, monkeypatch):
-    code, rows = _predictions(tmp_path, monkeypatch, *TONE, unreadable="motion_blurred")
+    code, rows = _predictions(tmp_path, monkeypatch, *TONE, unreadable="sharp")
     assert code == 1
-    assert rows[1] == {"path": "event/motion_blurred/0.jpg", "label": "motion_blurred",
-                       "event": "event", "predicted": None, "probabilities": None,
-                       "tone_scores": None}
+    assert rows[0] == {"path": "event/sharp/0.jpg", "label": "sharp", "event": "event",
+                       "predicted": None, "probabilities": None, "tone_scores": None}
+    assert rows[1]["tone_scores"] == pytest.approx([1.0] * 3, abs=0.01)   # still its own
+
+
+def test_the_stream_path_writes_the_strongest_blur_class_of_each_tone_copy(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"event": {"sharp": 1, "motion_blurred": 1}})
+    monkeypatch.setattr(blur_gate, "photometric_variants",
+                        lambda data, quality: [data + b"|brighter", data + b"|darker",
+                                               data + b"|grayscale"])
+
+    def server(data):
+        if data.endswith(b"|brighter") and b"/sharp/" in data:
+            return "defocused_blurred"   # brightness alone flips the sharp frame
+        return _truth(data)
+
+    predictions = tmp_path / "predictions.json"
+    _gate(tmp_path, monkeypatch, root, server, *TONE, "--predictions-json", str(predictions))
+    assert [r["tone_scores"] for r in json.loads(predictions.read_text())] == [
+        [0.9, 0.1 / 3, 0.1 / 3], [0.9] * 3]

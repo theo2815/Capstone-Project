@@ -119,6 +119,9 @@ def main() -> int:
           f"photos; whole-frame blur missed <= {LIMITS['whole_frame_missed']:.0%}; "
           f"missed focus missed <= {LIMITS['missed_focus_missed']:.0%}; "
           f"tone flips <= {LIMITS['tone_flips']:.0%}")
+    if summary["unscored"] or summary["no_tone_result"]:
+        print("FAIL: the report is incomplete (reason above the table); no threshold was judged")
+        return 1
     if args.at is not None:
         ok = args.at in summary["passing_thresholds"]
         print(f"{'PASS' if ok else 'FAIL'} at the requested flag threshold {args.at:.2f}")

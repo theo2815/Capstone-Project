@@ -80,6 +80,20 @@ def test_small_events_cannot_fail_the_event_limit():
     assert blur_cv_report.summarise(rows)["results"][0]["worst_event"] == ["big-event", 0, 120]
 
 
+def test_the_event_floor_counts_sharp_photos_only():
+    rows = _clean_rows() + [_row("sharp", "mixed-event", 0.99) for _ in range(8)]
+    rows += [_row("sharp", "mixed-event", 0.01) for _ in range(52)]      # 60 sharp, 13% flagged
+    rows += [_row("defocused_object_portrait", "mixed-event", 0.97) for _ in range(60)]
+    assert blur_cv_report.summarise(rows)["results"][0]["worst_event"] == ["big-event", 0, 120]
+
+
+def test_no_event_with_100_sharp_photos_does_not_fail_by_itself():
+    rows = [dict(row, event="small-event") for row in _clean_rows()[80:]]   # 40 sharp
+    summary = blur_cv_report.summarise(rows)
+    assert summary["results"][0]["worst_event"] is None
+    assert summary["passing_thresholds"] == ALL
+
+
 def test_missed_focus_and_whole_frame_misses_are_counted_separately():
     rows = _clean_rows() + [_row("defocused_object_portrait", "big-event", 0.02) for _ in range(5)]
     result = blur_cv_report.summarise(rows)["results"][0]
@@ -88,9 +102,16 @@ def test_missed_focus_and_whole_frame_misses_are_counted_separately():
     assert blur_cv_report.summarise(rows)["passing_thresholds"] == []
 
 
-def test_a_tone_flip_is_counted_at_the_threshold_a_tone_copy_crosses():
+def test_a_blurry_photo_flagged_under_another_blur_class_counts_as_caught():
+    rows = _clean_rows() + [_row("motion_blurred", "soft-event", 1.0, "defocused_blurred")]
+    assert blur_cv_report.summarise(rows)["results"][0]["whole_frame_missed"] == [0, 61]
+
+
+@pytest.mark.parametrize("position", [0, 1, 2])
+def test_one_tone_copy_crossing_a_threshold_is_a_flip_at_that_threshold_only(position):
     row = _row("sharp", "big-event", 0.271)
-    row["tone_scores"] = [0.25, 0.396, 0.271]             # only the darker copy reaches 0.30
+    row["tone_scores"] = [0.25] * 3
+    row["tone_scores"][position] = 0.396                  # only this copy reaches 0.30
     by_threshold = _by_threshold(_clean_rows() + [row])
     assert [by_threshold[t]["tone_flips"] for t in (0.20, 0.30, 0.40)] == [
         [0, 221], [1, 221], [0, 221]]
@@ -112,27 +133,36 @@ def test_at_judges_one_threshold_only(tmp_path, monkeypatch):
 
 def test_an_unscored_photo_fails_the_report(tmp_path, monkeypatch, capsys):
     rows = _clean_rows()
-    rows[0]["probabilities"] = None
+    rows[0].update(probabilities=None, tone_scores=None)  # as the gate writes it
     code, summary = _main(tmp_path, monkeypatch, rows)
+    out = capsys.readouterr().out
     assert code == 1
-    assert "have no prediction" in capsys.readouterr().out
+    assert "1 photo(s) have no prediction" in out
+    assert out.splitlines()[-1].startswith("FAIL: the report is incomplete")
     assert summary["unscored"] == [rows[0]["path"]]
+    assert summary["no_tone_result"] == 0                 # counted once, as unscored
+    assert summary["passing_thresholds"] == []
 
 
 def test_a_scored_photo_without_a_tone_result_fails_the_report(tmp_path, monkeypatch, capsys):
     rows = _clean_rows()
     rows[0]["tone_scores"] = None
-    code, summary = _main(tmp_path, monkeypatch, rows)
+    code, summary = _main(tmp_path, monkeypatch, rows, at="0.5")
+    out = capsys.readouterr().out
     assert code == 1
-    assert "have no tone result" in capsys.readouterr().out
+    assert "1 scored photo(s) have no tone result" in out
+    assert out.splitlines()[-1].startswith("FAIL: the report is incomplete")
+    assert not any(line.endswith("yes") for line in out.splitlines())
     assert summary["no_tone_result"] == 1
+    assert summary["results"][0]["tone_flips"] == [0, 219]
+    assert summary["passing_thresholds"] == []
 
 
 def test_a_group_with_no_photos_reads_not_measured_and_does_not_fail(tmp_path, monkeypatch, capsys):
     code, summary = _main(tmp_path, monkeypatch, _clean_rows()[:160])   # no whole-frame blur
     assert code == 0
     assert summary["results"][0]["whole_frame_missed"] == [0, 0]
-    assert "not measured" in capsys.readouterr().out
+    assert capsys.readouterr().out.count("not measured") == len(ALL)   # that one column only
 
 
 def test_a_probability_equal_to_the_threshold_is_flagged():
@@ -202,15 +232,20 @@ def test_thresholds_are_the_published_list():
         0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95)
 
 
-def test_the_photo_count_includes_unscored_photos():
+def test_photo_and_label_counts_include_unscored_photos():
     rows = _clean_rows()
     rows[0]["probabilities"] = None
-    assert blur_cv_report.summarise(rows)["photos"] == 220
+    summary = blur_cv_report.summarise(rows)
+    assert summary["photos"] == sum(summary["labels"].values()) == 220
 
 
-def test_the_printed_table_marks_each_threshold(tmp_path, monkeypatch, capsys):
+def test_the_printed_table_shows_each_count_and_marks_each_threshold(tmp_path, monkeypatch, capsys):
     rows = _clean_rows() + [_row("sharp", "big-event", 0.35) for _ in range(5)]
+    rows[120]["tone_scores"] = [0.92] * 3                 # one tone flip, at 0.95 only
     _main(tmp_path, monkeypatch, rows)
-    marks = {line.split()[0]: line.split()[-1] for line in capsys.readouterr().out.splitlines()
-             if line.split()[:1] in (["0.30"], ["0.40"])}
-    assert marks == {"0.30": "no", "0.40": "yes"}
+    out = capsys.readouterr().out
+    table = {line.split()[0]: line for line in out.splitlines() if line.startswith("    0.")}
+    assert "5/125 = 4.00%" in table["0.30"] and table["0.30"].endswith("no")
+    assert "0/125 = 0.00%" in table["0.40"] and table["0.40"].endswith("yes")
+    assert "1/225 = 0.44%" in table["0.95"]
+    assert "not measured" not in out
