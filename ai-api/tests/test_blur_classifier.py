@@ -322,6 +322,7 @@ class TestBlurClassifierPreprocess:
         upright = np.zeros((1280, 853, 3), dtype=np.uint8)
         upright[:40] = 255      # top edge
         upright[-40:] = 255     # bottom edge: a centre crop would lose both
+        upright[600:680] = (255, 0, 0)  # blue band: the channels are equal only in a gray view
         result = classifier._preprocess(upright)[0]
         assert result[0, :15].max() == 1.0
         assert result[0, -15:].max() == 1.0
@@ -499,6 +500,17 @@ class TestBlurClassifierTwoStage:
         assert clf.motion_min_ratio == settings.BLUR_MOTION_MIN_RATIO
         assert clf.motion_max_detail == settings.BLUR_MOTION_MAX_DETAIL
 
+    def test_each_limit_is_used_for_its_own_blur_type(self, tmp_path):
+        """With a soft limit below _soft_frame's detail (about 1.9) only the smear is caught."""
+        clf = BlurClassifier(
+            model_path=str(tmp_path / "nonexistent.onnx"),
+            class_names_path=str(tmp_path / "nonexistent.json"),
+            soft_max_detail=1.0, motion_min_ratio=2.63, motion_max_detail=52.4,
+        )
+        clf.session = _counting_session()
+        assert clf.classify(_soft_frame())["predicted_class"] == "sharp"
+        assert clf.classify(_smeared_frame())["predicted_class"] == "motion_blurred"
+
     def test_stage_two_output_fills_the_four_class_result(self, classifier):
         result = classifier.classify(_make_bgr_image())
         assert result["predicted_class"] == "sharp"
@@ -529,6 +541,20 @@ class TestBlurClassifierTwoStage:
         assert [r and r["predicted_class"] for r in results] == [
             "sharp", "defocused_blurred", None, "motion_blurred", "sharp"]
         assert classifier.session.calls == [(2, 3, 640, 640)]
+
+    @pytest.mark.parametrize("dynamic_batch", [True, False])
+    def test_batch_gives_each_photo_its_own_answer(self, classifier, dynamic_batch):
+        """The model's answer depends on the picture here, so swapped answers show."""
+        def run(output_names, input_feed):
+            sharp = next(iter(input_feed.values())).mean(axis=(1, 2, 3))  # brighter = sharper
+            return [np.stack([1 - sharp, sharp], axis=1)]
+
+        classifier.session.run = run
+        classifier._dynamic_batch = dynamic_batch
+        dark, bright = _make_bgr_image() // 4, 192 + _make_bgr_image() // 4
+        results = classifier.classify_batch([_soft_frame(), dark, bright])
+        assert [r["predicted_class"] for r in results] == [
+            "defocused_blurred", "defocused_object_portrait", "sharp"]
 
     def test_batch_feeds_the_model_in_small_chunks(self, classifier):
         """A 50-photo sub-batch must not become one ~250 MB tensor."""
