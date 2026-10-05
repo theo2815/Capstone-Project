@@ -2,6 +2,7 @@ package com.quickpitik.service.earnings
 
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.earnings.privacyBuyerDisplay
+import com.quickpitik.dto.earnings.privacyGuestBuyerDisplay
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.Transaction
@@ -61,8 +62,8 @@ class TransactionMintingService(
         val buyerDisplay = order.userId?.let { uid ->
             userRepository.findById(uid)
                 .map { privacyBuyerDisplay(it.name) }
-                .orElse(displayFromEmail(order.recipientEmail))
-        } ?: displayFromEmail(order.recipientEmail)
+                .orElse(privacyGuestBuyerDisplay(order.recipientEmail))
+        } ?: privacyGuestBuyerDisplay(order.recipientEmail)
 
         val keepRate = platformProperties.photographerKeepRate
 
@@ -190,18 +191,4 @@ class TransactionMintingService(
             original.discountPhp.multiply(fraction).setScale(2, RoundingMode.HALF_UP).negate()
     }
 
-    private fun displayFromEmail(email: String): String {
-        if (email.isBlank()) return ""
-        // Guest checkout: use the local part of the email as a stable initial
-        // (e.g., "aira.santos@gmail.com" → "Aira S."). Falls back to the raw
-        // local part when there is no separator.
-        val local = email.substringBefore('@').trim()
-        if (local.isEmpty()) return ""
-        val parts = local.split(Regex("[._\\-]")).filter { it.isNotBlank() }
-        if (parts.isEmpty()) return local.replaceFirstChar { it.uppercase() }
-        if (parts.size == 1) return parts[0].replaceFirstChar { it.uppercase() }
-        val first = parts[0].replaceFirstChar { it.uppercase() }
-        val lastInitial = parts.last().firstOrNull()?.uppercase() ?: return first
-        return "$first $lastInitial."
-    }
 }

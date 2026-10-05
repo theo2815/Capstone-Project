@@ -12,6 +12,12 @@ import java.util.UUID
 
 interface TransactionRepository : JpaRepository<Transaction, UUID> {
 
+    fun findByPhotographerIdAndPhotoIdAndOrderIdIn(
+        photographerId: UUID,
+        photoId: UUID,
+        orderIds: Collection<UUID>,
+    ): List<Transaction>
+
     fun findByOrderIdAndPhotoIdAndIsRefund(
         orderId: UUID,
         photoId: UUID,
