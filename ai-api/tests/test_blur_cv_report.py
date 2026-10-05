@@ -5,18 +5,21 @@ from __future__ import annotations
 import json
 import sys
 
+import pytest
+
 from scripts import blur_cv_report
 
 NAMES = ("defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp")
+ALL = list(blur_cv_report.THRESHOLDS)
 
 
-def _row(label, event, p_blur, blur_class="defocused_object_portrait", tone_flip=False):
+def _row(label, event, p_blur, blur_class="defocused_object_portrait"):
     probabilities = {name: 0.0 for name in NAMES}
     probabilities[blur_class] = p_blur
     probabilities["sharp"] = 1.0 - p_blur
     return {"path": f"{event}/{label}/x.jpg", "label": label, "event": event,
             "predicted": "sharp" if p_blur < 0.5 else blur_class,
-            "probabilities": probabilities, "tone_flip": tone_flip}
+            "probabilities": probabilities, "tone_scores": [p_blur] * 3}
 
 
 def _clean_rows():
@@ -27,15 +30,33 @@ def _clean_rows():
     return rows
 
 
+def _by_threshold(rows):
+    return {r["threshold"]: r for r in blur_cv_report.summarise(rows)["results"]}
+
+
+def _main(tmp_path, monkeypatch, *folds, at=None):
+    """Write each list of rows as one fold file, run the report: (exit code, summary)."""
+    paths = [tmp_path / f"cv_{n}.json" for n in range(len(folds))]
+    for path, rows in zip(paths, folds, strict=True):
+        path.write_text(json.dumps(rows), encoding="utf-8")
+    out = tmp_path / "summary.json"
+    monkeypatch.setattr(sys, "argv", ["blur_cv_report.py", *map(str, paths), "--out", str(out),
+                                      *(["--at", at] if at else [])])
+    return blur_cv_report.main(), json.loads(out.read_text())
+
+
 def test_a_clean_model_passes_at_every_threshold():
     summary = blur_cv_report.summarise(_clean_rows())
-    assert summary["passing_thresholds"] == list(blur_cv_report.THRESHOLDS)
-    assert summary["tone_flips"] == [0, 220]
+    assert summary["passing_thresholds"] == ALL
+    assert summary["results"][0]["tone_flips"] == [0, 220]
+
+
+def test_no_photos_cannot_pass():
+    assert blur_cv_report.summarise([])["passing_thresholds"] == []
 
 
 def test_a_photo_is_flagged_when_its_strongest_blur_class_reaches_the_threshold():
-    rows = _clean_rows() + [_row("sharp", "big-event", 0.35)]
-    by_threshold = {r["threshold"]: r for r in blur_cv_report.summarise(rows)["results"]}
+    by_threshold = _by_threshold(_clean_rows() + [_row("sharp", "big-event", 0.35)])
     assert by_threshold[0.30]["sharp_flagged"] == [1, 121]
     assert by_threshold[0.40]["sharp_flagged"] == [0, 121]
 
@@ -67,32 +88,48 @@ def test_missed_focus_and_whole_frame_misses_are_counted_separately():
     assert blur_cv_report.summarise(rows)["passing_thresholds"] == []
 
 
-def test_too_many_tone_flips_fail_every_threshold():
-    rows = _clean_rows()
-    for row in rows[:10]:
-        row["tone_flip"] = True
-    assert blur_cv_report.summarise(rows)["passing_thresholds"] == []
+def test_a_tone_flip_is_counted_at_the_threshold_a_tone_copy_crosses():
+    row = _row("sharp", "big-event", 0.271)
+    row["tone_scores"] = [0.25, 0.396, 0.271]             # only the darker copy reaches 0.30
+    by_threshold = _by_threshold(_clean_rows() + [row])
+    assert [by_threshold[t]["tone_flips"] for t in (0.20, 0.30, 0.40)] == [
+        [0, 221], [1, 221], [0, 221]]
+
+
+@pytest.mark.parametrize("flips, passing", [(5, ALL), (6, ALL[:-1])])
+def test_tone_limit_is_two_percent_inclusive_and_judged_per_threshold(flips, passing):
+    rows = _clean_rows() + [_row("sharp", "big-event", 0.01) for _ in range(30)]   # 250 rows
+    for row in rows[120:120 + flips]:                     # missed-focus photos at 0.97 ...
+        row["tone_scores"] = [0.92] * 3                   # ... whose copies drop below 0.95 only
+    assert blur_cv_report.summarise(rows)["passing_thresholds"] == passing
 
 
 def test_at_judges_one_threshold_only(tmp_path, monkeypatch):
     rows = _clean_rows() + [_row("sharp", "big-event", 0.35) for _ in range(5)]   # 4% at <= 0.30
-    fold = tmp_path / "exam.json"
-    fold.write_text(json.dumps(rows), encoding="utf-8")
-    codes = {}
-    for threshold in ("0.3", "0.4"):
-        monkeypatch.setattr(sys, "argv", ["blur_cv_report.py", str(fold), "--at", threshold,
-                                          "--out", str(tmp_path / "summary.json")])
-        codes[threshold] = blur_cv_report.main()
+    codes = {at: _main(tmp_path, monkeypatch, rows, at=at)[0] for at in ("0.3", "0.4")}
     assert codes == {"0.3": 1, "0.4": 0}
 
 
 def test_an_unscored_photo_fails_the_report(tmp_path, monkeypatch, capsys):
     rows = _clean_rows()
     rows[0]["probabilities"] = None
-    fold = tmp_path / "cv_a.json"
-    fold.write_text(json.dumps(rows), encoding="utf-8")
-    monkeypatch.setattr(sys, "argv", ["blur_cv_report.py", str(fold),
-                                      "--out", str(tmp_path / "summary.json")])
-    assert blur_cv_report.main() == 1
+    code, summary = _main(tmp_path, monkeypatch, rows)
+    assert code == 1
     assert "have no prediction" in capsys.readouterr().out
-    assert json.loads((tmp_path / "summary.json").read_text())["unscored"] == [rows[0]["path"]]
+    assert summary["unscored"] == [rows[0]["path"]]
+
+
+def test_a_scored_photo_without_a_tone_result_fails_the_report(tmp_path, monkeypatch, capsys):
+    rows = _clean_rows()
+    rows[0]["tone_scores"] = None
+    code, summary = _main(tmp_path, monkeypatch, rows)
+    assert code == 1
+    assert "have no tone result" in capsys.readouterr().out
+    assert summary["no_tone_result"] == 1
+
+
+def test_a_group_with_no_photos_reads_not_measured_and_does_not_fail(tmp_path, monkeypatch, capsys):
+    code, summary = _main(tmp_path, monkeypatch, _clean_rows()[:160])   # no whole-frame blur
+    assert code == 0
+    assert summary["results"][0]["whole_frame_missed"] == [0, 0]
+    assert "not measured" in capsys.readouterr().out

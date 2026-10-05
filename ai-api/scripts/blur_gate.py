@@ -384,7 +384,7 @@ def main() -> int:
                     default=Path("models/blur_classifier/class_names.json"))
     ap.add_argument("--predictions-json", type=Path, default=None,
                     help="Also write one row per input (path, label, event, predicted, "
-                         "probabilities, tone_flip) for scripts/blur_cv_report.py.")
+                         "probabilities, tone_scores) for scripts/blur_cv_report.py.")
     args = ap.parse_args()
 
     if (args.batch < 1 or args.limit < 0 or args.cand_dim < 1
@@ -518,8 +518,8 @@ def main() -> int:
         issues.append(f"{failed} input(s) without valid predictions")
 
     photometric = None
-    flipped: dict[int, bool] = {}
     if args.max_photometric_flip_rate is not None:
+        flipped: dict[int, bool] = {}
         for j, i in variant_of.items():
             if preds.get(i) in CLASSES and preds.get(j) in CLASSES:
                 moved = (preds[j] in BLUR_CLASSES) != (preds[i] in BLUR_CLASSES)
@@ -582,9 +582,16 @@ def main() -> int:
         print(f"Cannot write report: {type(e).__name__}", file=sys.stderr)
         return 2
     if args.predictions_json:
+        # Strongest blur class of each tone copy, so the report can count flips at any
+        # flag threshold. A photo with a copy that got no answer counts as not checked.
+        tone: dict[int, list[float]] = {}
+        for j, i in variant_of.items():
+            if j in probabilities:
+                tone.setdefault(i, []).append(max(probabilities[j][c] for c in BLUR_CLASSES))
         rows = [{"path": dataset_manifest[i]["path"], "label": label, "event": event,
                  "predicted": preds.get(i), "probabilities": probabilities.get(i),
-                 "tone_flip": flipped.get(i)}
+                 "tone_scores": (tone[i] if len(tone.get(i, ())) == len(PHOTOMETRIC_VARIANTS)
+                                 else None)}
                 for i, (_, label, event) in enumerate(pairs)]
         args.predictions_json.write_text(json.dumps(rows) + "\n", encoding="utf-8")
 
