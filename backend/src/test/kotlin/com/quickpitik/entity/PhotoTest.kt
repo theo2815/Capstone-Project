@@ -9,6 +9,14 @@ import kotlin.test.assertTrue
 
 class PhotoTest {
 
+    @Test
+    fun `removal review and authorized removal are not sellable`() {
+        for (state in listOf(RemovalState.REVIEW, RemovalState.REMOVED)) {
+            val reviewPhoto = photo(PhotoStatus.LIVE).apply { removalState = state }
+            assertFalse(reviewPhoto.isSellable)
+        }
+    }
+
     private fun photo(status: PhotoStatus, deletedAt: OffsetDateTime? = null) = Photo(
         eventId = UUID.randomUUID(),
         s3Key = "originals/photo.jpg",

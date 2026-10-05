@@ -151,7 +151,7 @@ it.each(["offline", "429", "malformed"])("continues with server authority when d
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
   expect(check).toHaveBeenCalledTimes(1);
   expect(upload.mock.calls[0][3].contentHash).toBe("a".repeat(64));
-  expect(screen.getByText("Uploaded — preparing preview")).toBeInTheDocument();
+  expect(await screen.findByText("Uploaded — preparing preview")).toBeInTheDocument();
 });
 
 it("keeps a long-running watermark receipt in processing status", async () => {

@@ -47,7 +47,7 @@ class EventService(
             pageable = pageable,
         )
         return PaginatedResponse(
-            items = page.content.map { eventDtoMapper.toListDto(it) },
+            items = eventDtoMapper.toListDtos(page.content),
             total = page.totalElements,
             offset = pagination.offset,
             limit = pagination.limit,

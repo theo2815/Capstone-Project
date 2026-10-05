@@ -73,6 +73,20 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class OrderServiceCheckoutTest {
+    @Test
+    fun `checkoutLosesRaceToVerifiedRestriction`() {
+        stubProvider()
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenAnswer {
+            listOf(photo.apply { removalState = com.quickpitik.entity.RemovalState.REVIEW })
+        }
+        val failure = runCatching { service.create(null, request(), key) }.exceptionOrNull()
+        assertEquals(0, newlyCreatedOrderItemsForRestrictedPhoto())
+        assertTrue(failure is ConflictException)
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    private fun newlyCreatedOrderItemsForRestrictedPhoto() = savedItems.count { it.id.photoId == photo.id }
+
     private val eventId = UUID.randomUUID()
     private val photo = Photo(
         eventId = eventId,

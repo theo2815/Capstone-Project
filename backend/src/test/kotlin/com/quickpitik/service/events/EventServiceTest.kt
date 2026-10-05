@@ -24,7 +24,7 @@ import kotlin.test.assertNull
 class EventServiceTest {
     private val eventRepository = Mockito.mock(EventRepository::class.java)
     private val settingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
-    private val mapper = EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties())
+    private val mapper = EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java))
     private val service = EventService(eventRepository, mapper, settingsRepository)
 
     @Test
