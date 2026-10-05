@@ -8,7 +8,8 @@ saw, and then once on everything for the thresholds to ship.
 Usage (from ai-api/):  python scripts/fit_blur_whole_frame_rule.py
 Copy the printed values into src/config.py (BLUR_SOFT_MAX_DETAIL,
 BLUR_MOTION_MIN_RATIO, BLUR_MOTION_MAX_DETAIL). Measurements are cached in
-<folds>/whole_frame_measures.json; delete that file after changing the folds.
+<folds>/whole_frame_measures.json; delete that file after changing the folds or how a
+photo is measured (whole_frame.measure, blur_gate.resize_bytes).
 """
 
 from __future__ import annotations
