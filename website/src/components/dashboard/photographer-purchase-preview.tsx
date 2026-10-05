@@ -34,17 +34,18 @@ export function PhotographerPurchasePreview(props: Props) {
 }
 
 function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelectPhoto }: Props & { selection: PurchaseSelection }) {
-  const [orderId, setOrderId] = useState(selection.orderId ?? transaction?.orderId);
+  const pinnedOrderId = selection.orderId ?? transaction?.orderId;
+  const [orderId, setOrderId] = useState(pinnedOrderId);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
-  const purchase = usePhotographerPhotoPurchases(selection.photoId, selection.orderId, true);
+  const purchase = usePhotographerPhotoPurchases(selection.photoId, pinnedOrderId, true);
   const photo = purchase.photo ?? photos?.find((item) => item.id === selection.photoId) ?? null;
   const gallery = photos?.length ? photos : photo ? [photo] : [];
   const index = gallery.findIndex((item) => item.id === selection.photoId);
+  const fallback = transaction && transaction.photoId === selection.photoId && (!orderId || transaction.orderId === orderId) ? transaction : null;
   const selected = (orderId && purchase.selectedPurchase?.orderId === orderId ? purchase.selectedPurchase : null)
     ?? purchase.items.find((item) => item.orderId === orderId)
-    ?? (!orderId ? purchase.selectedPurchase ?? purchase.items[0] : null);
-  const fallback = transaction && transaction.photoId === selection.photoId && (!orderId || transaction.orderId === orderId) ? transaction : null;
+    ?? (!orderId && !fallback ? purchase.selectedPurchase ?? purchase.items[0] : null);
   const preview: PhotoPreviewItem = {
     id: selection.photoId,
     bib: photo?.bib ?? null,
@@ -77,7 +78,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
   const details = <div className="space-y-3 text-sm text-ink">
     <p className="font-display font-bold">Paid for this photo</p>
     {(selected || fallback) ? <>
-      <p className="font-mono tnum">{formatOrderRef(selected?.orderId ?? orderId ?? "")}</p>
+      {(selected?.orderId ?? orderId) && <p className="font-mono tnum">{formatOrderRef(selected?.orderId ?? orderId ?? "")}</p>}
       <p>{selected?.buyer || fallback?.buyer || "Buyer unavailable"}</p>
       <p className="text-slate">{selected ? formatSalesDate(selected.purchasedAt ?? selected.orderCreatedAt) : fallback ? formatSalesDate(fallback.paidAt) : ""}</p>
       {selected && <>
@@ -89,9 +90,10 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
         </p>)}
       </>}
     </> : <p>Purchase unavailable.</p>}
+    {fallback && !selected && !purchase.isLoading && <p>Purchase unavailable.</p>}
     {purchase.isLoading && <p>Loading purchases…</p>}
     {purchase.error && <p role="alert">{errorText}</p>}
-    {(purchase.error || (orderId && !selected && !purchase.isLoading)) && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.refetch()}>Retry purchases</button>}
+    {(purchase.error || ((orderId || fallback) && !selected && !purchase.isLoading)) && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.refetch()}>Retry purchases</button>}
     {purchase.items.length > 1 && <div className="space-y-2 border-t border-line pt-3">
       <p className="font-display font-bold">Purchase history</p>
       {purchase.items.map((item: PhotographerPurchase) => <button key={`${item.orderId}:${item.photoId}`} type="button" aria-pressed={item.orderId === orderId} onClick={() => setOrderId(item.orderId)} className="block w-full rounded-lg border border-line p-2 text-left hover:bg-bone-deep aria-pressed:border-ink aria-pressed:bg-fresh-tint/30">

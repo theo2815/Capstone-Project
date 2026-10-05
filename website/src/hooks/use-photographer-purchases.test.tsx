@@ -46,3 +46,40 @@ it("dedupes photo pages by photo ID", async () => {
   expect(get.mock.calls[0][0]).toContain("/events/event-a/purchased-photos");
   expect(get.mock.calls[1][0]).toContain("offset=1");
 });
+
+it("manual controls cannot fetch disabled seller lists", async () => {
+  login();
+  const get = vi.spyOn(api, "get").mockResolvedValue(envelope([]));
+  const { result } = renderHook(() => ({
+    photos: usePhotographerPurchasedPhotos("event-a", false),
+    receipts: usePhotographerPhotoPurchases("photo-a", "order-a", false),
+  }), { wrapper });
+  await act(async () => {
+    await result.current.photos.refetch();
+    await result.current.photos.fetchNextPage();
+    await result.current.receipts.refetch();
+    await result.current.receipts.fetchNextPage();
+  });
+  expect(get).not.toHaveBeenCalled();
+});
+
+it("stale manual controls cannot read seller data after a role switch", async () => {
+  login();
+  const get = vi.spyOn(api, "get").mockImplementation((path) => Promise.resolve(path.includes("purchased-photos")
+    ? envelope([{ photo: { id: "photo-a" }, purchaseCount: 1 }], 0, 2)
+    : { ...envelope([{ orderId: "order-a", photoId: "photo-a" }], 0, 2), photo: { id: "photo-a" }, event: { id: "event-a" }, selectedPurchase: null }));
+  const { result } = renderHook(() => ({
+    photos: usePhotographerPurchasedPhotos("event-a", true),
+    receipts: usePhotographerPhotoPurchases("photo-a", "order-a"),
+  }), { wrapper });
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  const oldControls = result.current;
+  act(() => useAuthStore.getState().setUser({ id: "runner-a", role: "RUNNER", name: "Runner", email: "runner@example.test", createdAt: "2026-09-10" }));
+  await act(async () => {
+    await oldControls.photos.refetch();
+    await oldControls.photos.fetchNextPage();
+    await oldControls.receipts.refetch();
+    await oldControls.receipts.fetchNextPage();
+  });
+  expect(get).toHaveBeenCalledTimes(2);
+});
