@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
@@ -60,6 +60,8 @@ interface BasePhotoPreviewProps {
   onClose: () => void;
   onPrev?: () => void;
   onNext?: () => void;
+  details?: ReactNode;
+  onRefreshImage?: () => void;
 }
 
 interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
@@ -73,6 +75,7 @@ interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
 interface OwnedPhotoPreviewProps extends BasePhotoPreviewProps {
   mode: "owned";
   onDownload: () => void;
+  downloadDisabled?: boolean;
   /** Replaces the "Yours to keep" kicker — e.g. "Free from @handle" when a
    *  free-event photo is opened by a visitor rather than its owner. */
   footnote?: string;
@@ -182,6 +185,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   const hasImage = Boolean(renderedSrc);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const [imageAttempt, setImageAttempt] = useState(0);
   // Natural width / height of the served image, known once it loads.
   const [aspect, setAspect] = useState<number | null>(null);
 
@@ -304,6 +308,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             // Pinch / double-click zoom over whatever was served: the
             // watermarked preview, or the clean original for an owner.
             <ZoomableImage
+              key={imageAttempt}
               src={renderedSrc ?? ""}
               alt={
                 photo.alt ??
@@ -321,6 +326,13 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               }}
               onError={() => setImageFailed(true)}
             />
+          )}
+
+          {props.details && (!hasImage || imageFailed) && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-surface">
+              <p>Preview unavailable</p>
+              {(hasImage || props.onRefreshImage) && <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={props.onRefreshImage ?? (() => { setImageFailed(false); setImageAttempt((n) => n + 1); })}>Refresh preview</button>}
+            </div>
           )}
 
           {/* Below-lg chrome floats over the photo: counter top-left, close
@@ -373,7 +385,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         </div>
 
         {/* ── Rail ──────────────────────────────────────────────────── */}
-        <aside className="flex flex-col shrink-0 lg:w-[340px] bg-bone border-t lg:border-t-0 lg:border-l border-line">
+        <aside className={cn("flex flex-col shrink-0 lg:w-[340px] bg-bone border-t lg:border-t-0 lg:border-l border-line", props.details && "min-h-0 max-h-[50dvh] overflow-hidden lg:max-h-none")}>
           {/* lg header: date on the left, counter + close on the right. */}
           <div className="hidden lg:flex items-center justify-between gap-4 px-6 py-4 border-b border-line">
             {dateLabel ? (
@@ -397,7 +409,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             </div>
           </div>
 
-          <div className="px-5 pt-4 pb-3 md:px-6 lg:pt-6 lg:pb-0 lg:flex-1 lg:min-h-0">
+          <div className={cn("px-5 pt-4 pb-3 md:px-6 lg:pt-6 lg:pb-0 lg:flex-1 lg:min-h-0", props.details && "shrink-0")}>
             {/* Below lg: event name with the price beside it, then the credit. */}
             <div className="lg:hidden">
               <div className="flex items-start justify-between gap-4">
@@ -436,8 +448,10 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             </div>
           </div>
 
+          {props.details && <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 md:px-6">{props.details}</div>}
+
           {/* Actions — anchored to the rail bottom on lg. */}
-          <div className="px-5 pb-4 md:px-6 md:pb-5 lg:pb-6 lg:pt-5 lg:border-t lg:border-line">
+          <div className={cn("px-5 pb-4 md:px-6 md:pb-5 lg:pb-6 lg:pt-5 lg:border-t lg:border-line", props.details && "shrink-0")}>
             {mode === "browse" && (
               <div className="hidden lg:block mb-4">
                 <p className="font-mono font-semibold tnum text-[26px] leading-none text-ink">
@@ -459,6 +473,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 <button
                   type="button"
                   onClick={props.onDownload}
+                  disabled={props.downloadDisabled ?? false}
                   className={cn(BTN_PRIMARY, BTN_SIZE.sm, "w-full")}
                 >
                   Download photo

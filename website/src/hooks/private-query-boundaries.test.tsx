@@ -10,6 +10,7 @@ import { useOrdersList, useOrderDetail } from "./use-orders";
 import { useOwnedPhotoIds } from "./use-owned-photo-ids";
 import { useSelfiesList } from "./use-selfies";
 import { usePhotographerSettingsQueries } from "./use-photographer-settings";
+import { usePhotographerPurchasedPhotos, usePhotographerPhotoPurchases } from "./use-photographer-purchases";
 import { useAdminFlags, useAdminKpis, useAdminKpiTrend, useAdminSalesKpisLive, useAdminSalesByEventLive, useFlagActions } from "./use-admin-data";
 import {
   usePhotographerEvents, usePhotographerEventDetail, usePhotographerEventPhotos, usePhotographerEventMetadataVisibility,
@@ -87,6 +88,21 @@ describe.each([
       expect(get).not.toHaveBeenCalled();
     });
   }
+});
+
+it.each(["purchased photos", "photo purchases"])("%s seller session boundary", async (name) => {
+  const payload = name === "purchased photos" ? page : { ...page, photo: { id: "photo-a" }, event: { id: "event-a" }, selectedPurchase: null };
+  login("RUNNER");
+  const get = vi.spyOn(api, "get").mockResolvedValue(payload);
+  const hook = renderHook(() => name === "purchased photos"
+    ? usePhotographerPurchasedPhotos("event-a", true)
+    : usePhotographerPhotoPurchases("photo-a", "order-a"), { wrapper });
+  expect(get).not.toHaveBeenCalled();
+  act(() => login("PHOTOGRAPHER"));
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+  expect(get.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  expect(client.getQueryCache().getAll().some((q) => q.queryKey.includes("owner-a") && q.queryKey.includes("PHOTOGRAPHER") && q.queryKey.includes(name === "purchased photos" ? "event-a" : "photo-a"))).toBe(true);
+  hook.unmount();
 });
 
 it("keeps a late metadata settings read out of a new photographer session", async () => {

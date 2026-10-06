@@ -14,8 +14,8 @@ import {
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import type { PhotographerEventSummary } from "@/lib/photographer-mock";
-import { cn } from "@/lib/utils";
+import type { PerEventEarning } from "@/lib/api-photographer-earnings";
+import { formatPrice } from "@/lib/utils";
 
 export default function EarningsPage() {
   return (
@@ -194,27 +194,10 @@ function BreakdownStat({
 }
 
 function PerEventSlab() {
-  // GET /me/photographer/earnings/per-event response collapses to the
-  // PhotographerEventSummary shape so the existing render code works
-  // unchanged.
   const livePerEvent = usePhotographerPerEventEarnings();
-  const rawEvents = livePerEvent
-    ? livePerEvent.items.map((row) => ({
-        id: row.eventId,
-        slug: row.eventName,
-        name: row.eventName,
-        date: row.eventDate,
-        location: "",
-        state: "open" as const,
-        photoCount: row.photoCount,
-        salesCount: row.salesCount,
-        revenueKept: row.revenueKept,
-      }))
-    : null;
-  const isLoading = livePerEvent === null;
-  const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EARNINGS_INITIAL);
+  const events = livePerEvent.items;
 
-  if (isLoading || !rawEvents) {
+  if (livePerEvent.isLoading) {
     return (
       <Slab id="per-event" number="03" title="Per-event">
         <ul className="border-y border-line divide-y divide-line">
@@ -230,54 +213,38 @@ function PerEventSlab() {
     );
   }
 
-  // Sort events by lifetime revenue kept, descending. Skip events with zero
-  // (upcoming events not yet covered) so the table shows revenue-bearing
-  // entries only. The full list lives at /dashboard/events.
-  const events = [...rawEvents]
-    .filter((e) => e.revenueKept > 0)
-    .sort((a, b) => b.revenueKept - a.revenueKept);
-
-  const totalKept = events.reduce((sum, e) => sum + e.revenueKept, 0);
-  const visibleSlice = events.slice(0, loadedCount);
-
   return (
     <Slab
       id="per-event"
       number="03"
       title="Per-event"
-      trailing={
-        events.length > 0 ? `₱${totalKept.toLocaleString()} total` : undefined
-      }
     >
-      {events.length === 0 ? (
+      {livePerEvent.error ? (
+        <div role="alert" className="font-sans text-base text-slate">
+          <p>Couldn&apos;t load event earnings.</p>
+          <button type="button" onClick={livePerEvent.refetch} className="mt-4 min-h-[44px] underline">Retry</button>
+        </div>
+      ) : events.length === 0 ? (
         <p className="font-sans text-base text-slate max-w-md">
-          Per-event revenue will land here once your first photo sells.
+          No event earnings yet.
         </p>
       ) : (
         <>
           <ul className="border-y border-line divide-y divide-line">
-            {visibleSlice.map((event) => (
-              <li key={event.id}>
-                <PerEventRow event={event} totalKept={totalKept} />
+            {events.map((event) => (
+              <li key={event.eventId}>
+                <PerEventRow event={event} />
               </li>
             ))}
           </ul>
-          {/* `total` counts every per-event row the BE has; `items` is what
-              this fetch returned. The rows rendered below are a further
-              subset (zero-revenue events are filtered out), so the label
-              talks about events fetched — not rows shown — to stay true. */}
+          {livePerEvent.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more event earnings. Try again.</p>}
           <LoadMoreButton
-            shown={visibleSlice.length}
-            total={events.length}
+            shown={events.length}
+            total={livePerEvent.hasNextPage ? livePerEvent.total : events.length}
             increment={PAGE_SIZE.EARNINGS_INCREMENT}
-            onLoadMore={() =>
-              setLoadedCount((n) => n + PAGE_SIZE.EARNINGS_INCREMENT)
-            }
-            terminalLabel={
-              livePerEvent.items.length < livePerEvent.total
-                ? `Showing first ${livePerEvent.items.length.toLocaleString()} of ${livePerEvent.total.toLocaleString()} events`
-                : undefined
-            }
+            onLoadMore={livePerEvent.fetchNextPage}
+            isLoading={livePerEvent.isFetchingNextPage}
+            terminalLabel={!livePerEvent.hasNextPage && events.length < livePerEvent.total ? "All available event earnings loaded" : undefined}
           />
         </>
       )}
@@ -287,50 +254,34 @@ function PerEventSlab() {
 
 function PerEventRow({
   event,
-  totalKept,
 }: {
-  event: PhotographerEventSummary;
-  totalKept: number;
+  event: PerEventEarning;
 }) {
-  const sharePct = totalKept > 0 ? (event.revenueKept / totalKept) * 100 : 0;
   return (
     <Link
-      href={`${ROUTES.DASHBOARD_EVENTS}/${event.id}`}
-      className="group block py-5 md:py-6 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+      href={`${ROUTES.DASHBOARD_EVENTS}/${event.eventId}?tab=purchased`}
+      className="group block min-h-[44px] py-5 md:py-6 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
     >
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
         <div className="flex-1 min-w-0">
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-            {formatLongDate(event.date, true)}
+            {formatLongDate(event.eventDate, true)}
           </p>
           <h3 className="font-display text-lg md:text-xl font-medium tracking-tight text-ink mt-2 truncate group-hover:text-ink-soft transition-colors">
-            {event.name}
+            {event.eventName}
           </h3>
+          {event.deletedAt && <p className="mt-2 font-mono text-sm uppercase tracking-wide text-slate">Removed</p>}
           <p className="font-sans text-sm text-slate mt-2 tnum">
-            <span className="font-mono text-ink-soft">{event.salesCount}</span>
-            {" sold · "}
+            <span className="font-mono text-ink-soft">{event.purchaseCount}</span>
+            {` purchase${event.purchaseCount === 1 ? "" : "s"} · `}
             <span className="font-mono text-ink-soft">{event.photoCount}</span>
             {" photos"}
           </p>
         </div>
         <div className="flex items-center gap-4 md:flex-col md:items-end md:gap-1 shrink-0">
           <p className="font-mono tnum font-medium text-ink text-lg md:text-xl">
-            ₱{event.revenueKept.toLocaleString()}
+            {formatPrice(event.revenueKept)}
           </p>
-          <div className="flex items-center gap-2 md:gap-3">
-            <div className="w-16 md:w-24 h-1 bg-bone-deep rounded-full overflow-hidden">
-              <div
-                className={cn(
-                  "h-full rounded-full bg-ink-soft",
-                  "transition-[width]",
-                )}
-                style={{ width: `${Math.max(2, sharePct)}%` }}
-              />
-            </div>
-            <p className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] text-slate-soft tnum uppercase shrink-0">
-              {sharePct.toFixed(0)}%
-            </p>
-          </div>
         </div>
       </div>
     </Link>

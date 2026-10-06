@@ -17,7 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.quickpitik.mobile.data.remote.PhotoMetadataDto
@@ -155,7 +155,7 @@ private fun fileFacts(filename: String?, size: Long?) {
         val formatted = size?.let { String.format(Locale.US, "%.1f MiB", it / 1_048_576.0) }
         val exact = size?.let { NumberFormat.getIntegerInstance(Locale.US).format(it) }
         metadataRow("Original size", formatted,
-            if (exact == null) Modifier else Modifier.semantics {
+            if (exact == null) Modifier else Modifier.clearAndSetSemantics {
                 contentDescription = "Original size, $formatted, $exact bytes"
             },
         )
