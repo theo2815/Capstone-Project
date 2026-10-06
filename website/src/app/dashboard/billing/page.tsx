@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { Slab } from "@/components/profile-shell";
 import { HowPayoutsModal } from "@/components/dashboard/how-payouts-modal";
 import { FilePayoutReportModal } from "@/components/dashboard/file-payout-report-modal";
@@ -9,16 +10,17 @@ import { TrackPayoutReportModal } from "@/components/dashboard/track-payout-repo
 import { RequestPayoutModal } from "@/components/dashboard/request-payout-modal";
 import { WithdrawPayoutModal } from "@/components/dashboard/withdraw-payout-modal";
 import { Kicker } from "@/components/ui/kicker";
-import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PhotographerPurchasePreview, type PurchaseSelection } from "@/components/dashboard/photographer-purchase-preview";
 import {
   usePhotographerPayouts,
   usePhotographerPayoutBalance,
   usePhotographerTransactions,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
-import { formatLongDate, formatMonthYear } from "@/lib/format";
+import { formatLongDate, formatSalesDate, salesMonthKey } from "@/lib/format";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
@@ -33,7 +35,7 @@ import {
 import { usePhotographerPayoutReports, EMPTY_REPORTS } from "@/hooks/use-payout-reports";
 import { resolveCurrentPhotographer } from "@/lib/current-photographer";
 import { useAuth } from "@/hooks/use-auth";
-import { cn } from "@/lib/utils";
+import { cn, formatOrderRef, formatPrice } from "@/lib/utils";
 import { PAYOUT_METHOD_LABEL } from "@/store/photographer-settings-store";
 
 const STATUS_LABEL: Record<PayoutStatus, string> = {
@@ -609,6 +611,13 @@ function TransactionsSlab() {
   const liveTx = usePhotographerTransactions();
   const transactions = liveTx.items;
   const isLoading = liveTx.isLoading;
+  const [selection, setSelection] = useState<PurchaseSelection | null>(null);
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const selectedTransaction = transactions.find((tx) => tx.id === selection?.transactionId);
+  const closePreview = () => {
+    setSelection(null);
+    queueMicrotask(() => returnFocus.current?.focus());
+  };
 
   // Month-header totals come straight from the server envelope (computed over
   // ALL rows, in PHT), so sticky headers stay stable as Load-more reveals more
@@ -659,15 +668,18 @@ function TransactionsSlab() {
       caption="Each photo sale, post-platform-cut"
       trailing={
         liveTx.total > 0
-          ? `${liveTx.total} · ₱${total.toLocaleString()}`
+          ? `${liveTx.total} · ${formatPrice(total)}`
           : undefined
       }
     >
-      {transactions.length === 0 ? (
+      {liveTx.error && <div role="alert" aria-label="Transactions" className="mb-5 font-sans text-sm text-error">
+        Couldn&apos;t load transactions. <button type="button" className="underline" onClick={liveTx.refetch}>Retry transactions</button>
+      </div>}
+      {!liveTx.error && transactions.length === 0 ? (
         <p className="font-sans text-base text-slate max-w-md">
-          Sales will land here as runners buy your photos.
+          Sales will land here as runners buy your photos. Completed zero-charge purchases appear under each event&apos;s Purchased photos.
         </p>
-      ) : (
+      ) : transactions.length > 0 ? (
         <>
           <ul className="border-y border-line divide-y divide-line">
             {/* Group by month so the ledger is easier to skim. */}
@@ -682,56 +694,65 @@ function TransactionsSlab() {
                   tnum
                   className="md:sticky md:top-20 bg-bone py-2"
                 >
-                  {group.label} · ₱{group.total.toLocaleString()}
+                  {group.label} · {formatPrice(group.total)}
                 </Kicker>
                 <ul className="divide-y divide-line">
                   {group.items.map((tx) => (
                     <li key={tx.id}>
-                      <TransactionRow tx={tx} />
+                      <TransactionRow tx={tx} onOpen={(button) => {
+                        returnFocus.current = button;
+                        setSelection({ photoId: tx.photoId, orderId: tx.orderId, transactionId: tx.id });
+                      }} />
                     </li>
                   ))}
                 </ul>
               </li>
             ))}
           </ul>
-          <LoadMoreButton
+          {liveTx.appendError && <p role="alert" aria-label="Transactions" className="mt-4 font-sans text-sm text-error">Couldn&apos;t load more transactions.</p>}
+          {liveTx.appendError && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm} mt-3`} onClick={liveTx.fetchNextPage}>Retry transactions</button>}
+          {liveTx.hasNextPage && !liveTx.appendError && <LoadMoreButton
             shown={transactions.length}
             total={liveTx.total}
             increment={PAGE_SIZE.TRANSACTION_INCREMENT}
             onLoadMore={liveTx.fetchNextPage}
             isLoading={liveTx.isFetchingNextPage}
-          />
+          />}
         </>
-      )}
+      ) : null}
+      <PhotographerPurchasePreview selection={selection} transaction={selectedTransaction} onClose={closePreview} />
     </Slab>
   );
 }
 
-function TransactionRow({ tx }: { tx: PhotographerTransaction }) {
+function TransactionRow({ tx, onOpen }: { tx: PhotographerTransaction; onOpen: (button: HTMLButtonElement) => void }) {
   // BE snapshots eventName onto the row; only genuinely hard-deleted events
   // fall through to the "Event archived" copy.
   const eventLabel = tx.eventName ?? "Event archived";
 
-  return (
-    <div className="py-4 md:py-5 flex items-baseline justify-between gap-4">
-      <div className="flex-1 min-w-0">
-        <Kicker as="p" tnum>
-          {formatLongDate(tx.paidAt)}
+  const content = <span className="py-4 md:py-5 flex items-center justify-between gap-4">
+      <span className="size-14 shrink-0 overflow-hidden rounded-md bg-bone-deep flex items-center justify-center text-slate-soft">
+        {tx.thumbnailUrl ? <Image src={tx.thumbnailUrl} alt="" width={56} height={56} unoptimized className="size-full object-cover" /> : <span role="img" aria-label="Preview unavailable" className="font-mono text-lg">▧</span>}
+      </span>
+      <span className="flex-1 min-w-0">
+        <Kicker as="span" className="block" tnum>
+          {tx.isRefund ? "Refund" : "Sale"} · {formatSalesDate(tx.recordedAt ?? tx.paidAt)}
         </Kicker>
-        <p className="font-sans text-base text-ink mt-2 truncate">
+        <span className="block font-sans text-base text-ink mt-2 truncate">
           {eventLabel}
-        </p>
-        <p className="font-sans text-sm text-slate mt-1">
-          <span className="font-mono">{tx.photoId.replace(/^mock-/, "")}</span>
-          <span className="text-slate-soft"> · </span>
-          <span>{tx.buyer}</span>
-        </p>
-      </div>
-      <p className="font-mono tnum font-medium text-ink text-lg md:text-xl shrink-0">
-        ₱{tx.amountKept.toLocaleString()}
-      </p>
-    </div>
-  );
+        </span>
+        <span className="block font-sans text-sm text-slate mt-1">
+          <span>{tx.buyer || "Buyer unavailable"}</span>
+          {tx.orderId && <><span className="text-slate-soft"> · </span><span className="font-mono tnum">{formatOrderRef(tx.orderId)}</span></>}
+        </span>
+      </span>
+      <span className="font-mono tnum font-medium text-ink text-lg md:text-xl shrink-0">
+        {tx.amountKept < 0 || tx.isRefund ? "-" : "+"}{formatPrice(Math.abs(tx.amountKept))}
+      </span>
+    </span>;
+  return tx.orderId
+    ? <button type="button" onClick={(event) => onOpen(event.currentTarget)} className="block w-full text-left hover:bg-bone-deep/50 focus-visible:bg-bone-deep/50">{content}</button>
+    : <div>{content}</div>;
 }
 
 interface MonthGroup {
@@ -742,32 +763,20 @@ interface MonthGroup {
 
 function groupByMonth(
   transactions: ReadonlyArray<PhotographerTransaction>,
-  fullMonthTotals?: ReadonlyMap<string, number>,
+  fullMonthTotals: ReadonlyMap<string, number>,
 ): ReadonlyArray<MonthGroup> {
   const buckets = new Map<string, PhotographerTransaction[]>();
   for (const tx of transactions) {
-    const key = monthKey(tx.paidAt);
+    const key = salesMonthKey(tx.paidAt);
     const list = buckets.get(key);
     if (list) list.push(tx);
     else buckets.set(key, [tx]);
   }
-  // Map keys are insertion-ordered; PHOTOGRAPHER_TRANSACTIONS is newest-first
-  // so the buckets iterate newest-month first. When fullMonthTotals is passed
-  // (load-more case), the sticky header total stays stable across pages
-  // instead of growing as more rows in the same month load.
+  // Map keys preserve the server's newest-first row order. Month totals come
+  // from the full server ledger, so loading more rows cannot change a header.
   return Array.from(buckets.entries()).map(([key, items]) => ({
-    label: formatMonthYear(`${key}-01T00:00:00Z`),
-    total:
-      fullMonthTotals?.get(key) ??
-      items.reduce((sum, tx) => sum + tx.amountKept, 0),
+    label: key === "—" ? "—" : new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "Asia/Manila" }).format(new Date(`${key}-01T00:00:00Z`)).toUpperCase(),
+    total: fullMonthTotals.get(key) ?? 0,
     items,
   }));
-}
-
-function monthKey(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "unknown";
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  return `${yyyy}-${mm}`;
 }

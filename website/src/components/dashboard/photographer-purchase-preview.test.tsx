@@ -55,6 +55,7 @@ it("shows free purchase facts without inventing paid or refunded money", async (
   expect(fact("Reference")).toHaveTextContent(formatOrderRef(orderB));
   expect(fact("Purchased")).toHaveTextContent("Oct 2, 2026, 12:30 AM");
   expect(fact("Event")).toHaveTextContent("Cebu Run");
+  expect(screen.getByRole("link", { name: /Cebu Run.*Purchased photos/i })).toHaveAttribute("href", "/dashboard/events/event-a?tab=purchased");
   expect(fact("Photo")).toHaveTextContent("Bib 101");
   expect(fact("Photo price")).toHaveTextContent("₱150.00");
   expect(fact("Discount")).toHaveTextContent("₱150.00");

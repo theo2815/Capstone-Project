@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { PhotoPreviewCard, type PhotoPreviewItem } from "@/components/photos/photo-preview-card";
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import { usePhotographerPhotoPurchases } from "@/hooks/use-photographer-purchases";
@@ -107,7 +108,9 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
       <dt className="text-slate">Reference</dt><dd className={factClass}>{selected?.orderId || orderId ? formatOrderRef(selected?.orderId ?? orderId ?? "") : "Unavailable"}</dd>
       <dt className="text-slate">Purchased</dt><dd className={factClass}>{selected?.purchasedAt ? formatSalesDate(selected.purchasedAt) : fallback?.paidAt ? formatSalesDate(fallback.paidAt) : "Unavailable"}</dd>
       {selected && !selected.purchasedAt && <><dt className="text-slate">Order created</dt><dd className={factClass}>{formatSalesDate(selected.orderCreatedAt)}</dd></>}
-      <dt className="text-slate">Event</dt><dd className={factClass}>{purchase.event?.name ?? transaction?.eventName ?? "Event archived"}</dd>
+      <dt className="text-slate">Event</dt><dd className={factClass}>{purchase.event?.id || transaction?.eventId
+        ? <Link href={`/dashboard/events/${encodeURIComponent(purchase.event?.id ?? transaction!.eventId)}?tab=purchased`} className="underline decoration-line-strong underline-offset-4 hover:decoration-fresh">{purchase.event?.name ?? transaction?.eventName ?? "Event archived"} · Purchased photos</Link>
+        : "Event archived"}</dd>
       <dt className="text-slate">Photo</dt><dd className={factClass}>{photo?.bib ? `Bib ${photo.bib}` : selection.photoId}</dd>
       <dt className="text-slate">Photo price</dt><dd className={factClass}>{selected ? formatPrice(selected.pricePhp) : "Unavailable"}</dd>
       <dt className="text-slate">Discount</dt><dd className={factClass}>{selected ? formatPrice(selected.discountPhp) : "Unavailable"}</dd>
