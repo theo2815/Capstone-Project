@@ -63,7 +63,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
   const gallery = photos?.length ? photos : photo ? [photo] : [];
   const index = gallery.findIndex((item) => item.id === selection.photoId);
   const fallback = transaction && transaction.photoId === selection.photoId && (!orderId || transaction.orderId === orderId) ? transaction : null;
-  const eventId = purchase.event?.id ?? (transaction?.eventName ? transaction.eventId : null);
+  const eventId = purchase.event?.id;
   const selected = (orderId && purchase.selectedPurchase?.orderId === orderId ? purchase.selectedPurchase : null)
     ?? purchase.items.find((item) => item.orderId === orderId)
     ?? (!orderId && !fallback ? purchase.selectedPurchase ?? purchase.items[0] : null);
