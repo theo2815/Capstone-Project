@@ -19,6 +19,8 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Instant
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.HexFormat
 import java.util.UUID
 import javax.crypto.Mac
@@ -240,6 +242,65 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             role = role,
         ),
     ).accessToken
+
+    @Test
+    fun `case evidence and its known local storage key stay private`() {
+        val id = UUID.randomUUID()
+        val route = "/api/v1/admin/photo-removal-requests/$id/evidence"
+        assertEquals(401, get(route).statusCode())
+        assertEquals(403, get(route, register(Role.RUNNER)).statusCode())
+        assertEquals(403, get(route, register(Role.PHOTOGRAPHER)).statusCode())
+        val key = "photo-removal/$id/evidence/${UUID.randomUUID()}"
+        val path = Path.of("build/test-storage", key)
+        Files.createDirectories(path.parent)
+        Files.writeString(path, "synthetic private evidence")
+        try {
+            assertTrue(get("/storage/$key").statusCode() in setOf(401, 403, 404))
+            assertTrue(get("/storage/$key", adminToken()).statusCode() in setOf(401, 403, 404))
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun `known case evidence storage prefix cannot bypass the private stream`() {
+        val key = "photo-removal/${UUID.randomUUID()}/evidence/${UUID.randomUUID()}"
+        val path = Path.of("build/test-storage", key)
+        Files.createDirectories(path.parent)
+        Files.writeString(path, "synthetic private evidence")
+        try {
+            assertTrue(get("/storage/$key").statusCode() in setOf(401, 403, 404))
+            assertTrue(get("/storage/$key", adminToken()).statusCode() in setOf(401, 403, 404))
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun `removal intake shares the bounded admin media write policy`() {
+        val token = adminToken()
+        val responses = (1..21).map {
+            val body = """{"eventId":"${UUID.randomUUID()}","supportReference":"synthetic-ticket","requesterContact":"synthetic-contact","reason":"privacy","commandId":"${UUID.randomUUID()}"}"""
+            post("/api/v1/admin/photo-removal-requests", body, token)
+        }
+        assertEquals(404, responses.first().statusCode())
+        assertEquals(429, responses.last().statusCode())
+        assertTrue(responses.last().headers().firstValue("Retry-After").isPresent)
+    }
+
+    @Test
+    fun `mixed case local evidence prefix cannot reveal a known physical key`() {
+        val key = "photo-removal/${UUID.randomUUID()}/evidence/${UUID.randomUUID()}"
+        val path = Path.of("build/test-storage", key)
+        Files.createDirectories(path.parent)
+        Files.writeString(path, "synthetic private evidence")
+        try {
+            assertTrue(get("/storage/$key").statusCode() in setOf(401, 403, 404))
+            val mixedCase = "/storage/PHOTO-REMOVAL/${key.substringAfter('/')}"
+            assertTrue(get(mixedCase).statusCode() in setOf(401, 403, 404))
+            assertTrue(get(mixedCase, adminToken()).statusCode() in setOf(401, 403, 404))
+        } finally { Files.deleteIfExists(path) }
+    }
 
     private fun adminToken(): String {
         val response = authService.login(LoginRequest(email = adminEmail, password = adminPassword))

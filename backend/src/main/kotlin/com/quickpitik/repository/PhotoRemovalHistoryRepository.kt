@@ -13,6 +13,8 @@ interface PhotoRemovalHistoryRepository : Repository<PhotoRemovalHistory, UUID> 
     fun findByRequestIdAndCommandId(requestId: UUID, commandId: UUID): List<PhotoRemovalHistory>
     fun findByRequestIdAndCommandIdAndItemIdAndReviewId(requestId: UUID, commandId: UUID, itemId: UUID?, reviewId: UUID?): PhotoRemovalHistory?
     fun findByRequestIdOrderByOccurredAtAscIdAsc(requestId: UUID, pageable: Pageable): List<PhotoRemovalHistory>
+    fun countByRequestId(requestId: UUID): Long
+    fun existsByRequestIdAndAction(requestId: UUID, action: String): Boolean
 
     @Modifying
     @Query(value = """

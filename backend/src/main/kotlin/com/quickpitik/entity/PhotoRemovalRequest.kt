@@ -57,6 +57,8 @@ class PhotoRemovalRequest(
     var evidenceCleanupState: RemovalEvidenceCleanupState = RemovalEvidenceCleanupState.NONE,
     @JdbcTypeCode(SqlTypes.JSON) @Column(name = "outstanding_evidence_keys", nullable = false, columnDefinition = "jsonb")
     var outstandingEvidenceKeys: List<String> = emptyList(),
+    @Column(name = "evidence_cleanup_next_attempt_at")
+    var evidenceCleanupNextAttemptAt: Instant? = null,
     @Column(name = "creation_command_id", nullable = false, updatable = false)
     val creationCommandId: UUID,
 )
