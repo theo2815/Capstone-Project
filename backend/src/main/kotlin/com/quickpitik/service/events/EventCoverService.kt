@@ -2,13 +2,13 @@ package com.quickpitik.service.events
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 import javax.imageio.ImageIO
@@ -72,7 +72,7 @@ class EventCoverService(
     }
 
     private fun normaliseToJpeg(input: ByteArray): ByteArray {
-        val original: BufferedImage = ImageIO.read(ByteArrayInputStream(input))
+        val original: BufferedImage = ImageDecode.readOrNull(input)
             ?: throw ValidationException(
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
                 message = "image cannot be decoded",

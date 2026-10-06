@@ -22,6 +22,7 @@ import com.quickpitik.repository.ReservedHandleRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
+import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.AdminInboxEvent
@@ -32,7 +33,6 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.io.ByteArrayInputStream
 import java.time.OffsetDateTime
 import java.util.UUID
 import javax.imageio.ImageIO
@@ -554,7 +554,7 @@ class PhotographerSettingsService(
         transparent: Boolean,
         encoderFormat: String,
     ): ByteArray? {
-        val source = ImageIO.read(ByteArrayInputStream(input)) ?: return null
+        val source = ImageDecode.readOrNull(input) ?: return null
         val srcW = source.width
         val srcH = source.height
         val longEdge = maxOf(srcW, srcH)

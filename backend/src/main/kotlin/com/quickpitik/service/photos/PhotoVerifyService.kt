@@ -9,14 +9,13 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.image.ExifOrientation
+import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.image.PerceptualHash
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
-import java.io.ByteArrayInputStream
 import java.util.UUID
-import javax.imageio.ImageIO
 
 // "Is this a QuickPitik photo, and whose?" — fingerprints the uploaded image
 // the same way PhotoWatermarkService fingerprints every preview, then asks the
@@ -42,7 +41,7 @@ class PhotoVerifyService(
                 field = "file",
             )
         }
-        val decoded = ImageIO.read(ByteArrayInputStream(bytes))
+        val decoded = ImageDecode.readOrNull(bytes)
             ?: throw ApiException(
                 status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,

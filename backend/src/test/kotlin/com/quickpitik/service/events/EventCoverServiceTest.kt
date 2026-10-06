@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.util.Base64
 import java.util.UUID
 import javax.imageio.ImageIO
 import kotlin.test.assertEquals
@@ -77,6 +78,19 @@ class EventCoverServiceTest {
 
         assertTrue(key.startsWith("events/$eventId/cover/"))
         Mockito.verify(storageService).put(anyArg(), anyArg<ByteArray>(), anyArg())
+    }
+
+    @Test
+    fun `truncated WebP cover is rejected before storage`() {
+        val bytes = Base64.getDecoder().decode("UklGRjIAAABXRUJQVlA4ICYAAAA=")
+
+        val ex = assertFailsWith<ValidationException> {
+            service.upload(eventId, bytes, "image/webp")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("cover", ex.field)
+        Mockito.verifyNoInteractions(storageService)
     }
 
     @Test
