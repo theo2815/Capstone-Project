@@ -55,12 +55,35 @@ it("shows free purchase facts without inventing paid or refunded money", async (
   expect(fact("Reference")).toHaveTextContent(formatOrderRef(orderB));
   expect(fact("Purchased")).toHaveTextContent("Oct 2, 2026, 12:30 AM");
   expect(fact("Event")).toHaveTextContent("Cebu Run");
+  expect(screen.getByRole("link", { name: /Cebu Run.*Purchased photos/i })).toHaveAttribute("href", "/dashboard/events/event-a?tab=purchased");
   expect(fact("Photo")).toHaveTextContent("Bib 101");
   expect(fact("Photo price")).toHaveTextContent("₱150.00");
   expect(fact("Discount")).toHaveTextContent("₱150.00");
   expect(fact("Paid for this photo")).toHaveTextContent("Free");
   expect(fact("Refunded")).toHaveTextContent("₱0.00");
   expect(fact("Your net earnings")).toHaveTextContent("₱0.00");
+  client.clear();
+});
+
+it("does not link an archived event from a transaction ID alone", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockResolvedValue({ ...response([receipt(orderB)], receipt(orderB)), event: null });
+  render(view({ photoId: photo.id, orderId: orderB }, client, clicked(orderB)));
+  await screen.findByText("Aira S.");
+  expect(fact("Event")).toHaveTextContent("Event archived");
+  expect(fact("Event")?.querySelector("a")).toBeNull();
+  client.clear();
+});
+
+it("does not link a deleted event from a stale transaction name", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockResolvedValue({ ...response([receipt(orderB)], receipt(orderB)), event: null });
+  render(view({ photoId: photo.id, orderId: orderB }, client, { ...clicked(orderB), eventName: "Cebu Run" }));
+  await screen.findByText("Aira S.");
+  expect(fact("Event")).toHaveTextContent("Event archived");
+  expect(fact("Event")?.querySelector("a")).toBeNull();
   client.clear();
 });
 
