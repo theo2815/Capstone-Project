@@ -24,6 +24,7 @@ import type { PaginatedResponse } from "@/types/api";
 //   POST   /api/v1/me/photographer/events/{id}/photos                (multipart fallback)
 
 export interface PhotographerEventDetail extends PhotographerEventSummary {
+  deletedAt: string | null;
   firstUploadAt: string | null;
   lastUploadAt: string | null;
   // V46 — prefill for the owner's edit form.
@@ -128,9 +129,10 @@ export async function fetchPhotographerEvents(
 export async function fetchPhotographerEventDetail(
   eventId: string,
   signal?: AbortSignal,
+  includeRemoved = false,
 ): Promise<PhotographerEventDetail | null> {
   return api.get<PhotographerEventDetail>(
-    `/me/photographer/events/${encodeURIComponent(eventId)}`,
+    `/me/photographer/events/${encodeURIComponent(eventId)}${includeRemoved ? "?includeRemoved=true" : ""}`,
     { signal },
   );
 }

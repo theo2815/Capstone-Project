@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import { getEventMetadataVisibility, getMetadataSettings, OfflineUploadError, permanentDeletePhotographerPhotos, putEventMetadataVisibility, putMetadataSettings, restorePhotographerPhotos, trashPhotographerPhotos, uploadPhotographerPhoto } from "./api-photographer";
+import { fetchPhotographerEventDetail, getEventMetadataVisibility, getMetadataSettings, OfflineUploadError, permanentDeletePhotographerPhotos, putEventMetadataVisibility, putMetadataSettings, restorePhotographerPhotos, trashPhotographerPhotos, uploadPhotographerPhoto } from "./api-photographer";
 import { fetchPhotographerPayoutReports } from "./api-photographer-earnings";
 import { report } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
@@ -10,6 +10,17 @@ vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeo
 beforeEach(() => { get.mockReset(); post.mockReset(); put.mockReset(); });
 afterEach(() => { vi.restoreAllMocks(); });
 const ids = (count: number) => Array.from({ length: count }, (_, i) => `photo-${i}`);
+
+it("opts the event page into removed event detail while keeping existing callers on the default", async () => {
+  const signal = new AbortController().signal;
+  get.mockResolvedValue({ id: "event/1" });
+  await fetchPhotographerEventDetail("event/1", signal);
+  await fetchPhotographerEventDetail("event/1", signal, true);
+  expect(get.mock.calls).toEqual([
+    ["/me/photographer/events/event%2F1", { signal }],
+    ["/me/photographer/events/event%2F1?includeRemoved=true", { signal }],
+  ]);
+});
 
 it("uses the typed account metadata routes and forwards GET cancellation", async () => {
   const signal = new AbortController().signal;

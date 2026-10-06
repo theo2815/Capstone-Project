@@ -20,9 +20,18 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(async () => {}),
   setQueryData: vi.fn(),
   removeQueries: vi.fn(),
+  search: "",
+  replace: vi.fn(),
+  listeners: new Set<() => void>(),
   visibility: { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false } as { metadataPublic: boolean } | undefined, refetch: vi.fn() },
 }));
-vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'event-1' }), notFound: () => { throw Error('404'); } }));
+vi.mock('next/navigation', async () => {
+  const { useSyncExternalStore } = await import('react');
+  return { useParams: () => ({ id: 'event-1' }),
+    useSearchParams: () => new URLSearchParams(useSyncExternalStore((onChange) => { mocks.listeners.add(onChange); return () => { mocks.listeners.delete(onChange); }; }, () => mocks.search)),
+    useRouter: () => ({ replace: (url: string, options: { scroll: boolean }) => { mocks.replace(url, options); mocks.search = new URL(url, 'http://test').search; mocks.listeners.forEach((notify) => notify()); } }),
+    notFound: () => { throw Error('404'); } };
+});
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ cancelQueries: mocks.cancelQueries, invalidateQueries: mocks.invalidate, setQueryData: mocks.setQueryData, removeQueries: mocks.removeQueries }) }));
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ showToast: mocks.toast }) }));
 vi.mock('@/hooks/use-confirmation', () => ({ useConfirmation: () => ({ confirm: async () => true }) }));
@@ -53,8 +62,36 @@ vi.mock('@/hooks/use-photographer-data', () => ({
     fetchNextPage: vi.fn(),
   }),
 }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); mocks.activeRows = 1; mocks.photoStatus = "live"; mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() }; });
+afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); mocks.activeRows = 1; mocks.photoStatus = "live"; mocks.search = ""; mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() }; });
 describe('photographer photo management', () => {
+  it('uses the URL tab while keeping active and deleted selection controls', () => {
+    mocks.search = '?tab=deleted';
+    render(<EventPage />);
+    expect(screen.getByRole('tab', { name: 'Deleted' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+    expect(screen.getByRole('button', { name: 'Restore 0' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Active' }));
+    expect(mocks.replace).toHaveBeenCalledWith('/dashboard/events/event-1?tab=active', { scroll: false });
+  });
+  it('clears selection and preview when an external URL changes the effective tab', () => {
+    const { rerender } = render(<EventPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByRole('button', { name: 'Delete 1' })).toBeInTheDocument();
+    mocks.search = '?tab=deleted';
+    rerender(<EventPage />);
+    expect(screen.getByRole('tab', { name: 'Deleted' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Select' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete 1' })).toBeNull();
+
+    mocks.search = '?tab=active';
+    rerender(<EventPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open photo 1' }));
+    expect(screen.getByRole('button', { name: 'Download photo' })).toBeInTheDocument();
+    mocks.search = '?tab=deleted';
+    rerender(<EventPage />);
+    expect(screen.queryByRole('button', { name: 'Download photo' })).toBeNull();
+  });
   it('shows the server-false event choice on a shared event and saves only an explicit change', async () => {
     useAuthStore.getState().setUser({ id: 'photographer-a', role: 'PHOTOGRAPHER', name: 'A', email: 'a@example.test', createdAt: '2026-09-28' });
     mocks.put.mockResolvedValue({ metadataPublic: true });

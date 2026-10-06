@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { notFound, useParams } from "next/navigation";
+import { notFound, useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EventState, ListEvent } from "@/types/event";
 import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
+import { PhotographerPurchasePreview, type PurchaseSelection } from "@/components/dashboard/photographer-purchase-preview";
 import { MyEventForm } from "@/components/dashboard/my-event-form";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
@@ -30,6 +31,7 @@ import {
   usePhotographerEventPhotos,
 } from "@/hooks/use-photographer-data";
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import { usePhotographerPurchasedPhotos } from "@/hooks/use-photographer-purchases";
 import { useToast } from "@/hooks/use-toast";
 import {
   fetchPhotographerPhotoDownload,
@@ -53,7 +55,7 @@ import type {
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { isInAppBrowser } from "@/lib/in-app-browser";
 import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
-import { cn, copyToClipboard, triggerDownload } from "@/lib/utils";
+import { cn, copyToClipboard, formatPrice, triggerDownload } from "@/lib/utils";
 
 // Focused share page. Direction A composition: SiteHeader (no dashboard rail
 // — escaped via the conditional in app/dashboard/layout.tsx) → back chip →
@@ -82,9 +84,7 @@ export default function FocusedSharePage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
-  const { detail: liveDetail, isMissing } = usePhotographerEventDetail(
-    id ?? null,
-  );
+  const { detail: liveDetail, isMissing, error, refetch } = usePhotographerEventDetail(id ?? null, { includeRemoved: true });
   // Owned-event controls (V46): edit modal + withdraw of a parked pricing
   // change. Hooks stay above the early returns.
   const [editOpen, setEditOpen] = useState(false);
@@ -97,6 +97,10 @@ export default function FocusedSharePage() {
   // doesn't exist for them.
   if (isMissing) {
     notFound();
+  }
+
+  if (error) {
+    return <main className="bg-bone text-ink min-h-screen flex flex-col"><SiteHeader /><div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 py-12"><p role="alert" className="font-sans text-base">Couldn&apos;t load this event.</p><button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div></main>;
   }
 
   // Loading: detail is null until the BE responds. Photos load in parallel
@@ -123,6 +127,22 @@ export default function FocusedSharePage() {
     city: liveDetail.location.split(",").pop()?.trim() ?? "",
   };
   const photographer = liveDetail;
+
+  if (liveDetail.deletedAt) {
+    return <main className="bg-bone text-ink min-h-screen flex flex-col">
+      <SiteHeader />
+      <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
+        <BackChip />
+        <Hero event={event} />
+        <p className="mb-8 font-mono text-sm uppercase tracking-wide text-slate">Removed event</p>
+        <Stats photographer={photographer} />
+        <section>
+          <div role="tablist" aria-label="Photo library" className="mb-6 border-b border-line pb-4"><TabPill active onClick={() => { }}>Purchased</TabPill></div>
+          <RemovedPurchasedGallery eventId={liveDetail.id} />
+        </section>
+      </div>
+    </main>;
+  }
 
   const refreshEvents = () =>
     queryClient.invalidateQueries({ queryKey: ["photographer", "events"] });
@@ -765,7 +785,7 @@ function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
       </span>
       <span>
         <span className="text-ink">
-          ₱{photographer.revenueKept.toLocaleString()}
+          {formatPrice(photographer.revenueKept)}
         </span>{" "}
         kept
       </span>
@@ -788,15 +808,24 @@ function PhotoLibrary({
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
 
-  const [section, setSection] = useState<"active" | "deleted">("active");
+  const section = requestedTab === "deleted" || requestedTab === "purchased" ? requestedTab : "active";
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
-  const active = usePhotographerEventPhotos(eventId, { deleted: false });
+  useEffect(() => {
+    setSelecting(false);
+    setSelected(new Set());
+    setOpenIndex(null);
+  }, [section]);
+
+  const active = usePhotographerEventPhotos(eventId, { deleted: false, enabled: section === "active" });
   // Only fetch the trash when its tab is open — most visits never touch it.
   const trash = usePhotographerEventPhotos(eventId, {
     deleted: true,
@@ -810,9 +839,9 @@ function PhotoLibrary({
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["photographer", "events"] });
 
-  function switchSection(next: "active" | "deleted") {
+  function switchSection(next: "active" | "deleted" | "purchased") {
     if (next === section) return;
-    setSection(next);
+    router.replace(`${ROUTES.DASHBOARD_EVENTS}/${eventId}?tab=${next}`, { scroll: false });
     setSelecting(false);
     setSelected(new Set());
     setOpenIndex(null);
@@ -960,6 +989,19 @@ function PhotoLibrary({
     }
   }, [showToast]);
 
+  if (section === "purchased") {
+    return <section>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4 mb-6">
+        <div role="tablist" aria-label="Photo library" className="flex flex-wrap gap-2">
+          <TabPill active={false} onClick={() => switchSection("active")}>Active</TabPill>
+          <TabPill active={false} onClick={() => switchSection("deleted")}>Deleted</TabPill>
+          <TabPill active onClick={() => switchSection("purchased")}>Purchased</TabPill>
+        </div>
+      </div>
+      <PurchasedGallery eventId={eventId} />
+    </section>;
+  }
+
   const openPhoto = openIndex !== null ? photos[openIndex] : null;
   const previewItem: PhotoPreviewItem | null = openPhoto
     ? {
@@ -979,7 +1021,7 @@ function PhotoLibrary({
   return (
     <section>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4 mb-6">
-        <div role="tablist" aria-label="Photo library" className="flex gap-2">
+        <div role="tablist" aria-label="Photo library" className="flex flex-wrap gap-2">
           <TabPill
             active={section === "active"}
             onClick={() => switchSection("active")}
@@ -992,6 +1034,7 @@ function PhotoLibrary({
           >
             Deleted
           </TabPill>
+          <TabPill active={false} onClick={() => switchSection("purchased")}>Purchased</TabPill>
         </div>
         {!selecting && (
           <div className="flex items-center gap-2">
@@ -1109,6 +1152,43 @@ function PhotoLibrary({
   );
 }
 
+function RemovedPurchasedGallery({ eventId }: { eventId: string }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("tab") !== "purchased") {
+      router.replace(`${ROUTES.DASHBOARD_EVENTS}/${eventId}?tab=purchased`, { scroll: false });
+    }
+  }, [eventId, router, searchParams]);
+  return <PurchasedGallery eventId={eventId} />;
+}
+
+function PurchasedGallery({ eventId }: { eventId: string }) {
+  const list = usePhotographerPurchasedPhotos(eventId, true);
+  const [selection, setSelection] = useState<PurchaseSelection | null>(null);
+  const photos = list.items.map((item) => item.photo);
+
+  return <>
+    <p className="font-mono uppercase tracking-[0.14em] text-sm text-slate-soft tnum mb-6"><span className="text-ink">{list.total.toLocaleString()}</span> purchased photos</p>
+    {list.isLoading ? (
+      <div role="status" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
+        {Array.from({ length: 8 }, (_, i) => <TileSkeleton key={i} aspectRatio="aspect-[3/4]" />)}
+      </div>
+    ) : list.error ? (
+      <div role="alert"><p>Couldn&apos;t load purchased photos.</p><button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div>
+    ) : photos.length === 0 ? (
+      <p className="font-sans text-base text-slate">No purchased photos yet.</p>
+    ) : (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
+        {list.items.map((item, i) => <PhotoTile key={item.photo.id} photo={item.photo} index={i} purchaseCount={item.purchaseCount} selecting={false} selected={false} onOpen={() => setSelection({ photoId: item.photo.id })} onToggle={() => { }} />)}
+      </div>
+    )}
+    {list.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more purchased photos. Try again.</p>}
+    {list.total > 0 && <LoadMoreButton shown={photos.length} total={list.hasNextPage ? list.total : photos.length} increment={PAGE_SIZE.PHOTO_INCREMENT} onLoadMore={list.fetchNextPage} isLoading={list.isFetchingNextPage} terminalLabel={!list.hasNextPage && photos.length < list.total ? "All available purchased photos loaded" : undefined} />}
+    <PhotographerPurchasePreview selection={selection} photos={photos} onClose={() => setSelection(null)} onSelectPhoto={(photoId) => setSelection({ photoId })} />
+  </>;
+}
+
 function TabPill({
   active,
   onClick,
@@ -1125,9 +1205,9 @@ function TabPill({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
+        "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 min-h-[44px] transition-colors",
         active
-          ? "bg-ink text-bone border border-ink"
+          ? "bg-ink text-surface border border-ink"
           : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",
       )}
     >
@@ -1262,6 +1342,7 @@ function PhotoTile({
   selected,
   onOpen,
   onToggle,
+  purchaseCount,
 }: {
   photo: PhotographerLibraryPhoto;
   index: number;
@@ -1269,6 +1350,7 @@ function PhotoTile({
   selected: boolean;
   onOpen: () => void;
   onToggle: () => void;
+  purchaseCount?: number;
 }) {
   const colorIdx = photo.tone % TONE_COLORS.length;
   const wide = photo.span === "wide";
@@ -1289,7 +1371,7 @@ function PhotoTile({
         aria-label={
           (selecting
             ? `${selected ? "Deselect" : "Select"} photo ${index + 1}`
-            : `Open photo ${index + 1}`) +
+            : `Open photo ${index + 1}${purchaseCount !== undefined ? `, ${purchaseCount} purchase${purchaseCount === 1 ? "" : "s"}` : ""}`) +
           (photo.status === "processing" ? ", Processing" : "")
         }
         className="block w-full h-full text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
@@ -1347,9 +1429,9 @@ function PhotoTile({
               Processing
             </span>
           )}
-          {photo.salesCount > 0 && (
-            <span className="absolute bottom-2 right-2 font-mono uppercase tracking-[0.14em] text-[8px] text-bone tnum bg-ink/40 px-1.5 py-0.5 rounded-full backdrop-blur-sm">
-              {photo.salesCount} sold
+          {(purchaseCount !== undefined || photo.salesCount > 0) && (
+            <span className="absolute bottom-2 right-2 font-mono uppercase tracking-[0.14em] text-[12px] text-surface tnum bg-ink/70 px-2 py-1 rounded-full backdrop-blur-sm">
+              {purchaseCount !== undefined ? `${purchaseCount} purchase${purchaseCount === 1 ? "" : "s"}` : `${photo.salesCount} sold`}
             </span>
           )}
         </div>
