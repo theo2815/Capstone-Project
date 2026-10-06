@@ -76,6 +76,10 @@ jwt:
   refresh-token-ttl: P7D
 
 app:
+  photo-removal:
+    photographer-response-window: PT72H
+    cleanup-interval: ${PHOTO_REMOVAL_CLEANUP_INTERVAL:PT1M}
+    cleanup-backoff: ${PHOTO_REMOVAL_CLEANUP_BACKOFF:PT5M}
   security:
     origin-secret: ${ORIGIN_SECRET:}
   # Externally-reachable URLs the BE needs to embed in artifacts whose request

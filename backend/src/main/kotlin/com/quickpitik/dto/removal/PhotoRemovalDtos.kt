@@ -76,11 +76,26 @@ data class RemovalMatchResult(val items: List<RemovalPhotoDto>, val candidateLim
 
 data class CreateRemovalRequestCommand(
     val eventId: UUID,
-    @field:NotBlank val supportReference: String,
-    @field:NotBlank val requesterContact: String,
+    @field:NotBlank @field:Size(max = 1000) val supportReference: String,
+    @field:NotBlank @field:Size(max = 1000) val requesterContact: String,
     val requesterUserId: UUID? = null,
-    @field:NotBlank val reason: String,
+    @field:NotBlank @field:Size(max = 2000) val reason: String,
     val commandId: UUID,
+    @field:Size(max = 2000) val adminNote: String? = null,
+)
+
+data class CancelRemovalCommand(
+    val commandId: UUID,
+    @field:PositiveOrZero val expectedVersion: Long,
+    @field:NotBlank @field:Size(max = 2000) val reason: String,
+)
+
+class SearchImage(val bytes: ByteArray, val contentType: String, val filename: String)
+
+class RemovalEvidenceUploadForm(
+    @field:jakarta.validation.constraints.NotNull var selfie: org.springframework.web.multipart.MultipartFile? = null,
+    @field:jakarta.validation.constraints.NotNull var commandId: UUID? = null,
+    @field:jakarta.validation.constraints.NotNull @field:PositiveOrZero var expectedVersion: Long? = null,
 )
 data class VerifyRemovalSelection(val photoId: UUID, val source: RemovalMatchSource, val note: String? = null)
 data class VerifyRemovalCommand(

@@ -107,6 +107,8 @@ class SecurityConfig(
                 // can't carry the bearer token; in prod S3StorageService serves
                 // the same content from a different origin and this rule is a
                 // no-op (no handler registered).
+                // Case evidence is served only by the ADMIN case stream, even for a known key.
+                auth.requestMatchers(RegexRequestMatcher("^/storage/photo-removal(?:/.*|\\?.*)?$", null, true)).denyAll()
                 auth.requestMatchers(HttpMethod.GET, "/storage/**").permitAll()
                 // The four public event reads, listed by shape: a `/**` here also
                 // permitted the RUNNER-only `GET /events/{slug}/photo-alert`, which then
