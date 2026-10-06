@@ -93,6 +93,17 @@ function withQuery(card: React.ReactElement) {
 afterEach(() => { vi.restoreAllMocks(); useAuthStore.getState().logout(); });
 
 describe("PhotoPreviewCard metadata access", () => {
+  it("bounds long purchase details below lg without changing callers without details", async () => {
+    const base = { photo, mode: "owned" as const, eventName: "Cebu Run", index: 1, total: 1, onClose: vi.fn(), onDownload: vi.fn() };
+    const view = render(withQuery(<PhotoPreviewCard {...base} details={<p>Long purchase details</p>} />));
+    const rail = (await screen.findByText("Long purchase details")).closest("aside")!;
+    expect(rail).toHaveClass("max-h-[50dvh]", "lg:max-h-none", "overflow-hidden");
+    expect(screen.getByText("Long purchase details").parentElement).toHaveClass("flex-1", "min-h-0", "overflow-y-auto");
+    expect(screen.getByRole("button", { name: "Download photo" }).closest("aside")).toBe(rail);
+    view.rerender(withQuery(<PhotoPreviewCard {...base} />));
+    expect(screen.getByRole("dialog").querySelector("aside")).not.toHaveClass("max-h-[50dvh]");
+  });
+
   it("renders owner details and disables download while ownership resolves", async () => {
     const onDownload = vi.fn();
     render(withQuery(<PhotoPreviewCard photo={photo} mode="owned" eventName="Cebu Run" index={1} total={1}

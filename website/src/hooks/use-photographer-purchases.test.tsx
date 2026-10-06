@@ -26,7 +26,7 @@ it("opens a pinned purchase beyond page one", async () => {
 
 it("append failure keeps loaded receipts", async () => {
   login();
-  const get = vi.spyOn(api, "get").mockResolvedValueOnce({ ...envelope([{ orderId: "order-a", photoId: "photo-a" }], 0, 2), photo: { id: "photo-a" }, event: { id: "event-a" }, selectedPurchase: null }).mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMIT", message: "Wait" }], 429));
+  const get = vi.spyOn(api, "get").mockResolvedValueOnce({ ...envelope([{ orderId: "order-a", photoId: "photo-a" }], 0, 100), photo: { id: "photo-a" }, event: { id: "event-a" }, selectedPurchase: null }).mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMIT", message: "Wait" }], 429));
   const { result } = renderHook(() => usePhotographerPhotoPurchases("photo-a"), { wrapper });
   await waitFor(() => expect(result.current.items).toHaveLength(1));
   expect(result.current.items[0]).not.toHaveProperty("id");
@@ -38,13 +38,13 @@ it("append failure keeps loaded receipts", async () => {
 
 it("dedupes photo pages by photo ID", async () => {
   login();
-  const get = vi.spyOn(api, "get").mockResolvedValueOnce(envelope([{ photo: { id: "photo-a" }, purchaseCount: 1 }], 0, 2)).mockResolvedValueOnce(envelope([{ photo: { id: "photo-a" }, purchaseCount: 1 }], 1, 2));
+  const get = vi.spyOn(api, "get").mockResolvedValueOnce(envelope([{ photo: { id: "photo-a" }, purchaseCount: 1 }], 0, 100)).mockResolvedValueOnce(envelope([{ photo: { id: "photo-a" }, purchaseCount: 1 }], 25, 100));
   const { result } = renderHook(() => usePhotographerPurchasedPhotos("event-a", true), { wrapper });
   await waitFor(() => expect(result.current.items).toHaveLength(1));
   await act(async () => { await result.current.fetchNextPage(); });
   expect(result.current.items).toHaveLength(1);
   expect(get.mock.calls[0][0]).toContain("/events/event-a/purchased-photos");
-  expect(get.mock.calls[1][0]).toContain("offset=1");
+  expect(get.mock.calls[1][0]).toContain("offset=25");
 });
 
 it("manual controls cannot fetch disabled seller lists", async () => {
@@ -105,4 +105,41 @@ it("layout-effect controls cannot fetch after both seller lists are disabled", a
   await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   await act(async () => { rerender({ enabled: false }); await Promise.resolve(); });
   expect(get).toHaveBeenCalledTimes(2);
+});
+
+it("stops purchased-photo pagination on an empty page with a stale total", async () => {
+  login();
+  const get = vi.spyOn(api, "get").mockResolvedValue(envelope([], 0, 100));
+  const { result } = renderHook(() => usePhotographerPurchasedPhotos("event-a", true), { wrapper });
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(result.current.isLoading).toBe(false));
+  expect(result.current.hasNextPage).toBe(false);
+});
+
+it("uses the backend page limit for the next purchased-photo offset", async () => {
+  login();
+  const get = vi.spyOn(api, "get").mockResolvedValueOnce({ ...envelope([{ photo: { id: "photo-a" } }], 0, 100), limit: 60 }).mockResolvedValueOnce(envelope([], 60, 100));
+  const { result } = renderHook(() => usePhotographerPurchasedPhotos("event-a", true), { wrapper });
+  await waitFor(() => expect(result.current.items).toHaveLength(1));
+  await act(async () => { await result.current.fetchNextPage(); });
+  expect(get.mock.calls[1][0]).toContain("offset=60");
+});
+
+it("stops receipt pagination on an empty page with a stale total", async () => {
+  login();
+  const get = vi.spyOn(api, "get").mockResolvedValue({ ...envelope([], 0, 100), photo: { id: "photo-a" }, event: { id: "event-a" }, selectedPurchase: null });
+  const { result } = renderHook(() => usePhotographerPhotoPurchases("photo-a"), { wrapper });
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(result.current.isLoading).toBe(false));
+  expect(result.current.hasNextPage).toBe(false);
+});
+
+it("uses the backend page limit for the next receipt offset", async () => {
+  login();
+  const page = { photo: { id: "photo-a" }, event: { id: "event-a" }, selectedPurchase: null };
+  const get = vi.spyOn(api, "get").mockResolvedValueOnce({ ...envelope([{ orderId: "order-a", photoId: "photo-a" }], 0, 100), ...page }).mockResolvedValueOnce({ ...envelope([], 25, 100), ...page });
+  const { result } = renderHook(() => usePhotographerPhotoPurchases("photo-a"), { wrapper });
+  await waitFor(() => expect(result.current.items).toHaveLength(1));
+  await act(async () => { await result.current.fetchNextPage(); });
+  expect(get.mock.calls[1][0]).toContain("offset=25");
 });

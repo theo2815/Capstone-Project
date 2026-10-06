@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { PhotoPreviewCard, type PhotoPreviewItem } from "@/components/photos/photo-preview-card";
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import { usePhotographerPhotoPurchases } from "@/hooks/use-photographer-purchases";
 import { ApiError } from "@/lib/api";
 import { type PhotographerPurchase } from "@/lib/api-photographer-earnings";
 import { fetchPhotographerPhotoDownload } from "@/lib/api-photographer";
+import { captureAuthSession } from "@/lib/auth-session";
 import { formatSalesDate } from "@/lib/format";
 import type { PhotographerLibraryPhoto, PhotographerTransaction } from "@/lib/photographer-mock";
 import { savePhoto } from "@/lib/save-photo";
@@ -28,12 +29,30 @@ interface Props {
 }
 
 export function PhotographerPurchasePreview(props: Props) {
+  const { selection, onClose } = props;
   const session = usePrivateQuerySession("PHOTOGRAPHER");
-  if (!props.selection || !session.enabled) return null;
-  return <OpenPurchasePreview key={`${props.selection.photoId}:${props.selection.orderId ?? ""}:${props.selection.transactionId ?? ""}`} {...props} selection={props.selection} />;
+  const sessionKey = JSON.stringify(session.key);
+  const [selectionSession, setSelectionSession] = useState<string | null>(sessionKey);
+  const closeNotified = useRef<string | null>(null);
+  useEffect(() => {
+    if (!session.enabled) setSelectionSession(null);
+    else if (!selection) {
+      setSelectionSession(sessionKey);
+      closeNotified.current = null;
+    }
+    if (selection && (!session.enabled || selectionSession !== sessionKey) && closeNotified.current !== sessionKey) {
+      closeNotified.current = sessionKey;
+      onClose();
+    }
+  }, [selection, onClose, session.enabled, sessionKey, selectionSession]);
+  if (!selection || !session.enabled || selectionSession !== sessionKey) return null;
+  return <OpenPurchasePreview key={`${selection.photoId}:${selection.orderId ?? ""}:${selection.transactionId ?? ""}`} {...props} selection={selection} />;
 }
 
 function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelectPhoto }: Props & { selection: PurchaseSelection }) {
+  const selectionKey = `${selection.photoId}:${selection.orderId ?? ""}:${selection.transactionId ?? ""}`;
+  const activeSelection = useRef<string | null>(selectionKey);
+  useLayoutEffect(() => { activeSelection.current = selectionKey; return () => { activeSelection.current = null; }; }, [selectionKey]);
   const pinnedOrderId = selection.orderId ?? transaction?.orderId;
   const [orderId, setOrderId] = useState(pinnedOrderId);
   const [downloading, setDownloading] = useState(false);
@@ -58,16 +77,19 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
 
   async function download() {
     if (!purchase.photo || purchase.photo.deletionStartedAt || downloading) return;
+    const sameSession = captureAuthSession();
+    const isCurrent = () => sameSession() && activeSelection.current === selectionKey;
     setDownloading(true);
     setDownloadError(false);
     try {
       const result = await fetchPhotographerPhotoDownload(selection.photoId);
+      if (!isCurrent()) return;
       if (!result?.url) throw new Error("Download unavailable");
       await savePhoto(result.url);
     } catch {
-      setDownloadError(true);
+      if (isCurrent()) setDownloadError(true);
     } finally {
-      setDownloading(false);
+      if (isCurrent()) setDownloading(false);
     }
   }
 
@@ -75,21 +97,32 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     ? purchase.error.status === 404 ? "Purchase unavailable" : purchase.error.status === 429 ? "Too many requests. Try again shortly." : "Couldn't load purchases."
     : "Could not load purchases.";
 
+  const refundRecordedAt = selected?.transactions.filter((row) => row.isRefund).at(-1)?.recordedAt;
+  const factClass = "min-w-0 break-words text-right tnum";
+
   const details = <div className="space-y-3 text-sm text-ink">
-    <p className="font-display font-bold">Paid for this photo</p>
-    {(selected || fallback) ? <>
-      {(selected?.orderId ?? orderId) && <p className="font-mono tnum">{formatOrderRef(selected?.orderId ?? orderId ?? "")}</p>}
-      <p>{selected?.buyer || fallback?.buyer || "Buyer unavailable"}</p>
-      <p className="text-slate">{selected ? formatSalesDate(selected.purchasedAt ?? selected.orderCreatedAt) : fallback ? formatSalesDate(fallback.paidAt) : ""}</p>
-      {selected && <>
-        <p className="tnum">Paid {formatPrice(selected.paidPhp)} · Kept {selected.netKeptPhp == null ? "—" : formatPrice(selected.netKeptPhp)}</p>
-        {selected.refundStatus !== "none" && <p>Refund: {selected.refundStatus}</p>}
-        {selected.refundPending && <p>Refund pending</p>}
-        {selected.transactions.map((row) => <p key={row.id} aria-current={row.id === selection.transactionId ? "true" : undefined} className={row.id === selection.transactionId ? "rounded-lg border border-ink bg-fresh-tint/40 p-2" : "p-2"}>
-          {row.isRefund ? "Refund" : "Sale"} · {formatPrice(row.amountKept)} · {formatSalesDate(row.recordedAt)}
-        </p>)}
-      </>}
-    </> : <p>Purchase unavailable.</p>}
+    <p className="font-display font-bold">Purchase details</p>
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
+      <dt className="text-slate">Buyer</dt><dd className={factClass}>{selected?.buyer || fallback?.buyer || "Unavailable"}</dd>
+      <dt className="text-slate">Reference</dt><dd className={factClass}>{selected?.orderId || orderId ? formatOrderRef(selected?.orderId ?? orderId ?? "") : "Unavailable"}</dd>
+      <dt className="text-slate">Purchased</dt><dd className={factClass}>{selected?.purchasedAt ? formatSalesDate(selected.purchasedAt) : fallback?.paidAt ? formatSalesDate(fallback.paidAt) : "Unavailable"}</dd>
+      {selected && !selected.purchasedAt && <><dt className="text-slate">Order created</dt><dd className={factClass}>{formatSalesDate(selected.orderCreatedAt)}</dd></>}
+      <dt className="text-slate">Event</dt><dd className={factClass}>{purchase.event?.name ?? transaction?.eventName ?? "Event archived"}</dd>
+      <dt className="text-slate">Photo</dt><dd className={factClass}>{photo?.bib ? `Bib ${photo.bib}` : selection.photoId}</dd>
+      <dt className="text-slate">Photo price</dt><dd className={factClass}>{selected ? formatPrice(selected.pricePhp) : "Unavailable"}</dd>
+      <dt className="text-slate">Discount</dt><dd className={factClass}>{selected ? formatPrice(selected.discountPhp) : "Unavailable"}</dd>
+      <dt className="text-slate">Paid for this photo</dt><dd className={factClass}>{selected ? selected.kind === "free" ? `Free (${formatPrice(selected.paidPhp)})` : formatPrice(selected.paidPhp) : "Unavailable"}</dd>
+      <dt className="text-slate">Refunded</dt><dd className={factClass}>{selected?.refundedPhp == null ? "Unavailable" : formatPrice(selected.refundedPhp)}</dd>
+      <dt className="text-slate">Refund status</dt><dd className={factClass}>{selected ? selected.refundStatus.charAt(0).toUpperCase() + selected.refundStatus.slice(1) : "Unavailable"}</dd>
+      {selected?.refundedAt && <><dt className="text-slate">Refund completed</dt><dd className={factClass}>{formatSalesDate(selected.refundedAt)}</dd></>}
+      {!selected?.refundedAt && refundRecordedAt && <><dt className="text-slate">Refund recorded</dt><dd className={factClass}>{formatSalesDate(refundRecordedAt)}</dd></>}
+      <dt className="text-slate">Your net earnings</dt><dd className={factClass}>{selected?.netKeptPhp == null ? "Unavailable" : formatPrice(selected.netKeptPhp)}</dd>
+    </dl>
+    {selected?.refundPending && <p>Refund pending</p>}
+    {selected?.transactions.map((row) => <p key={row.id} aria-current={row.id === selection.transactionId ? "true" : undefined} className={row.id === selection.transactionId ? "rounded-lg border border-ink bg-fresh-tint/40 p-2 tnum" : "p-2 tnum"}>
+      {row.isRefund ? "Earnings adjustment" : "Sale earnings"} · {formatPrice(row.amountKept)} · Recorded {formatSalesDate(row.recordedAt)}
+    </p>)}
+    {!selected && !fallback && <p>Purchase unavailable.</p>}
     {fallback && !selected && !purchase.isLoading && <p>Purchase unavailable.</p>}
     {purchase.isLoading && <p>Loading purchases…</p>}
     {purchase.error && <p role="alert">{errorText}</p>}
@@ -97,12 +130,11 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     {purchase.items.length > 1 && <div className="space-y-2 border-t border-line pt-3">
       <p className="font-display font-bold">Purchase history</p>
       {purchase.items.map((item: PhotographerPurchase) => <button key={`${item.orderId}:${item.photoId}`} type="button" aria-pressed={item.orderId === orderId} onClick={() => setOrderId(item.orderId)} className="block w-full rounded-lg border border-line p-2 text-left hover:bg-bone-deep aria-pressed:border-ink aria-pressed:bg-fresh-tint/30">
-        {item.buyer || "Buyer unavailable"} · {formatSalesDate(item.purchasedAt ?? item.orderCreatedAt)}
+        {item.buyer || "Buyer unavailable"} · {item.purchasedAt ? `Purchased ${formatSalesDate(item.purchasedAt)}` : `Order created ${formatSalesDate(item.orderCreatedAt)}`}
       </button>)}
     </div>}
     {purchase.appendError && <p role="alert">Could not load more purchases.</p>}
     {purchase.hasNextPage && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.fetchNextPage()} disabled={purchase.isFetchingNextPage}>Load more purchases</button>}
-    {!preview.imageUrl && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.refetch()}>Refresh preview</button>}
     {downloadError && <p role="alert">Download unavailable. Try again.</p>}
   </div>;
 
@@ -120,5 +152,6 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     onDownload={() => void download()}
     downloadDisabled={!purchase.photo || !!purchase.photo.deletionStartedAt || downloading}
     details={details}
+    onRefreshImage={() => void purchase.refetch()}
   />;
 }

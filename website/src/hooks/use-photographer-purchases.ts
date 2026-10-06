@@ -34,7 +34,7 @@ export function usePhotographerPurchasedPhotos(eventId: string | null, enabled: 
       return fetchPhotographerPurchasedPhotos(eventId!, { offset: pageParam, limit: PAGE_SIZE.PHOTO_INCREMENT, signal });
     },
     initialPageParam: 0,
-    getNextPageParam: (last) => last.offset + last.items.length < last.total ? last.offset + last.items.length : undefined,
+    getNextPageParam: (last) => last.items.length && last.offset + last.limit < last.total ? last.offset + last.limit : undefined,
     enabled: active,
     retry,
   });
@@ -70,7 +70,7 @@ export function usePhotographerPhotoPurchases(photoId: string | null, orderId?: 
       return fetchPhotographerPhotoPurchases(photoId!, { orderId, offset: pageParam, limit: PAGE_SIZE.TRANSACTION_INCREMENT, signal });
     },
     initialPageParam: 0,
-    getNextPageParam: (last) => last.offset + last.items.length < last.total ? last.offset + last.items.length : undefined,
+    getNextPageParam: (last) => last.items.length && last.offset + last.limit < last.total ? last.offset + last.limit : undefined,
     enabled: active,
     retry,
   });
