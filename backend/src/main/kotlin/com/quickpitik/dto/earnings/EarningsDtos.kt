@@ -36,8 +36,10 @@ data class PerEventEarningDto(
     val eventId: String,
     val eventName: String,
     val eventDate: LocalDate?,
+    val deletedAt: OffsetDateTime?,
     val photoCount: Int,
     val salesCount: Int,
+    val purchaseCount: Long,
     val revenueKept: BigDecimal,
 )
 
@@ -182,21 +184,27 @@ data class PhotographerTransactionDto(
     val id: String,
     val paidAt: OffsetDateTime,
     val eventId: String,
-    // eventName + eventSlug snapshot the originating event so the billing
+    // eventName + eventSlug resolve the current retained event so the billing
     // ledger can render the title (and deep-link) without the FE keeping a
     // parallel events lookup. Null means the event was hard-deleted — FE
     // falls back to "Event archived".
     val eventName: String?,
     val eventSlug: String?,
     val photoId: String,
+    val orderId: String,
     val buyer: String,
     val amountKept: BigDecimal,
+    val isRefund: Boolean,
+    val refundOf: String?,
+    val recordedAt: OffsetDateTime,
+    val thumbnailUrl: String?,
 )
 
 fun Transaction.toDto(
     buyerDisplay: String,
     eventName: String?,
     eventSlug: String?,
+    thumbnailUrl: String?,
 ): PhotographerTransactionDto =
     PhotographerTransactionDto(
         id = id.toString(),
@@ -205,8 +213,13 @@ fun Transaction.toDto(
         eventName = eventName,
         eventSlug = eventSlug,
         photoId = photoId.toString(),
+        orderId = orderId.toString(),
         buyer = buyerDisplay,
         amountKept = amountKeptPhp,
+        isRefund = isRefund,
+        refundOf = refundOf?.toString(),
+        recordedAt = createdAt,
+        thumbnailUrl = thumbnailUrl,
     )
 
 data class TransactionsLedgerResponse(
