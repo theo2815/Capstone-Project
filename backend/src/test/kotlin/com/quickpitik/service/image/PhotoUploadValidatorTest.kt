@@ -7,6 +7,7 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
+import java.util.Base64
 import java.util.HexFormat
 import java.util.zip.CRC32
 import javax.imageio.ImageIO
@@ -33,6 +34,19 @@ class PhotoUploadValidatorTest {
         assertTrue(validator.canDecode("image/jpeg"))
         assertTrue(validator.canDecode("image/png"))
         assertFalse(validator.canDecode("image/webp"))
+    }
+
+    @Test
+    fun `valid WebP remains unsupported for event photo validation`() {
+        val bytes = Base64.getDecoder().decode(
+            "UklGRjIAAABXRUJQVlA4ICYAAACQAQCdASoQABAAAUAmJYgCdLoAA5gA/vPfZrQtCBz+N5vNasQAAA==",
+        )
+
+        val error = assertFailsWith<ApiException> {
+            validator.validate(ByteArrayInputStream(bytes), "image/webp", bytes.size.toLong())
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, error.code)
     }
 
     @Test
