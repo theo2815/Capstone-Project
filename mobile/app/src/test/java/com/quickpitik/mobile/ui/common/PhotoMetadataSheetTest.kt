@@ -4,6 +4,7 @@ import android.app.Application
 import android.view.WindowManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -157,6 +158,20 @@ class PhotoMetadataSheetTest {
         compose.onNodeWithText("2026-09-28 07:45:12 +08:00").assertExists()
         compose.onNodeWithText("1.5 MiB").assertExists()
         compose.onNodeWithContentDescription("Original size, 1.5 MiB, 1,572,864 bytes").assertExists()
+    }
+
+    @Test fun `original size exposes exact bytes on its visible node in every server state`() {
+        val state = androidx.compose.runtime.mutableStateOf<PhotoMetadataState>(PhotoMetadataState.Pending(metadata("pending")))
+        compose.setContent { PhotoMetadataSheet(state.value, onClose = {}, onRefresh = {}, secure = false) }
+        compose.onNodeWithText("1.5 MiB").assertContentDescriptionEquals("Original size, 1.5 MiB, 1,572,864 bytes")
+        compose.runOnIdle { state.value = PhotoMetadataState.Failed("Could not prepare metadata. Try again.", metadata("failed")) }
+        compose.onNodeWithText("1.5 MiB").assertContentDescriptionEquals("Original size, 1.5 MiB, 1,572,864 bytes")
+        compose.runOnIdle { state.value = PhotoMetadataState.Data(metadata("ready")) }
+        compose.onNodeWithText("1.5 MiB").assertContentDescriptionEquals("Original size, 1.5 MiB, 1,572,864 bytes")
+        compose.runOnIdle { state.value = PhotoMetadataState.Empty(metadata("empty")) }
+        compose.onNodeWithText("1.5 MiB").assertContentDescriptionEquals("Original size, 1.5 MiB, 1,572,864 bytes")
+        compose.runOnIdle { state.value = PhotoMetadataState.Unavailable(metadata("unavailable")) }
+        compose.onNodeWithText("1.5 MiB").assertContentDescriptionEquals("Original size, 1.5 MiB, 1,572,864 bytes")
     }
 
     @Test fun `pending and server failed metadata still show file facts`() {
