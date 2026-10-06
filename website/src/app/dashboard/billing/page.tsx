@@ -726,13 +726,14 @@ function TransactionsSlab() {
 }
 
 function TransactionRow({ tx, onOpen }: { tx: PhotographerTransaction; onOpen: (button: HTMLButtonElement) => void }) {
+  const [failedThumbnailUrl, setFailedThumbnailUrl] = useState<string | null>(null);
   // BE snapshots eventName onto the row; only genuinely hard-deleted events
   // fall through to the "Event archived" copy.
   const eventLabel = tx.eventName ?? "Event archived";
 
   const content = <span className="py-4 md:py-5 flex items-center justify-between gap-4">
       <span className="size-14 shrink-0 overflow-hidden rounded-md bg-bone-deep flex items-center justify-center text-slate-soft">
-        {tx.thumbnailUrl ? <Image src={tx.thumbnailUrl} alt="" width={56} height={56} unoptimized className="size-full object-cover" /> : <span role="img" aria-label="Preview unavailable" className="font-mono text-lg">▧</span>}
+        {tx.thumbnailUrl && failedThumbnailUrl !== tx.thumbnailUrl ? <Image src={tx.thumbnailUrl} alt="" width={56} height={56} unoptimized onError={() => setFailedThumbnailUrl(tx.thumbnailUrl ?? null)} className="size-full object-cover" /> : <span role="img" aria-label="Preview unavailable" className="font-mono text-lg">▧</span>}
       </span>
       <span className="flex-1 min-w-0">
         <Kicker as="span" className="block" tnum>

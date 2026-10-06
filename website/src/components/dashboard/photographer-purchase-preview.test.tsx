@@ -65,6 +65,17 @@ it("shows free purchase facts without inventing paid or refunded money", async (
   client.clear();
 });
 
+it("does not link an archived event from a transaction ID alone", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockResolvedValue({ ...response([receipt(orderB)], receipt(orderB)), event: null });
+  render(view({ photoId: photo.id, orderId: orderB }, client, clicked(orderB)));
+  await screen.findByText("Aira S.");
+  expect(fact("Event")).toHaveTextContent("Event archived");
+  expect(fact("Event")?.querySelector("a")).toBeNull();
+  client.clear();
+});
+
 it("separates a completed buyer refund from seller earnings adjustments", async () => {
   login();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

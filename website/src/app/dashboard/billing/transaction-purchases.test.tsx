@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
@@ -108,6 +108,23 @@ it("keeps a legacy row readable without opening fabricated purchase data", async
   expect(await screen.findByText("Cebu Run")).toBeVisible();
   expect(screen.getByRole("img", { name: "Preview unavailable" })).toBeVisible();
   expect(screen.queryByRole("button", { name: /sale.*aira s/i })).not.toBeInTheDocument();
+});
+
+it("falls back after a thumbnail error and shows a fresh URL on refetch", async () => {
+  const fresh = "https://cdn.example.test/fresh.jpg";
+  let reads = 0;
+  setup(async () => page([
+    { ...sale, thumbnailUrl: ++reads === 1 ? sale.thumbnailUrl : fresh },
+    refund,
+  ]));
+  const saleRow = await screen.findByRole("button", { name: /sale.*aira s\..*aaaa/i });
+  const refundRow = screen.getByRole("button", { name: /refund.*aira s\..*aaaa/i });
+  expect(saleRow.querySelector("img")).toHaveAttribute("src", sale.thumbnailUrl);
+  fireEvent.error(saleRow.querySelector("img")!);
+  expect(within(saleRow).getByRole("img", { name: "Preview unavailable" })).toBeVisible();
+  expect(refundRow.querySelector("img")).toHaveAttribute("src", refund.thumbnailUrl);
+  await act(async () => { await client.invalidateQueries({ queryKey: ["photographer", "transactions"] }); });
+  await waitFor(() => expect(saleRow.querySelector("img")).toHaveAttribute("src", fresh));
 });
 
 it("stops pagination when a stale total returns an empty page", async () => {
