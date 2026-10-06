@@ -143,7 +143,7 @@ class PhotoRemovalIntakeUnitTest {
     private val service = PhotoRemovalService(requests, commands, events, users, items,
         mock(PhotoRepository::class.java), mock(PhotoRemovalReviewRepository::class.java), mock(PhotoRemovalNotifier::class.java),
         mock(com.quickpitik.service.photos.PhotoAvailabilityService::class.java), evidence, queries,
-        mock(PhotoRemovalHistoryRecorder::class.java), PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.systemUTC())
+        mock(PhotoRemovalHistoryRecorder::class.java), PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.systemUTC(), mock(org.springframework.context.ApplicationEventPublisher::class.java))
     init {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
     }

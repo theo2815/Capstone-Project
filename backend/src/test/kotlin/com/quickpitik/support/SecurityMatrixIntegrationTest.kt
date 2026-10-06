@@ -302,6 +302,29 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         } finally { Files.deleteIfExists(path) }
     }
 
+    @Test
+    fun `photo removal owner routes enforce photographer role and private cache`() {
+        val root = "/api/v1/me/photographer/photo-removal-requests"
+        val runner = register(Role.RUNNER)
+        val admin = adminToken()
+        val photographer = register(Role.PHOTOGRAPHER)
+        assertEquals(200, get(root, photographer).statusCode())
+        val id = UUID.randomUUID()
+        val body = """{"commandId":"${UUID.randomUUID()}","expectedVersion":0,"itemIds":["${UUID.randomUUID()}"],"response":"AGREE"}"""
+        for (path in listOf(root, "$root/$id")) {
+            assertEquals(401, get(path).statusCode())
+            assertEquals(403, get(path, runner).statusCode())
+            assertEquals(403, get(path, admin).statusCode())
+        }
+        assertEquals(401, post("$root/$id/responses", body).statusCode())
+        assertEquals(403, post("$root/$id/responses", body, runner).statusCode())
+        assertEquals(403, post("$root/$id/responses", body, admin).statusCode())
+        val missing = get("$root/$id", photographer)
+        assertEquals(404, missing.statusCode())
+        assertTrue("no-store" in missing.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals(404, post("$root/$id/responses", body, photographer).statusCode())
+    }
+
     private fun adminToken(): String {
         val response = authService.login(LoginRequest(email = adminEmail, password = adminPassword))
         assertFalse(response.mfaRequired, "the bootstrap admin has no MFA enrolled")

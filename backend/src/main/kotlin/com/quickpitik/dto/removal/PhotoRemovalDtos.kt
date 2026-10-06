@@ -58,10 +58,14 @@ data class PhotographerRemovalItemDto(
     val response: PhotographerRemovalResponse?, val responseReason: String?, val respondedAt: Instant?,
     val decision: RemovalDecision?, val decisionReason: String?, val decidedAt: Instant?,
     val retentionReviewAt: Instant?, val cleanupState: String?, val photo: PhotoDto? = null,
+    // Current row/trash observations do not prove erasure-job completion.
+    val photoState: String? = null,
 )
 data class PhotographerRemovalReviewDto(
     val id: UUID, val notifiedAt: Instant?, val deadline: Instant?, val overdue: Boolean, val overdueAt: Instant?,
+    val responses: RemovalResponseCounts = RemovalResponseCounts(),
 )
+data class RemovalResponseCounts(val unanswered: Int = 0, val agree: Int = 0, val objected: Int = 0, val alreadyDeleted: Int = 0)
 data class PhotographerRemovalRequestDto(
     val id: UUID, val event: RemovalEventDto, val status: RemovalRequestStatus, val version: Long,
     val createdAt: Instant, val updatedAt: Instant, val resolvedAt: Instant? = null, val sanitizedReason: String,

@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import java.time.Instant
 import java.util.UUID
 
-enum class RemovalCommandOperation { CREATE, REPLACE_EVIDENCE, CANCEL, MATCH_CANDIDATES, VERIFY }
+enum class RemovalCommandOperation { CREATE, REPLACE_EVIDENCE, CANCEL, MATCH_CANDIDATES, VERIFY, RESPOND }
 enum class RemovalCommandState { PENDING, UNKNOWN, SUCCEEDED, FAILED }
 
 @Entity

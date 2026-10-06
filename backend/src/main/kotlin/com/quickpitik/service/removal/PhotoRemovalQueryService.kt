@@ -42,6 +42,69 @@ class PhotoRemovalQueryService(
 ) {
 
     @Transactional(propagation = Propagation.NEVER)
+    fun photographerDetail(photographerId: UUID, requestId: UUID): PhotographerRemovalRequestDto {
+        val snapshot = tx.execute { photographerSnapshot(photographerId, requestId) }!!
+        return presentOwner(snapshot)
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
+    fun photographerList(photographerId: UUID, offset: Int?, limit: Int?, eventId: UUID? = null,
+        status: RemovalRequestStatus? = null, needsAction: Boolean? = null): RemovalPage<PhotographerRemovalRequestDto> {
+        val params = removalPagination(offset, limit)
+        val page = tx.execute {
+            val rows = requests.findForPhotographer(photographerId, eventId, status, needsAction, OffsetLimitPageable(params))
+            RemovalPage(rows.content.map { photographerSnapshot(photographerId, it.id).dto.copy(items = emptyList()) },
+                rows.totalElements, params.offset, params.limit)
+        }!!
+        return page
+    }
+
+    internal data class OwnerSnapshot(val dto: PhotographerRemovalRequestDto, val previewKeys: Map<UUID, String>)
+
+    // Safe scalars and keys are captured while lazy photo fields are available. Signing happens after the transaction.
+    internal fun photographerSnapshot(photographerId: UUID, requestId: UUID): OwnerSnapshot {
+        // A later item snapshot may safely carry an older version; the reverse permits stale edits.
+        val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
+        val owned = items.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId)
+        if (owned.isEmpty()) removalNotFound()
+        val current = photos.findAllById(owned.mapNotNull { it.photoId }).associateBy { it.id }
+        val keys = mutableMapOf<UUID, String>()
+        val selected = owned.map { item ->
+            val photo = current[item.photoId]
+            if (photo != null && photo.purgedAt == null && photo.deletionStartedAt == null && photo.removalState != RemovalState.REMOVED &&
+                item.state !in setOf(RemovalItemState.REMOVAL_AUTHORIZED, RemovalItemState.REMOVED)) {
+                (photo.thumbnailS3Key ?: photo.watermarkS3Key)?.let { keys[item.id] = it }
+            }
+            PhotographerRemovalItemDto(item.id, item.photoIdSnapshot, item.state, item.ownerResponse, item.ownerResponseReason,
+                item.ownerRespondedAt, item.adminDecision, null, item.adminDecidedAt, item.retentionReviewAt,
+                null, photo?.toDto(thumbnailUrlResolver = { null }), observedRemovalPhotoState(photo))
+        }
+        val ownReviews = reviews.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId).map {
+            val group = owned.filter { item -> item.reviewId == it.id }
+            PhotographerRemovalReviewDto(it.id, it.notifiedAt, it.deadline, it.overdue, it.overdueAt,
+                RemovalResponseCounts(group.count { item -> item.awaitingDecision() && item.ownerResponse == null },
+                    group.count { item -> item.ownerResponse == PhotographerRemovalResponse.AGREE },
+                    group.count { item -> item.ownerResponse == PhotographerRemovalResponse.OBJECT },
+                    group.count { item -> item.ownerResponse == PhotographerRemovalResponse.ALREADY_DELETED }))
+        }
+        return OwnerSnapshot(PhotographerRemovalRequestDto(request.id, RemovalEventDto(request.eventIdSnapshot, request.eventNameSnapshot),
+            request.status, request.version, request.createdAt, request.updatedAt, request.resolvedAt, request.publicToOwnerReason,
+            selected, ownReviews), keys)
+    }
+
+    private fun presentOwner(snapshot: OwnerSnapshot): PhotographerRemovalRequestDto {
+        try {
+            return snapshot.dto.copy(items = snapshot.dto.items.map { item ->
+                val key = snapshot.previewKeys[item.id]
+                val preview = if (key != null && storage.exists(key)) storage.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail) else null
+                item.copy(photo = item.photo?.copy(imageUrl = preview))
+            })
+        } catch (error: Exception) {
+            throw ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, "Photo review storage is unavailable")
+        }
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
     fun photos(adminId: UUID, requestId: UUID, bib: String?, offset: Int?, limit: Int?): RemovalPage<RemovalPhotoDto> {
         val params = removalPagination(offset, limit)
         val rows = tx.execute {
@@ -152,12 +215,18 @@ class PhotoRemovalQueryService(
 
     fun list(adminId: UUID, eventId: UUID?, status: RemovalRequestStatus?, needsAction: Boolean?, offset: Int?, limit: Int?): RemovalPage<PhotoRemovalRequestDto> {
         val params = removalPagination(offset, limit)
-        val filter = Specification<PhotoRemovalRequest> { root, _, cb ->
+        val filter = Specification<PhotoRemovalRequest> { root, query, cb ->
             val predicates = mutableListOf<jakarta.persistence.criteria.Predicate>()
             eventId?.let { predicates += cb.equal(root.get<UUID>("eventIdSnapshot"), it) }
             status?.let { predicates += cb.equal(root.get<RemovalRequestStatus>("status"), it) }
             needsAction?.let {
-                val active = root.get<RemovalRequestStatus>("status").`in`(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN, RemovalRequestStatus.RESOLVING)
+                val retained = query!!.subquery(UUID::class.java)
+                val item = retained.from(PhotoRemovalItem::class.java)
+                retained.select(item.get("id")).where(cb.equal(item.get<UUID>("requestId"), root.get<UUID>("id")),
+                    cb.equal(item.get<RemovalItemState>("state"), RemovalItemState.RETAINED_RESTRICTED),
+                    cb.lessThanOrEqualTo(item.get("retentionReviewAt"), clock.instant()))
+                val active = cb.or(root.get<RemovalRequestStatus>("status").`in`(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN, RemovalRequestStatus.RESOLVING),
+                    cb.and(cb.equal(root.get<RemovalRequestStatus>("status"), RemovalRequestStatus.RESOLVED), cb.exists(retained)))
                 predicates += if (it) active else cb.not(active)
             }
             cb.and(*predicates.toTypedArray())
@@ -178,6 +247,13 @@ class PhotoRemovalQueryService(
 }
 
 internal fun removalPagination(offset: Int?, limit: Int?) = PaginationParams((offset ?: 0).coerceAtLeast(0), (limit ?: 50).coerceIn(1, 100))
+internal fun observedRemovalPhotoState(photo: Photo?) = when {
+    photo == null -> "ROW_ABSENT_UNCONFIRMED"
+    photo.purgedAt != null -> "PURGED_UNCONFIRMED"
+    photo.deletionStartedAt != null -> "DELETION_PENDING"
+    photo.deletedAt != null -> "TRASHED"
+    else -> "PRESENT"
+}
 internal fun removalNotFound(): Nothing = throw ApiException(HttpStatus.NOT_FOUND, ErrorCodes.NOT_FOUND, "Photo removal request not found")
 internal fun removalConflict(): Nothing = throw ApiException(HttpStatus.CONFLICT, ErrorCodes.CONFLICT, "Photo removal command changed or is still in progress")
 internal fun removalInvalid(message: String): Nothing = throw ApiException(HttpStatus.BAD_REQUEST, ErrorCodes.VALIDATION_ERROR, message)

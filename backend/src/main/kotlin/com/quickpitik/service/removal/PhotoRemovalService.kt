@@ -6,6 +6,8 @@ import com.quickpitik.entity.*
 import com.quickpitik.repository.*
 import com.quickpitik.service.photos.PhotoAvailabilityService
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.context.ApplicationEventPublisher
+import com.quickpitik.websocket.AdminInboxEvent
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.transaction.annotation.Propagation
@@ -33,7 +35,60 @@ class PhotoRemovalService(
     private val tx: TransactionTemplate,
     private val mapper: ObjectMapper,
     private val clock: Clock,
+    private val publisher: ApplicationEventPublisher,
 ) {
+    @Transactional(propagation = Propagation.NEVER)
+    fun respond(photographerId: UUID, requestId: UUID, command: RespondToRemovalCommand): PhotographerRemovalRequestDto {
+        val hash = commandHash(mapper, command)
+        return tx.execute {
+            val request = requests.findForUpdate(requestId) ?: removalNotFound()
+            val owned = items.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId).associateBy { it.id }
+            if (owned.isEmpty()) removalNotFound()
+            fun PhotoRemovalCommand.replayOwner(): PhotographerRemovalRequestDto {
+                ensureIdentity(photographerId, requestId, RemovalCommandOperation.RESPOND, hash)
+                if (state != RemovalCommandState.SUCCEEDED || result == null) removalConflict()
+                val replay = mapper.treeToValue(result, PhotographerRemovalRequestDto::class.java)
+                return replay.copy(items = replay.items.map { it.copy(photo = it.photo?.let { photo -> photo.copy(price = photo.price.setScale(2)) }) })
+            }
+            commands.findByCommandId(command.commandId)?.let { return@execute it.replayOwner() }
+            transitions.ensureVersion(request, command.expectedVersion)
+            if (request.status != RemovalRequestStatus.OPEN || commands.findByRequestIdAndStateIn(requestId,
+                    listOf(RemovalCommandState.PENDING, RemovalCommandState.UNKNOWN)).isNotEmpty()) removalConflict()
+            if (command.itemIds.isEmpty() || command.itemIds.size > 100 || command.itemIds.toSet().size != command.itemIds.size)
+                removalInvalid("Select one to 100 distinct items")
+            val selected = command.itemIds.map { owned[it] ?: removalNotFound() }
+            if (selected.any { !it.awaitingDecision() }) removalConflict()
+            if (command.response == PhotographerRemovalResponse.OBJECT && command.reason.isNullOrBlank()) removalInvalid("An objection requires a reason")
+            command.reason?.let { validateText(it, 2000) }
+            val now = clock.instant()
+            if (commands.insertClaim(command.commandId, requestId, RemovalCommandOperation.RESPOND.name, photographerId, hash, null, now) == 0)
+                return@execute commands.findByCommandId(command.commandId)!!.replayOwner()
+            val observed = if (command.response == PhotographerRemovalResponse.ALREADY_DELETED)
+                photos.findAllByIdForUpdate(selected.mapNotNull { it.photoId }.sorted()).associateBy { it.id } else emptyMap()
+            selected.forEach { item ->
+                val previous = item.ownerResponse
+                item.ownerResponse = command.response
+                item.ownerResponseReason = command.reason
+                item.ownerRespondedAt = now
+                val photo = observed[item.photoId]
+                val metadata = if (command.response == PhotographerRemovalResponse.ALREADY_DELETED)
+                    mapOf("observedPhotoState" to observedRemovalPhotoState(photo)) else emptyMap()
+                history.record(RemovalHistoryEvent(requestId, item.id, item.reviewId, item.photoIdSnapshot,
+                    RemovalActorType.PHOTOGRAPHER, photographerId, RemovalHistoryActions.OWNER_RESPONDED,
+                    previous?.name, command.response.name, command.reason, now, command.commandId, metadata))
+            }
+            items.flush()
+            requests.advanceVersion(requestId, now)
+            val result = queries.photographerSnapshot(photographerId, requestId).dto
+            val receipt = commands.findByCommandId(command.commandId)!!
+            receipt.result = mapper.valueToTree(result)
+            receipt.state = RemovalCommandState.SUCCEEDED
+            commands.flush()
+            publisher.publishEvent(removalChangedEvent(requestId, photographerId, now))
+            result
+        }!!
+    }
+
     @Transactional(propagation = Propagation.NEVER)
     fun verify(adminId: UUID, requestId: UUID, command: VerifyRemovalCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
@@ -200,6 +255,8 @@ class PhotoRemovalService(
 internal fun validateText(value: String, max: Int) {
     if (value.isBlank() || value.length > max) removalInvalid("Photo removal field is empty or too long")
 }
+internal fun removalChangedEvent(requestId: UUID, actorId: UUID?, now: java.time.Instant) = AdminInboxEvent(mapOf(
+    "type" to "photo_removal_changed", "entityId" to requestId.toString(), "actorId" to actorId?.toString(), "occurredAt" to now.toString()))
 internal fun commandHash(mapper: ObjectMapper, input: Any): String = hashBytes(mapper.writeValueAsBytes(input))
 internal fun hashBytes(bytes: ByteArray): String = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
 internal fun PhotoRemovalCommand.replay(actor: UUID, request: UUID?, operation: RemovalCommandOperation, hash: String, mapper: ObjectMapper): PhotoRemovalRequestDto {

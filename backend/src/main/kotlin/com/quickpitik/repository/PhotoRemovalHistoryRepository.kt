@@ -15,6 +15,7 @@ interface PhotoRemovalHistoryRepository : Repository<PhotoRemovalHistory, UUID> 
     fun findByRequestIdOrderByOccurredAtAscIdAsc(requestId: UUID, pageable: Pageable): List<PhotoRemovalHistory>
     fun countByRequestId(requestId: UUID): Long
     fun existsByRequestIdAndAction(requestId: UUID, action: String): Boolean
+    fun existsByRequestIdAndItemIdAndReviewIdAndAction(requestId: UUID, itemId: UUID?, reviewId: UUID?, action: String): Boolean
 
     @Modifying
     @Query(value = """

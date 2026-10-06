@@ -10,6 +10,7 @@ import java.util.UUID
 interface PhotoRemovalReviewRepository : JpaRepository<PhotoRemovalReview, UUID> {
     fun findByIdAndRequestId(id: UUID, requestId: UUID): PhotoRemovalReview?
     fun findByRequestIdOrderByIdAsc(requestId: UUID): List<PhotoRemovalReview>
+    fun findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId: UUID, ownerIdSnapshot: UUID): List<PhotoRemovalReview>
 
     @Query("""
         SELECT v FROM PhotoRemovalReview v, PhotoRemovalRequest r
