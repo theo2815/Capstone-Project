@@ -240,10 +240,11 @@ function PerEventSlab() {
           {livePerEvent.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more event earnings. Try again.</p>}
           <LoadMoreButton
             shown={events.length}
-            total={livePerEvent.total}
+            total={livePerEvent.hasNextPage ? livePerEvent.total : events.length}
             increment={PAGE_SIZE.EARNINGS_INCREMENT}
             onLoadMore={livePerEvent.fetchNextPage}
             isLoading={livePerEvent.isFetchingNextPage}
+            terminalLabel={!livePerEvent.hasNextPage && events.length < livePerEvent.total ? "All available event earnings loaded" : undefined}
           />
         </>
       )}

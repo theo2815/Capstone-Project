@@ -138,7 +138,7 @@ export default function FocusedSharePage() {
         <Stats photographer={photographer} />
         <section>
           <div role="tablist" aria-label="Photo library" className="mb-6 border-b border-line pb-4"><TabPill active onClick={() => { }}>Purchased</TabPill></div>
-          <PurchasedGallery eventId={liveDetail.id} />
+          <RemovedPurchasedGallery eventId={liveDetail.id} />
         </section>
       </div>
     </main>;
@@ -812,9 +812,7 @@ function PhotoLibrary({
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get("tab");
 
-  const [section, setSection] = useState<"active" | "deleted" | "purchased">(
-    requestedTab === "deleted" || requestedTab === "purchased" ? requestedTab : "active",
-  );
+  const section = requestedTab === "deleted" || requestedTab === "purchased" ? requestedTab : "active";
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -822,8 +820,10 @@ function PhotoLibrary({
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    setSection(requestedTab === "deleted" || requestedTab === "purchased" ? requestedTab : "active");
-  }, [requestedTab]);
+    setSelecting(false);
+    setSelected(new Set());
+    setOpenIndex(null);
+  }, [section]);
 
   const active = usePhotographerEventPhotos(eventId, { deleted: false, enabled: section === "active" });
   // Only fetch the trash when its tab is open — most visits never touch it.
@@ -841,7 +841,6 @@ function PhotoLibrary({
 
   function switchSection(next: "active" | "deleted" | "purchased") {
     if (next === section) return;
-    setSection(next);
     router.replace(`${ROUTES.DASHBOARD_EVENTS}/${eventId}?tab=${next}`, { scroll: false });
     setSelecting(false);
     setSelected(new Set());
@@ -1153,18 +1152,21 @@ function PhotoLibrary({
   );
 }
 
-function PurchasedGallery({ eventId }: { eventId: string }) {
+function RemovedPurchasedGallery({ eventId }: { eventId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const list = usePhotographerPurchasedPhotos(eventId, true);
-  const [selection, setSelection] = useState<PurchaseSelection | null>(null);
-  const photos = list.items.map((item) => item.photo);
-
   useEffect(() => {
     if (searchParams.get("tab") !== "purchased") {
       router.replace(`${ROUTES.DASHBOARD_EVENTS}/${eventId}?tab=purchased`, { scroll: false });
     }
   }, [eventId, router, searchParams]);
+  return <PurchasedGallery eventId={eventId} />;
+}
+
+function PurchasedGallery({ eventId }: { eventId: string }) {
+  const list = usePhotographerPurchasedPhotos(eventId, true);
+  const [selection, setSelection] = useState<PurchaseSelection | null>(null);
+  const photos = list.items.map((item) => item.photo);
 
   return <>
     <p className="font-mono uppercase tracking-[0.14em] text-sm text-slate-soft tnum mb-6"><span className="text-ink">{list.total.toLocaleString()}</span> purchased photos</p>
@@ -1182,7 +1184,7 @@ function PurchasedGallery({ eventId }: { eventId: string }) {
       </div>
     )}
     {list.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more purchased photos. Try again.</p>}
-    {list.total > 0 && <LoadMoreButton shown={photos.length} total={list.total} increment={PAGE_SIZE.PHOTO_INCREMENT} onLoadMore={list.fetchNextPage} isLoading={list.isFetchingNextPage} />}
+    {list.total > 0 && <LoadMoreButton shown={photos.length} total={list.hasNextPage ? list.total : photos.length} increment={PAGE_SIZE.PHOTO_INCREMENT} onLoadMore={list.fetchNextPage} isLoading={list.isFetchingNextPage} terminalLabel={!list.hasNextPage && photos.length < list.total ? "All available purchased photos loaded" : undefined} />}
     <PhotographerPurchasePreview selection={selection} photos={photos} onClose={() => setSelection(null)} onSelectPhoto={(photoId) => setSelection({ photoId })} />
   </>;
 }

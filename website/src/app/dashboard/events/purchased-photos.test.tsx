@@ -7,13 +7,16 @@ import { useAuthStore } from "@/store/auth-store";
 const mocks = vi.hoisted(() => ({
   search: "?tab=purchased", detail: null as unknown, error: null as unknown, missing: false,
   refetch: vi.fn(), active: vi.fn(), visibility: vi.fn(), purchased: vi.fn(),
+  replace: vi.fn(),
+  listeners: new Set<() => void>(),
 }));
-vi.mock("next/navigation", () => ({
-  useParams: () => ({ id: "event-1" }),
-  useSearchParams: () => new URLSearchParams(mocks.search),
-  useRouter: () => ({ replace: vi.fn() }),
-  notFound: () => { throw Error("404"); },
-}));
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return { useParams: () => ({ id: "event-1" }),
+    useSearchParams: () => new URLSearchParams(useSyncExternalStore((onChange) => { mocks.listeners.add(onChange); return () => { mocks.listeners.delete(onChange); }; }, () => mocks.search)),
+    useRouter: () => ({ replace: (url: string, options: { scroll: boolean }) => { mocks.replace(url, options); mocks.search = new URL(url, "http://test").search; mocks.listeners.forEach((notify) => notify()); } }),
+    notFound: () => { throw Error("404"); } };
+});
 vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ invalidateQueries: vi.fn() }) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 vi.mock("@/hooks/use-confirmation", () => ({ useConfirmation: () => ({ confirm: async () => true }) }));
@@ -42,7 +45,7 @@ vi.mock("@/hooks/use-photographer-purchases", () => ({
 const detail = { id: "event-1", slug: "old-race", name: "Old Race", date: "2026-09-07", location: "Cebu", state: "past", photoCount: 2, salesCount: 3, revenueKept: 0, pricingMode: "paid", ownedByMe: true, deletedAt: "2026-09-08" };
 const photo = { id: "photo-1", bib: null, status: "live", salesCount: 3, uploadedAt: "2026-09-07T00:00:00Z", tone: 0, span: "default", thumbnailUrl: null };
 
-afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); mocks.search = "?tab=purchased"; });
 
 it("removed event renders read-only purchase history", () => {
   useAuthStore.getState().setUser({ id: "seller", role: "PHOTOGRAPHER", name: "Seller", email: "seller@example.test", createdAt: "2026-09-01" });
@@ -87,4 +90,28 @@ it("active and deleted tabs retain management and bare URLs default to active", 
   fireEvent.click(screen.getByRole("tab", { name: "Deleted" }));
   expect(screen.getByRole("tab", { name: "Deleted" })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("button", { name: "Select" })).toBeInTheDocument();
+});
+
+it("shows exhausted purchased photos without an ineffective load control", () => {
+  mocks.detail = detail;
+  mocks.error = null;
+  mocks.purchased.mockReturnValue({ items: [{ photo, purchaseCount: 3, lastPurchasedAt: "2026-09-07T10:00:00Z" }], total: 6, isLoading: false, error: null, appendError: null, hasNextPage: false, fetchNextPage: vi.fn(), refetch: vi.fn() });
+  render(<EventPage />);
+  expect(screen.getByRole("button", { name: "Open photo 1, 3 purchases" })).toBeInTheDocument();
+  expect(screen.getByText("All available purchased photos loaded")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Load .* more/ })).toBeNull();
+});
+
+it("does not force an active event back to Purchased after external URL navigation", () => {
+  mocks.detail = { ...detail, deletedAt: null, ownedByMe: false, pricingMode: "free" };
+  mocks.error = null;
+  mocks.search = "?tab=purchased";
+  mocks.active.mockReturnValue({ items: [], total: 0, isLoading: false, isFetchingNextPage: false, fetchNextPage: vi.fn() });
+  mocks.purchased.mockReturnValue({ items: [{ photo, purchaseCount: 3, lastPurchasedAt: "2026-09-07T10:00:00Z" }], total: 1, isLoading: false, error: null, appendError: null, hasNextPage: false, fetchNextPage: vi.fn(), refetch: vi.fn() });
+  const { rerender } = render(<EventPage />);
+  expect(screen.getByRole("tab", { name: "Purchased" })).toHaveAttribute("aria-selected", "true");
+  mocks.search = "?tab=deleted";
+  rerender(<EventPage />);
+  expect(screen.getByRole("tab", { name: "Deleted" })).toHaveAttribute("aria-selected", "true");
+  expect(mocks.replace).not.toHaveBeenCalled();
 });

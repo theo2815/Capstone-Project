@@ -11,7 +11,7 @@ const earning = (id: string, revenueKept: number) => ({
   eventDate: "2026-09-07", photoCount: 2, salesCount: 3, purchaseCount: 5, revenueKept,
 });
 
-function setup(rows: ReturnType<typeof earning>[], total = rows.length) {
+function setup(rows: ReturnType<typeof earning>[], total = rows.length, pageItems = (offset: number, limit: number) => rows.slice(offset, offset + limit)) {
   useAuthStore.getState().setUser({ id: "seller", role: "PHOTOGRAPHER", name: "Seller", email: "seller@example.test", createdAt: "2026-09-01" });
   const get = vi.spyOn(api, "get").mockImplementation(async (path) => {
     if (path === "/me/photographer/earnings") return {
@@ -21,7 +21,7 @@ function setup(rows: ReturnType<typeof earning>[], total = rows.length) {
     const params = new URLSearchParams(path.split("?")[1]);
     const offset = Number(params.get("offset"));
     const limit = Number(params.get("limit"));
-    return { items: rows.slice(offset, offset + limit), total, offset, limit } as never;
+    return { items: pageItems(offset, limit), total, offset, limit } as never;
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><EarningsPage /></QueryClientProvider>);
@@ -51,4 +51,25 @@ it("all earnings pages are reachable, in server order, including zero peso event
   expect(perEventCalls.map(([path]) => new URLSearchParams(String(path).split("?")[1]).get("offset"))).toEqual(["0", "10"]);
   expect(perEventCalls.map(([path]) => new URLSearchParams(String(path).split("?")[1]).get("limit"))).toEqual(["10", "10"]);
   await waitFor(() => expect(screen.getByText("All 11 loaded")).toBeInTheDocument());
+});
+
+it("advances by the consumed server window after a short nonterminal page", async () => {
+  const rows = Array.from({ length: 25 }, (_, i) => earning(`race-${i}`, i));
+  const get = setup(rows, 25, (offset, limit) => offset === 0 ? rows.slice(0, 2) : rows.slice(offset, offset + limit));
+  expect(await screen.findByRole("link", { name: /Race race-0/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Load 10 more" }));
+  expect(await screen.findByRole("link", { name: /Race race-10/ })).toBeInTheDocument();
+  const offsets = get.mock.calls.filter(([path]) => String(path).includes("/earnings/per-event?"))
+    .map(([path]) => new URLSearchParams(String(path).split("?")[1]).get("offset"));
+  expect(offsets).toEqual(["0", "10"]);
+});
+
+it("does not offer another earnings page after an exhausted empty response", async () => {
+  const rows = [earning(eventId, 100), earning("race-1", 0)];
+  setup(rows, 25, (offset) => offset === 0 ? rows : []);
+  expect(await screen.findByRole("link", { name: /Cebu Marathon/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Load 10 more" }));
+  expect(await screen.findByText("All available event earnings loaded")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Load .* more/ })).toBeNull();
+  expect(screen.getByRole("link", { name: /Cebu Marathon/ })).toBeInTheDocument();
 });

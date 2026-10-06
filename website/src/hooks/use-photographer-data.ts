@@ -174,7 +174,7 @@ export function usePhotographerPerEventEarnings() {
     queryKey: ["photographer", "earnings", "per-event", ...session.key],
     queryFn: ({ pageParam, signal }) => fetchPerEventEarnings({ offset: pageParam, limit: pageParam === 0 ? PAGE_SIZE.EARNINGS_INITIAL : PAGE_SIZE.EARNINGS_INCREMENT }, signal),
     initialPageParam: 0,
-    getNextPageParam: (last) => last.items.length && last.offset + last.items.length < last.total ? last.offset + last.items.length : undefined,
+    getNextPageParam: (last) => last.items.length && last.offset + last.limit < last.total ? last.offset + last.limit : undefined,
     enabled: session.enabled,
     staleTime: EARNINGS_STALE_MS,
   });
