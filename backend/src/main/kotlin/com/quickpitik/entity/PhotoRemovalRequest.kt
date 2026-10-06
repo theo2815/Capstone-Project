@@ -53,6 +53,8 @@ class PhotoRemovalRequest(
     var evidenceContentType: String? = null,
     @Column(name = "evidence_generation", nullable = false)
     var evidenceGeneration: Long = 0,
+    @JdbcTypeCode(SqlTypes.JSON) @Column(name = "candidate_cache", columnDefinition = "jsonb")
+    var candidateCache: RemovalCandidateCache? = null,
     @Enumerated(EnumType.STRING) @Column(name = "evidence_cleanup_state", nullable = false, length = 16)
     var evidenceCleanupState: RemovalEvidenceCleanupState = RemovalEvidenceCleanupState.NONE,
     @JdbcTypeCode(SqlTypes.JSON) @Column(name = "outstanding_evidence_keys", nullable = false, columnDefinition = "jsonb")
@@ -62,3 +64,6 @@ class PhotoRemovalRequest(
     @Column(name = "creation_command_id", nullable = false, updatable = false)
     val creationCommandId: UUID,
 )
+
+data class RemovalCandidateCache(val requestVersion: Long, val evidenceGeneration: Long, val candidates: List<RemovalCachedCandidate>)
+data class RemovalCachedCandidate(val photoId: UUID, val source: RemovalMatchSource, val score: Double?)

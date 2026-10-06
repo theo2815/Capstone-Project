@@ -86,6 +86,7 @@ class PhotoRemovalService(
                 .forEach { it.state = RemovalItemState.EXCLUDED }
             items.flush()
             request.status = RemovalRequestStatus.RESOLVING
+            request.candidateCache = null
             request.updatedAt = now
             request.evidenceCleanupState = RemovalEvidenceCleanupState.PENDING
             request.evidenceCleanupNextAttemptAt = now

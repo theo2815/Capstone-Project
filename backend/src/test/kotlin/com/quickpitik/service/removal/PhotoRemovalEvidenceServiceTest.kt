@@ -28,14 +28,14 @@ class PhotoRemovalEvidenceServiceTest {
     private val commands = mock(PhotoRemovalCommandRepository::class.java)
     private val storage = mock(StorageService::class.java)
     private val items = mock(PhotoRemovalItemRepository::class.java)
-    private val queries = mock(PhotoRemovalQueryService::class.java)
+    private val reviews = mock(PhotoRemovalReviewRepository::class.java)
     private val history = mock(PhotoRemovalHistoryRecorder::class.java)
     private val transactionManager = mock(PlatformTransactionManager::class.java)
     private val tx = TransactionTemplate(transactionManager)
     private val request = PhotoRemovalRequest(eventIdSnapshot = UUID.randomUUID(), eventNameSnapshot = "Synthetic run",
         requesterContact = "Support contact", supportReference = "ticket-1", requesterReason = "Privacy",
         publicToOwnerReason = "Privacy request", creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID())
-    private val service = PhotoRemovalEvidenceService(requests, commands, items, storage, queries, history,
+    private val service = PhotoRemovalEvidenceService(requests, commands, items, storage, reviews, history,
         mock(PhotoRemovalHistoryRepository::class.java),
         PhotoRemovalTransitions(), tx, jacksonObjectMapper().findAndRegisterModules(), Clock.systemUTC(),
         PhotoRemovalProperties(), SimpleMeterRegistry())
@@ -107,6 +107,22 @@ class PhotoRemovalEvidenceServiceTest {
         assertEquals(50, page.value.pageSize)
     }
 
+    @Test fun `evidence stream identifies the exact case and evidence version read`() {
+        request.evidenceKey = "photo-removal/${request.id}/evidence/${UUID.randomUUID()}"
+        request.evidenceContentType = "image/png"
+        request.version = 7
+        request.evidenceGeneration = 3
+        `when`(requests.findById(request.id)).thenReturn(Optional.of(request))
+        `when`(storage.open(request.evidenceKey!!)).thenReturn(byteArrayOf(10).inputStream())
+        val result = service.stream(request.creatorId, request.id)
+        result.stream.use {
+            assertEquals(7L, result.requestVersion)
+            assertEquals(3L, result.evidenceGeneration)
+            assertEquals(request.eventIdSnapshot, result.eventId)
+            assertEquals(request.evidenceKey, result.evidenceKey)
+        }
+    }
+
     private fun image(): SearchImage {
         val output = ByteArrayOutputStream()
         ImageIO.write(BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB), "png", output)
@@ -157,7 +173,11 @@ class PhotoRemovalQueryUnitTest {
     private val items = mock(PhotoRemovalItemRepository::class.java)
     private val reviews = mock(PhotoRemovalReviewRepository::class.java)
     private val history = mock(PhotoRemovalHistoryRepository::class.java)
-    private val service = PhotoRemovalQueryService(requests, items, reviews, history)
+    private val service = PhotoRemovalQueryService(requests, items, reviews, history,
+        mock(PhotoRepository::class.java), mock(UserRepository::class.java), mock(PhotoRemovalCommandRepository::class.java),
+        mock(PhotoRemovalEvidenceService::class.java), mock(com.quickpitik.service.photos.PhotoSearchService::class.java),
+        mock(StorageService::class.java), com.quickpitik.config.StorageProperties(), TransactionTemplate(mock(PlatformTransactionManager::class.java)),
+        jacksonObjectMapper().findAndRegisterModules(), Clock.systemUTC())
     private val request = PhotoRemovalRequest(eventIdSnapshot = UUID.randomUUID(), eventNameSnapshot = "Synthetic run",
         requesterContact = "private contact", supportReference = "private ticket", requesterReason = "privacy", publicToOwnerReason = "privacy",
         creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID())

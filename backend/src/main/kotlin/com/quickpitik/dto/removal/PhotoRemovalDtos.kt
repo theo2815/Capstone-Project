@@ -72,7 +72,10 @@ data class RemovalHistoryDto(
     val actorType: RemovalActorType, val actorIdSnapshot: UUID?, val action: String, val fromState: String?,
     val toState: String?, val reason: String?, val occurredAt: Instant, val commandId: UUID, val metadata: Map<String, String>,
 )
-data class RemovalMatchResult(val items: List<RemovalPhotoDto>, val candidateLimit: Int, val possiblyTruncated: Boolean)
+data class RemovalMatchResult(val items: List<RemovalPhotoDto>, val candidateLimit: Int, val possiblyTruncated: Boolean,
+    val requestVersion: Long, val evidenceGeneration: Long)
+
+data class MatchRemovalCommand(val commandId: UUID, @field:PositiveOrZero val expectedVersion: Long)
 
 data class CreateRemovalRequestCommand(
     val eventId: UUID,

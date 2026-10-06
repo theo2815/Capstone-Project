@@ -130,7 +130,7 @@ class RekognitionAiClient(
             return@guarded FacesSearchResult(matches = emptyList())
         } catch (ex: InvalidParameterException) {
             // Rekognition raises this when it finds no face in the query image.
-            return@guarded FacesSearchResult(matches = emptyList())
+            return@guarded FacesSearchResult(matches = emptyList(), noFaces = true)
         }
         val matches = resp.faceMatches()
             .filter { !it.face().externalImageId().isNullOrBlank() }
@@ -138,7 +138,7 @@ class RekognitionAiClient(
             .map { (extId, group) ->
                 FaceMatch(person_id = extId, similarity = (group.maxOf { it.similarity() ?: 0f }).toDouble() / 100.0)
             }
-        FacesSearchResult(matches = matches)
+        FacesSearchResult(matches = matches, possiblyTruncated = resp.faceMatches().size >= topK)
     }
 
     override fun bibsRecognize(
