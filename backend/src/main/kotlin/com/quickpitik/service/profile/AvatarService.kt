@@ -16,6 +16,7 @@ import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.UUID
 import javax.imageio.ImageIO
 
@@ -107,12 +108,15 @@ class AvatarService(
     }
 
     private fun centerCropToJpeg(input: ByteArray): ByteArray {
-        val original: BufferedImage = ImageIO.read(ByteArrayInputStream(input))
-            ?: throw ValidationException(
-                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                message = "image cannot be decoded",
-                field = "file",
-            )
+        val original: BufferedImage = try {
+            ImageIO.read(ByteArrayInputStream(input))
+        } catch (_: IOException) {
+            null
+        } ?: throw ValidationException(
+            code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+            message = "image cannot be decoded",
+            field = "file",
+        )
         val w = original.width
         val h = original.height
         val crop = minOf(w, h)

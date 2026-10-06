@@ -13,7 +13,8 @@ import javax.imageio.ImageIO
 @Component
 class PhotoUploadValidator {
     fun canDecode(contentType: String): Boolean =
-        ImageIO.getImageReadersByMIMEType(contentType.lowercase()).hasNext()
+        contentType.lowercase() in ALLOWED_CONTENT_TYPES &&
+            ImageIO.getImageReadersByMIMEType(contentType.lowercase()).hasNext()
 
     fun validate(
         input: InputStream,
@@ -86,12 +87,12 @@ class PhotoUploadValidator {
         }
     }
 
-    private fun unsupported(message: String = "Upload must be a readable JPEG, PNG, or WebP image."): Nothing =
+    private fun unsupported(message: String = "Upload must be a readable JPEG or PNG image."): Nothing =
         throw ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ErrorCodes.UNSUPPORTED_MEDIA_TYPE, message)
 
     companion object {
         const val MAX_BYTES = 25 * 1024 * 1024
         private const val VALIDATION_LONG_EDGE = 2_048
-        private val ALLOWED_CONTENT_TYPES = setOf("image/jpeg", "image/png", "image/webp")
+        private val ALLOWED_CONTENT_TYPES = setOf("image/jpeg", "image/png")
     }
 }

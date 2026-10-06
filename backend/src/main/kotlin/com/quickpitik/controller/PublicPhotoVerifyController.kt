@@ -59,7 +59,7 @@ class PublicPhotoVerifyController(
 
     private companion object {
         const val MAX_BYTES = 10L * 1024 * 1024
-        // ImageIO decodes JPEG + PNG only; a WebP screenshot would 415 at decode.
+        // Verification accepts JPEG and PNG regardless of installed ImageIO readers.
         val SUPPORTED_TYPES = setOf("image/jpeg", "image/jpg", "image/png")
     }
 }
