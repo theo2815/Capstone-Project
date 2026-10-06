@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
+import java.util.Base64
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -85,6 +86,23 @@ class PayoutAccountServiceAuditTest {
         assertEquals("create", captor.value.action)
         assertEquals("••••4567", captor.value.maskedAccount)
     }
+    @Test
+    fun `truncated WebP QR is rejected before storage or account writes`() {
+        val account = PayoutAccount(userId = userId, method = PayoutMethod.GCASH, accountNumber = "09171234567", accountName = "Juan Dela Cruz", qrS3Key = "previous.png")
+        Mockito.`when`(payoutAccountRepository.findByIdAndUserId(account.id, userId)).thenReturn(account)
+        val bytes = Base64.getDecoder().decode("UklGRjIAAABXRUJQVlA4ICYAAAA=")
+
+        val ex = assertFailsWith<ValidationException> {
+            service().uploadQr(userId, account.id, bytes, "image/webp")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("file", ex.field)
+        assertEquals("previous.png", account.qrS3Key)
+        Mockito.verifyNoInteractions(storageService, payoutAccountAuditRepository, eventPublisher)
+        Mockito.verify(payoutAccountRepository, Mockito.never()).save(Mockito.any(PayoutAccount::class.java))
+    }
+
     @Test
     fun `uploading a QR over the pixel budget is rejected before storage or save`() {
         val account = PayoutAccount(userId = userId, method = PayoutMethod.GCASH, accountNumber = "09171234567", accountName = "Juan Dela Cruz")
