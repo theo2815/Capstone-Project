@@ -236,7 +236,7 @@ export function usePhotographerTransactions() {
     initialPageParam: 0,
     getNextPageParam: (last) => {
       const next = last.offset + last.limit;
-      return next < last.total ? next : undefined;
+      return last.items.length && next < last.total ? next : undefined;
     },
     enabled: session.enabled,
     staleTime: EARNINGS_STALE_MS,
@@ -250,7 +250,9 @@ export function usePhotographerTransactions() {
     isFetchingNextPage: query.isFetchingNextPage,
     hasNextPage: query.hasNextPage,
     fetchNextPage: () => void query.fetchNextPage(),
-    error: query.error,
+    refetch: () => void query.refetch(),
+    error: query.isFetchNextPageError ? null : query.error,
+    appendError: query.isFetchNextPageError ? query.error : null,
   };
 }
 
