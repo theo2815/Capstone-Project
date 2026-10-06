@@ -56,7 +56,7 @@ class AiApiClient(
             personId?.let { add("person_id", it) }
             add("event_id", eventId.toString())
         }
-        return postAndUnwrap("/api/v1/faces/enroll", body, facesEnrollRef)
+        return postAndUnwrap("/api/v1/faces/enroll", body, facesEnrollRef, retry = false)
     }
 
     override fun facesSearch(
@@ -88,7 +88,7 @@ class AiApiClient(
     // results map without relying on positional order. Returns the job to poll.
     fun facesEnrollMega(files: List<NamedFile>, eventId: UUID): JobCreateResult {
         val body = multiFileBody(files).apply { add("event_id", eventId.toString()) }
-        return postAndUnwrap("/api/v1/faces/enroll/mega", body, jobCreateRef)
+        return postAndUnwrap("/api/v1/faces/enroll/mega", body, jobCreateRef, retry = false)
     }
 
     fun bibsRecognizeMega(files: List<NamedFile>): JobCreateResult {
@@ -176,8 +176,8 @@ class AiApiClient(
 
     fun healthReady(): HealthReady = getAndUnwrap("/api/v1/health/ready", healthReadyRef)
 
-    private fun <T> postAndUnwrap(path: String, body: MultiValueMap<String, Any>, ref: TypeReference<AiApiEnvelope<T>>): T =
-        withRetry("POST $path") {
+    private fun <T> postAndUnwrap(path: String, body: MultiValueMap<String, Any>, ref: TypeReference<AiApiEnvelope<T>>, retry: Boolean = true): T =
+        withRetry("POST $path", if (retry) props.maxRetries else 1) {
             val raw = client.post()
                 .uri(path)
                 .contentType(MediaType.MULTIPART_FORM_DATA)
@@ -214,22 +214,22 @@ class AiApiClient(
         return envelope.data
     }
 
-    private fun <T> withRetry(label: String, block: () -> T): T {
+    private fun <T> withRetry(label: String, attempts: Int = props.maxRetries, block: () -> T): T {
         var attempt = 0
         var lastError: Throwable? = null
-        while (attempt < props.maxRetries) {
+        while (attempt < attempts) {
             attempt++
             try {
                 return block()
             } catch (ex: HttpServerErrorException) {
                 lastError = ex
                 log.warn("ai-api {} attempt {} failed with {}", label, attempt, ex.statusCode)
-                sleepBackoff(attempt)
+                if (attempt < attempts) sleepBackoff(attempt)
             } catch (ex: HttpClientErrorException) {
                 if (ex.statusCode == HttpStatus.TOO_MANY_REQUESTS) {
                     lastError = ex
                     log.warn("ai-api {} attempt {} rate-limited", label, attempt)
-                    sleepBackoff(attempt)
+                    if (attempt < attempts) sleepBackoff(attempt)
                 } else {
                     throw AiApiException(
                         status = HttpStatus.valueOf(ex.statusCode.value()),
@@ -241,13 +241,13 @@ class AiApiClient(
             } catch (ex: ResourceAccessException) {
                 lastError = ex
                 log.warn("ai-api {} attempt {} I/O error: {}", label, attempt, ex.message)
-                sleepBackoff(attempt)
+                if (attempt < attempts) sleepBackoff(attempt)
             }
         }
         throw AiApiException(
             status = HttpStatus.SERVICE_UNAVAILABLE,
             aiCode = null,
-            message = "ai-api $label failed after ${props.maxRetries} retries",
+            message = "ai-api $label failed after $attempts attempts",
             cause = lastError,
         )
     }

@@ -424,6 +424,14 @@ Both backends must handle these ai-api error scenarios. The `Error Code` column 
 
 ### Retry Strategy
 
+The Spring backend makes only one attempt for creating face POSTs
+(`facesEnroll` and `facesEnrollMega`). A timeout or lost response can leave a
+remote enrollment running, so retrying could create untracked output. Photo
+work claims retain the event/photo correlation, known person IDs and batch job
+IDs for reconciliation; local claim expiry does not prove remote completion.
+Other calls retain their existing retry behavior. This does not change the
+ai-api wire contract.
+
 ```python
 MAX_RETRIES = 3
 BACKOFF_BASE = 2  # seconds

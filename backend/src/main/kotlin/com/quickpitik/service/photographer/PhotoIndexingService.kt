@@ -10,6 +10,10 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.storage.StorageService
+import com.quickpitik.service.photos.PhotoWorkFence
+import com.quickpitik.service.photos.PhotoWorkClaim
+import com.quickpitik.service.photos.PhotoWorkKind
+import com.quickpitik.entity.RemovalState
 import com.quickpitik.websocket.PhotoIndexedEvent
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -39,6 +43,7 @@ class PhotoIndexingService(
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
     private val meterRegistry: MeterRegistry,
+    private val workFence: PhotoWorkFence,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -48,6 +53,7 @@ class PhotoIndexingService(
         // needed for cleanup are already loaded.
         val photo = photoRepository.findById(photoId).orElse(null) ?: return
         if (photo.deletedAt != null) return
+        if (photo.removalState != RemovalState.NONE) return
         if (photo.indexingStatus == IndexingStatus.INDEXED ||
             photo.indexingStatus == IndexingStatus.SKIPPED
         ) {
@@ -59,10 +65,14 @@ class PhotoIndexingService(
         }
 
         // Phase B — network I/O with no transaction open.
-        val outcome = runInference(photo)
+        val claim = workFence.claim(photoId, PhotoWorkKind.INDEXING) ?: return
+        val outcome = runInference(photo, claim)
 
         // Phase C — short write transaction.
-        transactionTemplate.execute { writeOutcome(photoId, outcome) }
+        transactionTemplate.execute {
+            if (workFence.isCurrent(claim)) writeOutcome(photoId, outcome)
+        }
+        if (!outcome.facesUnresolved) workFence.finish(claim)
     }
 
     // Everything phase C needs to persist, produced without touching the
@@ -77,9 +87,10 @@ class PhotoIndexingService(
         val personId: String? = null,
         val bibs: Map<String, BigDecimal> = emptyMap(),
         val error: String? = null,
+        val facesUnresolved: Boolean = false,
     )
 
-    private fun runInference(photo: Photo): InferenceOutcome {
+    private fun runInference(photo: Photo, claim: PhotoWorkClaim): InferenceOutcome {
         // Retry-safety: a re-run is a clean slate upstream too (no duplicate
         // ai-api persons). Best-effort — deleteFacesPerson is the same primitive
         // used for GDPR erasure, and a documented no-op under Rekognition.
@@ -108,6 +119,7 @@ class PhotoIndexingService(
         var personId: String? = null
         var facesOk = false
         var facesTransport = false
+        var facesUnresolved = false
         try {
             val enroll = meterRegistry.timer("qp.ai.call", "op", "enroll").recordCallable {
                 aiApiClient.facesEnroll(
@@ -120,6 +132,7 @@ class PhotoIndexingService(
                 )
             }!!
             personId = enroll.person_id
+            personId?.let { workFence.recordPerson(claim, it) }
             facesOk = true
         } catch (ex: AiApiException) {
             if (ex.aiCode == "NO_FACES" || ex.aiCode == "LOW_QUALITY") {
@@ -128,10 +141,12 @@ class PhotoIndexingService(
                 log.warn("Face enroll failed for photo {}: {}", photo.id, ex.message)
                 error = "faces: ${ex.message}"
                 facesTransport = ex.isRetryable
+                facesUnresolved = ex.isRetryable
             }
         } catch (ex: Exception) {
             log.warn("Face enroll failed for photo {}: {}", photo.id, ex.message)
             error = "faces: ${ex.message}"
+            facesUnresolved = true
         }
 
         var bibs: Map<String, BigDecimal> = emptyMap()
@@ -165,6 +180,7 @@ class PhotoIndexingService(
             personId = personId,
             bibs = bibs,
             error = error,
+            facesUnresolved = facesUnresolved,
         )
     }
 
@@ -181,15 +197,11 @@ class PhotoIndexingService(
     private fun writeOutcome(photoId: UUID, outcome: InferenceOutcome) {
         val photo = photoRepository.findById(photoId).orElse(null) ?: return
         if (photo.deletionStartedAt != null) return
+        if (photo.removalState != RemovalState.NONE) return
         if (photo.indexingStatus == IndexingStatus.INDEXED ||
             photo.indexingStatus == IndexingStatus.SKIPPED
         ) {
-            // Another worker finished while we were in phase B — keep its
-            // result, best-effort drop the person we just enrolled.
-            outcome.personId?.let { pid ->
-                runCatching { aiApiClient.deleteFacesPerson(pid) }
-                    .onFailure { log.warn("ai person cleanup failed for {}: {}", pid, it.message) }
-            }
+            // The output ledger retains our result for shared cleanup.
             return
         }
 

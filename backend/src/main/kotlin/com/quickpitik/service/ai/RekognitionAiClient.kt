@@ -211,6 +211,11 @@ class RekognitionAiClient(
             .image(imageOf(file))
             .maxFaces(props.maxFacesPerImage)
             .qualityFilter(QualityFilter.AUTO)
+            // Preserve an uncertain first enrollment for reconciliation;
+            // later success must not conceal a still-running earlier write.
+            .overrideConfiguration { request -> request.addPlugin { client ->
+                client.overrideConfiguration { it.retryStrategy { retry -> retry.maxAttempts(1) } }
+            } }
             .build()
 
     private fun collectionFor(eventId: UUID): String = "${props.collectionPrefix}$eventId"

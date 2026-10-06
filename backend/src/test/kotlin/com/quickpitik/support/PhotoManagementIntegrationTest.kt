@@ -186,7 +186,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
             snapshot
         }
         Mockito.`when`(wrappedPhotos.save(anyArg<Photo>())).thenAnswer { photos.save(it.getArgument<Photo>(0)) }
-        val indexer = PhotoIndexingService(wrappedPhotos, Mockito.mock(StorageService::class.java), Mockito.mock(FaceBibProvider::class.java), AiApiProperties(enabled = false), AiProperties(), Mockito.mock(ApplicationEventPublisher::class.java), tx, SimpleMeterRegistry())
+        val indexer = PhotoIndexingService(wrappedPhotos, Mockito.mock(StorageService::class.java), Mockito.mock(FaceBibProvider::class.java), AiApiProperties(enabled = false), AiProperties(), Mockito.mock(ApplicationEventPublisher::class.java), tx, SimpleMeterRegistry(), Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java))
         Mockito.`when`(wrappedPhotos.skipIndexing(photo.id)).thenAnswer { photos.skipIndexing(photo.id) }
         indexer.index(photo.id)
         assertNotNull(photos.findById(photo.id).orElseThrow().deletedAt, "Background full-entity save resurrected the trashed photo")

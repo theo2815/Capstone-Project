@@ -8,6 +8,9 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
+import com.quickpitik.service.photos.PhotoWorkFence
+import com.quickpitik.service.photos.PhotoWorkKind
+import com.quickpitik.entity.RemovalState
 import com.quickpitik.websocket.PhotoPublishedEvent
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -43,6 +46,7 @@ class PhotoWatermarkService(
     private val meterRegistry: MeterRegistry,
     @Value("\${app.watermark.max-attempts:5}") private val maxAttempts: Int,
     private val metadataService: PhotoMetadataService,
+    private val workFence: PhotoWorkFence,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -53,6 +57,7 @@ class PhotoWatermarkService(
     fun process(photoId: UUID) {
         val photo = photoRepository.findById(photoId).orElse(null) ?: return
         if (photo.deletedAt != null) return
+        if (photo.removalState != RemovalState.NONE) return
         if (photo.status != PhotoStatus.PROCESSING) return
         if (photo.processingAttempts >= maxAttempts) return
         val photographerId = photo.photographerId
@@ -111,103 +116,115 @@ class PhotoWatermarkService(
             portraitY = settings.watermarkPosPortraitY,
         )
 
-        val original: ByteArray
-        val marked = try {
-            original = storageService.getBytes(photo.s3Key)
-            val logo = watermarkKeySetting
-                ?.takeIf { policy != WatermarkPolicy.NONE }
-                ?.let { watermarkLogoCache.get(it) }
-            // Direct-to-storage uploads (2026-09-02) never pass through the
-            // request-time pixel guard, so the decompression-bomb check has to
-            // live here, before the only full decode of client bytes. Semantic:
-            // the object never changes, so burn an attempt.
-            if (com.quickpitik.service.image.ImagePixelGuard.exceedsPixelBudget(original)) {
-                settleSemanticFailure(photo.id, photo.processingAttempts, "image exceeds the pixel budget")
-                return
-            }
-            try {
-                watermarkService.processThumbnail(
-                    original,
-                    logo,
-                    credit,
-                    platformMark = policy == WatermarkPolicy.PLATFORM,
-                    placement = placement,
-                )
-            } catch (ex: IllegalArgumentException) {
-                settleSemanticFailure(photo.id, photo.processingAttempts, ex.message ?: "undecodable image")
-                return
-            } catch (ex: java.io.IOException) {
-                // ImageIO signals truncated/corrupt bytes with IOException — the
-                // bytes in storage never change, so retrying can never succeed.
-                settleSemanticFailure(photo.id, photo.processingAttempts, ex.message ?: "undecodable image")
-                return
-            }
-        } catch (ex: Exception) {
-            // Storage GET / logo fetch failed — transport. Sweep retries later.
-            log.warn("Watermark transport failure for photo {}: {}", photoId, ex.message)
-            meterRegistry.counter("qp.watermark.outcome", "outcome", "transport").increment()
-            return
-        }
-
-        val watermarkKey = "events/${photo.eventId}/photos/${photo.id}/watermark.jpg"
+        val claim = workFence.claim(photoId, PhotoWorkKind.WATERMARK) ?: return
+        var unresolvedWrite = false
         try {
-            storageService.put(watermarkKey, marked.jpeg, "image/jpeg")
-            // A purge can finish while this already-running worker is doing
-            // external I/O. Never leave its late derivative behind.
-            val current = photoRepository.findById(photoId).orElse(null)
-            if (current == null || current.deletionStartedAt != null) {
-                storageService.delete(watermarkKey)
+            val original: ByteArray
+            val marked = try {
+                original = storageService.getBytes(photo.s3Key)
+                val logo = watermarkKeySetting
+                    ?.takeIf { policy != WatermarkPolicy.NONE }
+                    ?.let { watermarkLogoCache.get(it) }
+                // Direct-to-storage uploads (2026-09-02) never pass through the
+                // request-time pixel guard, so the decompression-bomb check has to
+                // live here, before the only full decode of client bytes. Semantic:
+                // the object never changes, so burn an attempt.
+                if (com.quickpitik.service.image.ImagePixelGuard.exceedsPixelBudget(original)) {
+                    settleSemanticFailure(photo.id, photo.processingAttempts, "image exceeds the pixel budget")
+                    return
+                }
+                try {
+                    watermarkService.processThumbnail(
+                        original,
+                        logo,
+                        credit,
+                        platformMark = policy == WatermarkPolicy.PLATFORM,
+                        placement = placement,
+                    )
+                } catch (ex: IllegalArgumentException) {
+                    settleSemanticFailure(photo.id, photo.processingAttempts, ex.message ?: "undecodable image")
+                    return
+                } catch (ex: java.io.IOException) {
+                    // ImageIO signals truncated/corrupt bytes with IOException — the
+                    // bytes in storage never change, so retrying can never succeed.
+                    settleSemanticFailure(photo.id, photo.processingAttempts, ex.message ?: "undecodable image")
+                    return
+                }
+            } catch (ex: Exception) {
+                // Storage GET / logo fetch failed — transport. Sweep retries later.
+                log.warn("Watermark transport failure for photo {}: {}", photoId, ex.message)
+                meterRegistry.counter("qp.watermark.outcome", "outcome", "transport").increment()
                 return
             }
-        } catch (ex: Exception) {
-            log.warn("Watermark PUT failed for photo {}: {}", photoId, ex.message)
-            meterRegistry.counter("qp.watermark.outcome", "outcome", "transport").increment()
-            return
-        }
 
-        // Presign outside the transaction — local SigV4 math, no storage call.
-        val thumbnailUrl =
-            storageService.presignedGetUrl(watermarkKey, storageProperties.presignedTtl.thumbnail)
+            val watermarkKey = "events/${photo.eventId}/photos/${photo.id}/watermark.jpg"
+            try {
+                if (!workFence.isCurrent(claim)) return
+                unresolvedWrite = true
+                storageService.put(watermarkKey, marked.jpeg, "image/jpeg")
+                unresolvedWrite = false
+                // Preserve the existing best-effort stale-derivative cleanup. The
+                // claim remains held and its target stays recorded even if DELETE fails.
+                val current = photoRepository.findById(photoId).orElse(null)
+                if (current == null || current.deletionStartedAt != null) {
+                    storageService.delete(watermarkKey)
+                    return
+                }
+            } catch (ex: Exception) {
+                log.warn("Watermark PUT failed for photo {}: {}", photoId, ex.message)
+                meterRegistry.counter("qp.watermark.outcome", "outcome", "transport").increment()
+                return
+            }
 
-        val published = transactionTemplate.execute {
-            val flipped = photoRepository.publishWatermarked(
-                photo.id,
-                watermarkKey,
-                marked.phash,
-                marked.phashClean,
-                marked.phashCentre,
-            )
-            if (flipped == 1) {
-                // Same frame shape the upload transaction used to publish —
-                // PhotoPublishedBroadcaster (AFTER_COMMIT) is untouched. Fired
-                // only now, when the imageUrl it carries actually resolves.
-                eventPublisher.publishEvent(
-                    PhotoPublishedEvent(
-                        eventId = photo.eventId,
-                        payload = mapOf(
-                            "type" to "photo.published",
-                            "photo" to mapOf(
-                                "id" to photo.id.toString(),
-                                "bib" to (photo.bibs.minByOrNull { it.bibNumber }?.bibNumber),
-                                "tone" to photo.tone,
-                                "span" to photo.span.wire,
-                                "imageUrl" to thumbnailUrl,
-                                "uploadedAt" to photo.uploadedAt.toString(),
+            // Presign outside the transaction — local SigV4 math, no storage call.
+            val thumbnailUrl =
+                storageService.presignedGetUrl(watermarkKey, storageProperties.presignedTtl.thumbnail)
+
+            val published = transactionTemplate.execute {
+                if (!workFence.isCurrent(claim)) return@execute false
+                val flipped = photoRepository.publishWatermarked(
+                    photo.id,
+                    watermarkKey,
+                    marked.phash,
+                    marked.phashClean,
+                    marked.phashCentre,
+                )
+                if (flipped == 1) {
+                    // Same frame shape the upload transaction used to publish —
+                    // PhotoPublishedBroadcaster (AFTER_COMMIT) is untouched. Fired
+                    // only now, when the imageUrl it carries actually resolves.
+                    eventPublisher.publishEvent(
+                        PhotoPublishedEvent(
+                            eventId = photo.eventId,
+                            payload = mapOf(
+                                "type" to "photo.published",
+                                "photo" to mapOf(
+                                    "id" to photo.id.toString(),
+                                    "bib" to (photo.bibs.minByOrNull { it.bibNumber }?.bibNumber),
+                                    "tone" to photo.tone,
+                                    "span" to photo.span.wire,
+                                    "imageUrl" to thumbnailUrl,
+                                    "uploadedAt" to photo.uploadedAt.toString(),
+                                ),
                             ),
                         ),
-                    ),
-                )
+                    )
+                }
+                flipped == 1
             }
-            flipped == 1
-        }
-        meterRegistry.counter("qp.watermark.outcome", "outcome", "live").increment()
-        if (published == true) {
-            // Publication and its AFTER_COMMIT WebSocket frame complete first.
-            try {
-                metadataService.dispatchExtraction(photoId, original)
-            } catch (ex: Exception) {
-                log.warn("Metadata extraction failed after publishing photo {} ({})", photoId, ex.javaClass.simpleName)
+            meterRegistry.counter("qp.watermark.outcome", "outcome", "live").increment()
+            if (published == true) {
+                // Publication and its AFTER_COMMIT WebSocket frame complete first.
+                try {
+                    metadataService.dispatchExtraction(photoId, original)
+                } catch (ex: Exception) {
+                    log.warn("Metadata extraction failed after publishing photo {} ({})", photoId, ex.javaClass.simpleName)
+                }
             }
+        } finally {
+            // A failed PUT may still complete remotely. Its key and claim stay
+            // durable for reconciliation; late successful output uses shared cleanup.
+            if (!unresolvedWrite) workFence.finish(claim)
         }
     }
 

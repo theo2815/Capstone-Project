@@ -3,6 +3,8 @@ package com.quickpitik.service.photographer
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.photographer.PermanentDeleteResponse
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.RemovalState
+import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventPhotographerRepository
@@ -56,6 +58,9 @@ class PhotographerPhotoService(
     fun restore(photographerId: UUID, eventId: UUID, photoIds: List<UUID>): Int {
         requireNotRemovedEvent(eventId)
         if (photoIds.isEmpty()) return 0
+        photoRepository.findAllByIdForUpdate(photoIds.distinct().sorted())
+            .filter { it.photographerId == photographerId && it.eventId == eventId }
+            .forEach(::requireNoRemovalCase)
         val affected = photoRepository.restoreOwned(photographerId, eventId, photoIds)
         if (affected > 0) adjustPhotoCount(eventId, photographerId, affected)
         return affected
@@ -71,6 +76,7 @@ class PhotographerPhotoService(
     fun permanentDelete(photographerId: UUID, eventId: UUID, photoIds: List<UUID>): PermanentDeleteResponse {
         requireNotRemovedEvent(eventId)
         val trashed = load(photographerId, eventId, photoIds).filter { it.deletedAt != null }
+        trashed.forEach(::requireNoRemovalCase)
         if (trashed.isEmpty()) return PermanentDeleteResponse(deleted = emptyList(), blockedSold = emptyList())
 
         val deleted = mutableListOf<UUID>()
@@ -124,6 +130,9 @@ class PhotographerPhotoService(
             val current = photoRepository.findAllByIdForUpdate(listOf(photoId)).singleOrNull()
                 ?.takeIf { it.photographerId == photographerId && it.eventId == eventId && it.deletedAt != null }
                 ?: return@execute null
+            requireNoRemovalCase(current)
+            if (current.watermarkWorkToken != null || current.indexingWorkToken != null) return@execute null
+            if (photoRepository.hasUnfinishedWork(photoId, "ANY")) return@execute null
             if (orderItemRepository.existsByIdPhotoId(photoId) || downloadGrantRepository.existsByIdPhotoId(photoId)) {
                 return@execute null
             }
@@ -141,6 +150,13 @@ class PhotographerPhotoService(
     private fun requireNotRemovedEvent(eventId: UUID) {
         if (eventRepository.findById(eventId).orElse(null)?.deletedAt != null) {
             throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        }
+    }
+
+    private fun requireNoRemovalCase(photo: Photo) {
+        if (photo.removalState != RemovalState.NONE) {
+            throw ConflictException(code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "This photo is restricted by a removal case. Contact support for its case decision.")
         }
     }
 

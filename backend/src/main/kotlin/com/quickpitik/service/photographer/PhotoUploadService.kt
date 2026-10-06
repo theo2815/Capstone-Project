@@ -1005,6 +1005,7 @@ class PhotoUploadService(
         val existingByHash = photoRepository
             .findByPhotographerIdAndContentHashIn(photographerId, normalized)
             .associateBy { it.contentHash }
+        existingByHash.values.forEach(::requireNotRemoved)
 
         // Name the other events in one batch read rather than per-hit.
         val otherEventIds = existingByHash.values
@@ -1039,6 +1040,7 @@ class PhotoUploadService(
     // end of upload(): same fields, a fresh presigned thumbnail, and the same
     // eventually-consistent aiDetectionStatus convention.
     private fun existingPhotoDto(photo: Photo): UploadedPhotoDto {
+        requireNotRemoved(photo)
         // A still-PROCESSING duplicate has no watermark object yet — fall back
         // to the original (owner-only response), same as the live return above.
         val thumbnailUrl = storageService.presignedGetUrl(
@@ -1067,6 +1069,13 @@ class PhotoUploadService(
             .trim()
         val codePoints = normalized.codePoints().limit(255).toArray()
         return String(codePoints, 0, codePoints.size).takeIf { it.isNotBlank() }
+    }
+
+    private fun requireNotRemoved(photo: Photo) {
+        if (photo.removalState == com.quickpitik.entity.RemovalState.REMOVED) {
+            throw ConflictException(code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "This photo was removed. Contact support about its removal case.")
+        }
     }
 
     private companion object {

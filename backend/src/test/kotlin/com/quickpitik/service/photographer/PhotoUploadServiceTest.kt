@@ -71,6 +71,21 @@ import kotlin.test.assertTrue
 // different-event re-upload is rejected; a first-time upload stores the hash.
 class PhotoUploadServiceTest {
 
+    @Test fun `removed exact upload duplicate cannot return an available receipt`() {
+        stubValidationsPass()
+        val removed = existingPhoto(eventId).apply { removalState = com.quickpitik.entity.RemovalState.REMOVED }
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(removed)
+        assertFailsWith<ConflictException> { service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file()) }
+    }
+
+    @Test fun `removed exact preflight duplicate cannot report available same event photo`() {
+        val removed = existingPhoto(eventId).apply { removalState = com.quickpitik.entity.RemovalState.REMOVED }
+        Mockito.`when`(photoRepository.findByPhotographerIdAndContentHashIn(anyArg(), anyArg())).thenReturn(listOf(removed))
+        assertFailsWith<ConflictException> {
+            service(AiApiProperties(enabled = false)).checkExisting(photographerId, eventId, listOf(helloSha256))
+        }
+    }
+
     private lateinit var storageService: StorageService
     private lateinit var photoRepository: PhotoRepository
     private lateinit var photoUploadIntentRepository: PhotoUploadIntentRepository

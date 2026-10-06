@@ -15,6 +15,14 @@ import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
 
+interface PhotoWorkSnapshot {
+    val token: UUID
+    val photoId: UUID
+    val generation: Long
+    val kind: String
+    val expiresAt: java.time.Instant
+}
+
 interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
@@ -26,18 +34,80 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(value = """
         UPDATE photos p
-        SET removal_state = CASE WHEN EXISTS (
+        SET work_generation = work_generation + 1, removal_state = CASE WHEN EXISTS (
             SELECT 1 FROM photo_removal_items i
             WHERE i.photo_id_snapshot = p.id AND i.state IN ('VERIFIED', 'RETAINED_RESTRICTED')
         ) THEN 'REVIEW' ELSE 'NONE' END
         WHERE p.id IN :ids AND p.removal_state <> 'REMOVED'
+          AND p.removal_state <> CASE WHEN EXISTS (
+            SELECT 1 FROM photo_removal_items i
+            WHERE i.photo_id_snapshot = p.id AND i.state IN ('VERIFIED', 'RETAINED_RESTRICTED')
+          ) THEN 'REVIEW' ELSE 'NONE' END
         """, nativeQuery = true)
     fun refreshRemovalState(@Param("ids") ids: Collection<UUID>): Int
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("UPDATE Photo p SET p.removalState = com.quickpitik.entity.RemovalState.REMOVED " +
+    @Query("UPDATE Photo p SET p.removalState = com.quickpitik.entity.RemovalState.REMOVED, p.workGeneration = p.workGeneration + 1 " +
         "WHERE p.id = :id AND p.removalState <> com.quickpitik.entity.RemovalState.REMOVED")
     fun authorizeRemoval(@Param("id") id: UUID): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photos SET
+        watermark_work_token = CASE WHEN :kind = 'WATERMARK' THEN :token ELSE watermark_work_token END,
+        watermark_work_expires_at = CASE WHEN :kind = 'WATERMARK' THEN :expiry ELSE watermark_work_expires_at END,
+        indexing_work_token = CASE WHEN :kind = 'INDEXING' THEN :token ELSE indexing_work_token END,
+        indexing_work_expires_at = CASE WHEN :kind = 'INDEXING' THEN :expiry ELSE indexing_work_expires_at END
+        WHERE id = :id AND removal_state = 'NONE' AND deleted_at IS NULL AND deletion_started_at IS NULL
+          AND CASE WHEN :kind = 'WATERMARK' THEN watermark_work_token ELSE indexing_work_token END IS NULL""", nativeQuery = true)
+    fun claimWork(id: UUID, kind: String, token: UUID, expiry: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = """INSERT INTO photo_work_outputs(token, photo_id, event_id, generation, kind, provider,
+        expires_at, storage_key, person_name, prior_provider, prior_person_ids) VALUES
+        (:token, :photoId, :eventId, :generation, :kind, :provider, :expiry, :key, :personName, :priorProvider, CAST(:priorPersons AS jsonb))""", nativeQuery = true)
+    fun recordWork(token: UUID, photoId: UUID, eventId: UUID, generation: Long, kind: String,
+        provider: String, expiry: OffsetDateTime, key: String?, personName: String?, priorProvider: String?, priorPersons: String): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET person_ids = person_ids || CAST(:persons AS jsonb) WHERE token = :token", nativeQuery = true)
+    fun recordWorkPersons(token: UUID, persons: String): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET batch_id = :batchId WHERE token = :token", nativeQuery = true)
+    fun attributeWorkBatch(token: UUID, batchId: UUID): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET job_ids = job_ids || CAST(:jobs AS jsonb) WHERE token = :token", nativeQuery = true)
+    fun recordWorkJob(token: UUID, jobs: String): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """WITH renewed AS (
+        UPDATE photos SET indexing_work_expires_at = :expiry
+        WHERE id = :photoId AND indexing_work_token = :token RETURNING id
+        ) UPDATE photo_work_outputs SET expires_at = :expiry
+        WHERE token = :token AND finished_at IS NULL AND EXISTS (SELECT 1 FROM renewed)""", nativeQuery = true)
+    fun renewIndexingWork(photoId: UUID, token: UUID, expiry: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET finished_at = :now WHERE token = :token AND finished_at IS NULL", nativeQuery = true)
+    fun finishWorkOutput(token: UUID, now: OffsetDateTime): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photos SET
+        watermark_work_token = CASE WHEN watermark_work_token = :token THEN NULL ELSE watermark_work_token END,
+        watermark_work_expires_at = CASE WHEN watermark_work_token = :token THEN NULL ELSE watermark_work_expires_at END,
+        indexing_work_token = CASE WHEN indexing_work_token = :token THEN NULL ELSE indexing_work_token END,
+        indexing_work_expires_at = CASE WHEN indexing_work_token = :token THEN NULL ELSE indexing_work_expires_at END
+        WHERE id = :id""", nativeQuery = true)
+    fun finishWork(id: UUID, token: UUID): Int
+
+    @Query(value = """SELECT token, photo_id AS "photoId", generation, kind, expires_at AS "expiresAt"
+        FROM photo_work_outputs WHERE batch_id = :batchId ORDER BY photo_id""", nativeQuery = true)
+    fun workForBatch(batchId: UUID): List<PhotoWorkSnapshot>
+
+    @Query(value = """SELECT EXISTS (SELECT 1 FROM photo_work_outputs
+        WHERE photo_id = :photoId AND finished_at IS NULL AND (:kind = 'ANY' OR kind = :kind))""", nativeQuery = true)
+    fun hasUnfinishedWork(photoId: UUID, kind: String): Boolean
 
     @Modifying
     @Query("UPDATE Photo p SET p.deletedAt = :now WHERE p.photographerId = :photographerId " +
@@ -76,7 +146,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Modifying
     @Query(
         "UPDATE Photo p SET p.status = com.quickpitik.entity.PhotoStatus.PROCESSING, p.processingAttempts = 0 " +
-            "WHERE p.eventId = :eventId AND p.status = com.quickpitik.entity.PhotoStatus.LIVE",
+            "WHERE p.eventId = :eventId AND p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
+            "AND p.removalState = com.quickpitik.entity.RemovalState.NONE",
     )
     fun resetForRewatermark(@Param("eventId") eventId: UUID): Int
 
@@ -94,7 +165,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query(
         "UPDATE Photo p SET p.indexingStatus = com.quickpitik.entity.IndexingStatus.PENDING, " +
             "p.indexingAttempts = 0, p.indexingError = null " +
-            "WHERE p.eventId = :eventId AND p.indexingStatus IN :statuses",
+            "WHERE p.eventId = :eventId AND p.indexingStatus IN :statuses " +
+            "AND p.removalState = com.quickpitik.entity.RemovalState.NONE",
     )
     fun requeueIndexing(
         @Param("eventId") eventId: UUID,
@@ -109,6 +181,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT p FROM Photo p
         WHERE p.status = com.quickpitik.entity.PhotoStatus.PROCESSING
           AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.watermarkWorkToken IS NULL
           AND p.processingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -130,7 +205,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
             "p.phashClean = :phashClean, p.phashCentre = :phashCentre, p.publishedAt = CURRENT_TIMESTAMP, " +
             "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
-            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING AND p.deletedAt IS NULL",
+            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING AND p.deletedAt IS NULL " +
+            "AND p.deletionStartedAt IS NULL AND p.removalState = com.quickpitik.entity.RemovalState.NONE",
     )
     fun publishWatermarked(
         @Param("id") id: UUID,
@@ -473,6 +549,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT p FROM Photo p
         WHERE p.indexingStatus IN :statuses
           AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingWorkToken IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -493,6 +572,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT DISTINCT p.eventId FROM Photo p
         WHERE p.indexingStatus IN :statuses
           AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingWorkToken IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         """,
@@ -538,6 +620,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.indexingStatus IN :statuses
           AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingWorkToken IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
