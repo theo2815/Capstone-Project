@@ -95,6 +95,17 @@ class Photo(
     @Column(name = "purged_at", updatable = false)
     var purgedAt: OffsetDateTime? = null,
 
+    @Column(name = "work_generation", nullable = false, updatable = false)
+    var workGeneration: Long = 0,
+    @Column(name = "watermark_work_token", updatable = false)
+    var watermarkWorkToken: UUID? = null,
+    @Column(name = "watermark_work_expires_at", updatable = false)
+    var watermarkWorkExpiresAt: OffsetDateTime? = null,
+    @Column(name = "indexing_work_token", updatable = false)
+    var indexingWorkToken: UUID? = null,
+    @Column(name = "indexing_work_expires_at", updatable = false)
+    var indexingWorkExpiresAt: OffsetDateTime? = null,
+
     @Column(name = "price_php", nullable = false, precision = 12, scale = 2)
     var pricePhp: BigDecimal,
 

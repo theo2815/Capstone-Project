@@ -1,7 +1,6 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
-import com.quickpitik.config.AiProperties
 import com.quickpitik.dto.ai.JobStatusResult
 import com.quickpitik.entity.AiIndexBatch
 import com.quickpitik.entity.AiIndexJob
@@ -31,12 +30,25 @@ import kotlin.test.assertTrue
 // terminates a lost (NOT_FOUND) job instead of polling it forever.
 class PhotoBatchIngestServiceTest {
 
+    @Test fun `bib callback before face submission cannot finalize the batch`() {
+        val bibJob = job(IndexJobKind.BIB, "early-bib")
+        expectLookup(bibJob)
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(bibJob))
+        Mockito.`when`(aiClient.jobStatus("early-bib", 0, 2)).thenReturn(
+            JobStatusResult(job_id = "early-bib", status = "completed", result = emptyList()))
+        service.ingest("early-bib")
+        assertEquals(BatchStatus.SUBMITTED, batch.status)
+        assertEquals(IndexingStatus.BATCHING, photo1.indexingStatus)
+    }
+
     private lateinit var photoRepo: PhotoRepository
     private lateinit var batchRepo: AiIndexBatchRepository
     private lateinit var jobRepo: AiIndexJobRepository
     private lateinit var aiClient: AiApiClient
     private lateinit var publisher: ApplicationEventPublisher
     private lateinit var service: PhotoBatchIngestService
+    private lateinit var workFence: com.quickpitik.service.photos.PhotoWorkFence
+    private fun <T> anyArg(): T = Mockito.any()
 
     private val eventId = UUID.randomUUID()
     private val pid1 = UUID.randomUUID()
@@ -52,7 +64,16 @@ class PhotoBatchIngestServiceTest {
         jobRepo = Mockito.mock(AiIndexJobRepository::class.java)
         aiClient = Mockito.mock(AiApiClient::class.java)
         publisher = Mockito.mock(ApplicationEventPublisher::class.java)
-        service = PhotoBatchIngestService(photoRepo, batchRepo, jobRepo, aiClient, AiApiProperties(), AiProperties(), publisher)
+        workFence = Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java)
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(true)
+        Mockito.`when`(workFence.forBatch(anyArg())).thenAnswer {
+            batch.photoIds.map { com.quickpitik.service.photos.PhotoWorkClaim(it, 0, UUID.randomUUID(),
+                java.time.Instant.now().plusSeconds(60), com.quickpitik.service.photos.PhotoWorkKind.INDEXING) }
+        }
+        val manager = Mockito.mock(org.springframework.transaction.PlatformTransactionManager::class.java)
+        Mockito.`when`(manager.getTransaction(anyArg())).thenReturn(org.springframework.transaction.support.SimpleTransactionStatus())
+        service = PhotoBatchIngestService(photoRepo, batchRepo, jobRepo, aiClient, AiApiProperties(), publisher,
+            org.springframework.transaction.support.TransactionTemplate(manager), workFence)
 
         batch = AiIndexBatch(eventId = eventId, photoIds = mutableListOf(pid1, pid2))
         photo1 = batchingPhoto(pid1)
@@ -71,6 +92,7 @@ class PhotoBatchIngestServiceTest {
     private fun expectLookup(faceJob: AiIndexJob) {
         Mockito.`when`(jobRepo.findByAiJobId(faceJob.aiJobId)).thenReturn(faceJob)
         Mockito.`when`(batchRepo.findByIdForUpdate(batch.id)).thenReturn(batch)
+        Mockito.`when`(batchRepo.findById(batch.id)).thenReturn(java.util.Optional.of(batch))
         Mockito.`when`(photoRepo.findAllById(batch.photoIds)).thenReturn(mutableListOf(photo1, photo2))
     }
 

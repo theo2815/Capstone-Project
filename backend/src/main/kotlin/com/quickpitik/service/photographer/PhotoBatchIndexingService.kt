@@ -15,7 +15,11 @@ import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
+import com.quickpitik.service.photos.PhotoWorkFence
+import com.quickpitik.service.photos.PhotoWorkKind
+import com.quickpitik.service.photos.PhotoWorkClaim
+import com.quickpitik.entity.RemovalState
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -30,15 +34,13 @@ class PhotoBatchIndexingService(
     private val storageService: StorageService,
     private val aiApiClient: AiApiClient,
     private val aiApiProperties: AiApiProperties,
+    private val transactionTemplate: TransactionTemplate,
+    private val workFence: PhotoWorkFence,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    // All-in-one transaction. The @Scheduled drain is single-threaded so only one
-    // drainEvent runs at a time — holding the tx across the two mega uploads
-    // (≤ batch.max-size images) is bounded and contention-free. If either POST
-    // throws (ai-api down) the whole tx rolls back: photos stay PENDING and the
-    // attempt isn't consumed, so an outage self-heals on the next tick.
-    @Transactional
+    // Persist claims and batch membership before any creating POST. Network I/O
+    // has no open transaction; uncertain submissions retain their durable claims.
     fun drainEvent(eventId: UUID, cutoff: OffsetDateTime): Boolean {
         val photos = photoRepository.findIndexingBacklogForEvent(
             eventId,
@@ -52,45 +54,88 @@ class PhotoBatchIndexingService(
         // Read ORIGINAL bytes (never the watermarked image — the overlay would
         // corrupt face + bib detection). A photo whose bytes are gone is a poison
         // row: mark it FAILED individually so it can't block the whole event's
-        // batch. (If the megas below throw, this mark rolls back too and the row
-        // is simply re-evaluated next tick.)
+        // batch. This short transaction commits before any mega submission.
         val files = mutableListOf<NamedFile>()
         val batched = mutableListOf<Photo>()
+        val claims = mutableListOf<PhotoWorkClaim>()
         for (photo in photos) {
+            if (photo.removalState != RemovalState.NONE || photo.deletedAt != null) continue
+            val claim = workFence.claim(photo.id, PhotoWorkKind.INDEXING) ?: continue
             val bytes = try {
                 storageService.getBytes(photo.s3Key)
             } catch (ex: Exception) {
-                photo.indexingStatus = IndexingStatus.FAILED
-                photo.indexingAttempts += 1
-                photo.indexingError = "original image unavailable: ${ex.message}"
-                photoRepository.save(photo)
+                transactionTemplate.executeWithoutResult {
+                    if (workFence.isCurrent(claim)) {
+                        val current = photoRepository.findById(photo.id).orElseThrow()
+                        current.indexingStatus = IndexingStatus.FAILED
+                        current.indexingAttempts += 1
+                        current.indexingError = "original image unavailable: ${ex.message}"
+                        photoRepository.save(current)
+                    }
+                }
+                workFence.finish(claim)
                 continue
             }
             files.add(NamedFile(photo.id.toString(), bytes, sniffContentType(bytes)))
             batched.add(photo)
+            claims.add(claim)
         }
         if (batched.isEmpty()) return false
-
-        // Submit bib FIRST: it creates no persons, so a face-POST failure after it
-        // orphans only a harmless auto-expiring job, never face embeddings.
-        val bibJobId = aiApiClient.bibsRecognizeMega(files).job_id
-        val faceJobId = aiApiClient.facesEnrollMega(files, eventId).job_id
 
         val batch = AiIndexBatch(
             eventId = eventId,
             photoIds = batched.map { it.id }.toMutableList(),
         )
-        batchRepository.save(batch)
-        jobRepository.save(AiIndexJob(batchId = batch.id, kind = IndexJobKind.BIB, aiJobId = bibJobId))
-        jobRepository.save(AiIndexJob(batchId = batch.id, kind = IndexJobKind.FACE, aiJobId = faceJobId))
-
-        batched.forEach { photo ->
-            clearPriorResults(photo)
-            photo.indexingStatus = IndexingStatus.BATCHING
-            photo.indexingAttempts += 1
-            photo.indexingError = null
+        // Prior cleanup is also external I/O; its targets were saved by claim().
+        batched.forEach(::clearPriorResults)
+        val prepared = transactionTemplate.execute {
+            // Canonical UUID text has PostgreSQL's unsigned byte order;
+            // UUID.compareTo uses signed longs and can invert shared lock order.
+            if (!claims.sortedBy { it.photoId.toString() }.all(workFence::isCurrent)) return@execute false
+            batchRepository.save(batch)
+            claims.forEach { workFence.attributeBatch(it, batch.id) }
+            val current = photoRepository.findAllById(batched.map { it.id })
+            current.forEach { photo ->
+                photo.facePersons.clear()
+                photo.bibs.clear()
+                photo.indexingStatus = IndexingStatus.BATCHING
+                photo.indexingAttempts += 1
+                photo.indexingError = null
+            }
+            photoRepository.saveAll(current)
+            true
+        } == true
+        if (!prepared) {
+            claims.forEach(workFence::finish)
+            return false
         }
-        photoRepository.saveAll(batched)
+        try {
+            val bibJobId = aiApiClient.bibsRecognizeMega(files).job_id
+            transactionTemplate.executeWithoutResult {
+                jobRepository.save(AiIndexJob(batchId = batch.id, kind = IndexJobKind.BIB, aiJobId = bibJobId))
+                claims.forEach { workFence.recordJob(it, "BIB", bibJobId) }
+            }
+            val faceJobId = aiApiClient.facesEnrollMega(files, eventId).job_id
+            transactionTemplate.executeWithoutResult {
+                jobRepository.save(AiIndexJob(batchId = batch.id, kind = IndexJobKind.FACE, aiJobId = faceJobId))
+                claims.forEach { workFence.recordJob(it, "FACE", faceJobId) }
+            }
+        } catch (ex: Exception) {
+            // Preserve the transport retry budget, but never release the claim:
+            // a lost response can mean the remote job is still running.
+            transactionTemplate.executeWithoutResult {
+                batched.sortedBy { it.id.toString() }.forEach { photo ->
+                    val claim = claims.first { it.photoId == photo.id }
+                    if (workFence.isCurrent(claim)) {
+                        val current = photoRepository.findById(photo.id).orElseThrow()
+                        current.indexingStatus = IndexingStatus.PENDING
+                        current.indexingAttempts -= 1
+                        photoRepository.save(current)
+                    }
+                }
+            }
+            throw ex
+        }
         log.info("Submitted indexing batch {} for event {} ({} photos)", batch.id, eventId, batched.size)
         return true
     }
@@ -102,8 +147,6 @@ class PhotoBatchIndexingService(
             runCatching { aiApiClient.deleteFacesPerson(fp.aiPersonId) }
                 .onFailure { log.warn("ai person cleanup failed for {}: {}", fp.aiPersonId, it.message) }
         }
-        photo.facePersons.clear()
-        photo.bibs.clear()
     }
 
     // ai-api validates by magic bytes, not Content-Type, but the multipart part

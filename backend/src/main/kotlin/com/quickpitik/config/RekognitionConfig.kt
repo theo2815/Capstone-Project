@@ -29,6 +29,7 @@ class RekognitionConfig {
                 "batch drain/ingest is ai-api-only. Use INDEXING_MODE=per_photo."
         }
         val builder = RekognitionClient.builder().region(Region.of(props.region))
+            .overrideConfiguration { it.apiCallTimeout(props.operationTimeout) }
         if (!props.accessKey.isNullOrBlank() && !props.secretKey.isNullOrBlank()) {
             builder.credentialsProvider(
                 StaticCredentialsProvider.create(AwsBasicCredentials.create(props.accessKey, props.secretKey)),

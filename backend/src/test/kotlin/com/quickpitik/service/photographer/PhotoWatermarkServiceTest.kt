@@ -41,6 +41,26 @@ import kotlin.test.assertTrue
 // failures leave the budget intact for the reconcile sweep.
 class PhotoWatermarkServiceTest {
 
+    @Test fun `review refuses a new watermark write`() {
+        stubHappyPath()
+        Mockito.`when`(photoRepository.findById(photoId)).thenReturn(Optional.of(photo().apply {
+            removalState = com.quickpitik.entity.RemovalState.REVIEW
+        }))
+
+        service().process(photoId)
+
+        Mockito.verify(storageService, Mockito.never()).put(anyArg(), anyArg(), anyArg())
+    }
+
+    @Test fun `unknown PUT outcome retains its claim for remote reconciliation`() {
+        stubHappyPath()
+        Mockito.`when`(storageService.put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>()))
+            .thenThrow(RuntimeException("response lost after upload"))
+        service().process(photoId)
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+    }
+
     private lateinit var storageService: StorageService
     private lateinit var photoRepository: PhotoRepository
     private lateinit var eventRepository: EventRepository
@@ -50,6 +70,7 @@ class PhotoWatermarkServiceTest {
     private lateinit var eventPublisher: ApplicationEventPublisher
     private lateinit var metadataService: PhotoMetadataService
     private lateinit var transactionManager: PlatformTransactionManager
+    private lateinit var workFence: com.quickpitik.service.photos.PhotoWorkFence
     private var lastOriginal: ByteArray? = null
 
     private val photographerId = UUID.randomUUID()
@@ -74,6 +95,12 @@ class PhotoWatermarkServiceTest {
         metadataService = Mockito.mock(PhotoMetadataService::class.java)
         transactionManager = Mockito.mock(PlatformTransactionManager::class.java)
         Mockito.`when`(transactionManager.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
+        workFence = Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java)
+        Mockito.`when`(workFence.claim(anyArg(), anyArg())).thenAnswer {
+            com.quickpitik.service.photos.PhotoWorkClaim(it.getArgument(0), 0, UUID.randomUUID(),
+                java.time.Instant.now().plusSeconds(60), it.getArgument(1))
+        }
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(true)
     }
 
     private fun service(maxAttempts: Int = 5, metadata: PhotoMetadataService = metadataService) = PhotoWatermarkService(
@@ -91,6 +118,7 @@ class PhotoWatermarkServiceTest {
         SimpleMeterRegistry(),
         maxAttempts,
         metadata,
+        workFence,
     )
 
     private fun photo(

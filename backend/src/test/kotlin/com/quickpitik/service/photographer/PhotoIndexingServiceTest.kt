@@ -35,11 +35,41 @@ import kotlin.test.assertTrue
 // event-isolation enroll stamping. Also guards the #6 bib-confidence fix.
 class PhotoIndexingServiceTest {
 
+    @Test fun `unknown enrollment outcome retains its claim for remote reconciliation`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId))
+            .thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "response lost"))
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        service.index(p.id)
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
+        assertTrue(p.facePersons.isEmpty())
+    }
+
+    @Test fun `removal during enrollment prevents publishing its face and bib results`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId))
+            .thenAnswer {
+                p.removalState = com.quickpitik.entity.RemovalState.REMOVED
+                FacesEnrollResult(person_id = "late-person")
+            }
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("1234", 0.92))))
+
+        service.index(p.id)
+
+        assertTrue(p.facePersons.isEmpty())
+        assertTrue(p.bibs.isEmpty())
+        Mockito.verify(publisher, Mockito.never()).publishEvent(Mockito.any(PhotoIndexedEvent::class.java))
+    }
+
     private lateinit var photoRepo: PhotoRepository
     private lateinit var storage: StorageService
     private lateinit var aiClient: AiApiClient
     private lateinit var publisher: ApplicationEventPublisher
     private lateinit var service: PhotoIndexingService
+    private lateinit var workFence: com.quickpitik.service.photos.PhotoWorkFence
+    private fun <T> anyArg(): T = Mockito.any()
 
     // FF D8 FF → sniffed as image/jpeg by PhotoIndexingService.sniffContentType.
     private val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0x00)
@@ -62,8 +92,14 @@ class PhotoIndexingServiceTest {
         storage = Mockito.mock(StorageService::class.java)
         aiClient = Mockito.mock(AiApiClient::class.java)
         publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+        workFence = Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java)
+        Mockito.`when`(workFence.claim(anyArg(), anyArg())).thenAnswer {
+            com.quickpitik.service.photos.PhotoWorkClaim(it.getArgument(0), 0, UUID.randomUUID(),
+                java.time.Instant.now().plusSeconds(60), it.getArgument(1))
+        }
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(true)
         service = PhotoIndexingService(
-            photoRepo, storage, aiClient, props(), AiProperties(), publisher, template(), SimpleMeterRegistry(),
+            photoRepo, storage, aiClient, props(), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence,
         )
     }
 
@@ -206,7 +242,7 @@ class PhotoIndexingServiceTest {
         val p = photo()
         Mockito.`when`(photoRepo.findById(p.id)).thenReturn(Optional.of(p))
         val disabled = PhotoIndexingService(
-            photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(),
+            photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence,
         )
 
         disabled.index(p.id)

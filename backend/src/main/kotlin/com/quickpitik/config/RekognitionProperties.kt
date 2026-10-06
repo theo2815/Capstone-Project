@@ -1,6 +1,7 @@
 package com.quickpitik.config
 
 import org.springframework.boot.context.properties.ConfigurationProperties
+import java.time.Duration
 
 // AWS Rekognition settings, used only when app.ai.provider=rekognition.
 // Credentials are NOT here — they come from the AWS default chain
@@ -10,6 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 @ConfigurationProperties(prefix = "app.ai.rekognition")
 data class RekognitionProperties(
     val region: String = "ap-southeast-1",
+    val operationTimeout: Duration = Duration.ofMinutes(2),
     // Optional static credentials. Leave unset to use the AWS default chain
     // (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env or ~/.aws/credentials for dev,
     // instance/task role in prod). Set them in application-local.yml to keep all
@@ -30,4 +32,8 @@ data class RekognitionProperties(
     // Downscale longest edge before the 5 MB inline call; only images already
     // over the inline-safe byte budget are decoded + re-encoded.
     val maxImageDimension: Int = 2048,
-)
+) {
+    init {
+        require(operationTimeout > Duration.ZERO) { "operationTimeout must be positive" }
+    }
+}

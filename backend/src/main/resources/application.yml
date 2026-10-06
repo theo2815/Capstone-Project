@@ -114,6 +114,7 @@ app:
     # Q-A5 follow-up — flagging surface is enabled.
     flags-enabled: ${ADMIN_FLAGS_ENABLED:true}
   storage:
+    operation-timeout: ${STORAGE_OPERATION_TIMEOUT:PT2M}
     backend: ${STORAGE_BACKEND:LOCAL}
     bucket: ${STORAGE_BUCKET:quickpitik-dev}
     region: ${STORAGE_REGION:ap-southeast-1}
@@ -149,6 +150,7 @@ app:
     # come from the AWS default chain — AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
     # for local dev, or the instance/task role in production. Never put keys here.
     rekognition:
+      operation-timeout: ${REKOGNITION_OPERATION_TIMEOUT:PT2M}
       region: ${AWS_REGION:ap-southeast-1}
       # AWS credentials — leave empty to use the default chain (env vars /
       # ~/.aws/credentials / instance role). For a plain dev machine, set them
