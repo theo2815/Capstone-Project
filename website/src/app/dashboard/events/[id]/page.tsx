@@ -55,7 +55,7 @@ import type {
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { isInAppBrowser } from "@/lib/in-app-browser";
 import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
-import { cn, copyToClipboard, triggerDownload } from "@/lib/utils";
+import { cn, copyToClipboard, formatPrice, triggerDownload } from "@/lib/utils";
 
 // Focused share page. Direction A composition: SiteHeader (no dashboard rail
 // — escaped via the conditional in app/dashboard/layout.tsx) → back chip →
@@ -785,7 +785,7 @@ function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
       </span>
       <span>
         <span className="text-ink">
-          ₱{photographer.revenueKept.toLocaleString()}
+          {formatPrice(photographer.revenueKept)}
         </span>{" "}
         kept
       </span>

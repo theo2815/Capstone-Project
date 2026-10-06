@@ -8,7 +8,7 @@ import { useAuthStore } from "@/store/auth-store";
 const eventId = "b3ad2fe8-4489-4fbd-9c85-65fe8b3a4c15";
 const earning = (id: string, revenueKept: number) => ({
   eventId: id, eventName: id === eventId ? "Cebu Marathon" : id === "free-race" ? "Free Race" : `Race ${id}`,
-  eventDate: "2026-09-07", photoCount: 2, salesCount: 3, revenueKept,
+  eventDate: "2026-09-07", photoCount: 2, salesCount: 3, purchaseCount: 5, revenueKept,
 });
 
 function setup(rows: ReturnType<typeof earning>[], total = rows.length) {
@@ -32,9 +32,13 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); useAuthStore.getState().logou
 
 it("earnings opens the UUID event with purchased selected", async () => {
   setup([earning(eventId, 100)]);
-  expect(await screen.findByRole("link", { name: /Cebu Marathon/ })).toHaveAttribute(
+  const link = await screen.findByRole("link", { name: /Cebu Marathon/ });
+  expect(link).toHaveAttribute(
     "href", `/dashboard/events/${eventId}?tab=purchased`,
   );
+  expect(link).toHaveTextContent("5 purchases");
+  expect(link).toHaveTextContent("2 photos");
+  expect(link).toHaveTextContent("₱100.00");
 });
 
 it("all earnings pages are reachable, in server order, including zero peso events", async () => {
@@ -42,7 +46,7 @@ it("all earnings pages are reachable, in server order, including zero peso event
   const get = setup(rows);
   expect(await screen.findByRole("link", { name: /Cebu Marathon/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Load 1 more" }));
-  expect(await screen.findByRole("link", { name: /Free Race/ })).toBeInTheDocument();
+  expect(await screen.findByRole("link", { name: /Free Race/ })).toHaveTextContent("₱0.00");
   const perEventCalls = get.mock.calls.filter(([path]) => String(path).includes("/earnings/per-event?"));
   expect(perEventCalls.map(([path]) => new URLSearchParams(String(path).split("?")[1]).get("offset"))).toEqual(["0", "10"]);
   expect(perEventCalls.map(([path]) => new URLSearchParams(String(path).split("?")[1]).get("limit"))).toEqual(["10", "10"]);

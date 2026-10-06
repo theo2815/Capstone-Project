@@ -51,6 +51,7 @@ it("removed event renders read-only purchase history", () => {
   mocks.purchased.mockReturnValue({ items: [{ photo, purchaseCount: 3, lastPurchasedAt: "2026-09-07T10:00:00Z" }], total: 1, isLoading: false, error: null, appendError: null, hasNextPage: false, fetchNextPage: vi.fn(), refetch: vi.fn() });
   render(<EventPage />);
   expect(screen.getByText("Removed event")).toBeInTheDocument();
+  expect(screen.getByText("₱0.00")).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Upload/ })).toBeNull();
   expect(screen.getByText("3 purchases")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: /Open photo/ })).toHaveLength(1);

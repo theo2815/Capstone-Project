@@ -15,6 +15,7 @@ import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import type { PerEventEarning } from "@/lib/api-photographer-earnings";
+import { formatPrice } from "@/lib/utils";
 
 export default function EarningsPage() {
   return (
@@ -270,15 +271,15 @@ function PerEventRow({
           </h3>
           {event.deletedAt && <p className="mt-2 font-mono text-sm uppercase tracking-wide text-slate">Removed</p>}
           <p className="font-sans text-sm text-slate mt-2 tnum">
-            <span className="font-mono text-ink-soft">{event.salesCount}</span>
-            {" sold · "}
+            <span className="font-mono text-ink-soft">{event.purchaseCount}</span>
+            {` purchase${event.purchaseCount === 1 ? "" : "s"} · `}
             <span className="font-mono text-ink-soft">{event.photoCount}</span>
             {" photos"}
           </p>
         </div>
         <div className="flex items-center gap-4 md:flex-col md:items-end md:gap-1 shrink-0">
           <p className="font-mono tnum font-medium text-ink text-lg md:text-xl">
-            ₱{event.revenueKept.toLocaleString()}
+            {formatPrice(event.revenueKept)}
           </p>
         </div>
       </div>
