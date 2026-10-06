@@ -63,6 +63,22 @@ it("sale and refund rows open the exact purchase and restore row focus", async (
   expect(await screen.findByText(/Earnings adjustment/)).toHaveAttribute("aria-current", "true");
 });
 
+it("does not reopen a seller's purchase after the auth session changes", async () => {
+  let resolveSellerB!: (value: ReturnType<typeof page>) => void;
+  const sellerBLedger = new Promise<ReturnType<typeof page>>((resolve) => { resolveSellerB = resolve; });
+  const get = setup(async () => useAuthStore.getState().user?.id === "seller-1" ? page([sale]) : sellerBLedger);
+  fireEvent.click(await screen.findByRole("button", { name: /sale.*aira s\..*aaaa/i }));
+  expect(await screen.findByRole("dialog")).toBeVisible();
+  await waitFor(() => expect(get.mock.calls.filter(([path]) => path.includes("/photos/photo-1/purchases"))).toHaveLength(1));
+
+  act(() => useAuthStore.getState().setUser({ id: "seller-2", role: "PHOTOGRAPHER", name: "Other Seller", email: "other@example.test", createdAt: "2026-09-01" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  await act(async () => resolveSellerB(page([])));
+  expect(await screen.findByText(/zero-charge purchases.*Purchased photos/i)).toBeVisible();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(get.mock.calls.filter(([path]) => path.includes("/photos/photo-1/purchases"))).toHaveLength(1);
+});
+
 it("uses the Manila month and full server total even in a UTC browser", async () => {
   vi.stubEnv("TZ", "UTC");
   setup(async () => ({ ...page([sale], 0, 50), monthTotals: { "2026-10": 999.75 } }));
@@ -128,8 +144,11 @@ it("falls back after a thumbnail error and shows a fresh URL on refetch", async 
 });
 
 it("stops pagination when a stale total returns an empty page", async () => {
-  const get = setup(async () => page([], 0, 50));
-  await screen.findByText(/zero-charge purchases.*Purchased photos/i);
-  expect(screen.queryByRole("button", { name: /load .*more/i })).not.toBeInTheDocument();
-  expect(get.mock.calls.filter(([path]) => path.includes("/billing/transactions"))).toHaveLength(1);
+  const get = setup(async (offset) => offset === 0 ? page([sale], 0, 100) : page([], 25, 100));
+  await screen.findByRole("button", { name: /sale.*aira s\..*aaaa/i });
+  fireEvent.click(screen.getByRole("button", { name: /load 25 more/i }));
+  await waitFor(() => expect(get.mock.calls.filter(([path]) => path.includes("/billing/transactions"))).toHaveLength(2));
+  expect(screen.getByRole("button", { name: /sale.*aira s\..*aaaa/i })).toBeVisible();
+  await waitFor(() => expect(screen.queryByRole("button", { name: /load .*more/i })).not.toBeInTheDocument());
+  expect(get.mock.calls.filter(([path]) => path.includes("/billing/transactions"))).toHaveLength(2);
 });

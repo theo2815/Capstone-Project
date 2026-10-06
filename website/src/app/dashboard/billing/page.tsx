@@ -14,6 +14,7 @@ import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-sty
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhotographerPurchasePreview, type PurchaseSelection } from "@/components/dashboard/photographer-purchase-preview";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import {
   usePhotographerPayouts,
   usePhotographerPayoutBalance,
@@ -80,10 +81,11 @@ const ROW_NOTE: Record<PayoutStatus, string> = {
 };
 
 export default function BillingPage() {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
   return (
     <>
       <PayoutsSlab />
-      <TransactionsSlab />
+      <TransactionsSlab key={JSON.stringify(session.key)} />
     </>
   );
 }
