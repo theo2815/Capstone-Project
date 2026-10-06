@@ -37,6 +37,8 @@ data class FacesEnrollResult(
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class FacesSearchResult(
     val matches: List<FaceMatch> = emptyList(),
+    val noFaces: Boolean = false,
+    val possiblyTruncated: Boolean? = null,
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

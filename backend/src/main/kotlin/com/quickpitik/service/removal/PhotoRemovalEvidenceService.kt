@@ -31,7 +31,8 @@ import java.util.UUID
 import javax.imageio.ImageIO
 
 enum class EvidenceCleanupResult { DELETED, RETRY_REQUIRED }
-class RemovalEvidenceStream(val stream: InputStream, val contentType: String)
+class RemovalEvidenceStream(val stream: InputStream, val contentType: String,
+    val eventId: UUID, val requestVersion: Long, val evidenceGeneration: Long, val evidenceKey: String)
 
 @Service
 @Transactional(propagation = Propagation.NEVER)
@@ -40,7 +41,7 @@ class PhotoRemovalEvidenceService(
     private val commands: PhotoRemovalCommandRepository,
     private val items: PhotoRemovalItemRepository,
     private val storage: StorageService,
-    private val queries: PhotoRemovalQueryService,
+    private val reviews: PhotoRemovalReviewRepository,
     private val history: PhotoRemovalHistoryRecorder,
     private val historyReader: PhotoRemovalHistoryRepository,
     private val transitions: PhotoRemovalTransitions,
@@ -117,6 +118,7 @@ class PhotoRemovalEvidenceService(
             request.evidenceKey = key
             request.evidenceContentType = image.contentType.lowercase()
             request.evidenceGeneration++
+            request.candidateCache = null
             request.updatedAt = clock.instant()
             request.evidenceCleanupState = if (request.outstandingEvidenceKeys.isEmpty()) RemovalEvidenceCleanupState.PRESENT else RemovalEvidenceCleanupState.PENDING
             request.evidenceCleanupNextAttemptAt = if (request.outstandingEvidenceKeys.isEmpty()) null else clock.instant()
@@ -128,7 +130,7 @@ class PhotoRemovalEvidenceService(
             history.record(RemovalHistoryEvent(requestId = requestId, actorType = RemovalActorType.ADMIN, actorId = adminId,
                 action = RemovalHistoryActions.EVIDENCE_REPLACED, occurredAt = clock.instant(), commandId = commandId,
                 metadata = mapOf("generation" to request.evidenceGeneration.toString())))
-            val result = queries.adminDetail(adminId, requestId)
+            val result = request.toAdminDto(items.findByRequestIdOrderByIdAsc(requestId), reviews.findByRequestIdOrderByIdAsc(requestId))
             receipt.result = mapper.valueToTree(result)
             receipt.state = RemovalCommandState.SUCCEEDED
             commands.flush()
@@ -145,10 +147,14 @@ class PhotoRemovalEvidenceService(
     fun stream(adminId: UUID, requestId: UUID): RemovalEvidenceStream {
         val evidence = tx.execute {
             val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
-            (request.evidenceKey ?: removalNotFound()) to (request.evidenceContentType ?: removalNotFound())
+            EvidenceSnapshot(request.evidenceKey ?: removalNotFound(), request.evidenceContentType ?: removalNotFound(),
+                request.eventIdSnapshot, request.version, request.evidenceGeneration)
         }!!
-        return try { RemovalEvidenceStream(storage.open(evidence.first), evidence.second) } catch (error: Exception) { throw unavailable() }
+        return try { RemovalEvidenceStream(storage.open(evidence.key), evidence.contentType, evidence.eventId,
+            evidence.version, evidence.generation, evidence.key) } catch (error: Exception) { throw unavailable() }
     }
+
+    private data class EvidenceSnapshot(val key: String, val contentType: String, val eventId: UUID, val version: Long, val generation: Long)
 
     fun purgeResolvedEvidence(requestId: UUID): EvidenceCleanupResult {
         val work = tx.execute {

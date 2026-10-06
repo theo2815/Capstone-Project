@@ -79,6 +79,21 @@ class AdminPhotoRemovalController(
         return service.cancel(principal.userId, id, command)
     }
 
+    @GetMapping("/{id}/photos")
+    fun photos(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID,
+        @RequestParam(required = false) bib: String?, @RequestParam(required = false) offset: Int?,
+        @RequestParam(required = false) limit: Int?, response: HttpServletResponse): RemovalPage<RemovalPhotoDto> {
+        limit(principal, response, Bucket4jRateLimiter.POLICY_PHOTO_SEARCH)
+        return queries.photos(principal.userId, id, bib, offset, limit)
+    }
+
+    @PostMapping("/{id}/matches")
+    fun matches(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID,
+        @Valid @RequestBody command: MatchRemovalCommand, response: HttpServletResponse): RemovalMatchResult {
+        limit(principal, response, Bucket4jRateLimiter.POLICY_PHOTO_SEARCH)
+        return queries.matches(principal.userId, id, command)
+    }
+
     private fun limit(principal: AuthPrincipal, response: HttpServletResponse, policy: String = Bucket4jRateLimiter.POLICY_ORDER_READ) {
         response.setHeader("Cache-Control", "private, no-store")
         rateLimiter.acquireOrThrow(policy, principal.userId.toString())

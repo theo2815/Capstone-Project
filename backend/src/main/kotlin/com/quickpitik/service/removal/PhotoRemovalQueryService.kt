@@ -2,14 +2,24 @@ package com.quickpitik.service.removal
 
 import com.quickpitik.common.*
 import com.quickpitik.dto.removal.*
+import com.quickpitik.dto.photos.PhotographerRef
+import com.quickpitik.dto.photos.toDto
+import com.quickpitik.config.StorageProperties
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.entity.*
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.*
+import com.quickpitik.service.photos.PhotoSearchService
+import com.quickpitik.service.ai.AiApiException
+import com.quickpitik.service.storage.StorageService
 import org.springframework.data.domain.Sort
 import org.springframework.data.jpa.domain.Specification
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.support.TransactionTemplate
+import java.time.Clock
 import java.util.UUID
 
 @Service
@@ -19,7 +29,121 @@ class PhotoRemovalQueryService(
     private val items: PhotoRemovalItemRepository,
     private val reviews: PhotoRemovalReviewRepository,
     private val history: PhotoRemovalHistoryRepository,
+    private val photos: PhotoRepository,
+    private val users: UserRepository,
+    private val commands: PhotoRemovalCommandRepository,
+    private val evidence: PhotoRemovalEvidenceService,
+    private val search: PhotoSearchService,
+    private val storage: StorageService,
+    private val storageProperties: StorageProperties,
+    private val tx: TransactionTemplate,
+    private val mapper: ObjectMapper,
+    private val clock: Clock,
 ) {
+
+    @Transactional(propagation = Propagation.NEVER)
+    fun photos(adminId: UUID, requestId: UUID, bib: String?, offset: Int?, limit: Int?): RemovalPage<RemovalPhotoDto> {
+        val params = removalPagination(offset, limit)
+        val rows = tx.execute {
+            val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
+            val normalized = bib.orEmpty().removePrefix("B-").removePrefix("b-").trim().uppercase().filter { it.isLetterOrDigit() }
+            val page = photos.searchForRemovalReview(request.eventIdSnapshot, normalized, OffsetLimitPageable(params))
+            reviewPhotos(requestId, page.content) to page.totalElements
+        }!!
+        return RemovalPage(rows.first.map(::present), rows.second, params.offset, params.limit)
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
+    fun matches(adminId: UUID, requestId: UUID, command: MatchRemovalCommand): RemovalMatchResult {
+        val hash = commandHash(mapper, command)
+        val replay = tx.execute {
+            val request = requests.findForUpdate(requestId) ?: removalNotFound()
+            commands.findByCommandId(command.commandId)?.let { return@execute it.replayMatch(adminId, requestId, hash) }
+            ensureCanMatch(request, command.expectedVersion)
+            if (request.evidenceKey == null) removalNotFound()
+            null
+        }
+        if (replay != null) return replay
+        val sample = evidence.stream(adminId, requestId)
+        val image = sample.stream.use {
+            if (sample.requestVersion != command.expectedVersion) removalConflict()
+            val bytes = try { it.readAllBytes() } catch (error: Exception) {
+                throw ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, "Case evidence storage is unavailable")
+            }
+            SearchImage(bytes, sample.contentType, "case-selfie")
+        }
+        val candidates = search.findFaceCandidates(sample.eventId, image)
+        if (candidates.noFaces) throw AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, "NO_FACES", "No face detected in case evidence")
+        val scores = candidates.matches.groupBy { it.personId }.mapValues { (_, matches) -> matches.maxOf { it.similarity } }
+        val discovered = tx.execute {
+            val found = if (scores.isEmpty()) emptyList() else photos.findRemovalReviewCandidates(sample.eventId, scores.keys)
+            reviewPhotos(requestId, found, scores)
+        }!!.map(::present)
+        return tx.execute {
+            val request = requests.findForUpdate(requestId) ?: removalNotFound()
+            commands.findByCommandId(command.commandId)?.let { return@execute it.replayMatch(adminId, requestId, hash) }
+            ensureCanMatch(request, command.expectedVersion)
+            if (request.evidenceGeneration != sample.evidenceGeneration || request.evidenceKey != sample.evidenceKey) removalConflict()
+            if (commands.insertClaim(command.commandId, requestId, RemovalCommandOperation.MATCH_CANDIDATES.name,
+                    adminId, hash, null, clock.instant()) == 0) {
+                return@execute commands.findByCommandId(command.commandId)!!.replayMatch(adminId, requestId, hash)
+            }
+            // One request flush advances @Version once. The cache names that committed version.
+            request.candidateCache = RemovalCandidateCache(request.version + 1, sample.evidenceGeneration,
+                discovered.map { RemovalCachedCandidate(it.photo.id, RemovalMatchSource.SELFIE, it.matchScore) })
+            request.updatedAt = clock.instant()
+            requests.flush()
+            val result = RemovalMatchResult(discovered, candidates.candidateLimit, candidates.possiblyTruncated,
+                request.version, sample.evidenceGeneration)
+            val receipt = commands.findByCommandId(command.commandId)!!
+            receipt.result = mapper.valueToTree(result)
+            receipt.state = RemovalCommandState.SUCCEEDED
+            commands.flush()
+            result
+        }!!
+    }
+
+    private fun ensureCanMatch(request: PhotoRemovalRequest, expectedVersion: Long) {
+        if (expectedVersion < 0 || request.version != expectedVersion ||
+            request.status !in setOf(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN) ||
+            commands.findByRequestIdAndStateIn(request.id, listOf(RemovalCommandState.PENDING, RemovalCommandState.UNKNOWN)).isNotEmpty()) removalConflict()
+    }
+
+    private fun PhotoRemovalCommand.replayMatch(adminId: UUID, requestId: UUID, hash: String): RemovalMatchResult {
+        ensureIdentity(adminId, requestId, RemovalCommandOperation.MATCH_CANDIDATES, hash)
+        if (state != RemovalCommandState.SUCCEEDED || result == null) removalConflict()
+        val replay = mapper.treeToValue(result, RemovalMatchResult::class.java)
+        // JSONB normalizes whole numbers; restore the existing price column's monetary scale.
+        return replay.copy(items = replay.items.map { it.copy(photo = it.photo.copy(price = it.photo.price.setScale(2))) })
+    }
+
+    private data class ReviewPhoto(val dto: RemovalPhotoDto, val originalKey: String?, val previewKey: String?)
+
+    private fun reviewPhotos(requestId: UUID, found: List<Photo>, scores: Map<String, Double> = emptyMap()): List<ReviewPhoto> {
+        val owners = users.findAllById(found.mapNotNull { it.photographerId }.toSet()).associate { it.id to it.name }
+        val selected = items.findByRequestIdOrderByIdAsc(requestId).associateBy { it.photoIdSnapshot }
+        return found.map { photo ->
+            val score = photo.facePersons.mapNotNull { scores[it.aiPersonId] }.maxOrNull()
+            val dto = photo.toDto(thumbnailUrlResolver = { null },
+                photographerResolver = { it.photographerId?.let { id -> PhotographerRef(null, owners[id]) } })
+            val retained = photo.purgedAt == null && photo.removalState != RemovalState.REMOVED && photo.deletionStartedAt == null
+            ReviewPhoto(RemovalPhotoDto(dto, photo.photographerId, owners[photo.photographerId], selected[photo.id]?.id,
+                photo.removalState, photo.deletedAt != null, false, score, if (score != null) RemovalMatchSource.SELFIE else null),
+                photo.s3Key.takeIf { retained && it.isNotBlank() },
+                (photo.thumbnailS3Key ?: photo.watermarkS3Key).takeIf { retained })
+        }
+    }
+
+    private fun present(row: ReviewPhoto): RemovalPhotoDto {
+        try {
+            val available = row.originalKey?.let(storage::exists) == true
+            val preview = if (available && row.previewKey?.let(storage::exists) == true)
+                storage.presignedGetUrl(row.previewKey, storageProperties.presignedTtl.thumbnail) else null
+            return row.dto.copy(photo = row.dto.photo.copy(imageUrl = preview), bytesAvailable = available)
+        } catch (error: Exception) {
+            throw ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, "Photo review storage is unavailable")
+        }
+    }
     fun adminDetail(adminId: UUID, requestId: UUID): PhotoRemovalRequestDto {
         val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
         val selected = items.findByRequestIdOrderByIdAsc(requestId)

@@ -123,6 +123,35 @@ class RekognitionAiClientTest {
         assertTrue(result.matches.isEmpty())
     }
 
+    @Test fun `no face remains an empty public result with explicit internal outcome`() {
+        `when`(rek.searchFacesByImage(any(SearchFacesByImageRequest::class.java)))
+            .thenThrow(software.amazon.awssdk.services.rekognition.model.InvalidParameterException.builder().message("no face").build())
+        val result = client.facesSearch(bytes, "image/jpeg", "s.jpg", eventId, 0.8, 50)
+        assertTrue(result.matches.isEmpty())
+        val body = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().valueToTree<com.fasterxml.jackson.databind.JsonNode>(result)
+        assertEquals(true, body.path("noFaces").asBoolean())
+    }
+
+    @Test fun `missing collection is distinct from no face`() {
+        `when`(rek.searchFacesByImage(any(SearchFacesByImageRequest::class.java)))
+            .thenThrow(ResourceNotFoundException.builder().message("no collection").build())
+        val body = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().valueToTree<com.fasterxml.jackson.databind.JsonNode>(
+            client.facesSearch(bytes, "image/jpeg", "s.jpg", eventId, 0.8, 50))
+        assertTrue(body.has("noFaces"), "provider outcome must distinguish empty results")
+        assertEquals(false, body.path("noFaces").asBoolean())
+    }
+
+    @Test fun `saturated raw faces remain possibly truncated after external id deduplication`() {
+        `when`(rek.searchFacesByImage(any(SearchFacesByImageRequest::class.java))).thenReturn(
+            SearchFacesByImageResponse.builder().faceMatches(List(50) {
+                FaceMatch.builder().similarity(95f).face(Face.builder().externalImageId("$eventId.$photoId").build()).build()
+            }).build())
+        val result = client.facesSearch(bytes, "image/jpeg", "s.jpg", eventId, 0.8, 50)
+        assertEquals(1, result.matches.size)
+        val body = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().valueToTree<com.fasterxml.jackson.databind.JsonNode>(result)
+        assertTrue(body.path("possiblyTruncated").asBoolean())
+    }
+
     @Test
     fun `bib keeps numeric words at or above min chars and normalizes confidence`() {
         `when`(rek.detectText(any(DetectTextRequest::class.java))).thenReturn(

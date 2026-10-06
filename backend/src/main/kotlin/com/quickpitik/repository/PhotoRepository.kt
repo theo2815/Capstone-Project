@@ -25,6 +25,23 @@ interface PhotoWorkSnapshot {
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
 
+    @Query("""
+        SELECT DISTINCT p FROM Photo p LEFT JOIN p.bibs b
+        WHERE p.eventId = :eventId AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
+        ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
+    """, countQuery = """
+        SELECT COUNT(DISTINCT p) FROM Photo p LEFT JOIN p.bibs b
+        WHERE p.eventId = :eventId AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
+    """)
+    fun searchForRemovalReview(eventId: UUID, bib: String, pageable: Pageable): Page<Photo>
+
+    @Query("""
+        SELECT DISTINCT p FROM Photo p JOIN p.facePersons fp
+        WHERE p.eventId = :eventId AND fp.aiPersonId IN :personIds
+        ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
+    """)
+    fun findRemovalReviewCandidates(eventId: UUID, personIds: Collection<String>): List<Photo>
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     // DISTINCT forces follow-on locking: checkout could hydrate availability
     // before waiting for a review's lock. Lock the row in the initial read.
