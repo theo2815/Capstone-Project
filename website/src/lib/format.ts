@@ -31,3 +31,16 @@ export function formatLongDate(iso: MaybeIso, dateOnly = false): string {
 export const formatMemberSince = formatMonthYear;
 export const formatPaidAt = (iso: MaybeIso) => formatLongDate(iso, false);
 export const formatRaceDate = (iso: MaybeIso) => formatLongDate(iso, true);
+
+export function salesMonthKey(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit" }).formatToParts(d);
+  return `${parts.find((part) => part.type === "year")?.value}-${parts.find((part) => part.type === "month")?.value}`;
+}
+
+export function formatSalesDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(d);
+}
