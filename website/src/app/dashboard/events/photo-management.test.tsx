@@ -20,9 +20,11 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(async () => {}),
   setQueryData: vi.fn(),
   removeQueries: vi.fn(),
+  search: "",
+  replace: vi.fn(),
   visibility: { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false } as { metadataPublic: boolean } | undefined, refetch: vi.fn() },
 }));
-vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'event-1' }), notFound: () => { throw Error('404'); } }));
+vi.mock('next/navigation', () => ({ useParams: () => ({ id: 'event-1' }), useSearchParams: () => new URLSearchParams(mocks.search), useRouter: () => ({ replace: mocks.replace }), notFound: () => { throw Error('404'); } }));
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ cancelQueries: mocks.cancelQueries, invalidateQueries: mocks.invalidate, setQueryData: mocks.setQueryData, removeQueries: mocks.removeQueries }) }));
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ showToast: mocks.toast }) }));
 vi.mock('@/hooks/use-confirmation', () => ({ useConfirmation: () => ({ confirm: async () => true }) }));
@@ -53,8 +55,17 @@ vi.mock('@/hooks/use-photographer-data', () => ({
     fetchNextPage: vi.fn(),
   }),
 }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); mocks.activeRows = 1; mocks.photoStatus = "live"; mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() }; });
+afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); mocks.activeRows = 1; mocks.photoStatus = "live"; mocks.search = ""; mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() }; });
 describe('photographer photo management', () => {
+  it('uses the URL tab while keeping active and deleted selection controls', () => {
+    mocks.search = '?tab=deleted';
+    render(<EventPage />);
+    expect(screen.getByRole('tab', { name: 'Deleted' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+    expect(screen.getByRole('button', { name: 'Restore 0' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Active' }));
+    expect(mocks.replace).toHaveBeenCalledWith('/dashboard/events/event-1?tab=active', { scroll: false });
+  });
   it('shows the server-false event choice on a shared event and saves only an explicit change', async () => {
     useAuthStore.getState().setUser({ id: 'photographer-a', role: 'PHOTOGRAPHER', name: 'A', email: 'a@example.test', createdAt: '2026-09-28' });
     mocks.put.mockResolvedValue({ metadataPublic: true });

@@ -52,6 +52,7 @@ export interface PerEventEarning {
   photoCount: number;
   salesCount: number;
   revenueKept: number;
+  deletedAt: string | null;
 }
 
 export interface PerEventEarningsArgs {

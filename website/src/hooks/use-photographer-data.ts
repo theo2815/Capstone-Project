@@ -21,7 +21,6 @@ import {
   fetchPhotographerPayoutBalance,
   fetchPhotographerTransactions,
   type PayoutBalanceResponse,
-  type PerEventEarning,
 } from "@/lib/api-photographer-earnings";
 import { fetchPublicPhotographer } from "@/lib/api-photographer-public";
 import {
@@ -36,7 +35,6 @@ import type {
   PhotographerPayout,
 } from "@/lib/photographer-mock";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
-import type { PaginatedResponse } from "@/types/api";
 
 // React Query hooks for photographer reads.
 // Keys: ["photographer", <domain>, ...]
@@ -79,6 +77,9 @@ export interface PhotographerEventDetailResult {
   detail: PhotographerEventDetail | null;
   /** BE returned 404: the photographer doesn't cover this event, or it's gone. */
   isMissing: boolean;
+  error: Error | null;
+  isLoading: boolean;
+  refetch: () => void;
 }
 
 // Returns a result object rather than the bare detail because `null` alone
@@ -87,12 +88,13 @@ export interface PhotographerEventDetailResult {
 // forever, since api.get throws on 404 and query.data stays undefined.
 export function usePhotographerEventDetail(
   eventId: string | null,
+  { includeRemoved = false }: { includeRemoved?: boolean } = {},
 ): PhotographerEventDetailResult {
   const session = usePrivateQuerySession("PHOTOGRAPHER");
   const query = useQuery<PhotographerEventDetail | null>({
-    queryKey: ["photographer", "events", eventId, ...session.key],
+    queryKey: ["photographer", "events", eventId, includeRemoved, ...session.key],
     queryFn: ({ signal }) =>
-      eventId ? fetchPhotographerEventDetail(eventId, signal) : Promise.resolve(null),
+      eventId ? fetchPhotographerEventDetail(eventId, signal, includeRemoved) : Promise.resolve(null),
     enabled: session.enabled && !!eventId,
     staleTime: EVENTS_STALE_MS,
     // A 404 is a verdict, not a blip. Retrying it just holds the skeleton up
@@ -109,6 +111,9 @@ export function usePhotographerEventDetail(
   return {
     detail: query.data ?? null,
     isMissing: query.error instanceof ApiError && query.error.status === 404,
+    error: query.error,
+    isLoading: query.isPending && session.enabled,
+    refetch: () => void query.refetch(),
   };
 }
 
@@ -161,19 +166,30 @@ export function usePhotographerEarnings(): PhotographerEarnings | null {
   return query.data ?? null;
 }
 
-// Single capped fetch (not offset pagination): the slab sorts client-side by
-// revenueKept desc and the BE has no revenue-sort param, so paging would only
-// rank the loaded page. The fetcher defaults to the BE max, and the slab
-// client-slices the render. Envelope kept so the page can say "N of M".
-export function usePhotographerPerEventEarnings(): PaginatedResponse<PerEventEarning> | null {
+// The per-event list follows server order and uses raw server offsets, so
+// events past the former first-200 cap remain reachable.
+export function usePhotographerPerEventEarnings() {
   const session = usePrivateQuerySession("PHOTOGRAPHER");
-  const query = useQuery<PaginatedResponse<PerEventEarning>>({
+  const query = useInfiniteQuery({
     queryKey: ["photographer", "earnings", "per-event", ...session.key],
-    queryFn: ({ signal }) => fetchPerEventEarnings({}, signal),
+    queryFn: ({ pageParam, signal }) => fetchPerEventEarnings({ offset: pageParam, limit: pageParam === 0 ? PAGE_SIZE.EARNINGS_INITIAL : PAGE_SIZE.EARNINGS_INCREMENT }, signal),
+    initialPageParam: 0,
+    getNextPageParam: (last) => last.items.length && last.offset + last.items.length < last.total ? last.offset + last.items.length : undefined,
     enabled: session.enabled,
     staleTime: EARNINGS_STALE_MS,
   });
-  return query.data ?? null;
+  const pages = query.data?.pages ?? [];
+  return {
+    items: pages.flatMap((page) => page.items),
+    total: pages.at(-1)?.total ?? 0,
+    isLoading: query.isPending && session.enabled,
+    error: query.isFetchNextPageError ? null : query.error,
+    appendError: query.isFetchNextPageError ? query.error : null,
+    refetch: () => void query.refetch(),
+    fetchNextPage: () => void query.fetchNextPage(),
+    hasNextPage: query.hasNextPage,
+    isFetchingNextPage: query.isFetchingNextPage,
+  };
 }
 
 // ───────────────────────────────────────────── Payouts
