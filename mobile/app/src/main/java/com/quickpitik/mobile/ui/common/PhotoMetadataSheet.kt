@@ -155,7 +155,7 @@ private fun fileFacts(filename: String?, size: Long?) {
         val formatted = size?.let { String.format(Locale.US, "%.1f MiB", it / 1_048_576.0) }
         val exact = size?.let { NumberFormat.getIntegerInstance(Locale.US).format(it) }
         metadataRow("Original size", formatted,
-            if (exact == null) Modifier else Modifier.semantics {
+            if (exact == null) Modifier else Modifier.semantics(mergeDescendants = true) {
                 contentDescription = "Original size, $formatted, $exact bytes"
             },
         )
