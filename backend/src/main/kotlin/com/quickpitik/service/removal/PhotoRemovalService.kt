@@ -8,6 +8,8 @@ import com.quickpitik.service.photos.PhotoAvailabilityService
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.annotation.Transactional
 import java.security.MessageDigest
 import java.time.Clock
 import java.util.HexFormat
@@ -20,6 +22,9 @@ class PhotoRemovalService(
     private val events: EventRepository,
     private val users: UserRepository,
     private val items: PhotoRemovalItemRepository,
+    private val photos: PhotoRepository,
+    private val reviews: PhotoRemovalReviewRepository,
+    private val notifier: PhotoRemovalNotifier,
     private val availability: PhotoAvailabilityService,
     private val evidence: PhotoRemovalEvidenceService,
     private val queries: PhotoRemovalQueryService,
@@ -29,6 +34,87 @@ class PhotoRemovalService(
     private val mapper: ObjectMapper,
     private val clock: Clock,
 ) {
+    @Transactional(propagation = Propagation.NEVER)
+    fun verify(adminId: UUID, requestId: UUID, command: VerifyRemovalCommand): PhotoRemovalRequestDto {
+        val hash = commandHash(mapper, command)
+        val result = tx.execute {
+            val request = requests.findForUpdate(requestId) ?: removalNotFound()
+            commands.findByCommandId(command.commandId)?.let {
+                return@execute it.replay(adminId, requestId, RemovalCommandOperation.VERIFY, hash, mapper)
+            }
+            transitions.ensureVersion(request, command.expectedVersion)
+            if (request.status != RemovalRequestStatus.DRAFT || request.verifiedAt != null || request.eventId == null ||
+                commands.findByRequestIdAndStateIn(requestId, listOf(RemovalCommandState.PENDING, RemovalCommandState.UNKNOWN)).isNotEmpty()) removalConflict()
+            validateText(command.verificationMethod, 2000)
+            validateText(command.verificationNote, 2000)
+            if (command.selectedPhotos.isEmpty() || command.selectedPhotos.size > 100 ||
+                command.selectedPhotos.map { it.photoId }.toSet().size != command.selectedPhotos.size) removalInvalid("Select one to 100 distinct photos")
+            command.selectedPhotos.forEach {
+                if (it.source == RemovalMatchSource.MANUAL && it.note.isNullOrBlank()) removalInvalid("Manual selections require an admin note")
+                it.note?.let { note -> validateText(note, 2000) }
+            }
+            val selectedIds = command.selectedPhotos.map { it.photoId }.sorted()
+            val fresh = photos.findAllByIdForUpdate(selectedIds).associateBy { it.id }
+            if (fresh.size != selectedIds.size || fresh.values.any { it.eventId != request.eventIdSnapshot }) removalInvalid("Selected photos must belong to this event")
+            val cache = request.candidateCache
+            val scores = command.selectedPhotos.associate { selection ->
+                val candidate = if (selection.source == RemovalMatchSource.SELFIE) {
+                    if (request.evidenceKey == null || cache == null || cache.requestVersion != request.version ||
+                        cache.evidenceGeneration != request.evidenceGeneration) removalConflict()
+                    cache.candidates.singleOrNull { it.photoId == selection.photoId && it.source == RemovalMatchSource.SELFIE }
+                        ?: removalInvalid("Selfie selection must use this case's latest candidates")
+                } else null
+                selection.photoId to candidate?.score
+            }
+            val now = clock.instant()
+            if (commands.insertClaim(command.commandId, requestId, RemovalCommandOperation.VERIFY.name, adminId, hash, null, now) == 0) {
+                return@execute commands.findByCommandId(command.commandId)!!.replay(adminId, requestId, RemovalCommandOperation.VERIFY, hash, mapper)
+            }
+            val owners = users.findAllById(fresh.values.mapNotNull { it.photographerId }.toSet()).associateBy { it.id }
+            val groups = fresh.values.mapNotNull { it.photographerId }.toSet().associateWith { ownerId ->
+                reviews.save(PhotoRemovalReview(requestId = requestId, ownerIdSnapshot = ownerId, ownerId = owners[ownerId]?.id))
+            }
+            reviews.flush()
+            val confirmed = command.selectedPhotos.map { selection ->
+                val photo = fresh.getValue(selection.photoId)
+                items.save(PhotoRemovalItem(requestId = requestId, photoIdSnapshot = photo.id, photoId = photo.id,
+                    ownerIdSnapshot = photo.photographerId, ownerNameSnapshot = owners[photo.photographerId]?.name,
+                    reviewId = groups[photo.photographerId]?.id, state = RemovalItemState.VERIFIED, matchSource = selection.source,
+                    matchScore = scores[photo.id], verificationActorId = adminId, verifiedAt = now,
+                    verificationReason = selection.note ?: command.verificationNote))
+            }
+            items.flush()
+            request.status = RemovalRequestStatus.OPEN
+            request.verifierId = adminId
+            request.verificationMethod = command.verificationMethod
+            request.verificationNote = command.verificationNote
+            request.verifiedAt = now
+            request.updatedAt = now
+            requests.flush()
+            confirmed.forEach { item ->
+                history.record(RemovalHistoryEvent(requestId = requestId, itemId = item.id, reviewId = item.reviewId,
+                    photoIdSnapshot = item.photoIdSnapshot, actorType = RemovalActorType.ADMIN, actorId = adminId,
+                    action = RemovalHistoryActions.VERIFIED, toState = RemovalItemState.VERIFIED.name, reason = item.verificationReason,
+                    occurredAt = now, commandId = command.commandId))
+                if (item.ownerIdSnapshot == null) history.record(RemovalHistoryEvent(requestId = requestId, itemId = item.id,
+                    photoIdSnapshot = item.photoIdSnapshot, actorType = RemovalActorType.SYSTEM,
+                    action = RemovalHistoryActions.OWNER_UNAVAILABLE, reason = "Photo has no assigned owner; admin action required",
+                    occurredAt = now, commandId = UUID.nameUUIDFromBytes("${command.commandId}:orphan:${item.id}".toByteArray(Charsets.UTF_8))))
+            }
+            // Conditional availability writer clears the persistence context after its update.
+            availability.refreshRemovalState(selectedIds.toSet())
+            val detail = queries.adminDetail(adminId, requestId)
+            val receipt = commands.findByCommandId(command.commandId)!!
+            receipt.result = mapper.valueToTree(detail)
+            receipt.state = RemovalCommandState.SUCCEEDED
+            commands.flush()
+            detail
+        }!!
+        // Inbox persistence gets its own atomic message/deadline/history transaction. Failed owners stay due.
+        result.reviews.filter { it.notifiedAt == null && it.unavailableReason == null }.forEach { notifier.attempt(it.id) }
+        return result
+    }
+
     fun create(adminId: UUID, command: CreateRemovalRequestCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         fun attempt(): PhotoRemovalRequestDto = tx.execute {
@@ -53,7 +139,8 @@ class PhotoRemovalService(
                 removalConflict()
             }
             history.record(RemovalHistoryEvent(requestId = request.id, actorType = RemovalActorType.ADMIN, actorId = adminId,
-                action = RemovalHistoryActions.CREATED, toState = request.status.name, occurredAt = now, commandId = command.commandId))
+                action = RemovalHistoryActions.CREATED, toState = request.status.name, reason = command.adminNote,
+                occurredAt = now, commandId = command.commandId))
             val result = queries.adminDetail(adminId, request.id)
             val receipt = commands.findByCommandId(command.commandId)!!
             receipt.result = mapper.valueToTree(result)

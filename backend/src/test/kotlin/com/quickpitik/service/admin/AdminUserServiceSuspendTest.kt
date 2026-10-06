@@ -108,7 +108,7 @@ class AdminUserServiceSuspendTest {
         // Captured via thenAnswer rather than eq(): Mockito's matchers hand
         // Kotlin a null that the call site null-checks before the mock runs.
         var pushed: List<Any?> = emptyList()
-        Mockito.`when`(adminDecisionLogService.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+        Mockito.`when`(adminDecisionLogService.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull()))
             .thenAnswer {
                 pushed = it.arguments.toList()
                 PhotographerMessage(

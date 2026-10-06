@@ -11,6 +11,9 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
+import java.time.OffsetDateTime
+
+data class PhotoRemovalMessageLink(val requestId: UUID, val noticeKey: String, val createdAt: OffsetDateTime)
 
 /**
  * Single writer for the admin audit trail + photographer-inbox per Q-A2 / Q-A4.
@@ -119,10 +122,10 @@ class AdminDecisionLogService(
         body: String,
         sourceAdminId: UUID? = null,
         sourceDecisionId: UUID? = null,
-        /** Optional title — populated by ADMIN_MESSAGE (admin-supplied subject).
-         *  For every other kind the FE derives the label from MESSAGE_KIND_LABEL,
-         *  so callers leave this null. */
+        /** Optional title — used for admin subjects and removal notices.
+         *  Other kinds derive their label from MESSAGE_KIND_LABEL. */
         title: String? = null,
+        photoRemovalLink: PhotoRemovalMessageLink? = null,
     ): PhotographerMessage {
         val saved = photographerMessageRepository.save(
             PhotographerMessage(
@@ -132,6 +135,9 @@ class AdminDecisionLogService(
                 body = body,
                 sourceAdminId = sourceAdminId,
                 sourceDecisionId = sourceDecisionId,
+                photoRemovalRequestId = photoRemovalLink?.requestId,
+                noticeKey = photoRemovalLink?.noticeKey,
+                createdAt = photoRemovalLink?.createdAt ?: OffsetDateTime.now(),
             ),
         )
         // Publish for the WS broadcaster — fires only AFTER_COMMIT so a
@@ -151,6 +157,7 @@ class AdminDecisionLogService(
                         "sourceDecisionId" to saved.sourceDecisionId?.toString(),
                         "createdAt" to saved.createdAt.toString(),
                         "readAt" to saved.readAt?.toString(),
+                        "photoRemovalRequestId" to saved.photoRemovalRequestId?.toString(),
                     ),
                 ),
             ),

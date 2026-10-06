@@ -13,6 +13,15 @@ interface PhotoRemovalReviewRepository : JpaRepository<PhotoRemovalReview, UUID>
 
     @Query("""
         SELECT v FROM PhotoRemovalReview v, PhotoRemovalRequest r
+        WHERE v.requestId = r.id AND r.status = com.quickpitik.entity.RemovalRequestStatus.OPEN
+            AND COALESCE(v.notificationNextAttemptAt, r.updatedAt) <= :now
+            AND v.notifiedAt IS NULL AND v.unavailableReason IS NULL
+        ORDER BY COALESCE(v.notificationNextAttemptAt, r.updatedAt), v.id
+    """)
+    fun findPendingNotices(now: Instant, pageable: Pageable): List<PhotoRemovalReview>
+
+    @Query("""
+        SELECT v FROM PhotoRemovalReview v, PhotoRemovalRequest r
         WHERE v.requestId = r.id AND r.status IN
             (com.quickpitik.entity.RemovalRequestStatus.OPEN, com.quickpitik.entity.RemovalRequestStatus.RESOLVING)
             AND v.notifiedAt IS NOT NULL AND v.deadline <= :now

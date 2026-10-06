@@ -141,6 +141,7 @@ class PhotoRemovalIntakeUnitTest {
     private val manager = mock(PlatformTransactionManager::class.java)
     private val mapper = jacksonObjectMapper().findAndRegisterModules()
     private val service = PhotoRemovalService(requests, commands, events, users, items,
+        mock(PhotoRepository::class.java), mock(PhotoRemovalReviewRepository::class.java), mock(PhotoRemovalNotifier::class.java),
         mock(com.quickpitik.service.photos.PhotoAvailabilityService::class.java), evidence, queries,
         mock(PhotoRemovalHistoryRecorder::class.java), PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.systemUTC())
     init {

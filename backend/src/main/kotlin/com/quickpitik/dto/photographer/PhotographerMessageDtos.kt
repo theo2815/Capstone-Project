@@ -19,6 +19,7 @@ data class PhotographerMessageDto(
     val sourceDecisionId: UUID?,
     val createdAt: OffsetDateTime,
     val readAt: OffsetDateTime?,
+    val photoRemovalRequestId: UUID? = null,
 )
 
 // POST /api/v1/admin/users/{id}/message — admin → photographer DM. Subject
