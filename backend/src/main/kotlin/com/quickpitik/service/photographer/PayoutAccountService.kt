@@ -16,6 +16,7 @@ import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
@@ -27,7 +28,6 @@ import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -292,7 +292,7 @@ class PayoutAccountService(
     }
 
     private fun scaleToLongEdgePng(input: ByteArray, maxLongEdge: Int): ByteArray? {
-        val source = ImageIO.read(ByteArrayInputStream(input)) ?: return null
+        val source = ImageDecode.readOrNull(input) ?: return null
         val srcW = source.width
         val srcH = source.height
         val longEdge = maxOf(srcW, srcH)

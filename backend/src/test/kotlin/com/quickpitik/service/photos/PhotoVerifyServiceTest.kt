@@ -1,5 +1,6 @@
 package com.quickpitik.service.photos
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.PhotographerSettings
@@ -18,6 +19,7 @@ import java.awt.Color
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
+import java.util.Base64
 import java.util.Optional
 import java.util.UUID
 import javax.imageio.ImageIO
@@ -84,6 +86,19 @@ class PhotoVerifyServiceTest {
         Mockito.`when`(photoRepository.findNearestByPhash(Mockito.anyLong())).thenReturn(emptyList())
 
         assertEquals(false, service.verify(jpeg()).matched)
+    }
+
+    @Test
+    fun `truncated WebP bytes admitted as PNG are rejected as unsupported media`() {
+        // The controller admits declared image/png; the service receives only bytes.
+        val bytes = Base64.getDecoder().decode("UklGRjIAAABXRUJQVlA4ICYAAAA=")
+
+        val ex = assertFailsWith<ApiException> { service.verify(bytes) }
+
+        assertEquals(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ex.status)
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("file", ex.field)
+        Mockito.verifyNoInteractions(photoRepository, settingsRepository, userRepository, eventRepository)
     }
 
     @Test

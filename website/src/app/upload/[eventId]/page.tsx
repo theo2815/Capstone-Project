@@ -54,9 +54,8 @@ import {
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
 
-// The server image decoder reads JPEG and PNG event photos (no WebP reader in
-// the backend runtime). Avatar, cover and watermark uploads re-encode in the
-// browser and keep ACCEPTED_IMAGE_MIME.
+// Backend policy limits event photos to JPEG and PNG. Avatar, cover and
+// watermark uploads re-encode in the browser and keep ACCEPTED_IMAGE_MIME.
 const EVENT_PHOTO_MIME = ["image/jpeg", "image/png"];
 
 // Auto-upload mode. Photos are confirmed by the backend after transfer; there

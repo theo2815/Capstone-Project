@@ -28,6 +28,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder
 import java.sql.SQLException
+import java.util.Base64
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -156,6 +157,32 @@ class PhotographerSettingsServiceTest {
         assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, ex.status)
         assertEquals(ErrorCodes.PAYLOAD_TOO_LARGE, ex.code)
         Mockito.verifyNoInteractions(storageService)
+    }
+
+    @Test
+    fun `truncated WebP cover is rejected before storage or settings writes`() {
+        val bytes = Base64.getDecoder().decode("UklGRjIAAABXRUJQVlA4ICYAAAA=")
+
+        val ex = assertFailsWith<ValidationException> {
+            service().uploadCover(userId, bytes, "image/webp")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("file", ex.field)
+        Mockito.verifyNoInteractions(storageService, photographerSettingsRepository)
+    }
+
+    @Test
+    fun `truncated WebP watermark is rejected before storage or settings writes`() {
+        val bytes = Base64.getDecoder().decode("UklGRjIAAABXRUJQVlA4ICYAAAA=")
+
+        val ex = assertFailsWith<ValidationException> {
+            service().uploadWatermark(userId, bytes, "image/webp")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("file", ex.field)
+        Mockito.verifyNoInteractions(storageService, photographerSettingsRepository)
     }
 
     @Test
