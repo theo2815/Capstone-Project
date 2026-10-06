@@ -25,6 +25,19 @@ class MessagePaginationTest {
     private fun <T> anyArg(): T = Mockito.any()
 
     @Test
+    fun `removal case link is serialized through existing inbox projection`() {
+        val owner = UUID.randomUUID()
+        val case = UUID.randomUUID()
+        val message = PhotographerMessage(photographerId = owner, kindWire = "photo_removal_request", body = "Privacy removal request", photoRemovalRequestId = case)
+        Mockito.`when`(photographerRepo.findByPhotographerIdAndRemovedAtIsNullOrderByCreatedAtDescIdAsc(anyArg(), anyArg())).thenReturn(listOf(message))
+        val dto = PhotographerMessageService(photographerRepo).list(owner, PaginationParams.of(0, 25)).single()
+        val json = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().findAndRegisterModules().valueToTree<com.fasterxml.jackson.databind.JsonNode>(dto)
+        assertEquals(case.toString(), json["photoRemovalRequestId"].asText())
+        assertEquals("photo_removal_request", json["kind"].asText())
+        assertEquals(message.id.toString(), json["id"].asText())
+    }
+
+    @Test
     fun `photographer inbox forwards offset and limit to the repository`() {
         val userId = UUID.randomUUID()
         var seenId: UUID? = null

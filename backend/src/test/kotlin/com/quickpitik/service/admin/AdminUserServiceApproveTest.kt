@@ -123,7 +123,7 @@ class AdminUserServiceApproveTest {
         Mockito.verify(photographerSettingsRepository, Mockito.never()).save(anyArg())
         // No inbox message either: the photographer must not be told they're live.
         Mockito.verify(adminDecisionLogService, Mockito.never())
-            .pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+            .pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
     }
 
     @Test
@@ -135,7 +135,7 @@ class AdminUserServiceApproveTest {
         Mockito.`when`(adminDecisionLogService.logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(AdminDecisionLog(adminId = adminId, targetUserId = photographerId, decision = "approved"))
         Mockito.`when`(
-            adminDecisionLogService.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()),
+            adminDecisionLogService.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull()),
         ).thenReturn(
             PhotographerMessage(
                 photographerId = photographerId,

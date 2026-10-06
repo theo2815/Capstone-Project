@@ -32,15 +32,17 @@ enum class PhotographerMessageKind(val wire: String) {
     EVENT_APPROVED("event_approved"),
     EVENT_REJECTED("event_rejected"),
     EVENT_CHANGE_APPROVED("event_change_approved"),
-    EVENT_CHANGE_REJECTED("event_change_rejected");
+    EVENT_CHANGE_REJECTED("event_change_rejected"),
+    PHOTO_REMOVAL_REQUEST("photo_removal_request"),
+    PHOTO_REMOVAL_OUTCOME("photo_removal_outcome");
 }
 
 // DB-backed photographer inbox per Q-A2. Admin actions write a row in the
 // same TX as the decision-log entry; the photographer reads via
 // GET /api/v1/me/photographer/messages (V15 wired the FE surface).
 //
-// `title` is populated by ADMIN_MESSAGE (admin-supplied subject) and is
-// null for all other kinds — the FE derives a label from MESSAGE_KIND_LABEL.
+// `title` holds admin subjects and removal notice titles; other kinds
+// derive a label from MESSAGE_KIND_LABEL.
 // `removedAt` is the photographer's soft-delete flag; the list endpoint
 // filters removed_at IS NULL.
 @Entity
@@ -77,6 +79,12 @@ class PhotographerMessage(
 
     @Column(name = "removed_at")
     var removedAt: OffsetDateTime? = null,
+
+    @Column(name = "photo_removal_request_id", updatable = false)
+    val photoRemovalRequestId: UUID? = null,
+
+    @Column(name = "notice_key", length = 160, updatable = false)
+    val noticeKey: String? = null,
 ) {
     val kind: PhotographerMessageKind
         get() = PhotographerMessageKind.entries.first { it.wire == kindWire }

@@ -67,7 +67,7 @@ class AdminEventServiceReviewTest {
         Mockito.`when`(eventRepository.save(anyArg())).thenAnswer { it.arguments[0] }
         Mockito.`when`(decisions.logEventDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(AdminDecisionLog(adminId = adminId, targetEventId = UUID.randomUUID(), decision = "x"))
-        Mockito.`when`(decisions.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer { inv ->
+        Mockito.`when`(decisions.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())).thenAnswer { inv ->
             pushed += inv.getArgument<PhotographerMessageKind>(1)
             null
         }

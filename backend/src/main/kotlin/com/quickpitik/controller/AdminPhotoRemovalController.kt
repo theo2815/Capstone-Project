@@ -94,6 +94,13 @@ class AdminPhotoRemovalController(
         return queries.matches(principal.userId, id, command)
     }
 
+    @PostMapping("/{id}/verify")
+    fun verify(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID,
+        @Valid @RequestBody command: VerifyRemovalCommand, response: HttpServletResponse): PhotoRemovalRequestDto {
+        limit(principal, response, Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD)
+        return service.verify(principal.userId, id, command)
+    }
+
     private fun limit(principal: AuthPrincipal, response: HttpServletResponse, policy: String = Bucket4jRateLimiter.POLICY_ORDER_READ) {
         response.setHeader("Cache-Control", "private, no-store")
         rateLimiter.acquireOrThrow(policy, principal.userId.toString())

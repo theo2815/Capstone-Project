@@ -27,4 +27,6 @@ class PhotoRemovalReview(
     var overdueAt: Instant? = null,
     @Column(name = "unavailable_reason", columnDefinition = "TEXT")
     var unavailableReason: String? = null,
+    @Column(name = "notification_next_attempt_at")
+    var notificationNextAttemptAt: Instant? = null,
 )
