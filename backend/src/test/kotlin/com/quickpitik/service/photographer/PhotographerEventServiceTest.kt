@@ -34,7 +34,6 @@ class PhotographerEventServiceTest {
         PhotographerPhotoDtoMapper(
             Mockito.mock(StorageService::class.java),
             Mockito.mock(StorageProperties::class.java),
-            Mockito.mock(PhotoRepository::class.java),
         ),
         Mockito.mock(StorageService::class.java),
         Mockito.mock(StorageProperties::class.java),

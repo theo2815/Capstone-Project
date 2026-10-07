@@ -22,6 +22,7 @@ import com.quickpitik.service.photographer.PhotoMetadataSettingsService
 import com.quickpitik.service.photographer.PhotographerOwnedEventService
 import com.quickpitik.security.JwtTokenProvider
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertAll
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
@@ -57,6 +58,40 @@ class MetadataVisibilityIntegrationTest : PostgresIntegrationTest() {
     @LocalServerPort private var port: Int = 0
     private val http = HttpClient.newHttpClient()
     private val json = ObjectMapper()
+
+    @Test
+    fun `removed event refuses metadata changes for owner and covering photographer`() {
+        val owner = photographer()
+        val covering = photographer()
+        val stranger = photographer()
+        val runner = users.save(User(email = "runner-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Runner", role = Role.RUNNER))
+        val event = event(createdBy = owner.id)
+        transactions.executeWithoutResult {
+            coverage.upsertOnUpload(event.id, owner.id, OffsetDateTime.now())
+            coverage.upsertOnUpload(event.id, covering.id, OffsetDateTime.now())
+        }
+        val path = "/api/v1/me/photographer/events/${event.id}/metadata-visibility"
+        for ((caller, value) in listOf(owner to false, covering to true)) {
+            assertEquals(200, request("PUT", path, caller, """{"metadataPublic":$value}""").statusCode())
+            assertEquals(value, visibility(EventPhotographerId(event.id, caller.id)))
+        }
+        jdbc.update("UPDATE events SET deleted_at = now() WHERE id = ?", event.id)
+        assertEquals(404, request("PUT", path, stranger, """{"metadataPublic":true}""").statusCode())
+        assertEquals(403, request("PUT", path, runner, """{"metadataPublic":true}""").statusCode())
+        assertEquals(401, request("PUT", path, null, """{"metadataPublic":true}""").statusCode())
+
+        assertAll(listOf(owner, covering).map { caller ->
+            {
+                val key = EventPhotographerId(event.id, caller.id)
+                val before = visibility(key)
+                val response = request("PUT", path, caller, """{"metadataPublic":${!before}}""")
+                assertAll(
+                    { assertEquals(404, response.statusCode(), caller.role.name) },
+                    { assertEquals(before, visibility(key), "stored metadata choice") },
+                )
+            }
+        })
+    }
 
     @Test
     fun `metadata settings reject non boolean JSON without changing private choices`() {
@@ -296,10 +331,10 @@ class MetadataVisibilityIntegrationTest : PostgresIntegrationTest() {
         key.photographerId,
     )!!
 
-    private fun request(method: String, path: String, user: User, body: String = ""): HttpResponse<String> {
+    private fun request(method: String, path: String, user: User?, body: String = ""): HttpResponse<String> {
         val builder = HttpRequest.newBuilder(URI("http://localhost:$port$path"))
-            .header("Authorization", "Bearer ${tokens.createAccessToken(user)}")
             .header("Content-Type", "application/json")
+        user?.let { builder.header("Authorization", "Bearer ${tokens.createAccessToken(it)}") }
         val request = if (method == "GET") builder.GET() else builder.PUT(HttpRequest.BodyPublishers.ofString(body))
         return http.send(request.build(), HttpResponse.BodyHandlers.ofString())
     }

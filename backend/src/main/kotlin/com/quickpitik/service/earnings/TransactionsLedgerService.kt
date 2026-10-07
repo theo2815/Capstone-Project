@@ -67,9 +67,10 @@ class TransactionsLedgerService(
 
         val photoIds = page.content.map { it.photoId }.toSet()
         val thumbnailsByPhotoId = if (photoIds.isNotEmpty()) {
-            photoRepository.findAllById(photoIds)
-                .filter { it.photographerId == photographerId }
-                .associate { it.id to photoDtoMapper.thumbnailUrl(it) }
+            val ownedPhotos = photoRepository.findAllById(photoIds).filter { it.photographerId == photographerId }
+            val availableIds = if (ownedPhotos.isEmpty()) emptySet() else
+                photoRepository.findDeliveryAvailableIds(photographerId, ownedPhotos.map { it.id }).toSet()
+            ownedPhotos.associate { it.id to photoDtoMapper.thumbnailUrl(it, it.id in availableIds) }
         } else {
             emptyMap()
         }

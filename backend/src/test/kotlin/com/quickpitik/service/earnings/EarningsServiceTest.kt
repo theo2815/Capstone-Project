@@ -1,6 +1,7 @@
 package com.quickpitik.service.earnings
 
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.entity.EventPhotographerId
@@ -28,6 +29,35 @@ class EarningsServiceTest {
     private val purchases = Mockito.mock(OrderItemRepository::class.java)
     private val service = EarningsService(transactions, payouts, events, coverage, purchases)
     private val seller = UUID.randomUUID()
+
+    @Test
+    fun `empty out-of-range page retains the repository total and requested window`() {
+        val params = PaginationParams(250, 50)
+        Mockito.`when`(coverage.pageEarningsForPhotographer(anyArg(), anyArg()))
+            .thenReturn(PageImpl(emptyList(), OffsetLimitPageable(params), 205))
+
+        val result = service.listPerEvent(seller, params)
+
+        assertEquals(emptyList(), result.items)
+        assertEquals(205L, result.total)
+        assertEquals(250, result.offset)
+        assertEquals(50, result.limit)
+        Mockito.verifyNoInteractions(events, purchases, transactions, payouts)
+    }
+
+    @Test
+    fun `zero history has zero total and echoes the requested window`() {
+        val params = PaginationParams(250, 50)
+        Mockito.`when`(coverage.pageEarningsForPhotographer(anyArg(), anyArg()))
+            .thenReturn(PageImpl(emptyList(), OffsetLimitPageable(params), 0))
+
+        val result = service.listPerEvent(seller, params)
+
+        assertEquals(emptyList(), result.items)
+        assertEquals(0L, result.total)
+        assertEquals(250, result.offset)
+        assertEquals(50, result.limit)
+    }
 
     @Test
     fun `includes giveaway-only and fully refunded events`() {

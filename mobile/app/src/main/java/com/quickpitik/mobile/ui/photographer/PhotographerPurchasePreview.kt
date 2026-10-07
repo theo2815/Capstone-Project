@@ -80,10 +80,10 @@ fun PhotographerPurchasePreview(
         onClose = ::close,
         onIndexChange = { next -> viewModel.openPurchase(previewPhotos[next].id) },
         mode = PhotoPreviewMode.OwnerReview,
-        canDownload = { photo -> state.photo?.id == photo.id && state.photo?.deletionStartedAt == null && downloadingPhotoIds[photo.id] != true },
+        canDownload = { photo -> state.photo?.id == photo.id && state.photo?.mediaAvailable != false && state.photo?.deletionStartedAt == null && downloadingPhotoIds[photo.id] != true },
         onDownload = { photo ->
             val token = session.getAccessToken()
-            if (downloadingPhotoIds[photo.id] != true && token != null && state.photo?.id == photo.id && state.photo?.deletionStartedAt == null) {
+            if (downloadingPhotoIds[photo.id] != true && token != null && state.photo?.id == photo.id && state.photo?.mediaAvailable != false && state.photo?.deletionStartedAt == null) {
                 downloadingPhotoIds[photo.id] = true
                 downloadErrorPhotoId = null
                 val generation = session.authChanges.value

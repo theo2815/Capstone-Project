@@ -25,9 +25,17 @@ import com.quickpitik.entity.Transaction
 import com.quickpitik.entity.Dispute
 import com.quickpitik.security.JwtTokenProvider
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
+import org.hibernate.resource.jdbc.spi.StatementInspector
+import com.quickpitik.common.PaginationParams
+import com.quickpitik.service.earnings.PhotographerPurchaseService
+import com.quickpitik.service.earnings.TransactionsLedgerService
+import com.quickpitik.service.photographer.PhotographerEventService
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.jdbc.core.JdbcTemplate
 import java.math.BigDecimal
 import java.net.URI
 import java.net.http.HttpClient
@@ -40,7 +48,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = [
+    "spring.jpa.properties.hibernate.session_factory.statement_inspector=com.quickpitik.support.PhotographerPurchaseHistoryIntegrationTest\$DeliverySql",
+])
 class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var users: UserRepository
     @Autowired private lateinit var events: EventRepository
@@ -50,11 +60,168 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var items: OrderItemRepository
     @Autowired private lateinit var transactions: TransactionRepository
     @Autowired private lateinit var disputes: DisputeRepository
+    @Autowired private lateinit var jdbc: JdbcTemplate
+    @Autowired private lateinit var purchaseService: PhotographerPurchaseService
+    @Autowired private lateinit var eventService: PhotographerEventService
+    @Autowired private lateinit var ledgerService: TransactionsLedgerService
 
     @Autowired private lateinit var tokens: JwtTokenProvider
     @LocalServerPort private var port: Int = 0
     private val client = HttpClient.newHttpClient()
     private val json = ObjectMapper()
+
+    class DeliverySql : StatementInspector {
+        override fun inspect(sql: String): String {
+            if (sql.lowercase().contains("removal_state <> 'removed'")) queries.add(sql.lowercase())
+            return sql
+        }
+        companion object {
+            val queries: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+        }
+    }
+
+    @Test
+    fun `empty earnings pages distinguish out-of-range totals from zero history`() {
+        val owner = seller()
+        val event = event(EventStatus.ACTIVE, owner.id)
+        coverage.save(EventPhotographer(EventPhotographerId(event.id, owner.id), revenueKeptPhp = BigDecimal("40.00")))
+        val emptyOwner = seller()
+        for ((seller, expectedTotal) in listOf(owner to 1L, emptyOwner to 0L)) {
+            val response = get("/api/v1/me/photographer/earnings/per-event?offset=250&limit=50", tokens.createAccessToken(seller))
+            assertEquals(200, response.statusCode())
+            val data = json.readTree(response.body()).path("data")
+            assertEquals(0, data.path("items").size())
+            assertEquals(expectedTotal, data.path("total").asLong())
+            assertEquals(250, data.path("offset").asInt())
+            assertEquals(50, data.path("limit").asInt())
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [1, 50, 200])
+    fun `owner pages batch fresh availability regardless of photo count`(count: Int) {
+        val owner = seller()
+        val event = event(EventStatus.ACTIVE, owner.id)
+        val at = OffsetDateTime.parse("2026-09-01T10:00:00Z")
+        val order = orders.save(Order(eventId = event.id, recipientEmail = "guest@test.local", paymentMethodWire = "card", status = OrderStatus.FULFILLED, totalPhp = BigDecimal("100.00"), paidAt = at))
+        repeat(count) {
+            val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, status = PhotoStatus.LIVE, s3Key = "batch/$it.jpg", pricePhp = BigDecimal("100.00")))
+            items.save(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("100.00")))
+            transactions.save(Transaction(paidAt = at, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = order.id, amountKeptPhp = BigDecimal("75.00")))
+        }
+        val params = PaginationParams(0, count)
+        val pages = listOf<() -> Int>(
+            { eventService.listPhotos(owner.id, event.id, null, pagination = params).items.size },
+            { purchaseService.listPurchasedPhotos(owner.id, event.id, params).items.size },
+            { ledgerService.list(owner.id, params).items.size },
+        )
+        for (page in pages) {
+            DeliverySql.queries.clear()
+            assertEquals(count, page())
+            assertEquals(0, DeliverySql.queries.count { it.startsWith("select exists") }, "mapping must not perform scalar delivery queries")
+            assertEquals(1, DeliverySql.queries.size, "one fresh availability batch per page")
+        }
+        DeliverySql.queries.clear()
+        assertTrue(purchaseService.listPurchasedPhotos(owner.id, event.id, PaginationParams(count, count)).items.isEmpty())
+        assertTrue(ledgerService.list(owner.id, PaginationParams(count, count)).items.isEmpty())
+        assertTrue(DeliverySql.queries.isEmpty())
+    }
+
+    @Test
+    fun `blocked owner media retains receipts and never receives a signed thumbnail`() {
+        val owner = seller()
+        val foreign = seller()
+        val event = event(EventStatus.ACTIVE, owner.id)
+        val at = OffsetDateTime.parse("2026-09-01T10:00:00Z")
+        val order = orders.save(Order(eventId = event.id, recipientEmail = "guest@test.local", paymentMethodWire = "card", status = OrderStatus.FULFILLED, totalPhp = BigDecimal("100.00"), paidAt = at))
+        val cases = listOf("live" to true, "hidden" to true, "trash" to true, "review" to true, "removed" to false, "deleting" to false, "purged" to false)
+        for ((state, available) in cases) {
+            val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, status = PhotoStatus.LIVE, s3Key = "policy/$state.jpg", pricePhp = BigDecimal("100.00")))
+            when (state) {
+                "hidden" -> jdbc.update("UPDATE photos SET status = 'HIDDEN' WHERE id = ?", photo.id)
+                "trash" -> jdbc.update("UPDATE photos SET deleted_at = ? WHERE id = ?", at, photo.id)
+                "review" -> jdbc.update("UPDATE photos SET removal_state = 'REVIEW' WHERE id = ?", photo.id)
+                "removed" -> jdbc.update("UPDATE photos SET removal_state = 'REMOVED' WHERE id = ?", photo.id)
+                "deleting" -> jdbc.update("UPDATE photos SET deleted_at = ?, deletion_started_at = ? WHERE id = ?", at, at, photo.id)
+                "purged" -> jdbc.update("UPDATE photos SET purged_at = ? WHERE id = ?", at, photo.id)
+            }
+            items.save(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("100.00")))
+            val path = "/api/v1/me/photographer/photos/${photo.id}/purchases?orderId=${order.id}"
+            val response = get(path, tokens.createAccessToken(owner))
+            assertEquals(200, response.statusCode())
+            val data = json.readTree(response.body()).path("data")
+            assertTrue(data.path("photo").path("mediaAvailable").isBoolean, state)
+            assertEquals(available, data.path("photo").path("mediaAvailable").booleanValue(), state)
+            assertEquals(!available, data.path("photo").path("thumbnailUrl").isNull, state)
+            assertEquals(order.id.toString(), data.path("selectedPurchase").path("orderId").asText())
+            assertEquals(BigDecimal("100.00"), data.path("selectedPurchase").path("paidPhp").decimalValue().setScale(2))
+            assertEquals(1, data.path("items").size())
+            assertEquals(404, get(path, tokens.createAccessToken(foreign)).statusCode())
+        }
+        val foreignPhoto = photos.save(Photo(eventId = event.id, photographerId = foreign.id, s3Key = "policy/foreign.jpg", pricePhp = BigDecimal("100.00")))
+        val ownedIds = items.findByIdOrderId(order.id).map { it.id.photoId }
+        val availableIds = photos.findDeliveryAvailableIds(owner.id, ownedIds + foreignPhoto.id)
+        assertEquals(4, availableIds.size)
+        assertFalse(foreignPhoto.id in availableIds)
+        assertEquals(listOf(foreignPhoto.id), photos.findDeliveryAvailableIds(foreign.id, ownedIds + foreignPhoto.id))
+    }
+
+    @Test
+    fun `earnings legacy financial coverage opens empty private history`() {
+        val creator = seller()
+        val a = seller()
+        val b = seller()
+        val runner = users.save(User(email = "runner-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Runner", role = Role.RUNNER))
+        val aToken = tokens.createAccessToken(a)
+        val bToken = tokens.createAccessToken(b)
+        val removedAt = OffsetDateTime.parse("2026-09-04T21:36:27Z")
+        for (deletedAt in listOf(removedAt, null)) {
+            val event = event(EventStatus.ACTIVE, creator.id, deletedAt)
+            val key = EventPhotographerId(event.id, a.id)
+            coverage.save(EventPhotographer(key, revenueKeptPhp = BigDecimal("40.00")))
+            coverage.save(EventPhotographer(EventPhotographerId(event.id, b.id)))
+            val path = "/api/v1/me/photographer/events/${event.id}"
+            val earningsResponse = get("/api/v1/me/photographer/earnings/per-event?limit=200", aToken)
+            assertEquals(200, earningsResponse.statusCode())
+            val earning = json.readTree(earningsResponse.body()).path("data").path("items")
+                .single { it.path("eventId").asText() == event.id.toString() }
+            assertEquals(0, BigDecimal("40.00").compareTo(earning.path("revenueKept").decimalValue()))
+            assertEquals(0, earning.path("purchaseCount").asInt())
+            assertEquals(404, get(path, aToken).statusCode())
+            val detail = get("$path?includeRemoved=true", aToken)
+            assertEquals(200, detail.statusCode())
+            val detailData = json.readTree(detail.body()).path("data")
+            assertEquals(0, detailData.path("photoCount").asInt())
+            if (deletedAt == null) assertTrue(detailData.path("deletedAt").isNull)
+            else assertEquals(deletedAt.toString(), detailData.path("deletedAt").asText())
+            val purchased = get("$path/purchased-photos", aToken)
+            assertEquals(200, purchased.statusCode())
+            val history = json.readTree(purchased.body()).path("data")
+            assertEquals(0, history.path("total").asInt())
+            assertEquals(0, history.path("items").size())
+            assertEquals(404, get("$path?includeRemoved=true", bToken).statusCode())
+            assertEquals(404, get("$path/purchased-photos", bToken).statusCode())
+            assertEquals(403, get("$path?includeRemoved=true", tokens.createAccessToken(runner)).statusCode())
+            assertEquals(401, get("$path?includeRemoved=true").statusCode())
+            if (deletedAt != null) {
+                assertEquals(404, get("/api/v1/events/${event.slug}").statusCode())
+                assertEquals(404, get("$path/photos", aToken).statusCode())
+                for (action in listOf("trash", "restore", "permanent-delete")) {
+                    assertEquals(404, post("$path/photos/$action", """{"photoIds":["${UUID.randomUUID()}"]}""", aToken).statusCode())
+                }
+                val visibility = send(HttpRequest.newBuilder(uri("$path/metadata-visibility"))
+                    .header("Content-Type", "application/json")
+                    .PUT(HttpRequest.BodyPublishers.ofString("""{"metadataPublic":true}""")), aToken)
+                assertEquals(404, visibility.statusCode())
+            }
+            val saved = coverage.findById(key).orElseThrow()
+            assertEquals(BigDecimal("40.00"), saved.revenueKeptPhp)
+            assertEquals(0, saved.photoCount)
+            assertEquals(null, saved.firstUploadAt)
+            assertFalse(saved.metadataPublic)
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM transactions WHERE event_id = ?", Int::class.java, event.id))
+        }
+    }
 
     @Test
     fun `purchased gallery and history use settled item identities and private money`() {

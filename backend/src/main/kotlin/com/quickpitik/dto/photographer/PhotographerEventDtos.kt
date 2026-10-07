@@ -138,6 +138,7 @@ data class PhotographerLibraryPhotoDto(
     val tone: Int,
     val span: String,
     val thumbnailUrl: String?,
+    val mediaAvailable: Boolean,
     // Soft-delete timestamp (V52); non-null = in the photographer's trash.
     // Null on the active tab, set on the Deleted Photos tab.
     val deletedAt: OffsetDateTime? = null,
@@ -319,6 +320,7 @@ fun detailDto(
 
 fun Photo.toLibraryDto(
     salesCount: Long,
+    mediaAvailable: Boolean,
     thumbnailUrlResolver: (Photo) -> String?,
 ): PhotographerLibraryPhotoDto =
     PhotographerLibraryPhotoDto(
@@ -334,6 +336,7 @@ fun Photo.toLibraryDto(
         tone = tone,
         span = span.wire,
         thumbnailUrl = thumbnailUrlResolver(this),
+        mediaAvailable = mediaAvailable,
         deletedAt = deletedAt,
         deletionStartedAt = deletionStartedAt,
     )

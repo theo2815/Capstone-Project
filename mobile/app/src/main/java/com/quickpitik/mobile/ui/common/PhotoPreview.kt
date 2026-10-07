@@ -128,6 +128,7 @@ data class PhotoPreviewData(
     val caption: String? = null,
     val metadataAccess: String? = null,
     val localUploadRecordId: Long? = null,
+    val mediaAvailable: Boolean = true,
 )
 
 // PhotoPreview has four modes. Browse is the runner buy-flow (Add to cart /
@@ -142,7 +143,7 @@ enum class PhotoPreviewMode { Browse, OwnerReview, Owned, LocalReview }
 
 internal fun metadataAccessFor(mode: PhotoPreviewMode, photo: PhotoPreviewData): String? =
     when (mode) {
-        PhotoPreviewMode.OwnerReview -> "owner"
+        PhotoPreviewMode.OwnerReview -> if (photo.mediaAvailable) "owner" else null
         PhotoPreviewMode.LocalReview -> null
         else -> photo.metadataAccess?.takeIf { it == "owner" || it == "public" }
     }
@@ -184,9 +185,11 @@ fun PhotographerLibraryPhotoDto.toOwnerPreviewData(eventName: String?): PhotoPre
     PhotoPreviewData(
         id = id,
         price = 0.0,
-        imageUrl = RetrofitClient.resolveImageUrl(thumbnailUrl?.takeIf { it.isNotBlank() }),
+        imageUrl = if (mediaAvailable != false && deletionStartedAt == null)
+            RetrofitClient.resolveImageUrl(thumbnailUrl?.takeIf { it.isNotBlank() }) else null,
         eventName = eventName,
         salesCount = salesCount,
+        mediaAvailable = mediaAvailable != false && deletionStartedAt == null,
     )
 
 /**
@@ -605,9 +608,9 @@ fun PhotoPreview(
                                     onClick = onClose,
                                     modifier = Modifier.weight(1f),
                                 )
-                                if (canDownload(activePhoto)) PrimaryCta(
+                                if (activePhoto.mediaAvailable && canDownload(activePhoto)) PrimaryCta(
                                     text = "Download ↓",
-                                    onClick = { onDownload(activePhoto) },
+                                    onClick = { if (activePhoto.mediaAvailable && canDownload(activePhoto)) onDownload(activePhoto) },
                                     modifier = Modifier.weight(1f),
                                 )
                             }

@@ -81,8 +81,9 @@ class PhotographerPurchaseServiceTest {
             .thenReturn(emptyList())
         Mockito.`when`(disputes.findByOrderIdIn(listOf(order.id))).thenReturn(emptyList())
         Mockito.`when`(users.findAllById(emptySet<UUID>())).thenReturn(emptyList())
-        Mockito.`when`(photoMapper.toLibraryDto(photo, 1L)).thenReturn(PhotographerLibraryPhotoDto(
-            photo.id, null, "live", 1, photo.uploadedAt, 0, "default", null,
+        Mockito.`when`(photos.findDeliveryAvailableIds(seller, listOf(photo.id))).thenReturn(listOf(photo.id))
+        Mockito.`when`(photoMapper.toLibraryDto(photo, 1L, true)).thenReturn(PhotographerLibraryPhotoDto(
+            photo.id, null, "live", 1, photo.uploadedAt, 0, "default", null, true,
         ))
 
         val result = service.listPhotoPurchases(seller, photo.id, null, PaginationParams.of(null, null))

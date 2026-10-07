@@ -434,9 +434,15 @@ succeeds, so retry and Cancel retain the saved placement.
 default. `?includeRemoved=true` returns a removed event's detail, including
 `deletedAt`, only to its owner or a photographer with existing coverage. An own
 settled purchase also proves legacy coverage when its counters are empty.
+The explicit history read also accepts positive retained revenue in the
+requesting photographer's coverage row when uploads and receipts are absent;
+Purchased then returns an honest empty page without reconstructing receipts.
 Other photographers and unknown events receive 404.
-Live and archived event detail is unchanged. This opt-in does not reopen the
+Default live and archived event detail is unchanged. This opt-in does not reopen the
 event's photo list, public detail, uploads, or photo management actions.
+Metadata-visibility PUT also returns 404 for removed events without changing
+the saved choice. Active covered photographers may still update their own
+choice, and active legacy event owners may create one.
 
 **Photographer purchase history — additive seller reads:**
 `GET /api/v1/me/photographer/earnings/per-event` now includes covered events
@@ -445,6 +451,10 @@ with completed order items even when retained revenue is zero, and adds
 completed items, including zero-charge and refunded purchases; existing
 `salesCount` and `revenueKept` keep their ledger meanings. Rows remain ordered
 by retained revenue descending, then event ID, with server pagination.
+Empty out-of-range pages retain the eligible-event `total` and echo `offset`
+and `limit`; only zero history has `total=0`. Clients deduplicate overlapping
+event IDs in first-seen order, advance by returned `offset + limit`, stop on
+an empty page, and refresh from offset zero after changes.
 
 `GET /api/v1/me/photographer/events/{eventId}/purchased-photos` returns one
 row per purchased photo with `photo`, `purchaseCount` and `lastPurchasedAt` in
@@ -467,6 +477,30 @@ The existing billing transaction rows additionally expose `orderId`,
 purchase time. No full buyer identity, receipt email, guest capability,
 other-seller item or whole-order total is exposed. Anonymous free downloads
 create no order item and therefore have no purchase history.
+
+Website event detail, Purchased photos, receipt history, per-event earnings
+and Billing transactions expose Query's paused state separately from HTTP
+errors. Initial offline reads offer reconnect/retry; paused pagination keeps
+loaded rows and the selected receipt, disables duplicate append actions and
+resumes on reconnection. Purchased mounts only after private detail resolves.
+Closing the preview or ending its session prevents delayed private reads.
+Ledger recovery does not invoke or disable wallet/payout actions; Query's
+existing network and retry policies remain unchanged.
+
+The private `PhotographerLibraryPhotoDto` (ordinary owner library and both
+purchase responses) always emits non-null `mediaAvailable: boolean`. It is a
+fresh owner-scoped delivery-policy result: false for REMOVED, deletion-started
+or purged photos; hidden, trashed and REVIEW owner photos remain eligible.
+It does not prove the storage object exists. Each nonempty library, purchased
+gallery or distinct Billing-photo page uses one availability batch; empty
+pages skip it. Mapping never performs scalar availability queries. Actual
+download and storage-read boundaries retain their fresh scalar guards.
+False suppresses thumbnails, owner Download and metadata actions while receipts
+and persisted financial facts remain readable. Web uses `mediaAvailable?: boolean`;
+Android uses `Boolean? = null`, because absent Gson fields cannot rely on Kotlin
+non-null constructor defaults. Clients deny explicit false and deletion-started
+media; absent/null flags and missing or broken thumbnails alone do not deny
+owner downloads. The server remains authoritative and can reject later delivery.
 
 These reads use existing order, item, photo, dispute and transaction tables.
 No schema migration or new index was added for this feature; checkout, refund

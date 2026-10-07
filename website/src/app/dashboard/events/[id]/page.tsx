@@ -84,7 +84,7 @@ export default function FocusedSharePage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
-  const { detail: liveDetail, isMissing, error, refetch } = usePhotographerEventDetail(id ?? null, { includeRemoved: true });
+  const { detail: liveDetail, isMissing, error, isPaused, refetch } = usePhotographerEventDetail(id ?? null, { includeRemoved: true });
   // Owned-event controls (V46): edit modal + withdraw of a parked pricing
   // change. Hooks stay above the early returns.
   const [editOpen, setEditOpen] = useState(false);
@@ -99,8 +99,8 @@ export default function FocusedSharePage() {
     notFound();
   }
 
-  if (error) {
-    return <main className="bg-bone text-ink min-h-screen flex flex-col"><SiteHeader /><div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 py-12"><p role="alert" className="font-sans text-base">Couldn&apos;t load this event.</p><button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div></main>;
+  if (error || (isPaused && liveDetail === null)) {
+    return <main className="bg-bone text-ink min-h-screen flex flex-col"><SiteHeader /><div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 py-12"><p role="alert" className="font-sans text-base">{isPaused ? "You're offline. Reconnect to load this event, or retry once connected." : "Couldn't load this event."}</p><button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div></main>;
   }
 
   // Loading: detail is null until the BE responds. Photos load in parallel
@@ -972,6 +972,8 @@ function PhotoLibrary({
     [photos.length],
   );
   const handleDownloadSingle = useCallback(async (photoId: string) => {
+    const photo = photos.find((item) => item.id === photoId);
+    if (!photo || photo.mediaAvailable === false || photo.deletionStartedAt || downloading) return;
     setDownloading(true);
     try {
       const result = await fetchPhotographerPhotoDownload(photoId);
@@ -987,7 +989,7 @@ function PhotoLibrary({
     } finally {
       setDownloading(false);
     }
-  }, [showToast]);
+  }, [photos, downloading, showToast]);
 
   if (section === "purchased") {
     return <section>
@@ -1011,7 +1013,7 @@ function PhotoLibrary({
         tone: openPhoto.tone,
         price: 0,
         span: openPhoto.span,
-        imageUrl: openPhoto.thumbnailUrl ?? null,
+        imageUrl: openPhoto.mediaAvailable === false || openPhoto.deletionStartedAt ? null : openPhoto.thumbnailUrl ?? null,
       }
     : null;
 
@@ -1136,7 +1138,7 @@ function PhotoLibrary({
       {!selecting && previewItem && openIndex !== null && (
         <PhotoPreviewCard
           mode="owned"
-          metadataAccess="owner"
+          metadataAccess={openPhoto && openPhoto.mediaAvailable !== false && !openPhoto.deletionStartedAt ? "owner" : undefined}
           photo={previewItem}
           eventName={event.name}
           eventDate={event.date}
@@ -1146,6 +1148,7 @@ function PhotoLibrary({
           onPrev={openIndex > 0 ? handlePrev : undefined}
           onNext={openIndex < photos.length - 1 ? handleNext : undefined}
           onDownload={() => handleDownloadSingle(previewItem.id)}
+          downloadDisabled={openPhoto?.mediaAvailable === false || !!openPhoto?.deletionStartedAt || downloading}
         />
       )}
     </section>
@@ -1170,7 +1173,9 @@ function PurchasedGallery({ eventId }: { eventId: string }) {
 
   return <>
     <p className="font-mono uppercase tracking-[0.14em] text-sm text-slate-soft tnum mb-6"><span className="text-ink">{list.total.toLocaleString()}</span> purchased photos</p>
-    {list.isLoading ? (
+    {list.isPaused && photos.length === 0 ? (
+      <div role="alert"><p>You&apos;re offline. Reconnect to load purchased photos, or retry once connected.</p><button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div>
+    ) : list.isLoading ? (
       <div role="status" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
         {Array.from({ length: 8 }, (_, i) => <TileSkeleton key={i} aspectRatio="aspect-[3/4]" />)}
       </div>
@@ -1184,7 +1189,8 @@ function PurchasedGallery({ eventId }: { eventId: string }) {
       </div>
     )}
     {list.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more purchased photos. Try again.</p>}
-    {list.total > 0 && <LoadMoreButton shown={photos.length} total={list.hasNextPage ? list.total : photos.length} increment={PAGE_SIZE.PHOTO_INCREMENT} onLoadMore={list.fetchNextPage} isLoading={list.isFetchingNextPage} terminalLabel={!list.hasNextPage && photos.length < list.total ? "All available purchased photos loaded" : undefined} />}
+    {list.isPaused && photos.length > 0 && <div role="alert" className="mt-4"><p>You&apos;re offline. Reconnect to continue loading purchased photos.</p><button type="button" disabled className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Waiting for connection</button></div>}
+    {!list.isPaused && list.total > 0 && <LoadMoreButton shown={photos.length} total={list.hasNextPage ? list.total : photos.length} increment={PAGE_SIZE.PHOTO_INCREMENT} onLoadMore={list.fetchNextPage} isLoading={list.isFetchingNextPage} terminalLabel={!list.hasNextPage && photos.length < list.total ? "All available purchased photos loaded" : undefined} />}
     <PhotographerPurchasePreview selection={selection} photos={photos} onClose={() => setSelection(null)} onSelectPhoto={(photoId) => setSelection({ photoId })} />
   </>;
 }

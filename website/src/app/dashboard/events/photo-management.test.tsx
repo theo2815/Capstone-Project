@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   covered: [] as unknown[],
   activeRows: 1,
   photoStatus: "live",
+  mediaAvailable: undefined as boolean | undefined,
+  previewDownload: undefined as (() => void) | undefined,
   get: vi.fn(),
   save: vi.fn(async () => 'downloaded'),
   download: vi.fn(),
@@ -38,7 +40,10 @@ vi.mock('@/hooks/use-confirmation', () => ({ useConfirmation: () => ({ confirm: 
 vi.mock('@/components/layout/site-header', () => ({ SiteHeader: () => null }));
 vi.mock('@/components/dashboard/event-coupon-modal', () => ({ EventCouponModal: () => null }));
 vi.mock('@/components/dashboard/my-event-form', () => ({ MyEventForm: () => null }));
-vi.mock('@/components/photos/photo-preview-card', () => ({ PhotoPreviewCard: ({ onDownload, metadataAccess }: { onDownload: () => void; metadataAccess?: string }) => <button data-metadata-access={metadataAccess} onClick={onDownload}>Download photo</button> }));
+vi.mock('@/components/photos/photo-preview-card', () => ({ PhotoPreviewCard: ({ onDownload, metadataAccess, downloadDisabled }: { onDownload: () => void; metadataAccess?: string; downloadDisabled?: boolean }) => {
+  mocks.previewDownload = onDownload;
+  return <button data-metadata-access={metadataAccess} disabled={downloadDisabled} onClick={onDownload}>Download photo</button>;
+} }));
 vi.mock('@/lib/save-photo', () => ({ savePhoto: mocks.save, showInAppSaveHint: vi.fn() }));
 vi.mock('@/lib/utils', async (original) => ({ ...await original<typeof import('@/lib/utils')>(), triggerDownload: mocks.download }));
 vi.mock('@/components/profile-shell', () => ({ Slab: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
@@ -58,12 +63,24 @@ vi.mock('@/hooks/use-photographer-data', () => ({
       status: mocks.photoStatus, id: `photo-${i}`, eventId: 'event-1', tone: 0, span: 'default', salesCount: 0,
       uploadedAt: '2026-09-07T00:00:00Z', deletedAt: deleted ? '2026-09-07T01:00:00Z' : null,
       deletionStartedAt: deleted && mocks.purging ? '2026-09-07T02:00:00Z' : null,
+      mediaAvailable: mocks.mediaAvailable,
     })), total: deleted ? mocks.rows : 3028, isLoading: false, isFetchingNextPage: false,
     fetchNextPage: vi.fn(),
   }),
 }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); mocks.activeRows = 1; mocks.photoStatus = "live"; mocks.search = ""; mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() }; });
+afterEach(() => { cleanup(); vi.clearAllMocks(); useAuthStore.getState().logout(); mocks.mediaAvailable = undefined; mocks.activeRows = 1; mocks.photoStatus = "live"; mocks.search = ""; mocks.visibility = { isSuccess: true, isPending: false, isError: false, data: { metadataPublic: false }, refetch: vi.fn() }; });
 describe('photographer photo management', () => {
+  it('blocks ordinary owner preview media actions when the server reports unavailable', async () => {
+    mocks.mediaAvailable = false;
+    render(<EventPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open photo 1' }));
+    const download = screen.getByRole('button', { name: 'Download photo' });
+    expect(download).toBeDisabled();
+    expect(download).not.toHaveAttribute('data-metadata-access');
+    await act(async () => mocks.previewDownload?.());
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
   it('uses the URL tab while keeping active and deleted selection controls', () => {
     mocks.search = '?tab=deleted';
     render(<EventPage />);

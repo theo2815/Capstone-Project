@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import EarningsPage from "./page";
 import { api } from "@/lib/api";
@@ -28,7 +28,30 @@ function setup(rows: ReturnType<typeof earning>[], total = rows.length, pageItem
   return get;
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); useAuthStore.getState().logout(); });
+afterEach(() => { cleanup(); onlineManager.setOnline(true); vi.restoreAllMocks(); useAuthStore.getState().logout(); });
+
+it.each([true, false])("event earnings offline initial=%s recovers and retains rows during append pause", async (initialOffline) => {
+  onlineManager.setOnline(!initialOffline);
+  const rows = [earning(eventId, 100), earning("free-race", 0)];
+  const get = setup(rows, 20, (offset) => offset === 0 ? [rows[0]] : [rows[1]]);
+  if (initialOffline) {
+    expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry event earnings" })).toBeEnabled();
+    expect(screen.queryByText("No event earnings yet.")).not.toBeInTheDocument();
+    act(() => onlineManager.setOnline(true));
+  }
+  expect(await screen.findByRole("link", { name: /Cebu Marathon/ })).toBeVisible();
+  act(() => onlineManager.setOnline(false));
+  fireEvent.click(screen.getByRole("button", { name: "Load 10 more" }));
+  expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+  expect(screen.getByRole("link", { name: /Cebu Marathon/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /waiting for connection/i })).toBeDisabled();
+  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+  expect(get.mock.calls.filter(([path]) => path.includes("per-event"))).toHaveLength(1);
+  act(() => onlineManager.setOnline(true));
+  expect(await screen.findByRole("link", { name: /Free Race/ })).toHaveTextContent("₱0.00");
+  expect(screen.queryByText(/offline.*reconnect/i)).not.toBeInTheDocument();
+});
 
 it("earnings opens the UUID event with purchased selected", async () => {
   setup([earning(eventId, 100)]);
@@ -72,4 +95,23 @@ it("does not offer another earnings page after an exhausted empty response", asy
   expect(await screen.findByText("All available event earnings loaded")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Load .* more/ })).toBeNull();
   expect(screen.getByRole("link", { name: /Cebu Marathon/ })).toBeInTheDocument();
+});
+
+it("renders overlapping earnings events once in first-seen order without changing server amounts", async () => {
+  const rows = [earning("e1", 40), earning("e2", 0), earning("e3", 0)];
+  const get = setup(rows, 25, (offset) => offset === 0 ? rows.slice(0, 2)
+    : offset === 10 ? [earning("e2", 99), rows[2]] : []);
+  expect(await screen.findByRole("link", { name: /Race e1/ })).toHaveTextContent("₱40.00");
+  fireEvent.click(screen.getByRole("button", { name: "Load 10 more" }));
+  expect(await screen.findByRole("link", { name: /Race e3/ })).toHaveTextContent("₱0.00");
+  expect(screen.getAllByRole("link", { name: /Race e2/ })).toHaveLength(1);
+  expect(screen.getByRole("link", { name: /Race e2/ })).toHaveTextContent("₱0.00");
+  expect(screen.getAllByRole("link", { name: /Race e[123]/ }).map((link) => link.getAttribute("href")))
+    .toEqual(["/dashboard/events/e1?tab=purchased", "/dashboard/events/e2?tab=purchased", "/dashboard/events/e3?tab=purchased"]);
+  expect(screen.getByText("Showing 3 of 25")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Load 10 more" }));
+  expect(await screen.findByText("All available event earnings loaded")).toBeInTheDocument();
+  expect(get.mock.calls.filter(([path]) => path.includes("/earnings/per-event?"))
+    .map(([path]) => new URLSearchParams(path.split("?")[1]).get("offset"))).toEqual(["0", "10", "20"]);
+  expect(screen.getByText("Lifetime kept").nextElementSibling).toHaveTextContent("₱100");
 });

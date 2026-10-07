@@ -52,11 +52,14 @@ class PhotographerPurchaseService(
         eventService.getEventDetail(photographerId, eventId, includeRemoved = true)
         val page = orderItems.pagePurchasedPhotosForPhotographer(photographerId, eventId, OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.of(emptyList(), page.totalElements, params)
-        val photosById = photos.findAllById(page.content.map { it.photoId }).associateBy { it.id }
+        val photosById = photos.findAllById(page.content.map { it.photoId })
+            .filter { it.photographerId == photographerId }.associateBy { it.id }
+        val availableIds = if (photosById.isEmpty()) emptySet() else
+            photos.findDeliveryAvailableIds(photographerId, photosById.keys).toSet()
         val items = page.content.mapNotNull { row ->
             val photo = photosById[row.photoId] ?: return@mapNotNull null
             PhotographerPurchasedPhotoDto(
-                photo = photoDtoMapper.toLibraryDto(photo, row.purchaseCount),
+                photo = photoDtoMapper.toLibraryDto(photo, row.purchaseCount, photo.id in availableIds),
                 purchaseCount = row.purchaseCount,
                 lastPurchasedAt = row.lastPurchasedAt,
             )
@@ -97,7 +100,8 @@ class PhotographerPurchaseService(
             )
         }
         return PhotographerPhotoPurchasesResponse(
-            photo = photoDtoMapper.toLibraryDto(photo, page.totalElements),
+            photo = photoDtoMapper.toLibraryDto(photo, page.totalElements,
+                photo.id in photos.findDeliveryAvailableIds(photographerId, listOf(photo.id))),
             event = PurchaseEventDto(event.id, event.name, event.date, event.deletedAt),
             items = page.content.map { purchasesByOrder.getValue(it.id.orderId) },
             total = page.totalElements,

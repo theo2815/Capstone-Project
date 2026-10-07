@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -48,7 +48,31 @@ function setup(ledger: (offset: number) => Promise<unknown>) {
 }
 const page = (items: PhotographerTransaction[], offset = 0, total = items.length) => ({ items, offset, total, limit: 25, monthTotals: { "2026-10": 75 } });
 
-afterEach(() => { client?.clear(); vi.restoreAllMocks(); vi.unstubAllEnvs(); useAuthStore.getState().logout(); });
+afterEach(() => { client?.clear(); onlineManager.setOnline(true); vi.restoreAllMocks(); vi.unstubAllEnvs(); useAuthStore.getState().logout(); });
+
+it.each([true, false])("transactions offline initial=%s recovers and retains rows and wallet through append pause", async (initialOffline) => {
+  onlineManager.setOnline(!initialOffline);
+  const get = setup(async (offset) => offset === 0 ? page([sale], 0, 50) : page([refund], 25, 50));
+  if (initialOffline) {
+    expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry transactions" })).toBeEnabled();
+    expect(screen.queryByText(/Sales will land here/)).not.toBeInTheDocument();
+    act(() => onlineManager.setOnline(true));
+  }
+  expect(await screen.findByRole("button", { name: /sale.*aira/i })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Request payout" })).toBeEnabled();
+  act(() => onlineManager.setOnline(false));
+  fireEvent.click(screen.getByRole("button", { name: "Load 25 more" }));
+  expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+  expect(screen.getByRole("button", { name: /sale.*aira/i })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Request payout" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: /waiting for connection/i })).toBeDisabled();
+  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+  expect(get.mock.calls.filter(([path]) => path.includes("billing/transactions"))).toHaveLength(1);
+  act(() => onlineManager.setOnline(true));
+  expect(await screen.findByRole("button", { name: /refund.*aira/i })).toBeVisible();
+  expect(screen.queryByText(/offline.*reconnect/i)).not.toBeInTheDocument();
+});
 
 it("sale and refund rows open the exact purchase and restore row focus", async () => {
   const get = setup(async () => page([sale, refund]));
