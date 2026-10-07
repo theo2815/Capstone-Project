@@ -500,7 +500,7 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
         return buf.getvalue()
 
     class FakeClassifier:
-        def __init__(self, model_path, class_names_path):
+        def __init__(self, detector_path, rule_path):
             self.session = object()
 
         def classify_batch(self, images):
@@ -555,7 +555,7 @@ def _predictions(tmp_path, monkeypatch, *flags, shade=None, always=None, unreada
         return buf.getvalue()
 
     class FakeClassifier:
-        def __init__(self, model_path, class_names_path):
+        def __init__(self, detector_path, rule_path):
             self.session = object()
 
         def classify_batch(self, images):
