@@ -17,7 +17,7 @@ from PIL import Image
 from src.ml.blur import people
 from src.ml.blur.classifier import BlurClassifier
 from src.ml.blur.person_detector import Detection
-from src.utils.timeout import InferenceTimeoutError
+from src.utils.timeout import InferenceBusyError, InferenceTimeoutError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -333,6 +333,14 @@ class TestBlurClassifierClassify:
         finally:
             release.set()
             assert completed.wait(1)
+
+    def test_batch_passes_on_server_busy(self, classifier):
+        def busy_detect(image):
+            raise InferenceBusyError
+
+        classifier.detector.detect = busy_detect
+        with pytest.raises(InferenceBusyError):
+            classifier.classify_batch([_make_bgr_image()])
 
     def test_returns_dict_with_stage_two(self, classifier):
         result = classifier.classify(_make_bgr_image())

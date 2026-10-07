@@ -285,11 +285,11 @@ class BlurClassifier:
                 if results[i] is None:
                     results[i] = self._people_result(self._run_stage_two(img))
             except Exception as e:
-                # An unreadable image gives None at its position; the deadline
-                # error is not swallowed here, callers decide what a timeout means.
-                from src.utils.timeout import InferenceTimeoutError
+                # An unreadable image gives None at its position; the deadline and
+                # busy errors are not swallowed here, callers decide what they mean.
+                from src.utils.timeout import InferenceBusyError, InferenceTimeoutError
 
-                if isinstance(e, InferenceTimeoutError):
+                if isinstance(e, (InferenceTimeoutError, InferenceBusyError)):
                     raise
                 logger.warning(
                     "Blur classification failed for one image", error_type=type(e).__name__
