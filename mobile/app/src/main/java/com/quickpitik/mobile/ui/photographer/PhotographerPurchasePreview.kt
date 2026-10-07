@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,7 +59,7 @@ fun PhotographerPurchasePreview(
     val context = LocalContext.current
     val session = remember(context) { SessionManager.getInstance(context) }
     val scope = rememberCoroutineScope()
-    var downloadingPhotoId by remember { mutableStateOf<String?>(null) }
+    val downloadingPhotoIds = remember { mutableStateMapOf<String, Boolean>() }
     var downloadErrorPhotoId by remember { mutableStateOf<String?>(null) }
     val knownPhoto = state.photo ?: photos.firstOrNull { it.id == photoId }
     val gallery = if (photos.any { it.id == photoId }) photos else listOfNotNull(knownPhoto)
@@ -78,11 +79,11 @@ fun PhotographerPurchasePreview(
         onClose = ::close,
         onIndexChange = { next -> viewModel.openPurchase(previewPhotos[next].id) },
         mode = PhotoPreviewMode.OwnerReview,
-        canDownload = { photo -> state.photo?.id == photo.id && state.photo?.deletionStartedAt == null && downloadingPhotoId != photo.id },
+        canDownload = { photo -> state.photo?.id == photo.id && state.photo?.deletionStartedAt == null && downloadingPhotoIds[photo.id] != true },
         onDownload = { photo ->
             val token = session.getAccessToken()
-            if (downloadingPhotoId != photo.id && token != null && state.photo?.id == photo.id && state.photo?.deletionStartedAt == null) {
-                downloadingPhotoId = photo.id
+            if (downloadingPhotoIds[photo.id] != true && token != null && state.photo?.id == photo.id && state.photo?.deletionStartedAt == null) {
+                downloadingPhotoIds[photo.id] = true
                 downloadErrorPhotoId = null
                 val generation = session.authChanges.value
                 scope.launch {
@@ -97,14 +98,14 @@ fun PhotographerPurchasePreview(
                                 is PhotoDownloader.Result.Failed -> saved.message
                             }
                         } catch (e: Exception) {
-                            if (generation == session.authChanges.value && viewModel.previewState.value.photoId == photo.id && downloadingPhotoId == photo.id)
+                            if (generation == session.authChanges.value && viewModel.previewState.value.photoId == photo.id && downloadingPhotoIds[photo.id] == true)
                                 downloadErrorPhotoId = photo.id
                             RetrofitClient.parseError(e)
                         }
-                        if (generation == session.authChanges.value && viewModel.previewState.value.photoId == photo.id && downloadingPhotoId == photo.id)
+                        if (generation == session.authChanges.value && viewModel.previewState.value.photoId == photo.id && downloadingPhotoIds[photo.id] == true)
                             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                     } finally {
-                        if (downloadingPhotoId == photo.id) downloadingPhotoId = null
+                        downloadingPhotoIds.remove(photo.id)
                     }
                 }
             }

@@ -3,6 +3,7 @@ package com.quickpitik.mobile.ui.photographer
 import android.app.Application
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -155,8 +156,19 @@ class PhotographerPurchasePreviewTest {
                 onNodeWithText("Download ↓").assertExists()
                 onNodeWithText("Download ↓").performClick()
                 assertTrue(bStarted.await(5, TimeUnit.SECONDS))
+                onNodeWithContentDescription("Previous").performClick()
+                waitUntil(timeoutMillis = 5_000) { vm.previewState.value.selectedPurchase?.photoId == "photo-a" }
+                waitForIdle()
+                onNodeWithText("Download ↓").assertDoesNotExist()
+                onNodeWithContentDescription("Next").performClick()
+                waitUntil(timeoutMillis = 5_000) { vm.previewState.value.selectedPurchase?.photoId == "photo-b" }
                 releaseA.countDown()
                 assertTrue(aResponded.await(5, TimeUnit.SECONDS))
+                onNodeWithContentDescription("Previous").performClick()
+                waitUntil(timeoutMillis = 5_000) { vm.previewState.value.selectedPurchase?.photoId == "photo-a" }
+                waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Download ↓").fetchSemanticsNodes().isNotEmpty() }
+                onNodeWithContentDescription("Next").performClick()
+                waitUntil(timeoutMillis = 5_000) { vm.previewState.value.selectedPurchase?.photoId == "photo-b" }
                 waitForIdle()
                 onNodeWithText("Download ↓").assertDoesNotExist()
                 onNodeWithText("Download unavailable. Try again.").assertDoesNotExist()
