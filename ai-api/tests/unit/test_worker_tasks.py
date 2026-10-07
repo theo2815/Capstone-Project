@@ -698,3 +698,34 @@ class TestWorkerDecodeDimensions:
         from src.config import Settings
 
         assert Settings().MAX_INFERENCE_DIMENSION == 1280
+
+
+def test_worker_starts_the_blur_classifier_with_the_two_stage_two_files(monkeypatch):
+    """The worker's call must fit BlurClassifier's real arguments: a keyword the
+    class does not accept is swallowed by the loader and leaves no classifier."""
+    import inspect
+
+    import src.ml.blur.classifier as classifier_module
+    import src.workers.model_loader as loader
+
+    real_signature = inspect.signature(classifier_module.BlurClassifier)
+
+    class FakeClassifier:
+        session = object()
+
+        def __init__(self, **kwargs):
+            real_signature.bind(**kwargs)
+            self.kwargs = kwargs
+
+    monkeypatch.setenv("WORKER_QUEUES", "blur")
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.setattr("src.db.sync_session.init_sync_db", lambda: None)
+    monkeypatch.setattr(classifier_module, "BlurClassifier", FakeClassifier)
+    monkeypatch.setattr(loader, "_blur_detector", None)
+    monkeypatch.setattr(loader, "_blur_classifier", None)
+
+    loader.load_models_on_worker_start()
+
+    kwargs = loader.get_blur_classifier().kwargs
+    assert kwargs["detector_path"].endswith("person_detector/yolov8n_seg_person.onnx")
+    assert kwargs["rule_path"].endswith("blur_classifier/people_rule.json")
