@@ -8,7 +8,7 @@ only: serving loads the ONNX file with ONNX Runtime (src/ml/blur/person_detector
 Licence: the weights and Ultralytics are AGPL-3.0, like the project's other YOLO models
 (owner decision 2026-10-06, vault ai-api/decisions.md).
 
-Usage (from ai-api/):  python scripts/export_person_detector.py [--weights yolov8n.pt]
+Usage (from ai-api/):  python scripts/export_person_detector.py [--weights yolov8n-seg.pt]
 """
 
 from __future__ import annotations
@@ -76,10 +76,10 @@ def export(weights: str) -> Path:
 
     model = YOLO(weights)  # downloads the pretrained file on first use
     onnx_path = Path(model.export(format="onnx", imgsz=IMGSZ, dynamic=False, simplify=False))
+    verify(onnx_path)  # before the copy: a refused export must not replace the installed file
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(onnx_path, ONNX_DEST)
     print(f"  Copied to: {ONNX_DEST}")
-    verify(ONNX_DEST)
     update_manifest(MANIFEST, ONNX_DEST, Path(weights).name)
     print(f"  sha256: {sha256_of(ONNX_DEST)}")
     return ONNX_DEST

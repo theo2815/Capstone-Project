@@ -56,3 +56,25 @@ def test_verify_accepts_the_detector_shapes_and_refuses_others(tmp_path, monkeyp
         monkeypatch.setattr(onnxruntime, "InferenceSession", session_with(*shapes))
         with pytest.raises(SystemExit):
             exp.verify(onnx)
+
+
+def test_a_refused_export_leaves_the_installed_detector_alone(tmp_path, monkeypatch):
+    import sys
+
+    exported = tmp_path / "wrong.onnx"
+    exported.write_bytes(b"wrong")
+    installed = tmp_path / "models" / "installed.onnx"
+    installed.parent.mkdir()
+    installed.write_bytes(b"good")
+    fake = SimpleNamespace(YOLO=lambda _w: SimpleNamespace(export=lambda **_k: str(exported)))
+    monkeypatch.setitem(sys.modules, "ultralytics", fake)
+    monkeypatch.setattr(exp, "MODEL_DIR", installed.parent)
+    monkeypatch.setattr(exp, "ONNX_DEST", installed)
+
+    def refuse(_path):
+        raise SystemExit("wrong shapes")
+
+    monkeypatch.setattr(exp, "verify", refuse)
+    with pytest.raises(SystemExit):
+        exp.export("yolov8n.pt")
+    assert installed.read_bytes() == b"good"
