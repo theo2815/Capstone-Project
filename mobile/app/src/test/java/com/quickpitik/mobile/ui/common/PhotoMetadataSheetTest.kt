@@ -38,6 +38,32 @@ import org.robolectric.shadows.ShadowDialog
 class PhotoMetadataSheetTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun `explicit unavailable owner JSON gates shared default download and metadata`() {
+        val photo = com.google.gson.Gson().fromJson(
+            """{"id":"owner-photo","status":"live","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"default","thumbnailUrl":null,"mediaAvailable":false}""",
+            com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto::class.java,
+        ).toOwnerPreviewData("Cebu Run")
+        compose.setContent {
+            PhotoPreview(photos = listOf(photo), currentIndex = 0, onClose = {}, onIndexChange = {}, mode = PhotoPreviewMode.OwnerReview)
+        }
+        compose.onNodeWithText("Download ↓").assertDoesNotExist()
+        compose.onNodeWithText("Show Metadata").assertDoesNotExist()
+        assertEquals(null, metadataAccessFor(PhotoPreviewMode.OwnerReview, photo))
+    }
+
+    @Test fun `old owner JSON with missing thumbnail keeps shared media actions`() {
+        val photo = com.google.gson.Gson().fromJson(
+            """{"id":"owner-photo","status":"live","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"default","thumbnailUrl":null}""",
+            com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto::class.java,
+        ).toOwnerPreviewData("Cebu Run")
+        compose.setContent {
+            PhotoPreview(photos = listOf(photo), currentIndex = 0, onClose = {}, onIndexChange = {}, mode = PhotoPreviewMode.OwnerReview)
+        }
+        compose.onNodeWithText("Download ↓").assertExists()
+        compose.onNodeWithText("Show Metadata").assertExists()
+        assertEquals("owner", metadataAccessFor(PhotoPreviewMode.OwnerReview, photo))
+    }
+
     @Test fun `preview access follows owner mode or server hint only`() {
         val photo = PhotoPreviewData(id = "remote-uuid", price = 0.0, imageUrl = null, eventName = null)
         assertEquals("owner", metadataAccessFor(PhotoPreviewMode.OwnerReview, photo))

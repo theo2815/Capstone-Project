@@ -43,7 +43,8 @@ class TransactionsLedgerServiceTest {
             .thenReturn(PageImpl(listOf(refund, sale), PageRequest.of(0, 20), 2))
         Mockito.`when`(events.findAllById(setOf(event.id))).thenReturn(listOf(event))
         Mockito.`when`(photos.findAllById(setOf(photo.id))).thenReturn(listOf(photo))
-        Mockito.`when`(photoMapper.thumbnailUrl(photo)).thenReturn("https://signed.example/photo")
+        Mockito.`when`(photos.findDeliveryAvailableIds(seller, listOf(photo.id))).thenReturn(listOf(photo.id))
+        Mockito.`when`(photoMapper.thumbnailUrl(photo, true)).thenReturn("https://signed.example/photo")
         Mockito.`when`(transactions.pickAmountsForBucketing(anyArg(), anyArg(), anyArg())).thenReturn(
             listOf(
                 arrayOf<Any>(originalPaidAt, BigDecimal("75.00")),
@@ -62,6 +63,8 @@ class TransactionsLedgerServiceTest {
         assertEquals(originalPaidAt, refundRow.paidAt)
         assertEquals(refundCreatedAt, refundRow.recordedAt)
         assertEquals("https://signed.example/photo", refundRow.thumbnailUrl)
+        Mockito.verify(photos).findDeliveryAvailableIds(seller, listOf(photo.id))
+        Mockito.verify(photos, Mockito.never()).isDeliveryAvailable(anyArg())
     }
 
     @Test

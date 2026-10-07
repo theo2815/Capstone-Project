@@ -372,6 +372,7 @@ data class PhotographerLibraryPhotoDto(
     // on the active list, set on the ?deleted=true (Deleted tab) list.
     val deletedAt: String? = null,
     val deletionStartedAt: String? = null,
+    val mediaAvailable: Boolean? = null,
 )
 
 data class PhotographerPurchasedPhotoDto(

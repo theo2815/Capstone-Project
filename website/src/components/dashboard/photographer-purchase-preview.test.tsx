@@ -24,6 +24,41 @@ function view(selection: { photoId: string; orderId?: string; transactionId?: st
 const fact = (label: string) => screen.getByText(label, { exact: true }).nextElementSibling;
 afterEach(() => { vi.restoreAllMocks(); useAuthStore.getState().logout(); });
 
+it.each([undefined, true, false])("uses explicit availability %s without treating a missing thumbnail as denial", async (mediaAvailable) => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const get = vi.spyOn(api, "get").mockResolvedValue({ ...response([receipt(orderB)], receipt(orderB)), photo: { ...photo, mediaAvailable } });
+  render(view({ photoId: photo.id, orderId: orderB }, client));
+  await screen.findByText("Aira S.");
+  const button = screen.getByRole("button", { name: "Download photo" });
+  if (mediaAvailable === false) {
+    expect(button).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Show Metadata" })).not.toBeInTheDocument();
+    fireEvent.click(button);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(savePhoto).not.toHaveBeenCalled();
+  } else {
+    expect(button).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Show Metadata" })).toBeVisible();
+  }
+  expect(fact("Reference")).toHaveTextContent(formatOrderRef(orderB));
+  client.clear();
+});
+
+it("reports delivery rejection after an available response without saving a fallback URL", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockResolvedValueOnce({ ...response([receipt(orderB)], receipt(orderB)), photo: { ...photo, mediaAvailable: true } })
+    .mockRejectedValueOnce(new ApiError([{ code: "PHOTO_NOT_FOUND", message: "Photo unavailable" }], 410));
+  render(view({ photoId: photo.id, orderId: orderB }, client));
+  await screen.findByText("Aira S.");
+  fireEvent.click(screen.getByRole("button", { name: "Download photo" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Download unavailable. Try again.");
+  expect(savePhoto).not.toHaveBeenCalled();
+  expect(fact("Reference")).toHaveTextContent(formatOrderRef(orderB));
+  client.clear();
+});
+
 it("refreshes an expired image URL from the seller response without losing receipts", async () => {
   login();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

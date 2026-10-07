@@ -159,6 +159,7 @@ export interface PhotographerLibraryPhoto {
    *  Null on the active tab, set on the Deleted Photos tab. */
   deletedAt?: string | null;
   deletionStartedAt?: string | null;
+  mediaAvailable?: boolean;
 }
 
 function hashStr(s: string): number {

@@ -972,6 +972,8 @@ function PhotoLibrary({
     [photos.length],
   );
   const handleDownloadSingle = useCallback(async (photoId: string) => {
+    const photo = photos.find((item) => item.id === photoId);
+    if (!photo || photo.mediaAvailable === false || photo.deletionStartedAt || downloading) return;
     setDownloading(true);
     try {
       const result = await fetchPhotographerPhotoDownload(photoId);
@@ -987,7 +989,7 @@ function PhotoLibrary({
     } finally {
       setDownloading(false);
     }
-  }, [showToast]);
+  }, [photos, downloading, showToast]);
 
   if (section === "purchased") {
     return <section>
@@ -1011,7 +1013,7 @@ function PhotoLibrary({
         tone: openPhoto.tone,
         price: 0,
         span: openPhoto.span,
-        imageUrl: openPhoto.thumbnailUrl ?? null,
+        imageUrl: openPhoto.mediaAvailable === false || openPhoto.deletionStartedAt ? null : openPhoto.thumbnailUrl ?? null,
       }
     : null;
 
@@ -1136,7 +1138,7 @@ function PhotoLibrary({
       {!selecting && previewItem && openIndex !== null && (
         <PhotoPreviewCard
           mode="owned"
-          metadataAccess="owner"
+          metadataAccess={openPhoto && openPhoto.mediaAvailable !== false && !openPhoto.deletionStartedAt ? "owner" : undefined}
           photo={previewItem}
           eventName={event.name}
           eventDate={event.date}
@@ -1146,6 +1148,7 @@ function PhotoLibrary({
           onPrev={openIndex > 0 ? handlePrev : undefined}
           onNext={openIndex < photos.length - 1 ? handleNext : undefined}
           onDownload={() => handleDownloadSingle(previewItem.id)}
+          downloadDisabled={openPhoto?.mediaAvailable === false || !!openPhoto?.deletionStartedAt || downloading}
         />
       )}
     </section>

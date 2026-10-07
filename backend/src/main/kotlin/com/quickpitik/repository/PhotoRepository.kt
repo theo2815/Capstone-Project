@@ -29,6 +29,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query(value = "SELECT EXISTS (SELECT 1 FROM photos WHERE id = :id AND removal_state <> 'REMOVED' AND deletion_started_at IS NULL AND purged_at IS NULL)", nativeQuery = true)
     fun isDeliveryAvailable(@Param("id") id: UUID): Boolean
 
+    @Query(value = "SELECT id FROM photos WHERE photographer_id = :photographerId AND id IN (:ids) AND removal_state <> 'REMOVED' AND deletion_started_at IS NULL AND purged_at IS NULL", nativeQuery = true)
+    fun findDeliveryAvailableIds(photographerId: UUID, ids: Collection<UUID>): List<UUID>
+
     // Public/free streaming also requires the current catalog predicate, not paid access.
     @Query(value = """
         SELECT EXISTS (SELECT 1 FROM photos p JOIN events e ON e.id = p.event_id

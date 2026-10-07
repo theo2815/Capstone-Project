@@ -474,6 +474,21 @@ purchase time. No full buyer identity, receipt email, guest capability,
 other-seller item or whole-order total is exposed. Anonymous free downloads
 create no order item and therefore have no purchase history.
 
+The private `PhotographerLibraryPhotoDto` (ordinary owner library and both
+purchase responses) always emits non-null `mediaAvailable: boolean`. It is a
+fresh owner-scoped delivery-policy result: false for REMOVED, deletion-started
+or purged photos; hidden, trashed and REVIEW owner photos remain eligible.
+It does not prove the storage object exists. Each nonempty library, purchased
+gallery or distinct Billing-photo page uses one availability batch; empty
+pages skip it. Mapping never performs scalar availability queries. Actual
+download and storage-read boundaries retain their fresh scalar guards.
+False suppresses thumbnails, owner Download and metadata actions while receipts
+and persisted financial facts remain readable. Web uses `mediaAvailable?: boolean`;
+Android uses `Boolean? = null`, because absent Gson fields cannot rely on Kotlin
+non-null constructor defaults. Clients deny explicit false and deletion-started
+media; absent/null flags and missing or broken thumbnails alone do not deny
+owner downloads. The server remains authoritative and can reject later delivery.
+
 These reads use existing order, item, photo, dispute and transaction tables.
 No schema migration or new index was added for this feature; checkout, refund
 minting, payout and existing ledger totals are unchanged.

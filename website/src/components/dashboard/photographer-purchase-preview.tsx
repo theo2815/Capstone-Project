@@ -74,11 +74,11 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     tone: photo?.tone ?? 0,
     price: 0,
     span: photo?.span,
-    imageUrl: photo?.thumbnailUrl ?? null,
+    imageUrl: photo?.mediaAvailable === false || photo?.deletionStartedAt ? null : photo?.thumbnailUrl ?? null,
   };
 
   async function download() {
-    if (!purchase.photo || purchase.photo.deletionStartedAt || downloading) return;
+    if (!purchase.photo || purchase.photo.mediaAvailable === false || purchase.photo.deletionStartedAt || downloading) return;
     const sameSession = captureAuthSession();
     const isCurrent = () => sameSession() && activeSelection.current === selectionKey;
     setDownloading(true);
@@ -144,7 +144,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
 
   return <PhotoPreviewCard
     mode="owned"
-    metadataAccess="owner"
+    metadataAccess={photo && photo.mediaAvailable !== false && !photo.deletionStartedAt ? "owner" : undefined}
     photo={preview}
     eventName={purchase.event?.name ?? transaction?.eventName ?? "Event archived"}
     eventDate={purchase.event?.date}
@@ -154,7 +154,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     onPrev={onSelectPhoto && index > 0 ? () => onSelectPhoto(gallery[index - 1].id) : undefined}
     onNext={onSelectPhoto && index >= 0 && index < gallery.length - 1 ? () => onSelectPhoto(gallery[index + 1].id) : undefined}
     onDownload={() => void download()}
-    downloadDisabled={!purchase.photo || !!purchase.photo.deletionStartedAt || downloading}
+    downloadDisabled={!purchase.photo || purchase.photo.mediaAvailable === false || !!purchase.photo.deletionStartedAt || downloading}
     details={details}
     onRefreshImage={() => void purchase.refetch()}
   />;

@@ -40,6 +40,7 @@ class PhotographerPurchasePreviewTest {
     private lateinit var application: Application
     private lateinit var vm: PhotographerPurchasesViewModel
     private var purging = false
+    private var unavailable = false
     private var refundWithoutTimestamp = false
 
     @Before fun setUp() {
@@ -51,7 +52,7 @@ class PhotographerPurchasePreviewTest {
                 val buyer = if (order.startsWith("b")) "Bea T." else "Aira S."
                 val refund = if (refundWithoutTimestamp) """{"refundStatus":"refunded","refundedPhp":50.0,"refundedAt":null,"transactions":[{"id":"refund-a","isRefund":true,"refundOf":"sale-a","amountKept":-25.5,"discountPhp":0.0,"paidAt":"2026-10-02T00:00:00Z","recordedAt":"2026-10-02T00:00:00Z"}]}""" else """{"refundStatus":"none","refundedPhp":0.0,"refundedAt":null,"transactions":[]}"""
                 val receipt = """{"orderId":"$order","photoId":"photo-a","buyer":"$buyer","purchasedAt":"2026-10-01T00:00:00Z","orderCreatedAt":"2026-10-01T00:00:00Z","paymentMethod":"gcash","pricePhp":50.0,"discountPhp":0.0,"paidPhp":50.0,"kind":"paid","refundPending":false,"netKeptPhp":25.5,${refund.removeSurrounding("{", "}")}}"""
-                val photo = """{"id":"photo-a","bib":"123","status":"ready","salesCount":2,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null,"deletedAt":null,"deletionStartedAt":${if (purging) "\"2026-10-02T00:00:00Z\"" else "null"}}"""
+                val photo = """{"id":"photo-a","bib":"123","status":"ready","salesCount":2,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null,"deletedAt":null,"deletionStartedAt":${if (purging) "\"2026-10-02T00:00:00Z\"" else "null"}${if (unavailable) ",\"mediaAvailable\":false" else ""}}"""
                 return ok("""{"photo":$photo,"event":{"id":"event-a","name":"Cebu Run","date":"2026-10-01","deletedAt":null},"items":[$receipt],"total":1,"offset":0,"limit":50,"selectedPurchase":$receipt}""")
             }
         }
@@ -61,6 +62,20 @@ class PhotographerPurchasePreviewTest {
     @After fun tearDown() {
         vm.closePreview()
         SessionManager.getInstance(application).clearSession()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `explicit unavailable purchase keeps receipts without media actions`() {
+        unavailable = true
+        vm.openPurchase("photo-a", "a1b2c3d4-order")
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        runComposeUiTest {
+            setContent { PhotographerPurchasePreview(vm, onClose = {}, onOpenEvent = {}) }
+            onNodeWithText("Aira S.").assertIsDisplayed()
+            onNodeWithText("A1B2C3D4").assertIsDisplayed()
+            onNodeWithText("Download ↓").assertDoesNotExist()
+            onNodeWithText("Show Metadata").assertDoesNotExist()
+        }
     }
 
     @OptIn(ExperimentalTestApi::class)

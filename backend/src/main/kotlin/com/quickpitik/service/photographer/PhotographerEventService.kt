@@ -129,6 +129,7 @@ class PhotographerEventService(
         }
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
         val photoIds = page.content.map { it.id }
+        val availableIds = photoRepository.findDeliveryAvailableIds(photographerId, photoIds).toSet()
         val salesByPhoto: Map<UUID, Long> = if (photoIds.isEmpty()) {
             emptyMap()
         } else {
@@ -136,7 +137,7 @@ class PhotographerEventService(
         }
         return PaginatedResponse(
             items = page.content.map {
-                photoDtoMapper.toLibraryDto(it, salesByPhoto[it.id] ?: 0L)
+                photoDtoMapper.toLibraryDto(it, salesByPhoto[it.id] ?: 0L, it.id in availableIds)
             },
             total = page.totalElements,
             offset = pagination.offset,

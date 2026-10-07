@@ -446,7 +446,8 @@ class PhotoRemovalDeliveryIntegrationTest : PostgresIntegrationTest() {
         assertAll(
             { assertEquals(HttpStatus.GONE, assertFailsWith<ApiException> { ownerEvents.getDownload(owner.id, photo.id) }.status) },
             { assertEquals(HttpStatus.GONE, assertFailsWith<ApiException> { ownerBundles.prepare(owner.id, event.id) }.status) },
-            { assertNull(photoMapper.toLibraryDto(photos.findById(photo.id).orElseThrow(), 1).thumbnailUrl) },
+            { assertNull(photoMapper.toLibraryDto(photos.findById(photo.id).orElseThrow(), 1,
+                photo.id in photos.findDeliveryAvailableIds(owner.id, listOf(photo.id))).thumbnailUrl) },
             { assertEquals("NOT_FOUND", assertFailsWith<com.quickpitik.exception.NotFoundException> { metadata.getOwned(owner.id, photo.id) }.code) },
         )
     }

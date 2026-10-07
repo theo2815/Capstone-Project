@@ -25,6 +25,13 @@ import com.quickpitik.entity.Transaction
 import com.quickpitik.entity.Dispute
 import com.quickpitik.security.JwtTokenProvider
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
+import org.hibernate.resource.jdbc.spi.StatementInspector
+import com.quickpitik.common.PaginationParams
+import com.quickpitik.service.earnings.PhotographerPurchaseService
+import com.quickpitik.service.earnings.TransactionsLedgerService
+import com.quickpitik.service.photographer.PhotographerEventService
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
@@ -41,7 +48,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = [
+    "spring.jpa.properties.hibernate.session_factory.statement_inspector=com.quickpitik.support.PhotographerPurchaseHistoryIntegrationTest\$DeliverySql",
+])
 class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var users: UserRepository
     @Autowired private lateinit var events: EventRepository
@@ -52,11 +61,93 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var transactions: TransactionRepository
     @Autowired private lateinit var disputes: DisputeRepository
     @Autowired private lateinit var jdbc: JdbcTemplate
+    @Autowired private lateinit var purchaseService: PhotographerPurchaseService
+    @Autowired private lateinit var eventService: PhotographerEventService
+    @Autowired private lateinit var ledgerService: TransactionsLedgerService
 
     @Autowired private lateinit var tokens: JwtTokenProvider
     @LocalServerPort private var port: Int = 0
     private val client = HttpClient.newHttpClient()
     private val json = ObjectMapper()
+
+    class DeliverySql : StatementInspector {
+        override fun inspect(sql: String): String {
+            if (sql.lowercase().contains("removal_state <> 'removed'")) queries.add(sql.lowercase())
+            return sql
+        }
+        companion object {
+            val queries: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [1, 50, 200])
+    fun `owner pages batch fresh availability regardless of photo count`(count: Int) {
+        val owner = seller()
+        val event = event(EventStatus.ACTIVE, owner.id)
+        val at = OffsetDateTime.parse("2026-09-01T10:00:00Z")
+        val order = orders.save(Order(eventId = event.id, recipientEmail = "guest@test.local", paymentMethodWire = "card", status = OrderStatus.FULFILLED, totalPhp = BigDecimal("100.00"), paidAt = at))
+        repeat(count) {
+            val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, status = PhotoStatus.LIVE, s3Key = "batch/$it.jpg", pricePhp = BigDecimal("100.00")))
+            items.save(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("100.00")))
+            transactions.save(Transaction(paidAt = at, photographerId = owner.id, eventId = event.id, photoId = photo.id, orderId = order.id, amountKeptPhp = BigDecimal("75.00")))
+        }
+        val params = PaginationParams(0, count)
+        val pages = listOf<() -> Int>(
+            { eventService.listPhotos(owner.id, event.id, null, pagination = params).items.size },
+            { purchaseService.listPurchasedPhotos(owner.id, event.id, params).items.size },
+            { ledgerService.list(owner.id, params).items.size },
+        )
+        for (page in pages) {
+            DeliverySql.queries.clear()
+            assertEquals(count, page())
+            assertEquals(0, DeliverySql.queries.count { it.startsWith("select exists") }, "mapping must not perform scalar delivery queries")
+            assertEquals(1, DeliverySql.queries.size, "one fresh availability batch per page")
+        }
+        DeliverySql.queries.clear()
+        assertTrue(purchaseService.listPurchasedPhotos(owner.id, event.id, PaginationParams(count, count)).items.isEmpty())
+        assertTrue(ledgerService.list(owner.id, PaginationParams(count, count)).items.isEmpty())
+        assertTrue(DeliverySql.queries.isEmpty())
+    }
+
+    @Test
+    fun `blocked owner media retains receipts and never receives a signed thumbnail`() {
+        val owner = seller()
+        val foreign = seller()
+        val event = event(EventStatus.ACTIVE, owner.id)
+        val at = OffsetDateTime.parse("2026-09-01T10:00:00Z")
+        val order = orders.save(Order(eventId = event.id, recipientEmail = "guest@test.local", paymentMethodWire = "card", status = OrderStatus.FULFILLED, totalPhp = BigDecimal("100.00"), paidAt = at))
+        val cases = listOf("live" to true, "hidden" to true, "trash" to true, "review" to true, "removed" to false, "deleting" to false, "purged" to false)
+        for ((state, available) in cases) {
+            val photo = photos.save(Photo(eventId = event.id, photographerId = owner.id, status = PhotoStatus.LIVE, s3Key = "policy/$state.jpg", pricePhp = BigDecimal("100.00")))
+            when (state) {
+                "hidden" -> jdbc.update("UPDATE photos SET status = 'HIDDEN' WHERE id = ?", photo.id)
+                "trash" -> jdbc.update("UPDATE photos SET deleted_at = ? WHERE id = ?", at, photo.id)
+                "review" -> jdbc.update("UPDATE photos SET removal_state = 'REVIEW' WHERE id = ?", photo.id)
+                "removed" -> jdbc.update("UPDATE photos SET removal_state = 'REMOVED' WHERE id = ?", photo.id)
+                "deleting" -> jdbc.update("UPDATE photos SET deleted_at = ?, deletion_started_at = ? WHERE id = ?", at, at, photo.id)
+                "purged" -> jdbc.update("UPDATE photos SET purged_at = ? WHERE id = ?", at, photo.id)
+            }
+            items.save(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("100.00")))
+            val path = "/api/v1/me/photographer/photos/${photo.id}/purchases?orderId=${order.id}"
+            val response = get(path, tokens.createAccessToken(owner))
+            assertEquals(200, response.statusCode())
+            val data = json.readTree(response.body()).path("data")
+            assertTrue(data.path("photo").path("mediaAvailable").isBoolean, state)
+            assertEquals(available, data.path("photo").path("mediaAvailable").booleanValue(), state)
+            assertEquals(!available, data.path("photo").path("thumbnailUrl").isNull, state)
+            assertEquals(order.id.toString(), data.path("selectedPurchase").path("orderId").asText())
+            assertEquals(BigDecimal("100.00"), data.path("selectedPurchase").path("paidPhp").decimalValue().setScale(2))
+            assertEquals(1, data.path("items").size())
+            assertEquals(404, get(path, tokens.createAccessToken(foreign)).statusCode())
+        }
+        val foreignPhoto = photos.save(Photo(eventId = event.id, photographerId = foreign.id, s3Key = "policy/foreign.jpg", pricePhp = BigDecimal("100.00")))
+        val ownedIds = items.findByIdOrderId(order.id).map { it.id.photoId }
+        val availableIds = photos.findDeliveryAvailableIds(owner.id, ownedIds + foreignPhoto.id)
+        assertEquals(4, availableIds.size)
+        assertFalse(foreignPhoto.id in availableIds)
+        assertEquals(listOf(foreignPhoto.id), photos.findDeliveryAvailableIds(foreign.id, ownedIds + foreignPhoto.id))
+    }
 
     @Test
     fun `earnings legacy financial coverage opens empty private history`() {
