@@ -11,7 +11,7 @@ QuickPitik AI-API is a FastAPI-based computer vision service for marathon/runnin
 
 | Pipeline | Purpose | Models Used | Endpoint Prefix |
 |----------|---------|-------------|-----------------|
-| **Blur Detection** | Filter blurry photos | Laplacian/FFT detector + YOLOv8n-cls ONNX classifier | `/api/v1/blur/` |
+| **Blur Detection** | Filter blurry photos | Laplacian/FFT detector + two-stage blur classifier (whole-frame rule, then person detector + per-person sharpness + logistic rule); four classes reported | `/api/v1/blur/` |
 | **Face Search** | Match runners across photos | InsightFace (RetinaFace + ArcFace) + pgvector | `/api/v1/faces/` |
 | **Bib Number OCR** | Read bib numbers from photos | YOLOv8n detector + PaddleOCR 3.x (PP-OCRv5) | `/api/v1/bibs/` |
 

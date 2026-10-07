@@ -112,10 +112,11 @@ ai-api/
 │   │   │   │                   # frequency ratio, 640px-normalized). `detect_fast`
 │   │   │   │                   # skips FFT for the hot path. Uses one OpenCV/NumPy
 │   │   │   │                   # score contract across all classical callers.
-│   │   │   └── classifier.py   # BlurClassifier (YOLOv8n-cls, 4 classes via ONNX).
-│   │   │                       # Optional — loads only if
-│   │   │                       # models/blur_classifier/blur_classifier.onnx exists.
-│   │   │                       # Uses C++ `classify_preprocess` when available.
+│   │   │   └── classifier.py   # BlurClassifier: two-stage blur classifier (whole-frame
+│   │   │                       # rule, then person detector + per-person sharpness +
+│   │   │                       # logistic rule); four classes reported. Optional —
+│   │   │                       # loads only if models/person_detector/yolov8n_seg_person.onnx
+│   │   │                       # and models/blur_classifier/people_rule.json exist.
 │   │   │
 │   │   ├── faces/
 │   │   │   ├── embedder.py     # FaceEmbedder — wraps InsightFace `buffalo_l`
@@ -279,8 +280,9 @@ ai-api/
 ├── models/                     # === ML MODEL FILES (gitignored) ===
 │   ├── manifest.json           # Lists required models with sources/notes.
 │   ├── blur_classifier/
-│   │   ├── blur_classifier.onnx  # YOLOv8n-cls, 4 classes; see ai-system-overview.md for quality evidence.
-│   │   └── class_names.json
+│   │   └── people_rule.json      # Stage-2 rule of the two-stage blur classifier (whole-frame rule, then person detector + per-person sharpness + logistic rule); four classes reported; see ai-system-overview.md for quality evidence.
+│   ├── person_detector/
+│   │   └── yolov8n_seg_person.onnx  # COCO person detector for stage 2.
 │   ├── bib_detection/
 │   │   └── yolov8n_bib.onnx    # Custom-trained bib detector (Ultralytics).
 │   └── models/

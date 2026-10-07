@@ -6,7 +6,7 @@ This is a modular AI API built with FastAPI (Python 3.11+) for computer vision t
 
 All three ML pipelines are trained, integrated, and wired into the API:
 
-- **Blur classifier** — YOLOv8n-cls ONNX at `models/blur_classifier/blur_classifier.onnx`; quality evidence and limitations are in `docs/ai-system-overview.md`
+- **Blur classifier** — two-stage (whole-frame rule, then person detector + per-person sharpness + logistic rule), four classes reported; person detector at `models/person_detector/yolov8n_seg_person.onnx`, rule at `models/blur_classifier/people_rule.json`; quality evidence and limitations are in `docs/ai-system-overview.md`
 - **Face pipeline** — InsightFace `buffalo_l` (RetinaFace + ArcFace, 512-dim embeddings) at `models/models/buffalo_l/`
 - **Bib detector** — custom YOLOv8n at `models/bib_detection/yolov8n_bib.onnx` + PaddleOCR PP-OCRv5 for OCR
 
@@ -217,7 +217,7 @@ Do not add new dependencies without justification. Prefer existing libraries ove
 Two systems coexist:
 
 1. **Laplacian/FFT detector** (`src/ml/blur/detector.py`): Always-available classical CV. Single, stream, and worker decode grayscale at `BLUR_DETECT_DECODE_DIM` and use the same OpenCV Laplacian score, normalized to a 640px reference. FFT is informational and runs only when requested. `detect_fast(gray)` skips FFT.
-2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the ONNX model at `models/blur_classifier/blur_classifier.onnx`. Required and verified in the `blur` profile; optional in `all`.
+2. **Two-stage blur classifier** (`src/ml/blur/classifier.py`): whole-frame rule (`src/ml/blur/whole_frame.py`; thresholds `BLUR_SOFT_MAX_DETAIL`, `BLUR_MOTION_MIN_RATIO`, `BLUR_MOTION_MAX_DETAIL`), then person detector + per-person sharpness + logistic rule (`src/ml/blur/person_detector.py`, `src/ml/blur/people.py`); four classes reported (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the person detector at `models/person_detector/yolov8n_seg_person.onnx` and the rule at `models/blur_classifier/people_rule.json`. Required and verified in the `blur` profile; optional in `all`.
 
 API endpoints:
 
@@ -291,7 +291,7 @@ Key worker files:
 
 Training scripts live in `scripts/`:
 
-- Blur classifier: `synthesize_event_blur.py` → `prepare_blur_dataset.py` → `train_blur_classifier.py` → `export_blur_classifier.py`
+- Blur classifier: `build_blur_folds.py` → `fit_blur_whole_frame_rule.py` → `export_person_detector.py` → `measure_blur_people.py` → `fit_blur_people_rule.py` → `ship_blur_rule.py`
 - Bib detector (dedicated): `train_bib_detector.py` → `export_bib_detector.py`
 - Combined face+bib detector (archived path): `auto_annotate_face_bib.py` → `train_face_bib_detector.py` → `export_face_bib_detector.py`
 

@@ -6,7 +6,7 @@ Current state of the three ML pipelines in the QuickPitik `ai-api` service. All 
 
 | Module | Model | Accuracy | Artifact | Runtime |
 |---|---|---|---|---|
-| Blur Detection | Laplacian + FFT + YOLOv8n-cls | See quality evidence below | `models/blur_classifier/blur_classifier.onnx` | ONNX Runtime (CPU/GPU) |
+| Blur Detection | Laplacian + FFT detector; two-stage classifier (whole-frame rule, then people-first: person detector + per-person sharpness + logistic rule) | See quality evidence below | `models/person_detector/yolov8n_seg_person.onnx`, `models/blur_classifier/people_rule.json` | ONNX Runtime (CPU/GPU) |
 | Face Search | InsightFace `buffalo_l` (RetinaFace + ArcFace) | Production-grade pretrained | `models/models/buffalo_l/` | ONNX Runtime via InsightFace |
 | Bib Search | YOLOv8n (custom) + PaddleOCR PP-OCRv5 | Dedicated bib detector (trained on 1,713 images) | `models/bib_detection/yolov8n_bib.onnx` | Ultralytics YOLO + PaddleOCR |
 
@@ -21,17 +21,21 @@ All models load once at startup via `src/ml/registry.py` and are served from `ap
 Two-tier pipeline:
 
 1. **`BlurDetector`** (`src/ml/blur/detector.py`) — classical CV. Single, stream, and Celery use the same grayscale decode target (`BLUR_DETECT_DECODE_DIM`) and OpenCV Laplacian score, normalized to a 640 px reference. FFT is optional and informational. No model file needed.
-2. **`BlurClassifier`** (`src/ml/blur/classifier.py`) — YOLOv8n-cls (~5.5 MB ONNX). Classifies each image into one of four categories and powers `/blur/classify`:
-   - `sharp` — subject in focus, background bokeh allowed
-   - `defocused_object_portrait` — camera focused on wrong plane
-   - `defocused_blurred` — whole frame soft
-   - `motion_blurred` — camera shake or subject motion
+2. **`BlurClassifier`** (`src/ml/blur/classifier.py`) — two stages, four classes reported, powers `/blur/classify`:
+   - **Stage 1, no model** (`src/ml/blur/whole_frame.py`): two numbers measured on a 640-px gray copy of the upload — fine detail (the Laplacian score) and the up-down / left-right detail ratio. When nothing in the frame is sharp the answer is `defocused_blurred` (whole-frame soft) or `motion_blurred` (sideways smear), with probability 1.0. Thresholds: `BLUR_SOFT_MAX_DETAIL`, `BLUR_MOTION_MIN_RATIO`, `BLUR_MOTION_MAX_DETAIL`, learned by `scripts/fit_blur_whole_frame_rule.py`.
+   - **Stage 2, people first** (`src/ml/blur/person_detector.py`, `people.py`): a COCO person detector (YOLOv8n, ONNX Runtime) finds the people; each person's edge sharpness is measured on its own pixels at the 1280-px upload; a logistic rule (`models/blur_classifier/people_rule.json`, fitted by `scripts/fit_blur_people_rule.py` on the labelled event folds) turns a few numbers about the people — how sharp the largest person is next to the sharpest, how big the blurred people are, whether a blurred person is cut off by the frame — into P(`defocused_object_portrait`) versus `sharp`.
+   - `sharp` — the runner is sharp; background blur is intended; slight softness still counts as sharp
+   - `defocused_object_portrait` — subject missed focus: a blurred person in front cuts into the frame, or the runner is soft while the background or the road is sharp
+   - `defocused_blurred` — whole-frame soft: nothing in the frame is sharp
+   - `motion_blurred` — the whole frame is smeared sideways
 
 Callers can pass `?blur_type=...` to get a targeted `detected: true/false` response; omitting it returns the full class probability vector. A sharp subject with intentional background bokeh belongs to `sharp`.
 
 **Quality evidence (2026-09-24):** The old 98.68% training-time figure and 98.30% served figure came from a validation split with 31 train-overlapping files. After excluding those files, the unchanged ONNX model classified 1,009/1,026 correctly, missed 4/667 blurry photos, and culled 0/359 sharp photos. This is diagnostic because the historical validation data informed model and preprocessing choices. On a separately selected, visually labeled night-marathon sample, it culled **36/120 sharp runner photos** (30%; Wilson 95% interval 22.5–38.7%). All 120 were sharp, so blur misses and overall four-class accuracy cannot be assessed on that sample. The photos came from one event and camera; labels have not had a second human review. Near-burst correlation also limits the interval's generalizability. See the 2026-09-24 Task 8 vault journal and ignored `Training-Images/quality_evidence/` manifests for full provenance. No production accuracy or zero-over-cull guarantee is established.
 
 **Root cause (2026-09-29):** Real-event over-culling is shortcut learning, not a pipeline fault. Training labels were assigned per shoot, and 99.1% of the historical validation images share a shoot with training, so validation rewarded recognising shoots (a frozen ImageNet feature probe with no blur training scores 96% on it). On 736 sharp frames from two new events the served model flagged 67%; brightening or keeping colour alone raises its flags. Do not quote 98% as accuracy. The recovery plan is in the vault journal `2026-09-29-blur-detection-investigation-and-improvement-plan`.
+
+**People-first redesign (2026-10):** The 224-px centre-crop classifier and its 640-px whole-frame successor were replaced after the 2026-10-05 and 2026-10-06 investigations showed that a whole-frame model learns the look of the shoot (night, lens, blurred people in the background) instead of the runner's focus: on the archive, light and camera alone predict the label 99% on a random split and 69% on unseen events. Stage 2 now finds the people and measures each one. The detector is scored only on events it never saw: five event folds over 7,862 labelled photos from 22 events. Pooled result at the Moderate flag threshold 0.60: sharp photos wrongly flagged 76/4,073 = 1.87% (worst event with at least 100 sharp photos: `trilogy-run-asia-leg3-2026-08`, 7/165 = 4.2%); whole-frame soft and motion missed 0/1,717 = 0.00%; missed focus not caught 185/2,072 = 8.93%; verdict flips from brightness or colour alone 152/7,862 = 1.93%. The whole-frame rule alone sent 0 of 4,073 sharp photos to a blur group. Motion and most whole-frame-soft training examples are software-blurred by the owner's choice, so other kinds of motion blur are not covered.
 
 ## Face Search
 
@@ -76,8 +80,9 @@ If the ONNX detector is missing, the endpoint falls back to running PaddleOCR on
 ai-api/models/
   manifest.json                                  model registry metadata
   blur_classifier/
-    blur_classifier.onnx                         YOLOv8n-cls, 4-class, ~5.5 MB
-    class_names.json
+    people_rule.json                             the stage-2 rule (plain numbers)
+  person_detector/
+    yolov8n_seg_person.onnx                      COCO person detector, 13.8 MB
   bib_detection/
     yolov8n_bib.onnx                             custom YOLOv8n bib detector
   models/buffalo_l/                              InsightFace pack (RetinaFace + ArcFace), auto-downloaded
@@ -92,7 +97,10 @@ src/ml/
   registry.py                  loads all 5 models at startup
   blur/
     detector.py                Laplacian/FFT sharp-vs-blur check
-    classifier.py              YOLOv8n-cls ONNX inference
+    classifier.py              two-stage blur classifier
+    whole_frame.py             whole-frame rule
+    person_detector.py         letterbox + NMS around the ONNX detector
+    people.py                  per-person sharpness, features, logistic rule
   faces/
     embedder.py                InsightFace detect + embed
     matcher.py                 cosine similarity / top-K

@@ -176,10 +176,10 @@ The four classes:
 
 | Class | Meaning |
 |-------|---------|
-| `sharp` | Image is in focus |
-| `defocused_object_portrait` | Subject out of focus (portrait/bokeh style) |
-| `defocused_blurred` | General out-of-focus blur |
-| `motion_blurred` | Motion blur from camera or subject movement |
+| `sharp` | The runner is sharp. Background blur is intended; slight softness still counts as sharp |
+| `defocused_object_portrait` | Subject missed focus: a blurred person in front cuts into the frame, or the runner is soft while the background or road is sharp |
+| `defocused_blurred` | Whole-frame soft: nothing in the frame is sharp |
+| `motion_blurred` | The whole frame is smeared sideways |
 
 #### Mode B: Targeted Detection (with `blur_type` param)
 
@@ -319,7 +319,7 @@ Client rules that matter:
   stream if its prepared JPEGs approach the blur service's body limit.
 
 Both `/blur/classify` and `/blur/classify/stream` decode to
-`BLUR_CLASSIFY_DECODE_DIM` (640) internally and score identically.
+`BLUR_CLASSIFY_DECODE_DIM` (1280) internally and score identically.
 
 ---
 

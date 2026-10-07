@@ -71,7 +71,7 @@ Returns `503` with `success: false` if any check fails.
 
 ## Blur Detection
 
-The blur pipeline has a classical CV detector (Laplacian variance + optional FFT) and a CNN classifier (YOLOv8n-cls, 4 classes). Each has single, streaming, batch, and mega-batch endpoints.
+The blur pipeline has a classical CV detector (Laplacian variance + optional FFT) and a two-stage classifier (a whole-frame rule, then a person detector with per-person sharpness and a logistic rule); four classes are reported. Each has single, streaming, batch, and mega-batch endpoints.
 
 ### POST /api/v1/blur/detect
 
@@ -158,14 +158,14 @@ Same as `/batch` but accepts up to `MEGA_BATCH_MAX_SIZE` (500) images. The serve
 
 ### POST /api/v1/blur/classify
 
-Classify an image into blur categories using a CNN model (YOLOv8n-cls). Returns 503 `MODEL_UNAVAILABLE` if the ONNX file is missing.
+Classify an image into blur categories using a two-stage classifier (a whole-frame rule, then a person detector with per-person sharpness and a logistic rule); four classes are reported. Returns 503 `MODEL_UNAVAILABLE` if the person detector or the rule file is missing.
 
 Two modes:
 
 - **Full classification** (default): predicted class + probability vector over `sharp`, `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`.
 - **Targeted detection**: when `blur_type` is set, returns a binary Detected / Not Detected answer for that type. `detected` requires both a matching predicted class **and** `confidence >= BLUR_DETECTION_MIN_CONFIDENCE` (0.5) — identical on `/classify`, `/classify/stream` and `/classify/batch`.
 
-All classify paths downscale to `BLUR_CLASSIFY_DECODE_DIM` (640) before inference, so the single, streaming and Celery endpoints return the same class for the same image. `image_dimensions` reports the decoded size before that step.
+All classify paths decode to `BLUR_CLASSIFY_DECODE_DIM` (1280, the desktop upload size); stage 1 makes its own 640-px view, stage 2 measures people at 1280, so the single, streaming and Celery endpoints return the same class for the same image. `image_dimensions` reports the decoded size before that step.
 
 **Request:**
 - `file` (multipart)
