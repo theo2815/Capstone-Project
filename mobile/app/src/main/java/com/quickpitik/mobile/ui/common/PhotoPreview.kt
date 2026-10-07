@@ -283,8 +283,7 @@ fun PhotoPreview(
     }
     val safeIndex = currentIndex.coerceIn(0, photos.size - 1)
     val activePhoto = photos[safeIndex]
-    val metadataAccess = if (mode == PhotoPreviewMode.OwnerReview && !canDownload(activePhoto)) null
-        else metadataAccessFor(mode, activePhoto)
+    val metadataAccess = metadataAccessFor(mode, activePhoto)
     val metadataState by metadataViewModel.state.collectAsState()
     var metadataOpen by remember { mutableStateOf(false) }
     var openedPhotoId by remember { mutableStateOf<String?>(null) }

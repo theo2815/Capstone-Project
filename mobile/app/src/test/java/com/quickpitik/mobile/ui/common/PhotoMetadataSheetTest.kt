@@ -86,6 +86,29 @@ class PhotoMetadataSheetTest {
         compose.runOnIdle { assertEquals(2, count.get()) }
     }
 
+    @Test fun `owner metadata stays open when download availability changes`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val vm = PhotoMetadataViewModel(app) { id, _ -> PhotoMetadataDto(id, "ready", "$id.jpg", 1024, null) }
+        val canDownload = androidx.compose.runtime.mutableStateOf(true)
+        compose.setContent {
+            PhotoPreview(
+                photos = listOf(PhotoPreviewData("owned-photo", 0.0, null, null)),
+                currentIndex = 0,
+                onClose = {},
+                onIndexChange = {},
+                mode = PhotoPreviewMode.OwnerReview,
+                metadataViewModel = vm,
+                canDownload = { canDownload.value },
+            )
+        }
+        compose.onNodeWithText("Show Metadata").performClick()
+        compose.onNodeWithText("Photo metadata").assertExists()
+        compose.runOnIdle { canDownload.value = false }
+        compose.waitForIdle()
+        compose.onNodeWithText("Photo metadata").assertExists()
+        compose.onNodeWithText("Download ↓").assertDoesNotExist()
+    }
+
     @Test fun `public denial remains hidden after visiting another photo`() {
         val index = androidx.compose.runtime.mutableIntStateOf(0)
         val app = ApplicationProvider.getApplicationContext<Application>()

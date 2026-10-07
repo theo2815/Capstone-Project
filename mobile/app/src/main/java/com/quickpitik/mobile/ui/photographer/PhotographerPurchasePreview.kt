@@ -58,8 +58,8 @@ fun PhotographerPurchasePreview(
     val context = LocalContext.current
     val session = remember(context) { SessionManager.getInstance(context) }
     val scope = rememberCoroutineScope()
-    var downloading by remember { mutableStateOf(false) }
-    var downloadError by remember { mutableStateOf(false) }
+    var downloadingPhotoId by remember { mutableStateOf<String?>(null) }
+    var downloadErrorPhotoId by remember { mutableStateOf<String?>(null) }
     val knownPhoto = state.photo ?: photos.firstOrNull { it.id == photoId }
     val gallery = if (photos.any { it.id == photoId }) photos else listOfNotNull(knownPhoto)
     val previewPhotos = if (gallery.isNotEmpty()) gallery.map { photo ->
@@ -78,30 +78,33 @@ fun PhotographerPurchasePreview(
         onClose = ::close,
         onIndexChange = { next -> viewModel.openPurchase(previewPhotos[next].id) },
         mode = PhotoPreviewMode.OwnerReview,
-        canDownload = { photo -> state.photo?.id == photo.id && state.photo?.deletionStartedAt == null && !downloading },
+        canDownload = { photo -> state.photo?.id == photo.id && state.photo?.deletionStartedAt == null && downloadingPhotoId != photo.id },
         onDownload = { photo ->
             val token = session.getAccessToken()
-            if (!downloading && token != null && state.photo?.id == photo.id && state.photo?.deletionStartedAt == null) {
-                downloading = true
-                downloadError = false
+            if (downloadingPhotoId != photo.id && token != null && state.photo?.id == photo.id && state.photo?.deletionStartedAt == null) {
+                downloadingPhotoId = photo.id
+                downloadErrorPhotoId = null
                 val generation = session.authChanges.value
                 scope.launch {
-                    val message = try {
-                        val response = RetrofitClient.apiService.getPhotographerPhotoDownload("Bearer $token", photo.id)
-                        val url = response.data?.url?.takeIf { response.success }
-                            ?: error(response.error ?: "Download unavailable.")
-                        if (generation != session.authChanges.value || state.photoId != photo.id) return@launch
-                        when (val saved = PhotoDownloader.saveToGallery(context, url, PhotoDownloader.buildFilename(photo.id, state.photo?.bib))) {
-                            is PhotoDownloader.Result.Saved -> "Saved ${saved.displayName} to your gallery."
-                            is PhotoDownloader.Result.Failed -> saved.message
+                    try {
+                        val message = try {
+                            val response = RetrofitClient.apiService.getPhotographerPhotoDownload("Bearer $token", photo.id)
+                            val url = response.data?.url?.takeIf { response.success }
+                                ?: error(response.error ?: "Download unavailable.")
+                            if (generation != session.authChanges.value || viewModel.previewState.value.photoId != photo.id) return@launch
+                            when (val saved = PhotoDownloader.saveToGallery(context, url, PhotoDownloader.buildFilename(photo.id, state.photo?.bib))) {
+                                is PhotoDownloader.Result.Saved -> "Saved ${saved.displayName} to your gallery."
+                                is PhotoDownloader.Result.Failed -> saved.message
+                            }
+                        } catch (e: Exception) {
+                            if (generation == session.authChanges.value && viewModel.previewState.value.photoId == photo.id && downloadingPhotoId == photo.id)
+                                downloadErrorPhotoId = photo.id
+                            RetrofitClient.parseError(e)
                         }
-                    } catch (e: Exception) {
-                        downloadError = true
-                        RetrofitClient.parseError(e)
-                    }
-                    if (generation == session.authChanges.value && state.photoId == photo.id) {
-                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                        downloading = false
+                        if (generation == session.authChanges.value && viewModel.previewState.value.photoId == photo.id && downloadingPhotoId == photo.id)
+                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    } finally {
+                        if (downloadingPhotoId == photo.id) downloadingPhotoId = null
                     }
                 }
             }
@@ -114,7 +117,7 @@ fun PhotographerPurchasePreview(
                 onSelectPurchase = viewModel::selectPurchase,
                 onRetry = viewModel::retryPreview,
                 onLoadMore = viewModel::loadMorePurchases,
-                downloadError = downloadError,
+                downloadError = downloadErrorPhotoId == photoId,
             )
         },
     )
@@ -154,6 +157,7 @@ private fun PurchaseDetails(
         Fact("Refunded", selected?.refundedPhp?.let(::peso) ?: "Unavailable")
         Fact("Refund status", selected?.refundStatus?.replaceFirstChar { it.uppercase() } ?: "Unavailable")
         selected?.refundedAt?.let { Fact("Refund completed", formatManila(it, "MMM d, yyyy · h:mm a") ?: "Unavailable") }
+            ?: selected?.transactions?.lastOrNull { it.isRefund }?.recordedAt?.let { Fact("Refund recorded", formatManila(it, "MMM d, yyyy · h:mm a") ?: "Unavailable") }
         Fact("Your net earnings", selected?.netKeptPhp?.let(::peso) ?: "Unavailable")
         if (selected?.refundPending == true) Text("Refund pending", style = Typography.bodyMedium, color = Slate)
         selected?.transactions?.forEach { row ->
