@@ -6,7 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
-from src.ml.blur import whole_frame
+from src.ml.blur import people, whole_frame
+from src.ml.blur.person_detector import PersonDetector
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -17,27 +18,32 @@ class BlurClassifier:
 
     Stage 1 (no model): whole-frame measurements decide `defocused_blurred` and
     `motion_blurred`, the photos in which nothing is sharp (whole_frame.py).
-    Stage 2 (ONNX): a two-class model that sees the whole frame decides `sharp`
-    versus `defocused_object_portrait` (subject missed focus).
-    Callers still get all four classes. Falls back gracefully if the model file
-    is not found.
+    Stage 2 (people first): a person detector (ONNX, boxes and masks) finds the
+    people, people.py measures how sharp each one is on its own pixels at the
+    decoded upload's full detail, and a
+    logistic rule fitted on the labelled event folds turns those numbers into
+    P(`defocused_object_portrait`, subject missed focus) versus `sharp`.
+    Callers still get all four classes. Falls back gracefully if a file is
+    missing or does not match the manifest.
     """
 
     DEFAULT_MIN_DETECTION_CONFIDENCE = 0.5
     CLASSES = [
-        "defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp",
+        "defocused_blurred",
+        "defocused_object_portrait",
+        "motion_blurred",
+        "sharp",
     ]
-    # What the stage-2 model outputs, in the order Ultralytics sorts class folders.
+    # What stage 2 decides, in this order; the manifest's `classes` must say the same.
     MODEL_CLASSES = ["defocused_object_portrait", "sharp"]
-    # Images per ONNX call. One (50, 3, 640, 640) float batch is ~250 MB before
-    # activations: too much for the 2 GiB blur service with two active requests.
-    INFERENCE_CHUNK = 8
+    # The person detector's fixed shapes (scripts/export_person_detector.py).
+    DETECTOR_INPUT = [1, 3, 640, 640]
+    DETECTOR_OUTPUTS = [[1, 116, 8400], [1, 32, 160, 160]]
 
     def __init__(
         self,
-        model_path: str = "./models/blur_classifier/blur_classifier.onnx",
-        class_names_path: str = "./models/blur_classifier/class_names.json",
-        input_size: int = 640,
+        detector_path: str = "./models/person_detector/yolov8n_seg_person.onnx",
+        rule_path: str = "./models/blur_classifier/people_rule.json",
         use_gpu: bool = False,
         min_detection_confidence: float = DEFAULT_MIN_DETECTION_CONFIDENCE,
         manifest_path: str | None = None,
@@ -45,9 +51,8 @@ class BlurClassifier:
         motion_min_ratio: float | None = None,
         motion_max_detail: float | None = None,
     ) -> None:
-        self.model_path = model_path
-        self.class_names_path = class_names_path
-        self.input_size = input_size
+        self.detector_path = detector_path
+        self.rule_path = rule_path
         self.use_gpu = use_gpu
         self.min_detection_confidence = min_detection_confidence
         self.manifest_path = manifest_path
@@ -63,40 +68,44 @@ class BlurClassifier:
         self.motion_max_detail = (
             settings.BLUR_MOTION_MAX_DETAIL if motion_max_detail is None else motion_max_detail
         )
-        self.session = None
+        self.session = None  # the detector's ONNX session; None = stage 2 unavailable
+        self.detector: PersonDetector | None = None
+        self.rule: people.LogisticRule | None = None
         self.class_names: list[str] = []
         self._load_model()
 
     def _load_model(self) -> None:
-        # The four classes callers see; the model itself only knows MODEL_CLASSES.
+        # The four classes callers see; stage 2 itself only knows MODEL_CLASSES.
         self.class_names = self.CLASSES.copy()
 
         try:
             import onnxruntime as ort
 
-            if not Path(self.model_path).exists():
+            detector_file, rule_file = Path(self.detector_path), Path(self.rule_path)
+            if not detector_file.exists() or not rule_file.exists():
                 logger.warning(
-                    "Blur classifier model not found",
-                    model_path=self.model_path,
+                    "Blur stage-2 files not found",
+                    detector_path=self.detector_path,
+                    rule_path=self.rule_path,
                 )
                 return
 
             if self.manifest_path:
-                artifact = json.loads(Path(self.manifest_path).read_text(encoding="utf-8"))[
-                    "models"
-                ]["blur_classifier"]
-                names_path = Path(self.class_names_path)
-                if not names_path.is_file() or artifact["classes"] != self.MODEL_CLASSES:
-                    raise ValueError("Blur classifier labels are missing or unordered")
+                models = json.loads(Path(self.manifest_path).read_text(encoding="utf-8"))["models"]
+                artifact = models["blur_classifier"]
+                if artifact.get("classes") != self.MODEL_CLASSES:
+                    raise ValueError("Blur classifier manifest classes mismatch")
                 for path, digest in (
-                    (Path(self.model_path), artifact["sha256"]),
-                    (names_path, artifact["labels_sha256"]),
+                    (rule_file, artifact["sha256"]),
+                    (detector_file, models["person_detector"]["sha256"]),
                 ):
                     with path.open("rb") as f:
                         if hashlib.file_digest(f, "sha256").hexdigest() != digest:
                             raise ValueError("Blur classifier artifact digest mismatch")
-                if json.loads(names_path.read_text(encoding="utf-8")) != self.MODEL_CLASSES:
-                    raise ValueError("Blur classifier label order mismatch")
+
+            rule = people.LogisticRule.load(rule_file)
+            if rule.feature_names != list(people.FEATURE_NAMES):
+                raise ValueError("Blur rule features do not match this code")
 
             providers = (
                 ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -117,80 +126,58 @@ class BlurClassifier:
             sess_opts.enable_cpu_mem_arena = True
             sess_opts.execution_mode = ort.ExecutionMode.ORT_PARALLEL
 
-            self.session = ort.InferenceSession(
-                self.model_path,
+            session = ort.InferenceSession(
+                str(detector_file),
                 sess_options=sess_opts,
                 providers=providers,
             )
 
-            # The label file and the output size must both describe the two-class
-            # stage-2 model. A four-class artifact from before the two-stage design
-            # is refused here, so /blur/classify answers 503 instead of mislabelling.
-            names_path = Path(self.class_names_path)
-            model_names = self.MODEL_CLASSES
-            if names_path.exists():
-                with open(names_path) as f:
-                    model_names = json.load(f)
-            output_shape = self.session.get_outputs()[0].shape
-            num_classes = output_shape[-1]
-            if model_names != self.MODEL_CLASSES or num_classes != len(self.MODEL_CLASSES):
+            # Only the COCO person detector fits here. The 2026-08-14 four-class
+            # model and the 2026-10 two-class model have other shapes and are
+            # refused, so /blur/classify answers 503 instead of mislabelling.
+            input_shape = list(session.get_inputs()[0].shape)
+            output_shapes = [list(o.shape) for o in session.get_outputs()]
+            if input_shape != self.DETECTOR_INPUT or output_shapes != self.DETECTOR_OUTPUTS:
                 logger.error(
-                    "Blur classifier is not the two-class sharp / missed-focus model",
-                    class_names=model_names,
-                    model_output_classes=num_classes,
+                    "Blur stage-2 file is not the person detector",
+                    input_shape=input_shape,
+                    output_shapes=output_shapes,
                 )
-                self.session = None
                 return
 
+            detector = PersonDetector(session, rule.min_conf)
             if self.manifest_path:
-                input_shape = self.session.get_inputs()[0].shape
-                if len(input_shape) != 4 or input_shape[1] != 3 or len(output_shape) != 2:
-                    raise ValueError("Blur classifier ONNX input/output shape mismatch")
-                input_name = self.session.get_inputs()[0].name
-                sample = np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8)
-                warm = self.session.run(None, {input_name: self._preprocess(sample)})[0]
-                if (
-                    warm.shape != (1, len(self.MODEL_CLASSES))
-                    or not np.isfinite(warm).all()
-                    or (warm < -1e-5).any()
-                    or (warm > 1 + 1e-5).any()
-                    or not np.isclose(warm.sum(), 1.0, atol=1e-4)
-                ):
-                    raise ValueError("Blur classifier warm inference failed")
+                # Warm run through the whole stage: a blank frame has no people and
+                # must still give a finite probability.
+                blank = np.zeros(
+                    (self.DETECTOR_INPUT[2], self.DETECTOR_INPUT[3], 3), dtype=np.uint8
+                )
+                probe = rule.probability(
+                    people.features(
+                        people.measure(blank, detector.detect(blank)),
+                        rule.big_area,
+                        rule.soft_ratio,
+                    )
+                )
+                if not np.isfinite(probe) or not 0.0 <= probe <= 1.0:
+                    raise ValueError("Blur stage-2 warm inference failed")
 
-            # Check if model supports dynamic batch (dim 0 is -1 or None)
-            input_shape = self.session.get_inputs()[0].shape
-            self._dynamic_batch = (
-                input_shape[0] is None
-                or (isinstance(input_shape[0], (int, str)) and str(input_shape[0]) in ("-1", "N", "batch"))
-            )
-
+            self.session, self.detector, self.rule = session, detector, rule
             logger.info(
                 "BlurClassifier loaded",
-                model_path=self.model_path,
+                detector_path=self.detector_path,
+                rule_path=self.rule_path,
                 classes=self.class_names,
-                dynamic_batch=self._dynamic_batch,
+                features=len(rule.feature_names),
             )
         except Exception as e:
             logger.warning(
                 "BlurClassifier model not available",
-                model_path=self.model_path,
+                detector_path=self.detector_path,
+                rule_path=self.rule_path,
                 error_type=type(e).__name__,
             )
-            self.session = None
-
-    def _preprocess(self, image: np.ndarray) -> np.ndarray:
-        """Whole frame -> (1, 3, input_size, input_size) float tensor in [0, 1].
-
-        The frame is never cropped: it is padded to a square and area-averaged
-        down (whole_frame.square_gray_view). Gray on purpose: the 2026-08-14
-        model keyed on colour and brightness instead of blur. The training
-        pictures are written by the same function (scripts/package_blur_stage2.py),
-        so training and serving see identical pixels.
-        """
-        gray = whole_frame.square_gray_view(image, self.input_size)
-        chw = np.repeat(gray[np.newaxis, :, :], 3, axis=0).astype(np.float32) / 255.0
-        return np.expand_dims(chw, axis=0)
+            self.session = self.detector = self.rule = None
 
     def _whole_frame_result(self, image: np.ndarray) -> dict | None:
         """Stage 1: a finished result when nothing in the frame is sharp, else None."""
@@ -210,22 +197,47 @@ class BlurClassifier:
             "probabilities": {name: float(name == kind) for name in self.CLASSES},
         }
 
-    def _logits_to_result(self, probs: np.ndarray) -> dict:
-        """Turn the stage-2 output into the four-class result callers expect.
+    def _missed_focus_probability(self, image: np.ndarray) -> float:
+        """Stage 2 on one BGR image: find the people, measure them, apply the rule.
 
-        The exported ONNX model includes a Softmax node (Gemm -> Softmax -> output0),
-        so the two values are already probabilities that sum to 1. Do not re-apply
-        softmax. The whole-frame classes are 0.0 here: stage 1 already ruled them out.
+        Nobody found: 0.0 (sharp) without asking the rule, which was never fitted on such
+        a photo (owner decision 2026-10-07).
+        """
+        found = people.measure(image, self.detector.detect(image))
+        if not found:
+            return 0.0
+        return self.rule.probability(
+            people.features(found, self.rule.big_area, self.rule.soft_ratio)
+        )
+
+    def _people_result(self, p_missed: float) -> dict:
+        """Turn stage 2's probability into the four-class result callers expect.
+
+        The whole-frame classes are 0.0 here: stage 1 already ruled them out.
         """
         prob_dict = {name: 0.0 for name in self.CLASSES}
-        for name, value in zip(self.MODEL_CLASSES, probs, strict=True):
-            prob_dict[name] = float(value)
+        prob_dict["defocused_object_portrait"] = float(p_missed)
+        prob_dict["sharp"] = float(1.0 - p_missed)
         predicted_class = max(prob_dict, key=prob_dict.get)
         return {
             "predicted_class": predicted_class,
             "confidence": prob_dict[predicted_class],
             "probabilities": prob_dict,
         }
+
+    def _run_stage_two(self, image: np.ndarray) -> float:
+        """Stage 2 under the blur profile's per-image deadline."""
+        from src.config import get_settings
+        from src.utils.timeout import run_direct, run_with_timeout
+
+        settings = get_settings()
+        if settings.MODEL_PROFILE == "blur":
+            return run_with_timeout(
+                self._missed_focus_probability,
+                args=(image,),
+                timeout_seconds=settings.BLUR_INFERENCE_TIMEOUT_SECONDS,
+            )
+        return run_direct(self._missed_focus_probability, args=(image,), timeout_seconds=0)
 
     def classify(self, image: np.ndarray) -> dict | None:
         """Classify an image into blur categories.
@@ -235,7 +247,7 @@ class BlurClassifier:
 
         Returns:
             Dict with predicted_class, confidence, and per-class probabilities.
-            Returns None if model is not loaded.
+            Returns None if the stage-2 files are not loaded.
         """
         if self.session is None:
             return None
@@ -243,41 +255,15 @@ class BlurClassifier:
         whole_frame_blur = self._whole_frame_result(image)
         if whole_frame_blur is not None:
             return whole_frame_blur
-
-        input_tensor = self._preprocess(image)
-        input_name = self.session.get_inputs()[0].name
-
-        from src.config import get_settings
-        from src.utils.timeout import run_direct, run_with_timeout
-
-        settings = get_settings()
-        runner = run_with_timeout if settings.MODEL_PROFILE == "blur" else run_direct
-        outputs = runner(
-            self.session.run, args=(None, {input_name: input_tensor}),
-            timeout_seconds=(settings.BLUR_INFERENCE_TIMEOUT_SECONDS
-                             if settings.MODEL_PROFILE == "blur" else 0),
-        )
-        return self._logits_to_result(outputs[0][0])
+        return self._people_result(self._run_stage_two(image))
 
     def classify_batch(self, images: list[np.ndarray]) -> list[dict | None]:
-        """Classify multiple images, using true batch inference when possible.
+        """Classify multiple images, one at a time.
 
-        Whole-frame blur is answered by stage 1 without the model. For the rest,
-        if the ONNX model supports dynamic batch (detected at load time), images
-        are stacked INFERENCE_CHUNK at a time into (n, 3, H, W) session.run() calls.
-
-        If the model is static batch=1 (the default YOLOv8 export — pass
-        dynamic=True, see scripts/export_blur_classifier.py), runs per-image
-        inference internally — still benefits from the sub-batch decode
-        parallelism in the caller. Results are identical either way (verified
-        to float32 epsilon).
-
-        Expected gain: on CPU this is small — measured ~1.06x on a 50-image
-        batch (2.8 vs 3.0 ms/image), because the model is tiny (1.4M params)
-        and ONNX Runtime already parallelises a single inference across
-        ONNX_INTRA_OP_THREADS, leaving little per-call overhead to amortise.
-        Batching is what unlocks throughput on GPU (USE_GPU=true); on CPU the
-        real wins are the parallel decode and the client-side downscale.
+        Stage 2 runs the detector on each photo on its own: a (1, 3, 640, 640)
+        input is 5 MB, and the detector's fixed batch axis is 1, so there is no
+        batched call to gain from. The callers' sub-batch decode parallelism is
+        where the throughput comes from.
 
         Args:
             images: List of BGR numpy arrays. None entries are skipped and
@@ -290,65 +276,25 @@ class BlurClassifier:
         if self.session is None:
             return [None] * len(images)
 
-        # Stage 1 answers whole-frame blur on the spot; only the rest reach the model.
         results: list[dict | None] = [None] * len(images)
-        valid_indices: list[int] = []
         for i, img in enumerate(images):
             if img is None:
                 continue
             try:
                 results[i] = self._whole_frame_result(img)
                 if results[i] is None:
-                    valid_indices.append(i)
-            except Exception:
-                pass  # treat an unreadable image the same as None input
+                    results[i] = self._people_result(self._run_stage_two(img))
+            except Exception as e:
+                # An unreadable image gives None at its position; the deadline
+                # error is not swallowed here, callers decide what a timeout means.
+                from src.utils.timeout import InferenceTimeoutError
 
-        if not valid_indices:
-            return results
-
-        input_name = self.session.get_inputs()[0].name
-
-        if getattr(self, "_dynamic_batch", False):
-            from src.config import get_settings
-            from src.utils.timeout import run_with_timeout
-
-            _s = get_settings()
-            for start in range(0, len(valid_indices), self.INFERENCE_CHUNK):
-                chunk_indices = valid_indices[start:start + self.INFERENCE_CHUNK]
-                # True batch: stack (1, 3, H, W) -> (n, 3, H, W), one call per chunk.
-                # The inputs are made here, a chunk at a time: each one is ~5 MB.
-                batch_tensor = np.concatenate(
-                    [self._preprocess(images[i]) for i in chunk_indices], axis=0
+                if isinstance(e, InferenceTimeoutError):
+                    raise
+                logger.warning(
+                    "Blur classification failed for one image", error_type=type(e).__name__
                 )
-                timeout = min(
-                    _s.INFERENCE_BATCH_TIMEOUT,
-                    _s.INFERENCE_TIMEOUT + len(chunk_indices) * 2,
-                )
-                if _s.MODEL_PROFILE == "blur":
-                    timeout = min(timeout, _s.BLUR_INFERENCE_TIMEOUT_SECONDS)
-                batch_logits = run_with_timeout(
-                    self.session.run,
-                    args=(None, {input_name: batch_tensor}),
-                    timeout_seconds=timeout,
-                )[0]  # shape: (n, 2)
-                for batch_i, img_i in enumerate(chunk_indices):
-                    results[img_i] = self._logits_to_result(batch_logits[batch_i])
-        else:
-            # Static batch=1: run per-image (no noisy exception per sub-batch)
-            from src.config import get_settings
-            from src.utils.timeout import run_direct, run_with_timeout
-
-            settings = get_settings()
-            runner = run_with_timeout if settings.MODEL_PROFILE == "blur" else run_direct
-
-            for img_i in valid_indices:
-                logits = runner(
-                    self.session.run, args=(None, {input_name: self._preprocess(images[img_i])}),
-                    timeout_seconds=(settings.BLUR_INFERENCE_TIMEOUT_SECONDS
-                                     if settings.MODEL_PROFILE == "blur" else 0),
-                )
-                results[img_i] = self._logits_to_result(logits[0][0])
-
+                results[i] = None
         return results
 
     def detect_blur_type(self, image: np.ndarray, blur_type: str) -> dict | None:
