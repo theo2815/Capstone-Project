@@ -12,6 +12,15 @@ import java.util.UUID
 
 interface RunnerMessageRepository : JpaRepository<RunnerMessage, UUID> {
 
+    @Modifying
+    @Query(value = """
+        INSERT INTO runner_messages (id, runner_id, kind, body, order_id, photo_removal_request_id, notice_key, created_at)
+        VALUES (:id, :runnerId, 'photo_removed', :body, :orderId, :requestId, :noticeKey, :createdAt)
+        ON CONFLICT (notice_key) WHERE notice_key IS NOT NULL DO NOTHING
+    """, nativeQuery = true)
+    fun insertRemovalNotice(id: UUID, runnerId: UUID, orderId: UUID, requestId: UUID, noticeKey: String,
+        body: String, createdAt: OffsetDateTime): Int
+
     // List for /me/runner/messages — filters soft-deleted rows. Paged; mirrors
     // PhotographerMessageRepository exactly.
     fun findByRunnerIdAndRemovedAtIsNullOrderByCreatedAtDescIdAsc(

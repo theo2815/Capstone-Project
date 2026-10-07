@@ -54,7 +54,7 @@ class PaymongoWebhookServiceTest {
             listOf(OrderItem(OrderItemId(order.id, photoId), BigDecimal("125.00"))),
         )
         Mockito.`when`(grants.findByIdOrderId(order.id)).thenReturn(emptyList())
-        val service = PaymongoWebhookService(orders, items, payments, grants, minting, publisher, refunds)
+        val service = PaymongoWebhookService(orders, items, payments, grants, minting, publisher, refunds, Mockito.mock(OrderPhotoRemovalService::class.java))
 
         val first = service.handle(paidEvent())
         val duplicate = service.handle(paidEvent())
@@ -95,7 +95,7 @@ class PaymongoWebhookServiceTest {
         )
         Mockito.`when`(grants.findByIdOrderId(order.id)).thenReturn(emptyList())
         val service = PaymongoWebhookService(
-            orders, items, payments, grants, minting, publisher, Mockito.mock(PaymongoRefundService::class.java),
+            orders, items, payments, grants, minting, publisher, Mockito.mock(PaymongoRefundService::class.java), Mockito.mock(OrderPhotoRemovalService::class.java),
         )
 
         service.settleFree(listOf(order.id))
@@ -142,6 +142,7 @@ class PaymongoWebhookServiceTest {
             minting,
             Mockito.mock(ApplicationEventPublisher::class.java),
             Mockito.mock(PaymongoRefundService::class.java),
+            Mockito.mock(OrderPhotoRemovalService::class.java),
         )
 
         val result = service.handle(event("payment.failed"))
@@ -169,6 +170,38 @@ class PaymongoWebhookServiceTest {
             ),
         ),
     )
+
+    @Test
+    fun `checkout group locks every sibling photo before the first ledger write`() = assertGroupLockOrder(false)
+
+    @Test
+    fun `free group locks every sibling photo before the first ledger write`() = assertGroupLockOrder(true)
+
+    private fun assertGroupLockOrder(free: Boolean) {
+        val siblings = List(2) { Order(eventId = UUID.randomUUID(), recipientEmail = "runner@test.local",
+            paymentMethodWire = "qrph", totalPhp = if (free) BigDecimal.ZERO else BigDecimal("125.00")) }
+        val ids = siblings.map { it.id }
+        val records = siblings.map { Payment(orderId = it.id, provider = "paymongo", providerRef = "cs_group", amountPhp = it.totalPhp) }
+        val orders = Mockito.mock(OrderRepository::class.java)
+        val items = Mockito.mock(OrderItemRepository::class.java)
+        val payments = Mockito.mock(PaymentRepository::class.java)
+        val grants = Mockito.mock(DownloadGrantRepository::class.java)
+        val minting = Mockito.mock(TransactionMintingService::class.java)
+        val removal = Mockito.mock(OrderPhotoRemovalService::class.java)
+        Mockito.`when`(payments.findAllByProviderAndProviderRefForUpdate("paymongo", "cs_group")).thenReturn(records)
+        Mockito.`when`(payments.findAllByOrderIdInForUpdate(ids)).thenReturn(records)
+        siblings.forEach { Mockito.`when`(orders.findByIdForUpdate(it.id)).thenReturn(it) }
+        val service = PaymongoWebhookService(orders, items, payments, grants, minting,
+            Mockito.mock(ApplicationEventPublisher::class.java), Mockito.mock(PaymongoRefundService::class.java), removal)
+        if (free) service.settleFree(ids) else service.settleCheckoutSession("cs_group", "pay_group")
+        val sequence = Mockito.inOrder(removal, minting)
+        sequence.verify(removal).lockSettlementPhotos(ids)
+        siblings.forEach {
+            sequence.verify(removal).onOrderSettled(Mockito.eq(it.id) ?: it.id, anyArg())
+            sequence.verify(minting).mintForPaidOrder(it.id)
+        }
+        assertEquals(listOf(OrderStatus.FULFILLED, OrderStatus.FULFILLED), siblings.map { it.status })
+    }
 
     private fun <T> anyArg(): T = Mockito.any()
 }

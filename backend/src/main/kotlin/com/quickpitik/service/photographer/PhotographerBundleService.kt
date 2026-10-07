@@ -4,6 +4,8 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.PublicProperties
 import com.quickpitik.dto.photographer.PhotographerBundleDto
 import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.storage.StorageService
@@ -43,6 +45,7 @@ class PhotographerBundleService(
         if (photoRepository.countByEventIdAndPhotographerIdAndDeletedAtIsNull(eventId, photographerId) == 0L) {
             throw NotFoundException(ErrorCodes.PHOTO_NOT_FOUND, "No photos to download")
         }
+        if (!photoRepository.hasDeliverableOwnerPhoto(eventId, photographerId)) throw unavailable()
         val grant = tokenService.issue(photographerId, eventId)
         val base = publicProperties.apiBaseUrl.trimEnd('/')
         val token = URLEncoder.encode(grant.token, StandardCharsets.UTF_8)
@@ -68,11 +71,12 @@ class PhotographerBundleService(
         }
 
         val used = mutableSetOf<String>()
-        val entries = rows.map { row ->
+        val entries = rows.filter { photoRepository.isDeliveryAvailable(it.id) }.map { row ->
             val name = uniqueName(used, buildEntryName(event.slug, row.bib, row.id.toString()))
             used += name
-            BundleEntryRef(s3Key = row.s3Key, entryName = name)
+            BundleEntryRef(photoId = row.id, s3Key = row.s3Key, entryName = name)
         }
+        if (entries.isEmpty()) throw unavailable()
         // Single-photo events skip the ZIP wrapper — a lone entry downloads as
         // the raw image. Multi-photo events zip under an event-slug filename.
         val isSingle = entries.size == 1
@@ -90,6 +94,7 @@ class PhotographerBundleService(
 
     private fun writeSingleTo(spec: BundleSpec, out: OutputStream) {
         val entry = spec.entries.first()
+        requireAvailable(entry.photoId)
         storageService.open(entry.s3Key).use { it.transferTo(out) }
         out.flush()
     }
@@ -106,6 +111,7 @@ class PhotographerBundleService(
         zip.setLevel(java.util.zip.Deflater.NO_COMPRESSION)
         zip.use {
             spec.entries.forEach { entry ->
+                requireAvailable(entry.photoId)
                 storageService.open(entry.s3Key).use { original ->
                     zip.putNextEntry(ZipEntry(entry.entryName))
                     original.transferTo(zip)
@@ -136,7 +142,13 @@ class PhotographerBundleService(
     private fun sanitizeFilename(s: String): String =
         s.replace(Regex("[^a-zA-Z0-9._-]"), "-").trim('-').ifBlank { "file" }
 
-    data class BundleEntryRef(val s3Key: String, val entryName: String)
+    private fun requireAvailable(photoId: UUID) {
+        if (!photoRepository.isDeliveryAvailable(photoId)) throw unavailable()
+    }
+
+    private fun unavailable() = ApiException(HttpStatus.GONE, ErrorCodes.PHOTO_NOT_FOUND, "Photo is unavailable")
+
+    data class BundleEntryRef(val s3Key: String, val entryName: String, val photoId: UUID)
 
     data class BundleSpec(
         val filename: String,

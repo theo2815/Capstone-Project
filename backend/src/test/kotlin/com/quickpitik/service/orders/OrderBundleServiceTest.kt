@@ -32,6 +32,7 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
+import kotlin.test.assertFalse
 import kotlin.test.assertEquals
 import kotlin.test.assertContentEquals
 import kotlin.test.assertFailsWith
@@ -170,6 +171,57 @@ class OrderBundleServiceTest {
 
     // ─── Helpers ──────────────────────────────────────────────────────────
 
+    @Test
+    fun `oldBundleTokenCannotBypassRemoval`() {
+        val order = order(OffsetDateTime.now().plusDays(30))
+        val photo = stub(order).single()
+        photo.removalState = com.quickpitik.entity.RemovalState.REMOVED
+        val failure = assertFailsWith<com.quickpitik.exception.ApiException> { service.prepare(order.id, token) }
+        assertEquals(org.springframework.http.HttpStatus.GONE, failure.status)
+    }
+
+    @Test
+    fun `authorization after preflight aborts delivery before opening bytes`() {
+        val order = order(OffsetDateTime.now().plusDays(30))
+        val photo = stub(order).single()
+        val spec = service.prepare(order.id, token)
+        photo.removalState = com.quickpitik.entity.RemovalState.REMOVED
+        Mockito.`when`(photoRepository.isDeliveryAvailable(photo.id)).thenReturn(false)
+        Mockito.`when`(storageService.open(photo.s3Key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
+        val out = ByteArrayOutputStream()
+        assertFailsWith<com.quickpitik.exception.ApiException> { service.writeTo(spec, out) }
+        assertEquals(0, out.size())
+    }
+
+    @Test
+    fun `mixed removal keeps entitled financial lines and streams only retained photos`() {
+        val order = order(OffsetDateTime.now().plusYears(1))
+        val photos = stub(order, photoCount = 2)
+        photos.first().removalState = com.quickpitik.entity.RemovalState.REMOVED
+        val spec = service.prepare(order.id, token)
+        assertEquals(listOf(photos.last().id), spec.entries.map { it.photoId })
+        Mockito.`when`(storageService.open(photos.last().s3Key)).thenReturn(ByteArrayInputStream(byteArrayOf(1, 2)))
+        val output = ByteArrayOutputStream()
+        service.writeTo(spec, output)
+        assertEquals(listOf<Byte>(1, 2), output.toByteArray().toList())
+        Mockito.verify(storageService, Mockito.never()).open(photos.first().s3Key)
+    }
+
+    @Test
+    fun `removal between ZIP entries aborts without reading or finalizing removed entry`() {
+        val order = order(OffsetDateTime.now().plusYears(1))
+        val photos = stub(order, photoCount = 2)
+        val spec = service.prepare(order.id, token)
+        Mockito.`when`(storageService.getBytes(photos.first().s3Key)).thenAnswer {
+            photos.last().removalState = com.quickpitik.entity.RemovalState.REMOVED
+            byteArrayOf(1, 2)
+        }
+        val output = ByteArrayOutputStream()
+        assertFailsWith<com.quickpitik.exception.ApiException> { service.writeTo(spec, output) }
+        Mockito.verify(storageService, Mockito.never()).getBytes(photos.last().s3Key)
+        assertFalse(output.toByteArray().toList().windowed(4).contains(listOf<Byte>(80, 75, 5, 6)), "ZIP must not have an end-of-central-directory record")
+    }
+
     private fun order(tokenExpiresAt: OffsetDateTime): Order = Order(
         eventId = UUID.randomUUID(),
         recipientEmail = "runner@test.local",
@@ -220,6 +272,7 @@ class OrderBundleServiceTest {
                 ),
             ),
         )
+        photos.forEach { photo -> Mockito.`when`(photoRepository.isDeliveryAvailable(photo.id)).thenAnswer { photo.removalState != com.quickpitik.entity.RemovalState.REMOVED } }
         return photos
     }
 

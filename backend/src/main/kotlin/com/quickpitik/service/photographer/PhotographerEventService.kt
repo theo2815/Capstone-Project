@@ -13,6 +13,8 @@ import com.quickpitik.dto.photographer.detailDto
 import com.quickpitik.dto.photographer.summaryDto
 import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -149,6 +151,9 @@ class PhotographerEventService(
             ?.takeIf { it.deletionStartedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         val ttl = storageProperties.presignedTtl.photographerDownload
+        if (!photoRepository.isDeliveryAvailable(photo.id)) {
+            throw ApiException(HttpStatus.GONE, ErrorCodes.PHOTO_NOT_FOUND, "Photo is unavailable")
+        }
         val url = storageService.presignedDownloadUrl(photo.s3Key, ttl, "quickpitik-${photo.id}.jpg")
         return PhotographerDownloadDto(
             url = url,

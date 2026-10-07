@@ -285,6 +285,7 @@ class OrderReceiptEmailClaimTest {
             OrderAccessTokenService(PlatformProperties()),
             transactionTemplate,
             CLOCK,
+            Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
         )
 
     /** A TransactionTemplate that reports whether it currently has one open. */

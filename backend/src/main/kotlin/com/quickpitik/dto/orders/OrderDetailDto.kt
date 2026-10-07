@@ -45,4 +45,8 @@ data class OrderPhotoDetailDto(
     val thumbnailUrl: String? = null,
     val previewUrl: String? = null,
     val downloadUrl: String? = null,
+    val availability: OrderPhotoAvailability = OrderPhotoAvailability.AVAILABLE,
+    val unavailableReason: String? = null,
 )
+
+enum class OrderPhotoAvailability { AVAILABLE, REMOVAL_REVIEW, REMOVED }

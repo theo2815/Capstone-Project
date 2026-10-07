@@ -13,7 +13,6 @@ import com.quickpitik.service.photos.PhotoSearchService
 import com.quickpitik.service.photos.PhotoService
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.image.ImagePixelGuardTest.Companion.overBudgetPngHeader
-import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -63,7 +62,6 @@ class EventPhotoSearchGateTest {
             eventService,
             Mockito.mock(PhotoService::class.java),
             photoSearchService,
-            Mockito.mock(StorageService::class.java),
             allowAll,
         )
     }

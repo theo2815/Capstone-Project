@@ -14,6 +14,7 @@ import com.quickpitik.dto.orders.CreateOrderRequest
 import com.quickpitik.dto.orders.OrderDetailDto
 import com.quickpitik.dto.orders.OrderListItemDto
 import com.quickpitik.dto.orders.OrderPhotoDetailDto
+import com.quickpitik.dto.orders.OrderPhotoAvailability
 import com.quickpitik.dto.orders.OrderResponse
 import com.quickpitik.dto.orders.OrderResponseItem
 import com.quickpitik.dto.orders.OrderStatusDto
@@ -45,6 +46,7 @@ import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.RemovalState
 import com.quickpitik.entity.PhotographerCoupon
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -751,10 +753,13 @@ class OrderService(
             id = order.id,
             status = order.status,
             items = items.map { item ->
+                val availability = availabilityOf(item.id.photoId)
                 OrderResponseItem(
                     photoId = item.id.photoId,
                     price = item.pricePhpAtPurchase,
                     downloadUrl = photos[item.id.photoId]?.let { downloadUrlOf(order, it, grants[item.id.photoId], bundleToken) },
+                    availability = availability,
+                    unavailableReason = if (availability == OrderPhotoAvailability.REMOVED) "PHOTO_REMOVED" else null,
                     discount = item.discountPhp,
                 )
             },
@@ -902,6 +907,7 @@ class OrderService(
             status = order.status,
             photos = items.mapIndexed { index, item ->
                 val photo = photos[item.id.photoId]
+                val availability = availabilityOf(item.id.photoId)
                 OrderPhotoDetailDto(
                     id = item.id.photoId,
                     bib = photo?.bibs?.minByOrNull { it.bibNumber }?.bibNumber,
@@ -913,6 +919,8 @@ class OrderService(
                     thumbnailUrl = photo?.let(::thumbnailUrlOf),
                     previewUrl = photo?.let { previewUrlOf(it, grants[item.id.photoId]) },
                     downloadUrl = photo?.let { downloadUrlOf(order, it, grants[item.id.photoId], bundleToken) },
+                    availability = availability,
+                    unavailableReason = if (availability == OrderPhotoAvailability.REMOVED) "PHOTO_REMOVED" else null,
                 )
             },
             downloadBundleUrl = null,
@@ -924,14 +932,23 @@ class OrderService(
         )
     }
 
-    private fun thumbnailUrlOf(photo: Photo): String =
-        storageService.presignedGetUrl(
+    private fun thumbnailUrlOf(photo: Photo): String? {
+        if (!photoRepository.isDeliveryAvailable(photo.id)) return null
+        return storageService.presignedGetUrl(
             photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key,
             storageProperties.presignedTtl.thumbnail,
         )
+    }
+
+    private fun availabilityOf(photoId: UUID) = when (photoRepository.findCurrentRemovalState(photoId)) {
+        RemovalState.REVIEW -> OrderPhotoAvailability.REMOVAL_REVIEW
+        RemovalState.REMOVED -> OrderPhotoAvailability.REMOVED
+        else -> OrderPhotoAvailability.AVAILABLE
+    }
 
     private fun previewUrlOf(photo: Photo, grant: DownloadGrant?): String? {
         if (grant == null || grant.grantedUntil.isBefore(OffsetDateTime.now())) return null
+        if (!photoRepository.isDeliveryAvailable(photo.id)) return null
         val key = photo.s3Key.ifBlank { photo.watermarkS3Key ?: photo.thumbnailS3Key.orEmpty() }
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.runnerDownload)
     }
@@ -942,6 +959,7 @@ class OrderService(
     // shape as OrderReceiptEmailService.buildBundleUrl.
     private fun downloadUrlOf(order: Order, photo: Photo, grant: DownloadGrant?, bundleToken: String): String? {
         if (grant == null || grant.grantedUntil.isBefore(OffsetDateTime.now())) return null
+        if (!photoRepository.isDeliveryAvailable(photo.id)) return null
         val base = publicProperties.apiBaseUrl.trimEnd('/')
         val token = URLEncoder.encode(bundleToken, StandardCharsets.UTF_8)
         return "$base/orders/${order.id}/download-bundle?token=$token&photo=${photo.id}"

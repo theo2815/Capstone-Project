@@ -130,6 +130,7 @@ class OrderServiceCheckoutTest {
         orderItemRepository = Mockito.mock(OrderItemRepository::class.java)
         paymentRepository = Mockito.mock(PaymentRepository::class.java)
         photoRepository = Mockito.mock(PhotoRepository::class.java)
+        Mockito.`when`(photoRepository.isDeliveryAvailable(anyArg<UUID>())).thenReturn(true)
         paymongoClient = Mockito.mock(PaymongoClient::class.java)
         couponRepository = Mockito.mock(PhotographerCouponRepository::class.java)
         downloadGrants = Mockito.mock(DownloadGrantRepository::class.java)

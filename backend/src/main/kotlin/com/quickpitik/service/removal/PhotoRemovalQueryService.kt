@@ -96,7 +96,8 @@ class PhotoRemovalQueryService(
         try {
             return snapshot.dto.copy(items = snapshot.dto.items.map { item ->
                 val key = snapshot.previewKeys[item.id]
-                val preview = if (key != null && storage.exists(key)) storage.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail) else null
+                val preview = if (key != null && storage.exists(key) && photos.isDeliveryAvailable(item.photoIdSnapshot))
+                    storage.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail) else null
                 item.copy(photo = item.photo?.copy(imageUrl = preview))
             })
         } catch (error: Exception) {
@@ -199,8 +200,8 @@ class PhotoRemovalQueryService(
 
     private fun present(row: ReviewPhoto): RemovalPhotoDto {
         try {
-            val available = row.originalKey?.let(storage::exists) == true
-            val preview = if (available && row.previewKey?.let(storage::exists) == true)
+            val available = row.originalKey?.let(storage::exists) == true && photos.isDeliveryAvailable(row.dto.photo.id)
+            val preview = if (available && row.previewKey?.let(storage::exists) == true && photos.isDeliveryAvailable(row.dto.photo.id))
                 storage.presignedGetUrl(row.previewKey, storageProperties.presignedTtl.thumbnail) else null
             return row.dto.copy(photo = row.dto.photo.copy(imageUrl = preview), bytesAvailable = available)
         } catch (error: Exception) {
@@ -210,7 +211,10 @@ class PhotoRemovalQueryService(
     fun adminDetail(adminId: UUID, requestId: UUID): PhotoRemovalRequestDto {
         val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
         val selected = items.findByRequestIdOrderByIdAsc(requestId)
-        return request.toAdminDto(selected, reviews.findByRequestIdOrderByIdAsc(requestId))
+        return request.toAdminDto(selected, reviews.findByRequestIdOrderByIdAsc(requestId)).copy(
+            guestBuyerRemovalNotices = history.findGuestBuyerNotices(requestId).map {
+                GuestBuyerRemovalNoticeDto(it.noticeId, it.orderId, it.photoId, it.occurredAt, it.status, it.recipientEmail)
+            })
     }
 
     fun list(adminId: UUID, eventId: UUID?, status: RemovalRequestStatus?, needsAction: Boolean?, offset: Int?, limit: Int?): RemovalPage<PhotoRemovalRequestDto> {
