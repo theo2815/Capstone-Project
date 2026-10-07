@@ -76,4 +76,6 @@ data class OrderResponseItem(
     val price: BigDecimal,
     val downloadUrl: String? = null,
     val discount: BigDecimal = BigDecimal.ZERO,
+    val availability: OrderPhotoAvailability = OrderPhotoAvailability.AVAILABLE,
+    val unavailableReason: String? = null,
 )

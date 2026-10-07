@@ -6,6 +6,7 @@ import com.quickpitik.dto.photos.PhotoMetadataDto
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoMetadataState
+import com.quickpitik.entity.RemovalState
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.PhotoMetadataRepository
@@ -45,6 +46,7 @@ class PhotoMetadataService(
     @Transactional(readOnly = true)
     fun getOwned(userId: UUID, photoId: UUID): PhotoMetadataDto {
         photos.findByIdAndPhotographerIdAndDeletionStartedAtIsNull(photoId, userId) ?: throw notFound()
+        if (!photos.isDeliveryAvailable(photoId)) throw notFound()
         return repository.findById(photoId).orElse(null).toDto(photoId)
     }
 
@@ -65,6 +67,7 @@ class PhotoMetadataService(
         else coverage.findPublicMetadataPhotographerIds(eventId, photographerIds).toSet()
         return photos.associate { photo ->
             photo.id to when {
+                photo.removalState == RemovalState.REMOVED || photo.deletionStartedAt != null -> "none"
                 requesterUserId != null && photo.photographerId == requesterUserId -> "owner"
                 photo.isSellable && photo.photographerId in publicIds -> "public"
                 else -> "none"

@@ -3,6 +3,9 @@ package com.quickpitik.service.orders
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.entity.OrderStatus
 import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ApiException
+import com.quickpitik.entity.RemovalState
+import org.springframework.http.HttpStatus
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -84,12 +87,16 @@ class OrderBundleService(
             val photo = photos[item.id.photoId] ?: return@mapNotNull null
             val grant = grants[item.id.photoId] ?: return@mapNotNull null
             if (grant.grantedUntil.isBefore(now)) return@mapNotNull null
+            if (photo.removalState == RemovalState.REMOVED || photo.deletionStartedAt != null) return@mapNotNull null
             val bib = photo.bibs.minByOrNull { it.bibNumber }?.bibNumber
             val name = uniqueName(usedNames, buildEntryName(eventSlug, bib, photo.id.toString()))
             usedNames.add(name)
-            BundleEntryRef(s3Key = photo.s3Key, entryName = name)
+            BundleEntryRef(photoId = photo.id, s3Key = photo.s3Key, entryName = name)
         }
-        if (entries.isEmpty()) throw orderNotFound()
+        if (entries.isEmpty()) {
+            if (photos.values.any { it.removalState == RemovalState.REMOVED }) throw unavailable()
+            throw orderNotFound()
+        }
 
         // Single-photo orders skip the ZIP wrapper: the entry's own filename
         // becomes the response filename and the body is the raw image bytes.
@@ -119,6 +126,7 @@ class OrderBundleService(
 
     private fun writeSingleTo(spec: BundleSpec, out: OutputStream) {
         val entry = spec.entries.first()
+        requireAvailable(entry.photoId)
         try {
             storageService.open(entry.s3Key).use { it.transferTo(out) }
             out.flush()
@@ -141,6 +149,7 @@ class OrderBundleService(
         }
         zip.use {
             spec.entries.forEach { entry ->
+                requireAvailable(entry.photoId)
                 val bytes = storageService.getBytes(entry.s3Key)
                 zip.putNextEntry(ZipEntry(entry.entryName))
                 zip.write(bytes)
@@ -175,9 +184,16 @@ class OrderBundleService(
 
     private fun orderNotFound(): NotFoundException =
         NotFoundException(code = ErrorCodes.ORDER_NOT_FOUND, message = "Order not found")
+
+    private fun requireAvailable(photoId: UUID) {
+        if (!photoRepository.isDeliveryAvailable(photoId)) throw unavailable()
+    }
+
+    private fun unavailable() = ApiException(HttpStatus.GONE, ErrorCodes.PHOTO_NOT_FOUND, "Purchased photo is unavailable")
 }
 
 data class BundleEntryRef(
+    val photoId: UUID,
     val s3Key: String,
     val entryName: String,
 )

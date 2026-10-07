@@ -9,6 +9,9 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 
 /**
  * Single writer for the runner-side inbox. Mirrors
@@ -29,6 +32,15 @@ class RunnerMessagesService(
     private val runnerMessageRepository: RunnerMessageRepository,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun pushRemovalNotice(runnerId: UUID, orderId: UUID, photoId: UUID, requestId: UUID, occurredAt: Instant) {
+        val id = UUID.randomUUID()
+        val body = "A photo in this order was removed following a verified privacy request. Your purchase record remains available; contact support for help."
+        val inserted = runnerMessageRepository.insertRemovalNotice(id, runnerId, orderId, requestId,
+            "photo_removed:$orderId:$photoId", body, OffsetDateTime.ofInstant(occurredAt, ZoneOffset.UTC))
+        if (inserted == 1) publish(runnerMessageRepository.findById(id).orElseThrow())
+    }
+
     @Transactional(propagation = Propagation.MANDATORY)
     fun pushMessage(
         runnerId: UUID,
@@ -53,12 +65,17 @@ class RunnerMessagesService(
                 orderId = orderId,
             ),
         )
+        publish(saved)
+        return saved
+    }
+
+    private fun publish(saved: RunnerMessage) {
         // Fires only AFTER_COMMIT so a rollback of the surrounding admin
         // TX drops the would-be push. Payload mirrors the FE RunnerMessage
         // shape so the bell merges directly without a refetch.
         eventPublisher.publishEvent(
             RunnerMessageCreatedEvent(
-                runnerId = runnerId,
+                runnerId = saved.runnerId,
                 payload = mapOf(
                     "type" to "message.created",
                     "message" to mapOf(
@@ -67,6 +84,7 @@ class RunnerMessagesService(
                         "title" to saved.title,
                         "body" to saved.body,
                         "orderId" to saved.orderId?.toString(),
+                        "photoRemovalRequestId" to saved.photoRemovalRequestId?.toString(),
                         "sourceDecisionId" to saved.sourceDecisionId?.toString(),
                         "createdAt" to saved.createdAt.toString(),
                         "readAt" to saved.readAt?.toString(),
@@ -74,6 +92,5 @@ class RunnerMessagesService(
                 ),
             ),
         )
-        return saved
     }
 }

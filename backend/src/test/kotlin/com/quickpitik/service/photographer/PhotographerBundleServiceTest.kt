@@ -42,6 +42,8 @@ class PhotographerBundleServiceTest {
     @BeforeEach
     fun setUp() {
         photoRepository = Mockito.mock(PhotoRepository::class.java)
+        Mockito.`when`(photoRepository.isDeliveryAvailable(anyArg<UUID>())).thenReturn(true)
+        Mockito.`when`(photoRepository.hasDeliverableOwnerPhoto(eventId, photographerId)).thenReturn(true)
         eventRepository = Mockito.mock(EventRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
         tokenService = PhotographerBundleTokenService(PlatformProperties())
@@ -140,8 +142,8 @@ class PhotographerBundleServiceTest {
             filename = "quickpitik-fun-run-abcd1234.zip",
             contentType = "application/zip",
             entries = listOf(
-                PhotographerBundleService.BundleEntryRef("k1", "a.jpg"),
-                PhotographerBundleService.BundleEntryRef("k2", "b.jpg"),
+                PhotographerBundleService.BundleEntryRef("k1", "a.jpg", UUID.randomUUID()),
+                PhotographerBundleService.BundleEntryRef("k2", "b.jpg", UUID.randomUUID()),
             ),
         )
 
@@ -165,7 +167,7 @@ class PhotographerBundleServiceTest {
         val spec = PhotographerBundleService.BundleSpec(
             filename = "quickpitik-fun-run-bib-101.jpg",
             contentType = "image/jpeg",
-            entries = listOf(PhotographerBundleService.BundleEntryRef("k1", "quickpitik-fun-run-bib-101.jpg")),
+            entries = listOf(PhotographerBundleService.BundleEntryRef("k1", "quickpitik-fun-run-bib-101.jpg", UUID.randomUUID())),
         )
 
         val out = ByteArrayOutputStream()
@@ -194,12 +196,27 @@ class PhotographerBundleServiceTest {
     }
 
     @Test
+    fun `ownerDownloadAlsoStopsAfterPreflight`() {
+        stubEvent()
+        val selected = row("original", "101")
+        stubRows(selected)
+        val spec = service.prepare(photographerId, eventId)
+        val photo = com.quickpitik.entity.Photo(id = selected.id, eventId = eventId, photographerId = photographerId,
+            s3Key = "original", pricePhp = java.math.BigDecimal("125"), removalState = com.quickpitik.entity.RemovalState.REMOVED)
+        Mockito.`when`(photoRepository.isDeliveryAvailable(photo.id)).thenReturn(false)
+        Mockito.`when`(storageService.open("original")).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
+        val out = ByteArrayOutputStream()
+        assertFailsWith<com.quickpitik.exception.ApiException> { service.writeTo(spec, out) }
+        assertEquals(0, out.size())
+    }
+
+    @Test
     fun `failed second original aborts instead of finalizing a partial archive`() {
         Mockito.`when`(storageService.open("k1")).thenReturn(ByteArrayInputStream(byteArrayOf(1, 2, 3)))
         Mockito.`when`(storageService.open("k2")).thenAnswer { throw java.io.IOException("storage unavailable") }
         val spec = PhotographerBundleService.BundleSpec("photos.zip", "application/zip", listOf(
-            PhotographerBundleService.BundleEntryRef("k1", "a.jpg"),
-            PhotographerBundleService.BundleEntryRef("k2", "b.jpg"),
+            PhotographerBundleService.BundleEntryRef("k1", "a.jpg", UUID.randomUUID()),
+            PhotographerBundleService.BundleEntryRef("k2", "b.jpg", UUID.randomUUID()),
         ))
         val out = ByteArrayOutputStream()
         assertFailsWith<java.io.IOException> { service.writeTo(spec, out) }

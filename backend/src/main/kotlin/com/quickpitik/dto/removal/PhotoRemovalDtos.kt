@@ -50,7 +50,11 @@ data class PhotoRemovalRequestDto(
     val evidencePresent: Boolean, val evidenceContentType: String?, val evidenceGeneration: Long,
     val evidenceCleanupState: RemovalEvidenceCleanupState, val outstandingEvidenceCount: Int,
     val items: List<PhotoRemovalItemDto> = emptyList(), val reviews: List<PhotoRemovalReviewDto> = emptyList(),
+    val guestBuyerRemovalNotices: List<GuestBuyerRemovalNoticeDto> = emptyList(),
 )
+
+data class GuestBuyerRemovalNoticeDto(val noticeId: UUID, val orderId: UUID, val photoId: UUID,
+    val occurredAt: Instant, val status: String, val recipientEmail: String)
 
 // Separate shapes keep intake, evidence and support verification out of owner reads.
 data class PhotographerRemovalItemDto(

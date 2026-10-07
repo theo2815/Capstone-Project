@@ -32,6 +32,8 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import org.mockito.Mockito
 import org.springframework.data.domain.PageImpl
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.Optional
@@ -134,6 +136,38 @@ class PhotoServiceAttributionTest {
         Mockito.`when`(photoRepository.findById(stray.id)).thenReturn(Optional.of(stray))
 
         assertFailsWith<NotFoundException> { service().freeDownload(eventId, stray.id) }
+    }
+
+    @Test
+    fun `free stream checks current public eligibility before opening the original`() {
+        val photoId = UUID.randomUUID()
+        val download = PhotoService.FreeDownload("original.jpg", "photo.jpg")
+        val bytes = byteArrayOf(1, 2, 3)
+        Mockito.`when`(photoRepository.isFreeDeliveryAvailable(eventId, photoId)).thenReturn(true)
+        Mockito.`when`(storageService.open(download.s3Key)).thenReturn(ByteArrayInputStream(bytes))
+        val out = ByteArrayOutputStream()
+
+        service().writeFreeDownload(eventId, photoId, download, out)
+
+        assertTrue(bytes.contentEquals(out.toByteArray()))
+        val sequence = Mockito.inOrder(photoRepository, storageService)
+        sequence.verify(photoRepository).isFreeDeliveryAvailable(eventId, photoId)
+        sequence.verify(storageService).open(download.s3Key)
+    }
+
+    @Test
+    fun `free stream refuses current ineligibility without opening storage`() {
+        val photoId = UUID.randomUUID()
+        Mockito.`when`(photoRepository.isFreeDeliveryAvailable(eventId, photoId)).thenReturn(false)
+        val out = ByteArrayOutputStream()
+
+        val failure = assertFailsWith<NotFoundException> {
+            service().writeFreeDownload(eventId, photoId, PhotoService.FreeDownload("original.jpg", "photo.jpg"), out)
+        }
+
+        assertEquals(ErrorCodes.PHOTO_NOT_FOUND, failure.code)
+        assertEquals(0, out.size())
+        Mockito.verifyNoInteractions(storageService)
     }
 
     @Test

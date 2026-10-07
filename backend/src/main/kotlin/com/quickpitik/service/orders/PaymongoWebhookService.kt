@@ -28,6 +28,7 @@ class PaymongoWebhookService(
     private val transactionMintingService: TransactionMintingService,
     private val eventPublisher: ApplicationEventPublisher,
     private val refundService: PaymongoRefundService,
+    private val removalService: OrderPhotoRemovalService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -86,6 +87,9 @@ class PaymongoWebhookService(
         var ordersFulfilled = 0
         var grantsMinted = 0
 
+        // Lock every sibling photo before the first order takes ledger counter locks.
+        removalService.lockSettlementPhotos(payments.map { it.orderId })
+
         payments.forEach { payment ->
             payment.providerRef = checkoutSessionId
             providerPaymentId?.takeIf { it.isNotBlank() }?.let { payment.providerPaymentId = it }
@@ -115,7 +119,9 @@ class PaymongoWebhookService(
     @Transactional
     fun settleFree(orderIds: List<UUID>) {
         val now = OffsetDateTime.now()
-        paymentRepository.findAllByOrderIdInForUpdate(orderIds).forEach { fulfill(it, now) }
+        val payments = paymentRepository.findAllByOrderIdInForUpdate(orderIds)
+        removalService.lockSettlementPhotos(orderIds)
+        payments.forEach { fulfill(it, now) }
     }
 
     // Marks the payment settled and fulfils its order once. Returns the
@@ -129,6 +135,7 @@ class PaymongoWebhookService(
         if (order.status == OrderStatus.FULFILLED || order.status == OrderStatus.REFUNDED) return null
 
         order.paidAt = order.paidAt ?: now
+        removalService.onOrderSettled(order.id, now.toInstant())
         val minted = mintGrantsIfMissing(order.id, now)
         transactionMintingService.mintForPaidOrder(order.id)
         order.status = OrderStatus.FULFILLED

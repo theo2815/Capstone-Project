@@ -21,4 +21,5 @@ data class RunnerMessageDto(
     val sourceDecisionId: UUID?,
     val createdAt: OffsetDateTime,
     val readAt: OffsetDateTime?,
+    val photoRemovalRequestId: UUID? = null,
 )

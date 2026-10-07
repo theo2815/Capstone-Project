@@ -25,6 +25,32 @@ interface PhotoWorkSnapshot {
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
 
+    // Scalar read bypasses an already-hydrated entity immediately before delivery.
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM photos WHERE id = :id AND removal_state <> 'REMOVED' AND deletion_started_at IS NULL AND purged_at IS NULL)", nativeQuery = true)
+    fun isDeliveryAvailable(@Param("id") id: UUID): Boolean
+
+    // Public/free streaming also requires the current catalog predicate, not paid access.
+    @Query(value = """
+        SELECT EXISTS (SELECT 1 FROM photos p JOIN events e ON e.id = p.event_id
+            WHERE p.id = :photoId AND p.event_id = :eventId AND p.status = 'LIVE'
+            AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+            AND p.deletion_started_at IS NULL AND p.purged_at IS NULL
+            AND e.pricing_mode = 'FREE' AND e.status NOT IN ('DRAFT', 'ARCHIVED'))
+    """, nativeQuery = true)
+    fun isFreeDeliveryAvailable(eventId: UUID, photoId: UUID): Boolean
+
+    @Query(value = """
+        SELECT EXISTS (SELECT 1 FROM photos WHERE event_id = :eventId AND photographer_id = :photographerId
+            AND deleted_at IS NULL AND deletion_started_at IS NULL AND purged_at IS NULL AND removal_state <> 'REMOVED')
+    """, nativeQuery = true)
+    fun hasDeliverableOwnerPhoto(eventId: UUID, photographerId: UUID): Boolean
+
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM photos WHERE id = :id AND removal_state = 'REMOVED')", nativeQuery = true)
+    fun isRemoved(@Param("id") id: UUID): Boolean
+
+    @Query("SELECT p.removalState FROM Photo p WHERE p.id = :id")
+    fun findCurrentRemovalState(@Param("id") id: UUID): com.quickpitik.entity.RemovalState?
+
     @Query("""
         SELECT DISTINCT p FROM Photo p LEFT JOIN p.bibs b
         WHERE p.eventId = :eventId AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))

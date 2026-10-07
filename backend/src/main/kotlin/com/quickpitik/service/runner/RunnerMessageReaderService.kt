@@ -87,5 +87,6 @@ class RunnerMessageReaderService(
             sourceDecisionId = sourceDecisionId,
             createdAt = createdAt,
             readAt = readAt,
+            photoRemovalRequestId = photoRemovalRequestId,
         )
 }

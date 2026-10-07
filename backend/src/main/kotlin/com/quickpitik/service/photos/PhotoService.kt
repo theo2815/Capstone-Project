@@ -23,6 +23,8 @@ import com.quickpitik.service.photographer.PhotoMetadataService
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.annotation.Propagation
+import java.io.OutputStream
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
@@ -198,6 +200,12 @@ class PhotoService(
             throw photoNotFound()
         }
         return FreeDownload(s3Key = photo.s3Key, filename = PhotoFilenames.downloadFilenameOf(photo))
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun writeFreeDownload(eventId: UUID, photoId: UUID, download: FreeDownload, out: OutputStream) {
+        if (!photoRepository.isFreeDeliveryAvailable(eventId, photoId)) throw photoNotFound()
+        storageService.open(download.s3Key).use { it.transferTo(out) }
     }
 
     private fun photoNotFound() = NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")

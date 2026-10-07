@@ -8,6 +8,7 @@ import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.email.ResendClient
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
@@ -47,6 +48,7 @@ class OrderReceiptEmailService(
     private val orderAccessTokenService: OrderAccessTokenService,
     private val transactionTemplate: TransactionTemplate,
     private val clock: Clock,
+    private val photos: PhotoRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -146,6 +148,10 @@ class OrderReceiptEmailService(
             ctaUrl = receiptUrl,
             listTotal = items.sumOf { it.pricePhpAtPurchase },
             discountTotal = items.sumOf { it.discountPhp },
+            availableCount = items.count { item ->
+                grants[item.id.photoId]?.grantedUntil?.isAfter(OffsetDateTime.now(clock)) == true &&
+                    photos.isDeliveryAvailable(item.id.photoId)
+            },
         )
 
         // Claim the send slot BEFORE calling Resend, not after. The early
@@ -185,6 +191,7 @@ class OrderReceiptEmailService(
         ctaUrl: String,
         listTotal: BigDecimal = order.totalPhp,
         discountTotal: BigDecimal = BigDecimal.ZERO,
+        availableCount: Int = entitledCount,
     ): String {
         val ref = order.id.toString().take(8).uppercase()
         // A ₱0 order (100% giveaway) confirms without a payment; the receipt
@@ -208,8 +215,15 @@ class OrderReceiptEmailService(
         val photoWord = if (entitledCount == 1) "photo" else "photos"
         val totalPhp = "₱${order.totalPhp.toPlainString()}"
         val buttonLabel =
-            if (entitledCount == 1) "Get your photo  ↓"
+            if (availableCount != entitledCount) "Open your receipt"
+            else if (entitledCount == 1) "Get your photo  ↓"
             else "Get your $entitledCount photos  ↓"
+        val headline = if (availableCount == entitledCount) "All yours." else "Your receipt."
+        val availabilityText = if (availableCount == entitledCount) "" else
+            "<p>$availableCount of $entitledCount purchased photos are available. Some photos were removed or are no longer available. Contact support for help.</p>"
+        val instructions = if (availableCount == entitledCount)
+            "Tap the button to open your receipt and save your photos. The link works for 1 year."
+            else "Tap the button to view your receipt. Available photos can be saved from that page."
 
         return """
 <!DOCTYPE html>
@@ -223,7 +237,7 @@ class OrderReceiptEmailService(
             QuickPitik · $kicker
           </p>
           <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
-            All yours.
+            $headline
           </h1>
           <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
             You bought <strong style="font-variant-numeric:tabular-nums;">$entitledCount</strong> $photoWord from
@@ -231,6 +245,7 @@ class OrderReceiptEmailService(
             <strong style="font-variant-numeric:tabular-nums;">$totalPhp</strong>.
           </p>
 $discountLine
+$availabilityText
           <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
             <tr><td style="padding:6px 0;">
               <a href="${escapeUrl(ctaUrl)}"
@@ -254,7 +269,7 @@ $discountLine
           </p>
 
           <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:28px 0 0;">
-            Tap the button to open your receipt and save your photos. The link works for 1 year.
+            $instructions
           </p>
         </td></tr>
       </table>

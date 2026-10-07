@@ -18,7 +18,8 @@ enum class RunnerMessageKind(val wire: String) {
     DISPUTE_ESCALATED("dispute_escalated"),
     ADMIN_MESSAGE("admin_message"),
     ACCOUNT_SUSPENDED("account_suspended"),
-    ACCOUNT_UNSUSPENDED("account_unsuspended");
+    ACCOUNT_UNSUSPENDED("account_unsuspended"),
+    PHOTO_REMOVED("photo_removed");
 }
 
 // DB-backed runner inbox — parallel to PhotographerMessage. Admin actions
@@ -61,6 +62,12 @@ class RunnerMessage(
 
     @Column(name = "order_id")
     val orderId: UUID? = null,
+
+    @Column(name = "photo_removal_request_id")
+    val photoRemovalRequestId: UUID? = null,
+
+    @Column(name = "notice_key", length = 160)
+    val noticeKey: String? = null,
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
