@@ -325,8 +325,10 @@ class TestProdComposeModels:
         ]
         assert "models/" in lines
         assert "!models/manifest.json" in lines
-        assert "!models/blur_classifier/blur_classifier.onnx" in lines
-        assert "!models/blur_classifier/class_names.json" in lines
+        assert "!models/blur_classifier/people_rule.json" in lines
+        assert "!models/person_detector/yolov8n_seg_person.onnx" in lines
+        assert "!models/blur_classifier/blur_classifier.onnx" not in lines
+        assert "!models/blur_classifier/class_names.json" not in lines
         # Training-Images/ alone is ~16 GB. Leaving it in the context meant every
         # build shipped it to the daemon before the first instruction ran.
         for heavy in ("Training-Images/", "runs/", "build/"):
@@ -902,7 +904,7 @@ class TestDockerBuildContext:
     def test_context_carries_only_the_audited_blur_pair(self):
         if not shutil.which("docker"):
             pytest.skip("docker unavailable — cannot inspect the build context")
-        if not (PROJECT_ROOT / "models/blur_classifier/blur_classifier.onnx").exists():
+        if not (PROJECT_ROOT / "models/blur_classifier/people_rule.json").exists():
             pytest.skip("audited local artifact absent — release build must provision it")
 
         tag = "quickpitik-context-probe:test"
@@ -923,7 +925,8 @@ class TestDockerBuildContext:
             listing = subprocess.run(
                 [
                     "docker", "run", "--rm", tag, "sh", "-c",
-                    "ls -A /ctx /ctx/models /ctx/models/blur_classifier",
+                    "ls -A /ctx /ctx/models /ctx/models/blur_classifier "
+                    "/ctx/models/person_detector",
                 ],
                 capture_output=True,
                 timeout=120,
@@ -933,8 +936,8 @@ class TestDockerBuildContext:
             subprocess.run(["docker", "rmi", "-f", tag], capture_output=True, timeout=120)
 
         assert "manifest.json" in out, "models/manifest.json never reached the image"
-        assert "blur_classifier.onnx" in out, "audited ONNX absent from build context"
-        assert "class_names.json" in out, "audited labels absent from build context"
+        assert "people_rule.json" in out, "audited rule absent from build context"
+        assert "yolov8n_seg_person.onnx" in out, "person detector absent from build context"
         for weight in ("bib_detection", "buffalo_l"):
             assert weight not in out, (
                 f"{weight} is in the build context — weights are meant to be "

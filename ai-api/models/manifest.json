@@ -37,31 +37,28 @@
       "notes": "Not stored under models/. PaddleOCR downloads and caches its own weights outside this directory (~/.paddleocr or PADDLE_PDX_MODEL_SOURCE), so there is no artifact here to point at. file is null rather than a path that never resolves."
     },
     "blur_classifier": {
-      "name": "YOLOv8n-cls Blur Classifier (4-class)",
-      "file": "blur_classifier/blur_classifier.onnx",
-      "artifact_version": "2026-08-14-dynamic",
-      "sha256": "1187f4d5c99c7c8c10596db4c7c343c5d4ca029d4c1f893b69502be6d799cb97",
-      "labels_sha256": "bbd45c36351c2084870b033f04b8a45c0c33cfc64b29b90d622a1f8084056a39",
-      "source": "scripts/train_blur_classifier.py -> scripts/export_blur_classifier.py",
+      "name": "People-first blur rule, stage 2 (sharp vs subject missed focus)",
+      "file": "blur_classifier/people_rule.json",
+      "artifact_version": "2026-10-07-people-first",
+      "sha256": "87b6d0aa71a29b6a4b8fbb4d79b40cbdd093c65b73c016c9f7ac82dfdcb82e4e",
+      "detector": "person_detector",
+      "source": "scripts/measure_blur_people.py -> scripts/fit_blur_people_rule.py -> scripts/ship_blur_rule.py",
       "classes": [
-        "defocused_blurred",
         "defocused_object_portrait",
-        "motion_blurred",
         "sharp"
       ],
-      "export": {
-        "imgsz": 224,
-        "dynamic": true,
-        "simplify": false,
-        "opset": 20
-      },
-      "input_shape": [
-        "batch",
-        3,
-        "height",
-        "width"
+      "features": [
+        "n_big",
+        "largest_es",
+        "largest_conf",
+        "min_es_big",
+        "es_ratio",
+        "max_area_soft_big",
+        "area_edge_soft",
+        "soft_bottom_gap",
+        "soft_area_ratio"
       ],
-      "notes": "Historical top-1 98.68% was measured on a random file split where 99% of validation images share a shoot with training; it is not field accuracy. On 856 sharp real marathon frames from three events this artifact flagged 61% as blurry (vault journal 2026-09-29-blur-detection-investigation-and-improvement-plan). Re-exported 2026-08-14 with dynamic=True: the batch axis is dynamic so classify_batch issues one (N,3,224,224) ONNX call instead of a per-image loop. Ultralytics also makes H/W dynamic; the wrapper always centre-crops and resizes to 224 so that is inert. Verified bit-identical to the previous static export (max abs diff 0.0) and batched-vs-per-image agreement within float32 epsilon. Measured CPU gain is small (~1.06x on 50 images) because the model is tiny and ONNX Runtime already parallelises a single inference \u2014 batching is what pays off on GPU. Required in the blur profile; optional in the full profile. Re-run export_blur_classifier.py to regenerate with a new artifact version and digests; it self-verifies the dynamic axis."
+      "notes": "Stage 2 of the blur classifier: the person detector finds the people, src/ml/blur/people.py measures each one's sharpness at the 1280-px upload, and this logistic rule turns those numbers into P(missed focus). Whole-frame soft and motion are decided before it by src/ml/blur/whole_frame.py. Quality evidence: docs/ai-system-overview.md."
     },
     "person_detector": {
       "name": "YOLOv8n-seg COCO person detector (stage 2 of the blur classifier)",
