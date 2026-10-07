@@ -55,7 +55,7 @@ class PhotoMetadataSettingsServiceTest {
     }
 
     @Test
-    fun `event write changes covered events but refuses an unrelated event`() {
+    fun `event write changes active covered non creator events but refuses an unrelated event`() {
         Mockito.`when`(coverage.updateMetadataVisibility(eventId, userId, true)).thenReturn(1)
         assertEquals(true, service.setEvent(userId, eventId, true).metadataPublic)
         Mockito.verify(coverage).updateMetadataVisibility(eventId, userId, true)
@@ -63,6 +63,20 @@ class PhotoMetadataSettingsServiceTest {
 
         assertFailsWith<NotFoundException> { service.setEvent(userId, eventId, false) }
         Mockito.verify(coverage, Mockito.never()).upsertMetadataVisibility(eventId, userId, false)
+    }
+
+    @Test
+    fun `zero row update inserts visibility only for an active owned event`() {
+        Mockito.`when`(events.findByIdAndCreatedByAndDeletedAtIsNull(eventId, userId)).thenReturn(ownedEvent())
+        assertEquals(true, service.setEvent(userId, eventId, true).metadataPublic)
+        Mockito.verify(coverage).upsertMetadataVisibility(eventId, userId, true)
+    }
+
+    @Test
+    fun `zero row update refuses a removed owned event without inserting coverage`() {
+        assertFailsWith<NotFoundException> { service.setEvent(userId, eventId, true) }
+        Mockito.verify(events).findByIdAndCreatedByAndDeletedAtIsNull(eventId, userId)
+        Mockito.verify(coverage, Mockito.never()).upsertMetadataVisibility(eventId, userId, true)
     }
 
     private fun ownedEvent() = Event(

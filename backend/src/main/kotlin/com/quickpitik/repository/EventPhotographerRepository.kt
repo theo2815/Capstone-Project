@@ -149,7 +149,8 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
     @Modifying
     @Query(
         "UPDATE EventPhotographer ep SET ep.metadataPublic = :value " +
-            "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId",
+            "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId " +
+            "AND EXISTS (SELECT e.id FROM Event e WHERE e.id = ep.id.eventId AND e.deletedAt IS NULL)",
     )
     fun updateMetadataVisibility(
         @Param("eventId") eventId: UUID,

@@ -434,9 +434,15 @@ succeeds, so retry and Cancel retain the saved placement.
 default. `?includeRemoved=true` returns a removed event's detail, including
 `deletedAt`, only to its owner or a photographer with existing coverage. An own
 settled purchase also proves legacy coverage when its counters are empty.
+The explicit history read also accepts positive retained revenue in the
+requesting photographer's coverage row when uploads and receipts are absent;
+Purchased then returns an honest empty page without reconstructing receipts.
 Other photographers and unknown events receive 404.
-Live and archived event detail is unchanged. This opt-in does not reopen the
+Default live and archived event detail is unchanged. This opt-in does not reopen the
 event's photo list, public detail, uploads, or photo management actions.
+Metadata-visibility PUT also returns 404 for removed events without changing
+the saved choice. Active covered photographers may still update their own
+choice, and active legacy event owners may create one.
 
 **Photographer purchase history — additive seller reads:**
 `GET /api/v1/me/photographer/earnings/per-event` now includes covered events

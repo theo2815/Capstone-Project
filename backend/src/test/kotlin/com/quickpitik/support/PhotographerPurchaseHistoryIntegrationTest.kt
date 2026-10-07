@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.jdbc.core.JdbcTemplate
 import java.math.BigDecimal
 import java.net.URI
 import java.net.http.HttpClient
@@ -50,11 +51,69 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var items: OrderItemRepository
     @Autowired private lateinit var transactions: TransactionRepository
     @Autowired private lateinit var disputes: DisputeRepository
+    @Autowired private lateinit var jdbc: JdbcTemplate
 
     @Autowired private lateinit var tokens: JwtTokenProvider
     @LocalServerPort private var port: Int = 0
     private val client = HttpClient.newHttpClient()
     private val json = ObjectMapper()
+
+    @Test
+    fun `earnings legacy financial coverage opens empty private history`() {
+        val creator = seller()
+        val a = seller()
+        val b = seller()
+        val runner = users.save(User(email = "runner-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Runner", role = Role.RUNNER))
+        val aToken = tokens.createAccessToken(a)
+        val bToken = tokens.createAccessToken(b)
+        val removedAt = OffsetDateTime.parse("2026-09-04T21:36:27Z")
+        for (deletedAt in listOf(removedAt, null)) {
+            val event = event(EventStatus.ACTIVE, creator.id, deletedAt)
+            val key = EventPhotographerId(event.id, a.id)
+            coverage.save(EventPhotographer(key, revenueKeptPhp = BigDecimal("40.00")))
+            coverage.save(EventPhotographer(EventPhotographerId(event.id, b.id)))
+            val path = "/api/v1/me/photographer/events/${event.id}"
+            val earningsResponse = get("/api/v1/me/photographer/earnings/per-event?limit=200", aToken)
+            assertEquals(200, earningsResponse.statusCode())
+            val earning = json.readTree(earningsResponse.body()).path("data").path("items")
+                .single { it.path("eventId").asText() == event.id.toString() }
+            assertEquals(0, BigDecimal("40.00").compareTo(earning.path("revenueKept").decimalValue()))
+            assertEquals(0, earning.path("purchaseCount").asInt())
+            assertEquals(404, get(path, aToken).statusCode())
+            val detail = get("$path?includeRemoved=true", aToken)
+            assertEquals(200, detail.statusCode())
+            val detailData = json.readTree(detail.body()).path("data")
+            assertEquals(0, detailData.path("photoCount").asInt())
+            if (deletedAt == null) assertTrue(detailData.path("deletedAt").isNull)
+            else assertEquals(deletedAt.toString(), detailData.path("deletedAt").asText())
+            val purchased = get("$path/purchased-photos", aToken)
+            assertEquals(200, purchased.statusCode())
+            val history = json.readTree(purchased.body()).path("data")
+            assertEquals(0, history.path("total").asInt())
+            assertEquals(0, history.path("items").size())
+            assertEquals(404, get("$path?includeRemoved=true", bToken).statusCode())
+            assertEquals(404, get("$path/purchased-photos", bToken).statusCode())
+            assertEquals(403, get("$path?includeRemoved=true", tokens.createAccessToken(runner)).statusCode())
+            assertEquals(401, get("$path?includeRemoved=true").statusCode())
+            if (deletedAt != null) {
+                assertEquals(404, get("/api/v1/events/${event.slug}").statusCode())
+                assertEquals(404, get("$path/photos", aToken).statusCode())
+                for (action in listOf("trash", "restore", "permanent-delete")) {
+                    assertEquals(404, post("$path/photos/$action", """{"photoIds":["${UUID.randomUUID()}"]}""", aToken).statusCode())
+                }
+                val visibility = send(HttpRequest.newBuilder(uri("$path/metadata-visibility"))
+                    .header("Content-Type", "application/json")
+                    .PUT(HttpRequest.BodyPublishers.ofString("""{"metadataPublic":true}""")), aToken)
+                assertEquals(404, visibility.statusCode())
+            }
+            val saved = coverage.findById(key).orElseThrow()
+            assertEquals(BigDecimal("40.00"), saved.revenueKeptPhp)
+            assertEquals(0, saved.photoCount)
+            assertEquals(null, saved.firstUploadAt)
+            assertFalse(saved.metadataPublic)
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM transactions WHERE event_id = ?", Int::class.java, event.id))
+        }
+    }
 
     @Test
     fun `purchased gallery and history use settled item identities and private money`() {
