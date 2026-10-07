@@ -153,8 +153,26 @@ interface QuickPitikApi {
     @GET("api/v1/me/photographer/events/{eventId}")
     suspend fun getPhotographerEventDetail(
         @Header("Authorization") token: String,
-        @Path("eventId") eventId: String
+        @Path("eventId") eventId: String,
+        @Query("includeRemoved") includeRemoved: Boolean = false,
     ): ApiResponseEnvelope<PhotographerEventDetailDto>
+
+    @GET("api/v1/me/photographer/events/{eventId}/purchased-photos")
+    suspend fun getPhotographerPurchasedPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 50,
+    ): ApiResponseEnvelope<PaginatedResponse<PhotographerPurchasedPhotoDto>>
+
+    @GET("api/v1/me/photographer/photos/{photoId}/purchases")
+    suspend fun getPhotographerPhotoPurchases(
+        @Header("Authorization") token: String,
+        @Path("photoId") photoId: String,
+        @Query("orderId") orderId: String? = null,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 50,
+    ): ApiResponseEnvelope<PhotographerPhotoPurchasesResponse>
 
     // Event coupon (V47) — GET data is null when none; DELETE returns {removed:true}.
     @GET("api/v1/me/photographer/events/{eventId}/coupon")
@@ -366,6 +384,13 @@ interface QuickPitikApi {
     suspend fun getEarningsOverview(
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<EarningsOverviewDto>
+
+    @GET("api/v1/me/photographer/earnings/per-event")
+    suspend fun getPhotographerPerEventEarnings(
+        @Header("Authorization") token: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 10,
+    ): ApiResponseEnvelope<PaginatedResponse<PerEventEarningDto>>
 
     @GET("api/v1/me/photographer/payouts/balance")
     suspend fun getPayoutBalance(
