@@ -122,10 +122,56 @@ def test_features_see_a_soft_big_person_beside_a_crisp_one():
     assert soft_scene[names.index("soft_area_ratio")] == pytest.approx(1.0)
 
 
+def _person(area, es95, conf, bottom, edge=False, es=0.5, mask_area=0.01):
+    return people.Person(
+        box=(0.0, 0.0, 1.0, 1.0),
+        conf=conf,
+        area=area,
+        mask_area=mask_area,
+        height=0.5,
+        bottom=bottom,
+        cx=0.5,
+        touches_edge=edge,
+        contrast=100.0,
+        es=es,
+        es95=es95,
+    )
+
+
+def test_features_pin_each_number_on_people_of_different_sizes():
+    """A crisp runner, a big soft person cut by the frame, a smaller soft one, a tiny soft one."""
+    runner = _person(0.06, 0.40, 0.9, bottom=0.70)
+    cut_off = _person(0.30, 0.10, 0.5, bottom=0.95, edge=True, es=0.95, mask_area=0.20)
+    soft = _person(0.10, 0.20, 0.6, bottom=0.80)
+    tiny = _person(0.02, 0.05, 0.7, bottom=0.60)
+    got = dict(
+        zip(
+            people.FEATURE_NAMES,
+            people.features([runner, cut_off, soft, tiny], 0.05, 0.6),
+            strict=True,
+        )
+    )
+    assert got == pytest.approx(
+        {
+            "n_big": 3,
+            "largest_es": 0.10,
+            "largest_conf": 0.5,
+            "min_es_big": 0.10,
+            "es_ratio": 0.25,
+            "max_area_soft_big": 0.30,
+            "area_edge_soft": 0.30,
+            "soft_bottom_gap": 0.25,
+            "soft_area_ratio": 5.0,
+        }
+    )
+    alone = dict(zip(people.FEATURE_NAMES, people.features([tiny], 0.05, 0.6), strict=True))
+    assert alone["n_big"] == 0 and alone["min_es_big"] == 0.05  # nobody big: the sharpest stands in
+
+
 def test_logistic_rule_applies_standardisation_and_the_sigmoid(tmp_path):
     spec = {
         "feature_names": ["a", "b"],
-        "mean": [1.0, 2.0],
+        "mean": [1.0, 3.0],
         "scale": [2.0, 4.0],
         "coef": [1.0, -1.0],
         "intercept": 0.5,
@@ -136,7 +182,7 @@ def test_logistic_rule_applies_standardisation_and_the_sigmoid(tmp_path):
     path = tmp_path / "rule.json"
     path.write_text(json.dumps(spec))
     rule = people.LogisticRule.load(path)
-    z = (3.0 - 1.0) / 2.0 * 1.0 + (2.0 - 2.0) / 4.0 * -1.0 + 0.5
+    z = (3.0 - 1.0) / 2.0 * 1.0 + (2.0 - 3.0) / 4.0 * -1.0 + 0.5
     assert rule.probability(np.array([3.0, 2.0])) == pytest.approx(1 / (1 + math.exp(-z)))
     assert rule.min_conf == 0.2 and rule.big_area == 0.05 and rule.soft_ratio == 0.6
     assert rule.feature_names == ["a", "b"]
