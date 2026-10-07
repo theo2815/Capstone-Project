@@ -4,8 +4,10 @@ Reads the measurement cache written by scripts/measure_blur_people.py, turns eac
 people into the feature vector of src/ml/blur/people.py, and fits a logistic rule with
 NumPy (no scikit-learn: the rule ships as plain numbers). Five fits leave one event fold
 out each and are scored on the fold they never saw; a sixth fit on every fold is the rule
-to ship. The three limits that need no tone copies are printed here; the release numbers,
-tone flips included, come from scripts/blur_gate.py --offline with each fold rule and
+to ship. A photo in which nobody was found is left out of every fit and scored 0.0: the
+service answers sharp for it without asking the rule (owner decision 2026-10-07). The
+three limits that need no tone copies are printed here; the release numbers, tone flips
+included, come from scripts/blur_gate.py --offline with each fold rule and
 scripts/blur_cv_report.py.
 
 Outputs (in --out-dir):
@@ -152,28 +154,28 @@ def main() -> int:
     x = feature_matrix(rows)
     y = np.array([row["label"] == MISSED for row in rows], int)
     folds = np.array([row["fold"] for row in rows])
+    found = np.array([bool(row["people"]) for row in rows])
     missing = sorted(set(FOLDS) - set(folds))
     if missing:
         raise SystemExit(f"the cache has no photos for fold(s) {missing}")
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"{len(rows)} photos: {dict(counts)}; {x.shape[1]} features; l2={args.l2}")
+    print(f"  {int((~found).sum())} with nobody found: left out of the fits, scored as sharp")
 
     prob = np.zeros(len(rows))
     for k in FOLDS:
         held = folds == k
-        model = fit_logistic(x[~held], y[~held], args.l2)
-        prob[held] = [
-            people.LogisticRule(rule_spec(model, k, int((~held).sum()), args.l2)).probability(x)
-            for x in x[held]
-        ]
+        fit_on = ~held & found
+        spec = rule_spec(fit_logistic(x[fit_on], y[fit_on], args.l2), k, int(fit_on.sum()), args.l2)
+        rule = people.LogisticRule(spec)
+        prob[held & found] = [rule.probability(row) for row in x[held & found]]
         (args.out_dir / f"people_rule_cv_{k}.json").write_text(
-            json.dumps(rule_spec(model, k, int((~held).sum()), args.l2), indent=2) + "\n",
-            encoding="utf-8",
+            json.dumps(spec, indent=2) + "\n", encoding="utf-8"
         )
-        print(f"  fold {k} held out: fitted on {int((~held).sum())}, scored {int(held.sum())}")
+        print(f"  fold {k} held out: fitted on {int(fit_on.sum())}, scored {int(held.sum())}")
 
     table = score(rows, prob)
-    final = rule_spec(fit_logistic(x, y, args.l2), None, len(rows), args.l2)
+    final = rule_spec(fit_logistic(x[found], y[found], args.l2), None, int(found.sum()), args.l2)
     final["cross_validation"] = table
     (args.out_dir / "people_rule.json").write_text(
         json.dumps(final, indent=2) + "\n", encoding="utf-8"

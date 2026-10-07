@@ -147,3 +147,100 @@ def test_main_refuses_a_cache_missing_a_fold(tmp_path, monkeypatch):
         assert "e" in str(e)
     else:
         raise AssertionError("a cache without fold e must stop the fit")
+
+
+def _score_at(threshold, sharp_flagged=None, missed=0, on_the_line=False):
+    """One row of score() for events A (100 sharp, 20 missed focus), B (400 sharp), S (10 sharp)."""
+    sharp_flagged = sharp_flagged or {}
+    rows, prob = [], []
+    for event, n in (("A", 100), ("B", 400), ("S", 10)):
+        for i in range(n):
+            rows.append({"event": event, "label": "sharp"})
+            prob.append(1.0 if i < sharp_flagged.get(event, 0) else 0.0)
+    for i in range(20):
+        rows.append({"event": "A", "label": "defocused_object_portrait"})
+        prob.append(0.0 if i < missed else 1.0)
+    if on_the_line:
+        prob[100] = 0.5  # one sharp photo of B scores exactly 0.5
+    (row,) = (r for r in fit.score(rows, np.array(prob)) if r["threshold"] == threshold)
+    return row
+
+
+def test_score_applies_each_limit_and_flags_at_the_threshold_itself():
+    assert _score_at(0.5)["passes_without_tone"]
+    assert _score_at(0.5, on_the_line=True)["sharp_flagged"] == [1, 510]  # >= flags it
+    assert _score_at(0.6, on_the_line=True)["sharp_flagged"] == [0, 510]
+    # sharp flagged overall: 10/510 is under 2%, 11/510 is over
+    assert _score_at(0.5, {"B": 10})["passes_without_tone"]
+    assert not _score_at(0.5, {"B": 11})["passes_without_tone"]
+    # one big event: 5% of A is allowed, 6% is not, though 6/510 overall is fine
+    assert _score_at(0.5, {"A": 5})["passes_without_tone"]
+    over = _score_at(0.5, {"A": 6})
+    assert not over["passes_without_tone"] and over["worst_event"] == ["A", 6, 100]
+    # an event with fewer than 100 sharp photos cannot fail the per-event limit
+    small = _score_at(0.5, {"S": 1})
+    assert small["passes_without_tone"] and small["events"]["S"] == [1, 10]
+    # missed focus not caught: 2 of 20 is the limit
+    assert _score_at(0.5, missed=2)["passes_without_tone"]
+    late = _score_at(0.5, missed=3)
+    assert not late["passes_without_tone"] and late["missed_focus_missed"] == [3, 20]
+
+
+def test_each_fold_is_scored_by_a_rule_that_never_saw_it(tmp_path, monkeypatch):
+    """Fold e is big and labelled the other way round: only a rule that saw it gets it right."""
+    cache = _cache(tmp_path)
+    rows = [json.loads(line) for line in cache.read_text().splitlines()]
+    rest = [r for r in rows if r["fold"] != "e"]
+    flip = {"sharp": "defocused_object_portrait", "defocused_object_portrait": "sharp"}
+    upside_down = [
+        {
+            **r,
+            "fold": "e",
+            "event": "event-e",
+            "label": flip[r["label"]],
+            "name": f"e{i}-{r['name']}",
+        }
+        for i in range(3)
+        for r in rest
+    ]
+    cache.write_text("\n".join(json.dumps(r) for r in rest + upside_down) + "\n")
+    out = tmp_path / "rule"
+    monkeypatch.setattr(
+        sys, "argv", ["fit_blur_people_rule.py", "--measures", str(cache), "--out-dir", str(out)]
+    )
+    assert fit.main() == 1  # no threshold can pass
+    final = json.loads((out / "people_rule.json").read_text())
+    (at_half,) = (r for r in final["cross_validation"] if r["threshold"] == 0.5)
+    assert at_half["events"]["event-e"] == [36, 36]  # every "sharp" photo of fold e is flagged
+    assert json.loads((out / "fit_summary.json").read_text()) == final["cross_validation"]
+    soft_beside_crisp = people.features(
+        [people.person_from_dict(p) for p in rows[1]["people"]], people.BIG_AREA, people.SOFT_RATIO
+    )
+    without_e = people.LogisticRule.load(out / "people_rule_cv_e.json")
+    assert without_e.probability(soft_beside_crisp) > 0.9  # fitted on folds a to d only
+    assert people.LogisticRule(final).probability(soft_beside_crisp) < 0.5  # fold e outvotes them
+
+
+def test_photos_with_nobody_found_are_left_out_of_the_fit_and_scored_as_sharp(
+    tmp_path, monkeypatch, capsys
+):
+    cache = _cache(tmp_path)
+    args = ["fit_blur_people_rule.py", "--measures", str(cache), "--l2", "1.0", "--out-dir"]
+    monkeypatch.setattr(sys, "argv", [*args, str(tmp_path / "with_people")])
+    fit.main()
+    empty = [
+        {**json.loads(cache.read_text().splitlines()[1]), "name": f"empty{i}.jpg", "people": []}
+        for i in range(5)
+    ]  # fold a, labelled missed focus, nobody found
+    with cache.open("a") as f:
+        f.write("\n".join(json.dumps(r) for r in empty) + "\n")
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "argv", [*args, str(tmp_path / "rule")])
+    fit.main()
+    assert "35 photos" in capsys.readouterr().out
+    for name in ("people_rule_cv_a.json", "people_rule_cv_b.json", "people_rule.json"):
+        spec = json.loads((tmp_path / "rule" / name).read_text())
+        before = json.loads((tmp_path / "with_people" / name).read_text())
+        assert spec["coef"] == before["coef"] and spec["fitted_on"] == before["fitted_on"]
+    # never flagged, so they count as missed focus not caught at every threshold
+    assert all(r["missed_focus_missed"] == [5, 20] for r in spec["cross_validation"])
