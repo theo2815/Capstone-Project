@@ -326,6 +326,7 @@ class TestProdComposeModels:
         assert "models/" in lines
         assert "!models/manifest.json" in lines
         assert "!models/blur_classifier/people_rule.json" in lines
+        assert "models/person_detector/*" in lines
         assert "!models/person_detector/yolov8n_seg_person.onnx" in lines
         assert "!models/blur_classifier/blur_classifier.onnx" not in lines
         assert "!models/blur_classifier/class_names.json" not in lines
