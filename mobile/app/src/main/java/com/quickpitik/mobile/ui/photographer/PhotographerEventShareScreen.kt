@@ -21,11 +21,15 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -54,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,7 +66,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.download.PhotoDownloader
-import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
+import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.remote.PhotographerEventDetailDto
 import com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.common.PhotoPreview
@@ -94,7 +100,7 @@ import com.quickpitik.mobile.ui.theme.Typography
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 
-private enum class PhotoSection { Active, Deleted }
+private enum class PhotoSection { Active, Deleted, Purchased }
 
 // Focused share page — mobile mirror of website /dashboard/events/[id].
 // Layout: back → hero → public-gallery share band → stats → photo library.
@@ -105,17 +111,27 @@ private enum class PhotoSection { Active, Deleted }
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PhotographerEventShareScreen(
-    event: PhotographerEventSummaryDto,
+    event: PhotographerEventDetailDto,
     viewModel: PhotographerDashboardViewModel,
-    onBack: () -> Unit
+    purchaseViewModel: PhotographerPurchasesViewModel,
+    initialTab: String = "active",
+    onBack: () -> Unit,
+    onOpenEvent: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
+    val authGeneration by remember(context) { SessionManager.getInstance(context).authChanges }.collectAsState()
+    val removed = event.deletedAt != null
     val activeState by viewModel.sharePhotosState.collectAsState()
     val trashState by viewModel.trashPhotosState.collectAsState()
     val metadataVisibility by viewModel.eventMetadataVisibility.collectAsState()
+    val purchasedState by purchaseViewModel.purchasedPhotosState.collectAsState()
+    val previewState by purchaseViewModel.previewState.collectAsState()
 
-    var section by remember(event.id) { mutableStateOf(PhotoSection.Active) }
+    var section by rememberSaveable(event.id, authGeneration) {
+        mutableStateOf(if (removed || initialTab == "purchased") PhotoSection.Purchased else if (initialTab == "deleted") PhotoSection.Deleted else PhotoSection.Active)
+    }
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
+    var selectedPurchasePhotoId by rememberSaveable(event.id, authGeneration) { mutableStateOf<String?>(null) }
     var visiblePhotoLimit by rememberSaveable(event.id) { mutableStateOf(20) }
     // Selection is transient screen UI state (reset on tab switch), not VM data.
     var selecting by remember(event.id) { mutableStateOf(false) }
@@ -129,15 +145,25 @@ fun PhotographerEventShareScreen(
     var downloading by remember { mutableStateOf(false) }
 
     LaunchedEffect(event.id) {
-        viewModel.fetchSharePhotos(event.id)
-        viewModel.loadEventMetadataVisibility(event.id)
+        if (!removed) viewModel.loadEventMetadataVisibility(event.id)
     }
     // The trash list is only fetched when its tab is first opened.
     LaunchedEffect(section, event.id) {
-        if (section == PhotoSection.Deleted) viewModel.fetchTrashPhotos(event.id)
+        when {
+            removed || section == PhotoSection.Purchased -> purchaseViewModel.loadPurchasedPhotos(event.id)
+            section == PhotoSection.Deleted -> viewModel.fetchTrashPhotos(event.id)
+            else -> viewModel.fetchSharePhotos(event.id)
+        }
     }
 
-    val currentState = if (section == PhotoSection.Active) activeState else trashState
+    LaunchedEffect(selectedPurchasePhotoId) {
+        selectedPurchasePhotoId?.let { if (previewState.photoId != it) purchaseViewModel.openPurchase(it) }
+    }
+    LaunchedEffect(previewState.photoId) {
+        if (previewState.photoId != null && previewState.photoId != selectedPurchasePhotoId) selectedPurchasePhotoId = previewState.photoId
+    }
+
+    val currentState = if (section == PhotoSection.Deleted) trashState else activeState
     val currentPhotos = (currentState as? SharePhotosState.Success)?.photos ?: emptyList()
 
     fun switchSection(next: PhotoSection) {
@@ -146,6 +172,8 @@ fun PhotographerEventShareScreen(
         selecting = false
         selected = emptySet()
         selectedIndex = null
+        selectedPurchasePhotoId = null
+        purchaseViewModel.closePreview()
         visiblePhotoLimit = 20
     }
 
@@ -226,6 +254,28 @@ fun PhotographerEventShareScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(event.location, style = Typography.bodyMedium, color = InkSoft)
                 Spacer(modifier = Modifier.height(24.dp))
+
+                if (removed) {
+                    StatusChip(text = "Removed event", tone = StatusTone.Neutral)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("This event was removed. Your purchase history is still available.", style = Typography.bodyMedium, color = Slate)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                        StatNumber(value = "${event.photoCount}", label = "Photos")
+                        StatNumber(value = "${event.salesCount}", label = "Sold")
+                        StatNumber(value = peso(event.revenueKept, 0), label = "Kept", valueColor = Fresh)
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                    LibraryTabs(section = PhotoSection.Purchased, removed = true, onSelect = {})
+                    Spacer(modifier = Modifier.height(16.dp))
+                    PurchasedGallery(
+                        state = purchasedState,
+                        onOpenPhoto = { selectedPurchasePhotoId = it },
+                        onRetry = { purchaseViewModel.loadPurchasedPhotos(event.id, refresh = true) },
+                        onLoadMore = purchaseViewModel::loadMorePurchasedPhotos,
+                    )
+                    return@Column
+                }
 
                 // Share band
                 QpCard(
@@ -317,12 +367,21 @@ fun PhotographerEventShareScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    LibraryTabs(section = section, onSelect = ::switchSection)
-                    if (!selecting && currentPhotos.isNotEmpty()) {
+                    LibraryTabs(section = section, removed = false, onSelect = ::switchSection)
+                    if (section != PhotoSection.Purchased && !selecting && currentPhotos.isNotEmpty()) {
                         HeaderPill(text = "Select", onClick = { selecting = true })
                     }
                 }
 
+                if (section == PhotoSection.Purchased) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    PurchasedGallery(
+                        state = purchasedState,
+                        onOpenPhoto = { selectedPurchasePhotoId = it },
+                        onRetry = { purchaseViewModel.loadPurchasedPhotos(event.id, refresh = true) },
+                        onLoadMore = purchaseViewModel::loadMorePurchasedPhotos,
+                    )
+                } else {
                 // Download all (active tab, live gallery only)
                 if (section == PhotoSection.Active && !selecting) {
                     val hasActive = (activeState as? SharePhotosState.Success)?.photos?.isNotEmpty() == true
@@ -444,11 +503,12 @@ fun PhotographerEventShareScreen(
                 }
                 // Clears the fixed selection bar so the last row isn't hidden behind it.
                 if (selecting) Spacer(modifier = Modifier.height(96.dp))
+                }
             }
         }
 
         // Bulk-action bar — floats over the bottom while selecting.
-        if (selecting) {
+        if (!removed && selecting && section != PhotoSection.Purchased) {
             SelectionActionBar(
                 modifier = Modifier.align(Alignment.BottomCenter),
                 section = section,
@@ -496,7 +556,7 @@ fun PhotographerEventShareScreen(
     // Reuses the runner-side PhotoPreview lightbox in OwnerReview mode — swipe
     // through the current tab's photos, no purchase UI. Disabled in select mode.
     val idx = selectedIndex
-    if (!selecting && idx != null && currentPhotos.isNotEmpty()) {
+    if (!removed && section != PhotoSection.Purchased && !selecting && idx != null && currentPhotos.isNotEmpty()) {
         val previewPhotos = remember(currentPhotos, event.name) {
             currentPhotos.map { it.toOwnerPreviewData(event.name) }
         }
@@ -533,7 +593,16 @@ fun PhotographerEventShareScreen(
         )
     }
 
-    if (confirmPermanent) {
+    if (selectedPurchasePhotoId != null && previewState.photoId != null) {
+        PhotographerPurchasePreview(
+            viewModel = purchaseViewModel,
+            photos = purchasedState.items.map { it.photo },
+            onClose = { selectedPurchasePhotoId = null },
+            onOpenEvent = onOpenEvent,
+        )
+    }
+
+    if (!removed && confirmPermanent) {
         val n = selected.size
         AlertDialog(
             onDismissRequest = { if (!busy) confirmPermanent = false },
@@ -590,10 +659,13 @@ fun PhotographerEventShareScreen(
 }
 
 @Composable
-private fun LibraryTabs(section: PhotoSection, onSelect: (PhotoSection) -> Unit) {
+private fun LibraryTabs(section: PhotoSection, removed: Boolean, onSelect: (PhotoSection) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        LibraryTab("Active", section == PhotoSection.Active) { onSelect(PhotoSection.Active) }
-        LibraryTab("Deleted", section == PhotoSection.Deleted) { onSelect(PhotoSection.Deleted) }
+        if (!removed) {
+            LibraryTab("Active", section == PhotoSection.Active) { onSelect(PhotoSection.Active) }
+            LibraryTab("Deleted", section == PhotoSection.Deleted) { onSelect(PhotoSection.Deleted) }
+        }
+        LibraryTab("Purchased", section == PhotoSection.Purchased) { onSelect(PhotoSection.Purchased) }
     }
 }
 
@@ -605,6 +677,7 @@ private fun LibraryTab(label: String, active: Boolean, onClick: () -> Unit) {
             .background(if (active) Ink else Bone)
             .border(BorderStroke(1.dp, if (active) Ink else Line), PillShape)
             .clickable(onClick = onClick)
+            .heightIn(min = 48.dp)
             .padding(horizontal = 16.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -614,6 +687,61 @@ private fun LibraryTab(label: String, active: Boolean, onClick: () -> Unit) {
             color = if (active) Bone else Slate,
             fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+@Composable
+private fun PurchasedGallery(
+    state: PurchasedPhotosState,
+    onOpenPhoto: (String) -> Unit,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+) {
+    Column {
+        Kicker("${state.total} purchased photos", color = Slate)
+        Spacer(modifier = Modifier.height(12.dp))
+        when {
+            state.isLoading -> CircularProgressIndicator(color = Fresh)
+            state.error != null -> ErrorView(
+                title = "Couldn't load purchased photos",
+                message = state.error,
+                onRetry = onRetry,
+            )
+            state.items.isEmpty() -> Text("No completed purchases yet.", style = Typography.bodyMedium, color = Slate)
+            else -> {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(state.items, key = { it.photo.id }) { item ->
+                        SharePhotoTile(
+                            photo = item.photo,
+                            selecting = false,
+                            selected = false,
+                            purchaseCount = item.purchaseCount,
+                            onClick = { onOpenPhoto(item.photo.id) },
+                        )
+                    }
+                }
+            }
+        }
+        state.appendError?.let { Text("Couldn't load more purchased photos.", style = Typography.bodyMedium, color = ErrorRed) }
+        if (state.hasMore) GhostCta(
+            text = if (state.appendError != null) "Retry load more" else if (state.isLoadingMore) "Loading…" else "Load more",
+            enabled = !state.isLoadingMore,
+            onClick = onLoadMore,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PurchasedGalleryEmptyPreview() {
+    StudioTheme {
+        PurchasedGallery(PurchasedPhotosState(), onOpenPhoto = {}, onRetry = {}, onLoadMore = {})
     }
 }
 
@@ -725,6 +853,7 @@ internal fun SharePhotoTile(
     selecting: Boolean,
     selected: Boolean,
     modifier: Modifier = Modifier,
+    purchaseCount: Long? = null,
     onClick: () -> Unit
 ) {
     Box(
@@ -768,7 +897,7 @@ internal fun SharePhotoTile(
                 modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
             )
         }
-        if (photo.salesCount > 0) {
+        if (purchaseCount != null || photo.salesCount > 0) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -777,7 +906,7 @@ internal fun SharePhotoTile(
                     .background(Ink.copy(alpha = 0.55f))
                     .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
-                Text("${photo.salesCount} sold", color = Bone, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Text(if (purchaseCount != null) "$purchaseCount purchase${if (purchaseCount == 1L) "" else "s"}" else "${photo.salesCount} sold", color = Bone, fontSize = 9.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

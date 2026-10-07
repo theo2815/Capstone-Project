@@ -50,6 +50,7 @@ import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.common.formatManila
+import com.quickpitik.mobile.ui.common.formatOrderRef
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -70,7 +71,6 @@ import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
 import com.quickpitik.mobile.ui.theme.rememberQpHaptic
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 // /orders/return parity — mirrors website OrdersReturnPage. Polls the order
 // until PayMongo's webhook flips status to PAID, then renders the editorial
@@ -232,7 +232,7 @@ private fun PaidBody(
     val photoWord = if (photoCount == 1) "photo" else "photos"
     val eventName = detail.eventName ?: "QuickPitik"
     val recipientEmail = detail.recipientEmail.ifBlank { null }
-    val reference = detail.id.take(8).uppercase(Locale.ROOT)
+    val reference = formatOrderRef(detail.id)
     val paidLabel = formatPaidAt(detail.paidAt)
     val showDownloadAll = photoCount >= 2 &&
         detail.photos.any { !it.downloadUrl.isNullOrBlank() }
@@ -500,7 +500,7 @@ private fun TimeoutBody(orderId: String, onNavigateToOrders: () -> Unit) {
         PrimaryCta(text = "View your orders →", onClick = onNavigateToOrders)
         Spacer(modifier = Modifier.height(20.dp))
         Kicker(
-            text = "Reference · ${orderId.take(8).uppercase(Locale.ROOT)}",
+            text = "Reference · ${formatOrderRef(orderId)}",
             color = SlateSoft,
         )
     }

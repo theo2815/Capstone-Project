@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -272,6 +274,8 @@ fun PhotoPreview(
     // Add/Buy CTAs are hidden — price + byline stay.
     commerceEnabled: Boolean = true,
     metadataViewModel: PhotoMetadataViewModel = viewModel(),
+    details: (@Composable (PhotoPreviewData) -> Unit)? = null,
+    canDownload: (PhotoPreviewData) -> Boolean = { true },
 ) {
     if (photos.isEmpty()) {
         onClose()
@@ -279,7 +283,8 @@ fun PhotoPreview(
     }
     val safeIndex = currentIndex.coerceIn(0, photos.size - 1)
     val activePhoto = photos[safeIndex]
-    val metadataAccess = metadataAccessFor(mode, activePhoto)
+    val metadataAccess = if (mode == PhotoPreviewMode.OwnerReview && !canDownload(activePhoto)) null
+        else metadataAccessFor(mode, activePhoto)
     val metadataState by metadataViewModel.state.collectAsState()
     var metadataOpen by remember { mutableStateOf(false) }
     var openedPhotoId by remember { mutableStateOf<String?>(null) }
@@ -563,7 +568,7 @@ fun PhotoPreview(
                                 )
                             }
                         }
-                        PhotoPreviewMode.Owned -> {
+                        PhotoPreviewMode.Owned -> if (canDownload(activePhoto)) {
                             Spacer(modifier = Modifier.height(12.dp))
                             PrimaryCta(
                                 text = "Download photo ↓",
@@ -601,13 +606,23 @@ fun PhotoPreview(
                                     onClick = onClose,
                                     modifier = Modifier.weight(1f),
                                 )
-                                PrimaryCta(
+                                if (canDownload(activePhoto)) PrimaryCta(
                                     text = "Download ↓",
                                     onClick = { onDownload(activePhoto) },
                                     modifier = Modifier.weight(1f),
                                 )
                             }
                         }
+                    }
+
+                    if (details != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = cardMaxHeight * 0.40f)
+                                .verticalScroll(rememberScrollState()),
+                        ) { details(activePhoto) }
                     }
 
                     if ((metadataAccess != null && deniedAccess[activePhoto.id] != metadataAccess) ||

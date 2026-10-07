@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -37,20 +39,30 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import coil.compose.AsyncImage
+import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.EarningsOverviewDto
+import com.quickpitik.mobile.data.remote.PerEventEarningDto
 import com.quickpitik.mobile.data.remote.PayoutBalanceDto
 import com.quickpitik.mobile.data.remote.PhotographerPayoutDto
 import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
 import com.quickpitik.mobile.data.remote.WeeklyRevenuePointDto
 import com.quickpitik.mobile.ui.common.formatManila
+import com.quickpitik.mobile.ui.common.formatOrderRef
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
@@ -78,15 +90,20 @@ import com.quickpitik.mobile.ui.theme.WarningOrange
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
 
 @Composable
 fun PhotographerEarningsScreen(
     viewModel: PhotographerDashboardViewModel,
     earningsViewModel: StudioEarningsViewModel,
+    purchaseViewModel: PhotographerPurchasesViewModel,
+    onOpenEvent: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val earningsState by earningsViewModel.earningsUiState.collectAsState()
     val payoutActionState by earningsViewModel.payoutActionState.collectAsState()
+    val transactionsState by earningsViewModel.transactionsState.collectAsState()
+    val eventEarningsState by earningsViewModel.eventEarningsState.collectAsState()
     val verificationState by viewModel.verificationState.collectAsState()
     val currentStatus = (verificationState as? VerificationUiState.Success)?.verification?.status?.lowercase()
     // null = status not loaded yet or fetch failed. Never block on unknown; the backend enforces.
@@ -120,8 +137,14 @@ fun PhotographerEarningsScreen(
             is EarningsUiState.Success -> EarningsContent(
                 overview = state.overview,
                 balance = state.balance,
-                transactions = state.transactions,
-                monthTotals = state.monthTotals,
+                transactionsState = transactionsState,
+                eventEarningsState = eventEarningsState,
+                onLoadMoreTransactions = earningsViewModel::loadMoreTransactions,
+                onRetryTransactions = earningsViewModel::retryTransactions,
+                onLoadMoreEvents = earningsViewModel::loadMoreEventEarnings,
+                onRetryEvents = earningsViewModel::retryEventEarnings,
+                purchaseViewModel = purchaseViewModel,
+                onOpenEvent = onOpenEvent,
                 payoutActionState = payoutActionState,
                 onRequestPayout = {
                     if (!isApproved) {
@@ -142,15 +165,34 @@ fun PhotographerEarningsScreen(
 private fun EarningsContent(
     overview: EarningsOverviewDto,
     balance: PayoutBalanceDto,
-    transactions: List<PhotographerTransactionDto>,
-    monthTotals: Map<String, Double>,
+    transactionsState: TransactionsPageState,
+    eventEarningsState: EventEarningsPageState,
+    onLoadMoreTransactions: () -> Unit,
+    onRetryTransactions: () -> Unit,
+    onLoadMoreEvents: () -> Unit,
+    onRetryEvents: () -> Unit,
+    purchaseViewModel: PhotographerPurchasesViewModel,
+    onOpenEvent: (String) -> Unit,
     payoutActionState: String?,
     onRequestPayout: () -> Unit,
     onWithdrawPayout: (String) -> Unit,
     onClearActionState: () -> Unit,
 ) {
-    var showHistory by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val authGeneration by remember(context) { SessionManager.getInstance(context).authChanges }.collectAsState()
+    var showHistory by rememberSaveable(authGeneration) { mutableStateOf(false) }
+    var selectedPhotoId by rememberSaveable(authGeneration) { mutableStateOf<String?>(null) }
+    var selectedOrderId by rememberSaveable(authGeneration) { mutableStateOf<String?>(null) }
+    var selectedTransactionId by rememberSaveable(authGeneration) { mutableStateOf<String?>(null) }
+    val previewState by purchaseViewModel.previewState.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val transactionListState = rememberLazyListState()
+    LaunchedEffect(selectedPhotoId, selectedOrderId, selectedTransactionId) {
+        selectedPhotoId?.let { id ->
+            if (previewState.photoId != id || previewState.orderId != selectedOrderId || previewState.transactionId != selectedTransactionId)
+                purchaseViewModel.openPurchase(id, selectedOrderId, selectedTransactionId)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -180,25 +222,63 @@ private fun EarningsContent(
                 onClearActionState = onClearActionState,
             )
         }
+        item("eventEarnings") {
+            EventEarningsSection(
+                state = eventEarningsState,
+                onOpenEvent = onOpenEvent,
+                onLoadMore = onLoadMoreEvents,
+                onRetry = onRetryEvents,
+            )
+        }
         item("transactionsLink") {
             Spacer(modifier = Modifier.height(24.dp))
             Divider(thickness = 1.dp, color = Line)
             Spacer(modifier = Modifier.height(8.dp))
             TransactionsLink(
-                count = transactions.size,
+                count = transactionsState.total,
                 onClick = { showHistory = true },
             )
         }
     }
 
-    if (showHistory) {
+    if (showHistory && selectedPhotoId == null) {
         ModalBottomSheet(
             onDismissRequest = { showHistory = false },
             sheetState = sheetState,
             containerColor = Bone,
         ) {
-            TransactionsSheet(transactions = transactions, monthTotals = monthTotals)
+            TransactionsSheet(
+                state = transactionsState,
+                listState = transactionListState,
+                onRetry = onRetryTransactions,
+                onLoadMore = onLoadMoreTransactions,
+                onOpenTransaction = { tx ->
+                    if (tx.orderId != null) {
+                        selectedPhotoId = tx.photoId
+                        selectedOrderId = tx.orderId
+                        selectedTransactionId = tx.id
+                    }
+                },
+            )
         }
+    }
+    if (selectedPhotoId != null && previewState.photoId != null) {
+        PhotographerPurchasePreview(
+            viewModel = purchaseViewModel,
+            transaction = transactionsState.items.firstOrNull { it.id == selectedTransactionId },
+            onClose = {
+                selectedPhotoId = null
+                selectedOrderId = null
+                selectedTransactionId = null
+            },
+            onOpenEvent = { id ->
+                selectedPhotoId = null
+                selectedOrderId = null
+                selectedTransactionId = null
+                showHistory = false
+                onOpenEvent(id)
+            },
+        )
     }
 }
 
@@ -684,14 +764,50 @@ private fun ActionResultStrip(
 }
 
 @Composable
-private fun TransactionsLink(count: Int, onClick: () -> Unit) {
+private fun EventEarningsSection(
+    state: EventEarningsPageState,
+    onOpenEvent: (String) -> Unit,
+    onLoadMore: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Kicker("Earnings by event", color = Slate)
+        when {
+            state.isLoading -> LoadingSkeleton(modifier = Modifier.fillMaxWidth().height(72.dp))
+            state.error != null -> ErrorView(message = state.error, title = "Couldn't load event earnings", onRetry = onRetry)
+            state.items.isEmpty() -> Text("No completed purchases yet.", style = Typography.bodyMedium, color = Slate)
+            else -> state.items.forEach { event ->
+                QpCard(modifier = Modifier.fillMaxWidth().clickable { onOpenEvent(event.eventId) }, padding = 16.dp) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(event.eventName, style = Typography.titleSmall, color = Ink)
+                            Text("${event.purchaseCount} purchase${if (event.purchaseCount == 1L) "" else "s"} · ${event.photoCount} photos", style = Typography.bodySmall, color = Slate)
+                            if (event.deletedAt != null) Text("Removed event", style = Typography.bodySmall, color = Slate)
+                        }
+                        Text(peso(event.revenueKept), style = NumeralStyle, color = Ink)
+                    }
+                }
+            }
+        }
+        state.appendError?.let { Text("Couldn't load more event earnings.", style = Typography.bodyMedium, color = ErrorRed) }
+        if (state.hasMore) GhostCta(
+            text = if (state.appendError != null) "Retry load more" else if (state.isLoadingMore) "Loading…" else "Load more",
+            enabled = !state.isLoadingMore,
+            onClick = onLoadMore,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun TransactionsLink(count: Long, onClick: () -> Unit) {
     TextButton(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
     ) {
         ArrowLabel(
-            text = if (count == 0) "No transactions yet" else "View transactions ($count) →",
-            color = if (count == 0) SlateSoft else Ink,
+            text = if (count == 0L) "No transactions yet" else "View transactions ($count) →",
+            color = if (count == 0L) SlateSoft else Ink,
             style = Typography.bodyMedium,
             fontWeight = FontWeight.Medium,
         )
@@ -700,8 +816,11 @@ private fun TransactionsLink(count: Int, onClick: () -> Unit) {
 
 @Composable
 private fun TransactionsSheet(
-    transactions: List<PhotographerTransactionDto>,
-    monthTotals: Map<String, Double>,
+    state: TransactionsPageState,
+    listState: LazyListState,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onOpenTransaction: (PhotographerTransactionDto) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -711,7 +830,9 @@ private fun TransactionsSheet(
     ) {
         Kicker(text = "Recent sales history", color = Slate)
         Spacer(modifier = Modifier.height(16.dp))
-        if (transactions.isEmpty()) {
+        if (state.error != null) {
+            ErrorView(message = state.error, title = "Couldn't load transactions", onRetry = onRetry)
+        } else if (state.items.isEmpty() && !state.isLoading) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -749,7 +870,7 @@ private fun TransactionsSheet(
                         textAlign = TextAlign.Center,
                     )
                     Text(
-                        text = "Cover races and upload photos to start earning. Your sales transactions and payout cycles will appear here.",
+                        text = "Sales transactions appear here. Completed zero-charge purchases appear under each event's Purchased photos.",
                         style = Typography.bodyMedium,
                         color = Slate,
                         textAlign = TextAlign.Center,
@@ -761,12 +882,13 @@ private fun TransactionsSheet(
             // Month-grouped ledger (web billing parity). The subtotal is the
             // SERVER's per-month figure over all transactions, so it stays
             // correct even when the loaded page only holds part of a month.
-            val groups = remember(transactions) {
+            val groups = remember(state.items) {
                 // "YYYY-MM" on Manila's calendar, the key the backend's monthTotals use.
-                transactions.groupBy { formatManila(it.paidAt, "yyyy-MM") ?: it.paidAt.take(7) }
+                state.items.groupBy { formatManila(it.paidAt, "yyyy-MM") ?: it.paidAt.take(7) }
                     .toSortedMap(compareByDescending { it })
             }
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(420.dp),
@@ -782,10 +904,10 @@ private fun TransactionsSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Kicker(text = formatMonthLabel(monthKey), color = Slate)
-                            val subtotal = monthTotals[monthKey]
+                            val subtotal = state.monthTotals[monthKey]
                             if (subtotal != null) {
                                 Text(
-                                    text = "+${peso(subtotal, 0)}",
+                                    text = "${if (subtotal < 0) "-" else "+"}${peso(abs(subtotal))}",
                                     style = NumeralStyle.copy(fontSize = 13.sp),
                                     color = Ink,
                                 )
@@ -793,8 +915,19 @@ private fun TransactionsSheet(
                         }
                     }
                     items(rows, key = { it.id }) { tx ->
-                        TransactionRow(transaction = tx)
+                        TransactionRow(transaction = tx, onClick = { onOpenTransaction(tx) })
                     }
+                }
+                if (state.appendError != null) item("appendError") {
+                    Text("Couldn't load more transactions.", style = Typography.bodyMedium, color = ErrorRed)
+                }
+                if (state.hasMore) item("loadMore") {
+                    GhostCta(
+                        text = if (state.appendError != null) "Retry load more" else if (state.isLoadingMore) "Loading…" else "Load more",
+                        enabled = !state.isLoadingMore,
+                        onClick = onLoadMore,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
@@ -811,11 +944,19 @@ private fun formatMonthLabel(monthKey: String): String = try {
 } catch (e: Exception) { monthKey }
 
 @Composable
-private fun TransactionRow(transaction: PhotographerTransactionDto) {
+private fun TransactionRow(transaction: PhotographerTransactionDto, onClick: () -> Unit) {
     val buyerName = transaction.buyer.ifBlank { "Runner" }
     val initial = buyerName.firstOrNull()?.toString()?.uppercase() ?: "R"
 
-    QpCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+    QpCard(
+        modifier = Modifier.fillMaxWidth().then(
+            if (transaction.orderId != null) Modifier
+                .semantics { contentDescription = "Open purchase ${formatOrderRef(transaction.orderId)} by $buyerName" }
+                .clickable(role = Role.Button, onClick = onClick)
+            else Modifier,
+        ),
+        padding = 12.dp,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
@@ -824,12 +965,11 @@ private fun TransactionRow(transaction: PhotographerTransactionDto) {
                     .background(BoneDeep),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = initial,
-                    color = Slate,
-                    style = Typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                if (transaction.thumbnailUrl != null) AsyncImage(
+                    model = transaction.thumbnailUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                ) else Text(text = initial, color = Slate, style = Typography.labelMedium, fontWeight = FontWeight.SemiBold)
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -845,6 +985,11 @@ private fun TransactionRow(transaction: PhotographerTransactionDto) {
                     color = Slate,
                     style = Typography.bodySmall,
                 )
+                Text(
+                    text = "${if (transaction.isRefund) "Refund" else "Sale"}${transaction.orderId?.let { " · ${formatOrderRef(it)}" } ?: ""}",
+                    color = Slate,
+                    style = Typography.bodySmall,
+                )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = formatManila(transaction.paidAt, "MMM d, yyyy · h:mm a")
@@ -854,7 +999,7 @@ private fun TransactionRow(transaction: PhotographerTransactionDto) {
                 )
             }
             Text(
-                text = "+${peso(transaction.amountKept, 0)}",
+                text = "${if (transaction.amountKept < 0) "-" else "+"}${peso(abs(transaction.amountKept))}",
                 style = NumeralStyle.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
                 color = Ink,
             )
