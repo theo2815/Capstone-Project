@@ -21,6 +21,8 @@ fun peso(amount: Double, decimals: Int = 2): String =
 fun count(n: Int): String = String.format(Locale.US, "%,d", n)
 fun count(n: Long): String = String.format(Locale.US, "%,d", n)
 
+fun formatOrderRef(orderId: String): String = orderId.take(8).uppercase(Locale.ROOT)
+
 internal val MANILA: ZoneId = ZoneId.of("Asia/Manila")
 
 // DateTimeFormatter is immutable and thread-safe; cache one per pattern so a

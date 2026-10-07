@@ -93,6 +93,11 @@ class MainActivityRoutingTest {
         }
     }
 
+    @Test fun `event share defaults to active and earnings opens purchased`() {
+        assertEquals("studio/share/event-a", shareRoute("event-a"))
+        assertEquals("studio/share/event-a?tab=purchased", shareRoute("event-a", "purchased"))
+    }
+
     @Test fun `only quickpitik links and the two email paths are accepted, and each maps to one target`() {
         assertNull(pickQuickpitikUri(null))
         assertNull(pickQuickpitikUri(Intent()))
