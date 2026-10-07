@@ -138,4 +138,6 @@ val integrationTest by tasks.registering(Test::class) {
 	testClassesDirs = sourceSets.test.get().output.classesDirs
 	classpath = sourceSets.test.get().runtimeClasspath
 	shouldRunAfter(tasks.test)
+	maxHeapSize = "2g"
+	forkEvery = 1
 }
