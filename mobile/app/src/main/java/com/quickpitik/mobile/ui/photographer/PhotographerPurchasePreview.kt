@@ -53,6 +53,7 @@ fun PhotographerPurchasePreview(
     transaction: PhotographerTransactionDto? = null,
     onClose: () -> Unit,
     onOpenEvent: (String) -> Unit,
+    onSelectPurchase: (String) -> Unit = {},
 ) {
     val state by viewModel.previewState.collectAsState()
     val photoId = state.photoId ?: return
@@ -113,9 +114,9 @@ fun PhotographerPurchasePreview(
         details = {
             PurchaseDetails(
                 state = state,
-                transaction = transaction?.takeIf { it.photoId == photoId },
+                transaction = transaction?.takeIf { it.photoId == photoId && it.orderId == state.orderId },
                 onOpenEvent = { id -> close(); onOpenEvent(id) },
-                onSelectPurchase = viewModel::selectPurchase,
+                onSelectPurchase = { orderId -> viewModel.selectPurchase(orderId); onSelectPurchase(orderId) },
                 onRetry = viewModel::retryPreview,
                 onLoadMore = viewModel::loadMorePurchases,
                 downloadError = downloadErrorPhotoId == photoId,

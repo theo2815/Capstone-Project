@@ -132,6 +132,7 @@ fun PhotographerEventShareScreen(
     }
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
     var selectedPurchasePhotoId by rememberSaveable(event.id, authGeneration) { mutableStateOf<String?>(null) }
+    var selectedPurchaseOrderId by rememberSaveable(event.id, authGeneration) { mutableStateOf<String?>(null) }
     var skipSelectionFetchForPhoto by remember { mutableStateOf<String?>(null) }
     var visiblePhotoLimit by rememberSaveable(event.id) { mutableStateOf(20) }
     // Selection is transient screen UI state (reset on tab switch), not VM data.
@@ -157,15 +158,16 @@ fun PhotographerEventShareScreen(
         }
     }
 
-    LaunchedEffect(selectedPurchasePhotoId) {
+    LaunchedEffect(selectedPurchasePhotoId, selectedPurchaseOrderId) {
         selectedPurchasePhotoId?.let {
-            if (skipSelectionFetchForPhoto == it) skipSelectionFetchForPhoto = null
-            else purchaseViewModel.openPurchase(it)
+            if (skipSelectionFetchForPhoto == it && selectedPurchaseOrderId == null) skipSelectionFetchForPhoto = null
+            else purchaseViewModel.openPurchase(it, selectedPurchaseOrderId)
         }
     }
     LaunchedEffect(previewState.photoId) {
         if (previewState.photoId != null && previewState.photoId != selectedPurchasePhotoId) {
             skipSelectionFetchForPhoto = previewState.photoId
+            selectedPurchaseOrderId = null
             selectedPurchasePhotoId = previewState.photoId
         }
     }
@@ -180,6 +182,7 @@ fun PhotographerEventShareScreen(
         selected = emptySet()
         selectedIndex = null
         selectedPurchasePhotoId = null
+        selectedPurchaseOrderId = null
         purchaseViewModel.closePreview()
         visiblePhotoLimit = 20
     }
@@ -277,7 +280,7 @@ fun PhotographerEventShareScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     PurchasedGallery(
                         state = purchasedState,
-                        onOpenPhoto = { selectedPurchasePhotoId = it },
+                        onOpenPhoto = { selectedPurchaseOrderId = null; selectedPurchasePhotoId = it },
                         onRetry = { purchaseViewModel.loadPurchasedPhotos(event.id, refresh = true) },
                         onLoadMore = purchaseViewModel::loadMorePurchasedPhotos,
                     )
@@ -384,7 +387,7 @@ fun PhotographerEventShareScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     PurchasedGallery(
                         state = purchasedState,
-                        onOpenPhoto = { selectedPurchasePhotoId = it },
+                        onOpenPhoto = { selectedPurchaseOrderId = null; selectedPurchasePhotoId = it },
                         onRetry = { purchaseViewModel.loadPurchasedPhotos(event.id, refresh = true) },
                         onLoadMore = purchaseViewModel::loadMorePurchasedPhotos,
                     )
@@ -604,8 +607,9 @@ fun PhotographerEventShareScreen(
         PhotographerPurchasePreview(
             viewModel = purchaseViewModel,
             photos = purchasedState.items.map { it.photo },
-            onClose = { selectedPurchasePhotoId = null },
+            onClose = { selectedPurchasePhotoId = null; selectedPurchaseOrderId = null },
             onOpenEvent = onOpenEvent,
+            onSelectPurchase = { selectedPurchaseOrderId = it },
         )
     }
 

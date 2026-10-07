@@ -7,10 +7,13 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto
+import com.quickpitik.mobile.data.remote.PhotographerTransactionDto
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
@@ -106,6 +109,34 @@ class PhotographerPurchasePreviewTest {
             onNodeWithText("Refund recorded").assertExists()
             onNodeWithText("Oct 2, 2026 · 8:00 AM").assertExists()
             onNodeWithText("Refund completed").assertDoesNotExist()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `transaction time does not follow another order on the same photo`() {
+        backend.server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val photo = """{"id":"photo-a","bib":null,"status":"ready","salesCount":2,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null,"deletedAt":null,"deletionStartedAt":null}"""
+                fun receipt(orderId: String, buyer: String, purchasedAt: String, createdAt: String) = """{"orderId":"$orderId","photoId":"photo-a","buyer":"$buyer","purchasedAt":$purchasedAt,"orderCreatedAt":"$createdAt","paymentMethod":"gcash","pricePhp":50.0,"discountPhp":0.0,"paidPhp":50.0,"kind":"paid","refundStatus":"none","refundPending":false,"refundedPhp":0.0,"refundedAt":null,"netKeptPhp":25.5,"transactions":[]}"""
+                val a = receipt("a1b2c3d4-order", "Aira S.", "\"2026-10-01T00:00:00Z\"", "2026-10-01T00:00:00Z")
+                val b = receipt("b1b2c3d4-order", "Bea T.", "null", "2026-10-02T00:00:00Z")
+                return ok("""{"photo":$photo,"event":{"id":"event-a","name":"Cebu Run","date":"2026-10-01","deletedAt":null},"items":[$a,$b],"total":2,"offset":0,"limit":50,"selectedPurchase":$a}""")
+            }
+        }
+        val transaction = PhotographerTransactionDto(
+            id = "tx-a", paidAt = "2026-10-01T00:00:00Z", eventId = "event-a", eventName = "Cebu Run",
+            eventSlug = "cebu", photoId = "photo-a", orderId = "a1b2c3d4-order", buyer = "Aira S.", amountKept = 25.5,
+        )
+        vm.openPurchase("photo-a", "a1b2c3d4-order", "tx-a")
+        vm.previewState.awaitFirst { it.selectedPurchase?.buyer == "Aira S." }
+        runComposeUiTest {
+            setContent { PhotographerPurchasePreview(vm, transaction = transaction, onClose = {}, onOpenEvent = {}) }
+            onNodeWithText("Oct 1, 2026 · 8:00 AM").assertExists()
+            onNodeWithText("Bea T. · B1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+            waitUntil(timeoutMillis = 5_000) { vm.previewState.value.selectedPurchase?.buyer == "Bea T." }
+            onNodeWithText("Order created").assertExists()
+            onNodeWithText("Oct 2, 2026 · 8:00 AM").assertExists()
+            onNodeWithText("Oct 1, 2026 · 8:00 AM").assertDoesNotExist()
         }
     }
 

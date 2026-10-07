@@ -44,6 +44,8 @@ import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicBoolean
 
 @RunWith(RobolectricTestRunner::class)
 class StudioShareRestorationTest {
@@ -53,6 +55,8 @@ class StudioShareRestorationTest {
     private lateinit var application: Application
     private val purchaseCalls = AtomicInteger()
     private val eventCalls = AtomicInteger()
+    private val requestedOrderId = AtomicReference<String?>()
+    private val restoring = AtomicBoolean(false)
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -66,11 +70,14 @@ class StudioShareRestorationTest {
                 request.path.orEmpty().contains("purchased-photos") -> ok("""{"items":[{"photo":{"id":"photo-a","bib":"123","status":"ready","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null},"purchaseCount":1,"lastPurchasedAt":"2026-10-01T00:00:00Z"}],"total":1,"offset":0,"limit":50}""")
                 request.path.orEmpty().contains("/photos/photo-a/purchases") -> {
                     val call = purchaseCalls.incrementAndGet()
-                    val buyer = if (call == 1) "Aira S." else "Bea T."
+                    val orderId = request.requestUrl?.queryParameter("orderId")
+                    requestedOrderId.set(orderId)
                     val signedUrl = backend.server.url("/signed-$call").toString()
                     val photo = """{"id":"photo-a","bib":"123","status":"ready","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":"$signedUrl","deletedAt":null,"deletionStartedAt":null}"""
-                    val receipt = """{"orderId":"a1b2c3d4-order","photoId":"photo-a","buyer":"$buyer","purchasedAt":"2026-10-01T00:00:00Z","orderCreatedAt":"2026-10-01T00:00:00Z","paymentMethod":"gcash","pricePhp":50.0,"discountPhp":0.0,"paidPhp":50.0,"kind":"paid","refundStatus":"none","refundPending":false,"refundedPhp":0.0,"refundedAt":null,"netKeptPhp":25.5,"transactions":[]}"""
-                    ok("""{"photo":$photo,"event":{"id":"event-a","name":"Cebu Run","date":"2026-10-01","deletedAt":null},"items":[$receipt],"total":1,"offset":0,"limit":50,"selectedPurchase":$receipt}""")
+                    fun receipt(id: String, buyer: String) = """{"orderId":"$id","photoId":"photo-a","buyer":"$buyer","purchasedAt":"2026-10-01T00:00:00Z","orderCreatedAt":"2026-10-01T00:00:00Z","paymentMethod":"gcash","pricePhp":50.0,"discountPhp":0.0,"paidPhp":50.0,"kind":"paid","refundStatus":"none","refundPending":false,"refundedPhp":0.0,"refundedAt":null,"netKeptPhp":25.5,"transactions":[]}"""
+                    val a = receipt("a1b2c3d4-order", "Aira S.")
+                    val b = receipt("b1b2c3d4-order", if (restoring.get()) "Cora R." else "Bea T.")
+                    ok("""{"photo":$photo,"event":{"id":"event-a","name":"Cebu Run","date":"2026-10-01","deletedAt":null},"items":[$a,$b],"total":2,"offset":0,"limit":50,"selectedPurchase":${if (orderId == "b1b2c3d4-order") b else a}}""")
                 }
                 request.path.orEmpty().contains("earnings/per-event") -> ok("""{"items":[],"total":0,"offset":0,"limit":10}""")
                 request.path.orEmpty().endsWith("/earnings") -> ok("""{"lifetimeKept":25.5,"thisWeek":25.5,"thisMonth":25.5,"payoutPending":0.0,"payoutScheduledFor":null,"weeklySeries":[],"thisWeekSold":1,"thisMonthSold":1}""")
@@ -122,24 +129,32 @@ class StudioShareRestorationTest {
         compose.waitForIdle()
         compose.waitUntil(5_000) { purchases.previewState.value.selectedPurchase?.buyer == "Aira S." }
         compose.onNodeWithText("Aira S.").assertExists()
+        compose.onNodeWithText("Bea T. · B1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(5_000) { purchases.previewState.value.selectedPurchase?.buyer == "Bea T." }
+        compose.waitForIdle()
+        compose.waitUntil(5_000) { !purchases.previewState.value.isLoading }
         val firstVm = purchases
         val firstUrl = purchases.previewState.value.photo?.thumbnailUrl
-        assertEquals(1, purchaseCalls.get())
+        val callsBeforeRestore = purchaseCalls.get()
+        assertTrue(callsBeforeRestore >= 1)
 
+        restoring.set(true)
         restore.emulateSavedInstanceStateRestore()
         compose.waitForIdle()
-        compose.waitUntil(5_000) { purchaseCalls.get() >= 2 && purchases.previewState.value.selectedPurchase?.buyer == "Bea T." }
+        compose.waitUntil(5_000) { purchaseCalls.get() > callsBeforeRestore && purchases.previewState.value.selectedPurchase?.buyer == "Cora R." }
         compose.waitForIdle()
-        compose.onNodeWithText("Bea T.").assertExists()
+        compose.onNodeWithText("Cora R.").assertExists()
         compose.onNodeWithText("Aira S.").assertDoesNotExist()
         assertNotEquals(firstUrl, purchases.previewState.value.photo?.thumbnailUrl)
         assertTrue(eventCalls.get() >= 2)
         assertEquals("photo-a", purchases.previewState.value.photoId)
+        assertEquals("b1b2c3d4-order", purchases.previewState.value.orderId)
+        assertEquals("b1b2c3d4-order", requestedOrderId.get())
 
         SessionManager.getInstance(application).saveSession("other", "RUNNER", "Other", "other@x.com")
         compose.waitUntil(5_000) { purchases.previewState.value.photoId == null }
         compose.waitForIdle()
-        compose.onNodeWithText("Bea T.").assertDoesNotExist()
+        compose.onNodeWithText("Cora R.").assertDoesNotExist()
         assertTrue(firstVm.previewState.value.photoId == null)
     }
 
@@ -171,17 +186,24 @@ class StudioShareRestorationTest {
         compose.onNodeWithContentDescription("Open purchase A1B2C3D4 by Aira S.").performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
         compose.waitUntil(5_000) { purchases.previewState.value.selectedPurchase?.buyer == "Aira S." }
+        compose.onNodeWithText("Bea T. · B1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(5_000) { purchases.previewState.value.selectedPurchase?.buyer == "Bea T." }
+        compose.waitForIdle()
+        compose.waitUntil(5_000) { !purchases.previewState.value.isLoading }
         val firstUrl = purchases.previewState.value.photo?.thumbnailUrl
-        assertEquals("a1b2c3d4-order", purchases.previewState.value.orderId)
+        val callsBeforeRestore = purchaseCalls.get()
+        assertEquals("b1b2c3d4-order", purchases.previewState.value.orderId)
         assertEquals("tx-a", purchases.previewState.value.transactionId)
 
+        restoring.set(true)
         restore.emulateSavedInstanceStateRestore()
         compose.waitForIdle()
-        compose.waitUntil(5_000) { purchaseCalls.get() >= 2 && purchases.previewState.value.selectedPurchase?.buyer == "Bea T." }
-        compose.onNodeWithText("Bea T.").assertExists()
+        compose.waitUntil(5_000) { purchaseCalls.get() > callsBeforeRestore && purchases.previewState.value.selectedPurchase?.buyer == "Cora R." }
+        compose.onNodeWithText("Cora R.").assertExists()
         assertEquals("photo-a", purchases.previewState.value.photoId)
-        assertEquals("a1b2c3d4-order", purchases.previewState.value.orderId)
+        assertEquals("b1b2c3d4-order", purchases.previewState.value.orderId)
         assertEquals("tx-a", purchases.previewState.value.transactionId)
+        assertEquals("b1b2c3d4-order", requestedOrderId.get())
         assertNotEquals(firstUrl, purchases.previewState.value.photo?.thumbnailUrl)
     }
 }

@@ -265,6 +265,7 @@ private fun EarningsContent(
         PhotographerPurchasePreview(
             viewModel = purchaseViewModel,
             transaction = transactionsState.items.firstOrNull { it.id == selectedTransactionId },
+            onSelectPurchase = { selectedOrderId = it },
             onClose = {
                 selectedPhotoId = null
                 selectedOrderId = null
