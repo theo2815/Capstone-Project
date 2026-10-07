@@ -20,6 +20,7 @@ import com.quickpitik.service.photos.PhotoWorkFence
 import com.quickpitik.service.photos.PhotoWorkKind
 import com.quickpitik.service.photos.PhotoWorkClaim
 import com.quickpitik.entity.RemovalState
+import com.quickpitik.service.photos.PhotoFaceErasureService
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -36,6 +37,7 @@ class PhotoBatchIndexingService(
     private val aiApiProperties: AiApiProperties,
     private val transactionTemplate: TransactionTemplate,
     private val workFence: PhotoWorkFence,
+    private val faceErasure: PhotoFaceErasureService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -87,7 +89,13 @@ class PhotoBatchIndexingService(
             photoIds = batched.map { it.id }.toMutableList(),
         )
         // Prior cleanup is also external I/O; its targets were saved by claim().
-        batched.forEach(::clearPriorResults)
+        try {
+            batched.forEach(faceErasure::erasePrior)
+        } catch (ex: Exception) {
+            // No mega job has been submitted; only these unstarted claims end.
+            claims.forEach(workFence::finish)
+            throw ex
+        }
         val prepared = transactionTemplate.execute {
             // Canonical UUID text has PostgreSQL's unsigned byte order;
             // UUID.compareTo uses signed longs and can invert shared lock order.
@@ -138,15 +146,6 @@ class PhotoBatchIndexingService(
         }
         log.info("Submitted indexing batch {} for event {} ({} photos)", batch.id, eventId, batched.size)
         return true
-    }
-
-    // Drops any ai person + tags from a prior attempt so a re-drained photo is a
-    // clean slate. For a fresh PENDING photo this is a no-op (no facePersons yet).
-    private fun clearPriorResults(photo: Photo) {
-        photo.facePersons.forEach { fp ->
-            runCatching { aiApiClient.deleteFacesPerson(fp.aiPersonId) }
-                .onFailure { log.warn("ai person cleanup failed for {}: {}", fp.aiPersonId, it.message) }
-        }
     }
 
     // ai-api validates by magic bytes, not Content-Type, but the multipart part

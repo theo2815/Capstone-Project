@@ -47,6 +47,7 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean lateinit var aiProperties: com.quickpitik.config.AiProperties
     @Autowired lateinit var jdbc: JdbcTemplate
     @Autowired lateinit var dataSource: javax.sql.DataSource
+    @Autowired lateinit var context: org.springframework.context.ApplicationContext
     @Autowired lateinit var batchIndexer: com.quickpitik.service.photographer.PhotoBatchIndexingService
     @Autowired lateinit var batchIngest: com.quickpitik.service.photographer.PhotoBatchIngestService
     @MockitoBean lateinit var storage: StorageService
@@ -480,8 +481,22 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test fun `face before expiry and bib after expiry preserve actual provider for next claim`() {
+        // This provenance fixture requires enabled cleanup and an available old adapter.
+        // Keep both local to this test; the SDK mock confirms the old collection is absent.
+        val sdk = org.mockito.Mockito.mock(software.amazon.awssdk.services.rekognition.RekognitionClient::class.java)
+        org.mockito.Mockito.`when`(sdk.listFaces(anyArg<software.amazon.awssdk.services.rekognition.model.ListFacesRequest>()))
+            .thenThrow(software.amazon.awssdk.services.rekognition.model.ResourceNotFoundException.builder().message("Synthetic absent collection").build())
+        val oldAdapter = com.quickpitik.service.ai.RekognitionAiClient(sdk, com.quickpitik.config.RekognitionProperties())
+        val oldAdapters = org.springframework.beans.factory.support.StaticListableBeanFactory(mapOf("oldAdapter" to oldAdapter))
+        val enabledProps = context.getBean(com.quickpitik.config.AiApiProperties::class.java).copy(enabled = true)
+        val erasure = com.quickpitik.service.photos.PhotoFaceErasureService(photos, provider,
+            oldAdapters.getBeanProvider(com.quickpitik.service.ai.RekognitionAiClient::class.java), enabledProps,
+            fence, context.getBean(com.fasterxml.jackson.databind.ObjectMapper::class.java), tx, clock)
+        batchIndexer = com.quickpitik.service.photographer.PhotoBatchIndexingService(photos,
+            context.getBean(AiIndexBatchRepository::class.java), context.getBean(AiIndexJobRepository::class.java),
+            storage, provider, enabledProps, tx, fence, erasure)
         photo.indexedProvider = "rekognition"
-        photo.facePersons.add(PhotoFacePersonEmbed(0, "prior-rekognition-person"))
+        photo.facePersons.add(PhotoFacePersonEmbed(0, "${event.id}.${photo.id}"))
         photos.saveAndFlush(photo)
         val jobs = submitPollingBatch()
         org.mockito.Mockito.`when`(provider.jobStatus(jobs.second, 0, 1)).thenReturn(com.quickpitik.dto.ai.JobStatusResult(

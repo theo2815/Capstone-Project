@@ -25,6 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.util.Optional
 import java.util.UUID
+import java.time.OffsetDateTime
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -34,6 +35,31 @@ import kotlin.test.assertTrue
 // is not a failure, the INDEXED/PARTIAL/FAILED matrix, idempotent re-run, and the
 // event-isolation enroll stamping. Also guards the #6 bib-confidence fix.
 class PhotoIndexingServiceTest {
+
+    @Test fun `failed prior erasure cannot start another enrollment`() {
+        val p = photo(status = IndexingStatus.FAILED)
+        p.facePersons.add(PhotoFacePersonEmbed(0, "old-person", com.quickpitik.entity.FaceProvider.AI_API))
+        expectPhoto(p)
+        stubEnrollReturns(p, "new-person")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        val failure = AiApiException(HttpStatus.SERVICE_UNAVAILABLE, "AI_API_UNAVAILABLE", "cleanup unconfirmed")
+        Mockito.doThrow(failure).`when`(aiClient).deleteFacesPerson("old-person")
+        Mockito.`when`(aiClient.erasePhotoFaces(p.eventId, "old-person")).thenThrow(failure)
+
+        service.index(p.id)
+
+        Mockito.verify(aiClient, Mockito.never()).facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId)
+        assertEquals(setOf("old-person"), p.facePersons.map { it.aiPersonId }.toSet())
+    }
+
+    @Test fun `new enrollment stores the provider with its face target`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        service.index(p.id)
+        assertEquals(com.quickpitik.entity.FaceProvider.AI_API, p.facePersons.single().provider)
+    }
 
     @Test fun `unknown enrollment outcome retains its claim for remote reconciliation`() {
         val p = photo()
@@ -69,6 +95,7 @@ class PhotoIndexingServiceTest {
     private lateinit var publisher: ApplicationEventPublisher
     private lateinit var service: PhotoIndexingService
     private lateinit var workFence: com.quickpitik.service.photos.PhotoWorkFence
+    private lateinit var faceErasure: com.quickpitik.service.photos.PhotoFaceErasureService
     private fun <T> anyArg(): T = Mockito.any()
 
     // FF D8 FF → sniffed as image/jpeg by PhotoIndexingService.sniffContentType.
@@ -98,8 +125,11 @@ class PhotoIndexingServiceTest {
                 java.time.Instant.now().plusSeconds(60), it.getArgument(1))
         }
         Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(true)
+        faceErasure = com.quickpitik.service.photos.PhotoFaceErasureService(photoRepo, aiClient,
+            org.springframework.beans.factory.support.StaticListableBeanFactory().getBeanProvider(com.quickpitik.service.ai.RekognitionAiClient::class.java),
+            props(), workFence, com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), template(), java.time.Clock.systemUTC())
         service = PhotoIndexingService(
-            photoRepo, storage, aiClient, props(), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence,
+            photoRepo, storage, aiClient, props(), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
         )
     }
 
@@ -111,6 +141,30 @@ class PhotoIndexingServiceTest {
     private fun expectPhoto(p: Photo) {
         Mockito.`when`(photoRepo.findById(p.id)).thenReturn(Optional.of(p))
         Mockito.`when`(storage.getBytes(p.s3Key)).thenReturn(jpegBytes)
+    }
+
+    @Test fun `expired producer after legacy cleanup can recover after original disappears`() {
+        val p = photo()
+        p.facePersons.add(PhotoFacePersonEmbed(0, "legacy-person"))
+        expectPhoto(p)
+        Mockito.`when`(photoRepo.findAllByIdForUpdate(listOf(p.id))).thenReturn(listOf(p))
+        var present = true
+        Mockito.`when`(aiClient.listPersonsForEvent(p.eventId)).thenAnswer {
+            if (present) listOf(com.quickpitik.service.ai.AiPersonRef("legacy-person", OffsetDateTime.now(), p.id.toString())) else emptyList()
+        }
+        Mockito.`when`(aiClient.erasePhotoFaces(p.eventId, "legacy-person")).thenAnswer {
+            present = false
+            com.quickpitik.dto.ai.FaceErasureResult.DELETED
+        }
+        // Original bytes failed after cleanup, and the expired claim rejected its local write.
+        Mockito.`when`(storage.getBytes(p.s3Key)).thenThrow(IllegalStateException("Synthetic bytes failure")).thenReturn(jpegBytes)
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(false, true)
+        stubEnrollReturns(p, "new-person")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        service.index(p.id)
+        service.index(p.id)
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        assertEquals(listOf("new-person"), p.facePersons.map { it.aiPersonId })
     }
 
     private fun stubEnrollReturns(p: Photo, personId: String) {
@@ -242,7 +296,7 @@ class PhotoIndexingServiceTest {
         val p = photo()
         Mockito.`when`(photoRepo.findById(p.id)).thenReturn(Optional.of(p))
         val disabled = PhotoIndexingService(
-            photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence,
+            photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
         )
 
         disabled.index(p.id)
@@ -256,7 +310,7 @@ class PhotoIndexingServiceTest {
     @Test
     fun `re-run is idempotent - prior ai person erased, no duplicate`() {
         val p = photo(status = IndexingStatus.FAILED).also {
-            it.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = "old-person"))
+            it.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = "old-person", provider = com.quickpitik.entity.FaceProvider.AI_API))
         }
         expectPhoto(p)
         stubEnrollReturns(p, "new-person")
@@ -264,7 +318,7 @@ class PhotoIndexingServiceTest {
 
         service.index(p.id)
 
-        Mockito.verify(aiClient).deleteFacesPerson("old-person")
+        Mockito.verify(aiClient).erasePhotoFaces(p.eventId, "old-person")
         assertEquals(setOf("new-person"), p.facePersons.map { it.aiPersonId }.toSet())
     }
 

@@ -28,7 +28,25 @@ class PhotoOrphanReaperTest {
         aiApiClient = Mockito.mock(AiApiClient::class.java)
     }
 
-    private fun reaper(props: AiApiProperties) = PhotoOrphanReaper(photoRepo, aiApiClient, props)
+    private fun reaper(props: AiApiProperties) = PhotoOrphanReaper(photoRepo, aiApiClient, props,
+        Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java))
+
+    @Test fun `last photo cleanup discovers ledger targets without live indexed events`() {
+        Mockito.`when`(photoRepo.findEventsWithFacePersons(anyArg())).thenReturn(emptyList())
+        reaper(AiApiProperties(enabled = true)).reap()
+        Mockito.verify(photoRepo).faceWorkPending(anyArg())
+    }
+
+    @Test fun `orphan age cannot prove an unfinished enrollment ended`() {
+        val event = UUID.randomUUID()
+        val photo = UUID.randomUUID()
+        Mockito.`when`(photoRepo.findEventsWithFacePersons(anyArg())).thenReturn(listOf(event))
+        Mockito.`when`(aiApiClient.listPersonsForEvent(event)).thenReturn(listOf(
+            AiPersonRef("still-running", OffsetDateTime.now().minusHours(2), photo.toString())))
+        Mockito.`when`(photoRepo.hasUnfinishedWork(photo, "INDEXING")).thenReturn(true)
+        reaper(AiApiProperties(enabled = true)).reap()
+        Mockito.verify(aiApiClient, Mockito.never()).erasePhotoFaces(event, "still-running")
+    }
 
     @Test
     fun `reap when ai-api disabled does nothing`() {
@@ -67,9 +85,9 @@ class PhotoOrphanReaperTest {
         Mockito.`when`(photoRepo.findEventsWithFacePersons(anyArg())).thenReturn(listOf(eventId))
         Mockito.`when`(aiApiClient.listPersonsForEvent(eventId)).thenReturn(
             listOf(
-                AiPersonRef(referenced, old),
-                AiPersonRef(orphan, old),
-                AiPersonRef(justEnrolled, fresh),
+                AiPersonRef(referenced, old, UUID.randomUUID().toString()),
+                AiPersonRef(orphan, old, UUID.randomUUID().toString()),
+                AiPersonRef(justEnrolled, fresh, UUID.randomUUID().toString()),
             ),
         )
         Mockito.`when`(photoRepo.findReferencedAiPersonIds(eventId)).thenReturn(listOf(referenced))
@@ -77,11 +95,11 @@ class PhotoOrphanReaperTest {
         reaper(AiApiProperties(enabled = true)).reap()
 
         // The orphan is gone…
-        Mockito.verify(aiApiClient).deleteFacesPerson(orphan)
+        Mockito.verify(aiApiClient).erasePhotoFaces(eventId, orphan)
         // …but a still-referenced person is left alone…
-        Mockito.verify(aiApiClient, Mockito.never()).deleteFacesPerson(referenced)
+        Mockito.verify(aiApiClient, Mockito.never()).erasePhotoFaces(eventId, referenced)
         // …and so is one enrolled inside the grace window (could be mid-index).
-        Mockito.verify(aiApiClient, Mockito.never()).deleteFacesPerson(justEnrolled)
+        Mockito.verify(aiApiClient, Mockito.never()).erasePhotoFaces(eventId, justEnrolled)
     }
 
     @Test
@@ -93,15 +111,15 @@ class PhotoOrphanReaperTest {
 
         Mockito.`when`(photoRepo.findEventsWithFacePersons(anyArg())).thenReturn(listOf(eventId))
         Mockito.`when`(aiApiClient.listPersonsForEvent(eventId)).thenReturn(
-            listOf(AiPersonRef(first, old), AiPersonRef(second, old)),
+            listOf(AiPersonRef(first, old, UUID.randomUUID().toString()), AiPersonRef(second, old, UUID.randomUUID().toString())),
         )
         Mockito.`when`(photoRepo.findReferencedAiPersonIds(eventId)).thenReturn(emptyList())
-        Mockito.doThrow(RuntimeException("ai-api down")).`when`(aiApiClient).deleteFacesPerson(first)
+        Mockito.`when`(aiApiClient.erasePhotoFaces(eventId, first)).thenThrow(RuntimeException("ai-api down"))
 
         reaper(AiApiProperties(enabled = true)).reap()
 
         // First throws, but the second is still attempted.
-        Mockito.verify(aiApiClient).deleteFacesPerson(first)
-        Mockito.verify(aiApiClient).deleteFacesPerson(second)
+        Mockito.verify(aiApiClient).erasePhotoFaces(eventId, first)
+        Mockito.verify(aiApiClient).erasePhotoFaces(eventId, second)
     }
 }

@@ -14,6 +14,8 @@ import com.quickpitik.service.photos.PhotoWorkFence
 import com.quickpitik.service.photos.PhotoWorkClaim
 import com.quickpitik.service.photos.PhotoWorkKind
 import com.quickpitik.entity.RemovalState
+import com.quickpitik.entity.FaceProvider
+import com.quickpitik.service.photos.PhotoFaceErasureService
 import com.quickpitik.websocket.PhotoIndexedEvent
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -44,6 +46,7 @@ class PhotoIndexingService(
     private val transactionTemplate: TransactionTemplate,
     private val meterRegistry: MeterRegistry,
     private val workFence: PhotoWorkFence,
+    private val faceErasure: PhotoFaceErasureService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -91,12 +94,12 @@ class PhotoIndexingService(
     )
 
     private fun runInference(photo: Photo, claim: PhotoWorkClaim): InferenceOutcome {
-        // Retry-safety: a re-run is a clean slate upstream too (no duplicate
-        // ai-api persons). Best-effort — deleteFacesPerson is the same primitive
-        // used for GDPR erasure, and a documented no-op under Rekognition.
-        photo.facePersons.forEach { fp ->
-            runCatching { aiApiClient.deleteFacesPerson(fp.aiPersonId) }
-                .onFailure { log.warn("ai person cleanup failed for {}: {}", fp.aiPersonId, it.message) }
+        try {
+            faceErasure.erasePrior(photo)
+        } catch (ex: AiApiException) {
+            // No new writer was submitted. Keep prior IDs and retry budget;
+            // required old-provider cleanup cannot be hidden by new enrollment.
+            return InferenceOutcome(error = "Prior face cleanup unconfirmed", facesTransport = true, bibsTransport = true)
         }
 
         val bytes = try {
@@ -235,7 +238,8 @@ class PhotoIndexingService(
         photo.facePersons.clear()
         photo.bibs.clear()
         outcome.personId?.let {
-            photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = it))
+            photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = it,
+                provider = FaceProvider.valueOf(aiProperties.provider.name)))
         }
         outcome.bibs.forEach { (bibNumber, confidence) ->
             photo.bibs.add(PhotoBibEmbed(bibNumber = bibNumber, ocrConfidence = confidence))

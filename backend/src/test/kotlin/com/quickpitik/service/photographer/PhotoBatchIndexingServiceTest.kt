@@ -81,7 +81,11 @@ class PhotoBatchIndexingServiceTest {
         val manager = Mockito.mock(org.springframework.transaction.PlatformTransactionManager::class.java)
         Mockito.`when`(manager.getTransaction(anyArg())).thenReturn(org.springframework.transaction.support.SimpleTransactionStatus())
         service = PhotoBatchIndexingService(photoRepo, batchRepo, jobRepo, storage, aiClient, AiApiProperties(),
-            org.springframework.transaction.support.TransactionTemplate(manager), workFence)
+            org.springframework.transaction.support.TransactionTemplate(manager), workFence,
+            com.quickpitik.service.photos.PhotoFaceErasureService(photoRepo, aiClient,
+                org.springframework.beans.factory.support.StaticListableBeanFactory().getBeanProvider(com.quickpitik.service.ai.RekognitionAiClient::class.java),
+                AiApiProperties(), workFence, com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(),
+                org.springframework.transaction.support.TransactionTemplate(manager), java.time.Clock.systemUTC()))
     }
 
     private fun pendingPhoto(key: String) =
@@ -99,6 +103,21 @@ class PhotoBatchIndexingServiceTest {
                 PageRequest.of(0, 50),
             ),
         ).thenReturn(photos.toList())
+    }
+
+    @Test fun `unconfirmed prior cleanup prevents face mega creation`() {
+        val photo = pendingPhoto("k1")
+        photo.facePersons.add(com.quickpitik.entity.PhotoFacePersonEmbed(0, "old-person", com.quickpitik.entity.FaceProvider.AI_API))
+        stubBacklog(photo)
+        Mockito.`when`(storage.getBytes("k1")).thenReturn(jpeg1)
+        Mockito.`when`(aiClient.bibsRecognizeMega(anyArg())).thenReturn(JobCreateResult("bib-1"))
+        Mockito.`when`(aiClient.facesEnrollMega(anyArg(), anyArg())).thenReturn(JobCreateResult("face-1"))
+        val failure = AiApiException(HttpStatus.SERVICE_UNAVAILABLE, "AI_API_UNAVAILABLE", "cleanup unconfirmed")
+        Mockito.doThrow(failure).`when`(aiClient).deleteFacesPerson("old-person")
+        Mockito.`when`(aiClient.erasePhotoFaces(eventId, "old-person")).thenThrow(failure)
+        runCatching { service.drainEvent(eventId, cutoff) }
+        Mockito.verify(aiClient, Mockito.never()).facesEnrollMega(anyArg(), anyArg())
+        assertEquals(setOf("old-person"), photo.facePersons.map { it.aiPersonId }.toSet())
     }
 
     @Test

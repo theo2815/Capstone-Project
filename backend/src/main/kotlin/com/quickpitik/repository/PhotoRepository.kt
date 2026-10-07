@@ -23,6 +23,28 @@ interface PhotoWorkSnapshot {
     val expiresAt: java.time.Instant
 }
 
+interface PhotoFaceWork {
+    val token: UUID
+    val eventId: UUID
+    val photoId: UUID
+    val generation: Long
+    val expiresAt: java.time.Instant
+    val provider: String
+    val personName: String?
+    val personIds: String
+    val priorProvider: String?
+    val priorPersonIds: String
+    val jobIds: String
+    val batchPhotoIds: String
+    val finishedAt: java.time.Instant?
+    val facesErasedAt: java.time.Instant?
+}
+
+interface PhotoFaceTarget {
+    val eventId: UUID
+    val photoId: UUID
+}
+
 interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     // Scalar read bypasses an already-hydrated entity immediately before delivery.
@@ -112,8 +134,40 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         provider: String, expiry: OffsetDateTime, key: String?, personName: String?, priorProvider: String?, priorPersons: String): Int
 
     @Modifying
-    @Query(value = "UPDATE photo_work_outputs SET person_ids = person_ids || CAST(:persons AS jsonb) WHERE token = :token", nativeQuery = true)
+    @Query(value = "UPDATE photo_work_outputs SET person_ids = person_ids || CAST(:persons AS jsonb), faces_erased_at = NULL WHERE token = :token", nativeQuery = true)
     fun recordWorkPersons(token: UUID, persons: String): Int
+
+    @Query(value = """SELECT w.token, w.event_id AS "eventId", w.photo_id AS "photoId", w.generation,
+        w.expires_at AS "expiresAt", w.provider, w.person_name AS "personName", w.person_ids::text AS "personIds",
+        w.prior_provider AS "priorProvider", w.prior_person_ids::text AS "priorPersonIds", w.job_ids::text AS "jobIds",
+        COALESCE((SELECT jsonb_agg(bp.photo_id ORDER BY bp.idx)::text FROM ai_index_batch_photos bp
+            WHERE bp.batch_id = w.batch_id), '[]') AS "batchPhotoIds",
+        w.finished_at AS "finishedAt", w.faces_erased_at AS "facesErasedAt"
+        FROM photo_work_outputs w WHERE w.event_id = :eventId AND w.photo_id = :photoId AND w.kind = 'INDEXING'
+        ORDER BY w.created_at, w.token""", nativeQuery = true)
+    fun faceWorkForPhoto(eventId: UUID, photoId: UUID): List<PhotoFaceWork>
+
+    @Query(value = """SELECT DISTINCT w.event_id AS "eventId", w.photo_id AS "photoId"
+        FROM photo_work_outputs w WHERE w.kind = 'INDEXING' AND w.faces_erased_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM photos p WHERE p.id = w.photo_id
+            AND p.removal_state <> 'REMOVED' AND p.deletion_started_at IS NULL)
+        ORDER BY w.event_id, w.photo_id""", nativeQuery = true)
+    fun faceWorkPending(pageable: Pageable): List<PhotoFaceTarget>
+
+    @Modifying
+    @Query(value = """UPDATE photo_work_outputs SET faces_erased_at = :now
+        WHERE token = :token AND finished_at IS NOT NULL AND person_ids = CAST(:persons AS jsonb)""", nativeQuery = true)
+    fun confirmFaceWorkErased(token: UUID, persons: String, now: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = """UPDATE photo_work_outputs SET
+        provider = CASE WHEN :prior THEN provider ELSE :provider END,
+        prior_provider = CASE WHEN :prior THEN :provider ELSE prior_provider END
+        WHERE token = :token AND event_id = :eventId AND photo_id = :photoId AND kind = 'INDEXING'
+          AND person_name = CAST(:photoId AS text)
+          AND COALESCE(CASE WHEN :prior THEN prior_provider ELSE provider END, 'unknown') IN ('unknown', 'UNKNOWN')
+          AND CASE WHEN :prior THEN prior_person_ids ELSE person_ids END = CAST(:persons AS jsonb)""", nativeQuery = true)
+    fun attributeFaceWorkProvider(token: UUID, eventId: UUID, photoId: UUID, prior: Boolean, persons: String, provider: String): Int
 
     @Modifying
     @Query(value = "UPDATE photo_work_outputs SET batch_id = :batchId WHERE token = :token", nativeQuery = true)
