@@ -23,6 +23,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
@@ -51,6 +52,7 @@ class PhotographerPurchasesViewModelTest {
     }
 
     private fun model() = PhotographerPurchasesViewModel(application).also { viewModels.put("purchases", it) }
+    private fun event(id: String) = """{"id":"$id","slug":"run","name":"Run","date":"2026-10-01","location":"Cebu","state":"PAST","photoCount":1,"salesCount":0,"revenueKept":0}"""
     private fun photo(id: String) = """{"id":"$id","bib":null,"status":"ready","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null,"deletedAt":null,"deletionStartedAt":null}"""
     private fun receipt(order: String, photo: String) = """{"orderId":"$order","photoId":"$photo","buyer":"Aira S.","purchasedAt":"2026-10-01T00:00:00Z","orderCreatedAt":"2026-10-01T00:00:00Z","paymentMethod":"gcash","pricePhp":0,"discountPhp":0,"paidPhp":0,"kind":"free","refundStatus":"none","refundPending":false,"refundedPhp":null,"refundedAt":null,"netKeptPhp":0,"transactions":[]}"""
     private fun purchases(photoId: String, orders: List<String>, total: Int, offset: Int = 0, selected: String? = null): String =
@@ -74,21 +76,101 @@ class PhotographerPurchasesViewModelTest {
     }
 
     @Test fun `pins a receipt outside the first page and ignores older selection response`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
         respond = { request ->
             val order = request.requestUrl?.queryParameter("orderId")
             when {
-                request.path!!.contains("/photos/photo-a/purchases") && order == "order-a" -> ok(purchases("photo-a", listOf("first"), 2, selected = "order-a")).setBodyDelay(300, TimeUnit.MILLISECONDS)
+                request.path!!.contains("/photos/photo-a/purchases") && order == "order-a" -> {
+                    started.countDown()
+                    release.await(5, TimeUnit.SECONDS)
+                    ok(purchases("photo-a", listOf("first"), 2, selected = "order-a"))
+                }
                 request.path!!.contains("/photos/photo-a/purchases") -> ok(purchases("photo-a", listOf("first"), 2, selected = "order-b"))
                 else -> MockResponse().setResponseCode(404)
             }
         }
         val vm = model()
         vm.openPurchase("photo-a", "order-a")
-        vm.openPurchase("photo-a", "order-b")
-        vm.previewState.awaitFirst { it.selectedPurchase?.orderId == "order-b" }
-        Thread.sleep(400)
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            vm.openPurchase("photo-a", "order-b")
+            vm.previewState.awaitFirst { it.selectedPurchase?.orderId == "order-b" }
+        } finally { release.countDown() }
+        Thread.sleep(200)
         assertEquals("order-b", vm.previewState.value.selectedPurchase?.orderId)
         assertEquals(1, vm.previewState.value.items.size)
+    }
+
+    @Test fun `older event detail cannot replace the newly opened event`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        respond = { request -> when {
+            request.path!!.contains("/events/event-a?") -> {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                ok(event("event-a"))
+            }
+            request.path!!.contains("/events/event-b?") -> ok(event("event-b"))
+            else -> MockResponse().setResponseCode(404)
+        } }
+        val vm = model()
+        vm.loadEvent("event-a")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            vm.loadEvent("event-b")
+            vm.eventState.awaitFirst { it.event?.id == "event-b" }
+        } finally { release.countDown() }
+        Thread.sleep(200)
+        assertEquals("event-b", vm.eventState.value.event?.id)
+    }
+
+    @Test fun `older gallery cannot replace another event's purchased photos`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        respond = { request -> when {
+            request.path!!.contains("/events/event-a/purchased-photos") -> {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                ok(gallery(listOf("photo-a"), 1))
+            }
+            request.path!!.contains("/events/event-b/purchased-photos") -> ok(gallery(listOf("photo-b"), 1))
+            else -> MockResponse().setResponseCode(404)
+        } }
+        val vm = model()
+        vm.loadPurchasedPhotos("event-a")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            vm.loadPurchasedPhotos("event-b")
+            vm.purchasedPhotosState.awaitFirst { it.items.singleOrNull()?.photo?.id == "photo-b" }
+        } finally { release.countDown() }
+        Thread.sleep(200)
+        assertEquals("event-b", vm.purchasedPhotosState.value.eventId)
+        assertEquals("photo-b", vm.purchasedPhotosState.value.items.single().photo.id)
+    }
+
+    @Test fun `older photo purchase response cannot replace another photo's preview`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        respond = { request -> when {
+            request.path!!.contains("/photos/photo-a/purchases") -> {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                ok(purchases("photo-a", listOf("order-a"), 1))
+            }
+            request.path!!.contains("/photos/photo-b/purchases") -> ok(purchases("photo-b", listOf("order-b"), 1))
+            else -> MockResponse().setResponseCode(404)
+        } }
+        val vm = model()
+        vm.openPurchase("photo-a")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            vm.openPurchase("photo-b")
+            vm.previewState.awaitFirst { it.selectedPurchase?.orderId == "order-b" }
+        } finally { release.countDown() }
+        Thread.sleep(200)
+        assertEquals("photo-b", vm.previewState.value.photoId)
+        assertEquals("order-b", vm.previewState.value.selectedPurchase?.orderId)
     }
 
     @Test fun `gallery advances raw offsets and stops on empty page with stale total`() {
@@ -111,7 +193,7 @@ class PhotographerPurchasesViewModelTest {
         assertTrue(seenPaths.any { it.contains("offset=100") })
     }
 
-    @Test fun `preview exposes 404 and 429 for manual retry and close cancels work`() {
+    @Test fun `preview exposes 404 and 429 for manual retry`() {
         var status = 404
         respond = { request -> if (request.path!!.contains("/purchases")) MockResponse().setResponseCode(status) else MockResponse().setResponseCode(404) }
         val vm = model()
@@ -122,7 +204,21 @@ class PhotographerPurchasesViewModelTest {
         vm.retryPreview()
         vm.previewState.awaitFirst { it.errorStatus == 429 }
         assertEquals(2, seenPaths.size)
-        vm.closePreview()
+    }
+
+    @Test fun `closing preview discards an in-flight purchase response`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        respond = {
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            ok(purchases("photo-a", listOf("order-a"), 1))
+        }
+        val vm = model()
+        vm.openPurchase("photo-a")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try { vm.closePreview() } finally { release.countDown() }
+        Thread.sleep(200)
         assertNull(vm.previewState.value.photoId)
         assertNull(vm.previewState.value.selectedPurchase)
     }
@@ -193,12 +289,38 @@ class PhotographerPurchasesViewModelTest {
     }
 
     @Test fun `old account responses cannot restore purchase state`() {
-        respond = { request -> if (request.path!!.contains("/purchases")) ok(purchases("photo-a", listOf("order-a"), 1)).setBodyDelay(300, TimeUnit.MILLISECONDS) else MockResponse().setResponseCode(404) }
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        respond = { request -> if (request.path!!.contains("/purchases")) {
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            ok(purchases("photo-a", listOf("order-a"), 1))
+        } else MockResponse().setResponseCode(404) }
         val vm = model()
         vm.openPurchase("photo-a")
-        signInAs("RUNNER")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try { signInAs("RUNNER") } finally { release.countDown() }
         vm.previewState.awaitFirst { it.photoId == null }
-        Thread.sleep(400)
+        Thread.sleep(200)
+        assertNull(vm.previewState.value.photoId)
+        assertNull(vm.previewState.value.selectedPurchase)
+        assertFalse(vm.previewState.value.isLoading)
+    }
+
+    @Test fun `logout discards an in-flight purchase response`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        respond = {
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            ok(purchases("photo-a", listOf("order-a"), 1))
+        }
+        val vm = model()
+        vm.openPurchase("photo-a")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try { SessionManager.getInstance(application).clearSession() } finally { release.countDown() }
+        Thread.sleep(200)
+        assertNull(vm.previewState.value.photoId)
         assertNull(vm.previewState.value.selectedPurchase)
         assertFalse(vm.previewState.value.isLoading)
     }

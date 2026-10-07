@@ -73,9 +73,11 @@ class StudioEarningsViewModel(application: Application) : AndroidViewModel(appli
     private var walletJob: Job? = null
     private var transactionsJob: Job? = null
     private var eventsJob: Job? = null
+    private var payoutJob: Job? = null
     private var walletRequest = 0L
     private var transactionsRequest = 0L
     private var eventsRequest = 0L
+    private var payoutRequest = 0L
 
     init {
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -83,9 +85,11 @@ class StudioEarningsViewModel(application: Application) : AndroidViewModel(appli
                 walletRequest++
                 transactionsRequest++
                 eventsRequest++
+                payoutRequest++
                 walletJob?.cancel()
                 transactionsJob?.cancel()
                 eventsJob?.cancel()
+                payoutJob?.cancel()
                 _earningsUiState.value = EarningsUiState.Loading
                 _transactionsState.value = TransactionsPageState(hasMore = false)
                 _eventEarningsState.value = EventEarningsPageState(hasMore = false)
@@ -190,22 +194,29 @@ class StudioEarningsViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun submitPayoutRequest() {
-        viewModelScope.launch {
+        payoutRequest++
+        payoutJob?.cancel()
+        val request = payoutRequest
+        val generation = sessionManager.authChanges.value
+        payoutJob = viewModelScope.launch {
             _payoutActionState.value = "processing"
-            val token = sessionManager.getAccessToken()
+            val token = sessionManager.getAccessToken()?.takeIf { isPhotographerRole(sessionManager.getUserRole()) }
             if (token == null) {
                 _payoutActionState.value = "Error: No active login session."
                 return@launch
             }
             try {
                 val response = RetrofitClient.apiService.requestPayout("Bearer $token")
+                if (!currentPayout(request, generation)) return@launch
                 if (response.success && response.data != null) {
                     _payoutActionState.value = "Success: Payout request submitted successfully!"
                     fetchEarningsAndTransactions()
                 } else {
                     _payoutActionState.value = "Error: ${response.error ?: "Payout request rejected."}"
                 }
-            } catch (e: Exception) {
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (!currentPayout(request, generation)) return@launch
                 val err = RetrofitClient.parseHttpError(e)
                 _payoutActionState.value = "Error: ${err?.message ?: RetrofitClient.parseError(e)}"
             }
@@ -214,23 +225,34 @@ class StudioEarningsViewModel(application: Application) : AndroidViewModel(appli
 
     fun clearPayoutActionState() { _payoutActionState.value = null }
 
+    private fun currentPayout(request: Long, generation: Long): Boolean =
+        request == payoutRequest && generation == sessionManager.authChanges.value &&
+            isPhotographerRole(sessionManager.getUserRole()) && sessionManager.getAccessToken() != null
+
     fun withdrawPayoutRequest(cycleId: String) {
-        viewModelScope.launch {
+        payoutRequest++
+        payoutJob?.cancel()
+        val request = payoutRequest
+        val generation = sessionManager.authChanges.value
+        payoutJob = viewModelScope.launch {
             _payoutActionState.value = "processing"
-            val token = sessionManager.getAccessToken()
+            val token = sessionManager.getAccessToken()?.takeIf { isPhotographerRole(sessionManager.getUserRole()) }
             if (token == null) {
                 _payoutActionState.value = "Error: No active login session."
                 return@launch
             }
             try {
                 val response = RetrofitClient.apiService.withdrawPayout("Bearer $token", cycleId)
+                if (!currentPayout(request, generation)) return@launch
                 if (response.success) {
                     _payoutActionState.value = "Success: Request withdrawn — you can file a new one when ready."
                     fetchEarningsAndTransactions()
                 } else {
                     _payoutActionState.value = "Error: ${response.error ?: "Couldn't withdraw the request."}"
                 }
-            } catch (e: Exception) {
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (!currentPayout(request, generation)) return@launch
                 val err = RetrofitClient.parseHttpError(e)
                 _payoutActionState.value = "Error: ${err?.message ?: RetrofitClient.parseError(e)}"
             }

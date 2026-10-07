@@ -15,6 +15,7 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -23,6 +24,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * The payout cycle: a refused request must show the backend's own reason
@@ -124,6 +127,44 @@ class StudioEarningsViewModelTest {
         vm.earningsUiState.awaitFirst { it is EarningsUiState.Success }
         vm.transactionsState.awaitFirst { it.error != null }
         assertEquals("Ledger is unavailable.", vm.transactionsState.value.error)
+    }
+
+    @Test fun `logout discards an in-flight payout request result`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        route("POST $PAYOUTS/request") {
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            ok(PAYOUT)
+        }
+        val vm = model()
+        vm.submitPayoutRequest()
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            SessionManager.getInstance(application).clearSession()
+        } finally { release.countDown() }
+        Thread.sleep(250)
+        assertNull(vm.payoutActionState.value)
+        assertTrue(vm.earningsUiState.value is EarningsUiState.Loading)
+    }
+
+    @Test fun `role change discards an in-flight payout withdrawal result`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        route("POST $PAYOUTS/cy-1/withdraw") {
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            ok(PAYOUT)
+        }
+        val vm = model()
+        vm.withdrawPayoutRequest("cy-1")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            SessionManager.getInstance(application).saveSession("new-token", "RUNNER", "New", "new@x.com")
+        } finally { release.countDown() }
+        Thread.sleep(250)
+        assertNull(vm.payoutActionState.value)
+        assertTrue(vm.earningsUiState.value is EarningsUiState.Loading)
     }
 
     @Test fun `loads transaction 51 and preserves rows on retry`() {
