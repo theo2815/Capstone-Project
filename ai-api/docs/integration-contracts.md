@@ -402,6 +402,56 @@ async def remove_participant(participant, event):
 
 ---
 
+## Confirmed per-photo face erasure (QuickPitik backend)
+
+`FaceBibProvider.erasePhotoFaces(eventId, personId)` returns `DELETED` or
+`ALREADY_ABSENT` only after confirming absence; failures throw. The old
+`deleteFacesPerson` entry remains for compatibility. Backend
+`PhotoFaceErasureService.erase(eventId, photoId)` resolves durable enrollment
+targets and their recorded provider independently of active `AI_PROVIDER`.
+It does not delete blobs or create photo-erasure jobs.
+
+New face records carry `AI_API` or `REKOGNITION`; legacy records migrate to
+`UNKNOWN`. Composite Rekognition IDs must exactly match the event/photo UUIDs.
+Ambiguous legacy ai-api IDs require the exact photo UUID `person_name` within a
+complete tenant/event-scoped listing. Cleanup includes duplicate persons sharing
+that name. Unavailable recorded adapters and ambiguous attribution are visible
+retry/configuration failures; an unsupported empty listing is never proof.
+Before deleting a resolved legacy target, persist its proven provider on the
+individual face record and any unchanged homogeneous current/prior ledger group
+in a short transaction. Failed persistence or ambiguous siblings abort deletion;
+retries retain proof even after the original person disappears.
+
+For new synchronous enrollment, keep `person_id=null`. Persist event, photo
+UUID name, provider and producer claim before the request, then every returned
+person ID. ai-api deletion must confirm `success=true`, `deleted=true` and the
+requested person ID, followed by a complete event-scoped listing proving absence.
+HTTP 200 error envelopes, malformed/missing data, inconsistent/truncated pages
+and transport failures cannot confirm erasure. Rekognition uses paged `ListFaces`,
+exact external-ID matching, bounded `DeleteFaces` batches, checks unsuccessful
+deletions, and lists again; individual cleanup never deletes the collection.
+
+Terminal mega results must cover each submitted photo exactly once. Results are
+attributed by a valid UUID ref, or by an integral in-range index when
+the optional ref is null/absent. Null/absent indices use result position;
+malformed non-null refs or indices cannot use fallback or record face IDs.
+Each result also requires a valid person ID (including null/no-face) or a
+nonblank per-input error before its writer can be settled. Keep late
+IDs even for restricted/missing photos. Lost responses, incomplete results and
+unresolved accepted jobs keep cleanup pending; expiry never proves completion.
+`photo_work_outputs.finished_at` means writer completion. V75's `faces_erased_at`
+means confirmed erasure and resets when new IDs are recorded. Durable targets
+allow explicit last-photo cleanup without an indexed event row. Temporary review
+retains targets for the later decision; the reaper retries removed/missing-photo
+ledger targets.
+
+With `AI_API_ENABLED=false`, required cleanup waits. Only proven never-indexed
+photos with no targets/outstanding enrollment can skip AI cleanup. Failures use
+existing `AI_API_UNAVAILABLE` and bounded safe reasons (disabled cleanup,
+unavailable recorded provider, unresolved enrollment/attribution, incomplete
+confirmation, changed targets); provider text is not an admin/user response.
+Live-provider qualification remains a release gate.
+
 ## Error Handling Contract
 
 Both backends must handle these ai-api error scenarios. The `Error Code` column shows what appears in the `error.code` field of the standard envelope (or `detail` when the response is a raw FastAPI `HTTPException`).

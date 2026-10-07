@@ -15,6 +15,8 @@ import com.quickpitik.repository.AiIndexBatchRepository
 import com.quickpitik.repository.AiIndexJobRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.AiApiClient
+import com.quickpitik.service.ai.faceResultPhoto
+import com.quickpitik.service.ai.jobResultPhoto
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.websocket.PhotoIndexedEvent
 import org.slf4j.LoggerFactory
@@ -24,9 +26,9 @@ import org.springframework.transaction.support.TransactionTemplate
 import com.quickpitik.service.photos.PhotoWorkFence
 import com.quickpitik.dto.ai.JobStatusResult
 import com.quickpitik.entity.RemovalState
+import com.quickpitik.entity.FaceProvider
 import java.math.BigDecimal
 import java.time.OffsetDateTime
-import java.util.UUID
 
 // Ingests one mega job's results into the photos of its batch. Driven by the
 // webhook receiver (prod) or the poll backstop (dev/always-on) — both call
@@ -83,6 +85,13 @@ class PhotoBatchIngestService(
         if (job.status != IndexJobStatus.SUBMITTED) return@executeWithoutResult
         when (status.status) {
             "completed" -> {
+                if (job.kind == IndexJobKind.FACE && !completeFaceResults(batch, status.result)) {
+                    // Keep observed late IDs without certifying the missing
+                    // results or publishing a partially attributed completion.
+                    writeResults(batch, job.kind, status.result ?: emptyList(), publish = false)
+                    log.warn("ingest: face job {} has incomplete attribution; leaving SUBMITTED", aiJobId)
+                    return@executeWithoutResult
+                }
                 writeResults(batch, job.kind, status.result ?: emptyList())
                 job.status = IndexJobStatus.COMPLETED
                 job.completedAt = OffsetDateTime.now()
@@ -111,16 +120,25 @@ class PhotoBatchIngestService(
         }
     }
 
-    private fun writeResults(batch: AiIndexBatch, kind: IndexJobKind, result: List<Any?>) {
+    private fun completeFaceResults(batch: AiIndexBatch, result: List<Any?>?): Boolean {
+        if (result == null || result.size != batch.photoIds.size) return false
+        val ids = result.mapIndexed { index, item ->
+            faceResultPhoto(item, index, batch.photoIds) ?: return false
+        }
+        return ids.toSet() == batch.photoIds.toSet()
+    }
+
+    private fun writeResults(batch: AiIndexBatch, kind: IndexJobKind, result: List<Any?>, publish: Boolean = true) {
         val claims = workFence.forBatch(batch.id).associateBy { it.photoId }
         val current = claims.values.sortedBy { it.photoId.toString() }.associate { it.photoId to workFence.isCurrent(it) }
         val photosById = photoRepository.findAllById(batch.photoIds).associateBy { it.id }
         result.forEachIndexed { idx, item ->
             val map = item as? Map<*, *> ?: return@forEachIndexed
-            val id = resolvePhotoId(map, idx, batch.photoIds) ?: return@forEachIndexed
+            val id = jobResultPhoto(map, idx, batch.photoIds) ?: return@forEachIndexed
             val claim = claims[id] ?: return@forEachIndexed
             val personId = (map["person_id"] as? String)?.takeIf { it.isNotBlank() }
             if (kind == IndexJobKind.FACE && personId != null) workFence.recordPerson(claim, personId)
+            if (!publish) return@forEachIndexed
             val photo = photosById[id] ?: return@forEachIndexed
             if (current[id] != true || photo.removalState != RemovalState.NONE || photo.deletedAt != null) return@forEachIndexed
             if (photo.indexingStatus != IndexingStatus.BATCHING) return@forEachIndexed
@@ -131,7 +149,7 @@ class PhotoBatchIngestService(
                 IndexJobKind.FACE -> {
                     // person_id is null for a photo with no enrollable face — benign.
                     if (personId != null && photo.facePersons.none { it.aiPersonId == personId }) {
-                        photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = personId))
+                        photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = personId, provider = FaceProvider.AI_API))
                     }
                 }
                 IndexJobKind.BIB -> {
@@ -151,19 +169,6 @@ class PhotoBatchIngestService(
             }
         }
         photoRepository.saveAll(photosById.values)
-    }
-
-    // Map a result item to its photo: prefer the echoed ref (= photo id), fall
-    // back to the result's own global index, then the positional list index.
-    private fun resolvePhotoId(
-        map: Map<*, *>,
-        idx: Int,
-        photoIds: List<UUID>,
-    ): UUID? {
-        val ref = (map["ref"] as? String)?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-        val pos = (map["index"] as? Number)?.toInt() ?: idx
-        val id = ref ?: photoIds.getOrNull(pos)
-        return id?.takeIf { it in photoIds }
     }
 
     private fun finalize(batch: AiIndexBatch, jobs: List<AiIndexJob>) {

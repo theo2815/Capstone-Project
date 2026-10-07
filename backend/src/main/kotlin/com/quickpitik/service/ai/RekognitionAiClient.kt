@@ -9,6 +9,8 @@ import com.quickpitik.dto.ai.FaceMatch
 import com.quickpitik.dto.ai.FacesDetectResult
 import com.quickpitik.dto.ai.FacesEnrollResult
 import com.quickpitik.dto.ai.FacesSearchResult
+import com.quickpitik.dto.ai.FaceErasureResult
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.image.ExifOrientation
 import com.quickpitik.service.image.SubsampledDecode
 import org.slf4j.LoggerFactory
@@ -20,6 +22,8 @@ import software.amazon.awssdk.core.SdkBytes
 import software.amazon.awssdk.services.rekognition.RekognitionClient
 import software.amazon.awssdk.services.rekognition.model.CreateCollectionRequest
 import software.amazon.awssdk.services.rekognition.model.DeleteCollectionRequest
+import software.amazon.awssdk.services.rekognition.model.DeleteFacesRequest
+import software.amazon.awssdk.services.rekognition.model.ListFacesRequest
 import software.amazon.awssdk.services.rekognition.model.DetectFacesRequest
 import software.amazon.awssdk.services.rekognition.model.DetectTextRequest
 import software.amazon.awssdk.services.rekognition.model.Image
@@ -166,12 +170,51 @@ class RekognitionAiClient(
     }
 
     override fun deleteFacesPerson(personId: String) {
-        // ponytail: basic collections can't locate faces by ExternalImageId, so
-        // one photo's faces can't be surgically deleted. Harmless here — re-index
-        // leaves duplicate faces under the same ExternalImageId (same photo → same
-        // match) and event deletion drops the whole collection. Upgrade path:
-        // Rekognition Users (CreateUser/AssociateFaces) if per-photo erasure is needed.
-        log.debug("Rekognition provider: per-person delete is a no-op (personId={})", personId)
+        val event = runCatching { UUID.fromString(personId.substringBefore('.')) }.getOrNull()
+            ?: throw AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCodes.VALIDATION_ERROR, "Invalid face target")
+        erasePhotoFaces(event, personId)
+    }
+
+    override fun erasePhotoFaces(eventId: UUID, personId: String): FaceErasureResult = guarded("erasePhotoFaces") {
+        val parts = personId.split('.')
+        require(parts.size == 2 && parts[0] == eventId.toString() &&
+            runCatching { UUID.fromString(parts[1]).toString() == parts[1] }.getOrDefault(false)) { "Invalid face target" }
+        val collection = collectionFor(eventId)
+        try {
+            val ids = faceIds(collection, personId)
+            if (ids.isEmpty()) return@guarded FaceErasureResult.ALREADY_ABSENT
+            ids.chunked(4096).forEach { batch ->
+                val response = rekognition.deleteFaces(DeleteFacesRequest.builder().collectionId(collection).faceIds(batch).build())
+                if (response.unsuccessfulFaceDeletions().isNotEmpty() || response.deletedFaces().toSet() != batch.toSet()) {
+                    throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.AI_API_UNAVAILABLE, "Face cleanup incomplete")
+                }
+            }
+            if (faceIds(collection, personId).isNotEmpty()) {
+                throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.AI_API_UNAVAILABLE, "Face cleanup unconfirmed")
+            }
+            FaceErasureResult.DELETED
+        } catch (ex: ResourceNotFoundException) {
+            FaceErasureResult.ALREADY_ABSENT
+        }
+    }
+
+    private fun faceIds(collection: String, externalId: String): List<String> {
+        val ids = mutableSetOf<String>()
+        val tokens = mutableSetOf<String>()
+        var token: String? = null
+        do {
+            val page = rekognition.listFaces(ListFacesRequest.builder().collectionId(collection).nextToken(token).maxResults(4096).build())
+            page.faces().filter { it.externalImageId() == externalId }.forEach {
+                val id = it.faceId()?.takeIf(String::isNotBlank)
+                    ?: throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.AI_API_UNAVAILABLE, "Invalid face listing")
+                ids.add(id)
+            }
+            token = page.nextToken()?.takeIf(String::isNotBlank)
+            if (token != null && !tokens.add(token)) {
+                throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.AI_API_UNAVAILABLE, "Incomplete face listing")
+            }
+        } while (token != null)
+        return ids.toList()
     }
 
     override fun deleteFacesByEvent(eventId: UUID) {
@@ -188,9 +231,7 @@ class RekognitionAiClient(
     }
 
     override fun listPersonsForEvent(eventId: UUID): List<AiPersonRef> {
-        // The orphan reaper is ai-api-specific; under Rekognition its cleanup
-        // happens via event-collection deletion. Empty = safe no-op for the reaper.
-        return emptyList()
+        throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.AI_API_UNAVAILABLE, "Person listing unsupported by recorded provider")
     }
 
     private fun indexWithCollection(collectionId: String, externalId: String, file: ByteArray) =

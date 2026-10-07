@@ -4,6 +4,7 @@ import com.quickpitik.dto.ai.BibsRecognizeResult
 import com.quickpitik.dto.ai.FacesDetectResult
 import com.quickpitik.dto.ai.FacesEnrollResult
 import com.quickpitik.dto.ai.FacesSearchResult
+import com.quickpitik.dto.ai.FaceErasureResult
 import java.util.UUID
 
 // The synchronous face + bib inference the hot upload/search paths depend on,
@@ -41,6 +42,8 @@ interface FaceBibProvider {
     ): BibsRecognizeResult
 
     fun deleteFacesPerson(personId: String)
+
+    fun erasePhotoFaces(eventId: UUID, personId: String): FaceErasureResult
 
     fun deleteFacesByEvent(eventId: UUID)
 
