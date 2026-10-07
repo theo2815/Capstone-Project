@@ -15,7 +15,8 @@ import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import type { PerEventEarning } from "@/lib/api-photographer-earnings";
-import { formatPrice } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 
 export default function EarningsPage() {
   return (
@@ -197,7 +198,7 @@ function PerEventSlab() {
   const livePerEvent = usePhotographerPerEventEarnings();
   const events = livePerEvent.items;
 
-  if (livePerEvent.isLoading) {
+  if (livePerEvent.isLoading && !livePerEvent.isPaused) {
     return (
       <Slab id="per-event" number="03" title="Per-event">
         <ul className="border-y border-line divide-y divide-line">
@@ -219,7 +220,12 @@ function PerEventSlab() {
       number="03"
       title="Per-event"
     >
-      {livePerEvent.error ? (
+      {livePerEvent.isPaused && events.length === 0 ? (
+        <div role="alert" className="font-sans text-base text-slate">
+          <p>You&apos;re offline. Reconnect to load event earnings, or retry once connected.</p>
+          <button type="button" onClick={livePerEvent.refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry event earnings</button>
+        </div>
+      ) : livePerEvent.error ? (
         <div role="alert" className="font-sans text-base text-slate">
           <p>Couldn&apos;t load event earnings.</p>
           <button type="button" onClick={livePerEvent.refetch} className="mt-4 min-h-[44px] underline">Retry</button>
@@ -238,14 +244,15 @@ function PerEventSlab() {
             ))}
           </ul>
           {livePerEvent.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more event earnings. Try again.</p>}
-          <LoadMoreButton
+          {livePerEvent.isPaused && <div role="alert" className="mt-4 font-sans text-sm text-slate"><p>You&apos;re offline. Reconnect to continue loading event earnings.</p><button type="button" disabled className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Waiting for connection</button></div>}
+          {!livePerEvent.isPaused && <LoadMoreButton
             shown={events.length}
             total={livePerEvent.hasNextPage ? livePerEvent.total : events.length}
             increment={PAGE_SIZE.EARNINGS_INCREMENT}
             onLoadMore={livePerEvent.fetchNextPage}
             isLoading={livePerEvent.isFetchingNextPage}
             terminalLabel={!livePerEvent.hasNextPage && events.length < livePerEvent.total ? "All available event earnings loaded" : undefined}
-          />
+          />}
         </>
       )}
     </Slab>

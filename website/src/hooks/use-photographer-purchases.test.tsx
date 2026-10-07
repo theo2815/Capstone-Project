@@ -36,6 +36,20 @@ it("append failure keeps loaded receipts", async () => {
   await waitFor(() => expect(result.current.appendError).toBeTruthy());
 });
 
+it.each([404, 429])("seller queries keep HTTP %s separate from offline pause without automatic retry", async (status) => {
+  login();
+  const get = vi.spyOn(api, "get").mockRejectedValue(new ApiError([{ code: "UNAVAILABLE", message: "Unavailable" }], status));
+  const { result } = renderHook(() => ({
+    gallery: usePhotographerPurchasedPhotos("event-a", true),
+    history: usePhotographerPhotoPurchases("photo-a", "order-a"),
+  }), { wrapper });
+  await waitFor(() => expect(result.current.gallery.error).toBeInstanceOf(ApiError));
+  await waitFor(() => expect(result.current.history.error).toBeInstanceOf(ApiError));
+  expect(result.current.gallery.isPaused).toBe(false);
+  expect(result.current.history.isPaused).toBe(false);
+  expect(get).toHaveBeenCalledTimes(2);
+});
+
 it("dedupes photo pages by photo ID", async () => {
   login();
   const get = vi.spyOn(api, "get").mockResolvedValueOnce(envelope([{ photo: { id: "photo-a" }, purchaseCount: 1 }], 0, 100)).mockResolvedValueOnce(envelope([{ photo: { id: "photo-a" }, purchaseCount: 1 }], 25, 100));

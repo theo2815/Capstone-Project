@@ -79,6 +79,7 @@ export interface PhotographerEventDetailResult {
   isMissing: boolean;
   error: Error | null;
   isLoading: boolean;
+  isPaused: boolean;
   refetch: () => void;
 }
 
@@ -113,6 +114,7 @@ export function usePhotographerEventDetail(
     isMissing: query.error instanceof ApiError && query.error.status === 404,
     error: query.error,
     isLoading: query.isPending && session.enabled,
+    isPaused: query.isPaused && session.enabled,
     refetch: () => void query.refetch(),
   };
 }
@@ -183,6 +185,7 @@ export function usePhotographerPerEventEarnings() {
     items: dedupeItems(pages.map((page) => ({ ...page, items: page.items.map((item) => ({ id: item.eventId, value: item })) }))).map(({ value }) => value),
     total: pages.at(-1)?.total ?? 0,
     isLoading: query.isPending && session.enabled,
+    isPaused: query.isPaused && session.enabled,
     error: query.isFetchNextPageError ? null : query.error,
     appendError: query.isFetchNextPageError ? query.error : null,
     refetch: () => void query.refetch(),
@@ -247,6 +250,7 @@ export function usePhotographerTransactions() {
     total: pages.at(-1)?.total ?? 0,
     monthTotals: pages[0]?.monthTotals ?? {},
     isLoading: query.isPending && session.enabled,
+    isPaused: query.isPaused && session.enabled,
     isFetchingNextPage: query.isFetchingNextPage,
     hasNextPage: query.hasNextPage,
     fetchNextPage: () => void query.fetchNextPage(),

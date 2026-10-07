@@ -478,6 +478,15 @@ purchase time. No full buyer identity, receipt email, guest capability,
 other-seller item or whole-order total is exposed. Anonymous free downloads
 create no order item and therefore have no purchase history.
 
+Website event detail, Purchased photos, receipt history, per-event earnings
+and Billing transactions expose Query's paused state separately from HTTP
+errors. Initial offline reads offer reconnect/retry; paused pagination keeps
+loaded rows and the selected receipt, disables duplicate append actions and
+resumes on reconnection. Purchased mounts only after private detail resolves.
+Closing the preview or ending its session prevents delayed private reads.
+Ledger recovery does not invoke or disable wallet/payout actions; Query's
+existing network and retry policies remain unchanged.
+
 The private `PhotographerLibraryPhotoDto` (ordinary owner library and both
 purchase responses) always emits non-null `mediaAvailable: boolean`. It is a
 fresh owner-scoped delivery-policy result: false for REMOVED, deletion-started

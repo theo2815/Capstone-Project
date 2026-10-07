@@ -126,11 +126,12 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     {selected?.transactions.map((row) => <p key={row.id} aria-current={row.id === selection.transactionId ? "true" : undefined} className={row.id === selection.transactionId ? "rounded-lg border border-ink bg-fresh-tint/40 p-2 tnum" : "p-2 tnum"}>
       {row.isRefund ? "Earnings adjustment" : "Sale earnings"} · {formatPrice(row.amountKept)} · Recorded {formatSalesDate(row.recordedAt)}
     </p>)}
-    {!selected && !fallback && <p>Purchase unavailable.</p>}
-    {fallback && !selected && !purchase.isLoading && <p>Purchase unavailable.</p>}
-    {purchase.isLoading && <p>Loading purchases…</p>}
+    {!purchase.isPaused && !selected && !fallback && <p>Purchase unavailable.</p>}
+    {!purchase.isPaused && fallback && !selected && !purchase.isLoading && <p>Purchase unavailable.</p>}
+    {purchase.isLoading && !purchase.isPaused && <p>Loading purchases…</p>}
+    {purchase.isPaused && <p role="alert">You&apos;re offline. Reconnect to continue loading purchases, or retry once connected.</p>}
     {purchase.error && <p role="alert">{errorText}</p>}
-    {(purchase.error || ((orderId || fallback) && !selected && !purchase.isLoading)) && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.refetch()}>Retry purchases</button>}
+    {((purchase.isPaused && purchase.items.length === 0) || purchase.error || ((orderId || fallback) && !selected && !purchase.isLoading)) && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.refetch()}>Retry purchases</button>}
     {purchase.items.length > 1 && <div className="space-y-2 border-t border-line pt-3">
       <p className="font-display font-bold">Purchase history</p>
       {purchase.items.map((item: PhotographerPurchase) => <button key={`${item.orderId}:${item.photoId}`} type="button" aria-pressed={item.orderId === orderId} onClick={() => setOrderId(item.orderId)} className="block w-full rounded-lg border border-line p-2 text-left hover:bg-bone-deep aria-pressed:border-ink aria-pressed:bg-fresh-tint/30">
@@ -138,7 +139,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
       </button>)}
     </div>}
     {purchase.appendError && <p role="alert">Could not load more purchases.</p>}
-    {purchase.hasNextPage && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.fetchNextPage()} disabled={purchase.isFetchingNextPage}>Load more purchases</button>}
+    {purchase.hasNextPage && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.fetchNextPage()} disabled={purchase.isFetchingNextPage || purchase.isPaused}>{purchase.isPaused ? "Waiting for connection" : "Load more purchases"}</button>}
     {downloadError && <p role="alert">Download unavailable. Try again.</p>}
   </div>;
 

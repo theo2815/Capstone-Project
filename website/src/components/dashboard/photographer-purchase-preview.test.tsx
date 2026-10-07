@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
@@ -22,7 +22,62 @@ function view(selection: { photoId: string; orderId?: string; transactionId?: st
   return <QueryClientProvider client={client}><PhotographerPurchasePreview selection={selection} transaction={transaction} onClose={vi.fn()} /></QueryClientProvider>;
 }
 const fact = (label: string) => screen.getByText(label, { exact: true }).nextElementSibling;
-afterEach(() => { vi.restoreAllMocks(); useAuthStore.getState().logout(); });
+afterEach(() => { onlineManager.setOnline(true); vi.restoreAllMocks(); useAuthStore.getState().logout(); });
+
+it.each([true, false])("receipt history offline initial=%s preserves selected receipt on append and stays closed on reconnect", async (initialOffline) => {
+  login();
+  onlineManager.setOnline(!initialOffline);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const get = vi.spyOn(api, "get").mockImplementation(async (path) => {
+    const offset = Number(new URL(path, "https://test.invalid").searchParams.get("offset"));
+    return { ...response([receipt(offset === 0 ? orderA : orderB)]), offset, total: 50 };
+  });
+  const { rerender } = render(view({ photoId: photo.id }, client));
+  if (initialOffline) {
+    expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+    expect(screen.queryByText("Loading purchases…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry purchases" })).toBeEnabled();
+    expect(get).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry purchases" }));
+    act(() => onlineManager.setOnline(true));
+  }
+  await waitFor(() => expect(fact("Reference")).toHaveTextContent("AAAAAAAA"));
+  act(() => onlineManager.setOnline(false));
+  fireEvent.click(screen.getByRole("button", { name: "Load more purchases" }));
+  expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+  expect(fact("Reference")).toHaveTextContent("AAAAAAAA");
+  expect(screen.getByRole("button", { name: /waiting for connection/i })).toBeDisabled();
+  expect(get).toHaveBeenCalledTimes(1);
+  act(() => onlineManager.setOnline(true));
+  await screen.findByText("Purchase history");
+  fireEvent.click(screen.getAllByRole("button", { name: /Aira S\./ })[1]);
+  expect(fact("Reference")).toHaveTextContent("BBBBBBBB");
+  act(() => { onlineManager.setOnline(false); client.invalidateQueries(); });
+  expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+  rerender(view(null, client));
+  act(() => onlineManager.setOnline(true));
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(get).toHaveBeenCalledTimes(2);
+  client.clear();
+});
+
+it.each(["seller-b", "runner-b"])("paused preview cannot populate or reopen after switching to %s", async (id) => {
+  login();
+  onlineManager.setOnline(false);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const get = vi.spyOn(api, "get").mockResolvedValue(response([receipt(orderA)]));
+  const close = vi.fn();
+  render(<QueryClientProvider client={client}><PhotographerPurchasePreview selection={{ photoId: photo.id }} onClose={close} /></QueryClientProvider>);
+  expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+  act(() => useAuthStore.getState().setUser({ id, role: id === "runner-b" ? "RUNNER" : "PHOTOGRAPHER", name: "Other", email: "other@example.test", createdAt: "2026-09-10" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  act(() => onlineManager.setOnline(true));
+  await act(async () => { await Promise.resolve(); });
+  expect(get).not.toHaveBeenCalled();
+  expect(close).toHaveBeenCalledOnce();
+  client.clear();
+});
 
 it.each([undefined, true, false])("uses explicit availability %s without treating a missing thumbnail as denial", async (mediaAvailable) => {
   login();

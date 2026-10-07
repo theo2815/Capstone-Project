@@ -1,5 +1,5 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
@@ -39,9 +39,70 @@ beforeEach(() => {
   useAuthStore.getState().logout();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 });
-afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); useAuthStore.getState().logout(); });
+afterEach(() => { cleanup(); client.clear(); onlineManager.setOnline(true); vi.restoreAllMocks(); useAuthStore.getState().logout(); });
 
 const page = { items: [{ id: "record-a" }], total: 1, offset: 0, limit: 24 };
+
+const offlineLists = [
+  { name: "Purchased", useRead: () => usePhotographerPurchasedPhotos("event-a", true), payload: { ...page, items: [{ photo: { id: "photo-a" }, purchaseCount: 1 }] } },
+  { name: "receipts", useRead: () => usePhotographerPhotoPurchases("photo-a", "order-a"), payload: { ...page, items: [{ orderId: "order-a", photoId: "photo-a" }], photo: { id: "photo-a" }, event: { id: "event-a" }, selectedPurchase: { orderId: "order-a", photoId: "photo-a" } } },
+  { name: "event earnings", useRead: usePhotographerPerEventEarnings, payload: { ...page, items: [{ eventId: "event-a" }] } },
+  { name: "transactions", useRead: usePhotographerTransactions, payload: { ...page, monthTotals: { "2026-10": 75 } } },
+] as const;
+
+it.each(offlineLists)("$name exposes initial and append pause, recovers and cancels old-session queued work", async ({ useRead, payload }) => {
+  login("PHOTOGRAPHER");
+  onlineManager.setOnline(false);
+  const get = vi.spyOn(api, "get").mockResolvedValue({ ...payload, total: 100 });
+  const { result } = renderHook(() => useRead(), { wrapper });
+  await waitFor(() => expect(result.current).toHaveProperty("isPaused", true));
+  expect(result.current.error).toBeNull();
+  expect(result.current.items).toEqual([]);
+  expect(get).not.toHaveBeenCalled();
+  act(() => onlineManager.setOnline(true));
+  await waitFor(() => expect(result.current.items).toHaveLength(1));
+  const loaded = result.current.items;
+  act(() => { onlineManager.setOnline(false); void result.current.fetchNextPage(); });
+  await waitFor(() => expect(result.current).toHaveProperty("isPaused", true));
+  expect(result.current.items).toEqual(loaded);
+  expect(result.current.appendError).toBeNull();
+  expect(get).toHaveBeenCalledTimes(1);
+  act(() => onlineManager.setOnline(true));
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(result.current).toHaveProperty("isPaused", false));
+  expect(result.current.items).toEqual(loaded);
+  act(() => { onlineManager.setOnline(false); void result.current.fetchNextPage(); });
+  await waitFor(() => expect(result.current).toHaveProperty("isPaused", true));
+  act(() => { useAuthStore.getState().logout(); client.clear(); login("RUNNER"); onlineManager.setOnline(true); });
+  await waitFor(() => expect(result.current.items).toEqual([]));
+  expect(get).toHaveBeenCalledTimes(2);
+});
+
+it.each(offlineLists)("$name exposes append pause with loaded rows intact", async ({ useRead, payload }) => {
+  login("PHOTOGRAPHER");
+  vi.spyOn(api, "get").mockResolvedValue({ ...payload, total: 100 });
+  const { result } = renderHook(() => useRead(), { wrapper });
+  await waitFor(() => expect(result.current.items).toHaveLength(1));
+  const loaded = result.current.items;
+  act(() => { onlineManager.setOnline(false); void result.current.fetchNextPage(); });
+  await waitFor(() => expect(result.current).toHaveProperty("isPaused", true));
+  expect(result.current.items).toEqual(loaded);
+  expect(result.current.appendError).toBeNull();
+});
+
+it("uncached event detail exposes pause without missing or error and recovers on reconnect", async () => {
+  login("PHOTOGRAPHER");
+  onlineManager.setOnline(false);
+  const get = vi.spyOn(api, "get").mockResolvedValue({ id: "event-a" });
+  const { result } = renderHook(() => usePhotographerEventDetail("event-a", { includeRemoved: true }), { wrapper });
+  await waitFor(() => expect(result.current).toHaveProperty("isPaused", true));
+  expect(result.current.isMissing).toBe(false);
+  expect(result.current.error).toBeNull();
+  expect(get).not.toHaveBeenCalled();
+  act(() => onlineManager.setOnline(true));
+  await waitFor(() => expect(result.current.detail?.id).toBe("event-a"));
+  expect(result.current).toHaveProperty("isPaused", false);
+});
 
 it("deduplicates event earnings while retaining raw offsets, totals and rows through append retry and refresh", async () => {
   login("PHOTOGRAPHER");

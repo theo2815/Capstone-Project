@@ -634,7 +634,7 @@ function TransactionsSlab() {
     [transactions, monthTotalsMap],
   );
 
-  if (isLoading) {
+  if (isLoading && !liveTx.isPaused) {
     return (
       <Slab
         id="transactions"
@@ -677,7 +677,9 @@ function TransactionsSlab() {
       {liveTx.error && <div role="alert" aria-label="Transactions" className="mb-5 font-sans text-sm text-error">
         Couldn&apos;t load transactions. <button type="button" className="underline" onClick={liveTx.refetch}>Retry transactions</button>
       </div>}
-      {!liveTx.error && transactions.length === 0 ? (
+      {liveTx.isPaused && transactions.length === 0 ? (
+        <div role="alert" aria-label="Transactions" className="font-sans text-base text-slate"><p>You&apos;re offline. Reconnect to load transactions, or retry once connected.</p><button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm} mt-4`} onClick={liveTx.refetch}>Retry transactions</button></div>
+      ) : !liveTx.error && transactions.length === 0 ? (
         <p className="font-sans text-base text-slate max-w-md">
           Sales will land here as runners buy your photos. Completed zero-charge purchases appear under each event&apos;s Purchased photos.
         </p>
@@ -712,8 +714,9 @@ function TransactionsSlab() {
             ))}
           </ul>
           {liveTx.appendError && <p role="alert" aria-label="Transactions" className="mt-4 font-sans text-sm text-error">Couldn&apos;t load more transactions.</p>}
-          {liveTx.appendError && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm} mt-3`} onClick={liveTx.fetchNextPage}>Retry transactions</button>}
-          {liveTx.hasNextPage && !liveTx.appendError && <LoadMoreButton
+          {liveTx.appendError && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm} mt-3`} onClick={liveTx.fetchNextPage} disabled={liveTx.isPaused || liveTx.isFetchingNextPage}>Retry transactions</button>}
+          {liveTx.isPaused && <div role="alert" aria-label="Transactions" className="mt-4 font-sans text-sm text-slate"><p>You&apos;re offline. Reconnect to continue loading transactions.</p><button type="button" disabled className={`${BTN_SECONDARY} ${BTN_SIZE.sm} mt-4`}>Waiting for connection</button></div>}
+          {liveTx.hasNextPage && !liveTx.appendError && !liveTx.isPaused && <LoadMoreButton
             shown={transactions.length}
             total={liveTx.total}
             increment={PAGE_SIZE.TRANSACTION_INCREMENT}
