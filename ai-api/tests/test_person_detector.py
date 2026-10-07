@@ -152,14 +152,14 @@ def test_matches_ultralytics_on_a_real_picture():
     if not onnx.is_file():
         pytest.skip("export the detector first (scripts/export_person_detector.py)")
     from ultralytics import YOLO
+    from ultralytics.utils import ASSETS
 
-    rng = np.random.default_rng(0)
-    image = rng.integers(0, 256, (1280, 853, 3), dtype=np.uint8)
-    cv2.rectangle(image, (300, 200), (550, 1000), (30, 30, 30), -1)  # a dark upright blob
+    image = cv2.imread(str(ASSETS / "bus.jpg"))  # ships with Ultralytics: four people
     reference = YOLO(str(onnx), task="segment").predict(
         pd.tone_normalize(image), imgsz=640, conf=0.2, classes=[0], retina_masks=True, verbose=False
     )[0]
     ours = pd.PersonDetector(ort.InferenceSession(str(onnx)), min_conf=0.2).detect(image)
+    assert len(reference.boxes) >= 3  # the comparison below must have people to compare
     assert len(ours) == len(reference.boxes)
     ours = sorted(ours, key=lambda d: d.box)
     order = np.argsort([b[0] for b in reference.boxes.xyxy.tolist()])
