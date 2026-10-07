@@ -438,6 +438,40 @@ Other photographers and unknown events receive 404.
 Live and archived event detail is unchanged. This opt-in does not reopen the
 event's photo list, public detail, uploads, or photo management actions.
 
+**Photographer purchase history — additive seller reads:**
+`GET /api/v1/me/photographer/earnings/per-event` now includes covered events
+with completed order items even when retained revenue is zero, and adds
+`purchaseCount` and `deletedAt` to each event row. `purchaseCount` counts
+completed items, including zero-charge and refunded purchases; existing
+`salesCount` and `revenueKept` keep their ledger meanings. Rows remain ordered
+by retained revenue descending, then event ID, with server pagination.
+
+`GET /api/v1/me/photographer/events/{eventId}/purchased-photos` returns one
+row per purchased photo with `photo`, `purchaseCount` and `lastPurchasedAt` in
+the standard `items`/`total`/`offset`/`limit` envelope. It accepts `offset`
+and `limit`, defaults to 0/50 and caps the limit at 200. Rows order by latest
+completed purchase descending, then photo ID. The event read permits the
+seller's retained Removed history, but ownership and coverage remain required.
+
+`GET /api/v1/me/photographer/photos/{photoId}/purchases` pages completed
+order items for one owned photo, newest first with order ID as tie-breaker.
+Its `photo`, current retained `event`, `items`, `total`, `offset`, `limit` and
+`selectedPurchase` include an optional `orderId` selection even when that
+purchase is outside the requested page. An unknown or foreign photo/order
+returns 404. Each item exposes an abbreviated `buyer`, order/photo IDs,
+purchase and order-created times, payment method, historical item price and
+discount, paid amount, free/paid kind, refund status/pending/amount/time,
+net photographer keep and only that seller item's sale/refund transactions.
+The existing billing transaction rows additionally expose `orderId`,
+`isRefund`, `refundOf`, `recordedAt` and `thumbnailUrl`; `paidAt` still means
+purchase time. No full buyer identity, receipt email, guest capability,
+other-seller item or whole-order total is exposed. Anonymous free downloads
+create no order item and therefore have no purchase history.
+
+These reads use existing order, item, photo, dispute and transaction tables.
+No schema migration or new index was added for this feature; checkout, refund
+minting, payout and existing ledger totals are unchanged.
+
 **Photographer photo management — website/mobile integration:**
 `GET /api/v1/me/photographer/events/{id}/photos?deleted=true` lists trash using
 the same `items`, `offset`, `limit`, and `total` pagination envelope as the active
