@@ -2,7 +2,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import { resetUserScopedStores } from "@/lib/auth-reset";
 import type { Role } from "@/types/user";
@@ -42,6 +42,42 @@ beforeEach(() => {
 afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); useAuthStore.getState().logout(); });
 
 const page = { items: [{ id: "record-a" }], total: 1, offset: 0, limit: 24 };
+
+it("deduplicates event earnings while retaining raw offsets, totals and rows through append retry and refresh", async () => {
+  login("PHOTOGRAPHER");
+  const earning = (eventId: string, revenueKept: number) => ({
+    eventId, eventName: eventId, eventDate: "2026-09-01", photoCount: 2,
+    salesCount: 1, purchaseCount: 1, revenueKept,
+  });
+  const e1 = earning("e1", 40);
+  const e2 = earning("e2", 0);
+  const e3 = earning("e3", 0);
+  const get = vi.spyOn(api, "get")
+    .mockResolvedValueOnce({ items: [e1, e2], total: 25, offset: 0, limit: 7 })
+    .mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMITED", message: "Try again" }], 429))
+    .mockResolvedValueOnce({ items: [earning("e2", 99), e3], total: 25, offset: 7, limit: 6 })
+    .mockResolvedValueOnce({ items: [], total: 25, offset: 13, limit: 10 })
+    .mockResolvedValueOnce({ items: [e3, e1], total: 2, offset: 0, limit: 10 });
+  const { result } = renderHook(usePhotographerPerEventEarnings, { wrapper });
+  await waitFor(() => expect(result.current.items).toEqual([e1, e2]));
+  act(() => result.current.fetchNextPage());
+  await waitFor(() => expect(result.current.appendError).toBeInstanceOf(ApiError));
+  expect(result.current.items).toEqual([e1, e2]);
+  expect(result.current.total).toBe(25);
+  act(() => result.current.fetchNextPage());
+  await waitFor(() => expect(result.current.items).toEqual([e1, e2, e3]));
+  expect(result.current.appendError).toBeNull();
+  expect(result.current.total).toBe(25);
+  act(() => result.current.fetchNextPage());
+  await waitFor(() => expect(result.current.hasNextPage).toBe(false));
+  expect(result.current.items).toEqual([e1, e2, e3]);
+  expect(result.current.total).toBe(25);
+  act(() => result.current.refetch());
+  await waitFor(() => expect(result.current.items).toEqual([e3, e1]));
+  expect(result.current.total).toBe(2);
+  expect(get.mock.calls.map(([path]) => new URLSearchParams(path.split("?")[1]).get("offset")))
+    .toEqual(["0", "7", "7", "13", "0"]);
+});
 describe.each([
   { name: "orders", role: "RUNNER", useRead: useOrdersList, payload: page },
   { name: "order detail", role: "RUNNER", useRead: () => useOrderDetail("order-a"), payload: { id: "order-a" } },

@@ -80,6 +80,23 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    @Test
+    fun `empty earnings pages distinguish out-of-range totals from zero history`() {
+        val owner = seller()
+        val event = event(EventStatus.ACTIVE, owner.id)
+        coverage.save(EventPhotographer(EventPhotographerId(event.id, owner.id), revenueKeptPhp = BigDecimal("40.00")))
+        val emptyOwner = seller()
+        for ((seller, expectedTotal) in listOf(owner to 1L, emptyOwner to 0L)) {
+            val response = get("/api/v1/me/photographer/earnings/per-event?offset=250&limit=50", tokens.createAccessToken(seller))
+            assertEquals(200, response.statusCode())
+            val data = json.readTree(response.body()).path("data")
+            assertEquals(0, data.path("items").size())
+            assertEquals(expectedTotal, data.path("total").asLong())
+            assertEquals(250, data.path("offset").asInt())
+            assertEquals(50, data.path("limit").asInt())
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(ints = [1, 50, 200])
     fun `owner pages batch fresh availability regardless of photo count`(count: Int) {

@@ -180,7 +180,7 @@ export function usePhotographerPerEventEarnings() {
   });
   const pages = query.data?.pages ?? [];
   return {
-    items: pages.flatMap((page) => page.items),
+    items: dedupeItems(pages.map((page) => ({ ...page, items: page.items.map((item) => ({ id: item.eventId, value: item })) }))).map(({ value }) => value),
     total: pages.at(-1)?.total ?? 0,
     isLoading: query.isPending && session.enabled,
     error: query.isFetchNextPageError ? null : query.error,

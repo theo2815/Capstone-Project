@@ -105,7 +105,7 @@ class EarningsService(
             photographerId = photographerId,
             pageable = OffsetLimitPageable(params),
         )
-        if (rows.isEmpty) return PaginatedResponse.empty(params)
+        if (rows.isEmpty) return PaginatedResponse.of(emptyList(), rows.totalElements, params)
 
         val eventIds = rows.content.map { it.id.eventId }
         val events = eventRepository.findAllById(eventIds).associateBy { it.id }

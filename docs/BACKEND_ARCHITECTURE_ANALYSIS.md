@@ -451,6 +451,10 @@ with completed order items even when retained revenue is zero, and adds
 completed items, including zero-charge and refunded purchases; existing
 `salesCount` and `revenueKept` keep their ledger meanings. Rows remain ordered
 by retained revenue descending, then event ID, with server pagination.
+Empty out-of-range pages retain the eligible-event `total` and echo `offset`
+and `limit`; only zero history has `total=0`. Clients deduplicate overlapping
+event IDs in first-seen order, advance by returned `offset + limit`, stop on
+an empty page, and refresh from offset zero after changes.
 
 `GET /api/v1/me/photographer/events/{eventId}/purchased-photos` returns one
 row per purchased photo with `photo`, `purchaseCount` and `lastPurchasedAt` in
