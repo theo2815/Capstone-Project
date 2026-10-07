@@ -195,6 +195,42 @@ class StudioEarningsViewModelTest {
         assertEquals(0.0, vm.eventEarningsState.value.items.single().revenueKept, 0.0)
     }
 
+    @Test fun `initial ledger failure needs retry instead of an offset-zero append`() {
+        var calls = 0
+        route("GET $LEDGER_PATH") {
+            calls++
+            if (calls == 1) MockResponse().setResponseCode(503)
+            else ok(ledgerPage(0, 1, 1))
+        }
+        val vm = model()
+        vm.transactionsState.awaitFirst { it.error != null }
+        assertFalse(vm.transactionsState.value.hasMore)
+        vm.loadMoreTransactions()
+        assertEquals(1, calls)
+        vm.retryTransactions()
+        vm.transactionsState.awaitFirst { it.items.size == 1 }
+        assertEquals("tx-0", vm.transactionsState.value.items.single().id)
+        assertNull(vm.transactionsState.value.error)
+    }
+
+    @Test fun `initial event earnings failure needs retry instead of an offset-zero append`() {
+        var calls = 0
+        route("GET $EARNINGS/per-event") {
+            calls++
+            if (calls == 1) MockResponse().setResponseCode(503)
+            else ok("""{"items":[{"eventId":"event-a","eventName":"Run","eventDate":"2026-10-01","deletedAt":null,"photoCount":1,"salesCount":0,"purchaseCount":1,"revenueKept":0}],"total":1,"offset":0,"limit":10}""")
+        }
+        val vm = model()
+        vm.eventEarningsState.awaitFirst { it.error != null }
+        assertFalse(vm.eventEarningsState.value.hasMore)
+        vm.loadMoreEventEarnings()
+        assertEquals(1, calls)
+        vm.retryEventEarnings()
+        vm.eventEarningsState.awaitFirst { it.items.size == 1 }
+        assertEquals("event-a", vm.eventEarningsState.value.items.single().eventId)
+        assertNull(vm.eventEarningsState.value.error)
+    }
+
     private fun ledgerPage(offset: Int, count: Int, total: Int): String =
         """{"items":[${(offset until offset + count).joinToString(",") { n -> """{"id":"tx-$n","paidAt":"2026-10-01T00:00:00Z","eventId":"event","eventName":"Run","eventSlug":"run","photoId":"photo-$n","orderId":"order-$n","buyer":"Aira S.","amountKept":1,"isRefund":false,"refundOf":null,"recordedAt":"2026-10-01T00:00:00Z","thumbnailUrl":null}""" }}],"total":$total,"offset":$offset,"limit":50,"monthTotals":{}}"""
     private companion object {

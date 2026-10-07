@@ -62,17 +62,74 @@ class PhotographerPurchasesViewModelTest {
 
     @Test fun `opens an event absent from cached events`() {
         respond = { request -> when {
-            request.path!!.startsWith("/api/v1/me/photographer/events/event-a?") -> ok("""{"id":"event-a","slug":"run","name":"Run","date":"2026-10-01","location":"Cebu","state":"PAST","photoCount":1,"salesCount":0,"revenueKept":0}""")
+            request.path!!.startsWith("/api/v1/me/photographer/events/event-a?") -> ok("""{"id":"event-a","slug":"run","name":"Run","date":"2026-10-01","location":"Cebu","state":"PAST","photoCount":1,"salesCount":0,"revenueKept":0,"deletedAt":"2026-10-02T01:02:03Z"}""")
             request.path!!.contains("purchased-photos") -> ok(gallery(listOf("photo-a"), 1))
             else -> MockResponse().setResponseCode(404)
         } }
         val vm = model()
         vm.loadEvent("event-a")
         vm.eventState.awaitFirst { it.event?.id == "event-a" }
+        assertEquals("2026-10-02T01:02:03Z", vm.eventState.value.event?.deletedAt)
         assertTrue(seenPaths.any { it.contains("includeRemoved=true") })
         vm.loadPurchasedPhotos("event-a")
         vm.purchasedPhotosState.awaitFirst { it.items.size == 1 }
         assertEquals("photo-a", vm.purchasedPhotosState.value.items.single().photo.id)
+    }
+
+    @Test fun `older event detail without removed timestamp stays readable`() {
+        respond = { request ->
+            if (request.path!!.contains("/events/event-a?")) ok(event("event-a"))
+            else MockResponse().setResponseCode(404)
+        }
+        val vm = model()
+        vm.loadEvent("event-a")
+        vm.eventState.awaitFirst { it.event?.id == "event-a" }
+        assertNull(vm.eventState.value.event?.deletedAt)
+    }
+
+    @Test fun `initial gallery failure requires explicit retry before paging`() {
+        var calls = 0
+        respond = { request ->
+            if (request.path!!.contains("purchased-photos")) {
+                calls++
+                if (calls == 1) MockResponse().setResponseCode(429) else ok(gallery(listOf("photo-a"), 1))
+            } else MockResponse().setResponseCode(404)
+        }
+        val vm = model()
+        vm.loadPurchasedPhotos("event-a")
+        vm.purchasedPhotosState.awaitFirst { it.errorStatus == 429 }
+        assertFalse(vm.purchasedPhotosState.value.hasMore)
+        vm.loadMorePurchasedPhotos()
+        assertEquals(1, calls)
+        vm.loadPurchasedPhotos("event-a", refresh = true)
+        vm.purchasedPhotosState.awaitFirst { it.items.size == 1 }
+        assertEquals("photo-a", vm.purchasedPhotosState.value.items.single().photo.id)
+        assertNull(vm.purchasedPhotosState.value.error)
+        assertNull(vm.purchasedPhotosState.value.errorStatus)
+    }
+
+    @Test fun `initial preview failure requires explicit retry before paging`() {
+        var calls = 0
+        respond = { request ->
+            if (request.path!!.contains("/purchases")) {
+                calls++
+                if (calls == 1) MockResponse().setResponseCode(404)
+                else ok(purchases("photo-a", listOf("order-a"), 1, selected = "order-a"))
+            } else MockResponse().setResponseCode(404)
+        }
+        val vm = model()
+        vm.openPurchase("photo-a", "order-a")
+        vm.previewState.awaitFirst { it.errorStatus == 404 }
+        assertFalse(vm.previewState.value.hasMore)
+        vm.loadMorePurchases()
+        assertEquals(1, calls)
+        vm.retryPreview()
+        vm.previewState.awaitFirst { it.selectedPurchase?.orderId == "order-a" }
+        assertEquals("photo-a", vm.previewState.value.photo?.id)
+        assertEquals("event-a", vm.previewState.value.event?.id)
+        assertEquals(1, vm.previewState.value.items.size)
+        assertNull(vm.previewState.value.error)
+        assertNull(vm.previewState.value.errorStatus)
     }
 
     @Test fun `pins a receipt outside the first page and ignores older selection response`() {

@@ -41,7 +41,7 @@ data class TransactionsPageState(
     val isLoadingMore: Boolean = false,
     val error: String? = null,
     val appendError: String? = null,
-    val hasMore: Boolean = true,
+    val hasMore: Boolean = false,
     val monthTotals: Map<String, Double> = emptyMap(),
 )
 
@@ -53,7 +53,7 @@ data class EventEarningsPageState(
     val isLoadingMore: Boolean = false,
     val error: String? = null,
     val appendError: String? = null,
-    val hasMore: Boolean = true,
+    val hasMore: Boolean = false,
 )
 
 /** The photographer's wallet, ledger, per-event earnings, and payout actions. */

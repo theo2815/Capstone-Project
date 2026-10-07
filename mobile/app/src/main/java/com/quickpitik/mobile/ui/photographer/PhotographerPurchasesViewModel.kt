@@ -38,7 +38,7 @@ data class PurchasedPhotosState(
     val error: String? = null,
     val appendError: String? = null,
     val errorStatus: Int? = null,
-    val hasMore: Boolean = true,
+    val hasMore: Boolean = false,
 )
 
 data class PurchasePreviewState(
@@ -56,7 +56,7 @@ data class PurchasePreviewState(
     val error: String? = null,
     val appendError: String? = null,
     val errorStatus: Int? = null,
-    val hasMore: Boolean = true,
+    val hasMore: Boolean = false,
 )
 
 /** Read-only purchase history; loads only routes the photographer opens. */

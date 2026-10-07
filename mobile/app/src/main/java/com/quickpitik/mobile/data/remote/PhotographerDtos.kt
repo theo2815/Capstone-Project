@@ -66,6 +66,7 @@ data class PhotographerEventDetailDto(
     val description: String = "",
     val organizerName: String = "",
     val pricePerPhoto: Double = 0.0,
+    val deletedAt: String? = null,
 )
 
 // Event coupon (V47) — lives on the event, not Settings.
