@@ -160,13 +160,14 @@ class PhotoRemovalEvidenceService(
         val work = tx.execute {
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             val terminal = request.status in setOf(RemovalRequestStatus.RESOLVING, RemovalRequestStatus.RESOLVED, RemovalRequestStatus.CANCELLED)
+            if (terminal) request.candidateCache = null
             val unresolved = commands.findByRequestIdAndStateIn(requestId, listOf(RemovalCommandState.PENDING, RemovalCommandState.UNKNOWN))
                 .mapNotNull { it.intendedEvidenceKey }.toSet()
             val keys = (request.outstandingEvidenceKeys + if (terminal) listOfNotNull(request.evidenceKey) else emptyList()).distinct()
             request.evidenceCleanupNextAttemptAt = clock.instant().plus(properties.cleanupBackoff)
             (keys - unresolved) to unresolved
         }!!
-        val deleted = work.first.filter { key -> try { storage.delete(key); true } catch (error: Exception) { false } }.toSet()
+        val deleted = work.first.filter { key -> try { storage.delete(key); !storage.exists(key) } catch (error: Exception) { false } }.toSet()
         val result = tx.execute {
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             request.outstandingEvidenceKeys = request.outstandingEvidenceKeys.filterNot { it in deleted }
@@ -200,6 +201,7 @@ class PhotoRemovalEvidenceService(
                 }
             }
             requests.flush()
+            if (request.status in setOf(RemovalRequestStatus.RESOLVED, RemovalRequestStatus.CANCELLED)) commands.sanitizeTerminalResults(requestId)
             if (pending) EvidenceCleanupResult.RETRY_REQUIRED else EvidenceCleanupResult.DELETED
         }!!
         outcome(if (result == EvidenceCleanupResult.DELETED) "deleted" else "retry_required")

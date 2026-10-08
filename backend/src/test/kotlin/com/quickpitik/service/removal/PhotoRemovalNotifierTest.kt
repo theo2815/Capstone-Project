@@ -26,6 +26,7 @@ class PhotoRemovalNotifierTest {
     private val users = mock(UserRepository::class.java)
     private val messages = mock(PhotographerMessageRepository::class.java)
     private val history = mock(PhotoRemovalHistoryRecorder::class.java)
+    private val historyReader = mock(PhotoRemovalHistoryRepository::class.java)
     private val publisher = mock(ApplicationEventPublisher::class.java)
     private val manager = mock(PlatformTransactionManager::class.java)
     private val tx = TransactionTemplate(manager)
@@ -39,12 +40,13 @@ class PhotoRemovalNotifierTest {
         reviewId = review.id, state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.MANUAL)
     private val writer = AdminDecisionLogService(mock(AdminDecisionLogRepository::class.java), messages, publisher)
     private val notifier = PhotoRemovalNotifier(requests, reviews, items, users, messages, writer, history,
-        tx, Clock.fixed(now, ZoneOffset.UTC), PhotoRemovalProperties())
+        tx, Clock.fixed(now, ZoneOffset.UTC), PhotoRemovalProperties(), historyReader)
     private val persisted = mutableListOf<PhotographerMessage>()
     private val events = mutableListOf<PhotographerMessageCreatedEvent>()
     private val audit = mutableListOf<RemovalHistoryEvent>()
 
     init {
+        `when`(historyReader.findReviewNoticeVersion(org.mockito.ArgumentMatchers.any() ?: review.id)).thenReturn(null)
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
         `when`(reviews.findById(review.id)).thenReturn(Optional.of(review))
         `when`(reviews.findByIdAndRequestId(review.id, request.id)).thenReturn(review)
@@ -135,6 +137,66 @@ class PhotoRemovalNotifierTest {
         assertNull(review.notifiedAt); assertNull(review.deadline)
         assertEquals(now, nextReview.notifiedAt)
         assertEquals(nextOwner.id, persisted.single().photographerId)
+    }
+
+    @Test fun `cancelled case pending outcome failure retains durable backoff`() {
+        request.status = RemovalRequestStatus.CANCELLED
+        val pending = PhotoRemovalHistory(UUID.randomUUID(), request.id, selected.id, review.id, selected.photoIdSnapshot,
+            RemovalActorType.ADMIN, UUID.randomUUID(), "ADMIN_DECIDED", "VERIFIED", "VERIFIED", "private reason", now,
+            UUID.randomUUID(), mapOf("decisionVersion" to "2"))
+        `when`(historyReader.findPendingOutcomes(org.mockito.ArgumentMatchers.eq(review.id) ?: review.id,
+            org.mockito.ArgumentMatchers.any() ?: org.springframework.data.domain.PageRequest.of(0, 100))).thenReturn(listOf(pending))
+        doThrow(IllegalStateException("synthetic outcome failure")).`when`(messages).save(org.mockito.ArgumentMatchers.any() ?: message())
+        notifier.attempt(review.id)
+        assertEquals(now.plus(PhotoRemovalProperties().cleanupBackoff), review.notificationNextAttemptAt)
+        assertTrue(audit.isEmpty()); assertTrue(persisted.isEmpty())
+    }
+
+    @Test fun `outcome is safe scoped and unavailable owner receives only audit`() {
+        review.notifiedAt = now
+        val pending = PhotoRemovalHistory(UUID.randomUUID(), request.id, selected.id, review.id, selected.photoIdSnapshot,
+            RemovalActorType.ADMIN, UUID.randomUUID(), "ADMIN_DECIDED", "VERIFIED", "RETAINED_RESTRICTED", "private reason", now,
+            UUID.randomUUID(), mapOf("decisionVersion" to "2"))
+        `when`(historyReader.findPendingOutcomes(org.mockito.ArgumentMatchers.eq(review.id) ?: review.id,
+            org.mockito.ArgumentMatchers.any() ?: org.springframework.data.domain.PageRequest.of(0, 100))).thenReturn(listOf(pending))
+        notifier.notifyOutcomes(review.id)
+        val notice = persisted.single()
+        assertTrue(notice.body.contains(selected.id.toString()))
+        assertTrue(notice.body.contains("not erased")); assertFalse(notice.body.contains("private"))
+        assertEquals("photo_removal_outcome", notice.kindWire)
+        assertEquals("removal:review:${review.id}:outcome:2", audit.single().metadata["noticeKey"])
+        `when`(users.findById(owner.id)).thenReturn(Optional.empty())
+        notifier.notifyOutcomes(review.id)
+        assertEquals(1, persisted.size)
+        assertEquals("OWNER_UNAVAILABLE", audit.last().action)
+    }
+
+    @Test fun `removal admin log keeps item identity distinct in one command`() {
+        val logs = mock(AdminDecisionLogRepository::class.java)
+        val rows = mutableListOf<AdminDecisionLog>()
+        `when`(logs.save(org.mockito.ArgumentMatchers.any() ?: AdminDecisionLog(adminId = owner.id, decision = "sample")))
+            .thenAnswer { rows += it.getArgument<AdminDecisionLog>(0); rows.last() }
+        val auditWriter = AdminDecisionLogService(logs, messages, publisher)
+        val commandId = UUID.randomUUID(); val second = UUID.randomUUID()
+        val firstId = auditWriter.logPhotoRemovalDecision(owner.id, request.id, selected.id, RemovalDecision.RETAIN, "Reviewed", commandId)
+        val secondId = auditWriter.logPhotoRemovalDecision(owner.id, request.id, second, RemovalDecision.REMOVE, "Confirmed", commandId)
+        assertNotEquals(firstId, secondId)
+        assertEquals(setOf(selected.id.toString(), second.toString()), rows.map { it.meta!!["itemId"] }.toSet())
+        assertTrue(rows.all { it.meta!!["commandId"] == commandId.toString() && it.adminId == owner.id })
+        assertEquals(listOf("photo_removal_retain", "photo_removal_remove"), rows.map { it.decision })
+    }
+
+    @Test fun `only explicitly pending retained item starts a fresh response notice`() {
+        selected.state = RemovalItemState.RETAINED_RESTRICTED
+        selected.adminDecision = RemovalDecision.RETAIN_RESTRICTED
+        notifier.notifyReview(review.id)
+        assertTrue(persisted.isEmpty()); assertNull(review.deadline)
+        `when`(items.findPendingOwnerReviewItemIds(request.id)).thenReturn(listOf(selected.id))
+        notifier.notifyReview(review.id)
+        assertEquals(1, persisted.size)
+        assertTrue(persisted.single().body.contains(selected.id.toString()))
+        assertEquals(now.plusSeconds(72 * 3600), review.deadline)
+        assertEquals(RemovalDecision.RETAIN_RESTRICTED, selected.adminDecision)
     }
 
     private fun message() = PhotographerMessage(photographerId = owner.id, kindWire = "photo_removal_request", body = "safe",

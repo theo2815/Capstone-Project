@@ -3,6 +3,7 @@ package com.quickpitik.service.admin
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.RemovalDecision
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.websocket.PhotographerMessageCreatedEvent
@@ -34,6 +35,13 @@ class AdminDecisionLogService(
     private val photographerMessageRepository: PhotographerMessageRepository,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun logPhotoRemovalDecision(adminId: UUID, requestId: UUID, itemId: UUID, decision: RemovalDecision,
+        reason: String, commandId: UUID): UUID = adminDecisionLogRepository.save(AdminDecisionLog(
+        adminId = adminId, decision = "photo_removal_${decision.name.lowercase()}", reason = reason,
+        meta = mapOf("requestId" to requestId.toString(), "itemId" to itemId.toString(), "commandId" to commandId.toString()),
+    )).id
 
     @Transactional(propagation = Propagation.MANDATORY)
     fun logUserDecision(

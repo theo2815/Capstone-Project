@@ -16,6 +16,7 @@ data class RemovalEventDto(val id: UUID, val name: String)
 data class RemovalPhaseCounts(
     val candidate: Long = 0, val verified: Long = 0, val excluded: Long = 0,
     val removalAuthorized: Long = 0, val removed: Long = 0, val retained: Long = 0, val retainedRestricted: Long = 0,
+    val pendingOwnerReviews: Long = 0,
 )
 data class RemovalPhotoDto(
     val photo: PhotoDto,
@@ -36,6 +37,8 @@ data class PhotoRemovalItemDto(
     val adminDecision: RemovalDecision?, val adminDecisionReason: String?, val adminDecisionActorId: UUID?,
     val adminDecidedAt: Instant?, val retentionReviewAt: Instant?, val cleanupJobId: UUID?, val cleanupState: String?,
     val photo: RemovalPhotoDto? = null,
+    val reviewOwnerId: UUID? = null,
+    val ownerReviewPending: Boolean = false,
 )
 data class PhotoRemovalReviewDto(
     val id: UUID, val ownerIdSnapshot: UUID, val notifiedMessageId: UUID?, val notifiedAt: Instant?,
@@ -64,6 +67,7 @@ data class PhotographerRemovalItemDto(
     val retentionReviewAt: Instant?, val cleanupState: String?, val photo: PhotoDto? = null,
     // Current row/trash observations do not prove erasure-job completion.
     val photoState: String? = null,
+    val ownerReviewPending: Boolean = false,
 )
 data class PhotographerRemovalReviewDto(
     val id: UUID, val notifiedAt: Instant?, val deadline: Instant?, val overdue: Boolean, val overdueAt: Instant?,
@@ -81,7 +85,7 @@ data class RemovalHistoryDto(
     val toState: String?, val reason: String?, val occurredAt: Instant, val commandId: UUID, val metadata: Map<String, String>,
 )
 data class RemovalMatchResult(val items: List<RemovalPhotoDto>, val candidateLimit: Int, val possiblyTruncated: Boolean,
-    val requestVersion: Long, val evidenceGeneration: Long)
+    val requestVersion: Long, val evidenceGeneration: Long, val candidatesPurged: Boolean = false)
 
 data class MatchRemovalCommand(val commandId: UUID, @field:PositiveOrZero val expectedVersion: Long)
 
@@ -134,3 +138,8 @@ data class DecideRemovalCommand(
     @field:Valid @field:Size(min = 1, max = 100) val decisions: List<RemovalItemDecision>,
     val urgentReason: String? = null,
 )
+
+data class RetryRemovalCleanupCommand(val commandId: UUID, @field:PositiveOrZero val expectedVersion: Long,
+    @field:Size(min = 1, max = 100) val itemIds: List<UUID>)
+data class RemovalSupportUpdateCommand(val commandId: UUID, @field:PositiveOrZero val expectedVersion: Long,
+    @field:NotBlank @field:Size(max = 2000) val note: String, val noticeId: UUID? = null)

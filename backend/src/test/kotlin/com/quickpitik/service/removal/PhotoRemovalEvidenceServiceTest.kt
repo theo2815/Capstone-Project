@@ -87,6 +87,23 @@ class PhotoRemovalEvidenceServiceTest {
         assertEquals(RemovalRequestStatus.RESOLVING, request.status)
     }
 
+    @Test fun `terminal evidence purge removes transient matching candidates`() {
+        request.status = RemovalRequestStatus.RESOLVING
+        request.candidateCache = RemovalCandidateCache(0, 1,
+            listOf(RemovalCachedCandidate(UUID.randomUUID(), RemovalMatchSource.SELFIE, 0.95)))
+        assertEquals(EvidenceCleanupResult.DELETED, service.purgeResolvedEvidence(request.id))
+        assertNull(request.candidateCache, "Resolved evidence must not retain transient face matching data")
+    }
+
+    @Test fun `delete acknowledgement cannot confirm evidence while bytes remain`() {
+        request.status = RemovalRequestStatus.RESOLVING
+        request.evidenceKey = "photo-removal/${request.id}/evidence/synthetic"
+        `when`(storage.exists(request.evidenceKey!!)).thenReturn(true)
+        assertEquals(EvidenceCleanupResult.RETRY_REQUIRED, service.purgeResolvedEvidence(request.id))
+        assertNotNull(request.evidenceKey)
+        assertNull(request.resolvedAt)
+    }
+
     @Test fun `evidence stream opens case owned bytes without minting a URL`() {
         val key = "photo-removal/${request.id}/evidence/${UUID.randomUUID()}"
         request.evidenceKey = key
@@ -143,7 +160,10 @@ class PhotoRemovalIntakeUnitTest {
     private val service = PhotoRemovalService(requests, commands, events, users, items,
         mock(PhotoRepository::class.java), mock(PhotoRemovalReviewRepository::class.java), mock(PhotoRemovalNotifier::class.java),
         mock(com.quickpitik.service.photos.PhotoAvailabilityService::class.java), evidence, queries,
-        mock(PhotoRemovalHistoryRecorder::class.java), PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.systemUTC(), mock(org.springframework.context.ApplicationEventPublisher::class.java))
+        mock(PhotoRemovalHistoryRecorder::class.java), PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.systemUTC(), mock(org.springframework.context.ApplicationEventPublisher::class.java),
+        mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
+        mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
+        mock(PhotoRemovalHistoryRepository::class.java))
     init {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
     }
@@ -178,7 +198,7 @@ class PhotoRemovalQueryUnitTest {
         mock(PhotoRepository::class.java), mock(UserRepository::class.java), mock(PhotoRemovalCommandRepository::class.java),
         mock(PhotoRemovalEvidenceService::class.java), mock(com.quickpitik.service.photos.PhotoSearchService::class.java),
         mock(StorageService::class.java), com.quickpitik.config.StorageProperties(), TransactionTemplate(mock(PlatformTransactionManager::class.java)),
-        jacksonObjectMapper().findAndRegisterModules(), Clock.systemUTC())
+        jacksonObjectMapper().findAndRegisterModules(), Clock.systemUTC(), mock(PhotoErasureJobRepository::class.java))
     private val request = PhotoRemovalRequest(eventIdSnapshot = UUID.randomUUID(), eventNameSnapshot = "Synthetic run",
         requesterContact = "private contact", supportReference = "private ticket", requesterReason = "privacy", publicToOwnerReason = "privacy",
         creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID())

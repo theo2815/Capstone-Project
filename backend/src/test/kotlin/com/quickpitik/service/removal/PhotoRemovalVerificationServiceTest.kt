@@ -36,7 +36,10 @@ class PhotoRemovalVerificationServiceTest {
     private val service = PhotoRemovalService(requests, commands, mock(EventRepository::class.java), mock(UserRepository::class.java), items,
         photos, mock(PhotoRemovalReviewRepository::class.java), mock(PhotoRemovalNotifier::class.java), mock(PhotoAvailabilityService::class.java),
         mock(PhotoRemovalEvidenceService::class.java), mock(PhotoRemovalQueryService::class.java), mock(PhotoRemovalHistoryRecorder::class.java),
-        PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.fixed(now, ZoneOffset.UTC), mock(org.springframework.context.ApplicationEventPublisher::class.java))
+        PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.fixed(now, ZoneOffset.UTC), mock(org.springframework.context.ApplicationEventPublisher::class.java),
+        mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
+        mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
+        mock(PhotoRemovalHistoryRepository::class.java))
 
     init {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())

@@ -29,6 +29,7 @@ class PhotoRemovalNotifier(
     private val tx: TransactionTemplate,
     private val clock: Clock,
     private val properties: PhotoRemovalProperties,
+    private val audit: PhotoRemovalHistoryRepository,
 ) {
     fun notifyReview(reviewId: UUID) {
         val requestId = reviews.findById(reviewId).orElse(null)?.requestId ?: return
@@ -38,7 +39,8 @@ class PhotoRemovalNotifier(
             val request = requests.findForUpdate(requestId) ?: return@execute
             val review = reviews.findByIdAndRequestId(reviewId, request.id) ?: return@execute
             if (request.status != RemovalRequestStatus.OPEN || review.notifiedAt != null || review.unavailableReason != null) return@execute
-            val noticeKey = "removal:review:$reviewId:requested"
+            val noticeVersion = audit.findReviewNoticeVersion(reviewId)
+            val noticeKey = "removal:review:$reviewId:requested" + (noticeVersion?.let { ":$it" } ?: "")
             val commandId = UUID.nameUUIDFromBytes(noticeKey.toByteArray(Charsets.UTF_8))
             val owner = review.ownerId?.let { users.findById(it).orElse(null) }
             if (owner == null || owner.role != Role.PHOTOGRAPHER || owner.suspendedAt != null) {
@@ -50,8 +52,9 @@ class PhotoRemovalNotifier(
                     occurredAt = clock.instant(), commandId = commandId))
                 return@execute
             }
+            val pendingOwnerReviews = items.findPendingOwnerReviewItemIds(request.id).toSet()
             val selected = items.findByRequestIdOrderByIdAsc(request.id).filter {
-                it.reviewId == reviewId && it.ownerIdSnapshot == owner.id && it.state == RemovalItemState.VERIFIED
+                it.reviewId == reviewId && it.awaitingDecision(pendingOwnerReviews)
             }
             if (selected.isEmpty()) return@execute
             val message = messages.findByNoticeKey(noticeKey) ?: writer.pushMessage(owner.id, PhotographerMessageKind.PHOTO_REMOVAL_REQUEST,
@@ -67,6 +70,43 @@ class PhotoRemovalNotifier(
                 action = RemovalHistoryActions.NOTICE_STORED, occurredAt = review.notifiedAt!!, commandId = commandId,
                 metadata = mapOf("messageId" to message.id.toString())))
         }
+        notifyOutcomes(reviewId)
+    }
+
+    internal fun notifyOutcomes(reviewId: UUID) {
+        val requestId = reviews.findById(reviewId).orElse(null)?.requestId ?: return
+        tx.executeWithoutResult {
+            val request = requests.findForUpdate(requestId) ?: return@executeWithoutResult
+            val review = reviews.findByIdAndRequestId(reviewId, requestId) ?: return@executeWithoutResult
+            val pending = audit.findPendingOutcomes(reviewId, PageRequest.of(0, 100))
+            val currentIds = items.findByRequestIdOrderByIdAsc(requestId).filter { it.reviewId == reviewId }.map { it.id }.toSet()
+            val owner = review.ownerId?.let { users.findById(it).orElse(null) }
+            pending.groupBy { it.metadata.getValue("decisionVersion") }.forEach { (version, changes) ->
+                val key = "removal:review:$reviewId:outcome:$version"
+                val commandId = UUID.nameUUIDFromBytes(key.toByteArray(Charsets.UTF_8))
+                val scoped = changes.filter { it.itemId in currentIds }
+                val available = owner != null && owner.role == Role.PHOTOGRAPHER && owner.suspendedAt == null && scoped.isNotEmpty()
+                val message = if (available) messages.findByNoticeKey(key) ?: writer.pushMessage(owner!!.id,
+                    PhotographerMessageKind.PHOTO_REMOVAL_OUTCOME,
+                    body = scoped.joinToString("; ") { "${it.itemId}: ${outcomeLabel(it.toState)}" },
+                    title = "Photo removal review outcome", photoRemovalLink = PhotoRemovalMessageLink(request.id, key, clock.instant().atOffset(ZoneOffset.UTC))) else null
+                history.record(RemovalHistoryEvent(requestId, reviewId = reviewId, actorType = RemovalActorType.SYSTEM,
+                    action = if (message != null) RemovalHistoryActions.NOTICE_STORED else RemovalHistoryActions.OWNER_UNAVAILABLE,
+                    reason = if (message != null) null else "Outcome cannot be delivered to this current owner review",
+                    occurredAt = clock.instant(), commandId = commandId,
+                    metadata = mapOf("kind" to "photographer_removal_outcome", "noticeKey" to key) +
+                        (message?.let { mapOf("messageId" to it.id.toString()) } ?: emptyMap())))
+            }
+            review.notificationNextAttemptAt = clock.instant()
+        }
+    }
+
+    private fun outcomeLabel(state: String?) = when (state) {
+        "REMOVED" -> "Platform cleanup confirmed"
+        "REMOVAL_AUTHORIZED" -> "Removal authorized; cleanup pending"
+        "RETAINED" -> "Retained; this request's restriction released"
+        "RETAINED_RESTRICTED" -> "Retained under a restricted exception; not erased"
+        else -> "More evidence requested; restriction remains"
     }
 
     @Scheduled(fixedDelayString = "\${app.photo-removal.cleanup-interval:PT1M}")
@@ -83,9 +123,7 @@ class PhotoRemovalNotifier(
                 tx.execute {
                     val request = requests.findForUpdate(requestId) ?: return@execute
                     val review = reviews.findByIdAndRequestId(reviewId, request.id) ?: return@execute
-                    if (request.status == RemovalRequestStatus.OPEN && review.notifiedAt == null && review.unavailableReason == null) {
-                        review.notificationNextAttemptAt = clock.instant().plus(properties.cleanupBackoff)
-                    }
+                    review.notificationNextAttemptAt = clock.instant().plus(properties.cleanupBackoff)
                 }
             } catch (retryError: Exception) {
                 log.warn("Photo removal review retry time could not be stored: {}", reviewId)

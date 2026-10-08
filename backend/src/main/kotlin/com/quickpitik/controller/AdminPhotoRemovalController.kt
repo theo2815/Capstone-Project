@@ -105,4 +105,25 @@ class AdminPhotoRemovalController(
         response.setHeader("Cache-Control", "private, no-store")
         rateLimiter.acquireOrThrow(policy, principal.userId.toString())
     }
+
+    @PostMapping("/{id}/decisions")
+    fun decide(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID,
+        @Valid @RequestBody command: DecideRemovalCommand, response: HttpServletResponse): PhotoRemovalRequestDto {
+        limit(principal, response, Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD)
+        return service.decide(principal.userId, id, command)
+    }
+
+    @PostMapping("/{id}/retry-cleanup")
+    fun retryCleanup(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID,
+        @Valid @RequestBody command: RetryRemovalCleanupCommand, response: HttpServletResponse): PhotoRemovalRequestDto {
+        limit(principal, response, Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD)
+        return service.retryCleanup(principal.userId, id, command)
+    }
+
+    @PostMapping("/{id}/support-updates")
+    fun supportUpdate(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID,
+        @Valid @RequestBody command: RemovalSupportUpdateCommand, response: HttpServletResponse): RemovalHistoryDto {
+        limit(principal, response, Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD)
+        return service.supportUpdate(principal.userId, id, command)
+    }
 }
