@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
 
@@ -129,6 +130,8 @@ class BlurClassifier:
             sess_opts.enable_mem_pattern = True
             sess_opts.enable_cpu_mem_arena = True
             sess_opts.execution_mode = ort.ExecutionMode.ORT_PARALLEL
+            if not getattr(_settings, "ONNX_ALLOW_SPINNING", True):
+                sess_opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
 
             session = ort.InferenceSession(
                 str(detector_file),
@@ -281,12 +284,12 @@ class BlurClassifier:
         return self._people_result(self._run_stage_two(image))
 
     def classify_batch(self, images: list[np.ndarray]) -> list[dict | None]:
-        """Classify multiple images, one at a time.
+        """Classify multiple images.
 
         Stage 2 runs the detector on each photo on its own: a (1, 3, 640, 640)
         input is 5 MB, and the detector's fixed batch axis is 1, so there is no
-        batched call to gain from. The callers' sub-batch decode parallelism is
-        where the throughput comes from.
+        batched call to gain from. With BLUR_STAGE2_CONCURRENCY=2 two photos are
+        scored at the same time, each on its own native inference slot.
 
         Args:
             images: List of BGR numpy arrays. None entries are skipped and
@@ -298,26 +301,35 @@ class BlurClassifier:
         """
         if self.session is None:
             return [None] * len(images)
+        from src.config import get_settings
+        from src.utils.timeout import InferenceBusyError, InferenceTimeoutError
 
         results: list[dict | None] = [None] * len(images)
-        for i, img in enumerate(images):
-            if img is None:
-                continue
+
+        def one(index: int, img: np.ndarray) -> None:
             try:
-                results[i] = self._whole_frame_result(img)
-                if results[i] is None:
-                    results[i] = self._people_result(self._run_stage_two(img))
+                result = self._whole_frame_result(img)
+                if result is None:
+                    result = self._people_result(self._run_stage_two(img))
+                results[index] = result
             except Exception as e:
                 # An unreadable image gives None at its position; the deadline and
                 # busy errors are not swallowed here, callers decide what they mean.
-                from src.utils.timeout import InferenceBusyError, InferenceTimeoutError
-
                 if isinstance(e, (InferenceTimeoutError, InferenceBusyError)):
                     raise
                 logger.warning(
                     "Blur classification failed for one image", error_type=type(e).__name__
                 )
-                results[i] = None
+
+        todo = [(i, img) for i, img in enumerate(images) if img is not None]
+        workers = getattr(get_settings(), "BLUR_STAGE2_CONCURRENCY", 1)
+        if workers <= 1:
+            for i, img in todo:
+                one(i, img)
+            return results
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for future in [pool.submit(one, i, img) for i, img in todo]:
+                future.result()  # re-raises a deadline or busy error
         return results
 
     def detect_blur_type(self, image: np.ndarray, blur_type: str) -> dict | None:

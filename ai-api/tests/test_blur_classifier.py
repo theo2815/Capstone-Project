@@ -7,6 +7,7 @@ import io
 import json
 import math
 import threading
+import time
 from types import SimpleNamespace
 
 import cv2
@@ -783,3 +784,49 @@ def test_stage_timers_grow_only_for_the_stages_a_photo_went_through(tmp_path):
     assert after_sharp["detect"] > 0 and after_sharp["measure"] > 0
     after_sharp["detect"] = -1.0  # a copy: changing it must not touch the counters
     assert classifier.timing_snapshot()["detect"] > 0
+
+
+def test_two_photos_at_once_when_the_setting_says_so(tmp_path, monkeypatch):
+    from src import config
+
+    classifier = _arm(_unarmed(tmp_path), p_missed=0.3)
+    monkeypatch.setattr(
+        config,
+        "get_settings",
+        lambda: SimpleNamespace(MODEL_PROFILE="all", BLUR_STAGE2_CONCURRENCY=2),
+    )
+    barrier = threading.Barrier(2, timeout=2)
+
+    def detect(image):
+        barrier.wait()  # passes only while the other photo's detector call is running too
+        return []
+
+    classifier.detector.detect = detect
+    results = classifier.classify_batch([_make_bgr_image(), _make_bgr_image()])
+    assert [r["predicted_class"] for r in results] == ["sharp", "sharp"]
+
+
+def test_one_photo_at_a_time_by_default(tmp_path, monkeypatch):
+    from src import config
+
+    classifier = _arm(_unarmed(tmp_path), p_missed=0.3)
+    monkeypatch.setattr(
+        config,
+        "get_settings",
+        lambda: SimpleNamespace(MODEL_PROFILE="all", BLUR_STAGE2_CONCURRENCY=1),
+    )
+    running, overlap, lock = [], [], threading.Lock()
+
+    def detect(image):
+        with lock:
+            running.append(1)
+            overlap.append(len(running))
+        time.sleep(0.01)
+        with lock:
+            running.pop()
+        return []
+
+    classifier.detector.detect = detect
+    results = classifier.classify_batch([_make_bgr_image()] * 3)
+    assert [r["predicted_class"] for r in results] == ["sharp"] * 3
+    assert max(overlap) == 1  # never two detector calls at the same time

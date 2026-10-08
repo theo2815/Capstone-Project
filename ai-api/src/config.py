@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     BLUR_MAX_IMAGE_PIXELS: int = Field(default=24_000_000, gt=0)
     BLUR_MAX_ACTIVE_REQUESTS: int = Field(default=2, gt=0)
     BLUR_DECODE_CONCURRENCY: int = Field(default=2, gt=0)
+    # Stage-2 photos scored at the same time inside one stream sub-batch. 1 = one after
+    # another (today). 2 uses both native inference slots of this process for one
+    # request, so a second request arriving meanwhile is answered 503 BLUR_BUSY.
+    BLUR_STAGE2_CONCURRENCY: int = Field(default=1, ge=1, le=2)
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik"
@@ -115,6 +119,10 @@ class Settings(BaseSettings):
     # these matter less — batching (dynamic axis) is what drives GPU throughput.
     ONNX_INTRA_OP_THREADS: int = 6
     ONNX_INTER_OP_THREADS: int = 4
+    # Whether ONNX Runtime's worker threads keep spinning between pieces of work. Spinning
+    # is fastest on dedicated cores; inside a CPU quota (a 2-vCPU container) it can burn
+    # the quota and slow everything else down. False is the setting to try on staging.
+    ONNX_ALLOW_SPINNING: bool = True
 
     # OCR
     OCR_MAX_WORKERS: int = 8  # Thread pool size for PaddleOCR batch inference
