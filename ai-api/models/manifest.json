@@ -39,8 +39,8 @@
     "blur_classifier": {
       "name": "People-first blur rule, stage 2 (sharp vs subject missed focus)",
       "file": "blur_classifier/people_rule.json",
-      "artifact_version": "2026-10-07-people-first",
-      "sha256": "87b6d0aa71a29b6a4b8fbb4d79b40cbdd093c65b73c016c9f7ac82dfdcb82e4e",
+      "artifact_version": "2026-10-08-people-first-r3",
+      "sha256": "cad3bfe7acc92e4be9aa3d712823e3ab3586f0218d570dacd76c06b624ddb836",
       "detector": "person_detector",
       "source": "scripts/measure_blur_people.py -> scripts/fit_blur_people_rule.py -> scripts/ship_blur_rule.py",
       "classes": [
@@ -49,14 +49,18 @@
       ],
       "features": [
         "n_big",
-        "largest_es",
-        "largest_conf",
-        "min_es_big",
+        "subject_es",
+        "subject_conf",
+        "min_es_big_confident",
         "es_ratio",
-        "max_area_soft_big",
-        "area_edge_soft",
+        "max_area_soft_other",
+        "area_edge_soft_other",
         "soft_bottom_gap",
-        "soft_area_ratio"
+        "soft_area_ratio_log",
+        "soft_area_at_feet",
+        "lowconf_big_area",
+        "subject_at_bottom_edge",
+        "biggest_other_es_ratio"
       ],
       "notes": "Stage 2 of the blur classifier: the person detector finds the people, src/ml/blur/people.py measures each one's sharpness at the 1280-px upload, and this logistic rule turns those numbers into P(missed focus). Whole-frame soft and motion are decided before it by src/ml/blur/whole_frame.py. Quality evidence: docs/ai-system-overview.md."
     },
