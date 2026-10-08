@@ -14,7 +14,6 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
-import java.util.Optional
 import java.util.UUID
 import kotlin.test.*
 
@@ -32,8 +31,7 @@ class AdminEventCommandTest {
             { null }, { _, _ -> error("no cover") }, action)
 
     @Test fun `failed final event validation preserves its domain error and unresolved receipt`() {
-        Mockito.`when`(receipts.findById(UUID.fromString(key.value))).thenReturn(Optional.empty())
-        lateinit var claimed: AdminActionCommand
+        var claimed: AdminActionCommand? = null
         Mockito.`when`(receipts.insertEventClaim(anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),Mockito.isNull(),Mockito.isNull()))
             .thenAnswer {
                 claimed = AdminActionCommand(commandId=UUID.fromString(key.value),actorId=actor,
@@ -45,15 +43,15 @@ class AdminEventCommandTest {
         Mockito.`when`(receipts.findForUpdate(UUID.fromString(key.value))).thenAnswer { claimed }
         val error = assertFailsWith<NotFoundException> { run { _, _ -> throw NotFoundException("Deleted", "EVENT_NOT_FOUND") } }
         assertEquals("EVENT_NOT_FOUND",error.code)
-        assertEquals(AdminActionCommandState.UNKNOWN,claimed.state)
-        assertNull(claimed.resultResourceId)
+        assertEquals(AdminActionCommandState.UNKNOWN,claimed!!.state)
+        assertNull(claimed!!.resultResourceId)
     }
 
     @Test fun `legacy unresolved event receipt without lease requires administrative reconciliation`() {
         val receipt=AdminActionCommand(commandId=UUID.fromString(key.value),actorId=actor,
             operation=AdminActionOperation.EVENT_UPDATE,targetId=id,inputHash="a".repeat(64),
             state=AdminActionCommandState.UNKNOWN,claimedAt=now,updatedAt=now)
-        Mockito.`when`(receipts.findById(receipt.commandId)).thenReturn(Optional.of(receipt))
+        Mockito.`when`(receipts.findForUpdate(receipt.commandId)).thenReturn(receipt)
         val error=assertFailsWith<ApiException> { run() }
         assertEquals("ADMIN_COMMAND_RECOVERY_REQUIRED",error.code)
     }
@@ -63,7 +61,7 @@ class AdminEventCommandTest {
             operation=AdminActionOperation.EVENT_UPDATE,targetId=id,inputHash="a".repeat(64),
             state=AdminActionCommandState.SUCCEEDED,claimedAt=now,updatedAt=now,resultResourceId=id,
             resultDecisionId=UUID.randomUUID(),completedAt=now)
-        Mockito.`when`(receipts.findById(receipt.commandId)).thenReturn(Optional.of(receipt))
+        Mockito.`when`(receipts.findForUpdate(receipt.commandId)).thenReturn(receipt)
         val result=service.executeEvent(key,actor,AdminActionOperation.EVENT_UPDATE,id,"a".repeat(64),{},
             { error("old revision") },{ error("image decoding") },{ _, _ -> error("storage") },{ _, _ -> error("duplicate edit") })
         assertEquals(id,result.resourceId); assertEquals(receipt.resultDecisionId,result.decisionId)

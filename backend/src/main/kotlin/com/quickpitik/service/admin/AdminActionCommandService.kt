@@ -21,6 +21,7 @@ import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.support.TransactionTemplate
 import java.security.MessageDigest
 import java.time.Clock
+import java.time.Instant
 import java.util.HexFormat
 import java.util.UUID
 
@@ -81,12 +82,11 @@ class AdminActionCommandService(
         val commandId = UUID.fromString(key.value)
         val completed = tx.execute {
             authorize()
-            commands.findById(commandId).orElse(null)?.let {
+            commands.findForUpdate(commandId)?.let {
                 ensureIdentity(it, actorId, operation, targetId, inputHash)
                 if (it.state == AdminActionCommandState.SUCCEEDED) return@execute replay(it, actorId, operation, targetId, inputHash)
                 requireRecoverable(it)
             }
-            validate()
             null
         }
         if (completed != null) return completed
@@ -97,19 +97,20 @@ class AdminActionCommandService(
         val receipt = tx.execute {
             authorize()
             val now = clock.instant()
-            if (commands.findById(commandId).isEmpty) {
-                validate()
-                val eventId = targetId ?: UUID.randomUUID()
-                commands.insertEventClaim(commandId, actorId, operation.name, targetId, inputHash, owner, now,
-                    now.plus(properties.lease), eventId, digest?.let { "events/$eventId/cover/$commandId.jpg" }, digest)
-            }
+            val eventId = targetId ?: UUID.randomUUID()
+            commands.insertEventClaim(commandId, actorId, operation.name, targetId, inputHash, owner, now,
+                now.plus(properties.lease), eventId, digest?.let { "events/$eventId/cover/$commandId.jpg" }, digest)
             val current = commands.findForUpdate(commandId)!!
             ensureIdentity(current, actorId, operation, targetId, inputHash)
             if (current.state == AdminActionCommandState.SUCCEEDED) return@execute current
-            if (current.claimOwner == owner) return@execute current
-            requireRecoverable(current)
+            if (current.claimOwner == owner) {
+                validate()
+                return@execute current
+            }
+            val takeoverAt = requireRecoverable(current)
             if (current.processedCoverDigest != digest) throw recoveryRequired()
-            check(commands.takeOver(commandId, current.claimOwner, owner, now, now.plus(properties.lease)) == 1)
+            validate()
+            check(commands.takeOver(commandId, current.claimOwner, owner, takeoverAt, takeoverAt.plus(properties.lease)) == 1)
             recovery = true
             commands.findForUpdate(commandId)!!
         }!!
@@ -147,12 +148,14 @@ class AdminActionCommandService(
         }
     }
 
-    private fun requireRecoverable(receipt: AdminActionCommand) {
+    private fun requireRecoverable(receipt: AdminActionCommand): Instant {
         if (receipt.state == AdminActionCommandState.FAILED) throw ApiException(HttpStatus.CONFLICT,
             ErrorCodes.CONFLICT, "Command failed; this key cannot execute another action")
         if (receipt.leaseExpiresAt == null) throw recoveryRequired()
-        if (receipt.leaseExpiresAt!! > clock.instant())
+        val now = clock.instant()
+        if (receipt.leaseExpiresAt!! > now)
             throw ApiException(HttpStatus.CONFLICT, ErrorCodes.IDEMPOTENT_REPLAY_IN_PROGRESS, "Command is still in progress")
+        return now
     }
 
     private fun recoveryRequired() = ApiException(HttpStatus.CONFLICT,

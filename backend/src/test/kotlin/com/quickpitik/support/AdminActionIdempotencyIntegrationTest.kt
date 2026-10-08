@@ -268,6 +268,94 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(if(editing) listOf(old) else emptyList(),deletes.toList())
     }
 
+    private fun reviewEdit(service: AdminActionCommandService, key: IdempotencyKey, actor: UUID, id: UUID,
+        prepare: () -> String? = { null }, write: (String, Boolean) -> Unit = { _, _ -> error("no cover") },
+        beforeAction: () -> Unit = {}): AdminActionResult =
+        service.executeEvent(key, actor, AdminActionOperation.EVENT_UPDATE, id, "a".repeat(64), {}, {
+            events.findByIdForReview(id)!!.requireReviewRevision(0)
+        }, prepare, write, { _, _ ->
+            beforeAction()
+            val event = events.findByIdForReview(id)!!
+            event.requireReviewRevision(0)
+            event.name = "Reviewed edit"; event.reviewRevision++
+            events.save(event)
+            AdminActionResult(id, log.logEventDecision(actor, id, "edited").id, null)
+        })
+
+    @ParameterizedTest @ValueSource(booleans = [false, true])
+    fun `event completion between receipt reads replays authoritative result`(expired: Boolean) {
+        val actor = user(Role.ADMIN); val id = eventId(eventRequest(actor, null, "Read race ${UUID.randomUUID()}"))
+        val key = IdempotencyKey(UUID.randomUUID().toString())
+        if (expired) receipts.saveAndFlush(AdminActionCommand(commandId = UUID.fromString(key.value), actorId = actor,
+            operation = AdminActionOperation.EVENT_UPDATE, targetId = id, inputHash = "a".repeat(64),
+            leaseExpiresAt = now.minusSeconds(1), intendedEventId = id, claimedAt = now, updatedAt = now))
+        val paused = CountDownLatch(1); val resume = CountDownLatch(1)
+        val prepared = java.util.concurrent.atomic.AtomicBoolean()
+        val delegate = org.mockito.AdditionalAnswers.delegatesTo<Any>(receipts)
+        val delayedReceipts = org.mockito.Mockito.mock(AdminActionCommandRepository::class.java) { invocation ->
+            val name = invocation.method.name
+            if (expired && prepared.get() && name == "findForUpdate") {
+                paused.countDown(); check(resume.await(20, TimeUnit.SECONDS))
+            }
+            val result = delegate.answer(invocation)
+            if (!expired && !prepared.get() && name in listOf("findById", "findForUpdate")) {
+                paused.countDown(); check(resume.await(20, TimeUnit.SECONDS))
+            }
+            result
+        }
+        val delayed = AdminActionCommandService(delayedReceipts, manager, mapper, eventClock)
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            val loser = pool.submit<AdminActionResult> { reviewEdit(delayed, key, actor, id,
+                prepare = { prepared.set(true); null }) }
+            assertTrue(paused.await(15, TimeUnit.SECONDS))
+            val winner = try { reviewEdit(commands, key, actor, id) } finally { resume.countDown() }
+            assertEquals(winner, loser.get(20, TimeUnit.SECONDS))
+            assertEquals(1, events.findById(id).orElseThrow().reviewRevision); eventEffects(id, 2)
+            assertEquals("SUCCEEDED", receiptState(key.value))
+        } finally { resume.countDown(); pool.shutdownNow() }
+    }
+
+    @Test fun `initial same key event claims keep receipt before event lock order`() {
+        val actor = user(Role.ADMIN); val id = eventId(eventRequest(actor, null, "Lock race ${UUID.randomUUID()}"))
+        val key = IdempotencyKey(UUID.randomUUID().toString())
+        val secondMiss = CountDownLatch(1); val firstClaim = CountDownLatch(1)
+        val secondReady = CountDownLatch(1); val firstReceipt = CountDownLatch(1)
+        val lookups = AtomicInteger(); val writes = AtomicInteger(); val actions = AtomicInteger()
+        val delegate = org.mockito.AdditionalAnswers.delegatesTo<Any>(receipts)
+        val delayedReceipts = org.mockito.Mockito.mock(AdminActionCommandRepository::class.java) { invocation ->
+            if (invocation.method.name == "insertEventClaim") {
+                secondMiss.countDown(); check(firstClaim.await(20, TimeUnit.SECONDS))
+                secondReady.countDown(); check(firstReceipt.await(20, TimeUnit.SECONDS))
+            }
+            val result = delegate.answer(invocation)
+            // Delay the old unlocked claim read before it can acquire the event lock.
+            if (invocation.method.name == "findById" && lookups.incrementAndGet() == 2) {
+                secondMiss.countDown(); check(firstClaim.await(20, TimeUnit.SECONDS))
+            }
+            result
+        }
+        val delayed = AdminActionCommandService(delayedReceipts, manager, mapper, eventClock)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val first = pool.submit<AdminActionResult> { reviewEdit(commands, key, actor, id, prepare = {
+                check(secondMiss.await(20, TimeUnit.SECONDS)); "b".repeat(64)
+            }, write = { _, _ ->
+                assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+                writes.incrementAndGet(); firstClaim.countDown(); check(secondReady.await(20, TimeUnit.SECONDS))
+            }, beforeAction = { actions.incrementAndGet(); firstReceipt.countDown() }) }
+            val second = pool.submit<AdminActionResult> { reviewEdit(delayed, key, actor, id,
+                prepare = { "b".repeat(64) }, beforeAction = { actions.incrementAndGet() }) }
+            assertEquals(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS))
+            assertEquals(1, writes.get()); assertEquals(1, actions.get())
+            assertEquals(1, events.findById(id).orElseThrow().reviewRevision); eventEffects(id, 2)
+            assertEquals("SUCCEEDED", receiptState(key.value))
+        } finally {
+            secondMiss.countDown(); firstClaim.countDown(); secondReady.countDown(); firstReceipt.countDown(); pool.shutdownNow()
+        }
+    }
+
+
     private fun user(role: Role) = users.saveAndFlush(User(email = "message-${UUID.randomUUID()}@test.local",
         passwordHash = "unused", name = "Message fixture", role = role)).id
 
