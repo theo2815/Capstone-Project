@@ -134,6 +134,41 @@ it("refreshes an expired image URL from the seller response without losing recei
   client.clear();
 });
 
+it("keeps a newly selected receipt while a bounded same-URL refresh finishes", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const signed = "https://cdn.example.test/signed.jpg";
+  const first = { ...response([
+    { ...receipt(orderA), buyer: "Bea A." },
+    { ...receipt(orderB), buyer: "Aira B." },
+  ], { ...receipt(orderA), buyer: "Bea A." }), photo: { ...photo, thumbnailUrl: signed } };
+  let resolveRefresh!: (value: typeof first) => void;
+  const get = vi.spyOn(api, "get")
+    .mockResolvedValueOnce(first)
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+  render(view({ photoId: photo.id, orderId: orderA }, client));
+  const failedImage = await screen.findByRole("img", { name: "Race photo of bib 101" });
+  fireEvent.error(failedImage);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  expect(get.mock.calls[1][0]).toContain("offset=0");
+  expect(get.mock.calls[1][0]).toContain("limit=1");
+  expect(get.mock.calls[1][0]).toContain(`orderId=${orderA}`);
+  const pendingButton = screen.getByRole("button", { name: "Refreshing preview…" });
+  fireEvent.click(pendingButton);
+  expect(get).toHaveBeenCalledTimes(2);
+
+  fireEvent.click(screen.getByRole("button", { name: /Aira B\./ }));
+  expect(fact("Reference")).toHaveTextContent("BBBBBBBB");
+  await act(async () => resolveRefresh(first));
+
+  expect(fact("Reference")).toHaveTextContent("BBBBBBBB");
+  const retriedImage = await screen.findByRole("img", { name: "Race photo of bib 101" });
+  expect(retriedImage).not.toBe(failedImage);
+  expect(retriedImage).toHaveAttribute("src", signed);
+  client.clear();
+});
+
 it("shows free purchase facts without inventing paid or refunded money", async () => {
   login();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

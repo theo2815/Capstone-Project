@@ -62,6 +62,9 @@ interface BasePhotoPreviewProps {
   onNext?: () => void;
   details?: ReactNode;
   onRefreshImage?: () => void;
+  imageReloadKey?: number;
+  isRefreshingImage?: boolean;
+  imageRefreshError?: string | null;
 }
 
 interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
@@ -186,6 +189,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const [imageAttempt, setImageAttempt] = useState(0);
+  const priorImageReloadKey = useRef(props.imageReloadKey);
   // Natural width / height of the served image, known once it loads.
   const [aspect, setAspect] = useState<number | null>(null);
 
@@ -193,7 +197,11 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     setImageLoaded(false);
     setImageFailed(false);
     setAspect(null);
-  }, [photo.id, renderedSrc]);
+    if (priorImageReloadKey.current !== props.imageReloadKey) {
+      priorImageReloadKey.current = props.imageReloadKey;
+      setImageAttempt((attempt) => attempt + 1);
+    }
+  }, [photo.id, renderedSrc, props.imageReloadKey]);
 
   if (!mounted) return null;
 
@@ -331,7 +339,8 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           {props.details && (!hasImage || imageFailed) && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-surface">
               <p>Preview unavailable</p>
-              {(hasImage || props.onRefreshImage) && <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={props.onRefreshImage ?? (() => { setImageFailed(false); setImageAttempt((n) => n + 1); })}>Refresh preview</button>}
+              {(hasImage || props.onRefreshImage) && <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} disabled={props.isRefreshingImage} onClick={props.onRefreshImage ?? (() => { setImageFailed(false); setImageAttempt((n) => n + 1); })}>{props.isRefreshingImage ? "Refreshing preview…" : "Refresh preview"}</button>}
+              {props.imageRefreshError && <p role="alert">{props.imageRefreshError}</p>}
             </div>
           )}
 

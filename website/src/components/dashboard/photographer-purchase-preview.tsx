@@ -58,6 +58,8 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
   const [orderId, setOrderId] = useState(pinnedOrderId);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
+  const [imageReloadKey, setImageReloadKey] = useState(0);
+  const refreshingImage = useRef(false);
   const purchase = usePhotographerPhotoPurchases(selection.photoId, pinnedOrderId, true);
   const photo = purchase.photo ?? photos?.find((item) => item.id === selection.photoId) ?? null;
   const gallery = photos?.length ? photos : photo ? [photo] : [];
@@ -92,6 +94,19 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
       if (isCurrent()) setDownloadError(true);
     } finally {
       if (isCurrent()) setDownloading(false);
+    }
+  }
+
+  async function refreshImage() {
+    if (refreshingImage.current) return;
+    refreshingImage.current = true;
+    try {
+      await purchase.refreshPhoto(orderId);
+      if (activeSelection.current === selectionKey) setImageReloadKey((key) => key + 1);
+    } catch {
+      // The hook exposes a scoped retry error without replacing purchase history.
+    } finally {
+      refreshingImage.current = false;
     }
   }
 
@@ -157,6 +172,9 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     onDownload={() => void download()}
     downloadDisabled={!purchase.photo || purchase.photo.mediaAvailable === false || !!purchase.photo.deletionStartedAt || downloading}
     details={details}
-    onRefreshImage={() => void purchase.refetch()}
+    imageReloadKey={imageReloadKey}
+    isRefreshingImage={purchase.isRefreshingPhoto}
+    imageRefreshError={purchase.photoRefreshError ? "Could not refresh preview. Try again." : null}
+    onRefreshImage={photo?.mediaAvailable === false || photo?.deletionStartedAt ? undefined : () => void refreshImage()}
   />;
 }

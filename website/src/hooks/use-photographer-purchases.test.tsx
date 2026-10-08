@@ -157,3 +157,99 @@ it("uses the backend page limit for the next receipt offset", async () => {
   await act(async () => { await result.current.fetchNextPage(); });
   expect(get.mock.calls[1][0]).toContain("offset=25");
 });
+
+it("refreshes only page zero and preserves loaded receipt pages and selection", async () => {
+  login();
+  const page = (items: Array<{ orderId: string; photoId: string }>, offset: number, selectedPurchase: { orderId: string; photoId: string } | null, url: string) => ({
+    items, offset, limit: 1, total: 2,
+    photo: { id: "photo-a", thumbnailUrl: url },
+    event: { id: "event-a", name: offset ? "Old event" : "Cebu Run" },
+    selectedPurchase,
+  });
+  const get = vi.spyOn(api, "get")
+    .mockResolvedValueOnce(page([{ orderId: "order-a", photoId: "photo-a" }], 0, { orderId: "order-a", photoId: "photo-a" }, "expired"))
+    .mockResolvedValueOnce(page([{ orderId: "order-b", photoId: "photo-a" }], 1, null, "expired"))
+    .mockResolvedValueOnce(page([{ orderId: "replacement", photoId: "photo-a" }], 0, { orderId: "order-b", photoId: "photo-a" }, "fresh"));
+  const { result } = renderHook(() => usePhotographerPhotoPurchases("photo-a", "order-a"), { wrapper });
+  await waitFor(() => expect(result.current.items).toHaveLength(1));
+  await act(async () => { await result.current.fetchNextPage(); });
+  await waitFor(() => expect(result.current.items.map((item) => item.orderId)).toEqual(["order-a", "order-b"]));
+
+  await act(async () => { await result.current.refreshPhoto("order-b"); });
+
+  expect(get).toHaveBeenCalledTimes(3);
+  expect(get.mock.calls[2][0]).toContain("offset=0");
+  expect(get.mock.calls[2][0]).toContain("limit=1");
+  expect(get.mock.calls[2][0]).toContain("orderId=order-b");
+  expect(result.current.photo?.thumbnailUrl).toBe("fresh");
+  expect(result.current.event?.name).toBe("Cebu Run");
+  expect(result.current.items.map((item) => item.orderId)).toEqual(["order-a", "order-b"]);
+  expect(result.current.total).toBe(2);
+  expect(result.current.selectedPurchase?.orderId).toBe("order-a");
+});
+
+it.each(["close", "account switch"])("drops a delayed photo refresh after %s", async (change) => {
+  login();
+  const initial = (url: string) => ({
+    items: [{ orderId: "order-a", photoId: "photo-a" }], offset: 0, limit: 25, total: 1,
+    photo: { id: "photo-a", thumbnailUrl: url }, event: { id: "event-a" },
+    selectedPurchase: { orderId: "order-a", photoId: "photo-a" },
+  });
+  let resolveRefresh!: (value: ReturnType<typeof initial>) => void;
+  const get = vi.spyOn(api, "get")
+    .mockResolvedValueOnce(initial("expired"))
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }))
+    .mockResolvedValue(initial("other-account"));
+  const { result, rerender } = renderHook(({ enabled }) => usePhotographerPhotoPurchases("photo-a", "order-a", enabled), {
+    initialProps: { enabled: true }, wrapper,
+  });
+  await waitFor(() => expect(result.current.photo?.thumbnailUrl).toBe("expired"));
+  const oldKey = client.getQueryCache().getAll()[0].queryKey;
+  let refresh!: Promise<void>;
+  act(() => { refresh = result.current.refreshPhoto(); });
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  const signal = get.mock.calls[1][1]?.signal;
+
+  if (change === "close") rerender({ enabled: false });
+  else act(() => login("seller-b"));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => { resolveRefresh(initial("fresh")); await refresh; });
+
+  expect((client.getQueryData<{ pages: ReturnType<typeof initial>[] }>(oldKey))?.pages[0].photo.thumbnailUrl).toBe("expired");
+});
+
+it("single-flights a failed photo refresh and allows a bounded retry", async () => {
+  login();
+  const page = (url: string) => ({
+    items: [{ orderId: "order-a", photoId: "photo-a" }], offset: 0, limit: 25, total: 1,
+    photo: { id: "photo-a", thumbnailUrl: url }, event: { id: "event-a" }, selectedPurchase: null,
+  });
+  let rejectRefresh!: (error: Error) => void;
+  const get = vi.spyOn(api, "get")
+    .mockResolvedValueOnce(page("expired"))
+    .mockImplementationOnce(() => new Promise((_, reject) => { rejectRefresh = reject; }))
+    .mockResolvedValueOnce(page("fresh"));
+  const { result } = renderHook(() => usePhotographerPhotoPurchases("photo-a"), { wrapper });
+  await waitFor(() => expect(result.current.photo?.thumbnailUrl).toBe("expired"));
+
+  let first!: Promise<void>;
+  let duplicate!: Promise<void>;
+  act(() => {
+    first = result.current.refreshPhoto("order-a");
+    duplicate = result.current.refreshPhoto("order-b");
+  });
+  expect(duplicate).toBe(first);
+  expect(get).toHaveBeenCalledTimes(2);
+  const rejected = expect(first).rejects.toThrow("expired signer");
+  await act(async () => rejectRefresh(new Error("expired signer")));
+  await rejected;
+  await waitFor(() => expect(result.current.photoRefreshError).toBeInstanceOf(Error));
+  expect(result.current.photo?.thumbnailUrl).toBe("expired");
+
+  await act(async () => { await result.current.refreshPhoto("order-b"); });
+  expect(get).toHaveBeenCalledTimes(3);
+  expect(get.mock.calls[2][0]).toContain("limit=1");
+  expect(get.mock.calls[2][0]).toContain("orderId=order-b");
+  expect(result.current.photo?.thumbnailUrl).toBe("fresh");
+  expect(result.current.photoRefreshError).toBeNull();
+});

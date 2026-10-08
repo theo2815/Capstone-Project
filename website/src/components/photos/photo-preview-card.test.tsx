@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
@@ -236,5 +236,44 @@ describe("PhotoPreviewCard metadata access", () => {
     view.rerender(withQuery(<PhotoPreviewCard photo={{ ...photo, id: "photo-b" }} metadataAccess="public" mode="owned" eventName="Cebu Run" index={2} total={2} {...callbacks()} />));
     await waitFor(() => expect(screen.getByRole("button", { name: "Show Metadata" })).toBeInTheDocument());
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a new image attempt after a successful same-URL refresh and keeps details", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const props = { photo: { ...photo, imageUrl: "https://cdn.example.test/signed.jpg" }, mode: "owned" as const,
+      eventName: "Cebu Run", index: 1, total: 1, onClose: vi.fn(), onDownload: vi.fn(),
+      details: <p>Purchase facts stay visible</p>, onRefreshImage: vi.fn() };
+    const card = (imageReloadKey: number) => <QueryClientProvider client={client}><PhotoPreviewCard {...props} imageReloadKey={imageReloadKey} /></QueryClientProvider>;
+    const view = render(card(0));
+    const failedImage = await screen.findByRole("img", { name: "Race photo of bib 101" });
+    fireEvent.error(failedImage);
+    expect(screen.getByText("Preview unavailable")).toBeVisible();
+
+    view.rerender(card(1));
+
+    const retriedImage = await screen.findByRole("img", { name: "Race photo of bib 101" });
+    expect(retriedImage).not.toBe(failedImage);
+    expect(retriedImage).toHaveAttribute("src", props.photo.imageUrl);
+    expect(screen.getByText("Purchase facts stay visible")).toBeVisible();
+  });
+
+  it("bounds refresh clicks while pending and exposes a retryable failure", async () => {
+    const onRefreshImage = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const props = { photo: { ...photo, imageUrl: "https://cdn.example.test/signed.jpg" }, mode: "owned" as const,
+      eventName: "Cebu Run", index: 1, total: 1, onClose: vi.fn(), onDownload: vi.fn(),
+      details: <p>Purchase facts</p>, onRefreshImage, imageReloadKey: 0 };
+    const card = (pending: boolean, error: string | null) => <QueryClientProvider client={client}><PhotoPreviewCard {...props} isRefreshingImage={pending} imageRefreshError={error} /></QueryClientProvider>;
+    const view = render(card(true, null));
+    fireEvent.error(await screen.findByRole("img", { name: "Race photo of bib 101" }));
+    const pendingButton = screen.getByRole("button", { name: "Refreshing preview…" });
+    expect(pendingButton).toBeDisabled();
+    fireEvent.click(pendingButton);
+    expect(onRefreshImage).not.toHaveBeenCalled();
+
+    view.rerender(card(false, "Could not refresh preview. Try again."));
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not refresh preview. Try again.");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
+    expect(onRefreshImage).toHaveBeenCalledOnce();
   });
 });
