@@ -830,3 +830,25 @@ def test_one_photo_at_a_time_by_default(tmp_path, monkeypatch):
     results = classifier.classify_batch([_make_bgr_image()] * 3)
     assert [r["predicted_class"] for r in results] == ["sharp"] * 3
     assert max(overlap) == 1  # never two detector calls at the same time
+
+
+def test_two_at_once_keeps_the_request_tracking(tmp_path, monkeypatch):
+    from src import config
+    from src.utils.timeout import request_work, start_timeout_executor
+
+    start_timeout_executor()
+    classifier = _arm(_unarmed(tmp_path), p_missed=0.3)
+    monkeypatch.setattr(
+        config,
+        "get_settings",
+        lambda: SimpleNamespace(
+            MODEL_PROFILE="blur", BLUR_STAGE2_CONCURRENCY=2, BLUR_INFERENCE_TIMEOUT_SECONDS=5
+        ),
+    )
+    tracked = []
+    token = request_work.set(SimpleNamespace(track=tracked.append))
+    try:
+        classifier.classify_batch([_make_bgr_image(), _make_bgr_image()])
+    finally:
+        request_work.reset(token)
+    assert len(tracked) == 2  # each native call stays tied to the request that started it

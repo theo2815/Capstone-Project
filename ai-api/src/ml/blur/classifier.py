@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import time
@@ -328,7 +329,11 @@ class BlurClassifier:
                 one(i, img)
             return results
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for future in [pool.submit(one, i, img) for i, img in todo]:
+            # Each photo runs in a copy of the caller's context, so a native call that
+            # outlives its deadline still holds its request's admission.
+            for future in [
+                pool.submit(contextvars.copy_context().run, one, i, img) for i, img in todo
+            ]:
                 future.result()  # re-raises a deadline or busy error
         return results
 
