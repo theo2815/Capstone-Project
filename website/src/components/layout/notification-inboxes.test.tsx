@@ -27,7 +27,7 @@ beforeEach(() => {
   rows = [message]; useToastStore.getState().clear(); useViewModeStore.getState().reset();
   vi.spyOn(api, "getWithTotal").mockImplementation(async () => ({ data: rows, total: rows.length }));
 });
-afterEach(() => { cleanup(); client.clear(); useConfirmationStore.getState().close(false); useAuthStore.getState().logout(); vi.restoreAllMocks(); push.mockClear(); });
+afterEach(() => { cleanup(); client.clear(); useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", false); useAuthStore.getState().logout(); vi.restoreAllMocks(); push.mockClear(); });
 function mount(role: "PHOTOGRAPHER" | "RUNNER") {
   useAuthStore.getState().setUser({ id: "owner", role, name: "Owner", email: "owner@example.test", createdAt: "2026-09-10T00:00:00Z" });
   return render(<QueryClientProvider client={client}><NotificationBell /><RunnerNotificationBell /><ConfirmationOverlay /></QueryClientProvider>);

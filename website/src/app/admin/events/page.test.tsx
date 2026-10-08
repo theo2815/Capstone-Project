@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup(); client.clear(); useAuthStore.getState().logout();
-  useConfirmationStore.getState().close(false); useToastStore.getState().clear(); vi.restoreAllMocks();
+  useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", false); useToastStore.getState().clear(); vi.restoreAllMocks();
 });
 it("waits in delete confirmation, retains the event on failure, and allows retry", async () => {
   const user = userEvent.setup(); const request = deferred();

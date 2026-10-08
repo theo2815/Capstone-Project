@@ -21,9 +21,9 @@ interface ConfirmationState {
   loading: boolean;
   error: string | null;
   open: (req: ConfirmationRequest) => void;
-  close: (resolveWith: boolean) => void;
-  setLoading: (v: boolean) => void;
-  setError: (msg: string | null) => void;
+  claim: (id: string) => boolean;
+  close: (id: string, resolveWith: boolean) => void;
+  fail: (id: string, msg: string) => void;
 }
 
 function makeId(): string {
@@ -39,21 +39,27 @@ export const useConfirmationStore = create<ConfirmationState>((set, get) => ({
   error: null,
   open: (req) => {
     const prev = get().active;
-    if (prev) {
-      // A confirmation is already on screen. Reject the older one as cancelled
-      // so its caller can unblock; the newer one takes the singleton slot.
-      prev.resolve(false);
+    if (get().loading) {
+      req.resolve(false);
+      return;
     }
     set({ active: req, loading: false, error: null });
+    prev?.resolve(false);
   },
-  close: (resolveWith) => {
+  claim: (id) => {
+    if (get().active?.id !== id || get().loading) return false;
+    set({ loading: true, error: null });
+    return true;
+  },
+  close: (id, resolveWith) => {
     const current = get().active;
-    if (!current) return;
-    current.resolve(resolveWith);
+    if (current?.id !== id || (get().loading && !resolveWith)) return;
     set({ active: null, loading: false, error: null });
+    current.resolve(resolveWith);
   },
-  setLoading: (v) => set({ loading: v }),
-  setError: (msg) => set({ error: msg }),
+  fail: (id, msg) => {
+    if (get().active?.id === id) set({ loading: false, error: msg });
+  },
 }));
 
 export { makeId as makeConfirmationId };
