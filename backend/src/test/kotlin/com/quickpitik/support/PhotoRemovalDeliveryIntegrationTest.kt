@@ -36,6 +36,7 @@ class PhotoRemovalDeliveryIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var users: UserRepository
     @Autowired lateinit var requests: PhotoRemovalRequestRepository
     @Autowired lateinit var items: PhotoRemovalItemRepository
+    @Autowired lateinit var reviews: PhotoRemovalReviewRepository
     @Autowired lateinit var orders: OrderRepository
     @Autowired lateinit var orderItems: OrderItemRepository
     @Autowired lateinit var payments: PaymentRepository
@@ -82,8 +83,9 @@ class PhotoRemovalDeliveryIntegrationTest : PostgresIntegrationTest() {
         val request = requests.saveAndFlush(PhotoRemovalRequest(eventId = event.id, eventIdSnapshot = event.id, eventNameSnapshot = event.name,
             requesterContact = "Private contact", supportReference = "Case-${UUID.randomUUID()}", requesterReason = "Privacy",
             publicToOwnerReason = "Privacy request", creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID(), status = RemovalRequestStatus.OPEN))
+        val review = reviews.saveAndFlush(PhotoRemovalReview(requestId = request.id, ownerIdSnapshot = owner.id, ownerId = owner.id))
         item = items.saveAndFlush(PhotoRemovalItem(requestId = request.id, photoIdSnapshot = photo.id, photoId = photo.id,
-            ownerIdSnapshot = owner.id, state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.MANUAL))
+            ownerIdSnapshot = owner.id, reviewId = review.id, state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.MANUAL))
         Mockito.`when`(storage.open(anyArg())).thenAnswer { ByteArrayInputStream(bytes) }
         Mockito.`when`(storage.getBytes(anyArg())).thenReturn(bytes)
         Mockito.`when`(storage.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://synthetic.test/image")

@@ -39,6 +39,7 @@ class PhotoRemovalQueryService(
     private val tx: TransactionTemplate,
     private val mapper: ObjectMapper,
     private val clock: Clock,
+    private val jobs: PhotoErasureJobRepository,
 ) {
 
     @Transactional(propagation = Propagation.NEVER)
@@ -67,28 +68,37 @@ class PhotoRemovalQueryService(
         val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
         val owned = items.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId)
         if (owned.isEmpty()) removalNotFound()
+        val pendingOwnerReviews = items.findPendingOwnerReviewItemIds(requestId).toSet()
         val current = photos.findAllById(owned.mapNotNull { it.photoId }).associateBy { it.id }
         val keys = mutableMapOf<UUID, String>()
         val selected = owned.map { item ->
             val photo = current[item.photoId]
+            val job = item.cleanupJobId?.let { jobs.findById(it).orElse(null) }
+            val state = if (item.state == RemovalItemState.REMOVED && !job.confirms(item.photoIdSnapshot)) RemovalItemState.REMOVAL_AUTHORIZED else item.state
             if (photo != null && photo.purgedAt == null && photo.deletionStartedAt == null && photo.removalState != RemovalState.REMOVED &&
                 item.state !in setOf(RemovalItemState.REMOVAL_AUTHORIZED, RemovalItemState.REMOVED)) {
                 (photo.thumbnailS3Key ?: photo.watermarkS3Key)?.let { keys[item.id] = it }
             }
-            PhotographerRemovalItemDto(item.id, item.photoIdSnapshot, item.state, item.ownerResponse, item.ownerResponseReason,
+            PhotographerRemovalItemDto(item.id, item.photoIdSnapshot, state, item.ownerResponse, item.ownerResponseReason,
                 item.ownerRespondedAt, item.adminDecision, null, item.adminDecidedAt, item.retentionReviewAt,
-                null, photo?.toDto(thumbnailUrlResolver = { null }), observedRemovalPhotoState(photo))
+                job?.outcome?.name ?: if (photo == null) "UNCONFIRMED" else null,
+                photo?.toDto(thumbnailUrlResolver = { null }), observedRemovalPhotoState(photo), item.id in pendingOwnerReviews)
         }
         val ownReviews = reviews.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId).map {
             val group = owned.filter { item -> item.reviewId == it.id }
             PhotographerRemovalReviewDto(it.id, it.notifiedAt, it.deadline, it.overdue, it.overdueAt,
-                RemovalResponseCounts(group.count { item -> item.awaitingDecision() && item.ownerResponse == null },
+                RemovalResponseCounts(group.count { item -> item.awaitingDecision(pendingOwnerReviews) && item.ownerResponse == null },
                     group.count { item -> item.ownerResponse == PhotographerRemovalResponse.AGREE },
                     group.count { item -> item.ownerResponse == PhotographerRemovalResponse.OBJECT },
                     group.count { item -> item.ownerResponse == PhotographerRemovalResponse.ALREADY_DELETED }))
         }
+        val reopened = request.status == RemovalRequestStatus.RESOLVED && items.findByRequestIdOrderByIdAsc(requestId).any {
+            it.state == RemovalItemState.REMOVAL_AUTHORIZED || (it.state == RemovalItemState.REMOVED &&
+                !it.cleanupJobId?.let { id -> jobs.findById(id).orElse(null) }.confirms(it.photoIdSnapshot))
+        }
         return OwnerSnapshot(PhotographerRemovalRequestDto(request.id, RemovalEventDto(request.eventIdSnapshot, request.eventNameSnapshot),
-            request.status, request.version, request.createdAt, request.updatedAt, request.resolvedAt, request.publicToOwnerReason,
+            if (reopened) RemovalRequestStatus.RESOLVING else request.status, request.version, request.createdAt, request.updatedAt,
+            request.resolvedAt.takeUnless { reopened }, request.publicToOwnerReason,
             selected, ownReviews), keys)
     }
 
@@ -211,7 +221,22 @@ class PhotoRemovalQueryService(
     fun adminDetail(adminId: UUID, requestId: UUID): PhotoRemovalRequestDto {
         val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
         val selected = items.findByRequestIdOrderByIdAsc(requestId)
-        return request.toAdminDto(selected, reviews.findByRequestIdOrderByIdAsc(requestId)).copy(
+        val groups = reviews.findByRequestIdOrderByIdAsc(requestId)
+        val detail = request.toAdminDto(selected, groups)
+        val pendingOwnerReviews = items.findPendingOwnerReviewItemIds(requestId).toSet()
+        val hydrated = detail.items.map { item ->
+            val job = item.cleanupJobId?.let { jobs.findById(it).orElse(null) }
+            item.copy(cleanupState = job?.outcome?.name ?: if (selected.single { it.id == item.id }.photoId == null) "UNCONFIRMED" else null,
+                state = if (item.state == RemovalItemState.REMOVED && !job.confirms(item.photoIdSnapshot)) RemovalItemState.REMOVAL_AUTHORIZED else item.state,
+                reviewOwnerId = groups.find { it.id == item.reviewId }?.ownerIdSnapshot,
+                ownerReviewPending = item.id in pendingOwnerReviews)
+        }
+        val reopened = hydrated.any { it.state == RemovalItemState.REMOVAL_AUTHORIZED } && request.status == RemovalRequestStatus.RESOLVED
+        return detail.copy(items = hydrated, status = if (reopened) RemovalRequestStatus.RESOLVING else detail.status,
+            resolvedAt = detail.resolvedAt.takeUnless { reopened },
+            phaseCounts = detail.phaseCounts.copy(removed = hydrated.count { it.state == RemovalItemState.REMOVED }.toLong(),
+                removalAuthorized = hydrated.count { it.state == RemovalItemState.REMOVAL_AUTHORIZED }.toLong(),
+                pendingOwnerReviews = pendingOwnerReviews.size.toLong()),
             guestBuyerRemovalNotices = history.findGuestBuyerNotices(requestId).map {
                 GuestBuyerRemovalNoticeDto(it.noticeId, it.orderId, it.photoId, it.occurredAt, it.status, it.recipientEmail)
             })
@@ -222,21 +247,40 @@ class PhotoRemovalQueryService(
         val filter = Specification<PhotoRemovalRequest> { root, query, cb ->
             val predicates = mutableListOf<jakarta.persistence.criteria.Predicate>()
             eventId?.let { predicates += cb.equal(root.get<UUID>("eventIdSnapshot"), it) }
-            status?.let { predicates += cb.equal(root.get<RemovalRequestStatus>("status"), it) }
+            val pending = query!!.subquery(UUID::class.java)
+            val pendingItem = pending.from(PhotoRemovalItem::class.java)
+            val confirmed = pending.subquery(UUID::class.java)
+            val job = confirmed.from(PhotoErasureJob::class.java)
+            confirmed.select(job.get("id")).where(cb.equal(job.get<UUID>("id"), pendingItem.get<UUID>("cleanupJobId")),
+                cb.equal(job.get<UUID>("photoId"), pendingItem.get<UUID>("photoIdSnapshot")),
+                cb.equal(job.get<com.quickpitik.dto.photos.PhotoErasureOutcome>("outcome"), com.quickpitik.dto.photos.PhotoErasureOutcome.COMPLETE),
+                cb.isNotNull(job.get<java.time.Instant>("completedAt")))
+            pending.select(pendingItem.get("id")).where(cb.equal(pendingItem.get<UUID>("requestId"), root.get<UUID>("id")),
+                cb.or(cb.equal(pendingItem.get<RemovalItemState>("state"), RemovalItemState.REMOVAL_AUTHORIZED),
+                    cb.and(cb.equal(pendingItem.get<RemovalItemState>("state"), RemovalItemState.REMOVED), cb.not(cb.exists(confirmed)))))
+            val reopened = cb.and(cb.equal(root.get<RemovalRequestStatus>("status"), RemovalRequestStatus.RESOLVED), cb.exists(pending))
+            status?.let {
+                val stored = cb.equal(root.get<RemovalRequestStatus>("status"), it)
+                predicates += when (it) {
+                    RemovalRequestStatus.RESOLVING -> cb.or(stored, reopened)
+                    RemovalRequestStatus.RESOLVED -> cb.and(stored, cb.not(reopened))
+                    else -> stored
+                }
+            }
             needsAction?.let {
-                val retained = query!!.subquery(UUID::class.java)
+                val retained = query.subquery(UUID::class.java)
                 val item = retained.from(PhotoRemovalItem::class.java)
                 retained.select(item.get("id")).where(cb.equal(item.get<UUID>("requestId"), root.get<UUID>("id")),
                     cb.equal(item.get<RemovalItemState>("state"), RemovalItemState.RETAINED_RESTRICTED),
                     cb.lessThanOrEqualTo(item.get("retentionReviewAt"), clock.instant()))
-                val active = cb.or(root.get<RemovalRequestStatus>("status").`in`(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN, RemovalRequestStatus.RESOLVING),
+                val active = cb.or(reopened, root.get<RemovalRequestStatus>("status").`in`(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN, RemovalRequestStatus.RESOLVING),
                     cb.and(cb.equal(root.get<RemovalRequestStatus>("status"), RemovalRequestStatus.RESOLVED), cb.exists(retained)))
                 predicates += if (it) active else cb.not(active)
             }
             cb.and(*predicates.toTypedArray())
         }
         val page = requests.findAll(filter, OffsetLimitPageable(params, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id"))))
-        return RemovalPage(page.content.map { it.toAdminDto(items.findByRequestIdOrderByIdAsc(it.id), emptyList()).copy(items = emptyList()) },
+        return RemovalPage(page.content.map { adminDetail(adminId, it.id).copy(items = emptyList()) },
             page.totalElements, params.offset, params.limit)
     }
 

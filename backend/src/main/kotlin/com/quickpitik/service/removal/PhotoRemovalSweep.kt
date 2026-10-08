@@ -26,6 +26,7 @@ class PhotoRemovalSweep(
     private val tx: TransactionTemplate,
     private val clock: Clock,
     private val properties: PhotoRemovalProperties,
+    private val service: PhotoRemovalService,
 ) {
     @Scheduled(fixedDelayString = "\${app.photo-removal.cleanup-interval:PT1M}")
     fun sweep() { sweepDue(clock.instant(), properties.sweepBatchSize) }
@@ -42,6 +43,7 @@ class PhotoRemovalSweep(
                 val request = requests.findForUpdate(requestId) ?: return@execute 0
                 if (request.status !in setOf(RemovalRequestStatus.OPEN, RemovalRequestStatus.RESOLVING, RemovalRequestStatus.RESOLVED)) return@execute 0
                 val selected = items.findByRequestIdOrderByIdAsc(requestId)
+                val pendingOwnerReviews = items.findPendingOwnerReviewItemIds(requestId).toSet()
                 var actions = 0
                 fun record(kind: String, item: PhotoRemovalItem? = null, review: PhotoRemovalReview? = null,
                     dueAt: Instant? = null, reason: String): Boolean {
@@ -61,7 +63,7 @@ class PhotoRemovalSweep(
                 }
                 for (review in reviews.findByRequestIdOrderByIdAsc(requestId)) {
                     if (request.status == RemovalRequestStatus.RESOLVED) break
-                    val undecided = selected.filter { it.reviewId == review.id && it.awaitingDecision() }
+                    val undecided = selected.filter { it.reviewId == review.id && it.awaitingDecision(pendingOwnerReviews) }
                     if (undecided.isEmpty()) continue
                     if (review.unavailableReason != null) {
                         record("OWNER_UNAVAILABLE", review = review, reason = "Owner unavailable; admin action required")
@@ -74,7 +76,7 @@ class PhotoRemovalSweep(
                     }
                 }
                 for (item in selected) {
-                    if (request.status != RemovalRequestStatus.RESOLVED && item.ownerIdSnapshot == null && item.awaitingDecision())
+                    if (request.status != RemovalRequestStatus.RESOLVED && item.reviewId == null && item.awaitingDecision(pendingOwnerReviews))
                         record("OWNER_UNAVAILABLE", item = item, reason = "Photo has no assigned owner; admin action required")
                     if (item.state == RemovalItemState.RETAINED_RESTRICTED && item.retentionReviewAt?.let { it <= now } == true)
                         record("RETENTION_DUE", item = item, dueAt = item.retentionReviewAt, reason = "Restricted retention review due; admin action required")
@@ -87,8 +89,18 @@ class PhotoRemovalSweep(
                 actions
             }!!
         }
+        if (processed < bound) {
+            val pending = tx.execute { requests.findReconciliationRequestIds(PageRequest.of(0, bound - processed)) }!!
+            pending.forEach { id ->
+                runCatching { service.reconcile(id) }.onFailure {
+                    org.slf4j.LoggerFactory.getLogger(javaClass).warn("Removal reconciliation deferred for case {} ({})", id, it.javaClass.simpleName)
+                }
+                processed++
+            }
+        }
         return processed
     }
 }
 
-internal fun PhotoRemovalItem.awaitingDecision() = state == RemovalItemState.VERIFIED && adminDecision in setOf(null, RemovalDecision.MORE_EVIDENCE)
+internal fun PhotoRemovalItem.awaitingDecision(pendingOwnerReviews: Set<UUID> = emptySet()) =
+    (state == RemovalItemState.VERIFIED && adminDecision in setOf(null, RemovalDecision.MORE_EVIDENCE)) || id in pendingOwnerReviews

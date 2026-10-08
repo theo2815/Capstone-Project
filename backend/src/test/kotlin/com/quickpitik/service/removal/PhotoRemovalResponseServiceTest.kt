@@ -50,10 +50,13 @@ class PhotoRemovalResponseServiceTest {
         reviewId = review.id, state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.MANUAL)
     private val queries = PhotoRemovalQueryService(requests, items, reviews, mock(PhotoRemovalHistoryRepository::class.java), photos,
         mock(UserRepository::class.java), commands, mock(PhotoRemovalEvidenceService::class.java), mock(PhotoSearchService::class.java),
-        mock(StorageService::class.java), StorageProperties(), tx, mapper, clock)
+        mock(StorageService::class.java), StorageProperties(), tx, mapper, clock, mock(PhotoErasureJobRepository::class.java))
     private val service = PhotoRemovalService(requests, commands, mock(EventRepository::class.java), mock(UserRepository::class.java), items,
         photos, reviews, mock(PhotoRemovalNotifier::class.java), mock(PhotoAvailabilityService::class.java), mock(PhotoRemovalEvidenceService::class.java),
-        queries, history, PhotoRemovalTransitions(), tx, mapper, clock, publisher)
+        queries, history, PhotoRemovalTransitions(), tx, mapper, clock, publisher,
+        mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
+        mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
+        mock(PhotoRemovalHistoryRepository::class.java))
     private val receipts = mutableMapOf<UUID, PhotoRemovalCommand>()
     private val audit = mutableListOf<RemovalHistoryEvent>()
     private val events = mutableListOf<AdminInboxEvent>()
@@ -149,6 +152,47 @@ class PhotoRemovalResponseServiceTest {
         val snapshot = queries.photographerDetail(owner, request.id)
         assertNull(snapshot.items.single().response)
         assertEquals(0L, snapshot.version, "Older responses must carry the earlier version so stale edits are rejected")
+    }
+
+    // Supplemental unit validation for the decision/retry/support paths exercised first on PostgreSQL.
+    @Test fun `stale admin commands cannot create decisions retries or support history`() {
+        assertEquals(409, assertFailsWith<ApiException> {
+            service.decide(request.creatorId, request.id, DecideRemovalCommand(UUID.randomUUID(), 2,
+                listOf(RemovalItemDecision(item.id, RemovalDecision.REMOVE, "Confirmed")), "Urgent"))
+        }.status.value())
+        assertEquals(409, assertFailsWith<ApiException> {
+            service.retryCleanup(request.creatorId, request.id, RetryRemovalCleanupCommand(UUID.randomUUID(), 2, listOf(item.id)))
+        }.status.value())
+        assertEquals(409, assertFailsWith<ApiException> {
+            service.supportUpdate(request.creatorId, request.id, RemovalSupportUpdateCommand(UUID.randomUUID(), 2, "Private note"))
+        }.status.value())
+        assertEquals(RemovalItemState.VERIFIED, item.state)
+        assertTrue(receipts.isEmpty()); assertTrue(audit.isEmpty()); assertTrue(events.isEmpty())
+    }
+
+    @Test fun `draft reconciliation neither closes nor implicitly selects items`() {
+        request.status = RemovalRequestStatus.DRAFT
+        val detail = service.reconcile(request.id)
+        assertEquals(RemovalRequestStatus.DRAFT, detail.status)
+        assertNull(detail.resolvedAt)
+        assertTrue(detail.items.isEmpty()); assertTrue(audit.isEmpty()); assertTrue(events.isEmpty())
+    }
+
+    @Test fun `only pending restricted item can reply without replacing its decision`() {
+        item.state = RemovalItemState.RETAINED_RESTRICTED
+        item.adminDecision = RemovalDecision.RETAIN_RESTRICTED
+        item.verifiedAt = now; item.adminDecidedAt = now
+        `when`(items.findPendingOwnerReviewItemIds(request.id)).thenReturn(listOf(item.id))
+        val command = RespondToRemovalCommand(UUID.randomUUID(), 0, listOf(item.id), PhotographerRemovalResponse.AGREE)
+        val result = service.respond(owner, request.id, command)
+        assertTrue(result.items.single().ownerReviewPending)
+        assertEquals(PhotographerRemovalResponse.AGREE, result.items.single().response)
+        assertEquals(RemovalItemState.RETAINED_RESTRICTED, item.state)
+        assertEquals(RemovalDecision.RETAIN_RESTRICTED, item.adminDecision)
+        `when`(items.findPendingOwnerReviewItemIds(request.id)).thenReturn(emptyList())
+        assertEquals(409, assertFailsWith<ApiException> { service.respond(owner, request.id,
+            command.copy(commandId = UUID.randomUUID(), expectedVersion = 1)) }.status.value())
+        assertEquals(result, service.respond(owner, request.id, command))
     }
 
     private fun event() = RemovalHistoryEvent(requestId = request.id, actorType = RemovalActorType.PHOTOGRAPHER,

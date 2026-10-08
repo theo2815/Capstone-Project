@@ -10,6 +10,21 @@ import java.util.UUID
 
 // Deliberately excludes JpaRepository's save/update/delete surface.
 interface PhotoRemovalHistoryRepository : Repository<PhotoRemovalHistory, UUID> {
+    @Query(value = """SELECT max(CAST(metadata->>'noticeVersion' AS bigint)) FROM photo_removal_history
+        WHERE review_id = :reviewId AND action = 'VERIFIED' AND metadata->>'kind' = 'owner_reverification'""", nativeQuery = true)
+    fun findReviewNoticeVersion(reviewId: UUID): Long?
+
+    @Query(value = """WITH pending AS (SELECT h.* FROM photo_removal_history h WHERE h.review_id = :reviewId
+        AND h.action IN ('ADMIN_DECIDED','ERASURE_PROGRESS') AND h.metadata->>'decisionVersion' IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM photo_removal_history n WHERE n.review_id = h.review_id
+            AND n.action IN ('NOTICE_STORED','OWNER_UNAVAILABLE')
+            AND n.metadata->>'noticeKey' = 'removal:review:' || h.review_id || ':outcome:' || (h.metadata->>'decisionVersion'))
+        ), first_version AS (SELECT metadata->>'decisionVersion' AS version FROM pending
+            ORDER BY CAST(metadata->>'decisionVersion' AS bigint) LIMIT 1)
+        SELECT p.* FROM pending p WHERE p.metadata->>'decisionVersion' = (SELECT version FROM first_version)
+        ORDER BY p.occurred_at, p.id""", nativeQuery = true)
+    fun findPendingOutcomes(reviewId: UUID, pageable: Pageable): List<PhotoRemovalHistory>
+
     @Query(value = """
         SELECT EXISTS (SELECT 1 FROM photo_removal_history WHERE photo_id_snapshot = :photoId
             AND action = 'NOTICE_STORED' AND metadata->>'kind' = 'guest_buyer_removal' AND metadata->>'orderId' = :orderId)

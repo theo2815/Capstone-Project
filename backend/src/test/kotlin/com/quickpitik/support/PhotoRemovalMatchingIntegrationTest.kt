@@ -52,7 +52,7 @@ class PhotoRemovalMatchingUnitTest {
     private val service = PhotoRemovalQueryService(requests, mock(PhotoRemovalItemRepository::class.java),
         mock(PhotoRemovalReviewRepository::class.java), mock(PhotoRemovalHistoryRepository::class.java), photos,
         mock(UserRepository::class.java), commands, evidence, search, storage, com.quickpitik.config.StorageProperties(),
-        org.springframework.transaction.support.TransactionTemplate(manager), mapper, java.time.Clock.systemUTC())
+        org.springframework.transaction.support.TransactionTemplate(manager), mapper, java.time.Clock.systemUTC(), mock(PhotoErasureJobRepository::class.java))
 
     init {
         `when`(manager.getTransaction(any() ?: org.springframework.transaction.support.DefaultTransactionDefinition()))
