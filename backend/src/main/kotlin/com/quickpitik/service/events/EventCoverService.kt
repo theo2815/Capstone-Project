@@ -1,5 +1,9 @@
 package com.quickpitik.service.events
 
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
+import java.util.HexFormat
+import java.security.MessageDigest
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.service.image.ImageDecode
@@ -30,7 +34,10 @@ class EventCoverService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun upload(eventId: UUID, file: ByteArray, contentType: String?): String {
+    fun upload(eventId: UUID, file: ByteArray, contentType: String?): String =
+        uploadPrepared("events/$eventId/cover/${UUID.randomUUID()}.jpg", prepare(file, contentType))
+
+    fun prepare(file: ByteArray, contentType: String?): ByteArray {
         if (file.isEmpty()) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
@@ -60,9 +67,24 @@ class EventCoverService(
                 field = "cover",
             )
         }
-        val processed = normaliseToJpeg(file)
-        val key = "events/$eventId/cover/${UUID.randomUUID()}.jpg"
+        return normaliseToJpeg(file)
+    }
+
+    fun digest(bytes: ByteArray): String = HexFormat.of().formatHex(
+        MessageDigest.getInstance("SHA-256").digest(bytes))
+
+    fun uploadPrepared(key: String, processed: ByteArray): String {
         storageService.put(key, processed, "image/jpeg")
+        return key
+    }
+
+    fun recover(key: String, processed: ByteArray, digest: String): String {
+        val metadata = storageService.metadata(key) ?: return uploadPrepared(key, processed)
+        if (metadata.sizeBytes != processed.size.toLong() || metadata.contentType != "image/jpeg" ||
+            digest(storageService.getBytes(key)) != digest) {
+            throw ApiException(HttpStatus.CONFLICT,
+                ErrorCodes.ADMIN_COMMAND_RECOVERY_REQUIRED, "Cover object does not match its command; administrative reconciliation is required")
+        }
         return key
     }
 

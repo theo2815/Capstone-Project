@@ -1,5 +1,10 @@
 package com.quickpitik.service.admin
 
+import com.quickpitik.common.IdempotencyKey
+import com.quickpitik.entity.AdminActionOperation
+import com.quickpitik.entity.Role
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
@@ -50,6 +55,7 @@ class AdminEventService(
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
     private val transactionTemplate: TransactionTemplate,
+    private val commands: AdminActionCommandService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -237,45 +243,50 @@ class AdminEventService(
         adminId: UUID,
         req: CreateAdminEventRequest,
         cover: CoverUpload? = null,
+        key: IdempotencyKey? = null,
     ): AdminListEventDto {
+        if (key != null) return createCommand(adminId, req, cover, key)
         val date = parseDate(req.date)
-        val slug = slugify(req.title)
         val price = validatedPrice(req.pricePerPhoto)
         val eventId = UUID.randomUUID()
         val coverKey = cover?.let { eventCoverService.upload(eventId, it.bytes, it.contentType) }
-        // ponytail: a failed commit can orphan this new object; reconcile unreferenced keys if observed.
-        return transactionTemplate.execute {
-            val event = eventRepository.save(
-                Event(
-                    id = eventId,
-                    coverS3Key = coverKey,
-                    slug = slug,
-                    name = req.title.trim(),
-                    date = date,
-                    location = req.location.trim(),
-                    photoCount = 0,
-                    participantCount = 0,
-                    status = EventStatus.ACTIVE,
-                    description = req.description?.trim().orEmpty(),
-                    organizerName = req.organizerName?.trim().orEmpty(),
-                    pricePerPhoto = price,
-                    createdAt = OffsetDateTime.now(),
-                    updatedAt = OffsetDateTime.now(),
-                ),
-            )
-            adminDecisionLogService.logEventDecision(
-                adminId = adminId,
-                targetEventId = event.id,
-                decision = "event_created",
-                meta = mapOf(
-                    "title" to req.title,
-                    "date" to req.date,
-                    "location" to req.location,
-                    "pricePerPhoto" to price.toPlainString(),
-                ),
-            )
-            eventDtoMapper.toAdminListDto(event)
-        } ?: error("Event creation returned null")
+        // ponytail: unkeyed legacy commit failure can orphan a cover; keyed callers use durable provenance.
+        val result = transactionTemplate.execute { createEvent(adminId, req, eventId, coverKey, date, price).first }!!
+        return eventDtoMapper.toAdminListDto(result)
+    }
+
+    private fun createEvent(adminId: UUID, req: CreateAdminEventRequest, eventId: UUID, coverKey: String?,
+        date: LocalDate, price: BigDecimal): Pair<Event, UUID> {
+        val event = eventRepository.save(
+            Event(
+                id = eventId,
+                coverS3Key = coverKey,
+                slug = slugify(req.title),
+                name = req.title.trim(),
+                date = date,
+                location = req.location.trim(),
+                photoCount = 0,
+                participantCount = 0,
+                status = EventStatus.ACTIVE,
+                description = req.description?.trim().orEmpty(),
+                organizerName = req.organizerName?.trim().orEmpty(),
+                pricePerPhoto = price,
+                createdAt = OffsetDateTime.now(),
+                updatedAt = OffsetDateTime.now(),
+            ),
+        )
+        val decision = adminDecisionLogService.logEventDecision(
+            adminId = adminId,
+            targetEventId = event.id,
+            decision = "event_created",
+            meta = mapOf(
+                "title" to req.title,
+                "date" to req.date,
+                "location" to req.location,
+                "pricePerPhoto" to price.toPlainString(),
+            ),
+        )
+        return event to decision.id
     }
 
     /** Raw image bytes + content type for cover uploads. */
@@ -288,7 +299,9 @@ class AdminEventService(
         req: UpdateAdminEventRequest,
         cover: CoverUpload? = null,
         removeCover: Boolean = false,
+        key: IdempotencyKey? = null,
     ): AdminListEventDto {
+        if (key != null) return updateCommand(adminId, eventId, req, cover, removeCover, key)
         // Preserve validation before the PUT, then reload in the write transaction
         // so edits made during the upload are not overwritten by a detached snapshot.
         val coverKey = cover?.let {
@@ -303,12 +316,81 @@ class AdminEventService(
             val event = loadForReview(eventId)
             event.requireReviewRevision(req.expectedRevision)
             val oldKey = event.coverS3Key
-            val dto = updateEvent(adminId, event, req, coverKey, removeCover)
-            dto to oldKey?.takeIf { it.isNotBlank() && it != event.coverS3Key }
+            updateEvent(adminId, event, req, coverKey, removeCover)
+            event to oldKey?.takeIf { it.isNotBlank() && it != event.coverS3Key }
         } ?: error("Event update returned null")
         // Never delete the stored cover until its replacement/removal has committed.
         oldCoverKey?.let(eventCoverService::delete)
-        return result
+        return eventDtoMapper.toAdminListDto(result)
+    }
+
+    private fun authorizeCommand(adminId: UUID) {
+        val actor = userRepository.findById(adminId).orElse(null)
+        if (actor == null || actor.role != Role.ADMIN || actor.suspendedAt != null)
+            throw ApiException(HttpStatus.FORBIDDEN,
+                ErrorCodes.FORBIDDEN, "An active admin is required")
+    }
+
+    private fun createCommand(adminId: UUID, req: CreateAdminEventRequest, cover: CoverUpload?,
+        key: IdempotencyKey): AdminListEventDto {
+        val fields = listOf(req.title.trim(), req.date.trim(), req.location.trim(),
+            req.pricePerPhoto.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
+            req.organizerName?.trim().orEmpty(), req.description?.trim().orEmpty(), cover?.let { eventCoverService.digest(it.bytes) }.orEmpty())
+        var processed: ByteArray? = null
+        val result = commands.executeEvent(key, adminId, AdminActionOperation.EVENT_CREATE,
+            null, commands.inputHash(fields), { authorizeCommand(adminId) }, {
+                parseDate(req.date); validatedPrice(req.pricePerPhoto)
+            }, {
+                processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
+                processed?.let(eventCoverService::digest)
+            }, { storageKey, recovery ->
+                if (recovery) eventCoverService.recover(storageKey, processed!!, eventCoverService.digest(processed!!))
+                else eventCoverService.uploadPrepared(storageKey, processed!!)
+            }, { eventId, coverKey ->
+                val (event, decision) = createEvent(adminId, req, eventId, coverKey, parseDate(req.date), validatedPrice(req.pricePerPhoto))
+                AdminActionResult(event.id, decision, null)
+            })
+        return commandEventDto(result.resourceId!!)
+    }
+
+    private fun updateCommand(adminId: UUID, eventId: UUID, req: UpdateAdminEventRequest, cover: CoverUpload?,
+        removeCover: Boolean, key: IdempotencyKey): AdminListEventDto {
+        val fields = listOf(eventId.toString(), req.title?.trim().orEmpty(), req.date?.trim().orEmpty(),
+            req.location?.trim().orEmpty(), req.pricePerPhoto?.setScale(2, java.math.RoundingMode.HALF_UP)?.toPlainString().orEmpty(),
+            req.organizerName?.trim().orEmpty(), req.description?.trim().orEmpty(), req.expectedRevision?.toString().orEmpty(),
+            (removeCover && cover == null).toString(), cover?.let { eventCoverService.digest(it.bytes) }.orEmpty())
+        var processed: ByteArray? = null
+        var oldCover: String? = null
+        val result = commands.executeEvent(key, adminId, AdminActionOperation.EVENT_UPDATE,
+            eventId, commands.inputHash(fields), { authorizeCommand(adminId) }, {
+                val event = loadForReview(eventId)
+                event.requireReviewRevision(req.expectedRevision)
+                req.date?.takeIf(String::isNotBlank)?.let(::parseDate)
+                req.pricePerPhoto?.let { validatedUpdatePrice(it, event.isFree) }
+            }, {
+                processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
+                processed?.let(eventCoverService::digest)
+            }, { storageKey, recovery ->
+                if (recovery) eventCoverService.recover(storageKey, processed!!, eventCoverService.digest(processed!!))
+                else eventCoverService.uploadPrepared(storageKey, processed!!)
+            }, { _, coverKey ->
+                if (req.pricePerPhoto != null) lockEventPhotos(eventId)
+                val event = loadForReview(eventId)
+                event.requireReviewRevision(req.expectedRevision)
+                val previous = event.coverS3Key
+                val decision = updateEvent(adminId, event, req, coverKey, removeCover)
+                oldCover = previous?.takeIf { it.isNotBlank() && it != event.coverS3Key }
+                AdminActionResult(eventId, decision, null)
+            })
+        oldCover?.let(eventCoverService::delete)
+        return commandEventDto(result.resourceId!!)
+    }
+
+    private fun commandEventDto(eventId: UUID): AdminListEventDto {
+        val event = eventRepository.findById(eventId).orElseThrow {
+            NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Original event not found")
+        }
+        return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
     }
 
     private fun lockEventPhotos(eventId: UUID) {
@@ -326,7 +408,7 @@ class AdminEventService(
         req: UpdateAdminEventRequest,
         coverKey: String?,
         removeCover: Boolean,
-    ): AdminListEventDto {
+    ): UUID? {
         val changes = mutableMapOf<String, Any?>()
         val before = mutableMapOf<String, Any?>()
         val after = mutableMapOf<String, Any?>()
@@ -412,7 +494,7 @@ class AdminEventService(
             after["cover"] = "none"
         }
         if (changes.isEmpty()) {
-            return eventDtoMapper.toAdminListDto(event)
+            return null
         }
         // Append the per-row override entry per Q-A3 — replace the list reference
         // (rather than mutating in place) so Hibernate's dirty-checking notices
@@ -426,13 +508,13 @@ class AdminEventService(
         event.reviewRevision++
         event.adminOverrides = event.adminOverrides + entry
         eventRepository.save(event)
-        adminDecisionLogService.logEventDecision(
+        val decision = adminDecisionLogService.logEventDecision(
             adminId = adminId,
             targetEventId = event.id,
             decision = "event_updated",
             meta = changes.toMap(),
         )
-        return eventDtoMapper.toAdminListDto(event)
+        return decision.id
     }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)

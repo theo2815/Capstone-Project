@@ -85,6 +85,7 @@ class AdminEventServiceReviewTest {
             Mockito.mock(PhotographerSettingsRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             transactions,
+            Mockito.mock(AdminActionCommandService::class.java),
         )
         service = ProxyFactory(target).apply {
             addAdvice(TransactionInterceptor().apply {

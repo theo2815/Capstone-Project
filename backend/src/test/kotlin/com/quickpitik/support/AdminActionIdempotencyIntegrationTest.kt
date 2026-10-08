@@ -55,6 +55,219 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var manager: PlatformTransactionManager
     @Autowired lateinit var dataSource: DataSource
 
+    @Autowired lateinit var eventAdmin: com.quickpitik.service.admin.AdminEventService
+    @Autowired lateinit var events: com.quickpitik.repository.EventRepository
+    @org.springframework.test.context.bean.override.mockito.MockitoBean lateinit var storage: com.quickpitik.service.storage.StorageService
+    @org.springframework.test.context.bean.override.mockito.MockitoBean lateinit var eventClock: Clock
+    private var now = Instant.parse("2026-10-08T12:00:00Z")
+    private val objects = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    private val puts = CopyOnWriteArrayList<String>()
+    private val deletes = CopyOnWriteArrayList<String>()
+    private var afterPut: (String) -> Unit = {}
+    private var beforePut: () -> Unit = {}
+
+    @org.junit.jupiter.api.BeforeEach fun storageFake() {
+        objects.clear(); puts.clear(); deletes.clear(); afterPut = {}; beforePut = {}
+        now = Instant.parse("2026-10-08T12:00:00Z")
+        org.mockito.Mockito.`when`(eventClock.instant()).thenAnswer { now }
+        org.mockito.Mockito.`when`(storage.put(org.mockito.Mockito.anyString(), anyArg<ByteArray>(), org.mockito.Mockito.anyString())).thenAnswer {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            beforePut()
+            val key = it.getArgument<String>(0); val bytes = it.getArgument<ByteArray>(1)
+            puts.add(key); objects[key] = bytes; afterPut(key)
+            com.quickpitik.service.storage.StoredObject(key, bytes.size.toLong(), "image/jpeg")
+        }
+        org.mockito.Mockito.`when`(storage.metadata(org.mockito.Mockito.anyString())).thenAnswer {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            val key = it.getArgument<String>(0)
+            objects[key]?.let { bytes -> com.quickpitik.service.storage.StoredObject(key, bytes.size.toLong(), "image/jpeg") }
+        }
+        org.mockito.Mockito.`when`(storage.getBytes(org.mockito.Mockito.anyString())).thenAnswer {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            objects[it.getArgument<String>(0)] ?: error("missing fixture object")
+        }
+        org.mockito.Mockito.doAnswer {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            val key = it.getArgument<String>(0)
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM events WHERE cover_s3_key = ?", Int::class.java, key))
+            deletes.add(key); objects.remove(key); null
+        }.`when`(storage).delete(org.mockito.Mockito.anyString())
+        org.mockito.Mockito.`when`(storage.presignedGetUrl(org.mockito.Mockito.anyString(), anyArg())).thenAnswer {
+            "https://fixture.local/${it.getArgument<String>(0)}?fresh=${UUID.randomUUID()}"
+        }
+    }
+
+    private fun <T> anyArg(): T = org.mockito.Mockito.any()
+
+    private fun image(color: Int = 0): ByteArray {
+        val image = java.awt.image.BufferedImage(40, 30, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        image.setRGB(20, 15, color)
+        return java.io.ByteArrayOutputStream().also { javax.imageio.ImageIO.write(image, "png", it) }.toByteArray()
+    }
+
+    private fun eventRequest(actor: UUID, key: String?, title: String, id: UUID? = null, cover: ByteArray? = null, revision: Long? = null): org.springframework.mock.web.MockHttpServletResponse {
+        val principal = AuthPrincipal(actor, "fixture@test.local", users.findById(actor).orElseThrow().role)
+        SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
+        try {
+            val mvc = MockMvcBuilders.standaloneSetup(com.quickpitik.controller.AdminEventsController(eventAdmin))
+                .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
+                .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
+            val request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(if (id == null) "/api/v1/admin/events" else "/api/v1/admin/events/$id")
+            request.param("title", title).param("date", "2026-10-15").param("location", "Cebu").param("pricePerPhoto", "25.00")
+            if (id != null) request.with { it.method = "PATCH"; it }
+            if (key != null) request.header("Idempotency-Key", key)
+            if (revision != null) request.param("expectedRevision", revision.toString())
+            if (cover != null) request.file(org.springframework.mock.web.MockMultipartFile("cover", "cover.png", "image/png", cover))
+            return mvc.perform(request).andReturn().response
+        } finally { SecurityContextHolder.clearContext() }
+    }
+    private fun eventId(response: org.springframework.mock.web.MockHttpServletResponse): UUID {
+        assertEquals(200, response.status, response.contentAsString)
+        return UUID.fromString(mapper.readTree(response.contentAsString)["data"]["id"].asText())
+    }
+    private fun eventEffects(id: UUID, expected: Int) = assertEquals(expected, count("admin_decision_log", "target_event_id", id))
+    private fun receiptState(key: String) = jdbc.queryForObject("SELECT state FROM admin_action_commands WHERE command_id = ?", String::class.java, UUID.fromString(key))
+
+    @ParameterizedTest @ValueSource(booleans = [false, true])
+    fun `event create lost response replays one identity and allows a new intent with the same title`(hasCover: Boolean) {
+        val actor=user(Role.ADMIN); val key=UUID.randomUUID().toString(); val title="Intent ${UUID.randomUUID()}"
+        val bytes=if (hasCover) image() else null
+        val first=eventRequest(actor,key," $title ",cover=bytes); val id=eventId(first)
+        val second=eventRequest(actor,key,title,cover=bytes)
+        assertEquals(id,eventId(second)); eventEffects(id,1)
+        assertEquals(mapper.readTree(first.contentAsString)["data"]["slug"],mapper.readTree(second.contentAsString)["data"]["slug"])
+        assertEquals(if(hasCover) 1 else 0,puts.size)
+        if(hasCover) assertNotEquals(mapper.readTree(first.contentAsString)["data"]["bannerUrl"],mapper.readTree(second.contentAsString)["data"]["bannerUrl"])
+        assertNotEquals(id,eventId(eventRequest(actor,UUID.randomUUID().toString(),title,cover=bytes)))
+    }
+
+    @Test fun `completed cover edit replay precedes old revision and never overwrites a later edit`() {
+        val actor=user(Role.ADMIN); val id=eventId(eventRequest(actor,null,"Edit ${UUID.randomUUID()}",cover=image()))
+        val key=UUID.randomUUID().toString(); val bytes=image(0xffffff)
+        eventId(eventRequest(actor,key,"Changed",id,bytes,0)); val firstKey=events.findById(id).orElseThrow().coverS3Key
+        eventId(eventRequest(actor,UUID.randomUUID().toString(),"Later",id,image(0xff0000),1))
+        eventId(eventRequest(actor,key,"Changed",id,bytes,0))
+        assertEquals("Later",events.findById(id).orElseThrow().name); assertNotEquals(firstKey,events.findById(id).orElseThrow().coverS3Key)
+        assertEquals(2,events.findById(id).orElseThrow().reviewRevision); eventEffects(id,3); assertEquals(3,puts.size); assertEquals(2,deletes.size)
+    }
+
+    @ParameterizedTest @ValueSource(strings=["actor","bytes","operation","target"])
+    fun `event key rejects changed identity before upload`(field: String) {
+        val actor=user(Role.ADMIN); val key=UUID.randomUUID().toString(); val title="Mismatch ${UUID.randomUUID()}"; val bytes=image()
+        val id=eventId(eventRequest(actor,key,title,cover=bytes))
+        val response=when(field) {
+            "actor" -> eventRequest(user(Role.ADMIN),key,title,cover=bytes)
+            "bytes" -> eventRequest(actor,key,title,cover=image(0xffffff))
+            "operation" -> eventRequest(actor,key,title,id,bytes)
+            else -> { val updateKey=UUID.randomUUID().toString(); eventId(eventRequest(actor,updateKey,"Changed",id,bytes)); eventRequest(actor,updateKey,"Changed",UUID.randomUUID(),bytes) }
+        }
+        assertEquals(409,response.status); assertEquals(if(field=="target") 2 else 1,puts.size)
+    }
+
+    @Test fun `event malformed key and unauthorized replay are rejected`() {
+        val actor=user(Role.ADMIN); val title="Auth ${UUID.randomUUID()}"; val key=UUID.randomUUID().toString()
+        assertEquals(400,eventRequest(actor,"bad-key",title).status)
+        eventId(eventRequest(actor,key,title)); jdbc.update("UPDATE users SET suspended_at=now() WHERE id=?",actor)
+        assertEquals(403,eventRequest(actor,key,title).status)
+    }
+
+    @Test fun `suspended event command actor cannot replay a success`() {
+        val actor=user(Role.ADMIN); val title="Replay auth ${UUID.randomUUID()}"; val key=UUID.randomUUID().toString()
+        eventId(eventRequest(actor,key,title)); jdbc.update("UPDATE users SET suspended_at=now() WHERE id=?",actor)
+        assertEquals(403,eventRequest(actor,key,title).status)
+    }
+
+    @Test fun `uncertain PUT recovers the fixed object without a second upload`() {
+        val actor=user(Role.ADMIN); val title="Uncertain ${UUID.randomUUID()}"; val key=UUID.randomUUID().toString(); val bytes=image()
+        afterPut={ throw IllegalStateException("lost storage response") }
+        assertEquals(409,eventRequest(actor,key,title,cover=bytes).status); assertEquals("UNKNOWN",receiptState(key))
+        afterPut={}; val id=eventId(eventRequest(actor,key,title,cover=bytes)); eventEffects(id,1); assertEquals(1,puts.size)
+        assertEquals(puts.single(),events.findById(id).orElseThrow().coverS3Key)
+    }
+
+    @ParameterizedTest @ValueSource(booleans=[false,true])
+    fun `expired process loss reconciles the same key before or after PUT`(after: Boolean) {
+        val actor=user(Role.ADMIN); val title="Crash ${UUID.randomUUID()}"; val key=UUID.randomUUID().toString(); val bytes=image()
+        if(after) afterPut={ throw AssertionError("process lost") } else beforePut={ throw AssertionError("process lost") }
+        assertEquals(500,eventRequest(actor,key,title,cover=bytes).status)
+        assertEquals("PENDING",receiptState(key)); beforePut={}; afterPut={}
+        assertEquals(409,eventRequest(actor,key,title,cover=bytes).status)
+        now=now.plusSeconds(301)
+        val id=eventId(eventRequest(actor,key,title,cover=bytes)); eventEffects(id,1); assertEquals(1,puts.size)
+    }
+
+    @Test fun `conflicting recovery object remains UNKNOWN without a new event`() {
+        val actor=user(Role.ADMIN); val title="Conflict ${UUID.randomUUID()}"; val key=UUID.randomUUID().toString(); val bytes=image()
+        afterPut={ throw IllegalStateException("lost") }; eventRequest(actor,key,title,cover=bytes)
+        val reserved=puts.single(); objects[reserved]=ByteArray(objects[reserved]!!.size) { 5 }; afterPut={}
+        assertEquals(409,eventRequest(actor,key,title,cover=bytes).status); assertEquals("UNKNOWN",receiptState(key)); assertEquals(1,puts.size)
+        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM events WHERE name=?",Int::class.java,title))
+    }
+
+    @Test fun `active claim blocks a duplicate and fences late original completion after takeover`() {
+        val actor=user(Role.ADMIN); val title="Late ${UUID.randomUUID()}"; val key=UUID.randomUUID().toString(); val bytes=image()
+        val entered=CountDownLatch(1); val release=CountDownLatch(1); val pool=Executors.newSingleThreadExecutor()
+        afterPut={ entered.countDown(); check(release.await(20,TimeUnit.SECONDS)) }
+        try {
+            val first=pool.submit<org.springframework.mock.web.MockHttpServletResponse> { eventRequest(actor,key,title,cover=bytes) }
+            assertTrue(entered.await(15,TimeUnit.SECONDS))
+            val duplicate=eventRequest(actor,key,title,cover=bytes)
+            assertEquals(409,duplicate.status); assertEquals("IDEMPOTENT_REPLAY_IN_PROGRESS",mapper.readTree(duplicate.contentAsString)["errors"][0]["code"].asText())
+            now=now.plusSeconds(301); afterPut={}
+            val id=eventId(eventRequest(actor,key,title,cover=bytes)); release.countDown()
+            assertEquals(id,eventId(first.get(15,TimeUnit.SECONDS))); eventEffects(id,1); assertEquals(1,puts.size)
+        } finally {release.countDown();pool.shutdownNow()}
+    }
+
+    @Test fun `late original is fenced while recovery still owns an unfinished PUT`() {
+        val actor=user(Role.ADMIN); val title="Fence ${UUID.randomUUID()}"; val key=UUID.randomUUID().toString(); val bytes=image()
+        val originalWaiting=CountDownLatch(1); val releaseOriginal=CountDownLatch(1)
+        val recoveryWaiting=CountDownLatch(1); val releaseRecovery=CountDownLatch(1)
+        val attempts=AtomicInteger(); val pool=Executors.newFixedThreadPool(2)
+        beforePut={
+            if(attempts.incrementAndGet()==1) { originalWaiting.countDown(); check(releaseOriginal.await(20,TimeUnit.SECONDS)) }
+            else { recoveryWaiting.countDown(); check(releaseRecovery.await(20,TimeUnit.SECONDS)) }
+        }
+        try {
+            val first=pool.submit<org.springframework.mock.web.MockHttpServletResponse> {eventRequest(actor,key,title,cover=bytes)}
+            assertTrue(originalWaiting.await(10,TimeUnit.SECONDS)); now=now.plusSeconds(301)
+            val second=pool.submit<org.springframework.mock.web.MockHttpServletResponse> {eventRequest(actor,key,title,cover=bytes)}
+            assertTrue(recoveryWaiting.await(10,TimeUnit.SECONDS)); releaseOriginal.countDown()
+            assertEquals(409,first.get(10,TimeUnit.SECONDS).status)
+            assertEquals("PENDING",receiptState(key))
+            assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM events WHERE name=?",Int::class.java,title))
+            releaseRecovery.countDown(); val id=eventId(second.get(10,TimeUnit.SECONDS)); eventEffects(id,1)
+            assertEquals(1,puts.toSet().size)
+        } finally {releaseOriginal.countDown();releaseRecovery.countDown();pool.shutdownNow()}
+    }
+
+    @Test fun `delete during cover PUT prevents edit commit and keeps old cover`() {
+        val actor=user(Role.ADMIN); val id=eventId(eventRequest(actor,null,"Deleted ${UUID.randomUUID()}",cover=image())); val old=events.findById(id).orElseThrow().coverS3Key
+        afterPut={ eventAdmin.delete(actor,id) }
+        val key=UUID.randomUUID().toString()
+        assertEquals(404,eventRequest(actor,key,"Changed",id,image(0xffffff),0).status)
+        assertEquals(old,events.findById(id).orElseThrow().coverS3Key); assertTrue(deletes.isEmpty()); eventEffects(id,2)
+        afterPut={}; assertEquals(404,eventRequest(actor,key,"Changed",id,image(0xffffff),0).status); assertEquals(2,puts.size)
+    }
+
+    @ParameterizedTest @ValueSource(booleans=[false,true])
+    fun `PUT success then database rollback retains provenance and retries one commit`(editing: Boolean) {
+        val actor=user(Role.ADMIN); val title="Rollback ${UUID.randomUUID()}"; val key=UUID.randomUUID().toString(); val bytes=image(0xffffff)
+        val id=if(editing) eventId(eventRequest(actor,null,title,cover=image())) else null
+        val old=id?.let { events.findById(it).orElseThrow().coverS3Key }
+        jdbc.execute("CREATE FUNCTION fail_event_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.command_id = '$key' AND NEW.state = 'SUCCEEDED' THEN RAISE EXCEPTION 'fixture completion failure'; END IF; RETURN NEW; END; $$")
+        jdbc.execute("CREATE TRIGGER fail_event_receipt BEFORE UPDATE ON admin_action_commands FOR EACH ROW EXECUTE FUNCTION fail_event_receipt()")
+        try {
+            assertEquals(409,eventRequest(actor,key,"$title changed",id,bytes,if(editing) 0 else null).status)
+            assertEquals("UNKNOWN",receiptState(key)); assertTrue(deletes.isEmpty())
+            if(id!=null) { assertEquals(old,events.findById(id).orElseThrow().coverS3Key); eventEffects(id,1) }
+            else assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM events WHERE name=?",Int::class.java,"$title changed"))
+        } finally { jdbc.execute("DROP TRIGGER fail_event_receipt ON admin_action_commands"); jdbc.execute("DROP FUNCTION fail_event_receipt()") }
+        val resultId=eventId(eventRequest(actor,key,"$title changed",id,bytes,if(editing) 0 else null))
+        eventEffects(resultId,if(editing) 2 else 1); assertEquals(if(editing) 2 else 1,puts.size)
+        assertEquals(if(editing) listOf(old) else emptyList(),deletes.toList())
+    }
+
     private fun user(role: Role) = users.saveAndFlush(User(email = "message-${UUID.randomUUID()}@test.local",
         passwordHash = "unused", name = "Message fixture", role = role)).id
 

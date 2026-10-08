@@ -63,7 +63,7 @@ class EventFormBindingTest {
             .thenAnswer { created = it.getArgument(1); null }
         Mockito.`when`(ownedEvents.update(anyArg(), anyArg(), anyArg(), anyArg()))
             .thenAnswer { updated = it.getArgument(2); null }
-        Mockito.`when`(adminEvents.create(anyArg(), anyArg(), anyArg()))
+        Mockito.`when`(adminEvents.create(anyArg(), anyArg(), anyArg(), Mockito.isNull()))
             .thenAnswer { adminCreated = it.getArgument(1); null }
         photographer = mvc(
             MePhotographerController(

@@ -1,5 +1,7 @@
 package com.quickpitik.controller
 
+import com.quickpitik.common.IdempotencyKey
+import org.springframework.web.bind.annotation.RequestHeader
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.ApproveEventRequest
@@ -85,7 +87,8 @@ class AdminEventsController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @Valid @ModelAttribute("form") form: CreateAdminEventRequest,
         @RequestPart("cover", required = false) cover: MultipartFile?,
-    ): AdminListEventDto = adminEventService.create(principal.userId, form, coverOf(cover))
+        @RequestHeader(IdempotencyKey.HEADER, required = false) key: String? = null,
+    ): AdminListEventDto = adminEventService.create(principal.userId, form, coverOf(cover), IdempotencyKey.parse(key))
 
     // multipart/form-data so the cover image can ride alongside text fields,
     // mirroring POST. Text-only edits still work — they just send a form
@@ -98,12 +101,14 @@ class AdminEventsController(
         @Valid @ModelAttribute("form") form: UpdateAdminEventRequest,
         @RequestParam(required = false) removeCover: Boolean?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
+        @RequestHeader(IdempotencyKey.HEADER, required = false) key: String? = null,
     ): AdminListEventDto = adminEventService.update(
         adminId = principal.userId,
         eventId = eventId,
         req = form,
         cover = coverOf(cover),
         removeCover = removeCover == true,
+        key = IdempotencyKey.parse(key),
     )
 
     @DeleteMapping("/{eventId}")
