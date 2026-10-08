@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     # Stage-2 photos scored at the same time inside one stream sub-batch. 1 = one after
     # another (today). 2 uses both native inference slots of this process for one
     # request: set BLUR_MAX_ACTIVE_REQUESTS=1 beside it, or a second request is still
-    # admitted and either stream can then fail part-way with BLUR_BUSY.
+    # admitted and either stream can then end part-way, marked incomplete.
     BLUR_STAGE2_CONCURRENCY: int = Field(default=1, ge=1, le=2)
 
     # Database
