@@ -46,6 +46,20 @@ it("shows cross-view payout pending feedback while independent rows remain usabl
   await act(async () => { request.reject(new Error("Step-up cancelled")); await pending; });
   await waitFor(() => expect(screen.getAllByRole("button", { name: "Approve" }).every((button) => !button.hasAttribute("disabled"))).toBe(true));
 });
+it("opens an unrelated payout drawer while a selected row approval is pending", async () => {
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
+  const request = deferred<AdminPayoutCycle>();
+  const post = vi.spyOn(api, "post").mockReturnValue(request.promise);
+  mount();
+  await userEvent.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
+  await userEvent.click(screen.getAllByRole("button", { name: "Approve" })[0]);
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  await userEvent.click(screen.getByRole("button", { name: "Open payout cycle-2" }));
+  expect(screen.getByRole("dialog")).toHaveTextContent("cycle-2");
+  expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" })).toBeEnabled();
+  await act(async () => { request.reject(new Error("Unavailable")); });
+});
+
 function seed(status: AdminPayoutCycle["status"] = "pending_review") {
   rows = [{ ...payoutCycle, status }]; client.setQueryData(key, rows);
 }

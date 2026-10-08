@@ -283,7 +283,7 @@ describe.each(["hide", "dismiss", "escalate"] as const)("flag %s", (action) => {
     expect(invalidate).not.toHaveBeenCalled();
     await expect(result.current[action]("flag-a", null)).resolves.toBe(true);
     expect(post).toHaveBeenCalledTimes(2);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "flags"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "flags"] }, { throwOnError: true });
   });
   it.each([true, false])("suppresses stale completion (success=%s)", async (success) => {
     login("ADMIN");

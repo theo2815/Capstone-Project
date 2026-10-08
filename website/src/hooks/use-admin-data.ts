@@ -24,6 +24,7 @@ import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { captureAuthSession } from "@/lib/auth-session";
 import { useAuthStore } from "@/store/auth-store";
+import { useToastStore } from "@/store/toast-store";
 import { useAdminMutation } from "./use-admin-mutation";
 
 // React Query hooks for admin reads.
@@ -104,10 +105,13 @@ export function useFlagActions() {
         throw error;
       }
       if (!isCurrent()) return false;
-      await Promise.allSettled([
-        qc.invalidateQueries({ queryKey: ["admin", "flags"] }),
-        qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
+      const refresh = await Promise.allSettled([
+        qc.invalidateQueries({ queryKey: ["admin", "flags"] }, { throwOnError: true }),
+        qc.invalidateQueries({ queryKey: ["admin", "kpis"] }, { throwOnError: true }),
       ]);
+      if (isCurrent() && refresh.some((result) => result.status === "rejected")) {
+        useToastStore.getState().showToast({ kind: "info", message: "Flag action saved, but the list could not refresh. Reload before taking another action." });
+      }
       return isCurrent();
     };
     const run = async (id: string, action: string, execute: () => Promise<unknown>) => {

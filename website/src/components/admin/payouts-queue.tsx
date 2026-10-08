@@ -333,7 +333,6 @@ export function PayoutsQueue() {
   }
 
   function handleOpenDrawer(id: string) {
-    if (isPending(actionIds)) return;
     setFocusedId(id);
     setRowId(id);
   }

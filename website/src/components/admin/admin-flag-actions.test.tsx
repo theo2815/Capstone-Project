@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import type { Flag } from "@/lib/admin-flags";
 import { admin } from "@/test/fixtures/admin";
+import { useToastStore } from "@/store/toast-store";
 import { useAuthStore } from "@/store/auth-store";
 import { AdminFlagCard } from "./admin-flag-card";
 import { FlagsQueue } from "./flags-queue";
@@ -16,6 +17,7 @@ const flag: Flag = { id: "flag-1", photoId: "photo-1", eventId: "event-1", event
 let client: QueryClient;
 beforeEach(() => {
   useAuthStore.getState().setUser(admin);
+  useToastStore.getState().clear();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   navigation.search = "";
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
@@ -49,4 +51,17 @@ it.each(["card", "drawer"])("%s retains flag reasons on failure and blocks repea
   post.mockResolvedValue(flag);
   await user.click(submit);
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
+});
+
+it("distinguishes an accepted hide from a failed queue refresh", async () => {
+  const post = vi.spyOn(api, "post").mockResolvedValue({ ...flag, status: "hidden" });
+  render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
+  await userEvent.click((await screen.findAllByRole("button", { name: "Hide…" }))[0]);
+  const dialog = screen.getByRole("dialog", { name: "Hide flag-1" });
+  vi.mocked(api.get).mockRejectedValue(new Error("Refresh unavailable"));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Hide photo" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(useToastStore.getState().toasts.some((toast) => /saved.*could not refresh/.test(toast.message))).toBe(true);
+  expect(useToastStore.getState().toasts.some((toast) => toast.kind === "error")).toBe(false);
 });
