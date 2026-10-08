@@ -44,8 +44,9 @@ class AdminActionCommandService(
                     return@transaction replay(it, actorId, operation, targetId, inputHash)
                 }
                 val now = clock.instant()
-                val receipt = commands.saveAndFlush(AdminActionCommand(commandId = commandId, actorId = actorId,
-                    operation = operation, targetId = targetId, inputHash = inputHash, claimedAt = now, updatedAt = now))
+                val receipt = AdminActionCommand(commandId = commandId, actorId = actorId,
+                    operation = operation, targetId = targetId, inputHash = inputHash, claimedAt = now, updatedAt = now)
+                commands.insertClaim(commandId, actorId, operation.name, targetId, inputHash, receipt.claimOwner, now)
                 val result = action()
                 receipt.resultResourceId = result.resourceId
                 receipt.resultDecisionId = result.decisionId

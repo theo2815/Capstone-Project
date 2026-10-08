@@ -33,6 +33,11 @@ import org.springframework.security.web.method.annotation.AuthenticationPrincipa
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import java.util.UUID
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -239,5 +244,33 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
             assertEquals(409, response.status); assertEquals(code, mapper.readTree(response.contentAsString)["errors"][0]["code"].asText())
         }
         effects(target, Role.RUNNER, 0)
+    }
+
+    @Test fun `winner committing after lookup but before claim still replays`() {
+        val actor = user(Role.ADMIN); val target = user(Role.RUNNER)
+        val key = IdempotencyKey(UUID.randomUUID().toString()); val hash = "a".repeat(64)
+        val missed = CountDownLatch(1); val resume = CountDownLatch(1)
+        val calls = AtomicInteger(); val loserActions = AtomicInteger()
+        val delayedClock = object : Clock() {
+            override fun getZone(): ZoneId = ZoneOffset.UTC
+            override fun withZone(zone: ZoneId): Clock = this
+            override fun instant(): Instant {
+                if (calls.incrementAndGet() == 1) {
+                    missed.countDown(); check(resume.await(15, TimeUnit.SECONDS))
+                }
+                return Instant.now()
+            }
+        }
+        val delayed = AdminActionCommandService(receipts, manager, mapper, delayedClock)
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            val loser = pool.submit<AdminActionResult> { delayed.execute(key, actor, AdminActionOperation.USER_MESSAGE,
+                target, hash, {}, { loserActions.incrementAndGet(); action(actor, target) }) }
+            assertTrue(missed.await(10, TimeUnit.SECONDS), "Loser must observe no receipt before winner commits")
+            val winner = try { commands.execute(key, actor, AdminActionOperation.USER_MESSAGE, target, hash, {}, { action(actor, target) }) }
+                finally { resume.countDown() }
+            assertEquals(winner, loser.get(20, TimeUnit.SECONDS))
+            assertEquals(0, loserActions.get()); effects(target, Role.RUNNER, 1)
+        } finally { resume.countDown(); pool.shutdownNow() }
     }
 }
