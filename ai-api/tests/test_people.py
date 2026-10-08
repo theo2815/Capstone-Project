@@ -24,9 +24,9 @@ def _scene(soft_left: bool = False, sharp_right: bool = True) -> np.ndarray:
         left = cv2.GaussianBlur(left, (0, 0), 10)
     frame = np.maximum(frame, left)
     right = np.zeros_like(frame)
-    right[150:550, 240:360] = 200
-    right[150:550:8, 240:360] = 80
-    right[151:550:8, 240:360] = 80
+    right[150:560, 240:360] = 200
+    right[150:560:8, 240:360] = 80
+    right[151:560:8, 240:360] = 80
     if not sharp_right:
         right = cv2.GaussianBlur(right, (0, 0), 10)
     return np.maximum(frame, right)
@@ -40,7 +40,7 @@ def _detection(x0, y0, x1, y1, conf, shape=(600, 400)):
 
 
 LEFT = _detection(40, 100, 160, 500, 0.9)
-RIGHT = _detection(240, 150, 360, 550, 0.8)
+RIGHT = _detection(240, 150, 360, 560, 0.8)
 
 
 def test_measure_reads_geometry_in_frame_shares():
@@ -99,73 +99,91 @@ def test_dict_round_trip_keeps_every_number():
 
 def test_features_have_the_declared_length_and_are_finite_without_people():
     empty = people.features([], people.BIG_AREA, people.SOFT_RATIO)
-    assert empty.shape == (len(people.FEATURE_NAMES),) == (9,)
+    assert empty.shape == (len(people.FEATURE_NAMES),) == (13,)
     assert not empty.any()
     found = people.measure(_scene(soft_left=True), [LEFT, RIGHT])
     full = people.features(found, people.BIG_AREA, people.SOFT_RATIO)
     assert full.shape == empty.shape and np.isfinite(full).all()
 
 
-def test_features_see_a_soft_big_person_beside_a_crisp_one():
+def test_features_see_a_soft_big_person_beside_the_crisp_subject():
     names = list(people.FEATURE_NAMES)
-    soft_scene = people.features(people.measure(_scene(soft_left=True), [LEFT, RIGHT]), 0.05, 0.6)
-    crisp_scene = people.features(people.measure(_scene(soft_left=False), [LEFT, RIGHT]), 0.05, 0.6)
+    soft_scene = people.features(people.measure(_scene(soft_left=True), [LEFT, RIGHT]), 0.05, 0.7)
+    crisp_scene = people.features(people.measure(_scene(soft_left=False), [LEFT, RIGHT]), 0.05, 0.7)
     assert soft_scene[names.index("n_big")] == 2 == crisp_scene[names.index("n_big")]
-    assert (
-        soft_scene[names.index("max_area_soft_big")] > 0
-        and crisp_scene[names.index("max_area_soft_big")] == 0
+    # the subject is the right person (slightly bigger, confidence 0.8), crisp in both scenes
+    assert soft_scene[names.index("es_ratio")] == pytest.approx(1.0)
+    assert crisp_scene[names.index("es_ratio")] > 0.8
+    assert soft_scene[names.index("max_area_soft_other")] == pytest.approx(120 * 400 / (400 * 600))
+    assert crisp_scene[names.index("max_area_soft_other")] == 0
+    ratio = names.index("biggest_other_es_ratio")
+    assert soft_scene[ratio] < 0.7 < crisp_scene[ratio]
+    # the soft person's feet (y 500) are above the subject's (y 560): it is not nearer the camera
+    assert soft_scene[names.index("soft_bottom_gap")] == pytest.approx((500 - 560) / 600)
+    assert soft_scene[names.index("soft_area_at_feet")] == 0
+    assert soft_scene[names.index("soft_area_ratio_log")] == pytest.approx(
+        math.log1p((120 * 400) / (120 * 410))
     )
-    assert soft_scene[names.index("min_es_big")] < crisp_scene[names.index("min_es_big")]
-    assert soft_scene[names.index("es_ratio")] < crisp_scene[names.index("es_ratio")]
-    # the soft person's feet (y 500) are above the crisp one's (y 550): it is not nearer the camera
-    assert soft_scene[names.index("soft_bottom_gap")] == pytest.approx((500 - 550) / 600)
-    assert soft_scene[names.index("soft_area_ratio")] == pytest.approx(1.0)
 
 
-def _person(area, es95, conf, bottom, edge=False, es=0.5, mask_area=0.01):
+def _person(box, conf, area, bottom, es95, edge=False):
     return people.Person(
-        box=(0.0, 0.0, 1.0, 1.0),
+        box=box,
         conf=conf,
         area=area,
-        mask_area=mask_area,
+        mask_area=area * 0.7,
         height=0.5,
         bottom=bottom,
         cx=0.5,
         touches_edge=edge,
         contrast=100.0,
-        es=es,
+        es=es95 * 1.2,
         es95=es95,
     )
 
 
-def test_features_pin_each_number_on_people_of_different_sizes():
-    """A crisp runner, a big soft person cut by the frame, a smaller soft one, a tiny soft one."""
-    runner = _person(0.06, 0.40, 0.9, bottom=0.70)
-    cut_off = _person(0.30, 0.10, 0.5, bottom=0.95, edge=True, es=0.95, mask_area=0.20)
-    soft = _person(0.10, 0.20, 0.6, bottom=0.80)
-    tiny = _person(0.02, 0.05, 0.7, bottom=0.60)
+def test_features_pin_each_number_on_a_subject_an_intruder_a_bystander_a_duplicate_and_a_tiny_one():
+    runner = _person((400.0, 100.0, 600.0, 700.0), 0.9, 0.12, bottom=0.70, es95=0.40)
+    cut_off = _person((0.0, 300.0, 350.0, 1000.0), 0.4, 0.30, bottom=1.00, es95=0.10, edge=True)
+    behind = _person((650.0, 250.0, 800.0, 650.0), 0.8, 0.06, bottom=0.65, es95=0.20)
+    duplicate = _person((410.0, 120.0, 590.0, 500.0), 0.3, 0.07, bottom=0.50, es95=0.05)
+    tiny = _person((900.0, 400.0, 930.0, 460.0), 0.7, 0.002, bottom=0.46, es95=0.60)
     got = dict(
         zip(
             people.FEATURE_NAMES,
-            people.features([runner, cut_off, soft, tiny], 0.05, 0.6),
+            people.features([runner, cut_off, behind, duplicate, tiny], 0.05, 0.6),
             strict=True,
         )
     )
     assert got == pytest.approx(
         {
-            "n_big": 3,
-            "largest_es": 0.10,
-            "largest_conf": 0.5,
-            "min_es_big": 0.10,
-            "es_ratio": 0.25,
-            "max_area_soft_big": 0.30,
-            "area_edge_soft": 0.30,
-            "soft_bottom_gap": 0.25,
-            "soft_area_ratio": 5.0,
+            "n_big": 4,
+            "subject_es": 0.40,  # the runner: largest among the confident people
+            "subject_conf": 0.9,
+            "min_es_big_confident": 0.20,  # the runner behind
+            "es_ratio": 1.0,
+            "max_area_soft_other": 0.30,  # the cut-off body
+            "area_edge_soft_other": 0.30,
+            "soft_bottom_gap": 0.30,  # its feet 0.30 of the frame below the runner's
+            "soft_area_ratio_log": math.log1p(0.30 / 0.12),
+            "soft_area_at_feet": 0.30,  # the body behind stands higher and does not count
+            "lowconf_big_area": 0.30,  # the duplicate is not an "other"
+            "subject_at_bottom_edge": 0.0,
+            "biggest_other_es_ratio": 0.25,
         }
     )
-    alone = dict(zip(people.FEATURE_NAMES, people.features([tiny], 0.05, 0.6), strict=True))
-    assert alone["n_big"] == 0 and alone["min_es_big"] == 0.05  # nobody big: the sharpest stands in
+    alone = dict(zip(people.FEATURE_NAMES, people.features([cut_off], 0.05, 0.6), strict=True))
+    assert alone["subject_conf"] == 0.4  # nobody confident: the largest person stands in
+    assert alone["subject_at_bottom_edge"] == 1.0
+    assert alone["min_es_big_confident"] == 0.10 and alone["biggest_other_es_ratio"] == 1.0
+    pair = dict(
+        zip(
+            people.FEATURE_NAMES,
+            people.features([runner, duplicate], 0.05, 0.6),
+            strict=True,
+        )
+    )
+    assert pair["n_big"] == 2 and pair["max_area_soft_other"] == 0 and pair["lowconf_big_area"] == 0
 
 
 def test_logistic_rule_applies_standardisation_and_the_sigmoid(tmp_path):

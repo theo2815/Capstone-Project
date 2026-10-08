@@ -134,45 +134,80 @@ def person_from_dict(d: dict) -> Person:
     )
 
 
-# --- the numbers the rule reads (chosen on the five folds in the planning session, 2026-10-06) ---
+# --- the numbers the rule reads (chosen on the five folds and the spent exam, 2026-10-08) ---
 
 MIN_CONF = 0.2  # detector confidence below which a person is ignored
 BIG_AREA = 0.05  # a person whose box covers at least this share of the frame is "big"
-SOFT_RATIO = 0.6  # a big person this much softer than the sharpest person is "soft"
+SOFT_RATIO = 0.7  # a big person this much softer than the reference is "soft"
+SUBJECT_CONF = 0.5  # the subject is the largest person the detector is at least this sure about
+DUPLICATE_OVERLAP = 0.7  # a box this much inside (or around) the subject's box is a duplicate
+FEET_GAP = 0.02  # feet within this share of the frame height of the subject's are "at the feet"
+BOTTOM_EDGE = 0.98  # a subject whose box reaches this far down is cut off by the bottom edge
 FEATURE_NAMES = (
     "n_big",  # how many big people there are
-    "largest_es",  # sharpness of the largest person
-    "largest_conf",  # the detector's confidence in the largest person (a blurred body scores lower)
-    "min_es_big",  # sharpness of the softest big person
-    "es_ratio",  # largest person's sharpness over the sharpest person's
-    "max_area_soft_big",  # size of the biggest soft big person
-    "area_edge_soft",  # total size of soft people cut off by the frame border
-    "soft_bottom_gap",  # the biggest soft person's feet below the sharpest person's (nearer)
-    "soft_area_ratio",  # the biggest soft person's size over the sharpest person's
+    "subject_es",  # sharpness of the subject (the largest confident person)
+    "subject_conf",  # the detector's confidence in the subject
+    "min_es_big_confident",  # sharpness of the softest big confident person
+    "es_ratio",  # the subject's sharpness over the reference (the sharpest big confident person)
+    "max_area_soft_other",  # size of the biggest soft big "other" (not the subject or a duplicate)
+    "area_edge_soft_other",  # total size of soft big others cut off by the frame border
+    "soft_bottom_gap",  # the biggest soft other's feet below the subject's (nearer the camera)
+    "soft_area_ratio_log",  # log(1 + the biggest soft other's size over the subject's)
+    "soft_area_at_feet",  # total size of soft big others whose feet are at the subject's or lower
+    "lowconf_big_area",  # total size of big others the detector is less than SUBJECT_CONF sure of
+    "subject_at_bottom_edge",  # 1 when the subject's box reaches the bottom edge (feet cut off)
+    "biggest_other_es_ratio",  # the biggest big other's sharpness over the reference (1 if none)
 )
 
 
+def _overlap_of_smaller(a: tuple, b: tuple) -> float:
+    """How much of the smaller of two boxes lies inside the other (0 = apart, 1 = contained)."""
+    x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+    x1, y1 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return inter / smaller if smaller > 0 else 0.0
+
+
 def features(people: list[Person], big_area: float, soft_ratio: float) -> np.ndarray:
-    """The feature vector of one photo, in FEATURE_NAMES order (all zeros when nobody was found)."""
+    """The feature vector of one photo, in FEATURE_NAMES order (all zeros when nobody was found).
+
+    The subject is the largest person the detector is confident about, so a loose second box
+    around a costume, an inflatable arch or a ghost in a dark background cannot take its place;
+    boxes that mostly overlap the subject's box are its duplicates and are ignored; the rest
+    are "others". Softness is measured against the sharpest big confident person.
+    """
     if not people:
         return np.zeros(len(FEATURE_NAMES))
-    largest = max(people, key=lambda p: p.area)
-    sharpest = max(people, key=lambda p: p.es95)
-    big = [p for p in people if p.area >= big_area]
-    soft_cut = soft_ratio * sharpest.es95
-    soft_big = [p for p in big if p.es95 < soft_cut]
-    top_soft = max(soft_big, key=lambda p: p.area) if soft_big else None
+    confident = [p for p in people if p.conf >= SUBJECT_CONF]
+    subject = max(confident or people, key=lambda p: p.area)
+    big_confident = [p for p in confident if p.area >= big_area] or [subject]
+    reference = max(p.es95 for p in big_confident)
+    others = [
+        p
+        for p in people
+        if p is not subject and _overlap_of_smaller(p.box, subject.box) < DUPLICATE_OVERLAP
+    ]
+    big_others = [p for p in others if p.area >= big_area]
+    soft_cut = soft_ratio * reference
+    soft_others = [p for p in big_others if p.es95 < soft_cut]
+    top_soft = max(soft_others, key=lambda p: p.area) if soft_others else None
+    biggest_other = max(big_others, key=lambda p: p.area) if big_others else None
     return np.array(
         [
-            len(big),
-            largest.es95,
-            largest.conf,
-            min(p.es95 for p in big) if big else sharpest.es95,
-            largest.es95 / max(sharpest.es95, 1e-6),
-            max((p.area for p in soft_big), default=0.0),
-            sum(p.area for p in people if p.touches_edge and p.es95 < soft_cut),
-            (top_soft.bottom - sharpest.bottom) if top_soft else 0.0,
-            (top_soft.area / max(sharpest.area, 1e-6)) if top_soft else 0.0,
+            sum(p.area >= big_area for p in people),
+            subject.es95,
+            subject.conf,
+            min(p.es95 for p in big_confident),
+            subject.es95 / max(reference, 1e-6),
+            max((p.area for p in soft_others), default=0.0),
+            sum(p.area for p in soft_others if p.touches_edge),
+            (top_soft.bottom - subject.bottom) if top_soft else 0.0,
+            np.log1p(top_soft.area / max(subject.area, 1e-6)) if top_soft else 0.0,
+            sum(p.area for p in soft_others if p.bottom >= subject.bottom - FEET_GAP),
+            sum(p.area for p in big_others if p.conf < SUBJECT_CONF),
+            1.0 if subject.bottom >= BOTTOM_EDGE else 0.0,
+            (biggest_other.es95 / max(reference, 1e-6)) if biggest_other else 1.0,
         ],
         dtype=float,
     )

@@ -594,12 +594,10 @@ class TestBlurClassifierTwoStage:
         assert result["blur_type_probability"] == 1.0
 
     def test_stage_two_runs_the_people_pipeline(self, tmp_path):
-        """A rule weighing the largest person's sharpness reacts to a soft versus a crisp person."""
+        """A rule weighing the subject's sharpness reacts to a soft versus a crisp person."""
         names = list(people.FEATURE_NAMES)
         spec = _rule_spec(0.5)
-        spec["coef"][
-            names.index("largest_es")
-        ] = -4.0  # sharper largest person -> less missed focus
+        spec["coef"][names.index("subject_es")] = -4.0  # a sharper subject -> less missed focus
         clf = _unarmed(tmp_path)
         clf.session = object()
         clf.rule = people.LogisticRule(spec)
