@@ -2,6 +2,7 @@ package com.quickpitik.controller
 
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.dto.admin.ApproveEventRequest
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.AdminReindexResponseDto
@@ -64,14 +65,15 @@ class AdminEventsController(
     fun approve(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
-    ): AdminListEventDto = adminEventService.approve(principal.userId, eventId)
+        @Valid @RequestBody(required = false) body: ApproveEventRequest? = null,
+    ): AdminListEventDto = adminEventService.approve(principal.userId, eventId, body?.expectedRevision)
 
     @PostMapping("/{eventId}/reject")
     fun reject(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: RejectEventRequest,
-    ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason)
+    ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason, body.expectedRevision)
 
     // multipart/form-data — the text parts bind onto the request DTO and the
     // optional `cover` part carries the image bytes (jpeg/png/webp).

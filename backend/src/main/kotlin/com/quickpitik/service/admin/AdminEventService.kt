@@ -93,8 +93,10 @@ class AdminEventService(
     // (PENDING, DRAFT) goes live; a pricing-change request (CHANGE_PENDING on
     // a LIVE event) is applied — and only here — or dropped.
 
-    fun approve(adminId: UUID, eventId: UUID): AdminListEventDto {
+    fun approve(adminId: UUID, eventId: UUID, expectedRevision: Long? = null): AdminListEventDto {
+        lockEventPhotos(eventId)
         val event = loadForReview(eventId)
+        event.requireReviewRevision(expectedRevision)
         when (event.reviewStatus) {
             EventReviewStatus.PENDING -> {
                 event.status = EventStatus.ACTIVE
@@ -143,8 +145,9 @@ class AdminEventService(
         return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
     }
 
-    fun reject(adminId: UUID, eventId: UUID, reason: String): AdminListEventDto {
+    fun reject(adminId: UUID, eventId: UUID, reason: String, expectedRevision: Long? = null): AdminListEventDto {
         val event = loadForReview(eventId)
+        event.requireReviewRevision(expectedRevision)
         val note = reason.trim().take(500)
         when (event.reviewStatus) {
             EventReviewStatus.PENDING -> {
@@ -197,6 +200,7 @@ class AdminEventService(
 
     private fun markReviewed(event: Event, adminId: UUID, status: EventReviewStatus) {
         event.reviewStatus = status
+        event.reviewRevision++
         event.reviewedAt = OffsetDateTime.now()
         event.reviewedBy = adminId
     }
@@ -289,12 +293,15 @@ class AdminEventService(
         // so edits made during the upload are not overwritten by a detached snapshot.
         val coverKey = cover?.let {
             val event = loadForUpdate(eventId)
+            event.requireReviewRevision(req.expectedRevision)
             req.date?.takeIf { date -> date.isNotBlank() }?.let(::parseDate)
             req.pricePerPhoto?.let { price -> validatedUpdatePrice(price, event.isFree) }
             eventCoverService.upload(eventId, it.bytes, it.contentType)
         }
         val (result, oldCoverKey) = transactionTemplate.execute {
-            val event = loadForUpdate(eventId)
+            if (req.pricePerPhoto != null) lockEventPhotos(eventId)
+            val event = loadForReview(eventId)
+            event.requireReviewRevision(req.expectedRevision)
             val oldKey = event.coverS3Key
             val dto = updateEvent(adminId, event, req, coverKey, removeCover)
             dto to oldKey?.takeIf { it.isNotBlank() && it != event.coverS3Key }
@@ -304,10 +311,15 @@ class AdminEventService(
         return result
     }
 
+    private fun lockEventPhotos(eventId: UUID) {
+        // Match photo writers: photos before event counters, avoiding a repricing deadlock.
+        val ids = photoRepository.findIdsByEventId(eventId)
+        if (ids.isNotEmpty()) photoRepository.findAllByIdForUpdate(ids)
+    }
+
     private fun loadForUpdate(eventId: UUID): Event =
-        eventRepository.findById(eventId).orElseThrow {
-            NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
-        }
+        eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
 
     private fun updateEvent(
         adminId: UUID,
@@ -412,6 +424,7 @@ class AdminEventService(
             "before" to before.toMap(),
             "after" to after.toMap(),
         )
+        event.reviewRevision++
         event.adminOverrides = event.adminOverrides + entry
         eventRepository.save(event)
         adminDecisionLogService.logEventDecision(
@@ -426,10 +439,11 @@ class AdminEventService(
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun delete(adminId: UUID, eventId: UUID): AdminEventDeleteResponseDto {
         val removed = transactionTemplate.execute {
-            val event = eventRepository.findById(eventId).orElse(null)
+            val event = eventRepository.findByIdForReview(eventId)
                 ?: return@execute false
             if (event.deletedAt != null) return@execute false
             event.deletedAt = OffsetDateTime.now()
+            event.reviewRevision++
             eventRepository.save(event)
             adminDecisionLogService.logEventDecision(
                 adminId = adminId,

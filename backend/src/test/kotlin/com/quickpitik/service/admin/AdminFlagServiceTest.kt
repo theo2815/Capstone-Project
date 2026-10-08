@@ -94,7 +94,8 @@ class AdminFlagServiceTest {
             reason = "inappropriate",
             statusWire = status.wire,
         )
-        Mockito.`when`(flagRepository.findById(f.id)).thenReturn(Optional.of(f))
+        Mockito.`when`(flagRepository.findPhotoId(f.id)).thenReturn(f.targetId)
+        Mockito.`when`(flagRepository.findByIdForUpdate(f.id)).thenReturn(f)
         if (photo != null) {
             Mockito.`when`(photoRepository.findById(photo.id)).thenReturn(Optional.of(photo))
             Mockito.`when`(photoRepository.findAllById(anyArg())).thenReturn(listOf(photo))

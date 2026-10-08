@@ -181,6 +181,21 @@ class AdminDisputeServiceTest {
         Mockito.verify(orderItemRepository, Mockito.never()).findById(Mockito.any(OrderItemId::class.java))
     }
 
+    @Test
+    fun `a second escalation conflicts without another decision or notice`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(photoRepository.findById(dispute.photoId)).thenReturn(Optional.empty())
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "escalated", null))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "escalated"))
+        service.escalate(adminId, dispute.id, null)
+        val error = assertFailsWith<ApiException> { service.escalate(adminId, dispute.id, null) }
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.ESCALATED, dispute.status)
+        Mockito.verify(decisionLogService, Mockito.times(1)).logDisputeDecision(adminId, dispute.id, "escalated", null)
+    }
+
     private fun order(total: BigDecimal) = Order(
         eventId = UUID.randomUUID(),
         recipientEmail = "runner@example.test",

@@ -1,5 +1,9 @@
 package com.quickpitik.entity
 
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
+import org.hibernate.annotations.DynamicUpdate
 import jakarta.persistence.CollectionTable
 import jakarta.persistence.Column
 import jakarta.persistence.ElementCollection
@@ -19,6 +23,7 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 @Entity
+@DynamicUpdate
 @Table(name = "events")
 class Event(
     @Id
@@ -112,6 +117,9 @@ class Event(
     @Column(name = "review_status", nullable = false, length = 16)
     var reviewStatus: EventReviewStatus = EventReviewStatus.APPROVED,
 
+    @Column(name = "review_revision", nullable = false)
+    var reviewRevision: Long = 0,
+
     // The owner's requested pricing trio while CHANGE_PENDING — the live
     // columns above are untouched until an admin approves it.
     @Column(name = "pending_change", columnDefinition = "jsonb")
@@ -127,6 +135,13 @@ class Event(
     @Column(name = "reviewed_by")
     var reviewedBy: UUID? = null,
 ) {
+    fun requireReviewRevision(expected: Long?) {
+        if (expected != null && expected != reviewRevision) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "Event has changed. Refresh it before deciding or editing.", field = "expectedRevision")
+        }
+    }
+
     val isFree: Boolean get() = pricingMode == EventPricingMode.FREE
     @PreUpdate
     fun onUpdate() {

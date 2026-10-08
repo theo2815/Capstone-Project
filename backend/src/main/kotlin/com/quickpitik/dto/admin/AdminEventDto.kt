@@ -2,6 +2,8 @@ package com.quickpitik.dto.admin
 
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
+import jakarta.validation.constraints.PositiveOrZero
+import io.swagger.v3.oas.annotations.media.Schema
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
@@ -41,6 +43,14 @@ data class AdminListEventDto(
     val reviewStatus: String = "approved",
     val reviewNote: String? = null,
     val pendingChange: Map<String, Any?>? = null,
+    @field:Schema(description = "Event review generation; advances on actual decisions and edits")
+    val reviewRevision: Long = 0,
+)
+
+data class ApproveEventRequest(
+    @field:PositiveOrZero
+    @field:Schema(description = "Optional v1 precondition; stale generations return 409 before side effects")
+    val expectedRevision: Long? = null,
 )
 
 // POST /admin/events/{id}/reject — the reason reaches the photographer's inbox.
@@ -48,6 +58,8 @@ data class RejectEventRequest(
     @field:NotBlank
     @field:Size(max = 500)
     val reason: String,
+    @field:PositiveOrZero
+    val expectedRevision: Long? = null,
 )
 
 // POST /admin/events is multipart — the text parts bind straight onto this
@@ -90,6 +102,8 @@ data class UpdateAdminEventRequest(
     val organizerName: String? = null,
     @field:Size(max = 600)
     val description: String? = null,
+    @field:PositiveOrZero
+    val expectedRevision: Long? = null,
 )
 
 data class AdminEventDeleteResponseDto(

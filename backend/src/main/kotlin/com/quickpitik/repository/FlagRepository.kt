@@ -1,5 +1,7 @@
 package com.quickpitik.repository
 
+import jakarta.persistence.LockModeType
+import org.springframework.data.jpa.repository.Lock
 import com.quickpitik.entity.Flag
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
@@ -28,6 +30,13 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
         @Param("query") query: String?,
         pageable: Pageable,
     ): Page<Flag>
+
+    @Query("SELECT f.targetId FROM Flag f WHERE f.id = :id AND f.targetKindWire = 'photo'")
+    fun findPhotoId(@Param("id") id: UUID): UUID?
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT f FROM Flag f WHERE f.id = :id")
+    fun findByIdForUpdate(@Param("id") id: UUID): Flag?
 
     fun countByStatusWire(statusWire: String): Long
 

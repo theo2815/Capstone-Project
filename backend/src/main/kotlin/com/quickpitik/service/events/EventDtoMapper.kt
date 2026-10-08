@@ -99,6 +99,7 @@ class EventDtoMapper(
         reviewStatus = event.reviewStatus.wire,
         reviewNote = event.reviewNote,
         pendingChange = event.pendingChange,
+        reviewRevision = event.reviewRevision,
     )
 
     fun resolveBannerUrl(event: Event): String? =
