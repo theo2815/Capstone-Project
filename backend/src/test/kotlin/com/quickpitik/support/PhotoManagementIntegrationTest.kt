@@ -57,8 +57,32 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         coverage.saveAndFlush(EventPhotographer(id = EventPhotographerId(event.id, owner.id), photoCount = 1, firstUploadAt = OffsetDateTime.now()))
     }
 
+    @Autowired lateinit var erasureJobs: PhotoErasureJobRepository
+    @Autowired lateinit var removalItems: PhotoRemovalItemRepository
+    @Autowired lateinit var metadata: PhotoMetadataRepository
+    @Autowired lateinit var faceErasure: com.quickpitik.service.photos.PhotoFaceErasureService
+    @Autowired lateinit var json: com.fasterxml.jackson.databind.ObjectMapper
+    @Autowired lateinit var clock: java.time.Clock
+
     private fun deletingWith(storage: StorageService, coverageRepo: EventPhotographerRepository = coverage) =
-        PhotographerPhotoService(photos, uploadIntents, coverageRepo, items, storage, events, grants, reconciler, tx)
+        PhotographerPhotoService(photos, coverageRepo, items, events, grants, reconciler,
+            com.quickpitik.service.photos.PhotoErasureService(photos, erasureJobs, uploadIntents, removalItems,
+                items, grants, coverage, events, metadata, storage, faceErasure,
+                com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(), tx, json, clock))
+
+    @Test fun `delete acknowledgement with retained derivative must not report physical erasure`() {
+        manager.trash(owner.id, event.id, listOf(photo.id))
+        val storage = Mockito.mock(StorageService::class.java)
+        // The original disappeared, but a successful DELETE response alone
+        // does not prove the derivative is absent.
+        Mockito.`when`(storage.exists(photo.watermarkS3Key!!)).thenReturn(true)
+
+        val result = deletingWith(storage).permanentDelete(owner.id, event.id, listOf(photo.id))
+
+        assertTrue(result.deleted.isEmpty(), "A retained derivative was reported as deleted")
+        assertEquals(listOf(photo.id), result.failed)
+        assertNotNull(photos.findById(photo.id).orElseThrow().deletionStartedAt)
+    }
 
     @Test fun `trash is excluded from real gallery queries while owner trash includes it`() {
         manager.trash(owner.id, event.id, listOf(photo.id))
@@ -136,8 +160,9 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
                 originalKey = photo.s3Key,
                 state = PhotoUploadIntentState.COMMITTED,
                 resultPhotoId = photo.id,
-                putExpiresAt = now.plusMinutes(15),
-                expiresAt = now.plusHours(24),
+                createdAt = now.minusDays(10),
+                putExpiresAt = now.minusDays(10).plusMinutes(15),
+                expiresAt = now.minusDays(9),
                 cleanupAfter = null,
                 cleanedAt = now.minusDays(8),
             ),
@@ -151,6 +176,25 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertNull(stored.resultPhotoId)
         assertNotNull(stored.cleanupAfter)
         assertNull(stored.cleanedAt)
+    }
+
+    @Test fun `an unexpired staging PUT keeps permanent deletion pending`() {
+        val now = OffsetDateTime.now()
+        uploadIntents.saveAndFlush(PhotoUploadIntent(
+            photographerId = owner.id, eventId = event.id, contentHash = "b".repeat(64),
+            contentType = "image/jpeg", sizeBytes = 1,
+            stagingKey = "staging/task10/${photo.id}/original", originalKey = photo.s3Key,
+            state = PhotoUploadIntentState.COMMITTED, resultPhotoId = photo.id,
+            putExpiresAt = now.plusMinutes(15), expiresAt = now.plusDays(1),
+        ))
+        manager.trash(owner.id, event.id, listOf(photo.id))
+
+        val result = deletingWith(Mockito.mock(StorageService::class.java))
+            .permanentDelete(owner.id, event.id, listOf(photo.id))
+
+        assertTrue(result.deleted.isEmpty(), "The staging capability can still produce another object")
+        assertEquals(listOf(photo.id), result.failed)
+        assertNotNull(photos.findById(photo.id).orElseThrow().deletionStartedAt)
     }
 
     @Test fun `trash counter update must preserve a concurrent upload increment`() {

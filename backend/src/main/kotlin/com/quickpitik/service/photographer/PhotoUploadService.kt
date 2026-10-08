@@ -67,6 +67,7 @@ class PhotoUploadService(
     private val meterRegistry: MeterRegistry,
     private val entityManager: EntityManager,
     private val clock: Clock,
+    private val erasure: com.quickpitik.service.photos.PhotoErasureService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency)
@@ -928,6 +929,7 @@ class PhotoUploadService(
                 if (intent != null) {
                     val token = checkNotNull(leaseToken)
                     val settledAt = OffsetDateTime.now(clock)
+                    erasure.recordUploadIntent(photoId, intent)
                     if (photoUploadIntentRepository.complete(
                             intent.photoId,
                             token,
@@ -958,16 +960,16 @@ class PhotoUploadService(
             } else {
                 val token = checkNotNull(leaseToken)
                 val now = OffsetDateTime.now(clock)
-                val completed = transactionTemplate.execute {
-                    photoUploadIntentRepository.complete(
+                transactionTemplate.executeWithoutResult {
+                    erasure.recordUploadIntent(existing.id, intent)
+                    if (photoUploadIntentRepository.complete(
                         intent.photoId,
                         token,
                         existing.id,
                         cleanupAfter(intent, now),
                         now,
-                    )
-                } ?: 0
-                if (completed != 1) throw LeaseLostException()
+                    ) != 1) throw LeaseLostException()
+                }
             }
             if (intent != null) directOutcome("existing")
             return existingPhotoDto(existing)

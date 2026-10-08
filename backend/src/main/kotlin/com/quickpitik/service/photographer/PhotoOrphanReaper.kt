@@ -31,6 +31,8 @@ class PhotoOrphanReaper(
     private val aiApiClient: AiApiClient,
     private val aiApiProperties: AiApiProperties,
     private val faceErasure: PhotoFaceErasureService,
+    private val removalProperties: com.quickpitik.config.PhotoRemovalProperties,
+    private val clock: java.time.Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -38,10 +40,12 @@ class PhotoOrphanReaper(
     fun reap() {
         if (!aiApiProperties.enabled || !aiApiProperties.reaperEnabled) return
         // Durable targets survive the last photo/event catalog reference.
-        // ponytail: bounded first-page retries; TASK 10 owns durable due-job scheduling.
         photoRepository.faceWorkPending(PageRequest.of(0, REAP_MAX_EVENTS_PER_SWEEP)).forEach {
+            // Persist the backoff before I/O so crashes and persistent failures
+            // do not monopolize the bounded first page after restart.
+            photoRepository.deferFaceCleanup(it.eventId, it.photoId, OffsetDateTime.now(clock).plus(removalProperties.cleanupBackoff))
             runCatching { faceErasure.erase(it.eventId, it.photoId) }
-                .onFailure { error -> log.warn("Face cleanup pending for photo {}: {}", it.photoId, error.message) }
+                .onFailure { error -> log.warn("Face cleanup pending for photo {} ({})", it.photoId, error.javaClass.simpleName) }
         }
         val events = photoRepository.findEventsWithFacePersons(
             PageRequest.of(0, REAP_MAX_EVENTS_PER_SWEEP),

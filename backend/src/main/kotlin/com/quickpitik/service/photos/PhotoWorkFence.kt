@@ -67,11 +67,15 @@ class PhotoWorkFence(
     }
 
     fun recordPerson(claim: PhotoWorkClaim, personId: String) {
+        photos.findAllByIdForUpdate(listOf(claim.photoId))
         photos.recordWorkPersons(claim.token, json.writeValueAsString(listOf(personId)))
     }
 
     fun attributeBatch(claim: PhotoWorkClaim, batchId: UUID) { photos.attributeWorkBatch(claim.token, batchId) }
     fun recordJob(claim: PhotoWorkClaim, kind: String, jobId: String) {
+        // Erasure callbacks invalidate the job and tombstone in that order.
+        // Take the photo lock first, matching erasure claim/settlement.
+        photos.findAllByIdForUpdate(listOf(claim.photoId))
         photos.recordWorkJob(claim.token, json.writeValueAsString(mapOf(kind to jobId)))
     }
 

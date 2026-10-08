@@ -29,7 +29,8 @@ class PhotoOrphanReaperTest {
     }
 
     private fun reaper(props: AiApiProperties) = PhotoOrphanReaper(photoRepo, aiApiClient, props,
-        Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java))
+        Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java),
+        com.quickpitik.config.PhotoRemovalProperties(), java.time.Clock.systemUTC())
 
     @Test fun `last photo cleanup discovers ledger targets without live indexed events`() {
         Mockito.`when`(photoRepo.findEventsWithFacePersons(anyArg())).thenReturn(emptyList())

@@ -159,6 +159,7 @@ class PhotoUploadServiceTest {
         meterRegistry,
         entityManager,
         clock,
+        Mockito.mock(com.quickpitik.service.photos.PhotoErasureService::class.java),
     )
 
     private fun event(id: UUID = eventId, name: String = "Cebu Marathon 2026"): Event =

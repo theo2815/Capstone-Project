@@ -529,6 +529,36 @@ items can be released only after provider closure is verified and payment/order
 state is rechecked under locks. This also closes any intent behind an expired
 checkout page before storage cleanup begins.
 
+`PhotoErasureService.request(PhotoErasureCommand)` records one durable job per
+photo; `attempt(jobId)` returns `PENDING`, `RETRY_REQUIRED` or `COMPLETE`.
+Ordinary permanent deletion and authorized privacy removal share this executor.
+Privacy requests require the matching authorized removal item and decision actor.
+An ordinary job can acquire validated privacy authorization while retaining its
+initial audit snapshot and the same job ID; settlement then retains a tombstone.
+Bulk actions may share their original command ID across distinct photo jobs.
+
+[V76](../backend/src/main/resources/db/migration/V76__photo_erasure_jobs.sql)
+retains storage targets, authorization and progress independently of the live
+photo. Short photo-then-job locks surround storage/provider I/O; leases recover
+interrupted attempts, and bounded due sweeps retry failures. Originals,
+derivatives and staging must be absent, and the existing event-scoped face
+eraser must separately confirm AI cleanup. Unfinished producers remain pending
+regardless of lease expiry; late output attribution reopens cleanup and cannot
+republish the photo. Shared live blob references prevent completion.
+
+Staging cleanup honors PUT expiry and retained upload-receipt rechecks, including
+obligations moved during an attempt. Duplicate commits atomically append newly
+associated receipt targets and rechecks under photo-then-job-then-receipt locks;
+they invalidate an in-flight attempt or reopen a completed job. The initial
+manifest is retained, and late targets survive loss of the live photo reference.
+This bounded check does not prove every
+accepted but unreported browser PUT has ended; storage-provider qualification
+remains a release gate. `deleted` includes only confirmed completion. Privacy
+completion clears image keys and metadata/face/bib relationships while retaining
+the photo ID, seller and financial references, and exact-byte content hash that
+prevents the same photographer reuploading the purged bytes. Missing photo rows
+alone are never evidence of erasure; the surviving job manifest is required.
+
 The library's additive `deletionStartedAt` field marks irreversible cleanup.
 Once set, restore and original-download requests are refused, including after
 a storage failure. Clients show the failure and retry permanent deletion.

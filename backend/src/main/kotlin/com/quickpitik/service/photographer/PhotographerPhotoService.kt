@@ -3,6 +3,9 @@ package com.quickpitik.service.photographer
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.photographer.PermanentDeleteResponse
 import com.quickpitik.entity.Photo
+import com.quickpitik.dto.photos.*
+import com.quickpitik.entity.RemovalActorType
+import com.quickpitik.service.photos.PhotoErasureService
 import com.quickpitik.entity.RemovalState
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -11,13 +14,10 @@ import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.repository.PhotoUploadIntentRepository
-import com.quickpitik.service.storage.StorageService
 import com.quickpitik.service.orders.PaymongoCheckoutReconciler
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import org.springframework.transaction.support.TransactionTemplate
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -28,14 +28,12 @@ import java.util.UUID
 @Service
 class PhotographerPhotoService(
     private val photoRepository: PhotoRepository,
-    private val photoUploadIntentRepository: PhotoUploadIntentRepository,
     private val eventPhotographerRepository: EventPhotographerRepository,
     private val orderItemRepository: OrderItemRepository,
-    private val storageService: StorageService,
     private val eventRepository: EventRepository,
     private val downloadGrantRepository: DownloadGrantRepository,
     private val checkoutReconciler: PaymongoCheckoutReconciler,
-    private val transactionTemplate: TransactionTemplate,
+    private val erasure: PhotoErasureService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -93,27 +91,13 @@ class PhotographerPhotoService(
                     if (isSold(photo.id)) blocked += photo.id else pending += photo.id
                     return@forEach
                 }
-                val claimed = claimDeletion(photographerId, eventId, photo.id)
-                if (claimed == null) {
-                    failed += photo.id
-                    return@forEach
-                }
-                // Include the deterministic derivative key even if a worker
-                // stored it before publishing its database pointer.
-                setOfNotNull(claimed.s3Key, claimed.watermarkS3Key, claimed.thumbnailS3Key,
-                    "events/$eventId/photos/${photo.id}/watermark.jpg")
-                    .forEach(storageService::delete)
-                transactionTemplate.executeWithoutResult {
-                    photoRepository.findAllByIdForUpdate(listOf(photo.id)).singleOrNull()?.let {
-                        check(it.deletionStartedAt != null)
-                        photoUploadIntentRepository.scheduleCleanupForResultPhoto(photo.id, OffsetDateTime.now())
-                        photoRepository.delete(it)
-                    }
-                }
-                deleted += photo.id
+                val jobId = erasure.request(PhotoErasureCommand(photo.id, PhotoErasurePurpose.PHOTOGRAPHER_DELETE,
+                    RemovalActorType.PHOTOGRAPHER, photographerId, "Photographer permanent deletion", commandId = UUID.randomUUID()))
+                if (erasure.attempt(jobId) == PhotoErasureOutcome.COMPLETE) deleted += photo.id
+                else failed += photo.id
             } catch (ex: Exception) {
                 failed += photo.id
-                log.warn("Permanent delete failed for photo {} (event {}): {}", photo.id, eventId, ex.message)
+                log.warn("Permanent delete failed for photo {} (event {}): {}", photo.id, eventId, ex.javaClass.simpleName)
             }
         }
         return PermanentDeleteResponse(deleted = deleted, blockedSold = blocked, blockedPending = pending, failed = failed)
@@ -122,23 +106,6 @@ class PhotographerPhotoService(
     private fun isSold(photoId: UUID): Boolean =
         downloadGrantRepository.existsByIdPhotoId(photoId) ||
             orderItemRepository.countSalesByPhotoIds(listOf(photoId)).any { it.salesCount > 0 }
-
-    private fun claimDeletion(photographerId: UUID, eventId: UUID, photoId: UUID): Photo? =
-        transactionTemplate.execute {
-            // Checkout locks these same photo rows before reserving any order
-            // items. Restore must also acquire the row lock through its UPDATE.
-            val current = photoRepository.findAllByIdForUpdate(listOf(photoId)).singleOrNull()
-                ?.takeIf { it.photographerId == photographerId && it.eventId == eventId && it.deletedAt != null }
-                ?: return@execute null
-            requireNoRemovalCase(current)
-            if (current.watermarkWorkToken != null || current.indexingWorkToken != null) return@execute null
-            if (photoRepository.hasUnfinishedWork(photoId, "ANY")) return@execute null
-            if (orderItemRepository.existsByIdPhotoId(photoId) || downloadGrantRepository.existsByIdPhotoId(photoId)) {
-                return@execute null
-            }
-            if (current.deletionStartedAt == null) photoRepository.startDeletion(photoId, OffsetDateTime.now())
-            current
-        }
 
     private fun load(photographerId: UUID, eventId: UUID, photoIds: List<UUID>) =
         if (photoIds.isEmpty()) {

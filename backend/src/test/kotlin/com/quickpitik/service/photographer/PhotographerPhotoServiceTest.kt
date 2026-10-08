@@ -26,14 +26,12 @@ class PhotographerPhotoServiceTest {
     private val events = Mockito.mock(EventRepository::class.java)
     private val service = PhotographerPhotoService(
         photos,
-        Mockito.mock(PhotoUploadIntentRepository::class.java),
         Mockito.mock(EventPhotographerRepository::class.java),
         Mockito.mock(OrderItemRepository::class.java),
-        Mockito.mock(StorageService::class.java),
         events,
         Mockito.mock(DownloadGrantRepository::class.java),
         Mockito.mock(PaymongoCheckoutReconciler::class.java),
-        Mockito.mock(TransactionTemplate::class.java),
+        Mockito.mock(com.quickpitik.service.photos.PhotoErasureService::class.java),
     )
     private val seller = UUID.randomUUID()
     private val photoId = UUID.randomUUID()
