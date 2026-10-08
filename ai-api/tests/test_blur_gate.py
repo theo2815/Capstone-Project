@@ -138,7 +138,7 @@ def test_complete_gate_writes_reproducible_report(tmp_path, monkeypatch):
     assert len(report["dataset_manifest"]) == 4
     assert report["confusion"]["sharp"]["sharp"] == 1
     assert report["runtime_dependencies"]["python"]
-    assert report["gate_arguments"]["batch"] == 200
+    assert report["gate_arguments"]["batch"] == 100
 
 
 @pytest.mark.parametrize("damage", [
@@ -499,8 +499,10 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
         Image.new("RGB", (32, 16), (shade, shade, shade)).save(buf, "JPEG")
         return buf.getvalue()
 
+    seen = {}
     class FakeClassifier:
         def __init__(self, detector_path, rule_path):
+            seen["detector"], seen["rule"] = detector_path, rule_path
             self.session = object()
 
         def classify_batch(self, images):
@@ -523,10 +525,12 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
     report_path = tmp_path / "report.json"
     monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(root), "--offline",
                                       "--model-file", str(model),
+                                      "--detector-file", str(tmp_path / "detector.onnx"),
                                       "--model-manifest", str(manifest_path),
                                       "--report-json", str(report_path),
                                       "--max-overcull-rate", "0"])
     code = blur_gate.main()
+    assert seen == {"detector": str(tmp_path / "detector.onnx"), "rule": str(model)}
     report = json.loads(report_path.read_text())
     assert code == 2 and report["status"] == "DIAGNOSTIC"
     assert report["counts"] == {"attempted": 2, "scored": 2, "failed": 0}

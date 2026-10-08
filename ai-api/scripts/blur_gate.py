@@ -360,7 +360,9 @@ def main() -> int:
     ap.add_argument("--report-json", type=Path, default=Path("blur-gate-report.json"))
     ap.add_argument("--cand-dim", type=int, default=1280, help="Client resize long edge.")
     ap.add_argument("--cand-quality", type=int, default=90, help="Client JPEG quality.")
-    ap.add_argument("--batch", type=int, default=200, help="Images per stream request.")
+    ap.add_argument("--batch", type=int, default=100,
+                    help="Images per stream request (what the desktop sends; 200 ran too close "
+                         "to the 120-second stream limit on staging).")
     ap.add_argument("--limit", type=int, default=0, help="Cap number of images (0 = all).")
     ap.add_argument("--diagnostic-subset", action="store_true",
                     help="Allow --limit or partial class coverage; output is not a release PASS.")
