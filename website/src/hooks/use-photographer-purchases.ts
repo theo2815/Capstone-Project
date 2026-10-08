@@ -98,7 +98,7 @@ export function usePhotographerPhotoPurchases(photoId: string | null, orderId?: 
   const items = dedupeItems(pages.map((page) => ({ ...page, items: page.items.map((item: PhotographerPurchase) => ({ id: `${item.orderId}:${item.photoId}`, value: item })) }))).map(({ value }) => value);
   const refreshPhoto = (selectedOrderId = orderId): Promise<void> => {
     if (refreshPromise.current) return refreshPromise.current;
-    if (!canRead() || !photoId) return Promise.resolve();
+    if (!canRead() || !photoId || !queryClient.getQueryData<InfiniteData<PhotographerPhotoPurchasesResponse>>(queryKey)?.pages.length) return Promise.resolve();
 
     const controller = new AbortController();
     const targetKey = queryKey;

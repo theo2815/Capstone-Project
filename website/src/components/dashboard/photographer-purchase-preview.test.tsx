@@ -169,6 +169,24 @@ it("keeps a newly selected receipt while a bounded same-URL refresh finishes", a
   client.clear();
 });
 
+it("does not replace private history when retrying a gallery fallback", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const get = vi.spyOn(api, "get").mockImplementation(() => new Promise(() => undefined));
+  render(<QueryClientProvider client={client}><PhotographerPurchasePreview
+    selection={{ photoId: photo.id }}
+    photos={[{ ...photo, thumbnailUrl: "https://cdn.example.test/gallery-fallback.jpg" }]}
+    onClose={vi.fn()}
+  /></QueryClientProvider>);
+  fireEvent.error(await screen.findByRole("img", { name: "Race photo of bib 101" }));
+
+  expect(screen.getByText("Preview unavailable")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
+  expect(get).toHaveBeenCalledTimes(1);
+  expect(get.mock.calls[0][1]?.signal?.aborted).toBe(false);
+  client.clear();
+});
+
 it("shows free purchase facts without inventing paid or refunded money", async () => {
   login();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

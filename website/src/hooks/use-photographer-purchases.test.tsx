@@ -282,3 +282,24 @@ it("keeps refreshed media when an older page append completes later", async () =
   expect(result.current.photo?.thumbnailUrl).toBe("fresh");
   expect(result.current.items.map((item) => item.orderId)).toEqual(["order-a"]);
 });
+
+it("does not replace an initial history load with a one-row media refresh", async () => {
+  login();
+  const loaded = {
+    items: [{ orderId: "order-a", photoId: "photo-a" }], offset: 0, limit: 25, total: 1,
+    photo: { id: "photo-a", thumbnailUrl: "fresh" }, event: { id: "event-a" }, selectedPurchase: null,
+  };
+  let resolveInitial!: (value: typeof loaded) => void;
+  const get = vi.spyOn(api, "get")
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
+    .mockResolvedValueOnce(loaded);
+  const { result } = renderHook(() => usePhotographerPhotoPurchases("photo-a"), { wrapper });
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+
+  await act(async () => { await result.current.refreshPhoto("order-a"); });
+
+  expect(get).toHaveBeenCalledTimes(1);
+  expect(result.current.isLoading).toBe(true);
+  await act(async () => resolveInitial(loaded));
+  await waitFor(() => expect(result.current.photo?.thumbnailUrl).toBe("fresh"));
+});

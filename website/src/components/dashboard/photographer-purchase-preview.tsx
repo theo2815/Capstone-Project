@@ -175,6 +175,6 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     imageReloadKey={imageReloadKey}
     isRefreshingImage={purchase.isRefreshingPhoto}
     imageRefreshError={purchase.photoRefreshError ? "Could not refresh preview. Try again." : null}
-    onRefreshImage={photo?.mediaAvailable === false || photo?.deletionStartedAt ? undefined : () => void refreshImage()}
+    onRefreshImage={!purchase.photo || photo?.mediaAvailable === false || photo?.deletionStartedAt ? undefined : () => void refreshImage()}
   />;
 }
