@@ -11,8 +11,8 @@ import { useScrollLock } from "@/lib/scroll-lock";
 import {
   BibPanel,
   SelfieSearchPanel,
-  type SearchPanelMode,
 } from "./bib-search-panels";
+import type { SearchPanelMode } from "./find-photos-controls";
 import type { EventPhotosResult } from "@/lib/api-photos";
 
 interface FindPhotosModalProps {

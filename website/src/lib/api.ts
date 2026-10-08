@@ -4,7 +4,7 @@ import { API_BASE_URL } from "./constants";
 import { buildLoginRedirect, currentUrlForRedirect } from "./redirect";
 import type { ApiResponse } from "@/types/api";
 
-type ApiRequestOptions = RequestInit & { timeoutMs?: number };
+type ApiRequestOptions = RequestInit & { timeoutMs?: number; responseType?: "blob" };
 
 class ApiClient {
   private baseUrl: string;
@@ -39,7 +39,7 @@ class ApiClient {
     // FormData gets the long budget: a 10 MB cover on venue Wi-Fi is slow.
     let res: Response;
     try {
-      const { timeoutMs, ...requestOptions } = options ?? {};
+      const { timeoutMs, responseType, ...requestOptions } = options ?? {};
       const timeout = AbortSignal.timeout(timeoutMs ?? (isFormData ? 120_000 : 30_000));
       res = await fetch(`${this.baseUrl}${path}`, {
         ...requestOptions,
@@ -48,6 +48,10 @@ class ApiClient {
           ? AbortSignal.any([options.signal, timeout])
           : timeout,
       });
+      // Decode only successful binary responses; errors retain the envelope path.
+      if (res.ok && responseType === "blob") {
+        return { data: await res.blob() as T, res };
+      }
     } catch (e) {
       if (options?.signal?.aborted) {
         throw new DOMException("Request cancelled", "AbortError");
@@ -150,6 +154,10 @@ class ApiClient {
 
   async get<T>(path: string, options?: { signal?: AbortSignal }): Promise<T> {
     return this.fetch<T>(path, { method: "GET", ...options });
+  }
+
+  async getBlob(path: string, options?: { signal?: AbortSignal }): Promise<Blob> {
+    return this.fetch<Blob>(path, { method: "GET", ...options, responseType: "blob" });
   }
 
   // GET that also reads the X-Total-Count response header (CORS-exposed) for

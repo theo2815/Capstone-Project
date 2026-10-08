@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/store/auth-store";
 import { useAdminNotificationsWs } from "./use-admin-notifications-ws";
+import { removalKeys } from "./use-photo-removal";
 
 vi.mock("@/lib/auth", () => ({ getAccessToken: () => "fixture-token" }));
 
@@ -44,4 +45,23 @@ it("refreshes canonical queues on reconnect and filed events, and ignores messag
   socket.onmessage({ data: JSON.stringify({ type: "dispute_filed" }) });
   expect(invalidate).not.toHaveBeenCalled();
   client.clear();
+});
+
+it("refreshes current-session removal cases on reconnect and removal changes", () => {
+  const socket = { onopen: () => {}, onmessage: vi.fn<(event: { data: string }) => void>(), close: vi.fn() };
+  vi.stubGlobal("WebSocket", vi.fn(function () { return socket; }));
+  const client = new QueryClient();
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  const key = removalKeys.admin([admin.id, admin.role, useAuthStore.getState().sessionVersion]);
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { unmount } = renderHook(() => useAdminNotificationsWs(true), { wrapper });
+  socket.onopen();
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+  invalidate.mockClear();
+  socket.onmessage({ data: JSON.stringify({ type: "photo_removal_changed", entityId: "case" }) });
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+  invalidate.mockClear();
+  act(() => { useAuthStore.getState().startSession(admin); socket.onmessage({ data: JSON.stringify({ type: "photo_removal_changed" }) }); });
+  expect(invalidate).not.toHaveBeenCalled();
+  unmount(); client.clear();
 });

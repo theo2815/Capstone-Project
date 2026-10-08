@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken } from "@/lib/auth";
 import { buildWsUrl } from "@/lib/ws-url";
 import { adminUserKeys } from "@/hooks/use-admin-users";
+import { removalKeys } from "@/hooks/use-photo-removal";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 
 // WebSocket push for the admin queue. Subscribes to /ws/admin/notifications
@@ -34,7 +35,8 @@ interface AdminInboxFrame {
     | "dispute_filed"
     | "payout_report_filed"
     | "event_submitted"
-    | "event_change_requested";
+    | "event_change_requested"
+    | "photo_removal_changed";
   entityId: string;
   actorId: string;
   occurredAt: string;
@@ -51,6 +53,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
   useEffect(() => {
     if (!enabled || user?.role !== "ADMIN" || !useAuthStore.getState().isAuthenticated) return;
     const isCurrent = captureAuthSession();
+    const removalKey = removalKeys.admin([user.id, user.role, sessionVersion]);
     let cancelled = false;
 
     function clearReconnectTimer() {
@@ -81,6 +84,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
         void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
         void queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
         void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
+        void queryClient.invalidateQueries({ queryKey: removalKey });
       };
 
       ws.onmessage = (event) => {
@@ -88,6 +92,10 @@ export function useAdminNotificationsWs(enabled: boolean): void {
         try {
           const data = JSON.parse(event.data) as AdminInboxFrame;
           switch (data.type) {
+            case "photo_removal_changed":
+              void queryClient.invalidateQueries({ queryKey: removalKey });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
+              break;
             case "verification_submitted":
               void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
               void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });

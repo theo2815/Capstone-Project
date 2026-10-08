@@ -7,8 +7,9 @@ import { useAuthStore } from "@/store/auth-store";
 import { SelfieSearchPanel } from "./bib-search-panels";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/events/race" }));
+const library = vi.hoisted(() => ({ selfies: [] as { id: string; dataUrl: string; uploadedAt: string; isPrimary: boolean; qualityScore: number; qualityTestStatus: string }[] }));
 vi.mock("@/hooks/use-selfies", () => ({
-  useSelfiesList: () => ({ selfies: [], isLoading: false, error: null }),
+  useSelfiesList: () => ({ selfies: library.selfies, isLoading: false, error: null }),
 }));
 
 const runner = { id: "runner-a", role: "RUNNER" as const, name: "Runner", email: "a@example.test", createdAt: "2026-09-10" };
@@ -21,6 +22,7 @@ const found = () => new Response(JSON.stringify({ success: true, data: searchRes
 
 let client: QueryClient;
 beforeEach(() => {
+  library.selfies = [];
   useAuthStore.getState().startSession(runner);
   setTokens("access-a", "refresh-a");
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -73,4 +75,39 @@ it("falls back to file search after a current-session save rejection", async () 
   await waitFor(() => expect(onSearchSuccess).toHaveBeenCalledWith(searchResult));
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(screen.getByText(/Not saved to your library/)).toBeInTheDocument();
+});
+
+it.each(["all", "selected"])("rejects a late saved-%s search after same-account login", async (selection) => {
+  library.selfies = [selfie];
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => { finish = resolve; });
+  vi.stubGlobal("fetch", vi.fn().mockReturnValue(pending));
+  const onSearchSuccess = vi.fn();
+  render(<QueryClientProvider client={client}><SelfieSearchPanel eventSlug="race" onSwitchToBib={() => {}} onSearchSuccess={onSearchSuccess} /></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", { name: /Use saved selfie/ }));
+  fireEvent.click(screen.getByRole("button", { name: selection === "all" ? /Match with all/ : /Search with primary selfie/ }));
+  act(() => useAuthStore.getState().startSession(runner));
+  await act(async () => { finish(found()); await pending; });
+  expect(onSearchSuccess).not.toHaveBeenCalled();
+});
+
+it("allows the replacement session to search without an old result clearing its busy state", async () => {
+  library.selfies = [selfie];
+  let finishOld!: (response: Response) => void, finishNew!: (response: Response) => void;
+  const old = new Promise<Response>((resolve) => { finishOld = resolve; });
+  const next = new Promise<Response>((resolve) => { finishNew = resolve; });
+  vi.stubGlobal("fetch", vi.fn().mockReturnValueOnce(old).mockReturnValueOnce(next));
+  const success = vi.fn();
+  render(<QueryClientProvider client={client}><SelfieSearchPanel eventSlug="race" onSwitchToBib={() => {}} onSearchSuccess={success} /></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", { name: /Use saved selfie/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Match with all/ }));
+  act(() => useAuthStore.getState().startSession(runner));
+  await waitFor(() => expect(screen.getByLabelText(/Upload a selfie/)).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: /Use saved selfie/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Match with all/ }));
+  await act(async () => { finishOld(found()); await old; });
+  expect(success).not.toHaveBeenCalled();
+  expect(screen.getByLabelText(/Upload a selfie/)).toBeDisabled();
+  await act(async () => { finishNew(found()); await next; });
+  expect(success).toHaveBeenCalledTimes(1);
 });
