@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,23 +29,30 @@ describe("shared admin mutation ownership", () => {
   it("blocks_same_tick_and_cross_instance_submission", async () => {
     const response = deferred<string>();
     const execute = vi.fn(() => response.promise);
-    const { result } = renderHook(() => ({ first: useAdminMutation(), second: useAdminMutation() }), { wrapper });
-    let accepted!: ReturnType<typeof result.current.first.run<string>>;
-    let blocked!: ReturnType<typeof result.current.first.run<string>>;
+    const views: Record<string, ReturnType<typeof useAdminMutation>> = {};
+    function View({ name }: { name: string }) {
+      const guard = useAdminMutation(); views[name] = guard;
+      return <output aria-label={name}>{guard.pendingAction([row]) ?? "idle"}</output>;
+    }
+    render(<><View name="first" /><View name="second" /></>, { wrapper });
+    let accepted!: ReturnType<typeof views.first.run<string>>;
+    let blocked!: ReturnType<typeof views.first.run<string>>;
     act(() => {
-      accepted = result.current.first.run({ targets: [row], action: "approve", execute });
-      expect(result.current.second.isPending([row])).toBe(true);
-      blocked = result.current.second.run({ targets: [row], action: "approve", execute });
+      accepted = views.first.run({ targets: [row], action: "approve", execute });
+      expect(views.second.isPending([row])).toBe(true);
+      blocked = views.second.run({ targets: [row], action: "approve", execute });
     });
     await expect(blocked).resolves.toEqual({ kind: "blocked" });
     await waitFor(() => {
-      expect(result.current.first.isPending([row])).toBe(true);
-      expect(result.current.second.pendingAction([row])).toBe("approve");
+      expect(screen.getByLabelText("first")).toHaveTextContent("approve");
+      expect(screen.getByLabelText("second")).toHaveTextContent("approve");
     });
     expect(execute).toHaveBeenCalledTimes(1);
     await act(async () => { response.resolve("saved"); expect(await accepted).toEqual({ kind: "completed", value: "saved" }); });
-    await waitFor(() => expect(result.current.second.isPending([row])).toBe(false));
-    expect(result.current.first.pendingAction([row])).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByLabelText("first")).toHaveTextContent("idle");
+      expect(screen.getByLabelText("second")).toHaveTextContent("idle");
+    });
   });
 
   it("blocks_conflicting_verb_and_overlapping_bulk", async () => {

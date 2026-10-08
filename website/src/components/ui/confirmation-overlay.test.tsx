@@ -57,6 +57,22 @@ describe("confirmation ID ownership", () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
+  it("holds the claim through a synchronous throw so same-turn Enter and click cannot retry", async () => {
+    const execute = vi.fn(() => { throw new Error("Refused immediately"); });
+    render(<ConfirmationOverlay />);
+    const resolve = open(execute);
+    const button = screen.getByRole("button", { name: "Submit" });
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("Refused immediately");
+    expect(resolve).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+  });
+
   it("resolves a second open as cancelled while the first owns execution", async () => {
     const response = deferred();
     const execute = vi.fn(() => response.promise);

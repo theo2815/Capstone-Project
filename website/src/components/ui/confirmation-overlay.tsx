@@ -63,6 +63,8 @@ export function ConfirmationOverlay() {
       await cb();
       close(active.id, true);
     } catch (err) {
+      // A synchronous throw must retain the claim through same-turn Enter/click.
+      await Promise.resolve();
       const msg =
         err instanceof Error && err.message
           ? err.message
