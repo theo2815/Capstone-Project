@@ -22,7 +22,7 @@ def _archive(tmp_path, rows):
         path.write_bytes(data)
         digest = hashlib.sha256(data).hexdigest()
         sheet += f"{digest},{event},archive/{name},{label},{label},{label},,\n"
-    (root / "quality_evidence" / "labels_2026-09.csv").write_text(sheet, encoding="utf-8")
+    (root / build_blur_folds.LABELS).write_text(sheet, encoding="utf-8")
     return root
 
 
@@ -72,4 +72,8 @@ def test_existing_folds_are_never_replaced(tmp_path, monkeypatch):
 
 def test_every_event_in_the_real_fold_table_has_one_of_five_folds():
     assert set(build_blur_folds.FOLDS.values()) == set("abcde")
-    assert len(build_blur_folds.FOLDS) == 22
+    assert len(build_blur_folds.FOLDS) == 24
+    assert build_blur_folds.FOLDS["dipolog-marathon-1-2026-10"] == "e"
+    assert build_blur_folds.FOLDS["gaisano-grand-run-2026-10"] == "d"
+    assert "final_exam_2026-10" in build_blur_folds.SOURCES
+    assert build_blur_folds.LABELS.endswith("labels_2026-10.csv")

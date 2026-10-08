@@ -1,6 +1,6 @@
 """Lay the labelled event photos out as five event folds.
 
-Reads Training-Images/quality_evidence/labels_2026-09.csv (one row per unique photo:
+Reads Training-Images/quality_evidence/labels_2026-10.csv (one row per unique photo:
 sha256, event, final_label) and hard-links every photo into
 
     Training-Images/blur_v2/fold_<a-e>/<event>/<class>/<sha16>.jpg
@@ -22,9 +22,9 @@ from collections import Counter
 from pathlib import Path
 
 TRAINING_DIR = Path(__file__).resolve().parent.parent / "Training-Images"
-LABELS = "quality_evidence/labels_2026-09.csv"
+LABELS = "quality_evidence/labels_2026-10.csv"
 SOURCES = ("Sharp event photos", "Event subject missed focus", "Event defocus", "Event motion",
-           "holdout_events_2026-09")
+           "holdout_events_2026-09", "final_exam_2026-10")
 CLASSES = ("sharp", "defocused_object_portrait", "defocused_blurred", "motion_blurred")
 # Hand-balanced on 2026-10-05: every fold holds sharp and missed-focus photos, and the
 # two motion sources (alin-move, palawanpay) sit in different folds.
@@ -51,6 +51,9 @@ FOLDS = {
     "winzir-color-run-2026-07": "e",
     "cebu-marathon-2026-07": "e",
     "iloilo-run-2026-09": "e",
+    # The spent final exam of 2026-10-08 (owner decision D1 of the round-three plan).
+    "dipolog-marathon-1-2026-10": "e",
+    "gaisano-grand-run-2026-10": "d",
 }
 
 
