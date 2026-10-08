@@ -86,6 +86,16 @@ it("keeps legacy city explicit, replaces it atomically, and lets province win wh
   await waitFor(() => expect(navigation.search).toBe("province=bohol"));
   expect(raceLink("a")).not.toBeInTheDocument();
 });
+it("preserves a city-only URL when navigating from a province filter", async () => {
+  rows.push(event("other", { location: "Venue, Other City" }));
+  navigation.search = "province=cebu"; mount();
+  await waitFor(() => expect(raceLink("other")).toBeInTheDocument());
+  navigate("city=Legacy+City");
+  await waitFor(() => expect(navigation.search).toBe("city=Legacy+City"));
+  expect(screen.getAllByText(/Legacy city: Legacy City/).length).toBeGreaterThan(0);
+  expect(raceLink("a")).toBeInTheDocument();
+  expect(raceLink("other")).not.toBeInTheDocument();
+});
 it("keeps options independent of search/date, merges debounced search, and follows external navigation", async () => {
   rows.push(event("last", { provinceCode: "bohol" })); mount();
   await waitFor(() => expect(raceLink("a")).toBeInTheDocument());

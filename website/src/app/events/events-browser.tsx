@@ -89,11 +89,12 @@ export function EventsBrowser({ events: seed }: EventsBrowserProps) {
   const [province] = useUrlState<string>("province", "");
   const [date, setDate] = useUrlState<DateKey>("date", "any");
   const setUrlBatch = useUrlStateBatch();
-  const hasLegacyCity = useSearchParams().has("city");
+  const searchParams = useSearchParams();
+  const hasBothLocations = Boolean(searchParams.get("province")) && searchParams.has("city");
 
   useEffect(() => {
-    if (province && hasLegacyCity) setUrlBatch({ city: null });
-  }, [province, hasLegacyCity, setUrlBatch]);
+    if (hasBothLocations) setUrlBatch({ city: null });
+  }, [hasBothLocations, setUrlBatch]);
 
   const provinceOptions = useMemo(() => {
     const options = new Map<string, { code: string; label: string; region: string }>();
