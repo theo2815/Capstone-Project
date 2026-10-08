@@ -50,6 +50,8 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var reportAdmin: AdminPayoutReportService
     @Autowired lateinit var disputeAdmin: AdminDisputeService
     @Autowired lateinit var eventAdmin: AdminEventService
+    @Autowired lateinit var photoOwner: com.quickpitik.service.photographer.PhotographerPhotoService
+    @Autowired lateinit var refunds: com.quickpitik.service.orders.RefundService
     @Autowired lateinit var ownerEvents: PhotographerOwnedEventService
     @Autowired lateinit var jdbc: JdbcTemplate
     @Autowired lateinit var dataSource: DataSource
@@ -415,4 +417,73 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
             assertEquals(1, events.findById(p.eventId).get().photoCount)
         } finally { pool.shutdownNow() }
     }
+
+    @Test fun `withdrawn dispute cannot be resurrected by a delayed escalation`() {
+        val p = photo(); val runner = user(Role.RUNNER).id
+        val order = orders.saveAndFlush(Order(eventId = p.eventId, recipientEmail = "test@example.test",
+            userId = runner, paymentMethodWire = "gcash", totalPhp = BigDecimal("150.00")))
+        val d = disputes.saveAndFlush(Dispute(orderId = order.id, photoId = p.id, runnerId = runner, reasonWire = "other"))
+        refunds.withdraw(runner, d.id)
+        val error = assertFailsWith<ApiException> { disputeAdmin.escalate(user(Role.ADMIN).id, d.id, null) }
+        assertEquals(409, error.status.value())
+        assertEquals(DisputeStatus.WITHDRAWN, disputes.findById(d.id).get().status)
+        assertEquals(0, count("SELECT count(*) FROM admin_decision_log WHERE target_dispute_id = ?", d.id))
+        assertEquals(0, count("SELECT count(*) FROM photographer_messages WHERE photographer_id = ?", p.photographerId!!))
+        assertEquals(0, count("SELECT count(*) FROM runner_messages WHERE runner_id = ?", runner))
+        disputes.saveAndFlush(Dispute(orderId = order.id, photoId = p.id, runnerId = runner, reasonWire = "other"))
+    }
+
+    @Test fun `bulk trash and event repricing lock overlapping photos in the same order`() {
+        val e = event(); val seller = e.createdBy!!; val admin = user(Role.ADMIN).id
+        // Reverse physical order so the unordered bulk UPDATE reaches the larger UUID first.
+        val high = UUID.fromString("70000000-0000-0000-0000-000000000002")
+        val low = UUID.fromString("10000000-0000-0000-0000-000000000001")
+        for (id in listOf(high, low)) photos.saveAndFlush(Photo(id = id, eventId = e.id,
+            photographerId = seller, s3Key = "test/$id.jpg", pricePhp = BigDecimal("150"), status = PhotoStatus.LIVE))
+        jdbc.update("UPDATE events SET photo_count = 2 WHERE id = ?", e.id)
+        jdbc.execute("""CREATE FUNCTION pause_transition_trash() RETURNS trigger LANGUAGE plpgsql AS ${'$'}${'$'}
+            BEGIN
+              IF NEW.id = '$high' AND NEW.deleted_at IS NOT NULL AND OLD.deleted_at IS NULL THEN
+                PERFORM pg_advisory_xact_lock(78202);
+              END IF;
+              RETURN NEW;
+            END ${'$'}${'$'}""")
+        jdbc.execute("CREATE TRIGGER pause_transition_trash BEFORE UPDATE ON photos FOR EACH ROW EXECUTE FUNCTION pause_transition_trash()")
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            dataSource.connection.use { pause ->
+                pause.autoCommit = false
+                pause.createStatement().use { it.execute("SELECT pg_advisory_xact_lock(78202)") }
+                val trash = pool.submit<Result<Int>> { runCatching { TransactionTemplate(txManager).execute {
+                    jdbc.execute("SET LOCAL enable_indexscan = off")
+                    jdbc.execute("SET LOCAL enable_bitmapscan = off")
+                    photoOwner.trash(seller, e.id, listOf(high, low))
+                }!! } }
+                try {
+                    awaitBlocked(1)
+                    val edit = pool.submit<Result<AdminListEventDto>> { runCatching {
+                        eventAdmin.update(admin, e.id, UpdateAdminEventRequest(pricePerPhoto = BigDecimal("200")))
+                    } }
+                    awaitBlocked(2)
+                    pause.commit()
+                    val trashed = trash.get(25, TimeUnit.SECONDS)
+                    val edited = edit.get(25, TimeUnit.SECONDS)
+                    assertTrue(trashed.isSuccess, trashed.toString())
+                    assertTrue(edited.isSuccess, edited.toString())
+                    assertEquals(2, trashed.getOrThrow())
+                } finally { pause.rollback() }
+            }
+            assertEquals(0, events.findById(e.id).get().photoCount)
+            for (id in listOf(high, low)) {
+                val saved = photos.findById(id).get()
+                assertNotNull(saved.deletedAt)
+                assertEquals(BigDecimal("200.00"), saved.pricePhp)
+            }
+        } finally {
+            pool.shutdownNow()
+            jdbc.execute("DROP TRIGGER pause_transition_trash ON photos")
+            jdbc.execute("DROP FUNCTION pause_transition_trash()")
+        }
+    }
+
 }

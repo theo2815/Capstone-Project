@@ -196,6 +196,22 @@ class AdminDisputeServiceTest {
         Mockito.verify(decisionLogService, Mockito.times(1)).logDisputeDecision(adminId, dispute.id, "escalated", null)
     }
 
+
+    @Test
+    fun `withdrawn dispute rejects escalation without writing a decision`() {
+        val admin = UUID.randomUUID()
+        val d = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+            statusWire = DisputeStatus.WITHDRAWN.wire)
+        Mockito.`when`(disputeRepository.findByIdForUpdate(d.id)).thenReturn(d)
+        Mockito.`when`(photoRepository.findById(d.photoId)).thenReturn(Optional.empty())
+        Mockito.`when`(decisionLogService.logDisputeDecision(admin, d.id, "escalated", null))
+            .thenReturn(AdminDecisionLog(adminId = admin, targetDisputeId = d.id, decision = "escalated"))
+        val error = assertFailsWith<ApiException> { service.escalate(admin, d.id, null) }
+        assertEquals(409, error.status.value())
+        assertEquals(DisputeStatus.WITHDRAWN, d.status)
+        Mockito.verifyNoInteractions(decisionLogService)
+    }
+
     private fun order(total: BigDecimal) = Order(
         eventId = UUID.randomUUID(),
         recipientEmail = "runner@example.test",

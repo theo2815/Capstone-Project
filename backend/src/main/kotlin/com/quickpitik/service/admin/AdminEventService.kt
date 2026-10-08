@@ -313,8 +313,7 @@ class AdminEventService(
 
     private fun lockEventPhotos(eventId: UUID) {
         // Match photo writers: photos before event counters, avoiding a repricing deadlock.
-        val ids = photoRepository.findIdsByEventId(eventId)
-        if (ids.isNotEmpty()) photoRepository.findAllByIdForUpdate(ids)
+        photoRepository.lockIdsByEventIdForUpdate(eventId)
     }
 
     private fun loadForUpdate(eventId: UUID): Event =
