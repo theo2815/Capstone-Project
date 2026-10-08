@@ -32,7 +32,7 @@ export function EventRequestsQueue() {
   const { showToast } = useToast();
   const [rejecting, setRejecting] = useState<AdminEventRow | null>(null);
   const [reason, setReason] = useState("");
-  async function run(row: AdminEventRow, action: () => Promise<boolean>, message: string) {
+  async function run(action: () => Promise<boolean>, message: string) {
     try {
       const ok = await action();
       if (ok) showToast({ kind: "success", message });
@@ -48,7 +48,6 @@ export function EventRequestsQueue() {
     const text = reason.trim();
     if (!row || !text) return;
     const ok = await run(
-      row,
       () => reject(row.id, text, row.reviewRevision),
       row.reviewStatus === "change_pending"
         ? `Change declined — ${row.name} keeps its current pricing.`
@@ -101,7 +100,6 @@ export function EventRequestsQueue() {
               pendingLabel={pendingAction(row.id)}
               onApprove={() =>
                 run(
-                  row,
                   () => approve(row.id, row.reviewRevision),
                   row.reviewStatus === "change_pending"
                     ? `Change applied to ${row.name}.`

@@ -95,6 +95,27 @@ it("shows loading and a retryable query error instead of an empty catalog", asyn
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("button", { name: "Edit" });
 });
+it("identifies a lost edit snapshot after a committed response is lost and the editor remounts", async () => {
+  const update = vi.spyOn(api, "fetch").mockImplementationOnce(async () => {
+    rows = [{ ...adminEvent, name: "Committed draft", reviewRevision: 5 }];
+    throw new Error("Response lost after commit");
+  });
+  mount(); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.clear(screen.getByLabelText("Title")); await user.type(screen.getByLabelText("Title"), "Committed draft");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
+  const reference = (update.mock.calls[0][1]?.headers as Record<string, string>)["Idempotency-Key"];
+  cleanup(); client.setQueryData(key, rows); mount();
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveTextContent(/original edit snapshot/i);
+  expect(dialog).toHaveTextContent(/reconcil/i); expect(dialog).toHaveTextContent(reference);
+  await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/reconcil/i));
+  expect(update).toHaveBeenCalledTimes(1);
+  expect(dialog).toBeInTheDocument();
+});
 it("keeps a delete confirmation open when another view owns the event", async () => {
   const request = deferred(); vi.spyOn(api, "post").mockReturnValue(request.promise);
   const remove = vi.spyOn(api, "delete");

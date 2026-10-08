@@ -110,13 +110,19 @@ export function useAdminEventActions() {
         return row;
       } catch (error) {
         if (!current()) throw error;
-        // These cover checks run before receipt claim or any storage write.
-        if (error instanceof ApiError && error.errors.every((entry) => entry.field === "cover" &&
-          ["VALIDATION_ERROR", "UNSUPPORTED_MEDIA_TYPE", "PAYLOAD_TOO_LARGE"].includes(entry.code))) {
+        // Form validation and cover decoding fail before command side effects.
+        if (error instanceof ApiError && error.errors.length > 0 && error.errors.every((entry) =>
+          (error.status === 400 && entry.code === "VALIDATION_ERROR" &&
+            ["title", "date", "location", "pricePerPhoto", "organizerName", "description"].includes(entry.field ?? "")) ||
+          (entry.field === "cover" && ["VALIDATION_ERROR", "UNSUPPORTED_MEDIA_TYPE", "PAYLOAD_TOO_LARGE"].includes(entry.code)))) {
           completeAdminIntent(intent);
           throw error;
         }
-        const message = `${error instanceof Error ? error.message : "Request failed."} Retry the unchanged draft to check the same request.${!intent.reloadSafe ? " Recovery after reload is unavailable; keep this page open." : ""}`;
+        const revisionConflict = error instanceof ApiError && error.errors.some((entry) => entry.field === "expectedRevision");
+        const guidance = revisionConflict
+          ? `The event changed. This request may already have written a cover. Ask the project maintainer to reconcile it before another edit. Request reference: ${intent.key}.`
+          : "Retry the unchanged draft to check the same request.";
+        const message = `${error instanceof Error ? error.message : "Request failed."} ${guidance}${!intent.reloadSafe ? " Recovery after reload is unavailable; keep this page open." : ""}`;
         if (error instanceof ApiError) throw new ApiError(error.errors.map((entry) => ({ ...entry, message })), error.status);
         throw new Error(message);
       }

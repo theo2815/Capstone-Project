@@ -18,9 +18,12 @@ function save() {
   catch { return false; }
 }
 export function adminIntentRecoveryNotice(actor: string, operation: string, target: string) {
-  return read().some((row) => row.actor === actor && row.operation === operation && row.target === target)
-    ? "An earlier request is unresolved. Keep or reconstruct the original unchanged draft and cover, then retry to check it. A blank form does not mean it failed."
-    : null;
+  const intent = read().find((row) => row.actor === actor && row.operation === operation && row.target === target);
+  if (!intent) return null;
+  const guidance = operation === "event.update"
+    ? "Retry only with the original edit snapshot still open. After reload or a changed event, the original revision and submitted fields cannot be reconstructed here. Ask the project maintainer to reconcile this request before another edit."
+    : `Keep or reconstruct the original unchanged draft${operation === "event.create" ? " and cover" : ""}, then retry to check it. A blank form does not mean it failed.`;
+  return `An earlier request is unresolved. ${guidance} Request reference: ${intent.key}.`;
 }
 async function hash(bytes: ArrayBuffer) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -40,7 +43,7 @@ export async function claimAdminIntent(actor: string, operation: string, target:
   if (started !== generation) throw new Error("Session changed. Reopen the form.");
   const existing = read().find((row) => row.actor === actor && row.operation === operation && row.target === target);
   if (existing && existing.fingerprint !== fingerprint) {
-    throw new Error("An earlier request is unresolved. Reconstruct the original unchanged draft, including its cover, to check it. Do not start a replacement request.");
+    throw new Error(`An earlier request is unresolved. Reconstruct the original unchanged draft to check it. If the original edit snapshot is lost or the event changed, ask the project maintainer to reconcile this request. Do not start a replacement request. Request reference: ${existing.key}.`);
   }
   const intent = existing ?? { actor, operation, target, fingerprint, key: crypto.randomUUID() };
   if (!existing) read().push(intent);
