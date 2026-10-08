@@ -56,6 +56,13 @@ export function useAdminNotificationsWs(enabled: boolean): void {
     const removalKey = removalKeys.admin([user.id, user.role, sessionVersion]);
     let cancelled = false;
 
+    async function refreshRemoval() {
+      if (cancelled || !isCurrent()) return;
+      await queryClient.cancelQueries({ queryKey: removalKey });
+      if (cancelled || !isCurrent()) return;
+      await queryClient.invalidateQueries({ queryKey: removalKey });
+    }
+
     function clearReconnectTimer() {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
@@ -84,7 +91,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
         void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
         void queryClient.invalidateQueries({ queryKey: ["admin", "payouts"] });
         void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
-        void queryClient.invalidateQueries({ queryKey: removalKey });
+        void refreshRemoval();
       };
 
       ws.onmessage = (event) => {
@@ -93,7 +100,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
           const data = JSON.parse(event.data) as AdminInboxFrame;
           switch (data.type) {
             case "photo_removal_changed":
-              void queryClient.invalidateQueries({ queryKey: removalKey });
+              void refreshRemoval();
               void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
               break;
             case "verification_submitted":
