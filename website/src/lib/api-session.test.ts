@@ -112,3 +112,52 @@ it("preserves a current-session 401 refresh and step-up retry", async () => {
   expect(await api.post("/me/photographer/payouts", {})).toEqual({ saved: true });
   expect(fetch.mock.calls[3][1].headers).toMatchObject({ Authorization: "Bearer fresh", "X-Step-Up": "proof" });
 });
+
+it("GET Blob decodes private evidence bytes without forwarding its decoder option", async () => {
+  const bytes = new Uint8Array([137, 80, 78, 71]);
+  const fetch = vi.fn().mockResolvedValue(new Response(bytes, { headers: { "Content-Type": "image/png" } }));
+  vi.stubGlobal("fetch", fetch);
+  const blob = await api.getBlob("/admin/photo-removal-requests/case/evidence");
+  expect(blob.type).toBe("image/png"); expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes);
+  expect(fetch.mock.calls[0][1]).not.toHaveProperty("responseType");
+});
+
+it("GET Blob preserves JSON error details and Retry-After", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: false, errors: [{ code: "FORBIDDEN", message: "Private evidence" }] }), { status: 403, headers: { "Retry-After": "42" } }));
+  vi.stubGlobal("fetch", fetch);
+  await expect(api.getBlob("/admin/photo-removal-requests/case/evidence")).rejects.toMatchObject({ status: 403, retryAfterSeconds: 42, errors: [{ code: "FORBIDDEN", message: "Private evidence" }] });
+});
+
+it("GET Blob retains refresh, step-up and the caller signal through retries", async () => {
+  const caller = new AbortController();
+  const fetch = vi.fn().mockResolvedValueOnce(response([], 401)).mockResolvedValueOnce(response({ accessToken: "fresh", refreshToken: "fresh-refresh" })).mockResolvedValueOnce(response([{ code: "STEP_UP_REQUIRED" }], 403)).mockResolvedValueOnce(new Response("evidence", { headers: { "Content-Type": "image/jpeg" } }));
+  vi.stubGlobal("fetch", fetch); setStepUpHandler(async () => "proof");
+  expect((await api.getBlob("/admin/photo-removal-requests/case/evidence", { signal: caller.signal })).type).toBe("image/jpeg");
+  expect(fetch.mock.calls[3][1].headers).toMatchObject({ Authorization: "Bearer fresh", "X-Step-Up": "proof" });
+  caller.abort(); expect(fetch.mock.calls[3][1].signal.aborted).toBe(true);
+});
+
+it.each(["query cancellation", "request timeout"])("GET Blob distinguishes %s", async (cause) => {
+  const query = new AbortController(), timeout = new AbortController();
+  const timer = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+  vi.stubGlobal("fetch", vi.fn((_url, options: RequestInit) => new Promise((_resolve, reject) => { options.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))); })));
+  try {
+    const result = expect(api.getBlob("/admin/photo-removal-requests/case/evidence", { signal: query.signal })).rejects.toMatchObject(cause === "query cancellation" ? { name: "AbortError" } : { errors: [{ code: "TIMEOUT" }] });
+    (cause === "query cancellation" ? query : timeout).abort(); await result;
+  } finally { timer.mockRestore(); }
+});
+
+it.each(["query cancellation", "request timeout"])("GET Blob distinguishes %s while reading image bytes", async (cause) => {
+  const query = new AbortController(), timeout = new AbortController();
+  const timer = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+  let started!: () => void;
+  const reading = new Promise<void>((resolve) => { started = resolve; });
+  vi.stubGlobal("fetch", vi.fn(async (_url, options: RequestInit) => ({
+    ok: true,
+    blob: () => { started(); return new Promise((_resolve, reject) => { options.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))); }); },
+  })));
+  try {
+    const result = expect(api.getBlob("/admin/photo-removal-requests/case/evidence", { signal: query.signal })).rejects.toMatchObject(cause === "query cancellation" ? { name: "AbortError" } : { errors: [{ code: "TIMEOUT" }] });
+    await reading; (cause === "query cancellation" ? query : timeout).abort(); await result;
+  } finally { timer.mockRestore(); }
+});
