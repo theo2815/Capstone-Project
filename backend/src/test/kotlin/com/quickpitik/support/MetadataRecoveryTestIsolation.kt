@@ -24,6 +24,7 @@ class MetadataRecoveryTestIsolation {
     class TestSchedules : ScheduledAnnotationBeanPostProcessor() {
         override fun postProcessAfterInitialization(bean: Any, beanName: String): Any =
             // Manual recoverDue calls retain the real recovery policy and assertions.
-            if (bean is PhotoMetadataService) bean else super.postProcessAfterInitialization(bean, beanName)
+            if (bean is PhotoMetadataService || bean is com.quickpitik.service.photos.PhotoErasureSweep) bean
+            else super.postProcessAfterInitialization(bean, beanName)
     }
 }

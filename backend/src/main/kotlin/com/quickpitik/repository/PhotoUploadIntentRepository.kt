@@ -17,6 +17,8 @@ import java.util.UUID
 @Repository
 interface PhotoUploadIntentRepository : JpaRepository<PhotoUploadIntent, UUID> {
 
+    fun findByPhotoIdOrResultPhotoId(photoId: UUID, resultPhotoId: UUID): List<PhotoUploadIntent>
+
     @Query(
         "SELECT i FROM PhotoUploadIntent i " +
             "WHERE i.photoId = :photoId AND i.photographerId = :ownerId AND i.eventId = :eventId",

@@ -47,6 +47,31 @@ interface PhotoFaceTarget {
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
 
+    @Query(value = """SELECT EXISTS (SELECT 1 FROM photos WHERE id <> :photoId
+        AND (s3_key = :key OR thumbnail_s3_key = :key OR watermark_s3_key = :key))""", nativeQuery = true)
+    fun hasOtherBlobReference(photoId: UUID, key: String): Boolean
+
+    @Query(value = "SELECT DISTINCT storage_key FROM photo_work_outputs WHERE photo_id = :photoId AND storage_key IS NOT NULL", nativeQuery = true)
+    fun erasureWorkKeys(photoId: UUID): List<String>
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photos SET deletion_started_at = COALESCE(deletion_started_at, :now),
+        deleted_at = COALESCE(deleted_at, :now), work_generation = work_generation + 1
+        WHERE id = :id AND deletion_started_at IS NULL""", nativeQuery = true)
+    fun beginErasure(id: UUID, now: OffsetDateTime): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photos SET s3_key = '', thumbnail_s3_key = NULL, watermark_s3_key = NULL,
+        alt_text = NULL, captured_at = NULL, published_at = NULL,
+        km = NULL, phash = NULL, phash_clean = NULL, phash_centre = NULL,
+        indexing_error = NULL, indexed_provider = NULL, indexed_at = NULL, purged_at = :now
+        WHERE id = :id AND deletion_started_at IS NOT NULL AND purged_at IS NULL""", nativeQuery = true)
+    fun minimizeErasedPhoto(id: UUID, now: OffsetDateTime): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = "UPDATE photos SET purged_at = NULL WHERE id = :id AND purged_at IS NOT NULL", nativeQuery = true)
+    fun clearErasureConfirmation(id: UUID): Int
+
     // Scalar read bypasses an already-hydrated entity immediately before delivery.
     @Query(value = "SELECT EXISTS (SELECT 1 FROM photos WHERE id = :id AND removal_state <> 'REMOVED' AND deletion_started_at IS NULL AND purged_at IS NULL)", nativeQuery = true)
     fun isDeliveryAvailable(@Param("id") id: UUID): Boolean
@@ -152,10 +177,17 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     @Query(value = """SELECT DISTINCT w.event_id AS "eventId", w.photo_id AS "photoId"
         FROM photo_work_outputs w WHERE w.kind = 'INDEXING' AND w.faces_erased_at IS NULL
+        AND w.cleanup_next_attempt_at <= CURRENT_TIMESTAMP
         AND NOT EXISTS (SELECT 1 FROM photos p WHERE p.id = w.photo_id
             AND p.removal_state <> 'REMOVED' AND p.deletion_started_at IS NULL)
         ORDER BY w.event_id, w.photo_id""", nativeQuery = true)
     fun faceWorkPending(pageable: Pageable): List<PhotoFaceTarget>
+
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = """UPDATE photo_work_outputs SET cleanup_next_attempt_at = :retryAt
+        WHERE event_id = :eventId AND photo_id = :photoId AND kind = 'INDEXING' AND faces_erased_at IS NULL""", nativeQuery = true)
+    fun deferFaceCleanup(eventId: UUID, photoId: UUID, retryAt: OffsetDateTime): Int
 
     @Modifying
     @Query(value = """UPDATE photo_work_outputs SET faces_erased_at = :now
