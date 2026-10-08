@@ -189,7 +189,10 @@ private fun EarningsContent(
     val transactionListState = rememberLazyListState()
     LaunchedEffect(selectedPhotoId, selectedOrderId, selectedTransactionId) {
         selectedPhotoId?.let { id ->
-            purchaseViewModel.openPurchase(id, selectedOrderId, selectedTransactionId)
+            val current = purchaseViewModel.previewState.value
+            if (current.photoId != id || current.orderId != selectedOrderId || current.transactionId != selectedTransactionId) {
+                purchaseViewModel.openPurchase(id, selectedOrderId, selectedTransactionId)
+            }
         }
     }
 

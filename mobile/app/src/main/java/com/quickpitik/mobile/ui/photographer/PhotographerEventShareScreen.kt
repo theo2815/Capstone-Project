@@ -133,7 +133,6 @@ fun PhotographerEventShareScreen(
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
     var selectedPurchasePhotoId by rememberSaveable(event.id, authGeneration) { mutableStateOf<String?>(null) }
     var selectedPurchaseOrderId by rememberSaveable(event.id, authGeneration) { mutableStateOf<String?>(null) }
-    var skipSelectionFetchForPhoto by remember { mutableStateOf<String?>(null) }
     var visiblePhotoLimit by rememberSaveable(event.id) { mutableStateOf(20) }
     // Selection is transient screen UI state (reset on tab switch), not VM data.
     var selecting by remember(event.id) { mutableStateOf(false) }
@@ -160,13 +159,14 @@ fun PhotographerEventShareScreen(
 
     LaunchedEffect(selectedPurchasePhotoId, selectedPurchaseOrderId) {
         selectedPurchasePhotoId?.let {
-            if (skipSelectionFetchForPhoto == it && selectedPurchaseOrderId == null) skipSelectionFetchForPhoto = null
-            else purchaseViewModel.openPurchase(it, selectedPurchaseOrderId)
+            val current = purchaseViewModel.previewState.value
+            if (current.photoId != it || current.orderId != selectedPurchaseOrderId || current.transactionId != null) {
+                purchaseViewModel.openPurchase(it, selectedPurchaseOrderId)
+            }
         }
     }
     LaunchedEffect(previewState.photoId) {
         if (previewState.photoId != null && previewState.photoId != selectedPurchasePhotoId) {
-            skipSelectionFetchForPhoto = previewState.photoId
             selectedPurchaseOrderId = null
             selectedPurchasePhotoId = previewState.photoId
         }
