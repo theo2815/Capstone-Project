@@ -59,15 +59,19 @@ class PhotographerSettingsService(
     fun getOrCreate(userId: UUID): PhotographerSettings {
         val existing = photographerSettingsRepository.findById(userId).orElse(null)
         if (existing != null) return existing
-        val user = userRepository.findById(userId).orElseThrow {
+        return lockVerificationSettings(userId)
+    }
+
+    private fun lockVerificationSettings(userId: UUID): PhotographerSettings {
+        val user = userRepository.lockById(userId) ?: throw
             ConflictException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
-        }
         if (user.role != Role.PHOTOGRAPHER) {
             // Method-level @PreAuthorize already enforces this, but defend in
             // depth — if a non-photographer somehow reaches here, refuse to
             // pollute the photographer_settings table with a row.
             throw ConflictException(code = ErrorCodes.FORBIDDEN, message = "User is not a photographer")
         }
+        photographerSettingsRepository.findByUserIdForUpdate(userId)?.let { return it }
         val fresh = PhotographerSettings(
             userId = userId,
             verificationStatus = VerificationStatus.INCOMPLETE,
@@ -385,10 +389,11 @@ class PhotographerSettingsService(
     // Flips status back to INCOMPLETE. No-op (idempotent) when status is
     // already INCOMPLETE — calling withdraw twice doesn't error.
     fun withdrawVerification(userId: UUID): VerificationSubmitResponseDto {
-        val settings = getOrCreate(userId)
+        val settings = lockVerificationSettings(userId)
         if (settings.verificationStatus == VerificationStatus.PENDING ||
             settings.verificationStatus == VerificationStatus.APPROVED) {
             settings.verificationStatus = VerificationStatus.INCOMPLETE
+            settings.verificationRevision++
             photographerSettingsRepository.save(settings)
         }
         val incomplete = collectMissing(userId, settings)
@@ -405,7 +410,7 @@ class PhotographerSettingsService(
     // there's no ambiguity: if `status` is "incomplete" the FE shows the
     // missing list; if "pending" the FE shows the "submitted" affordance.
     fun submitVerification(userId: UUID): VerificationSubmitResponseDto {
-        val settings = getOrCreate(userId)
+        val settings = lockVerificationSettings(userId)
         val incomplete = collectMissing(userId, settings)
         if (!incomplete.isComplete) {
             return buildVerificationResponse(
@@ -414,10 +419,14 @@ class PhotographerSettingsService(
                 missing = incomplete.missing,
             )
         }
+        if (settings.verificationStatus == VerificationStatus.PENDING) {
+            return buildVerificationResponse(userId, settings.verificationStatus)
+        }
         // PENDING is the post-submit state; admins move it to APPROVED/REJECTED
         // in PR 10. APPROVED/REJECTED rows can be re-submitted (resets to
         // PENDING) so admins see fresh evidence without an out-of-band reset.
         settings.verificationStatus = VerificationStatus.PENDING
+        settings.verificationRevision++
         photographerSettingsRepository.save(settings)
         // Push to connected admins so the verification queue picks up the
         // new submission without a refresh. AFTER_COMMIT only — a rollback

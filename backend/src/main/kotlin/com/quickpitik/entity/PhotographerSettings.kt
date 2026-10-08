@@ -96,6 +96,9 @@ class PhotographerSettings(
     @Column(name = "verification_status", nullable = false, length = 20)
     var verificationStatus: VerificationStatus = VerificationStatus.INCOMPLETE,
 
+    @Column(name = "verification_revision", nullable = false)
+    var verificationRevision: Long = 0,
+
     @Column(name = "member_since", nullable = false, updatable = false)
     val memberSince: LocalDate = LocalDate.now(ZoneId.of("Asia/Manila")),
 

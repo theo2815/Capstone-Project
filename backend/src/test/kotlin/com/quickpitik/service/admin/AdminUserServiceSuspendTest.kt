@@ -10,6 +10,8 @@ import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -101,6 +103,7 @@ class AdminUserServiceSuspendTest {
     fun `suspend stamps the account and kills every session`() {
         val photographer = user(Role.PHOTOGRAPHER)
         Mockito.`when`(userRepository.findById(targetId)).thenReturn(Optional.of(photographer))
+        Mockito.`when`(userRepository.lockById(targetId)).thenReturn(photographer)
         Mockito.`when`(photographerSettingsRepository.findById(targetId))
             .thenReturn(Optional.of(PhotographerSettings(userId = targetId, verificationStatus = VerificationStatus.APPROVED)))
         Mockito.`when`(adminDecisionLogService.logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
@@ -119,7 +122,15 @@ class AdminUserServiceSuspendTest {
             }
         Mockito.`when`(regionsService.all()).thenReturn(emptyList())
 
-        service().suspend(adminId, targetId, "chargeback abuse")
+        val service = service()
+        service.suspend(adminId, targetId, "chargeback abuse")
+        val suspendedAt = photographer.suspendedAt
+        val ex = assertFailsWith<ApiException> { service.suspend(adminId, targetId, "Repeat") }
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        assertEquals(suspendedAt, photographer.suspendedAt)
+        Mockito.verify(adminDecisionLogService).logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
 
         assertNotNull(photographer.suspendedAt, "the account must be stamped suspended")
         assertEquals("chargeback abuse", photographer.suspensionReason)
@@ -136,6 +147,7 @@ class AdminUserServiceSuspendTest {
     fun `an admin account cannot be suspended`() {
         val admin = user(Role.ADMIN)
         Mockito.`when`(userRepository.findById(targetId)).thenReturn(Optional.of(admin))
+        Mockito.`when`(userRepository.lockById(targetId)).thenReturn(admin)
 
         val ex = assertFailsWith<ValidationException> { service().suspend(adminId, targetId, "power struggle") }
 
@@ -145,5 +157,28 @@ class AdminUserServiceSuspendTest {
         Mockito.verify(userRepository, Mockito.never()).save(anyArg())
         Mockito.verifyNoInteractions(refreshTokenService)
         Mockito.verifyNoInteractions(adminDecisionLogService)
+    }
+
+    @Test
+    fun `unsuspend accepts once without another message or token revocation`() {
+        val photographer = user(Role.PHOTOGRAPHER).apply {
+            suspendedAt = java.time.OffsetDateTime.now()
+            suspensionReason = "Original reason"
+        }
+        Mockito.`when`(userRepository.findById(targetId)).thenReturn(Optional.of(photographer))
+        Mockito.`when`(userRepository.lockById(targetId)).thenReturn(photographer)
+        Mockito.`when`(adminDecisionLogService.logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetUserId = targetId, decision = "unsuspended"))
+        Mockito.`when`(regionsService.all()).thenReturn(emptyList())
+        val service = service()
+        service.unsuspend(adminId, targetId)
+        val ex = assertFailsWith<ApiException> { service.unsuspend(adminId, targetId) }
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        assertNull(photographer.suspendedAt)
+        assertNull(photographer.suspensionReason)
+        Mockito.verify(adminDecisionLogService).logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+        Mockito.verifyNoInteractions(refreshTokenService)
     }
 }

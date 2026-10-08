@@ -12,6 +12,7 @@ import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -103,8 +104,11 @@ class AdminUserServiceApproveTest {
     )
 
     private fun stubLookups(s: PhotographerSettings) {
-        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(photographer()))
+        val user = photographer()
+        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(user))
+        Mockito.`when`(userRepository.lockById(photographerId)).thenReturn(user)
         Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.of(s))
+        Mockito.`when`(photographerSettingsRepository.findByUserIdForUpdate(photographerId)).thenReturn(s)
     }
 
     @Test
@@ -171,5 +175,92 @@ class AdminUserServiceApproveTest {
         assertEquals(photographerId.toString(), dto.userId)
         assertEquals("none", dto.brandColor)
         assertEquals("", dto.bio)
+    }
+
+    private fun stubDecision(s: PhotographerSettings) {
+        stubLookups(s)
+        Mockito.`when`(photographerSettingsService.collectMissing(anyArg(), anyArg()))
+            .thenReturn(IncompleteFields(missing = emptyList()))
+        Mockito.`when`(regionsService.all()).thenReturn(emptyList())
+        Mockito.`when`(adminDecisionLogService.logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetUserId = photographerId, decision = "test"))
+    }
+
+    @Test
+    fun `a repeated approval conflicts without another decision or message`() {
+        val s = settings()
+        stubDecision(s)
+        val service = service()
+        service.approve(adminId, photographerId)
+        val ex = assertFailsWith<ApiException> { service.approve(adminId, photographerId) }
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        assertEquals(VerificationStatus.APPROVED, s.verificationStatus)
+        Mockito.verify(adminDecisionLogService).logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+    }
+
+    @Test
+    fun `a repeated rejection conflicts without another decision or message`() {
+        val s = settings()
+        stubDecision(s)
+        val service = service()
+        service.reject(adminId, photographerId, "Please correct the evidence")
+        val ex = assertFailsWith<ApiException> { service.reject(adminId, photographerId, "Another reason") }
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        assertEquals(VerificationStatus.INCOMPLETE, s.verificationStatus)
+        Mockito.verify(adminDecisionLogService).logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+    }
+
+    @Test
+    fun `a repeated reset conflicts without another decision or message`() {
+        val s = settings().apply { verificationStatus = VerificationStatus.APPROVED }
+        stubDecision(s)
+        val service = service()
+        service.resetVerification(adminId, photographerId, "Please review your profile")
+        val ex = assertFailsWith<ApiException> { service.resetVerification(adminId, photographerId, "Again") }
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        assertEquals(VerificationStatus.INCOMPLETE, s.verificationStatus)
+        Mockito.verify(adminDecisionLogService).logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+    }
+
+    @Test
+    fun `approval and rejection refuse every non-pending state`() {
+        for (state in listOf(VerificationStatus.INCOMPLETE, VerificationStatus.APPROVED, VerificationStatus.REJECTED)) {
+            val s = settings().apply { verificationStatus = state }
+            stubDecision(s)
+            assertEquals(ErrorCodes.INVALID_STATE_TRANSITION,
+                assertFailsWith<ApiException> { service().approve(adminId, photographerId) }.code)
+            assertEquals(ErrorCodes.INVALID_STATE_TRANSITION,
+                assertFailsWith<ApiException> { service().reject(adminId, photographerId, "Reason") }.code)
+            assertEquals(state, s.verificationStatus)
+        }
+        Mockito.verifyNoInteractions(adminDecisionLogService)
+    }
+
+    @Test
+    fun `reset accepts pending approved and legacy rejected`() {
+        for (state in listOf(VerificationStatus.PENDING, VerificationStatus.APPROVED, VerificationStatus.REJECTED)) {
+            val s = settings().apply { verificationStatus = state }
+            stubDecision(s)
+            assertEquals("incomplete", service().resetVerification(adminId, photographerId, "Reason").verificationStatus)
+        }
+        Mockito.verify(adminDecisionLogService, Mockito.times(3)).logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `verification actions refuse a runner without creating settings`() {
+        val runner = photographer().apply { role = Role.RUNNER }
+        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(Optional.of(runner))
+        Mockito.`when`(userRepository.lockById(photographerId)).thenReturn(runner)
+        assertFailsWith<ValidationException> { service().approve(adminId, photographerId) }
+        assertFailsWith<ValidationException> { service().reject(adminId, photographerId, "Reason") }
+        assertFailsWith<ValidationException> { service().resetVerification(adminId, photographerId, "Reason") }
+        Mockito.verify(photographerSettingsRepository, Mockito.never()).save(anyArg())
+        Mockito.verifyNoInteractions(adminDecisionLogService)
     }
 }
