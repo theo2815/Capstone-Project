@@ -110,8 +110,8 @@ export function useAdminEventActions() {
         return row;
       } catch (error) {
         if (!current()) throw error;
-        // Form validation and cover decoding fail before command side effects.
-        if (error instanceof ApiError && error.errors.length > 0 && error.errors.every((entry) =>
+        // Validation resolves only a first attempt, never an earlier uncertain write.
+        if (!intent.reused && error instanceof ApiError && error.errors.length > 0 && error.errors.every((entry) =>
           (error.status === 400 && entry.code === "VALIDATION_ERROR" &&
             ["title", "date", "location", "regionCode", "provinceCode", "pricePerPhoto", "organizerName", "description"].includes(entry.field ?? "")) ||
           (error.status === 400 && entry.code === "INVALID_REGION" && entry.field === "regionCode") ||
@@ -120,7 +120,11 @@ export function useAdminEventActions() {
           throw error;
         }
         const revisionConflict = error instanceof ApiError && error.errors.some((entry) => entry.field === "expectedRevision");
-        const guidance = revisionConflict
+        const locationConflict = intent.reused && error instanceof ApiError && error.errors.some((entry) =>
+          ["regionCode", "provinceCode"].includes(entry.field ?? ""));
+        const guidance = locationConflict
+          ? `An earlier request is unresolved. Ask the project maintainer to reconcile it before changing the location. Request reference: ${intent.key}.`
+          : revisionConflict
           ? `The event changed. This request may already have written a cover. Ask the project maintainer to reconcile it before another edit. Request reference: ${intent.key}.`
           : "Retry the unchanged draft to check the same request.";
         const message = `${error instanceof Error ? error.message : "Request failed."} ${guidance}${!intent.reloadSafe ? " Recovery after reload is unavailable; keep this page open." : ""}`;

@@ -20,7 +20,9 @@ it("keeps two controlled copies independent with unique labels and keyboard-acce
   event.getByLabelText("Region").focus(); await user.keyboard("{Enter}");
   const selected = screen.getByRole("menuitem", { name: eventRegions[0].name });
   expect(selected).toHaveAttribute("aria-current", "true");
-  screen.getByRole("menuitem", { name: eventRegions[1].name }).focus(); await user.keyboard("{Enter}");
+  expect(selected).toHaveFocus();
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(event.getByLabelText("Region")).toHaveFocus();
   expect(event.getByLabelText("Province")).toHaveAccessibleName("Province: Pick a province");
   expect(settings.getByLabelText("Province")).toHaveAccessibleName("Province: Cebu");
 });

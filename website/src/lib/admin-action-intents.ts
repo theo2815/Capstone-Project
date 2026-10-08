@@ -47,7 +47,7 @@ export async function claimAdminIntent(actor: string, operation: string, target:
   }
   const intent = existing ?? { actor, operation, target, fingerprint, key: crypto.randomUUID() };
   if (!existing) read().push(intent);
-  return { ...intent, reloadSafe: save() };
+  return { ...intent, reused: !!existing, reloadSafe: save() };
 }
 export function completeAdminIntent(intent: { key: string }) {
   records = read().filter((row) => row.key !== intent.key); save();

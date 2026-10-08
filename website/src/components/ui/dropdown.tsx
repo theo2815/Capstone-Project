@@ -63,6 +63,7 @@ export function Dropdown({
   });
   const triggerWrapRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const keyboardOpen = useRef(false);
   const expanded = isOpen && !disabled;
 
   useEffect(() => { onOpenChange?.(expanded); }, [expanded, onOpenChange]);
@@ -95,7 +96,12 @@ export function Dropdown({
   useLayoutEffect(() => {
     if (!isOpen) return;
     updatePosition();
-  }, [isOpen, updatePosition]);
+    if (keyboardOpen.current && panelRef.current) {
+      const options = panelRef.current.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
+      (Array.from(options).find((option) => option.getAttribute("aria-current") === "true") ?? options[0])?.focus();
+      keyboardOpen.current = false;
+    }
+  }, [isOpen, mounted, updatePosition]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -139,7 +145,21 @@ export function Dropdown({
             ref={panelRef}
             role="menu"
             aria-label={ariaLabel}
-            onClick={() => setIsOpen(false)}
+            onClick={() => { setIsOpen(false); triggerWrapRef.current?.querySelector("button")?.focus(); }}
+            onKeyDown={(event) => {
+              if (event.key === "Tab") {
+                setIsOpen(false);
+                triggerWrapRef.current?.querySelector("button")?.focus();
+                return;
+              }
+              if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+              event.preventDefault();
+              const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+              const index = options.indexOf(document.activeElement as HTMLButtonElement);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
+                : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+              options[next]?.focus();
+            }}
             style={{
               animation: "fade-in 0.16s ease-out both",
               position: "fixed",
@@ -171,7 +191,13 @@ export function Dropdown({
         id={id}
         disabled={disabled}
         aria-describedby={ariaDescribedBy}
-        onClick={() => setIsOpen((v) => !v)}
+        onClick={(event) => { keyboardOpen.current = event.detail === 0; setIsOpen((v) => !v); }}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          event.preventDefault();
+          keyboardOpen.current = true;
+          setIsOpen(true);
+        }}
         aria-haspopup="menu"
         aria-expanded={expanded}
         aria-label={ariaLabel}

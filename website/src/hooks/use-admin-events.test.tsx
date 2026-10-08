@@ -53,6 +53,21 @@ it.each(["INVALID_REGION", "VALIDATION_ERROR"])("allows correcting a rejected lo
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
 });
 const actions = ["createEvent", "editEvent", "deleteEvent", "approve", "reject"] as const;
+it.each(["INVALID_REGION", "VALIDATION_ERROR"])("retains an uncertain create key when a retry rejects the location (%s)", async (code) => {
+  const draft = { ...createArgs, regionCode: "region-vii", provinceCode: "cebu" };
+  const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Response lost"));
+  const { result } = renderHook(useAdminEventActions, { wrapper });
+  await expect(result.current.createEvent(draft)).rejects.toThrow();
+  const originalKey = post.mock.calls[0][2]?.headers;
+  post.mockRejectedValueOnce(new ApiError([{ code, field: "regionCode", message: "Catalog changed" }], 400));
+  await expect(result.current.createEvent(draft)).rejects.toThrow(/reconcil/);
+  expect(post.mock.calls[1][2]?.headers).toEqual(originalKey);
+  post.mockResolvedValue(adminEvent);
+  await expect(result.current.createEvent({ ...draft, regionCode: "barmm" })).rejects.toThrow(/unresolved/);
+  expect(post).toHaveBeenCalledTimes(2);
+  await expect(result.current.createEvent(draft)).resolves.toBe(true);
+  expect(post.mock.calls[2][2]?.headers).toEqual(originalKey);
+});
 it("claims an event before hashing, blocks another view and reuses the update key after timeout", async () => {
   const request = deferred<unknown>(); const patch = { title: "Race", expectedRevision: 4, cover: new File(["cover"], "cover.jpg") };
   const update = vi.spyOn(api, "fetch").mockReturnValueOnce(request.promise); const remove = vi.spyOn(api, "delete");
