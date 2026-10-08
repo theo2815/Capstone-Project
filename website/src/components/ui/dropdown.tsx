@@ -5,6 +5,7 @@ import {
   useRef,
   useEffect,
   useLayoutEffect,
+  useCallback,
   type ReactNode,
   type ButtonHTMLAttributes,
 } from "react";
@@ -27,13 +28,17 @@ interface DropdownProps {
   className?: string;
   panelClassName?: string;
   ariaLabel?: string;
+  id?: string;
+  ariaDescribedBy?: string;
+  disabled?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 interface PanelPosition {
   top: number;
   left: number;
-  rightFromViewport: number;
   triggerWidth: number;
+  maxHeight: number;
 }
 
 export function Dropdown({
@@ -43,17 +48,25 @@ export function Dropdown({
   className,
   panelClassName,
   ariaLabel,
+  id,
+  ariaDescribedBy,
+  disabled = false,
+  onOpenChange,
 }: DropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [position, setPosition] = useState<PanelPosition>({
     top: 0,
     left: 0,
-    rightFromViewport: 0,
     triggerWidth: 0,
+    maxHeight: 320,
   });
   const triggerWrapRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const expanded = isOpen && !disabled;
+
+  useEffect(() => { onOpenChange?.(expanded); }, [expanded, onOpenChange]);
+  useEffect(() => { if (disabled) setIsOpen(false); }, [disabled]);
 
   useEffect(() => {
     setMounted(true);
@@ -61,22 +74,28 @@ export function Dropdown({
 
   // Recompute panel position from the trigger's viewport rect. Called on
   // open + scroll + resize so the panel stays anchored to the trigger.
-  function updatePosition() {
+  const updatePosition = useCallback(() => {
     const wrap = triggerWrapRef.current;
     if (!wrap) return;
     const rect = wrap.getBoundingClientRect();
+    const panel = panelRef.current?.getBoundingClientRect();
+    const width = Math.min(Math.max(panel?.width ?? 200, rect.width), window.innerWidth - 16);
+    const height = panel?.height || 320;
+    const below = Math.max(0, window.innerHeight - rect.bottom - 16);
+    const above = Math.max(0, rect.top - 16);
+    const openAbove = below < height && above > below;
     setPosition({
-      top: rect.bottom + 8,
-      left: rect.left,
-      rightFromViewport: window.innerWidth - rect.right,
-      triggerWidth: rect.width,
+      top: openAbove ? rect.top - 8 - Math.min(height, above) : rect.bottom + 8,
+      left: Math.max(8, Math.min(align === "right" ? rect.right - width : rect.left, window.innerWidth - width - 8)),
+      triggerWidth: Math.min(rect.width, window.innerWidth - 16),
+      maxHeight: Math.min(320, openAbove ? above : below),
     });
-  }
+  }, [align]);
 
   useLayoutEffect(() => {
     if (!isOpen) return;
     updatePosition();
-  }, [isOpen]);
+  }, [isOpen, updatePosition]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -92,7 +111,10 @@ export function Dropdown({
       setIsOpen(false);
     };
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIsOpen(false);
+      if (e.key === "Escape") {
+        setIsOpen(false);
+        triggerWrapRef.current?.querySelector("button")?.focus();
+      }
     };
     const handleScroll = () => updatePosition();
     const handleResize = () => updatePosition();
@@ -108,10 +130,10 @@ export function Dropdown({
       window.removeEventListener("scroll", handleScroll, true);
       window.removeEventListener("resize", handleResize);
     };
-  }, [isOpen]);
+  }, [isOpen, updatePosition]);
 
   const panel =
-    isOpen && mounted
+    expanded && mounted
       ? createPortal(
           <div
             ref={panelRef}
@@ -122,10 +144,11 @@ export function Dropdown({
               animation: "fade-in 0.16s ease-out both",
               position: "fixed",
               top: position.top,
-              ...(align === "right"
-                ? { right: position.rightFromViewport }
-                : { left: position.left }),
+              left: position.left,
               minWidth: position.triggerWidth,
+              maxWidth: "calc(100vw - 16px)",
+              maxHeight: position.maxHeight,
+              overflowY: "auto",
             }}
             className={cn(
               "z-50 min-w-[200px] rounded-xl border border-line bg-bone py-1 shadow-[0_12px_32px_-12px_rgba(17,17,17,0.22)] origin-top",
@@ -145,11 +168,14 @@ export function Dropdown({
     >
       <button
         type="button"
+        id={id}
+        disabled={disabled}
+        aria-describedby={ariaDescribedBy}
         onClick={() => setIsOpen((v) => !v)}
         aria-haspopup="menu"
-        aria-expanded={isOpen}
+        aria-expanded={expanded}
         aria-label={ariaLabel}
-        className="rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="rounded-sm disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
       >
         {trigger}
       </button>

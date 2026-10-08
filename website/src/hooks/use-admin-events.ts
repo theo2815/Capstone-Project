@@ -113,7 +113,8 @@ export function useAdminEventActions() {
         // Form validation and cover decoding fail before command side effects.
         if (error instanceof ApiError && error.errors.length > 0 && error.errors.every((entry) =>
           (error.status === 400 && entry.code === "VALIDATION_ERROR" &&
-            ["title", "date", "location", "pricePerPhoto", "organizerName", "description"].includes(entry.field ?? "")) ||
+            ["title", "date", "location", "regionCode", "provinceCode", "pricePerPhoto", "organizerName", "description"].includes(entry.field ?? "")) ||
+          (error.status === 400 && entry.code === "INVALID_REGION" && entry.field === "regionCode") ||
           (entry.field === "cover" && ["VALIDATION_ERROR", "UNSUPPORTED_MEDIA_TYPE", "PAYLOAD_TOO_LARGE"].includes(entry.code)))) {
           completeAdminIntent(intent);
           throw error;

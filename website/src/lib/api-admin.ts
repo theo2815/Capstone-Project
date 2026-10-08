@@ -670,6 +670,8 @@ export interface CreateAdminEventArgs {
   title: string;
   date: string;
   location: string;
+  regionCode?: string;
+  provinceCode?: string;
   /** Per-photo price in PHP. Admin-set at create; the BE seeds new uploads
    *  to this value via PhotoUploadService. Defaults to 0 if omitted. */
   pricePerPhoto: number;
@@ -690,6 +692,8 @@ export async function createAdminEvent(
   form.append("title", args.title);
   form.append("date", args.date);
   form.append("location", args.location);
+  if (args.regionCode !== undefined) form.append("regionCode", args.regionCode);
+  if (args.provinceCode !== undefined) form.append("provinceCode", args.provinceCode);
   form.append("pricePerPhoto", String(args.pricePerPhoto));
   if (args.organizerName !== undefined)
     form.append("organizerName", args.organizerName);
@@ -704,6 +708,8 @@ export interface UpdateAdminEventPatch {
   title?: string;
   date?: string;
   location?: string;
+  regionCode?: string;
+  provinceCode?: string;
   /** New per-photo price in PHP. When this changes the BE re-prices every
    *  existing photo under the event (UPDATE photos SET price_php = ?).
    *  Signed-in carts follow along: `GET /me/cart` renders the live
@@ -732,6 +738,8 @@ export async function updateAdminEvent(
   if (patch.title !== undefined) form.append("title", patch.title);
   if (patch.date !== undefined) form.append("date", patch.date);
   if (patch.location !== undefined) form.append("location", patch.location);
+  if (patch.regionCode !== undefined) form.append("regionCode", patch.regionCode);
+  if (patch.provinceCode !== undefined) form.append("provinceCode", patch.provinceCode);
   if (patch.pricePerPhoto !== undefined) {
     form.append("pricePerPhoto", String(patch.pricePerPhoto));
   }

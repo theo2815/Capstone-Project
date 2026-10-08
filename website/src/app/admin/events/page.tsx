@@ -105,6 +105,8 @@ export default function AdminEventsPage() {
   async function handleCreateSubmit(payload: {
     name: string;
     location: string;
+    regionCode: string | null;
+    provinceCode: string | null;
     date: string;
     pricePerPhoto: number;
     organizerName: string;
@@ -116,6 +118,8 @@ export default function AdminEventsPage() {
       const ok = await createEvent({
         title: payload.name,
         location: payload.location,
+        regionCode: payload.regionCode ?? undefined,
+        provinceCode: payload.provinceCode ?? undefined,
         date: payload.date,
         pricePerPhoto: payload.pricePerPhoto,
         organizerName: payload.organizerName,
@@ -135,6 +139,8 @@ export default function AdminEventsPage() {
   async function handleEditSubmit(payload: {
     name: string;
     location: string;
+    regionCode: string | null;
+    provinceCode: string | null;
     date: string;
     pricePerPhoto: number;
     organizerName: string;
@@ -155,10 +161,14 @@ export default function AdminEventsPage() {
         (editTarget.organizerName ?? "") !== payload.organizerName;
       const descriptionChanged =
         (editTarget.description ?? "") !== payload.description;
+      const pairChanged = (editTarget.regionCode ?? null) !== payload.regionCode ||
+        (editTarget.provinceCode ?? null) !== payload.provinceCode;
       const ok = await editEvent(editTarget.id, {
         expectedRevision: editTarget.reviewRevision,
         title: payload.name,
         location: payload.location,
+        ...(pairChanged && payload.regionCode && payload.provinceCode
+          ? { regionCode: payload.regionCode, provinceCode: payload.provinceCode } : {}),
         date: payload.date,
         ...(priceChanged ? { pricePerPhoto: payload.pricePerPhoto } : {}),
         ...(organizerChanged ? { organizerName: payload.organizerName } : {}),

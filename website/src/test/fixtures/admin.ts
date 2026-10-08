@@ -2,6 +2,12 @@ import type { Dispute } from "@/lib/admin-disputes";
 import type { PayoutReport } from "@/lib/admin-payout-reports";
 import type { AdminPayoutCycle } from "@/lib/admin-payouts";
 import type { User } from "@/types/user";
+import type { PHRegion } from "@/lib/ph-regions";
+
+export const eventRegions: PHRegion[] = [
+  { code: "region-vii", name: "Region VII (Central Visayas)", shortName: "Region VII", group: "visayas", provinces: [{ code: "cebu", name: "Cebu" }] },
+  { code: "region-viii", name: "Region VIII (Eastern Visayas)", shortName: "Region VIII", group: "visayas", provinces: [{ code: "leyte", name: "Leyte" }] },
+];
 
 export const admin: User = {
   id: "admin-a", role: "ADMIN", name: "Admin", email: "admin@example.test", createdAt: "2026-09-10T00:00:00Z",

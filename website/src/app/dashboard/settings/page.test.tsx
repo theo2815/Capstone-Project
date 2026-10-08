@@ -12,12 +12,13 @@ import SettingsPage from "./page";
 import { DEFAULT_WATERMARK_PLACEMENT, usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import { putHandle, putWatermarkSettings, postPayoutAccount, patchPayoutAccount, postPayoutQr } from "@/lib/api-photographer-settings";
+import type { PHRegion } from "@/lib/ph-regions";
 
-const mocks = vi.hoisted(() => ({ toast: vi.fn(), confirm: vi.fn(), regions: [] }));
+const mocks = vi.hoisted(() => ({ toast: vi.fn(), confirm: vi.fn(), regions: [] as PHRegion[], loading: false, error: null as Error | null, retry: vi.fn() }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: mocks.toast }) }));
 vi.mock("@/hooks/use-confirmation", () => ({ useConfirmation: () => ({ confirm: mocks.confirm }) }));
 vi.mock("@/hooks/use-auth", () => ({ useAuth: () => ({ user: null }) }));
-vi.mock("@/hooks/use-regions", () => ({ useRegions: () => ({ regions: mocks.regions, isLoading: false }) }));
+vi.mock("@/hooks/use-regions", () => ({ useRegions: () => ({ regions: mocks.regions, isLoading: mocks.loading, error: mocks.error, retry: mocks.retry }) }));
 vi.mock("@/lib/photographer-verification-sync", () => ({ syncVerificationNow: vi.fn() }));
 vi.mock("@/lib/api-photographer-settings", async (importActual) => ({
   ...await importActual<typeof import("@/lib/api-photographer-settings")>(),
@@ -55,6 +56,7 @@ function render(ui: ReactElement) {
 beforeEach(() => {
   useAuthStore.getState().setUser(photographer);
   vi.clearAllMocks();
+  mocks.regions = []; mocks.loading = false; mocks.error = null;
   vi.spyOn(console, "error").mockImplementation(() => {}); // expected failed handle request
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
@@ -71,6 +73,45 @@ beforeEach(() => {
 
 const payout = { id: "account", method: "gcash" as const, accountName: "Test Recipient", accountNumber: "09171234567", isPrimary: true, qr: null };
 const qr = { dataUrl: "data:image/png;base64,AA==", uploadedAt: "2026-09-09T00:00:00Z" };
+
+it("prefills saved geography, clears province on region change, cancels and saves through Settings", async () => {
+  mocks.regions = [
+    { code: "r7", name: "Central Visayas", shortName: "VII", group: "visayas", provinces: [{ code: "cebu", name: "Cebu" }] },
+    { code: "r8", name: "Eastern Visayas", shortName: "VIII", group: "visayas", provinces: [{ code: "leyte", name: "Leyte" }] },
+  ];
+  usePhotographerSettingsStore.setState({ region: { regionCode: "r7", provinceCode: "cebu" } });
+  const put = vi.spyOn(api, "put").mockResolvedValue(undefined);
+  render(<SettingsPage />);
+  const slab = document.getElementById("region")!;
+  expect(within(slab).getByText("Central Visayas")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.click(within(slab).getByRole("button", { name: /region/i }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Eastern Visayas" }));
+  expect(usePhotographerSettingsStore.getState().region).toEqual({ regionCode: "r8", provinceCode: "" });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(usePhotographerSettingsStore.getState().region).toEqual({ regionCode: "r7", provinceCode: "cebu" });
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.click(within(slab).getByRole("button", { name: /region/i }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Eastern Visayas" }));
+  fireEvent.click(within(slab).getByRole("button", { name: /province/i }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Leyte" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(put).toHaveBeenCalledWith("/me/photographer/region", { regionCode: "r8", provinceCode: "leyte" }));
+});
+
+it("preserves saved geography during reference loading and offers retry without calling it stale", () => {
+  usePhotographerSettingsStore.setState({ region: { regionCode: "r7", provinceCode: "cebu" } });
+  mocks.loading = true;
+  const view = render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  expect(within(document.getElementById("region")!).getByRole("button", { name: /region/i })).toBeDisabled();
+  mocks.loading = false; mocks.error = new Error("Offline");
+  view.rerender(<SettingsPage />);
+  expect(screen.queryByText(/region is no longer available/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Retry regions/ }));
+  expect(mocks.retry).toHaveBeenCalledOnce();
+  expect(usePhotographerSettingsStore.getState().region).toEqual({ regionCode: "r7", provinceCode: "cebu" });
+});
 
 it("keeps every Edit entry disabled until initial settings hydrate", async () => {
   usePhotographerSettingsStore.setState({

@@ -4,12 +4,12 @@ import { clearAdminActionIntents } from "@/lib/admin-action-intents";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { ConfirmationOverlay } from "@/components/ui/confirmation-overlay";
 import { useConfirmationStore } from "@/store/confirmation-store";
 import { useToastStore } from "@/store/toast-store";
 import { useAuthStore } from "@/store/auth-store";
-import { admin, adminEvent } from "@/test/fixtures/admin";
+import { admin, adminEvent, eventRegions } from "@/test/fixtures/admin";
 import { adminEventKeys } from "@/hooks/use-admin-events";
 import AdminEventsPage from "./page";
 import { useAdminEventActions } from "@/hooks/use-admin-events";
@@ -27,7 +27,8 @@ beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto); clearAdminActionIntents();
   useAuthStore.getState().setUser(admin); rows = [adminEvent];
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); client.setQueryData(key, rows);
-  vi.spyOn(api, "get").mockImplementation(async () => ({ items: rows }));
+  client.setQueryData(["regions"], eventRegions);
+  vi.spyOn(api, "get").mockImplementation(async (path) => path === "/regions" ? eventRegions : { items: rows });
 });
 afterEach(() => {
   clearAdminActionIntents(); vi.unstubAllGlobals();
@@ -63,6 +64,10 @@ it.each(["create", "edit"])("retains %s form input and canonical rows after fail
     fireEvent.change(within(dialog).getByLabelText("Date"), { target: { value: adminEvent.date } });
     await user.clear(within(dialog).getByLabelText("Price per photo · PHP"));
     await user.type(within(dialog).getByLabelText("Price per photo · PHP"), "80");
+    await user.click(within(dialog).getByRole("button", { name: /^Region:/ }));
+    await user.click(screen.getByRole("menuitem", { name: eventRegions[0].name }));
+    await user.click(within(dialog).getByRole("button", { name: /^Province:/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Cebu" }));
   }
   const submitLabel = mode === "create" ? "Create event" : "Save changes";
   await user.click(within(dialog).getByRole("button", { name: submitLabel }));
@@ -86,10 +91,19 @@ it.each(["create", "edit"])("retains %s form input and canonical rows after fail
     const form = (mutation.mock.calls[0][1] as RequestInit).body as FormData;
     expect(form.get("title")).toBe("Draft title"); expect(form.has("pricePerPhoto")).toBe(false);
     expect(form.get("expectedRevision")).toBe("4");
+    expect(form.has("regionCode")).toBe(false); expect(form.has("provinceCode")).toBe(false);
+  } else {
+    const form = mutation.mock.calls[0][1] as FormData;
+    expect(form.get("regionCode")).toBe("region-vii"); expect(form.get("provinceCode")).toBe("cebu");
   }
 });
 it("shows loading and a retryable query error instead of an empty catalog", async () => {
-  client.clear(); vi.mocked(api.get).mockRejectedValueOnce(new Error("Offline")); mount();
+  client.clear(); let failed = false;
+  vi.mocked(api.get).mockImplementation(async (path) => {
+    if (path === "/regions") return eventRegions;
+    if (!failed) { failed = true; throw new Error("Offline"); }
+    return { items: rows };
+  }); mount();
   expect(screen.getByRole("status")).toHaveTextContent("Loading events");
   await screen.findByRole("alert"); expect(screen.queryByText("No live events right now.")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -115,6 +129,40 @@ it("identifies a lost edit snapshot after a committed response is lost and the e
   await waitFor(() => expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/reconcil/i));
   expect(update).toHaveBeenCalledTimes(1);
   expect(dialog).toBeInTheDocument();
+});
+
+it("retains changed geography and cover after a conflict refresh, then sends the original snapshot on retry", async () => {
+  const user = userEvent.setup();
+  rows = [{ ...adminEvent, regionCode: "region-vii", provinceCode: "cebu" }]; client.setQueryData(key, rows);
+  const update = vi.spyOn(api, "fetch").mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", field: "expectedRevision", message: "Event changed" }], 409));
+  const objectUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:cover");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  mount(); await user.click(screen.getByRole("button", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: /^Region:/ }));
+  await user.click(screen.getByRole("menuitem", { name: eventRegions[1].name }));
+  await user.click(within(dialog).getByRole("button", { name: /^Province:/ }));
+  await user.click(screen.getByRole("menuitem", { name: "Leyte" }));
+  await user.upload(within(dialog).getByLabelText("Upload cover"), new File(["cover"], "cover.jpg", { type: "image/jpeg" }));
+  rows = [{ ...rows[0], name: "Other admin", reviewRevision: 5 }];
+  await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeEnabled());
+  await waitFor(() => expect(client.getQueryData(key)).toEqual(rows));
+  expect(within(dialog).getByLabelText("Title")).toHaveValue("Cebu Race");
+  expect(within(dialog).getByRole("button", { name: "Province: Leyte" })).toBeInTheDocument();
+  expect(within(dialog).getByAltText("Cover preview")).toHaveAttribute("src", "blob:cover");
+  expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/event changed.*reconcile/i);
+  const confirmed = { ...rows[0], regionCode: "region-viii", provinceCode: "leyte" };
+  update.mockResolvedValue(confirmed);
+  await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  for (const [, options] of update.mock.calls) {
+    const form = options?.body as FormData;
+    expect(form.get("regionCode")).toBe("region-viii"); expect(form.get("provinceCode")).toBe("leyte");
+    expect(form.get("cover")).toBeInstanceOf(File); expect(form.get("expectedRevision")).toBe("4");
+  }
+  expect(update.mock.calls[0][1]?.headers).toEqual(update.mock.calls[1][1]?.headers);
+  expect(objectUrl).toHaveBeenCalledOnce();
 });
 it("keeps a delete confirmation open when another view owns the event", async () => {
   const request = deferred(); vi.spyOn(api, "post").mockReturnValue(request.promise);

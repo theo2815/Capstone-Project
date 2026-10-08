@@ -31,6 +31,27 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const createArgs = { title: "New race", date: adminEvent.date, location: "Cebu", pricePerPhoto: 80 };
+it.each(["create", "edit"])("transports the complete %s pair and reconciles returned codes", async (mode) => {
+  const row = { ...adminEvent, regionCode: "region-vii", provinceCode: "cebu" };
+  const post = vi.spyOn(api, "post").mockResolvedValue(row);
+  const patch = vi.spyOn(api, "fetch").mockResolvedValue(row);
+  const { result } = renderHook(useAdminEventActions, { wrapper });
+  const pair = { regionCode: "region-vii", provinceCode: "cebu" };
+  await act(async () => { if (mode === "create") await result.current.createEvent({ ...createArgs, ...pair }); else await result.current.editEvent(adminEvent.id, pair); });
+  const form = mode === "create" ? post.mock.calls[0][1] as FormData : patch.mock.calls[0][1]?.body as FormData;
+  expect(form.get("regionCode")).toBe("region-vii"); expect(form.get("provinceCode")).toBe("cebu");
+  expect(client.getQueryData(key)).toEqual([row]);
+  expect(client.getQueryData(publicKey)).toEqual([adminEvent]);
+});
+it.each(["INVALID_REGION", "VALIDATION_ERROR"])("allows correcting a rejected location pair (%s) before command execution", async (code) => {
+  const post = vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code, field: "regionCode", message: "Invalid region" }], 400));
+  const { result } = renderHook(useAdminEventActions, { wrapper });
+  await expect(result.current.createEvent({ ...createArgs, regionCode: "retired", provinceCode: "cebu" })).rejects.toThrow();
+  post.mockResolvedValue(adminEvent);
+  await expect(result.current.createEvent({ ...createArgs, regionCode: "region-vii", provinceCode: "cebu" })).resolves.toBe(true);
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+});
 const actions = ["createEvent", "editEvent", "deleteEvent", "approve", "reject"] as const;
 it("claims an event before hashing, blocks another view and reuses the update key after timeout", async () => {
   const request = deferred<unknown>(); const patch = { title: "Race", expectedRevision: 4, cover: new File(["cover"], "cover.jpg") };
