@@ -186,6 +186,16 @@ def test_features_pin_each_number_on_a_subject_an_intruder_a_bystander_a_duplica
     assert pair["n_big"] == 2 and pair["max_area_soft_other"] == 0 and pair["lowconf_big_area"] == 0
 
 
+def test_features_see_a_soft_subject_beside_a_sharper_smaller_person():
+    runner = _person((400.0, 100.0, 600.0, 700.0), 0.9, 0.12, bottom=0.70, es95=0.10)
+    sharp = _person((650.0, 250.0, 800.0, 650.0), 0.8, 0.06, bottom=0.65, es95=0.40)
+    got = dict(zip(people.FEATURE_NAMES, people.features([runner, sharp], 0.05, 0.6), strict=True))
+    assert got["subject_es"] == 0.10 and got["min_es_big_confident"] == 0.10
+    assert got["es_ratio"] == pytest.approx(0.25)  # the reference is the sharper person
+    assert got["biggest_other_es_ratio"] == pytest.approx(1.0)
+    assert got["max_area_soft_other"] == 0  # the other person is not the soft one
+
+
 def test_logistic_rule_applies_standardisation_and_the_sigmoid(tmp_path):
     spec = {
         "feature_names": ["a", "b"],
