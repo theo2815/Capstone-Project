@@ -53,10 +53,10 @@ class PhotographerPurchasesViewModelTest {
 
     private fun model() = PhotographerPurchasesViewModel(application).also { viewModels.put("purchases", it) }
     private fun event(id: String) = """{"id":"$id","slug":"run","name":"Run","date":"2026-10-01","location":"Cebu","state":"PAST","photoCount":1,"salesCount":0,"revenueKept":0}"""
-    private fun photo(id: String) = """{"id":"$id","bib":null,"status":"ready","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null,"deletedAt":null,"deletionStartedAt":null}"""
+    private fun photo(id: String, thumbnail: String? = null) = """{"id":"$id","bib":null,"status":"ready","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":${thumbnail?.let { "\"$it\"" } ?: "null"},"deletedAt":null,"deletionStartedAt":null}"""
     private fun receipt(order: String, photo: String) = """{"orderId":"$order","photoId":"$photo","buyer":"Aira S.","purchasedAt":"2026-10-01T00:00:00Z","orderCreatedAt":"2026-10-01T00:00:00Z","paymentMethod":"gcash","pricePhp":0,"discountPhp":0,"paidPhp":0,"kind":"free","refundStatus":"none","refundPending":false,"refundedPhp":null,"refundedAt":null,"netKeptPhp":0,"transactions":[]}"""
-    private fun purchases(photoId: String, orders: List<String>, total: Int, offset: Int = 0, selected: String? = null): String =
-        """{"photo":${photo(photoId)},"event":{"id":"event-a","name":"Run","date":"2026-10-01","deletedAt":null},"items":[${orders.joinToString(",") { receipt(it, photoId) }}],"total":$total,"offset":$offset,"limit":50,"selectedPurchase":${selected?.let { receipt(it, photoId) } ?: "null"}}"""
+    private fun purchases(photoId: String, orders: List<String>, total: Int, offset: Int = 0, selected: String? = null, thumbnail: String? = null): String =
+        """{"photo":${photo(photoId, thumbnail)},"event":{"id":"event-a","name":"Run","date":"2026-10-01","deletedAt":null},"items":[${orders.joinToString(",") { receipt(it, photoId) }}],"total":$total,"offset":$offset,"limit":50,"selectedPurchase":${selected?.let { receipt(it, photoId) } ?: "null"}}"""
     private fun gallery(items: List<String>, total: Int, offset: Int = 0) =
         """{"items":[${items.joinToString(",") { """{"photo":${photo(it)},"purchaseCount":1,"lastPurchasedAt":"2026-10-01T00:00:00Z"}""" }}],"total":$total,"offset":$offset,"limit":50}"""
 
@@ -380,5 +380,103 @@ class PhotographerPurchasesViewModelTest {
         assertNull(vm.previewState.value.photoId)
         assertNull(vm.previewState.value.selectedPurchase)
         assertFalse(vm.previewState.value.isLoading)
+    }
+
+    @Test fun `media refresh is bounded and preserves pinned purchase history and selection`() {
+        var refreshed = false
+        val firstPage = (1..50).map { "order-$it" }
+        respond = { request ->
+            val offset = request.requestUrl?.queryParameter("offset")?.toInt() ?: 0
+            val limit = request.requestUrl?.queryParameter("limit")?.toInt() ?: 50
+            if (offset == 50) ok(purchases("photo-a", listOf("order-51"), 51, offset))
+            else if (limit == 1) {
+                refreshed = true
+                ok(purchases("photo-a", listOf("order-1"), 51, selected = "order-51", thumbnail = "/same.jpg"))
+            } else ok(purchases("photo-a", firstPage, 51, selected = "order-51", thumbnail = "/same.jpg"))
+        }
+        val vm = model()
+        vm.openPurchase("photo-a", "order-51")
+        vm.previewState.awaitFirst { it.selectedPurchase?.orderId == "order-51" }
+        vm.loadMorePurchases()
+        vm.previewState.awaitFirst { it.items.size == 51 }
+        val before = vm.previewState.value
+        vm.refreshPhoto()
+        vm.previewState.awaitFirst { it.photoRefreshGeneration == 1L }
+        val after = vm.previewState.value
+        assertTrue(refreshed)
+        assertTrue(seenPaths.last().contains("offset=0"))
+        assertTrue(seenPaths.last().contains("limit=1"))
+        assertTrue(seenPaths.last().contains("orderId=order-51"))
+        assertEquals(before.items, after.items)
+        assertEquals(before.total, after.total)
+        assertEquals(before.nextOffset, after.nextOffset)
+        assertEquals(before.selectedPurchase, after.selectedPurchase)
+        assertEquals(before.photo?.thumbnailUrl, after.photo?.thumbnailUrl)
+    }
+
+    @Test fun `failed media refresh keeps receipts and duplicate taps do not start another request`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        var refreshCalls = 0
+        respond = { request ->
+            if (request.requestUrl?.queryParameter("limit") == "1") {
+                refreshCalls++
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                MockResponse().setResponseCode(503)
+            } else ok(purchases("photo-a", listOf("first"), 51, selected = "order-51"))
+        }
+        val vm = model()
+        vm.openPurchase("photo-a", "order-51")
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        vm.refreshPhoto()
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try { vm.refreshPhoto(); assertEquals(1, refreshCalls) } finally { release.countDown() }
+        vm.previewState.awaitFirst { it.photoRefreshError != null }
+        assertEquals("order-51", vm.previewState.value.selectedPurchase?.orderId)
+        assertEquals(0L, vm.previewState.value.photoRefreshGeneration)
+    }
+
+    @Test fun `stale media refresh cannot restore a closed preview`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        respond = { request ->
+            if (request.requestUrl?.queryParameter("limit") == "1") {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+            ok(purchases("photo-a", listOf("first"), 1, selected = "first", thumbnail = "/same.jpg"))
+        }
+        val vm = model()
+        vm.openPurchase("photo-a", "first")
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        vm.refreshPhoto()
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try { vm.closePreview() } finally { release.countDown() }
+        Thread.sleep(200)
+        assertNull(vm.previewState.value.photoId)
+        assertEquals(0L, vm.previewState.value.photoRefreshGeneration)
+    }
+
+    @Test fun `stale account media refresh cannot restore buyer context`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        respond = { request ->
+            if (request.requestUrl?.queryParameter("limit") == "1") {
+                started.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+            ok(purchases("photo-a", listOf("first"), 1, selected = "first", thumbnail = "/same.jpg"))
+        }
+        val vm = model()
+        vm.openPurchase("photo-a", "first")
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        vm.refreshPhoto()
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try { signInAs("RUNNER") } finally { release.countDown() }
+        vm.previewState.awaitFirst { it.photoId == null }
+        Thread.sleep(200)
+        assertNull(vm.previewState.value.selectedPurchase)
+        assertEquals(0L, vm.previewState.value.photoRefreshGeneration)
     }
 }

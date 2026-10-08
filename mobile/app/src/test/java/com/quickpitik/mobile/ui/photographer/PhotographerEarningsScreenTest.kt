@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
@@ -97,7 +98,8 @@ class PhotographerEarningsScreenTest {
             onNodeWithContentDescription("Open purchase A1B2C3D4 by Aira S.").performSemanticsAction(SemanticsActions.OnClick)
             waitForIdle()
             waitUntil(timeoutMillis = 5_000) { purchases.previewState.value.selectedPurchase != null }
-            onNodeWithText("Transaction Run").performClick()
+            onNodeWithText("Transaction Run", useUnmergedTree = true).performScrollTo()
+            onNodeWithText("Transaction Run", useUnmergedTree = true).performClick()
             runOnIdle { assertEquals("event-a", opened) }
             onNodeWithText("Recent sales history", ignoreCase = true).assertDoesNotExist()
             onNodeWithText("Purchase details", ignoreCase = true).assertDoesNotExist()
