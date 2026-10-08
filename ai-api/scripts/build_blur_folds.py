@@ -26,7 +26,8 @@ LABELS = "quality_evidence/labels_2026-10.csv"
 SOURCES = ("Sharp event photos", "Event subject missed focus", "Event defocus", "Event motion",
            "holdout_events_2026-09", "final_exam_2026-10")
 CLASSES = ("sharp", "defocused_object_portrait", "defocused_blurred", "motion_blurred")
-# Hand-balanced on 2026-10-05: every fold holds sharp and missed-focus photos, and the
+# Placed by hand (2026-10-05; the spent exam added 2026-10-08): every fold holds sharp and
+# missed-focus photos, though not in equal shares (fold e is nearly all sharp), and the
 # two motion sources (alin-move, palawanpay) sit in different folds.
 FOLDS = {
     "bohol-intl-marathon-2026-08": "a",
