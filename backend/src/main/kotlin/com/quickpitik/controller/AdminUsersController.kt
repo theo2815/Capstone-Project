@@ -1,5 +1,6 @@
 package com.quickpitik.controller
 
+import com.quickpitik.common.IdempotencyKey
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminPhotographerSettingsDto
@@ -20,6 +21,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -89,10 +91,12 @@ class AdminUsersController(
     ): AdminUserRowDto = adminUserService.unsuspend(principal.userId, userId)
 
     @PostMapping("/{userId}/message")
+    @Operation(description = "Send an admin message. Optional UUID Idempotency-Key replays the original message and decision IDs; changed actor, recipient or text returns 409. Unkeyed v1 sends remain supported.")
     fun sendMessage(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable userId: UUID,
         @Valid @RequestBody body: AdminUserMessageRequest,
+        @RequestHeader(name = IdempotencyKey.HEADER, required = false) idempotencyKey: String? = null,
     ): PhotographerMessageDto =
-        adminUserService.sendMessage(principal.userId, userId, body.subject, body.body)
+        adminUserService.sendMessage(principal.userId, userId, body.subject, body.body, IdempotencyKey.parse(idempotencyKey))
 }

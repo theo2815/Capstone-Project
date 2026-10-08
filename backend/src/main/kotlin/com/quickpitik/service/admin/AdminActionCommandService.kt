@@ -1,0 +1,90 @@
+package com.quickpitik.service.admin
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.IdempotencyKey
+import com.quickpitik.entity.AdminActionCommand
+import com.quickpitik.entity.AdminActionCommandState
+import com.quickpitik.entity.AdminActionOperation
+import com.quickpitik.exception.ApiException
+import com.quickpitik.repository.AdminActionCommandRepository
+import org.hibernate.exception.ConstraintViolationException
+import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.HttpStatus
+import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.support.TransactionTemplate
+import java.security.MessageDigest
+import java.time.Clock
+import java.util.HexFormat
+import java.util.UUID
+
+data class AdminActionResult(val resourceId: UUID?, val decisionId: UUID?, val messageId: UUID?)
+
+@Service
+class AdminActionCommandService(
+    private val commands: AdminActionCommandRepository,
+    txManager: PlatformTransactionManager,
+    private val mapper: ObjectMapper,
+    private val clock: Clock,
+) {
+    private val tx = TransactionTemplate(txManager).apply {
+        propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+    }
+
+    fun execute(key: IdempotencyKey?, actorId: UUID, operation: AdminActionOperation, targetId: UUID?,
+        inputHash: String, authorize: () -> Unit, action: () -> AdminActionResult): AdminActionResult {
+        val commandId = key?.let { UUID.fromString(it.value) }
+        return try {
+            tx.execute transaction@ {
+                authorize()
+                if (commandId == null) return@transaction action()
+                commands.findById(commandId).orElse(null)?.let {
+                    return@transaction replay(it, actorId, operation, targetId, inputHash)
+                }
+                val now = clock.instant()
+                val receipt = commands.saveAndFlush(AdminActionCommand(commandId = commandId, actorId = actorId,
+                    operation = operation, targetId = targetId, inputHash = inputHash, claimedAt = now, updatedAt = now))
+                val result = action()
+                receipt.resultResourceId = result.resourceId
+                receipt.resultDecisionId = result.decisionId
+                receipt.resultMessageId = result.messageId
+                receipt.state = AdminActionCommandState.SUCCEEDED
+                receipt.completedAt = clock.instant()
+                receipt.updatedAt = receipt.completedAt!!
+                commands.saveAndFlush(receipt)
+                result
+            }!!
+        } catch (error: DataIntegrityViolationException) {
+            val constraint = generateSequence<Throwable>(error) { it.cause }
+                .filterIsInstance<ConstraintViolationException>().firstOrNull()?.constraintName
+            if (commandId == null || constraint != "admin_action_commands_pkey") throw error
+            // The losing PostgreSQL transaction is rolled back before the winner is read.
+            tx.execute {
+                authorize()
+                val receipt = commands.findById(commandId).orElse(null) ?: throw error
+                replay(receipt, actorId, operation, targetId, inputHash)
+            }!!
+        }
+    }
+
+    fun inputHash(fields: List<String>): String = HexFormat.of().formatHex(
+        MessageDigest.getInstance("SHA-256").digest(mapper.writeValueAsBytes(fields)))
+
+    private fun replay(receipt: AdminActionCommand, actorId: UUID, operation: AdminActionOperation,
+        targetId: UUID?, hash: String): AdminActionResult {
+        if (receipt.actorId != actorId || receipt.operation != operation || receipt.targetId != targetId || receipt.inputHash != hash)
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.CONFLICT, "Command key is already bound to another input")
+        when (receipt.state) {
+            AdminActionCommandState.PENDING -> throw ApiException(HttpStatus.CONFLICT,
+                ErrorCodes.IDEMPOTENT_REPLAY_IN_PROGRESS, "Command is still in progress")
+            AdminActionCommandState.UNKNOWN -> throw ApiException(HttpStatus.CONFLICT,
+                ErrorCodes.ADMIN_COMMAND_RECOVERY_REQUIRED, "Command requires recovery before it can be retried")
+            AdminActionCommandState.FAILED -> throw ApiException(HttpStatus.CONFLICT,
+                ErrorCodes.CONFLICT, "Command did not succeed; this key cannot execute another action")
+            AdminActionCommandState.SUCCEEDED -> return AdminActionResult(receipt.resultResourceId,
+                receipt.resultDecisionId, receipt.resultMessageId)
+        }
+    }
+}

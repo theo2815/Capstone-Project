@@ -89,6 +89,9 @@ class AdminUserServiceSuspendTest {
         runnerMessagesService,
         photographerSettingsService,
         refreshTokenService,
+        Mockito.mock(AdminActionCommandService::class.java),
+        Mockito.mock(com.quickpitik.repository.PhotographerMessageRepository::class.java),
+        Mockito.mock(com.quickpitik.repository.RunnerMessageRepository::class.java),
     )
 
     private fun user(role: Role): User = User(

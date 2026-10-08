@@ -1,5 +1,6 @@
 package com.quickpitik.service.admin
 
+import com.quickpitik.common.IdempotencyKey
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
@@ -18,6 +19,7 @@ import com.quickpitik.dto.photographer.PayoutQrDto
 import com.quickpitik.dto.photographer.PhotographerMessageDto
 import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.toDto
+import com.quickpitik.entity.AdminActionOperation
 import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
@@ -42,6 +44,7 @@ import com.quickpitik.service.runner.RunnerMessagesService
 import org.springframework.data.domain.PageRequest
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -62,6 +65,9 @@ class AdminUserService(
     private val runnerMessagesService: RunnerMessagesService,
     private val photographerSettingsService: PhotographerSettingsService,
     private val refreshTokenService: RefreshTokenService,
+    private val adminActionCommandService: AdminActionCommandService,
+    private val photographerMessageRepository: com.quickpitik.repository.PhotographerMessageRepository,
+    private val runnerMessageRepository: com.quickpitik.repository.RunnerMessageRepository,
 ) {
 
     @Transactional(readOnly = true)
@@ -376,12 +382,38 @@ class AdminUserService(
         return hydrateRow(user, settings)
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun sendMessage(
         adminId: UUID,
         userId: UUID,
         subject: String,
         body: String,
+        key: IdempotencyKey? = null,
     ): PhotographerMessageDto {
+        val trimmedSubject = subject.trim()
+        val trimmedBody = body.trim()
+        val result = adminActionCommandService.execute(key, adminId, AdminActionOperation.USER_MESSAGE, userId,
+            adminActionCommandService.inputHash(listOf(trimmedSubject, trimmedBody)), {
+                val actor = userRepository.findById(adminId).orElse(null)
+                if (actor == null || actor.role != Role.ADMIN || actor.suspendedAt != null)
+                    throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.FORBIDDEN, "An active admin is required")
+                requireMessageRecipient(userId)
+            }, {
+                val message = sendUserMessage(adminId, userId, trimmedSubject, trimmedBody)
+                AdminActionResult(userId, message.sourceDecisionId, message.id)
+            })
+        val messageId = result.messageId!!
+        photographerMessageRepository.findByIdAndPhotographerId(messageId, userId).orElse(null)?.let {
+            return PhotographerMessageDto(it.id, it.kindWire, it.title, it.body, result.decisionId, it.createdAt, it.readAt)
+        }
+        val message = runnerMessageRepository.findByIdAndRunnerId(messageId, userId).orElseThrow {
+            NotFoundException(ErrorCodes.NOT_FOUND, "Original message not found")
+        }
+        return PhotographerMessageDto(message.id, message.kindWire, message.title, message.body,
+            result.decisionId, message.createdAt, message.readAt)
+    }
+
+    private fun requireMessageRecipient(userId: UUID): User {
         val (user, _) = loadUserAndSettings(userId)
         // Free-form admin DM lands in the role-appropriate inbox. ADMIN
         // accounts can't receive messages (they're the ones sending).
@@ -392,8 +424,11 @@ class AdminUserService(
                 field = "userId",
             )
         }
-        val trimmedSubject = subject.trim()
-        val trimmedBody = body.trim()
+        return user
+    }
+
+    private fun sendUserMessage(adminId: UUID, userId: UUID, trimmedSubject: String, trimmedBody: String): PhotographerMessageDto {
+        val user = requireMessageRecipient(userId)
         val decision = adminDecisionLogService.logUserDecision(
             adminId = adminId,
             targetUserId = userId,
