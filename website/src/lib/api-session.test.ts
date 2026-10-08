@@ -102,13 +102,14 @@ it("discards an old step-up result without replaying the mutation as the new use
   expect(await result).toBe("Session changed"); expect(fetch).toHaveBeenCalledTimes(1);
 });
 
-it("preserves a current-session 401 refresh and step-up retry", async () => {
+it("preserves a caller's command key through current-session refresh and step-up retries", async () => {
   const fetch = vi.fn()
     .mockResolvedValueOnce(response([], 401))
     .mockResolvedValueOnce(response({ accessToken: "fresh", refreshToken: "fresh-refresh" }))
     .mockResolvedValueOnce(response([{ code: "STEP_UP_REQUIRED" }], 403))
     .mockResolvedValueOnce(response({ saved: true }));
   vi.stubGlobal("fetch", fetch); setStepUpHandler(async () => "proof");
-  expect(await api.post("/me/photographer/payouts", {})).toEqual({ saved: true });
+  expect(await api.post("/admin/users/user-1/message", { subject: "Hello", body: "Message" }, { headers: { "Idempotency-Key": "caller-owned-key" } })).toEqual({ saved: true });
+  for (const index of [0, 2, 3]) expect(fetch.mock.calls[index][1].headers).toMatchObject({ "Idempotency-Key": "caller-owned-key" });
   expect(fetch.mock.calls[3][1].headers).toMatchObject({ Authorization: "Bearer fresh", "X-Step-Up": "proof" });
 });

@@ -34,6 +34,7 @@ export interface AdminUserRow {
   city: string;
   createdAt: string;
   verificationStatus: VerificationStatus;
+  verificationRevision: number;
   suspendedAt: string | null;
   suspensionReason: string | null;
   settingsSnapshot: PhotographerSettingsSnapshot | null;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -76,22 +76,17 @@ export function VerificationsQueue() {
   const effective = users.data ?? EMPTY_ADMIN_USERS;
   const { isPending: loading, refetch } = users;
   const error = users.error?.message;
-  const { approve, reject } = useAdminUserActions();
-  const busy = useRef(false);
-  const [submitting, setSubmitting] = useState(false);
-  async function run(action: () => Promise<void>) {
-    if (busy.current) return;
-    busy.current = true; setSubmitting(true);
-    try { await action(); }
-    finally { busy.current = false; setSubmitting(false); }
-  }
+  const { approve, reject, verifyBatch, isPending: actionPending, pendingAction } = useAdminUserActions();
   const { showToast } = useToast();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [drawerRejectOpen, setDrawerRejectOpen] = useState(false);
+  const [rejectRevisions, setRejectRevisions] = useState<Record<string, number>>({});
   const [rowId, setRowId] = useUrlState<string>("row", "");
   const detail = useAdminUserDetail(rowId || null);
+  const submitting = actionPending([...selected, ...(rowId ? [rowId] : [])]);
+  const activeLabel = pendingAction(rowId || Array.from(selected)[0] || "");
 
   const pending = useMemo(
     () =>
@@ -200,7 +195,7 @@ export function VerificationsQueue() {
   }, [rowId, setFocusedId]);
 
   function toggleSelect(id: string) {
-    if (busy.current) return;
+    if (submitting) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -210,19 +205,19 @@ export function VerificationsQueue() {
   }
 
   function clearSelection() {
-    if (busy.current) return;
+    if (submitting) return;
     setSelected(new Set());
   }
 
   function handleRowActivate(id: string) {
-    if (busy.current) return;
+    if (submitting) return;
     setFocusedId(id);
     if (selectionActive) toggleSelect(id);
     else setRowId(id);
   }
 
   function handleOpenDrawer(id: string) {
-    if (busy.current) return;
+    if (submitting) return;
     setFocusedId(id);
     setRowId(id);
   }
@@ -232,18 +227,26 @@ export function VerificationsQueue() {
   // successes vs failures so admin sees an honest count — individual
   // failures already surfaced their own error toast from the action hook.
   async function handleBulkApprove() {
-    await run(() => handleBulkDecision());
+    await handleBulkDecision();
   }
 
   async function handleBulkRejectSubmit(reason: string) {
-    await run(() => handleBulkDecision(reason));
+    await handleBulkDecision(reason);
+  }
+
+  function openRejection(bulk: boolean) {
+    const rows = bulk ? Array.from(selected).map((id) => byId.get(id)!) : openRow ? [openRow] : [];
+    setRejectRevisions(Object.fromEntries(rows.map((row) => [row.userId, row.verificationRevision])));
+    if (bulk) setBulkRejectOpen(true);
+    else setDrawerRejectOpen(true);
   }
 
   async function handleBulkDecision(reason?: string) {
     const sessionVersion = useAuthStore.getState().sessionVersion;
     const ids = Array.from(selected).filter((id) => pendingIds.has(id));
     if (!ids.length) return;
-    const results = await Promise.all(ids.map((id) => reason === undefined ? approve(id) : reject(id, reason)));
+    const results = await verifyBatch(ids.map((id) => ({ userId: id, verificationRevision: reason === undefined ? byId.get(id)!.verificationRevision : rejectRevisions[id] })), reason === undefined ? "approve" : "reject", reason);
+    if (!results) return;
     if (useAuthStore.getState().sessionVersion !== sessionVersion) return;
     const failed = ids.filter((_, i) => !results[i]);
     setSelected(new Set(failed));
@@ -258,23 +261,19 @@ export function VerificationsQueue() {
   async function handleDrawerApprove() {
     if (!openRow) return;
     const row = openRow;
-    await run(async () => {
-      if (await approve(row.userId)) {
+      if (await approve(row.userId, row.verificationRevision)) {
         showToast({ kind: "success", message: `Approved · ${row.brandName ?? row.name}` });
         setRowId("");
       }
-    });
   }
 
   async function handleDrawerRejectSubmit(reason: string) {
     if (!openRow) return;
     const row = openRow;
-    await run(async () => {
-      if (await reject(row.userId, reason)) {
+      if (await reject(row.userId, reason, rejectRevisions[row.userId])) {
         showToast({ kind: "info", message: `Sent back · ${row.brandName ?? row.name}` });
         setDrawerRejectOpen(false); setRowId("");
       }
-    });
   }
 
   // Drawer verbs: E approves the open photographer, R opens the reject
@@ -285,7 +284,7 @@ export function VerificationsQueue() {
     verbs: openRow
       ? {
           E: handleDrawerApprove,
-          R: () => setDrawerRejectOpen(true),
+          R: () => openRejection(false),
         }
       : {},
   });
@@ -334,6 +333,7 @@ export function VerificationsQueue() {
                 <PendingRow
                   row={row}
                   disabled={submitting}
+                  aria-busy={submitting}
                   selected={selected.has(row.userId)}
                   selectionActive={selectionActive}
                   focused={focusedId === row.userId}
@@ -402,7 +402,7 @@ export function VerificationsQueue() {
         submitting={submitting}
         count={selected.size}
         onApprove={handleBulkApprove}
-        onReject={() => setBulkRejectOpen(true)}
+        onReject={() => openRejection(true)}
         onClear={clearSelection}
       />
 
@@ -420,7 +420,7 @@ export function VerificationsQueue() {
       {openRow && (
         <AdminDetailDrawer
           open={true}
-          onClose={() => { if (!busy.current) setRowId(""); }}
+          onClose={() => { if (!submitting) setRowId(""); }}
           escDisabled={drawerRejectOpen || submitting}
           kicker="Verification"
           title={openRow.brandName ?? openRow.name}
@@ -445,7 +445,8 @@ export function VerificationsQueue() {
               <button
                 type="button"
                 disabled={submitting}
-                onClick={() => setDrawerRejectOpen(true)}
+                  aria-busy={submitting}
+                onClick={() => openRejection(false)}
                 className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
               >
                 Reject…
@@ -453,10 +454,11 @@ export function VerificationsQueue() {
               <button
                 type="button"
                 disabled={submitting}
+                  aria-busy={submitting}
                 onClick={handleDrawerApprove}
                 className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
               >
-                Approve
+                {activeLabel === "Approving…" ? activeLabel : "Approve"}
               </button>
             </>
           }
@@ -1003,6 +1005,7 @@ function VerificationsBulkBar({
           <button
             type="button"
             disabled={submitting}
+                  aria-busy={submitting}
             onClick={onApprove}
             className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
           >
@@ -1011,6 +1014,7 @@ function VerificationsBulkBar({
           <button
             type="button"
             disabled={submitting}
+                  aria-busy={submitting}
             onClick={onReject}
             className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
           >
@@ -1019,6 +1023,7 @@ function VerificationsBulkBar({
           <button
             type="button"
             disabled={submitting}
+                  aria-busy={submitting}
             onClick={onClear}
             className="disabled:opacity-50 disabled:cursor-not-allowed font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-2"
           >

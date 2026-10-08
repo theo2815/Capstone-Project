@@ -38,12 +38,14 @@ export const adminEvent: import("@/lib/api-admin").AdminEventRow = {
   photoCount: 10, participantCount: 20, pricePerPhoto: 80,
   createdByHandle: null, createdByName: null, visibility: "public", pricingMode: "paid",
   watermarkPolicy: "platform", reviewStatus: "approved", reviewNote: null, pendingChange: null,
+  reviewRevision: 4,
 };
 
 export const adminUser: import("@/lib/admin-user-registry").AdminUserRow = {
   userId: "photographer-1", role: "PHOTOGRAPHER", name: "Test Photographer", email: "photographer@example.test",
   avatarUrl: null, brandName: "Test Studio", handle: "test-studio", region: "Cebu", city: "Cebu",
   createdAt: "2026-09-10T00:00:00Z", verificationStatus: "pending", suspendedAt: null, suspensionReason: null,
+  verificationRevision: 7,
   settingsSnapshot: { hasCover: true, hasBrandName: true, hasWatermark: true, hasHandle: true, hasRegion: true, socialCount: 1, payoutCount: 1 },
 };
 export const adminUserSettings: import("@/lib/api-admin").AdminPhotographerSettingsResponse = {

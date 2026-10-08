@@ -1,4 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { webcrypto } from "node:crypto";
+import { clearAdminActionIntents } from "@/lib/admin-action-intents";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -10,6 +12,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { admin, adminEvent } from "@/test/fixtures/admin";
 import { adminEventKeys } from "@/hooks/use-admin-events";
 import AdminEventsPage from "./page";
+import { useAdminEventActions } from "@/hooks/use-admin-events";
 
 let client: QueryClient;
 let rows = [adminEvent];
@@ -21,11 +24,13 @@ function deferred() {
   return { promise, resolve, reject };
 }
 beforeEach(() => {
+  vi.stubGlobal("crypto", webcrypto); clearAdminActionIntents();
   useAuthStore.getState().setUser(admin); rows = [adminEvent];
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); client.setQueryData(key, rows);
   vi.spyOn(api, "get").mockImplementation(async () => ({ items: rows }));
 });
 afterEach(() => {
+  clearAdminActionIntents(); vi.unstubAllGlobals();
   cleanup(); client.clear(); useAuthStore.getState().logout();
   useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", false); useToastStore.getState().clear(); vi.restoreAllMocks();
 });
@@ -36,6 +41,7 @@ it("waits in delete confirmation, retains the event on failure, and allows retry
   const dialog = screen.getByRole("dialog", { name: "Delete event?" });
   const submit = within(dialog).getByRole("button", { name: "Delete event" });
   await user.click(submit); await user.click(submit);
+  expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
   expect(submit).toBeDisabled(); expect(remove).toHaveBeenCalledTimes(1);
   expect(client.getQueryData(key)).toEqual([adminEvent]); expect(useToastStore.getState().toasts).toEqual([]);
   await act(async () => { request.reject(new Error("Event is still in use.")); });
@@ -60,20 +66,26 @@ it.each(["create", "edit"])("retains %s form input and canonical rows after fail
   }
   const submitLabel = mode === "create" ? "Create event" : "Save changes";
   await user.click(within(dialog).getByRole("button", { name: submitLabel }));
+  expect(within(dialog).getByRole("button", { name: mode === "create" ? "Creating…" : "Saving…" })).toHaveAttribute("aria-busy", "true");
   expect(title).toBeDisabled(); expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
   await user.keyboard("{Escape}{Enter}"); expect(mutation).toHaveBeenCalledTimes(1);
   expect(client.getQueryData(key)).toEqual([adminEvent]);
   await act(async () => { request.reject(new Error("Try again")); });
   expect(title).toHaveValue("Draft title"); expect(title).toBeEnabled(); expect(dialog).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: mode === "create" ? /new event/i : "Edit" }));
+  expect(within(screen.getByRole("dialog")).getByLabelText("Title")).toHaveValue("Draft title");
+  expect(screen.getByRole("status")).toHaveTextContent(/unresolved|unchanged|original/i);
   const confirmed = { ...adminEvent, name: "Backend title", slug: "backend-title" };
   mutation.mockImplementationOnce(async () => { rows = [confirmed]; return confirmed; });
-  await user.click(within(dialog).getByRole("button", { name: submitLabel }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: submitLabel }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(client.getQueryData(key)).toEqual([confirmed]);
   expect(screen.getByRole("link", { name: /view/i })).toHaveAttribute("href", "/events/backend-title");
   if (mode === "edit") {
     const form = (mutation.mock.calls[0][1] as RequestInit).body as FormData;
     expect(form.get("title")).toBe("Draft title"); expect(form.has("pricePerPhoto")).toBe(false);
+    expect(form.get("expectedRevision")).toBe("4");
   }
 });
 it("shows loading and a retryable query error instead of an empty catalog", async () => {
@@ -82,4 +94,18 @@ it("shows loading and a retryable query error instead of an empty catalog", asyn
   await screen.findByRole("alert"); expect(screen.queryByText("No live events right now.")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("button", { name: "Edit" });
+});
+it("keeps a delete confirmation open when another view owns the event", async () => {
+  const request = deferred(); vi.spyOn(api, "post").mockReturnValue(request.promise);
+  const remove = vi.spyOn(api, "delete");
+  let approve!: () => Promise<boolean>;
+  function OtherView() { const actions = useAdminEventActions(); approve = () => actions.approve(adminEvent.id, 4); return null; }
+  render(<QueryClientProvider client={client}><AdminEventsPage /><OtherView /><ConfirmationOverlay /></QueryClientProvider>);
+  await userEvent.click(screen.getByRole("button", { name: /delete/i }));
+  let command!: Promise<boolean>; act(() => { command = approve(); });
+  const dialog = screen.getByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Delete event" }));
+  await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent(/another|pending/i));
+  expect(dialog).toBeInTheDocument(); expect(remove).not.toHaveBeenCalled();
+  await act(async () => { request.resolve(adminEvent); await command; });
 });

@@ -25,6 +25,8 @@ export interface Event {
   // the default. Wire-lowercase.
   visibility?: EventVisibility;
   pricingMode?: EventPricingMode;
+  /** Review generation, supplied by privileged event responses. */
+  reviewRevision?: number;
 }
 
 export type EventVisibility = "public" | "unlisted";

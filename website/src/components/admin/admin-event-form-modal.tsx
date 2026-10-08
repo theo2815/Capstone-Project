@@ -33,6 +33,8 @@ type Mode = "create" | "edit";
 interface AdminEventFormModalProps {
   open: boolean;
   mode: Mode;
+  pending?: boolean;
+  recoveryNotice?: string | null;
   event?: ListEvent | null;
   onClose: () => void;
   onSubmit: (payload: {
@@ -52,12 +54,14 @@ interface AdminEventFormModalProps {
      *  file — signals to the caller to send `removeCover` to the backend.
      *  Always false in create mode (no existing cover to remove). */
     removeCover: boolean;
-  }) => void | Promise<void>;
+  }) => Promise<boolean>;
 }
 
 export function AdminEventFormModal({
   open,
   mode,
+  pending = false,
+  recoveryNotice,
   event,
   onClose,
   onSubmit,
@@ -88,10 +92,17 @@ export function AdminEventFormModal({
   const [coverError, setCoverError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const draftTarget = useRef<string | null>(null);
+  const wasOpen = useRef(false);
 
   // Reset / prefill whenever the modal opens or the target event flips.
   useEffect(() => {
-    if (!open) return;
+    if (!open) { wasOpen.current = false; return; }
+    const target = mode === "create" ? "create" : event?.id;
+    if (wasOpen.current && draftTarget.current === target) return;
+    wasOpen.current = true;
+    if (target && draftTarget.current === target && recoveryNotice) return;
+    draftTarget.current = target ?? null;
     if (mode === "edit" && event) {
       setName(event.name);
       setLocation(event.location);
@@ -114,7 +125,7 @@ export function AdminEventFormModal({
     setCoverFile(null);
     setCoverError(null);
     setSubmitting(false);
-  }, [open, mode, event]);
+  }, [open, mode, event, recoveryNotice]);
 
   // Object URL preview for newly picked files. Revoke on swap/close so we
   // don't leak the blob references the browser holds per createObjectURL.
@@ -147,7 +158,7 @@ export function AdminEventFormModal({
     trimmedLocation.length > 0 &&
     dateValid &&
     priceValid &&
-    !submitting;
+    !submitting && !pending;
 
   async function handleSubmit() {
     if (!canSubmit || parsedPrice === null || submittingRef.current) return;
@@ -159,7 +170,7 @@ export function AdminEventFormModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      await onSubmit({
+      const completed = await onSubmit({
         name: trimmedName,
         location: trimmedLocation,
         date,
@@ -169,6 +180,7 @@ export function AdminEventFormModal({
         cover: coverFile,
         removeCover,
       });
+      if (completed) draftTarget.current = null;
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -196,9 +208,11 @@ export function AdminEventFormModal({
       title={title}
       intro={intro}
       submitLabel={submitLabel}
-      submitting={submitting}
+      submitting={submitting || pending}
+      pendingLabel={mode === "create" ? "Creating…" : "Saving…"}
       submitDisabled={!canSubmit}
     >
+      {recoveryNotice && <p role="status" className="font-sans text-sm text-slate">{recoveryNotice}</p>}
       <AdminTextInput
         id="event-name"
         label="Title"

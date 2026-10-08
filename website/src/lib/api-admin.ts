@@ -210,29 +210,32 @@ export async function fetchAdminPhotographerSettings(
   );
 }
 
-export async function approveUser(userId: string): Promise<AdminUserRow> {
+export async function approveUser(userId: string, expectedRevision?: number): Promise<AdminUserRow> {
   return api.post<AdminUserRow>(
     `/admin/users/${encodeURIComponent(userId)}/approve`,
+    { expectedRevision },
   );
 }
 
 export async function rejectUser(
   userId: string,
   reason: string,
+  expectedRevision?: number,
 ): Promise<AdminUserRow> {
   return api.post<AdminUserRow>(
     `/admin/users/${encodeURIComponent(userId)}/reject`,
-    { reason },
+    { reason, expectedRevision },
   );
 }
 
 export async function resetUserVerification(
   userId: string,
   reason: string,
+  expectedRevision?: number,
 ): Promise<AdminUserRow> {
   return api.post<AdminUserRow>(
     `/admin/users/${encodeURIComponent(userId)}/reset-verification`,
-    { reason },
+    { reason, expectedRevision },
   );
 }
 
@@ -274,10 +277,12 @@ export interface AdminMessageResponse {
 export async function sendAdminMessage(
   userId: string,
   input: SendAdminMessageInput,
+  idempotencyKey: string,
 ): Promise<AdminMessageResponse> {
   return api.post<AdminMessageResponse>(
     `/admin/users/${encodeURIComponent(userId)}/message`,
     input,
+    { headers: { "Idempotency-Key": idempotencyKey } },
   );
 }
 
@@ -618,6 +623,7 @@ export interface AdminEventListArgs {
 // AdminListEventDto — the catalog row plus the V46 ownership + review fields.
 // createdBy* are null for admin-created events.
 export interface AdminEventRow extends ListEvent {
+  reviewRevision: number;
   createdByHandle: string | null;
   createdByName: string | null;
   visibility: "public" | "unlisted";
@@ -647,20 +653,22 @@ export async function fetchAdminEvents(
 //   POST /admin/events/{id}/reject  — PENDING → rejected (+reason); CHANGE_PENDING → drop the request
 export async function approveAdminEvent(
   eventId: string,
+  expectedRevision?: number,
 ): Promise<AdminEventRow> {
   return api.post<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}/approve`,
-    {},
+    { expectedRevision },
   );
 }
 
 export async function rejectAdminEvent(
   eventId: string,
   reason: string,
+  expectedRevision?: number,
 ): Promise<AdminEventRow> {
   return api.post<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}/reject`,
-    { reason },
+    { reason, expectedRevision },
   );
 }
 
@@ -682,6 +690,7 @@ export interface CreateAdminEventArgs {
 
 export async function createAdminEvent(
   args: CreateAdminEventArgs,
+  idempotencyKey: string,
 ): Promise<AdminEventRow> {
   const form = new FormData();
   form.append("title", args.title);
@@ -693,10 +702,11 @@ export async function createAdminEvent(
   if (args.description !== undefined)
     form.append("description", args.description);
   if (args.cover) form.append("cover", args.cover);
-  return api.post<AdminEventRow>("/admin/events", form);
+  return api.post<AdminEventRow>("/admin/events", form, { headers: { "Idempotency-Key": idempotencyKey } });
 }
 
 export interface UpdateAdminEventPatch {
+  expectedRevision?: number;
   title?: string;
   date?: string;
   location?: string;
@@ -721,8 +731,10 @@ export interface UpdateAdminEventPatch {
 export async function updateAdminEvent(
   eventId: string,
   patch: UpdateAdminEventPatch,
+  idempotencyKey: string,
 ): Promise<AdminEventRow> {
   const form = new FormData();
+  if (patch.expectedRevision !== undefined) form.append("expectedRevision", String(patch.expectedRevision));
   if (patch.title !== undefined) form.append("title", patch.title);
   if (patch.date !== undefined) form.append("date", patch.date);
   if (patch.location !== undefined) form.append("location", patch.location);
@@ -737,7 +749,7 @@ export async function updateAdminEvent(
   if (patch.removeCover) form.append("removeCover", "true");
   return api.fetch<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}`,
-    { method: "PATCH", body: form },
+    { method: "PATCH", body: form, headers: { "Idempotency-Key": idempotencyKey } },
   );
 }
 

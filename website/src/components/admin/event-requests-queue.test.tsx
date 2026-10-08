@@ -28,12 +28,12 @@ it.each(["pending", "change_pending"] as const)("retains %s rejection input thro
   await user.type(reason, "Please clarify pricing"); await user.click(within(dialog).getByRole("button", { name: label }));
   expect(reason).toBeDisabled(); await user.keyboard("{Escape}{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   await act(async () => { fail(new Error("Unavailable")); });
-  expect(reason).toHaveValue("Please clarify pricing"); expect(reason).toBeEnabled(); expect(dialog).toBeInTheDocument();
+  expect(reason).toHaveValue("Please clarify pricing"); await waitFor(() => expect(reason).toBeEnabled()); expect(dialog).toBeInTheDocument();
   post.mockResolvedValueOnce({ ...adminEvent, reviewStatus: reviewStatus === "pending" ? "rejected" : "approved" });
   await user.click(within(dialog).getByRole("button", { name: label }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(client.getQueryData(key)).toEqual([]);
-  expect(post).toHaveBeenLastCalledWith(`/admin/events/${adminEvent.id}/reject`, { reason: "Please clarify pricing" });
+  expect(post).toHaveBeenLastCalledWith(`/admin/events/${adminEvent.id}/reject`, { reason: "Please clarify pricing", expectedRevision: 4 });
 });
 it("awaits approval before success and prevents duplicate submission", async () => {
   let confirm!: (value: unknown) => void;

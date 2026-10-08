@@ -1,9 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useAdminUserActions } from "@/hooks/use-admin-users";
 import { useToast } from "@/hooks/use-toast";
-import { sendAdminMessage } from "@/lib/api-admin";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { AdminRejectModal } from "./admin-reject-modal";
 import { AdminResetVerificationModal } from "./admin-reset-verification-modal";
@@ -32,20 +31,15 @@ interface AdminActionAsideProps {
 // opens; restorative/neutral actions stay secondary/ghost.
 export function AdminActionAside({ row }: AdminActionAsideProps) {
   const { showToast } = useToast();
-  const { approve, reject, suspend, unsuspend, resetVerification } = useAdminUserActions();
-  const busy = useRef(false);
-  const [submitting, setSubmitting] = useState(false);
-  async function run(action: () => Promise<boolean>) {
-    if (busy.current) return false;
-    busy.current = true; setSubmitting(true);
-    try { return await action(); }
-    finally { busy.current = false; setSubmitting(false); }
-  }
+  const { approve, reject, suspend, unsuspend, resetVerification, message, messageRecoveryNotice, isPending: actionPending, pendingAction } = useAdminUserActions();
+  const submitting = actionPending([row.userId]);
+  const activeLabel = pendingAction(row.userId);
 
   const [rejectOpen, setRejectOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  const [reviewRevision, setReviewRevision] = useState(row.verificationRevision);
 
   const isPending = row.verificationStatus === "pending";
   const isSuspended = row.suspendedAt !== null;
@@ -53,14 +47,14 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   const displayName = row.brandName ?? row.name;
 
   async function handleApprove() {
-    const ok = await run(() => approve(row.userId));
+    const ok = await approve(row.userId, row.verificationRevision);
     if (ok) {
       showToast({ kind: "success", message: `Approved · ${displayName}` });
     }
   }
 
   async function handleReject(reason: string) {
-    const ok = await run(() => reject(row.userId, reason));
+    const ok = await reject(row.userId, reason, reviewRevision);
     if (ok) {
       setRejectOpen(false);
       showToast({ kind: "info", message: `Sent back · ${displayName}` });
@@ -68,7 +62,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   }
 
   async function handleSuspend(reason: string) {
-    const ok = await run(() => suspend(row.userId, reason));
+    const ok = await suspend(row.userId, reason);
     if (ok) {
       setSuspendOpen(false);
       showToast({ kind: "info", message: `Suspended · ${displayName}` });
@@ -76,14 +70,14 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   }
 
   async function handleUnsuspend() {
-    const ok = await run(() => unsuspend(row.userId));
+    const ok = await unsuspend(row.userId);
     if (ok) {
       showToast({ kind: "success", message: `Unsuspended · ${displayName}` });
     }
   }
 
   async function handleReset(reason: string) {
-    const ok = await run(() => resetVerification(row.userId, reason));
+    const ok = await resetVerification(row.userId, reason, reviewRevision);
     if (ok) {
       setResetOpen(false);
       showToast({
@@ -94,25 +88,21 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   }
 
   async function handleMessage(payload: { subject: string; body: string }) {
-    setMessageOpen(false);
-    try {
-      await sendAdminMessage(row.userId, payload);
+    const ok = await message(row.userId, payload);
+    if (ok) {
+      setMessageOpen(false);
       showToast({
         kind: "success",
         message: `Message sent · ${displayName}`,
       });
-    } catch (err) {
-      console.error("[admin/users] sendMessage failed", err);
-      showToast({
-        kind: "error",
-        message: `Couldn't send message — please try again.`,
-      });
     }
+    return ok;
   }
 
   return (
     <aside
       aria-label="Admin actions"
+      aria-busy={submitting}
       className="lg:sticky lg:top-24 mt-12 lg:mt-0 rounded-2xl border border-line bg-bone p-5 md:p-6"
     >
       <Kicker as="p" tone="soft">
@@ -127,12 +117,12 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
               onClick={handleApprove}
               className={primaryFreshBtn}
             >
-              Approve
+              {activeLabel === "Approving…" ? activeLabel : "Approve"}
             </button>
             <button
               type="button"
               disabled={submitting}
-              onClick={() => setRejectOpen(true)}
+              onClick={() => { setReviewRevision(row.verificationRevision); setRejectOpen(true); }}
               className={dangerBtn}
             >
               Reject…
@@ -156,7 +146,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
             onClick={handleUnsuspend}
             className={secondaryBtn}
           >
-            Unsuspend
+            {activeLabel === "Unsuspending…" ? activeLabel : "Unsuspend"}
           </button>
         )}
 
@@ -164,7 +154,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
           <button
             type="button"
             disabled={submitting}
-            onClick={() => setResetOpen(true)}
+            onClick={() => { setReviewRevision(row.verificationRevision); setResetOpen(true); }}
             className={secondaryBtn}
           >
             Reset verification…
@@ -215,6 +205,8 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         photographerName={displayName}
       />
       <AdminMessageModal
+        recoveryNotice={messageRecoveryNotice(row.userId)}
+        submitting={submitting}
         open={messageOpen}
         onClose={() => setMessageOpen(false)}
         onSubmit={handleMessage}

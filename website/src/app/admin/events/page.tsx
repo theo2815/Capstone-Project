@@ -70,12 +70,13 @@ const SECTIONS: ReadonlyArray<{
 export default function AdminEventsPage() {
   const query = useAdminEvents();
   const catalog = query.data ?? EMPTY_ADMIN_EVENTS;
-  const { createEvent, editEvent, deleteEvent } = useAdminEventActions();
+  const { createEvent, editEvent, deleteEvent, pendingAction, isPending, recoveryNotice } = useAdminEventActions();
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ListEvent | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   const grouped = useMemo(() => {
     return SECTIONS.map((section) => ({
@@ -121,11 +122,13 @@ export default function AdminEventsPage() {
         description: payload.description,
         cover: payload.cover,
       });
-      if (!ok) return;
+      if (!ok) return false;
       setCreateOpen(false);
       showToast({ kind: "success", message: `Created · ${payload.name}` });
+      return true;
     } catch {
       // The domain hook reports errors; retain the form for retry.
+      return false;
     }
   }
 
@@ -139,7 +142,7 @@ export default function AdminEventsPage() {
     cover: File | null;
     removeCover: boolean;
   }) {
-    if (!editTarget) return;
+    if (!editTarget) return false;
     try {
       // Only forward pricePerPhoto when it actually changed from the
       // prefilled value — keeps the PATCH payload minimal and avoids
@@ -153,6 +156,7 @@ export default function AdminEventsPage() {
       const descriptionChanged =
         (editTarget.description ?? "") !== payload.description;
       const ok = await editEvent(editTarget.id, {
+        expectedRevision: editTarget.reviewRevision,
         title: payload.name,
         location: payload.location,
         date: payload.date,
@@ -162,11 +166,13 @@ export default function AdminEventsPage() {
         cover: payload.cover,
         removeCover: payload.removeCover,
       });
-      if (!ok) return;
-      setEditTarget(null);
+      if (!ok) return false;
+      setEditOpen(false);
       showToast({ kind: "success", message: `Updated · ${payload.name}` });
+      return true;
     } catch {
       // The domain hook reports errors; retain the form for retry.
+      return false;
     }
   }
 
@@ -184,7 +190,7 @@ export default function AdminEventsPage() {
       danger: true,
       onConfirm: async () => {
         const ok = await deleteEvent(event.id);
-        if (!ok) return;
+        if (!ok) throw new Error("Another action is pending or the session changed. Review this event before retrying.");
         showToast({ kind: "info", message: `Deleted · ${event.name}` });
       },
     });
@@ -227,7 +233,8 @@ export default function AdminEventsPage() {
                     event={event}
                     index={i}
                     review={reviewById.get(event.id)}
-                    onEdit={(e) => setEditTarget(e)}
+                    pendingLabel={pendingAction(event.id)}
+                    onEdit={(e) => { if (editTarget?.id !== e.id || !recoveryNotice(e.id)) setEditTarget(e); setEditOpen(true); }}
                     onDelete={handleDelete}
                   />
                 ))}
@@ -240,14 +247,18 @@ export default function AdminEventsPage() {
       <AdminEventFormModal
         open={createOpen}
         mode="create"
+        pending={isPending("create")}
+        recoveryNotice={recoveryNotice("create")}
         onClose={() => setCreateOpen(false)}
         onSubmit={handleCreateSubmit}
       />
       <AdminEventFormModal
-        open={editTarget !== null}
+        open={editOpen}
         mode="edit"
+        pending={!!editTarget && isPending(editTarget.id)}
+        recoveryNotice={editTarget ? recoveryNotice(editTarget.id) : null}
         event={editTarget}
-        onClose={() => setEditTarget(null)}
+        onClose={() => setEditOpen(false)}
         onSubmit={handleEditSubmit}
       />
     </>
