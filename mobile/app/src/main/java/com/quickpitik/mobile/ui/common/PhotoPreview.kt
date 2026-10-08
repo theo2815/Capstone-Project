@@ -433,10 +433,11 @@ fun PhotoPreview(
                                         Text("Preview unavailable", style = Typography.bodyMedium, color = Color.White)
                                         if (onRefreshImage != null) {
                                             Spacer(Modifier.height(12.dp))
-                                            PrimaryCta(
+                                            GhostCta(
                                                 text = if (isRefreshingImage) "Refreshing…" else "Refresh image",
                                                 enabled = !isRefreshingImage,
                                                 onClick = { onRefreshImage(pagePhoto) },
+                                                modifier = Modifier.background(Bone, PillShape),
                                             )
                                         }
                                     }
