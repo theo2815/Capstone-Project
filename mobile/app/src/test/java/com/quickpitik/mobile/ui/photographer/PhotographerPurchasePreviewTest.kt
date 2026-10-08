@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ApplicationProvider
@@ -98,7 +99,8 @@ class PhotographerPurchasePreviewTest {
             onNodeWithText("Bea T.").assertIsDisplayed()
             onNodeWithText("B1B2C3D4").assertIsDisplayed()
             onNodeWithText("Aira S.").assertDoesNotExist()
-            onNodeWithText("Cebu Run").performClick()
+            onNodeWithText("Cebu Run", useUnmergedTree = true).performScrollTo()
+            onNodeWithText("Cebu Run", useUnmergedTree = true).performClick()
             runOnIdle { assertEquals("event-a", openedEvent) }
         }
     }
@@ -110,6 +112,7 @@ class PhotographerPurchasePreviewTest {
         runComposeUiTest {
             setContent { PhotographerPurchasePreview(vm, onClose = {}, onOpenEvent = {}) }
             onNodeWithText("Aira S.").assertIsDisplayed()
+            onNodeWithText("Refresh image").assertDoesNotExist()
             onNodeWithText("Download ↓").assertIsDisplayed()
         }
     }

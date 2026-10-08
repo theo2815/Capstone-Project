@@ -57,6 +57,9 @@ data class PurchasePreviewState(
     val appendError: String? = null,
     val errorStatus: Int? = null,
     val hasMore: Boolean = false,
+    val isRefreshingPhoto: Boolean = false,
+    val photoRefreshError: String? = null,
+    val photoRefreshGeneration: Long = 0,
 )
 
 /** Read-only purchase history; loads only routes the photographer opens. */
@@ -72,9 +75,11 @@ class PhotographerPurchasesViewModel(application: Application) : AndroidViewMode
     private var eventJob: Job? = null
     private var galleryJob: Job? = null
     private var previewJob: Job? = null
+    private var photoRefreshJob: Job? = null
     private var eventRequest = 0L
     private var galleryRequest = 0L
     private var previewRequest = 0L
+    private var photoRefreshRequest = 0L
 
     init {
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -94,9 +99,11 @@ class PhotographerPurchasesViewModel(application: Application) : AndroidViewMode
         eventRequest++
         galleryRequest++
         previewRequest++
+        photoRefreshRequest++
         eventJob?.cancel()
         galleryJob?.cancel()
         previewJob?.cancel()
+        photoRefreshJob?.cancel()
         _eventState.value = PurchaseEventState()
         _purchasedPhotosState.value = PurchasedPhotosState(hasMore = false)
         _previewState.value = PurchasePreviewState(hasMore = false)
@@ -179,7 +186,9 @@ class PhotographerPurchasesViewModel(application: Application) : AndroidViewMode
 
     fun openPurchase(photoId: String, orderId: String? = null, transactionId: String? = null) {
         previewRequest++
+        photoRefreshRequest++
         previewJob?.cancel()
+        photoRefreshJob?.cancel()
         val request = previewRequest
         val generation = session.authChanges.value
         val token = bearer() ?: return
@@ -238,9 +247,35 @@ class PhotographerPurchasesViewModel(application: Application) : AndroidViewMode
         state.photoId?.let { openPurchase(it, state.orderId, state.transactionId) }
     }
 
+    fun refreshPhoto() {
+        val previous = _previewState.value
+        if (previous.photoId == null || previous.photo == null || previous.isLoading || previous.isRefreshingPhoto ||
+            previous.photo.mediaAvailable == false || previous.photo.deletionStartedAt != null) return
+        val token = bearer() ?: return
+        val generation = session.authChanges.value
+        val request = ++photoRefreshRequest
+        _previewState.value = previous.copy(isRefreshingPhoto = true, photoRefreshError = null)
+        photoRefreshJob = viewModelScope.launch {
+            try {
+                val response = RetrofitClient.apiService.getPhotographerPhotoPurchases(token, previous.photoId, previous.orderId, 0, 1)
+                if (request != photoRefreshRequest || !current(generation)) return@launch
+                val page = response.data.takeIf { response.success } ?: error(response.error ?: "Couldn't refresh image.")
+                val latest = _previewState.value
+                _previewState.value = latest.copy(photo = page.photo, event = page.event, isRefreshingPhoto = false,
+                    photoRefreshGeneration = latest.photoRefreshGeneration + 1)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (request == photoRefreshRequest && current(generation))
+                    _previewState.value = _previewState.value.copy(isRefreshingPhoto = false, photoRefreshError = message(e))
+            }
+        }
+    }
+
     fun closePreview() {
         previewRequest++
+        photoRefreshRequest++
         previewJob?.cancel()
+        photoRefreshJob?.cancel()
         _previewState.value = PurchasePreviewState(hasMore = false)
     }
 }

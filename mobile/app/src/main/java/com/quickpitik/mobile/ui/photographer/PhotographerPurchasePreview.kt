@@ -80,6 +80,9 @@ fun PhotographerPurchasePreview(
         onClose = ::close,
         onIndexChange = { next -> viewModel.openPurchase(previewPhotos[next].id) },
         mode = PhotoPreviewMode.OwnerReview,
+        onRefreshImage = state.photo?.let { { photo: PhotoPreviewData -> if (photo.id == state.photoId) viewModel.refreshPhoto() } },
+        imageReloadKey = state.photoRefreshGeneration,
+        isRefreshingImage = state.isRefreshingPhoto,
         canDownload = { photo -> state.photo?.id == photo.id && state.photo?.mediaAvailable != false && state.photo?.deletionStartedAt == null && downloadingPhotoIds[photo.id] != true },
         onDownload = { photo ->
             val token = session.getAccessToken()
@@ -139,6 +142,7 @@ private fun PurchaseDetails(
     val eventId = state.event?.id ?: transaction?.eventId
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Kicker("Purchase details", color = Ink)
+        if (state.photoRefreshError != null) Text("Image refresh failed. Try again.", style = Typography.bodyMedium, color = ErrorRed)
         Fact("Buyer", selected?.buyer ?: transaction?.buyer ?: "Unavailable")
         Fact("Reference", (selected?.orderId ?: state.orderId ?: transaction?.orderId)?.let(::formatOrderRef) ?: "Unavailable")
         Fact("Purchased", formatManila(selected?.purchasedAt ?: transaction?.paidAt, "MMM d, yyyy · h:mm a") ?: "Unavailable")
