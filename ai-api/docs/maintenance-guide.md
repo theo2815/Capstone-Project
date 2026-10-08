@@ -230,12 +230,12 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 
 ### Retraining the Blur Classifier
 
-The classifier has no trained network of its own: stage 1 is a rule with three thresholds, stage 2 is a pretrained person detector plus a fitted logistic rule. Run from `ai-api/`, in this order:
+Run from `ai-api/`, in this order:
 
 1. `scripts/build_blur_folds.py` -- lays the labelled event photos out as five event folds
 2. `scripts/fit_blur_whole_frame_rule.py` -- learns the whole-frame thresholds; copy the printed values into `src/config.py`
 3. `scripts/export_person_detector.py` -- exports the person detector to `models/person_detector/yolov8n_seg_person.onnx` and records its hash (only when the detector itself is replaced)
-4. `scripts/measure_blur_people.py` -- measures the people in every fold photo once and caches the numbers
+4. `scripts/measure_blur_people.py` -- measures the people in every sharp and missed-focus fold photo once and caches the numbers
 5. `scripts/fit_blur_people_rule.py` -- fits the rule and scores it on the folds it never saw
 6. `scripts/ship_blur_rule.py` -- installs the rule as `models/blur_classifier/people_rule.json` and records its hash in `models/manifest.json`; then restart
 

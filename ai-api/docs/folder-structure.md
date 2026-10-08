@@ -312,7 +312,7 @@ ai-api/
 │   ├── fit_blur_whole_frame_rule.py  # Learns the whole-frame rule's thresholds (stage 1).
 │   ├── export_person_detector.py   # Exports the COCO person detector → ONNX →
 │   │                               # models/person_detector/.
-│   ├── measure_blur_people.py      # Measures the people in every fold photo, once (cache).
+│   ├── measure_blur_people.py      # Measures the people in every sharp and missed-focus fold photo, once (cache).
 │   ├── fit_blur_people_rule.py     # Fits the stage-2 rule and scores it fold by fold.
 │   ├── ship_blur_rule.py           # Installs the fitted rule → models/blur_classifier/
 │   │                               # and records its hash in the manifest.
