@@ -2,7 +2,6 @@
 
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 
-import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminKpis,
@@ -25,6 +24,7 @@ import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { captureAuthSession } from "@/lib/auth-session";
 import { useAuthStore } from "@/store/auth-store";
+import { useAdminMutation } from "./use-admin-mutation";
 
 // React Query hooks for admin reads.
 // Keys: ["admin", <domain>, ...]
@@ -92,7 +92,7 @@ export function useAdminFlags(
 // action must never look like a success.
 export function useFlagActions() {
   const qc = useQueryClient();
-  return useMemo(() => {
+  const mutation = useAdminMutation();
     const settle = async (operation: () => Promise<unknown>): Promise<boolean> => {
       const auth = useAuthStore.getState();
       if (!auth.isAuthenticated || auth.user?.role !== "ADMIN") return false;
@@ -104,21 +104,26 @@ export function useFlagActions() {
         throw error;
       }
       if (!isCurrent()) return false;
-      await Promise.all([
+      await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["admin", "flags"] }),
         qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
       ]);
       return isCurrent();
     };
-    return {
-      hide: (flagId: string, reason: string | null) =>
-        settle(() => hideAdminFlag(flagId, reason)),
-      dismiss: (flagId: string, reason: string | null = null) =>
-        settle(() => dismissAdminFlag(flagId, reason)),
-      escalate: (flagId: string, note: string | null) =>
-        settle(() => escalateAdminFlag(flagId, note)),
+    const run = async (id: string, action: string, execute: () => Promise<unknown>) => {
+      const result = await mutation.run({ targets: [{ kind: "flag", id }], action, execute: () => settle(execute) });
+      return result.kind === "completed" && result.value;
     };
-  }, [qc]);
+    return {
+      isPending: (id: string) => mutation.isPending([{ kind: "flag", id }]),
+      pendingAction: (id: string) => mutation.pendingAction([{ kind: "flag", id }]),
+      hide: (flagId: string, reason: string | null) =>
+        run(flagId, "Hiding…", () => hideAdminFlag(flagId, reason)),
+      dismiss: (flagId: string, reason: string | null = null) =>
+        run(flagId, "Dismissing…", () => dismissAdminFlag(flagId, reason)),
+      escalate: (flagId: string, note: string | null) =>
+        run(flagId, "Escalating…", () => escalateAdminFlag(flagId, note)),
+    };
 }
 
 // ───────────────────────────────────────────── Sales

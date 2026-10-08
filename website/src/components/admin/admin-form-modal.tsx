@@ -110,6 +110,7 @@ interface AdminConfirmModalProps {
   confirmLabel: string;
   confirmDisabled?: boolean;
   submitting?: boolean;
+  pendingLabel?: string;
   cancelLabel?: string;
   escDisabled?: boolean;
   children: ReactNode;
@@ -127,6 +128,7 @@ export function AdminConfirmModal({
   confirmLabel,
   confirmDisabled = false,
   submitting = false,
+  pendingLabel = "Saving…",
   cancelLabel = "Cancel",
   escDisabled = false,
   children,
@@ -151,10 +153,11 @@ export function AdminConfirmModal({
           <button
             type="button"
             onClick={onConfirm}
+            aria-busy={submitting}
             disabled={confirmDisabled || submitting}
             className={SUBMIT_BTN_CLS}
           >
-            {submitting ? "Saving…" : confirmLabel}
+            {submitting ? pendingLabel : confirmLabel}
           </button>
         </div>
       </div>

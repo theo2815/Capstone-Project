@@ -76,7 +76,8 @@ export function AdminFlagCard({
   focused = false,
 }: AdminFlagCardProps) {
   const { showToast } = useToast();
-  const { hide, dismiss, escalate } = useFlagActions();
+  const { hide, dismiss, escalate, isPending, pendingAction } = useFlagActions();
+  const submitting = isPending(flag.id);
 
   const [hideOpen, setHideOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
@@ -89,29 +90,27 @@ export function AdminFlagCard({
 
   async function run(
     verb: "hide" | "dismiss" | "escalate",
-    action: Promise<boolean>,
+    action: () => Promise<boolean>,
   ) {
     try {
-      if (!(await action)) return;
+      if (!(await action())) return false;
       showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${flag.id}` });
+      return true;
     } catch {
       showToast({
         kind: "error",
-        message: `Could not ${verb} ${flag.id} — nothing changed. Try again.`,
+        message: `Could not ${verb} ${flag.id} — check the current status before retrying.`,
       });
     }
   }
-  function handleHide(reason: string | null) {
-    setHideOpen(false);
-    void run("hide", hide(flag.id, reason));
+  async function handleHide(reason: string | null) {
+    if (await run("hide", () => hide(flag.id, reason))) setHideOpen(false);
   }
-  function handleDismiss() {
-    setConfirmDismiss(false);
-    void run("dismiss", dismiss(flag.id));
+  async function handleDismiss() {
+    if (await run("dismiss", () => dismiss(flag.id))) setConfirmDismiss(false);
   }
-  function handleEscalate(note: string | null) {
-    setEscalateOpen(false);
-    void run("escalate", escalate(flag.id, note));
+  async function handleEscalate(note: string | null) {
+    if (await run("escalate", () => escalate(flag.id, note))) setEscalateOpen(false);
   }
 
   function handleArticleClick() {
@@ -201,11 +200,13 @@ export function AdminFlagCard({
           </div>
         )}
 
+        {submitting && <p role="status">{pendingAction(flag.id)}</p>}
         {actionable && (
           <div className="flex items-center gap-3 flex-wrap pt-2">
             {canHide(flag) && (
               <button
                 type="button"
+                disabled={submitting}
                 onClick={(e) => {
                   e.stopPropagation();
                   setHideOpen(true);
@@ -219,6 +220,7 @@ export function AdminFlagCard({
             )}
             <button
               type="button"
+                disabled={submitting}
               onClick={(e) => {
                 e.stopPropagation();
                 setConfirmDismiss((v) => !v);
@@ -234,6 +236,7 @@ export function AdminFlagCard({
             {canEscalate(flag) && (
               <button
                 type="button"
+                disabled={submitting}
                 onClick={(e) => {
                   e.stopPropagation();
                   setEscalateOpen(true);
@@ -258,6 +261,7 @@ export function AdminFlagCard({
             </p>
             <button
               type="button"
+                disabled={submitting}
               onClick={(e) => {
                 e.stopPropagation();
                 handleDismiss();
@@ -271,12 +275,14 @@ export function AdminFlagCard({
       </div>
 
       <AdminFlagHideModal
+        submitting={submitting}
         open={hideOpen}
         onClose={() => setHideOpen(false)}
         onSubmit={handleHide}
         flagId={flag.id}
       />
       <AdminEscalateModal
+        submitting={submitting}
         open={escalateOpen}
         onClose={() => setEscalateOpen(false)}
         onSubmit={handleEscalate}

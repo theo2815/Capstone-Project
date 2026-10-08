@@ -24,7 +24,6 @@ import type {
 } from "@/lib/photographer-mock";
 import type { DecisionLogEntry } from "@/lib/admin-user-registry";
 import type { PaginatedResponse } from "@/types/api";
-import { safeUUID } from "@/lib/utils";
 
 // Admin queues fetch a page and then categorize/merge/sort it CLIENT-SIDE
 // (status slabs, optimistic-store overrides, GMV sort), so true offset
@@ -535,31 +534,26 @@ export interface BulkPayoutResult {
   results: Array<{ id: string; ok: boolean; error?: string }>;
 }
 
-// BE requires Idempotency-Key (UUID v4) on POST /admin/payouts/bulk per
-// AdminPayoutsController.bulk — retry safety hinges on it. The header is
-// generated per call so each batch is a distinct logical decision.
-function idempotencyHeader(): { headers: HeadersInit } {
-  return { headers: { "Idempotency-Key": safeUUID() } };
-}
-
 export async function bulkApprovePayouts(
   payoutIds: string[],
+  idempotencyKey: string,
 ): Promise<BulkPayoutResult> {
   return api.post<BulkPayoutResult>(
     "/admin/payouts/bulk",
     { ids: payoutIds, action: "approve" },
-    idempotencyHeader(),
+    { headers: { "Idempotency-Key": idempotencyKey } },
   );
 }
 
 export async function bulkHoldPayouts(
   payoutIds: string[],
   reason: string,
+  idempotencyKey: string,
 ): Promise<BulkPayoutResult> {
   return api.post<BulkPayoutResult>(
     "/admin/payouts/bulk",
     { ids: payoutIds, action: "hold", reason },
-    idempotencyHeader(),
+    { headers: { "Idempotency-Key": idempotencyKey } },
   );
 }
 

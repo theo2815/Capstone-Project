@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminPayoutReports, acknowledgePayoutReport, resolvePayoutReport,
@@ -13,6 +12,7 @@ import {
 import type { PayoutReport } from "@/lib/admin-payout-reports";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
+import { useAdminMutation } from "./use-admin-mutation";
 
 export const EMPTY_REPORTS: PayoutReport[] = [];
 export const payoutReportKeys = {
@@ -46,7 +46,7 @@ export function usePhotographerPayoutReports(args: PhotographerPayoutReportsArgs
 
 export function usePayoutReportActions() {
   const qc = useQueryClient();
-  return useMemo(() => {
+  const mutation = useAdminMutation();
     const settle = async (label: string, operation: () => Promise<PayoutReport>): Promise<boolean> => {
       const session = useAuthStore.getState();
       if (!session.isAuthenticated || !session.user) return false;
@@ -86,13 +86,20 @@ export function usePayoutReportActions() {
           });
         }
       }
-      await Promise.all(prefixes.map((queryKey) => qc.invalidateQueries({ queryKey })));
+      const refresh = prefixes.map((queryKey) => qc.invalidateQueries({ queryKey }));
+      if (label === "submit") await Promise.all(refresh);
+      else await Promise.allSettled(refresh);
       return isCurrent();
     };
+    const run = async (id: string, action: string, label: string, operation: () => Promise<PayoutReport>) => {
+      const result = await mutation.run({ targets: [{ kind: "report", id }], action, execute: () => settle(label, operation) });
+      return result.kind === "completed" && result.value;
+    };
     return {
-      acknowledge: (id: string, reply: string) => settle("acknowledge", () => acknowledgePayoutReport(id, reply)),
-      resolve: (id: string, note: string) => settle("resolve", () => resolvePayoutReport(id, note)),
+      isPending: (id: string) => mutation.isPending([{ kind: "report", id }]),
+      pendingAction: (id: string) => mutation.pendingAction([{ kind: "report", id }]),
+      acknowledge: (id: string, reply: string) => run(id, "Acknowledging…", "acknowledge", () => acknowledgePayoutReport(id, reply)),
+      resolve: (id: string, note: string) => run(id, "Resolving…", "resolve", () => resolvePayoutReport(id, note)),
       submit: (args: SubmitPayoutReportArgs) => settle("submit", () => submitPayoutReport(args)),
     };
-  }, [qc]);
 }

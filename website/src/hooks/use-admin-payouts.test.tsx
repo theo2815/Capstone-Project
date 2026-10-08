@@ -51,6 +51,7 @@ it.each([...actions.map(([name]) => name), "bulkApprove", "bulkHold"] as const)(
     });
     expect(client.getQueryData(key)).toEqual([payoutCycle]);
     expect(useToastStore.getState().toasts).toHaveLength(0);
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     request.reject(new Error("Unavailable"));
     await expect(pending).resolves.toBe(false);
     expect(post).toHaveBeenCalledTimes(1);
@@ -125,7 +126,8 @@ it.each(["logout", "account-change", "same-user-relogin"])("discards late single
   const { result } = renderHook(usePayoutActions, { wrapper });
   const pending = result.current.approve(payoutCycle.id);
   const onPartialFailure = vi.fn();
-  const pendingBulk = result.current.bulkApprove([payoutCycle.id], onPartialFailure);
+  const pendingBulk = result.current.bulkApprove(["independent-cycle"], onPartialFailure);
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
   useAuthStore.getState().logout(); client.clear();
   if (transition !== "logout") useAuthStore.getState().setUser({ ...admin, id: transition === "account-change" ? "admin-b" : admin.id });
   const newKey = adminPayoutKeys.list(useAuthStore.getState().user?.id ?? null);
@@ -146,6 +148,7 @@ it("suppresses a late failure toast after logout", async () => {
   vi.spyOn(api, "post").mockReturnValue(request.promise);
   const { result } = renderHook(usePayoutActions, { wrapper });
   const pending = result.current.markPaid(payoutCycle.id, "REF-123");
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
   useAuthStore.getState().logout(); client.clear();
   request.reject(new Error("Old session failure"));
   await expect(pending).resolves.toBe(false);

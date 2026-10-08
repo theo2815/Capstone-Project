@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import {
   AdminFormSection,
@@ -10,6 +10,7 @@ import {
 
 interface AdminFlagHideModalProps {
   open: boolean;
+  submitting?: boolean;
   onClose: () => void;
   onSubmit: (note: string | null) => void;
   flagId: string;
@@ -29,6 +30,7 @@ const HIDE_REASONS: ReadonlyArray<{ value: string; label: string }> = [
 // appear in runner-facing search results going forward (Phase F backend).
 export function AdminFlagHideModal({
   open,
+  submitting = false,
   onClose,
   onSubmit,
   flagId,
@@ -38,6 +40,10 @@ export function AdminFlagHideModal({
   );
   const [note, setNote] = useState("");
 
+  useEffect(() => {
+    if (!open) { setNote(""); setSelectedReason(HIDE_REASONS[0]!.value); }
+  }, [open]);
+
   function handleSubmit() {
     const label =
       HIDE_REASONS.find((r) => r.value === selectedReason)?.label ??
@@ -45,13 +51,14 @@ export function AdminFlagHideModal({
     const composed =
       note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
     onSubmit(composed);
-    setNote("");
-    setSelectedReason(HIDE_REASONS[0]!.value);
+
   }
 
   return (
     <AdminFormModal
       open={open}
+      submitting={submitting}
+      pendingLabel="Hiding…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Hide ${flagId}`}

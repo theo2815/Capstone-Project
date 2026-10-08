@@ -1,10 +1,10 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, setStepUpHandler } from "@/lib/api";
 import type { AdminPayoutCycle } from "@/lib/admin-payouts";
-import { adminPayoutKeys } from "@/hooks/use-admin-payouts";
+import { adminPayoutKeys, usePayoutActions } from "@/hooks/use-admin-payouts";
 import { admin, payoutCycle } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
@@ -30,6 +30,22 @@ function deferred<T>() {
 function mount() {
   return render(<QueryClientProvider client={client}><PayoutsQueue /><StepUpProvider /></QueryClientProvider>);
 }
+
+it("shows cross-view payout pending feedback while independent rows remain usable", async () => {
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
+  const request = deferred<AdminPayoutCycle>();
+  vi.spyOn(api, "post").mockReturnValue(request.promise);
+  const actions = renderHook(usePayoutActions, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+  mount();
+  let pending!: Promise<boolean>;
+  act(() => { pending = actions.result.current.approve(payoutCycle.id); });
+  await waitFor(() => expect(screen.getByText("Approving…")).toBeInTheDocument());
+  const approvals = screen.getAllByRole("button", { name: /Approve|Approving/ });
+  expect(approvals.filter((button) => button.hasAttribute("disabled"))).toHaveLength(1);
+  expect(approvals.filter((button) => !button.hasAttribute("disabled"))).toHaveLength(1);
+  await act(async () => { request.reject(new Error("Step-up cancelled")); await pending; });
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Approve" }).every((button) => !button.hasAttribute("disabled"))).toBe(true));
+});
 function seed(status: AdminPayoutCycle["status"] = "pending_review") {
   rows = [{ ...payoutCycle, status }]; client.setQueryData(key, rows);
 }
@@ -117,14 +133,14 @@ it.each([
   const input = within(form).getByRole("textbox");
   await user.type(input, "Reference or note retained");
   await user.click(within(form).getByRole("button", { name: submitLabel }));
-  expect(within(form).getByRole("button", { name: "Saving…" })).toBeDisabled();
+  expect(within(form).getByRole("button", { name: action === "hold" ? "Holding…" : action === "mark-paid" ? "Marking paid…" : action === "reject" ? "Rejecting…" : action === "mark-failed" ? "Marking failed…" : "Marking returned…" })).toBeDisabled();
   expect(input).toBeDisabled();
   await user.keyboard("{Escape}");
   expect(form).toBeInTheDocument();
   expect(client.getQueryData(key)).toEqual(rows);
   await act(async () => { request.reject(new Error("Unavailable")); });
   expect(input).toHaveValue("Reference or note retained");
-  expect(within(form).getByRole("button", { name: submitLabel })).toBeEnabled();
+  await waitFor(() => expect(within(form).getByRole("button", { name: submitLabel })).toBeEnabled());
   expect(useToastStore.getState().toasts.at(-1)?.kind).toBe("error");
   post.mockImplementationOnce(async () => {
     rows = [{ ...rows[0], status: finalStatus }]; return rows[0];
@@ -147,7 +163,7 @@ it.each(["approve", "hold"])("keeps bulk %s pending through partial-result recon
   const modal = screen.getByRole("dialog");
   const submit = action === "approve" ? "Confirm approve" : "Hold 2 payouts";
   await user.click(within(modal).getByRole("button", { name: submit }));
-  expect(within(modal).getByRole("button", { name: "Saving…" })).toBeDisabled();
+  expect(within(modal).getByRole("button", { name: action === "approve" ? "Approving…" : "Holding…" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
   await act(async () => { request.resolve({ groupId: "partial", results: [
     { id: payoutCycle.id, ok: true }, { id: "cycle-2", ok: false },
@@ -211,24 +227,24 @@ it("retains a mark-paid form through step-up cancellation, invalid credentials, 
   await user.type(within(form).getByRole("textbox"), "GC-REFERENCE");
   await user.click(within(form).getByRole("button", { name: "Mark paid" }));
   let stepUp = await screen.findByRole("dialog", { name: "Confirm it's you" });
-  expect(within(form).getByRole("button", { name: "Saving…" })).toBeDisabled();
+  expect(within(form).getByRole("button", { name: "Marking paid…" })).toBeDisabled();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(stepUp).not.toBeInTheDocument());
   expect(within(form).getByRole("textbox")).toHaveValue("GC-REFERENCE");
   expect(client.getQueryData(key)).toEqual(rows);
-  await user.click(within(form).getByRole("button", { name: "Mark paid" }));
+  await user.click(await within(form).findByRole("button", { name: "Mark paid" }));
   stepUp = await screen.findByRole("dialog", { name: "Confirm it's you" });
   await user.type(within(stepUp).getByLabelText("Password"), "wrong");
   await user.click(within(stepUp).getByRole("button", { name: "Confirm" }));
   expect(await within(stepUp).findByText("Incorrect password")).toBeInTheDocument();
-  expect(within(form).getByRole("button", { name: "Saving…" })).toBeDisabled();
+  expect(within(form).getByRole("button", { name: "Marking paid…" })).toBeDisabled();
   await user.clear(within(stepUp).getByLabelText("Password"));
   await user.type(within(stepUp).getByLabelText("Password"), "fixture-password");
   await user.click(within(stepUp).getByRole("button", { name: "Confirm" }));
   const retried = fetch.mock.calls.filter(([, opts]) => new Headers(opts.headers).get("X-Step-Up"));
   expect(retried).toHaveLength(1);
   expect(JSON.parse(retried[0][1].body as string)).toEqual({ paymentReference: "GC-REFERENCE" });
-  expect(within(form).getByRole("button", { name: "Saving…" })).toBeDisabled();
+  expect(within(form).getByRole("button", { name: "Marking paid…" })).toBeDisabled();
   rows = [{ ...rows[0], status: "paid", paymentReference: "GC-REFERENCE" }];
   await act(async () => { proofRequest.resolve(new Response(JSON.stringify({ success: true, data: rows[0] }))); });
   await waitFor(() => expect(form).not.toBeInTheDocument());

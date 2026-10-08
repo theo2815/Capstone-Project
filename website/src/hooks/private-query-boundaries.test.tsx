@@ -292,6 +292,7 @@ describe.each(["hide", "dismiss", "escalate"] as const)("flag %s", (action) => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(useFlagActions, { wrapper });
     const outcome = result.current[action]("flag-a", null);
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
     act(() => { useAuthStore.getState().logout(); login("ADMIN"); });
     if (success) pending.resolve({}); else pending.reject(new Error("offline"));
     await expect(outcome).resolves.toBe(false);

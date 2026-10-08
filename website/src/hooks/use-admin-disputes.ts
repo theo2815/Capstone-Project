@@ -10,6 +10,7 @@ import {
 import type { Dispute } from "@/lib/admin-disputes";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
+import { useAdminMutation } from "./use-admin-mutation";
 
 export const EMPTY_DISPUTES: Dispute[] = [];
 export const adminDisputeKeys = {
@@ -46,7 +47,7 @@ export function useAdminDispute(id: string) {
 // Replace cached rows with that record; never reconstruct a decision locally.
 export function useDisputeActions() {
   const qc = useQueryClient();
-  return useMemo(() => {
+  const mutation = useAdminMutation();
     const settle = async (label: string, operation: () => Promise<Dispute>): Promise<Dispute | null> => {
       const session = useAuthStore.getState();
       if (!session.isAuthenticated || session.user?.role !== "ADMIN") return null;
@@ -82,19 +83,24 @@ export function useDisputeActions() {
       }
       qc.setQueryData(adminDisputeKeys.detail(userId, dispute.id), dispute);
       // Refetch lists for filter membership/pagination and related financial counts.
-      await Promise.all([
+      await Promise.allSettled([
         qc.invalidateQueries({ queryKey: adminDisputeKeys.lists(userId) }),
         qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
         qc.invalidateQueries({ queryKey: ["admin", "sales"] }),
       ]);
       return isCurrent() ? dispute : null;
     };
-    return {
-      resolve: (id: string, args: ResolveDisputeArgs) => settle("resolve", () => resolveDispute(id, args)),
-      deny: async (id: string, reason: string | null) => !!(await settle("deny", () => denyDispute(id, reason))),
-      escalate: async (id: string, reason: string | null) => !!(await settle("escalate", () => escalateDispute(id, reason))),
+    const run = async (id: string, action: string, label: string, operation: () => Promise<Dispute>) => {
+      const result = await mutation.run({ targets: [{ kind: "dispute", id }], action, execute: () => settle(label, operation) });
+      return result.kind === "completed" ? result.value : null;
     };
-  }, [qc]);
+    return {
+      isPending: (id: string) => mutation.isPending([{ kind: "dispute", id }]),
+      pendingAction: (id: string) => mutation.pendingAction([{ kind: "dispute", id }]),
+      resolve: (id: string, args: ResolveDisputeArgs) => run(id, "Resolving…", "resolve", () => resolveDispute(id, args)),
+      deny: async (id: string, reason: string | null) => !!(await run(id, "Denying…", "deny", () => denyDispute(id, reason))),
+      escalate: async (id: string, reason: string | null) => !!(await run(id, "Escalating…", "escalate", () => escalateDispute(id, reason))),
+    };
 }
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;

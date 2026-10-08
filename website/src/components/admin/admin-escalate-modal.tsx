@@ -41,6 +41,7 @@ export function AdminEscalateModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel="Escalating…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title={targetLabel}
