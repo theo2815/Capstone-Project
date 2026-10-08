@@ -39,6 +39,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,7 +50,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -279,6 +282,9 @@ fun PhotoPreview(
     metadataViewModel: PhotoMetadataViewModel = viewModel(),
     details: (@Composable (PhotoPreviewData) -> Unit)? = null,
     canDownload: (PhotoPreviewData) -> Boolean = { true },
+    onRefreshImage: ((PhotoPreviewData) -> Unit)? = null,
+    imageReloadKey: Long = 0,
+    isRefreshingImage: Boolean = false,
 ) {
     if (photos.isEmpty()) {
         onClose()
@@ -383,7 +389,7 @@ fun PhotoPreview(
                     // caps at the max. Landscape / not yet loaded: full height,
                     // the stage takes what the strip leaves.
                     .then(
-                        if (fitPortrait) Modifier.heightIn(max = cardMaxHeight)
+                        if (fitPortrait && details == null) Modifier.heightIn(max = cardMaxHeight)
                         else Modifier.height(cardMaxHeight),
                     )
                     .clip(QpCardShape)
@@ -398,11 +404,12 @@ fun PhotoPreview(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f, fill = !fitPortrait)
+                        .weight(1f, fill = details != null || !fitPortrait)
                         .then(
-                            if (fitPortrait) Modifier.height(cardWidth / aspect!!) else Modifier,
+                            if (fitPortrait && details == null) Modifier.height(cardWidth / aspect!!) else Modifier,
                         )
-                        .background(Ink),
+                        .background(Ink)
+                        .clipToBounds(),
                 ) {
                     HorizontalPager(
                         state = pagerState,
@@ -410,12 +417,32 @@ fun PhotoPreview(
                     ) { page ->
                         val pagePhoto = photos[page]
                         Box(modifier = Modifier.fillMaxSize()) {
-                            if (pagePhoto.imageUrl != null) {
-                                ZoomableImage(
-                                    url = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl)!!,
-                                    onAspect = { aspects[page] = it },
-                                    modifier = Modifier.fillMaxSize(),
-                                )
+                            if (pagePhoto.imageUrl != null && pagePhoto.mediaAvailable) {
+                                val url = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl)!!
+                                key(pagePhoto.id, url, if (pagePhoto.id == activePhoto.id) imageReloadKey else 0L) {
+                                    var imageFailed by remember { mutableStateOf(false) }
+                                    ZoomableImage(
+                                        url = url,
+                                        onAspect = { aspects[page] = it },
+                                        onError = { imageFailed = true },
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                    if (imageFailed) Column(
+                                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                    ) {
+                                        Text("Preview unavailable", style = Typography.bodyMedium, color = Color.White)
+                                        if (onRefreshImage != null) {
+                                            Spacer(Modifier.height(12.dp))
+                                            GhostCta(
+                                                text = if (isRefreshingImage) "Refreshing…" else "Refresh image",
+                                                enabled = !isRefreshingImage,
+                                                onClick = { onRefreshImage(pagePhoto) },
+                                                modifier = Modifier.background(Bone, PillShape),
+                                            )
+                                        }
+                                    }
+                                }
                             } else {
                                 Box(
                                     modifier = Modifier
@@ -491,6 +518,7 @@ fun PhotoPreview(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .then(if (details != null) Modifier.heightIn(max = cardMaxHeight * 0.5f).verticalScroll(rememberScrollState()) else Modifier)
                         .padding(horizontal = 20.dp, vertical = 16.dp),
                 ) {
                     Row(
@@ -620,10 +648,7 @@ fun PhotoPreview(
                     if (details != null) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = cardMaxHeight * 0.40f)
-                                .verticalScroll(rememberScrollState()),
+                            modifier = Modifier.fillMaxWidth(),
                         ) { details(activePhoto) }
                     }
 
@@ -668,6 +693,20 @@ fun PhotoPreview(
     }
 }
 
+// The final pointer-up event has no pressed pointers. Compose reports an
+// unspecified centroid then; skip it before it can become a NaN translation.
+internal fun zoomOffsetAfterGesture(
+    offset: Offset,
+    centroid: Offset,
+    centre: Offset,
+    currentScale: Float,
+    nextScale: Float,
+    pan: Offset,
+): Offset? {
+    if (!centroid.isSpecified) return null
+    return (offset - (centroid - centre)) * (nextScale / currentScale) + (centroid - centre) + pan
+}
+
 // Pinch-to-zoom + double-tap-to-zoom over the preview. Pans while zoomed and
 // hands the drag back to the HorizontalPager at 1×, so a swipe still pages.
 // Decodes at the preview's native size (Size.ORIGINAL) — Coil would otherwise
@@ -680,6 +719,7 @@ fun PhotoPreview(
 private fun ZoomableImage(
     url: String,
     onAspect: (Float) -> Unit,
+    onError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -723,8 +763,9 @@ private fun ZoomableImage(
                             val centroid = event.calculateCentroid()
                             val centre = Offset(size.width / 2f, size.height / 2f)
                             // Keep the pinch centroid fixed while scaling around the centre.
-                            val scaled = (offset - (centroid - centre)) * (s / scale.value) + (centroid - centre)
-                            offset = clamp(scaled + pan, s)
+                            val next = zoomOffsetAfterGesture(offset, centroid, centre, scale.value, s, pan)
+                                ?: continue
+                            offset = clamp(next, s)
                             scope.launch { scale.snapTo(s) }
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
@@ -745,6 +786,7 @@ private fun ZoomableImage(
                     onAspect(d.intrinsicWidth.toFloat() / d.intrinsicHeight)
                 }
             },
+            onError = { onError() },
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
