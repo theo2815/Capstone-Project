@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -692,6 +693,20 @@ fun PhotoPreview(
     }
 }
 
+// The final pointer-up event has no pressed pointers. Compose reports an
+// unspecified centroid then; skip it before it can become a NaN translation.
+internal fun zoomOffsetAfterGesture(
+    offset: Offset,
+    centroid: Offset,
+    centre: Offset,
+    currentScale: Float,
+    nextScale: Float,
+    pan: Offset,
+): Offset? {
+    if (!centroid.isSpecified) return null
+    return (offset - (centroid - centre)) * (nextScale / currentScale) + (centroid - centre) + pan
+}
+
 // Pinch-to-zoom + double-tap-to-zoom over the preview. Pans while zoomed and
 // hands the drag back to the HorizontalPager at 1×, so a swipe still pages.
 // Decodes at the preview's native size (Size.ORIGINAL) — Coil would otherwise
@@ -748,8 +763,9 @@ private fun ZoomableImage(
                             val centroid = event.calculateCentroid()
                             val centre = Offset(size.width / 2f, size.height / 2f)
                             // Keep the pinch centroid fixed while scaling around the centre.
-                            val scaled = (offset - (centroid - centre)) * (s / scale.value) + (centroid - centre)
-                            offset = clamp(scaled + pan, s)
+                            val next = zoomOffsetAfterGesture(offset, centroid, centre, scale.value, s, pan)
+                                ?: continue
+                            offset = clamp(next, s)
                             scope.launch { scale.snapTo(s) }
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }

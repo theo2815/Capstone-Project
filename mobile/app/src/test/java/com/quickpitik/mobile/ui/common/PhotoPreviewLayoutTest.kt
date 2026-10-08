@@ -6,6 +6,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.Density
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,6 +25,12 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 class PhotoPreviewLayoutTest {
     private val photo = PhotoPreviewData("photo-a", 50.0, null, "Cebu Run", metadataAccess = "owner")
+
+    @Test fun `lifting both fingers skips the zoom transform`() {
+        assertNull(
+            zoomOffsetAfterGesture(Offset(120f, -30f), Offset.Unspecified, Offset(300f, 300f), 2f, 2f, Offset.Zero),
+        )
+    }
 
     @OptIn(ExperimentalTestApi::class)
     private fun checkDetails(fontScale: Float = 1f) = runComposeUiTest {
