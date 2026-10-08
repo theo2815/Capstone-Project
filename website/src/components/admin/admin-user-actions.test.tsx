@@ -137,3 +137,12 @@ it("retains only failed bulk rejections, keeps their reason, and retries them on
   await user.click(within(dialog).getByRole("button", { name: "Send back" })); await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post).toHaveBeenCalledTimes(3); expect(post.mock.calls[2][0]).toContain("photographer-2/reject");
 });
+it("names the pending bulk approval and blocks repeat Enter until it settles", async () => {
+  const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValue(request.promise);
+  mount(true); const user = userEvent.setup();
+  await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
+  await user.click(screen.getByRole("button", { name: "Approve 1" }));
+  expect(screen.getByRole("button", { name: "Approving…" })).toHaveAttribute("aria-busy", "true");
+  await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(1);
+  await act(async () => { request.resolve(adminUser); });
+});

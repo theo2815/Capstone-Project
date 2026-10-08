@@ -400,6 +400,7 @@ export function VerificationsQueue() {
 
       <VerificationsBulkBar
         submitting={submitting}
+        pendingLabel={activeLabel}
         count={selected.size}
         onApprove={handleBulkApprove}
         onReject={() => openRejection(true)}
@@ -979,12 +980,14 @@ function FieldRow({
 function VerificationsBulkBar({
   count,
   submitting,
+  pendingLabel,
   onApprove,
   onReject,
   onClear,
 }: {
   count: number;
   submitting: boolean;
+  pendingLabel: string | null;
   onApprove: () => void;
   onReject: () => void;
   onClear: () => void;
@@ -1009,7 +1012,7 @@ function VerificationsBulkBar({
             onClick={onApprove}
             className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
           >
-            Approve {count}
+            {pendingLabel === "Approving…" ? pendingLabel : `Approve ${count}`}
           </button>
           <button
             type="button"
