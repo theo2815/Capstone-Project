@@ -85,7 +85,7 @@ class PhotoRemovalSweepTest {
 
     private fun sweep(now: Instant, limit: Int = 1) = sweepService().sweepDue(now, limit)
     private fun sweepService() = PhotoRemovalSweep(requests, reviews, items, auditRepository, recorder, publisher, tx,
-        Clock.fixed(deadline, ZoneOffset.UTC), PhotoRemovalProperties(sweepBatchSize = 1))
+        Clock.fixed(deadline, ZoneOffset.UTC), PhotoRemovalProperties(sweepBatchSize = 1), mock(PhotoRemovalService::class.java))
 
     @Test fun `scheduled sweep uses configured action budget and injected time`() {
         sweepService().sweep()
@@ -94,6 +94,18 @@ class PhotoRemovalSweepTest {
         assertEquals(1, audit.size)
         assertEquals(deadline, audit.single().occurredAt)
     }
+    @Test fun `fresh retained review overdue needs an admin decision and never becomes consent`() {
+        item.state = RemovalItemState.RETAINED_RESTRICTED
+        item.adminDecision = RemovalDecision.RETAIN_RESTRICTED
+        `when`(items.findPendingOwnerReviewItemIds(request.id)).thenReturn(listOf(item.id))
+        assertEquals(1, sweep(deadline))
+        assertTrue(review.overdue)
+        assertEquals(RemovalDecision.RETAIN_RESTRICTED, item.adminDecision)
+        assertEquals(RemovalItemState.RETAINED_RESTRICTED, item.state)
+        assertNull(item.ownerResponse)
+        assertEquals(RemovalRequestStatus.OPEN, request.status)
+    }
+
     private fun event() = RemovalHistoryEvent(requestId = request.id, actorType = RemovalActorType.SYSTEM,
         action = "REVIEW_OVERDUE", occurredAt = deadline, commandId = UUID.randomUUID())
 }

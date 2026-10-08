@@ -9,6 +9,13 @@ import java.time.Instant
 import java.util.UUID
 
 interface PhotoRemovalCommandRepository : JpaRepository<PhotoRemovalCommand, UUID> {
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photo_removal_commands c SET result = sanitize_photo_removal_result(c.operation, c.result)
+        WHERE c.request_id = :requestId AND c.state = 'SUCCEEDED' AND EXISTS
+            (SELECT 1 FROM photo_removal_requests r WHERE r.id = c.request_id AND r.status IN ('RESOLVED','CANCELLED'))
+        AND c.result IS DISTINCT FROM sanitize_photo_removal_result(c.operation, c.result)""", nativeQuery = true)
+    fun sanitizeTerminalResults(requestId: UUID): Int
+
     @Modifying(flushAutomatically = true)
     @Query(value = """
         INSERT INTO photo_removal_commands
