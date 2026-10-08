@@ -146,7 +146,7 @@ it("keeps a newly selected receipt while a bounded same-URL refresh finishes", a
   const get = vi.spyOn(api, "get")
     .mockResolvedValueOnce(first)
     .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
-  render(view({ photoId: photo.id, orderId: orderA }, client));
+  render(view({ photoId: photo.id }, client));
   const failedImage = await screen.findByRole("img", { name: "Race photo of bib 101" });
   fireEvent.error(failedImage);
   fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));

@@ -114,6 +114,8 @@ export function usePhotographerPhotoPurchases(photoId: string | null, orderId?: 
           signal: controller.signal,
         });
         if (controller.signal.aborted || refreshController.current !== controller || !canRead()) return;
+        await queryClient.cancelQueries({ queryKey: targetKey, exact: true });
+        if (controller.signal.aborted || refreshController.current !== controller || !canRead()) return;
         queryClient.setQueryData<InfiniteData<PhotographerPhotoPurchasesResponse>>(targetKey, (current) => current ? {
           ...current,
           pages: current.pages.map((page, index) => index === 0 ? { ...page, photo: fresh.photo, event: fresh.event } : page),

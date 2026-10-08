@@ -253,3 +253,32 @@ it("single-flights a failed photo refresh and allows a bounded retry", async () 
   expect(result.current.photo?.thumbnailUrl).toBe("fresh");
   expect(result.current.photoRefreshError).toBeNull();
 });
+
+it("keeps refreshed media when an older page append completes later", async () => {
+  login();
+  const page = (orderId: string, offset: number, url: string) => ({
+    items: [{ orderId, photoId: "photo-a" }], offset, limit: 1, total: 2,
+    photo: { id: "photo-a", thumbnailUrl: url, mediaAvailable: true },
+    event: { id: "event-a" }, selectedPurchase: null,
+  });
+  let resolveAppend!: (value: ReturnType<typeof page>) => void;
+  const get = vi.spyOn(api, "get")
+    .mockResolvedValueOnce(page("order-a", 0, "expired"))
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveAppend = resolve; }))
+    .mockResolvedValueOnce({ ...page("order-a", 0, "fresh"), items: [] });
+  const { result } = renderHook(() => usePhotographerPhotoPurchases("photo-a"), { wrapper });
+  await waitFor(() => expect(result.current.photo?.thumbnailUrl).toBe("expired"));
+
+  let append!: ReturnType<typeof result.current.fetchNextPage>;
+  act(() => { append = result.current.fetchNextPage(); });
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  const appendSignal = get.mock.calls[1][1]?.signal;
+  await act(async () => { await result.current.refreshPhoto(); });
+  expect(result.current.photo?.thumbnailUrl).toBe("fresh");
+
+  await act(async () => { resolveAppend(page("order-b", 1, "expired")); await append; });
+
+  expect(appendSignal?.aborted).toBe(true);
+  expect(result.current.photo?.thumbnailUrl).toBe("fresh");
+  expect(result.current.items.map((item) => item.orderId)).toEqual(["order-a"]);
+});

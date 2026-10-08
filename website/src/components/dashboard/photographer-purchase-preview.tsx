@@ -101,7 +101,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     if (refreshingImage.current) return;
     refreshingImage.current = true;
     try {
-      await purchase.refreshPhoto(orderId);
+      await purchase.refreshPhoto(selected?.orderId ?? orderId);
       if (activeSelection.current === selectionKey) setImageReloadKey((key) => key + 1);
     } catch {
       // The hook exposes a scoped retry error without replacing purchase history.
