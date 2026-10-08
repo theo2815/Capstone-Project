@@ -40,6 +40,7 @@ class AdminEventServiceReindexTest {
         Mockito.mock(com.quickpitik.repository.UserRepository::class.java),
         testTransactionTemplate(),
         Mockito.mock(AdminActionCommandService::class.java),
+        Mockito.mock(com.quickpitik.service.reference.RegionsService::class.java),
     )
 
     private val adminId = UUID.randomUUID()

@@ -32,6 +32,7 @@ import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.events.EventInputs
 import com.quickpitik.service.photographer.PricingTrio
+import com.quickpitik.service.reference.RegionsService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
@@ -56,6 +57,7 @@ class AdminEventService(
     private val userRepository: UserRepository,
     private val transactionTemplate: TransactionTemplate,
     private val commands: AdminActionCommandService,
+    private val regionsService: RegionsService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -245,13 +247,15 @@ class AdminEventService(
         cover: CoverUpload? = null,
         key: IdempotencyKey? = null,
     ): AdminListEventDto {
-        if (key != null) return createCommand(adminId, req, cover, key)
+        val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim())
+        validateLocation(normalized.regionCode, normalized.provinceCode)
+        if (key != null) return createCommand(adminId, normalized, cover, key)
         val date = parseDate(req.date)
         val price = validatedPrice(req.pricePerPhoto)
         val eventId = UUID.randomUUID()
         val coverKey = cover?.let { eventCoverService.upload(eventId, it.bytes, it.contentType) }
         // ponytail: unkeyed legacy commit failure can orphan a cover; keyed callers use durable provenance.
-        val result = transactionTemplate.execute { createEvent(adminId, req, eventId, coverKey, date, price).first }!!
+        val result = transactionTemplate.execute { createEvent(adminId, normalized, eventId, coverKey, date, price).first }!!
         return eventDtoMapper.toAdminListDto(result)
     }
 
@@ -265,6 +269,8 @@ class AdminEventService(
                 name = req.title.trim(),
                 date = date,
                 location = req.location.trim(),
+                regionCode = req.regionCode,
+                provinceCode = req.provinceCode,
                 photoCount = 0,
                 participantCount = 0,
                 status = EventStatus.ACTIVE,
@@ -283,6 +289,8 @@ class AdminEventService(
                 "title" to req.title,
                 "date" to req.date,
                 "location" to req.location,
+                "regionCode" to req.regionCode,
+                "provinceCode" to req.provinceCode,
                 "pricePerPhoto" to price.toPlainString(),
             ),
         )
@@ -301,7 +309,9 @@ class AdminEventService(
         removeCover: Boolean = false,
         key: IdempotencyKey? = null,
     ): AdminListEventDto {
-        if (key != null) return updateCommand(adminId, eventId, req, cover, removeCover, key)
+        val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim())
+        validateLocation(normalized.regionCode, normalized.provinceCode)
+        if (key != null) return updateCommand(adminId, eventId, normalized, cover, removeCover, key)
         // Preserve validation before the PUT, then reload in the write transaction
         // so edits made during the upload are not overwritten by a detached snapshot.
         val coverKey = cover?.let {
@@ -316,12 +326,21 @@ class AdminEventService(
             val event = loadForReview(eventId)
             event.requireReviewRevision(req.expectedRevision)
             val oldKey = event.coverS3Key
-            updateEvent(adminId, event, req, coverKey, removeCover)
+            updateEvent(adminId, event, normalized, coverKey, removeCover)
             event to oldKey?.takeIf { it.isNotBlank() && it != event.coverS3Key }
         } ?: error("Event update returned null")
         // Never delete the stored cover until its replacement/removal has committed.
         oldCoverKey?.let(eventCoverService::delete)
         return eventDtoMapper.toAdminListDto(result)
+    }
+
+    private fun validateLocation(region: String?, province: String?) {
+        if (region == null && province == null) return
+        if (region.isNullOrBlank() || province.isNullOrBlank() || region.length > 20 || province.length > 40 ||
+            !regionsService.isValidPair(region, province)) {
+            throw ValidationException(code = ErrorCodes.INVALID_REGION,
+                message = "Unknown regionCode/provinceCode pair", field = "regionCode")
+        }
     }
 
     private fun authorizeCommand(adminId: UUID) {
@@ -333,9 +352,11 @@ class AdminEventService(
 
     private fun createCommand(adminId: UUID, req: CreateAdminEventRequest, cover: CoverUpload?,
         key: IdempotencyKey): AdminListEventDto {
+        // Omitted pairs keep the fingerprint of receipts created before location support.
         val fields = listOf(req.title.trim(), req.date.trim(), req.location.trim(),
             req.pricePerPhoto.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
-            req.organizerName?.trim().orEmpty(), req.description?.trim().orEmpty(), cover?.let { eventCoverService.digest(it.bytes) }.orEmpty())
+            req.organizerName?.trim().orEmpty(), req.description?.trim().orEmpty(), cover?.let { eventCoverService.digest(it.bytes) }.orEmpty()) +
+            listOfNotNull(req.regionCode, req.provinceCode)
         var processed: ByteArray? = null
         val result = commands.executeEvent(key, adminId, AdminActionOperation.EVENT_CREATE,
             null, commands.inputHash(fields), { authorizeCommand(adminId) }, {
@@ -358,7 +379,8 @@ class AdminEventService(
         val fields = listOf(eventId.toString(), req.title?.trim().orEmpty(), req.date?.trim().orEmpty(),
             req.location?.trim().orEmpty(), req.pricePerPhoto?.setScale(2, java.math.RoundingMode.HALF_UP)?.toPlainString().orEmpty(),
             req.organizerName?.trim().orEmpty(), req.description?.trim().orEmpty(), req.expectedRevision?.toString().orEmpty(),
-            (removeCover && cover == null).toString(), cover?.let { eventCoverService.digest(it.bytes) }.orEmpty())
+            (removeCover && cover == null).toString(), cover?.let { eventCoverService.digest(it.bytes) }.orEmpty()) +
+            listOfNotNull(req.regionCode, req.provinceCode)
         var processed: ByteArray? = null
         var oldCover: String? = null
         val result = commands.executeEvent(key, adminId, AdminActionOperation.EVENT_UPDATE,
@@ -437,6 +459,22 @@ class AdminEventService(
                 before["location"] = event.location
                 after["location"] = newLocation
                 event.location = newLocation
+            }
+        }
+        req.regionCode?.let {
+            if (event.regionCode != it) {
+                changes["regionCode"] = mapOf("from" to event.regionCode, "to" to it)
+                before["regionCode"] = event.regionCode
+                after["regionCode"] = it
+                event.regionCode = it
+            }
+        }
+        req.provinceCode?.let {
+            if (event.provinceCode != it) {
+                changes["provinceCode"] = mapOf("from" to event.provinceCode, "to" to it)
+                before["provinceCode"] = event.provinceCode
+                after["provinceCode"] = it
+                event.provinceCode = it
             }
         }
         // Organizer + race-day notes feed the runner-facing "About this race"

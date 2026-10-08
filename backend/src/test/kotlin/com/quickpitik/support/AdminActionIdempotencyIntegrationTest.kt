@@ -105,7 +105,7 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         return java.io.ByteArrayOutputStream().also { javax.imageio.ImageIO.write(image, "png", it) }.toByteArray()
     }
 
-    private fun eventRequest(actor: UUID, key: String?, title: String, id: UUID? = null, cover: ByteArray? = null, revision: Long? = null): org.springframework.mock.web.MockHttpServletResponse {
+    private fun eventRequest(actor: UUID, key: String?, title: String, id: UUID? = null, cover: ByteArray? = null, revision: Long? = null, region: String? = null, province: String? = null): org.springframework.mock.web.MockHttpServletResponse {
         val principal = AuthPrincipal(actor, "fixture@test.local", users.findById(actor).orElseThrow().role)
         SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
         try {
@@ -117,6 +117,8 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
             if (id != null) request.with { it.method = "PATCH"; it }
             if (key != null) request.header("Idempotency-Key", key)
             if (revision != null) request.param("expectedRevision", revision.toString())
+            if (region != null) request.param("regionCode", region)
+            if (province != null) request.param("provinceCode", province)
             if (cover != null) request.file(org.springframework.mock.web.MockMultipartFile("cover", "cover.png", "image/png", cover))
             return mvc.perform(request).andReturn().response
         } finally { SecurityContextHolder.clearContext() }
@@ -151,7 +153,7 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(2,events.findById(id).orElseThrow().reviewRevision); eventEffects(id,3); assertEquals(3,puts.size); assertEquals(2,deletes.size)
     }
 
-    @ParameterizedTest @ValueSource(strings=["actor","bytes","operation","target"])
+    @ParameterizedTest @ValueSource(strings=["actor","bytes","operation","target","classification"])
     fun `event key rejects changed identity before upload`(field: String) {
         val actor=user(Role.ADMIN); val key=UUID.randomUUID().toString(); val title="Mismatch ${UUID.randomUUID()}"; val bytes=image()
         val id=eventId(eventRequest(actor,key,title,cover=bytes))
@@ -159,6 +161,7 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
             "actor" -> eventRequest(user(Role.ADMIN),key,title,cover=bytes)
             "bytes" -> eventRequest(actor,key,title,cover=image(0xffffff))
             "operation" -> eventRequest(actor,key,title,id,bytes)
+            "classification" -> eventRequest(actor,key,title,cover=bytes,region="region-7",province="cebu")
             else -> { val updateKey=UUID.randomUUID().toString(); eventId(eventRequest(actor,updateKey,"Changed",id,bytes)); eventRequest(actor,updateKey,"Changed",UUID.randomUUID(),bytes) }
         }
         assertEquals(409,response.status); assertEquals(if(field=="target") 2 else 1,puts.size)

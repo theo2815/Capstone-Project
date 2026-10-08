@@ -136,6 +136,9 @@ class AdminEventsController(
     @InitBinder("form")
     fun trimEventForm(binder: WebDataBinder) {
         binder.registerCustomEditor(String::class.java, StringTrimmerEditor(true))
+        // A supplied blank pair is invalid, not an omitted PATCH.
+        binder.registerCustomEditor(String::class.java, "regionCode", StringTrimmerEditor(false))
+        binder.registerCustomEditor(String::class.java, "provinceCode", StringTrimmerEditor(false))
     }
 
     private fun coverOf(cover: MultipartFile?): AdminEventService.CoverUpload? =

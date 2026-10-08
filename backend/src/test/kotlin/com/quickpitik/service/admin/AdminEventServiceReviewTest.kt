@@ -86,6 +86,7 @@ class AdminEventServiceReviewTest {
             Mockito.mock(UserRepository::class.java),
             transactions,
             Mockito.mock(AdminActionCommandService::class.java),
+            com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
         )
         service = ProxyFactory(target).apply {
             addAdvice(TransactionInterceptor().apply {
@@ -442,6 +443,25 @@ class AdminEventServiceReviewTest {
             assertTrue(TransactionSynchronizationManager.isActualTransactionActive())
             AdminDecisionLog(adminId = adminId, targetEventId = it.getArgument(1), decision = it.getArgument(2))
         }
+    }
+
+    @Test
+    fun `invalid location pairs reject legacy and keyed writes before cover or claim`() {
+        val event = submitted()
+        for ((region, province) in listOf("region-7" to null, null to "cebu", "" to "",
+            "region-7" to "metro-manila", "r".repeat(21) to "cebu", "region-7" to "p".repeat(41))) {
+            for (key in listOf(null, com.quickpitik.common.IdempotencyKey(UUID.randomUUID().toString()))) {
+                val createError = assertFailsWith<ValidationException> {
+                    service.create(adminId, createRequest().copy(regionCode = region, provinceCode = province), cover(), key)
+                }
+                assertEquals("INVALID_REGION", createError.code)
+                val updateError = assertFailsWith<ValidationException> {
+                    service.update(adminId, event.id, UpdateAdminEventRequest(regionCode = region, provinceCode = province), cover(), key = key)
+                }
+                assertEquals("INVALID_REGION", updateError.code)
+            }
+        }
+        Mockito.verifyNoInteractions(covers, decisions)
     }
 
     private fun createRequest() = CreateAdminEventRequest(

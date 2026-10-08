@@ -45,6 +45,10 @@ data class AdminListEventDto(
     val pendingChange: Map<String, Any?>? = null,
     @field:Schema(description = "Event review generation; advances on actual decisions and edits")
     val reviewRevision: Long = 0,
+    @field:Schema(description = "Canonical region code from /regions; null for unclassified legacy events", nullable = true)
+    val regionCode: String? = null,
+    @field:Schema(description = "Canonical province code from /regions; null for unclassified legacy events", nullable = true)
+    val provinceCode: String? = null,
 )
 
 data class ApproveEventRequest(
@@ -84,6 +88,11 @@ data class CreateAdminEventRequest(
     val organizerName: String? = null,
     @field:Size(max = 600)
     val description: String? = null,
+    @field:Size(max = 20)
+    @field:Schema(description = "Optional v1 location pair from /regions; supply both nonblank codes or omit both")
+    val regionCode: String? = null,
+    @field:Size(max = 40)
+    val provinceCode: String? = null,
 )
 
 // PATCH /admin/events/{id} — body { title?, date?, location?, pricePerPhoto?,
@@ -104,6 +113,11 @@ data class UpdateAdminEventRequest(
     val description: String? = null,
     @field:PositiveOrZero
     val expectedRevision: Long? = null,
+    @field:Size(max = 20)
+    @field:Schema(description = "Omit both codes to preserve location; supply both valid /regions codes to replace it. Clearing is not supported")
+    val regionCode: String? = null,
+    @field:Size(max = 40)
+    val provinceCode: String? = null,
 )
 
 data class AdminEventDeleteResponseDto(

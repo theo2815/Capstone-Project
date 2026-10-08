@@ -134,6 +134,12 @@ class Event(
 
     @Column(name = "reviewed_by")
     var reviewedBy: UUID? = null,
+
+    @Column(name = "region_code", length = 20)
+    var regionCode: String? = null,
+
+    @Column(name = "province_code", length = 40)
+    var provinceCode: String? = null,
 ) {
     fun requireReviewRevision(expected: Long?) {
         if (expected != null && expected != reviewRevision) {

@@ -191,6 +191,20 @@ class EventFormBindingTest {
         assertNull(adminCreated)
     }
 
+    @Test
+    fun `admin location codes trim supplied values but preserve explicit blanks`() {
+        val json = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+        for ((region, province) in listOf(" region-7 " to " cebu ", " " to "")) {
+            admin.perform(multipart("/api/v1/admin/events")
+                .param("title", "Run").param("date", "2026-11-08").param("location", "Venue")
+                .param("regionCode", region).param("provinceCode", province))
+                .andExpect(status().isOk)
+            val bound = json.valueToTree<com.fasterxml.jackson.databind.JsonNode>(assertNotNull(adminCreated))
+            assertEquals(region.trim(), bound["regionCode"]?.asText())
+            assertEquals(province.trim(), bound["provinceCode"]?.asText())
+        }
+    }
+
     private fun mvc(controller: Any): MockMvc =
         MockMvcBuilders.standaloneSetup(controller)
             .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver())
