@@ -82,7 +82,7 @@ except ImportError:
     _HAS_CPP = False
 ```
 
-Then branch on `_HAS_CPP` only where a function has the same output contract. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs. The live consumer is `batch_cosine_topk` in the face matcher. The classifier preprocess and classical blur metric functions remain exported but are not used by served inference: classifier preprocessing needs area averaging, and the C++ blur score differs from OpenCV at image borders.
+Then branch on `_HAS_CPP` only where a function has the same output contract. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs. The live consumer is `batch_cosine_topk` in the face matcher. The classifier preprocess and classical blur metric functions remain exported but are not used by served inference: the blur classifier no longer calls `classify_preprocess` (it measures people at the 1280-px upload), and the C++ blur score differs from OpenCV at image borders.
 
 ### Database Access
 
@@ -225,7 +225,7 @@ API endpoints:
 - `POST /api/v1/blur/detect/stream` — NDJSON stream, up to 500 images, synchronous
 - `POST /api/v1/blur/detect/batch` — async Celery, up to `MAX_BATCH_SIZE` (50)
 - `POST /api/v1/blur/detect/mega` — async Celery chord, up to 500 images
-- `POST /api/v1/blur/classify` — single image, CNN (optional `blur_type` query param)
+- `POST /api/v1/blur/classify` — single image, two-stage classifier (optional `blur_type` query param)
 - `POST /api/v1/blur/classify/stream` — NDJSON stream, up to 500
 - `POST /api/v1/blur/classify/batch` — async Celery, up to 50
 - `POST /api/v1/blur/classify/mega` — async Celery chord, up to 500
