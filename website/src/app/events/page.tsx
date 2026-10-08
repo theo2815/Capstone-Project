@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { SiteHeader } from "@/components/layout/site-header";
-import { fetchEventsList } from "@/lib/api-events";
+import { fetchPublicEventsCatalog } from "@/lib/api-events";
 import { EventsBrowser } from "./events-browser";
 
 export const metadata: Metadata = {
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function EventsPage() {
-  const events = await fetchEventsList();
+  const events = await fetchPublicEventsCatalog().catch(() => undefined);
 
   return (
     <main className="bg-bone text-ink relative">

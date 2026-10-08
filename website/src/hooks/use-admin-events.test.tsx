@@ -9,7 +9,7 @@ import { admin, adminEvent } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
 import { adminEventKeys, useAdminEvents, useAdminEventActions } from "./use-admin-events";
-import { usePublicEvents } from "./use-public-events";
+import { usePublicEvents, usePublicEventsCatalog } from "./use-public-events";
 
 let client: QueryClient;
 const key = adminEventKeys.list(admin.id);
@@ -245,6 +245,18 @@ it("shares public SSR data through Query and refetches after admin invalidation"
   await waitFor(() => expect(client.isFetching()).toBe(0));
   await act(async () => { await result.current.actions.deleteEvent(adminEvent.id); });
   await waitFor(() => expect(result.current.events).toEqual([]));
+});
+it.each(actions)("%s refreshes the complete public catalog without copying the admin response", async action => {
+  const publicRow = { id: "public", slug: "public", name: "Public race", date: "2099-01-01", location: "Venue", status: "ACTIVE", photoCount: 0, participantCount: 0, regionCode: "region-vii", provinceCode: "bohol" };
+  let items = [publicRow];
+  vi.spyOn(api, "get").mockImplementation(async () => ({ items, total: items.length, offset: 0, limit: 200 }));
+  mockRequest(action, Promise.resolve(action === "deleteEvent" ? { removed: true } : { ...adminEvent, visibility: "unlisted" }));
+  const { result } = renderHook(() => ({ catalog: usePublicEventsCatalog(), actions: useAdminEventActions() }), { wrapper });
+  await waitFor(() => expect(result.current.catalog.data?.[0].id).toBe("public"));
+  items = [];
+  await act(async () => { await invoke(result.current.actions, action); });
+  await waitFor(() => expect(result.current.catalog.data).toEqual([]));
+  expect(client.getQueryData(publicKey)).toEqual([adminEvent]);
 });
 it("does not fetch or mutate as a signed-out visitor", async () => {
   useAuthStore.getState().logout(); const get = vi.spyOn(api, "get"); const post = vi.spyOn(api, "post");
