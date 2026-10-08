@@ -672,6 +672,47 @@ class TestClassifyStream:
         assert lines[2]["predicted_class"] == "sharp"
         assert lines[3]["_summary"] is True
 
+    def test_finished_line_carries_milliseconds_per_photo_per_stage(
+        self, client, stub_registry, monkeypatch
+    ):
+        from src.api.v1 import blur as blur_module
+
+        class TimedClassifier(_StubClassifier):
+            """Stage totals that have grown by 0.004 / 0.3 / 0.06 s when read the second time."""
+
+            snapshots = 0
+
+            def timing_snapshot(self):
+                self.snapshots += 1
+                grown = self.snapshots > 1
+                return {"stage1": 0.004 if grown else 0.0, "detect": 0.3 if grown else 0.0,
+                        "measure": 0.06 if grown else 0.0}
+
+        lines = []
+
+        class Recorder:
+            def info(self, event, **fields):
+                lines.append((event, fields))
+
+            def warning(self, event, **fields):
+                pass
+
+            error = exception = debug = warning
+
+        monkeypatch.setattr(blur_module, "logger", Recorder())
+        stub_registry(TimedClassifier())
+
+        resp = client.post("/api/v1/blur/classify/stream", files=_files([_make_jpeg_bytes()] * 2))
+
+        assert resp.status_code == 200
+        finished = next(
+            fields for event, fields in lines if event == "Stream blur classification finished"
+        )
+        assert finished["stage1_ms_per_photo"] == 2.0  # 0.004 s over 2 photos
+        assert finished["detect_ms_per_photo"] == 150.0
+        assert finished["measure_ms_per_photo"] == 30.0
+        assert 0 <= finished["decode_ms_per_photo"] <= finished["ms_per_photo"]
+
 
 # ---------------------------------------------------------------------------
 # POST /api/v1/blur/detect/stream — the desktop's other high-throughput path

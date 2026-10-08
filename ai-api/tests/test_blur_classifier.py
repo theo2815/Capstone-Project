@@ -767,3 +767,19 @@ class TestBlurServiceClassify:
         assert result is not None
         assert "detected" in result
         assert isinstance(result["detected"], bool)
+
+
+def test_stage_timers_grow_only_for_the_stages_a_photo_went_through(tmp_path):
+    classifier = _arm(_unarmed(tmp_path), p_missed=0.3)
+    assert classifier.timing_snapshot() == {"stage1": 0.0, "detect": 0.0, "measure": 0.0}
+
+    classifier.classify_batch([_soft_frame()])  # stage 1 decides; the detector never runs
+    after_soft = classifier.timing_snapshot()
+    assert after_soft["stage1"] > 0 and after_soft["detect"] == 0 and after_soft["measure"] == 0
+
+    classifier.classify(_make_bgr_image())  # noise is "sharp" for stage 1, so stage 2 runs
+    after_sharp = classifier.timing_snapshot()
+    assert after_sharp["stage1"] > after_soft["stage1"]
+    assert after_sharp["detect"] > 0 and after_sharp["measure"] > 0
+    after_sharp["detect"] = -1.0  # a copy: changing it must not touch the counters
+    assert classifier.timing_snapshot()["detect"] > 0

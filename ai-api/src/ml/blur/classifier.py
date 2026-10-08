@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
+from threading import Lock
 
 import numpy as np
 
@@ -72,6 +74,8 @@ class BlurClassifier:
         self.detector: PersonDetector | None = None
         self.rule: people.LogisticRule | None = None
         self.class_names: list[str] = []
+        self.stage_seconds = {"stage1": 0.0, "detect": 0.0, "measure": 0.0}
+        self._timing_lock = Lock()
         self._load_model()
 
     def _load_model(self) -> None:
@@ -179,14 +183,25 @@ class BlurClassifier:
             )
             self.session = self.detector = self.rule = None
 
+    def _add_time(self, stage: str, seconds: float) -> None:
+        with self._timing_lock:
+            self.stage_seconds[stage] += seconds
+
+    def timing_snapshot(self) -> dict[str, float]:
+        """Seconds spent so far in each stage, process-wide, for a per-request timing line."""
+        with self._timing_lock:
+            return dict(self.stage_seconds)
+
     def _whole_frame_result(self, image: np.ndarray) -> dict | None:
         """Stage 1: a finished result when nothing in the frame is sharp, else None."""
+        started = time.perf_counter()
         kind = whole_frame.decide(
             *whole_frame.measure(image),
             soft_max_detail=self.soft_max_detail,
             motion_min_ratio=self.motion_min_ratio,
             motion_max_detail=self.motion_max_detail,
         )
+        self._add_time("stage1", time.perf_counter() - started)
         if kind is None:
             return None
         # ponytail: a rule gives a hard 1.0. Fit a curve on the distance to the
@@ -203,12 +218,20 @@ class BlurClassifier:
         Nobody found: 0.0 (sharp) without asking the rule, which was never fitted on such
         a photo (owner decision 2026-10-07).
         """
-        found = people.measure(image, self.detector.detect(image))
-        if not found:
-            return 0.0
-        return self.rule.probability(
-            people.features(found, self.rule.big_area, self.rule.soft_ratio)
+        started = time.perf_counter()
+        detections = self.detector.detect(image)
+        detected = time.perf_counter()
+        found = people.measure(image, detections)
+        probability = (
+            0.0
+            if not found
+            else self.rule.probability(
+                people.features(found, self.rule.big_area, self.rule.soft_ratio)
+            )
         )
+        self._add_time("detect", detected - started)
+        self._add_time("measure", time.perf_counter() - detected)
+        return probability
 
     def _people_result(self, p_missed: float) -> dict:
         """Turn stage 2's probability into the four-class result callers expect.
