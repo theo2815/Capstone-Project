@@ -128,6 +128,19 @@ class EventLocationIntegrationTest : PostgresIntegrationTest() {
         assertEquals("Renamed legacy run", event.name)
     }
 
+    @Test fun `admin edit classifies a legacy null event and records it in history`() {
+        val created = data(request())
+        val eventId = id(created)
+        val classified = data(request("region-7", "cebu", eventId))
+        pair(classified, "region-7", "cebu")
+        val history = classified["adminOverrides"].last()
+        pair(history["before"], null, null)
+        pair(history["after"], "region-7", "cebu")
+        assertEquals(created["reviewRevision"].asLong() + 1, classified["reviewRevision"].asLong())
+        assertEquals(created["location"].asText(), classified["location"].asText())
+        pair(json.valueToTree(dtos.toListDto(events.findById(eventId).orElseThrow())), "region-7", "cebu")
+    }
+
     @ParameterizedTest
     @CsvSource("region-7,NULL", "NULL,cebu", "'',cebu", "region-7,''", "'   ','   '",
         "unknown,cebu", "region-7,metro-manila", "REGION-7,cebu", "region-7,unknown", nullValues = ["NULL"])
