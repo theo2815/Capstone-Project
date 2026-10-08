@@ -81,6 +81,44 @@ it("waits for canonical results, invalidates related queries and preserves submi
   keys.filter((key) => !key.includes("detail")).forEach((key) => expect(client.getQueryState(key)?.isInvalidated).toBe(true));
 });
 
+it("invalidates the photographer public gallery and cancels an older read after a removal decision", async () => {
+  // Same viewer-scoped key used by usePublicPhotographerEventPhotos.
+  const galleryKey = ["photographer", "public", "owner-handle", "race", "photos", ...session()];
+  const current = { pages: [{ items: [], total: 0, offset: 0, limit: 50 }], pageParams: [0] };
+  client.setQueryData(galleryKey, current);
+  const old = deferred<typeof current>();
+  let readSignal!: AbortSignal;
+  const read = client.fetchQuery({ queryKey: galleryKey, queryFn: ({ signal }) => { readSignal = signal; return old.promise; } }).catch(() => undefined);
+  vi.spyOn(api, "post").mockResolvedValue({ ...oldAdminCase, version: 3 });
+  const { result } = renderHook(useAdminRemovalActions, { wrapper });
+  await act(async () => { await result.current.decide.mutateAsync({ id: "case", command: decision }); });
+  expect(client.getQueryState(galleryKey)?.isInvalidated).toBe(true);
+  expect(readSignal.aborted).toBe(true);
+  old.resolve({ pages: [{ items: [], total: 9, offset: 0, limit: 50 }], pageParams: [0] });
+  await read;
+  expect(client.getQueryData(galleryKey)).toEqual(current);
+  expect(client.getQueryState(galleryKey)?.isInvalidated).toBe(true);
+});
+
+it("invalidates seller purchase detail and cancels its older media read after a removal decision", async () => {
+  // Same detail key used by usePhotographerPhotoPurchases.
+  const purchaseKey = ["photographer", "photos", "photo", "purchases", "order", ...session()];
+  const current = { id: "order", photo: { imageUrl: null } };
+  client.setQueryData(purchaseKey, current);
+  const old = deferred<typeof current>();
+  let readSignal!: AbortSignal;
+  const read = client.fetchQuery({ queryKey: purchaseKey, queryFn: ({ signal }) => { readSignal = signal; return old.promise; } }).catch(() => undefined);
+  vi.spyOn(api, "post").mockResolvedValue({ ...oldAdminCase, version: 3 });
+  const { result } = renderHook(useAdminRemovalActions, { wrapper });
+  await act(async () => { await result.current.decide.mutateAsync({ id: "case", command: decision }); });
+  expect(client.getQueryState(purchaseKey)?.isInvalidated).toBe(true);
+  expect(readSignal.aborted).toBe(true);
+  old.resolve({ id: "old-order", photo: { imageUrl: null } });
+  await read;
+  expect(client.getQueryData(purchaseKey)).toEqual(current);
+  expect(client.getQueryState(purchaseKey)?.isInvalidated).toBe(true);
+});
+
 it("409 refetches current state and blocks a changed command until reviewed", async () => {
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", message: "Changed" }], 409)).mockResolvedValue({ ...oldAdminCase, version: 4 });
   const get = vi.spyOn(api, "get").mockResolvedValue({ ...oldAdminCase, version: 3 });

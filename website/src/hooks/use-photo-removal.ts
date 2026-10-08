@@ -110,7 +110,7 @@ function useRemovalActionContext(role: RemovalRole) {
         throw error;
       }
       if (!isCurrent()) throw new Error("Session changed");
-      const affected = [key, ["events"], ["public", "events"], ["photographer", "events"], ["admin", "events"],
+      const affected = [key, ["events"], ["public", "events"], ["photographer", "events"], ["photographer", "public"], ["photographer", "photos"], ["admin", "events"],
         ["orders"], ["me", "orders"], ["inbox"], ["admin", "kpis"]];
       await Promise.all(affected.map((queryKey) => qc.cancelQueries({ queryKey })));
       if (!isCurrent()) throw new Error("Session changed");
