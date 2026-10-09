@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminUsers, fetchAdminUserDetail, fetchAdminPhotographerSettings,
   approveUser, rejectUser, suspendUser, unsuspendUser, resetUserVerification,
-  sendAdminMessage, type SendAdminMessageInput,
+  sendAdminMessage, fetchAdminCommand, type SendAdminMessageInput,
   type AdminUserDetail,
 } from "@/lib/api-admin";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
@@ -123,13 +123,25 @@ export function useAdminUserActions() {
           const owner = useAuthStore.getState().user!.id;
           let intent: Awaited<ReturnType<typeof claimAdminIntent>> | undefined;
           try {
-            intent = await claimAdminIntent(owner, "user.message", id, input);
+            intent = await claimAdminIntent(owner, "user.message", id, input, async (key) => {
+              const command = await fetchAdminCommand(key);
+              if (!command) return "missing";
+              if (command.state !== "SUCCEEDED" || !current()) return "open";
+              useToastStore.getState().showToast({ kind: "success", duration: 10_000, message: "Your earlier message to this user was delivered. It is in their inbox." });
+              return "succeeded";
+            });
             if (!current()) return false;
             await sendAdminMessage(id, input, intent.key);
             if (!current()) return false;
             completeAdminIntent(intent); refresh(owner); return true;
           } catch (error) {
             if (!current()) return false;
+            // A first attempt the server refused outright wrote nothing: the receipt and the message commit together.
+            if (intent && !intent.reused && error instanceof ApiError && [400, 403, 404, 422].includes(error.status ?? 0)) {
+              completeAdminIntent(intent);
+              useToastStore.getState().showToast({ kind: "error", message: error.message });
+              return false;
+            }
             useToastStore.getState().showToast({ kind: "error", message: `${error instanceof Error ? error.message : "Couldn't send message."} Retry the unchanged draft to check the same request.${intent?.reloadSafe === false ? " Recovery after reload is unavailable; keep this page open." : ""}` });
             return false;
           }

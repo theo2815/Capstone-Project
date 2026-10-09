@@ -21,6 +21,7 @@
 11. [Phase 10: Photographers Roster & Messaging (`/admin/photographers`)](#phase-10-photographers-roster--messaging-adminphotographers)
 12. [Phase 11: Sales Analytics & Leaderboards (`/admin/sales`)](#phase-11-sales-analytics--leaderboards-adminsales)
 13. [Phase 12: Real-Time WebSocket Updates & Toast Sync](#phase-12-real-time-websocket-updates--toast-sync)
+14. [Unresolved admin request](#unresolved-admin-request)
 
 ---
 
@@ -270,3 +271,23 @@
 - [ ] **TC-ADM-50: Network Disconnect & Graceful Reconnect**
   - **Action:** Simulate network offline via DevTools for 5 seconds, then toggle back to online.
   - **Expected Result:** WS reconnect backoff triggers automatically. Upon reconnect, an automatic REST refetch runs to catch any decisions or updates made during the disconnect gap.
+
+---
+
+## Unresolved admin request
+
+The website shows "Request reference: `<key>`" when the reply to a create-event, edit-event or message request was lost and it cannot tell whether the request went through. Sending a different draft makes the website look the key up by itself; use this section when the block stays.
+
+**Look it up.** Signed in as the same admin, call `GET /api/v1/admin/commands/<key>`. Another admin's key and an unknown key both answer 404. With database access, read the same row: `SELECT state, result_resource_id, result_message_id, updated_at FROM admin_action_commands WHERE command_id = '<key>';`
+
+| Answer | Meaning | What to do |
+|---|---|---|
+| `SUCCEEDED` | It went through. `resourceId` is the event; `messageId` is the message. | Nothing to repair. Sending a different draft clears the block. |
+| `PENDING` | Still running, or it stopped part-way. | Wait a few minutes (the request's lease, `AdminActionProperties`), then retry the same unchanged draft. |
+| `UNKNOWN` | The server could not confirm the cover upload or the save. | Retry the same unchanged draft. If it stays `UNKNOWN`, follow the reconciliation steps below. |
+| `FAILED` | It did not go through, and this key can never run again. An event save that uploaded a new cover and was then refused (the event changed or was deleted meanwhile) ends here; the unused image is removed. | Nothing to repair. Reopen the event and save again, or send a different draft: the website sees the answer and clears the block. |
+| 404 `ADMIN_COMMAND_NOT_FOUND` | The server has recorded nothing for it so far. A request that is still running shows up only when it finishes. | Nothing to do by hand. The website keeps the block for 5 minutes after the request was last sent and says how long is left; after that, sending a different draft clears it. If you look the key up yourself, trust a 404 only once those 5 minutes have passed. |
+
+**Reconciliation for a request that stays `UNKNOWN`:** vault `_journal/2026-10-08-admin-actions-and-event-location-plan.md`, heading "Safe administrative reconciliation for persistent UNKNOWN" (Session 4). Never edit or delete the `admin_action_commands` row by hand; the database blocks deleting it.
+
+Signing out clears every stored reference in that browser tab. Do that only after the lookup shows the request did not go through, or you may send it twice.

@@ -7,6 +7,8 @@ import com.quickpitik.exception.ValidationException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.IdempotencyKey
+import com.quickpitik.dto.admin.AdminActionCommandDto
+import com.quickpitik.dto.admin.toDto
 import com.quickpitik.entity.AdminActionCommand
 import com.quickpitik.entity.AdminActionCommandState
 import com.quickpitik.entity.AdminActionOperation
@@ -38,6 +40,13 @@ class AdminActionCommandService(
     private val tx = TransactionTemplate(txManager).apply {
         propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
     }
+
+    // Another admin's receipt answers exactly like a missing one, so a key's existence is never revealed.
+    // The code differs from an unmapped path's NOT_FOUND: clients release a stored key only on this answer.
+    fun find(actorId: UUID, key: IdempotencyKey?): AdminActionCommandDto =
+        key?.let { commands.findById(UUID.fromString(it.value)).orElse(null) }
+            ?.takeIf { it.actorId == actorId }?.toDto()
+            ?: throw NotFoundException("Admin request not found", ErrorCodes.ADMIN_COMMAND_NOT_FOUND)
 
     fun execute(key: IdempotencyKey?, actorId: UUID, operation: AdminActionOperation, targetId: UUID?,
         inputHash: String, authorize: () -> Unit, action: () -> AdminActionResult): AdminActionResult {
@@ -78,7 +87,8 @@ class AdminActionCommandService(
 
     fun executeEvent(key: IdempotencyKey, actorId: UUID, operation: AdminActionOperation, targetId: UUID?,
         inputHash: String, authorize: () -> Unit, validate: () -> Unit, prepare: () -> String?,
-        writeCover: (String, Boolean) -> Unit, action: (UUID, String?) -> AdminActionResult): AdminActionResult {
+        writeCover: (String, Boolean) -> Unit, deleteCover: (String) -> Unit,
+        action: (UUID, String?) -> AdminActionResult): AdminActionResult {
         val commandId = UUID.fromString(key.value)
         val completed = tx.execute {
             authorize()
@@ -115,8 +125,9 @@ class AdminActionCommandService(
             commands.findForUpdate(commandId)!!
         }!!
         if (receipt.state == AdminActionCommandState.SUCCEEDED) return replay(receipt, actorId, operation, targetId, inputHash)
+        var coverWritten = false
         try {
-            receipt.intendedStorageKey?.let { writeCover(it, recovery) }
+            receipt.intendedStorageKey?.let { writeCover(it, recovery); coverWritten = true }
             return tx.execute {
                 authorize()
                 val current = commands.findForUpdate(commandId)!!
@@ -133,17 +144,24 @@ class AdminActionCommandService(
                 result
             }!!
         } catch (error: Exception) {
+            val typed = error is ApiException || error is NotFoundException ||
+                error is ConflictException || error is ValidationException
+            // A typed error after the cover was written came from the final transaction, which rolled back:
+            // nothing was saved and no event points at the new object, so the outcome is known.
+            val failed = typed && coverWritten
+            var orphan: String? = null
             tx.executeWithoutResult {
                 val current = commands.findForUpdate(commandId)!!
                 if (current.claimOwner == owner && current.state != AdminActionCommandState.SUCCEEDED) {
-                    current.state = AdminActionCommandState.UNKNOWN
+                    current.state = if (failed) AdminActionCommandState.FAILED else AdminActionCommandState.UNKNOWN
                     current.updatedAt = clock.instant()
                     current.leaseExpiresAt = current.updatedAt
                     commands.saveAndFlush(current)
+                    if (failed) orphan = current.intendedStorageKey
                 }
             }
-            if (error is ApiException || error is NotFoundException ||
-                error is ConflictException || error is ValidationException) throw error
+            orphan?.let(deleteCover)
+            if (typed) throw error
             throw recoveryRequired()
         }
     }

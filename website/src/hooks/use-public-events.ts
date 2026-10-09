@@ -16,7 +16,8 @@ export function usePublicEventsCatalog(initialEvents?: ReadonlyArray<ListEvent>)
     staleTime: LIST_STALE_MS,
     retry: false,
     initialData: initialEvents ? () => [...initialEvents] : undefined,
-    initialDataUpdatedAt: initialEvents ? 0 : undefined,
+    // The server loaded this catalog for the page just now: it is fresh, not due for a second load.
+    initialDataUpdatedAt: initialEvents ? Date.now() : undefined,
   });
   return { data: query.data, isPending: query.isPending, isFetching: query.isFetching, error: query.error, retry: query.refetch };
 }

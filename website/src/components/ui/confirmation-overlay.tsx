@@ -28,12 +28,14 @@ export function ConfirmationOverlay() {
   }, [active]);
 
   // Enter triggers confirm while overlay is open and not already working.
+  // A held key never confirms, and Enter on Cancel stays Cancel's own click.
+  const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!active) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !loading) {
+      if (e.key === "Enter" && !loading && !cancelRef.current?.contains(e.target as Node)) {
         e.preventDefault();
-        runConfirm();
+        if (!e.repeat) runConfirm();
       }
     };
     document.addEventListener("keydown", handler);
@@ -93,6 +95,7 @@ export function ConfirmationOverlay() {
 
         <div className="flex items-center justify-end gap-3 pt-2">
           <button
+            ref={cancelRef}
             type="button"
             onClick={handleCancel}
             disabled={loading}

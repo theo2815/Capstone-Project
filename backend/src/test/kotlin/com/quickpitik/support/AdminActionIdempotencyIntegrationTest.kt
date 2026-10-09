@@ -143,6 +143,37 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         assertNotEquals(id,eventId(eventRequest(actor,UUID.randomUUID().toString(),title,cover=bytes)))
     }
 
+    private fun lookup(actor: UUID, key: String): org.springframework.mock.web.MockHttpServletResponse {
+        val principal = AuthPrincipal(actor, "fixture@test.local", Role.ADMIN)
+        SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
+        try {
+            return MockMvcBuilders.standaloneSetup(com.quickpitik.controller.AdminCommandsController(commands))
+                .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
+                .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
+                .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/admin/commands/$key"))
+                .andReturn().response
+        } finally { SecurityContextHolder.clearContext() }
+    }
+
+    @Test fun `lookup after a lost response shows the original result only to its own admin`() {
+        val actor=user(Role.ADMIN); val key=UUID.randomUUID().toString()
+        val id=eventId(eventRequest(actor,key,"Lookup ${UUID.randomUUID()}"))
+        val found=lookup(actor,key); assertEquals(200,found.status,found.contentAsString)
+        val data=mapper.readTree(found.contentAsString)["data"]
+        assertEquals(setOf("commandId","state","resourceId","decisionId","messageId","completedAt"),data.fieldNames().asSequence().toSet())
+        assertEquals(key,data["commandId"].asText()); assertEquals("SUCCEEDED",data["state"].asText())
+        assertEquals(id.toString(),data["resourceId"].asText()); assertFalse(data["completedAt"].isNull)
+        assertEquals(404,lookup(user(Role.ADMIN),key).status)
+        assertEquals(404,lookup(actor,UUID.randomUUID().toString()).status)
+        assertEquals(400,lookup(actor,"bad-key").status)
+
+        val target=user(Role.RUNNER); val messageKey=UUID.randomUUID().toString()
+        val sent=mapper.readTree(send(actor,target,messageKey).contentAsString)["data"]
+        val message=mapper.readTree(lookup(actor,messageKey).contentAsString)["data"]
+        assertEquals(sent["id"],message["messageId"]); assertEquals(sent["sourceDecisionId"],message["decisionId"])
+        eventEffects(id,1); effects(target,Role.RUNNER,1)
+    }
+
     @Test fun `completed cover edit replay precedes old revision and never overwrites a later edit`() {
         val actor=user(Role.ADMIN); val id=eventId(eventRequest(actor,null,"Edit ${UUID.randomUUID()}",cover=image()))
         val key=UUID.randomUUID().toString(); val bytes=image(0xffffff)
@@ -249,8 +280,24 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         afterPut={ eventAdmin.delete(actor,id) }
         val key=UUID.randomUUID().toString()
         assertEquals(404,eventRequest(actor,key,"Changed",id,image(0xffffff),0).status)
-        assertEquals(old,events.findById(id).orElseThrow().coverS3Key); assertTrue(deletes.isEmpty()); eventEffects(id,2)
-        afterPut={}; assertEquals(404,eventRequest(actor,key,"Changed",id,image(0xffffff),0).status); assertEquals(2,puts.size)
+        assertEquals(old,events.findById(id).orElseThrow().coverS3Key); assertEquals(listOf(puts[1]),deletes.toList()); eventEffects(id,2)
+        assertEquals("FAILED",receiptState(key))
+        afterPut={}; assertEquals(409,eventRequest(actor,key,"Changed",id,image(0xffffff),0).status); assertEquals(2,puts.size)
+    }
+
+    @Test fun `stale revision after cover PUT fails the receipt, deletes the new cover and never uploads again`() {
+        val actor=user(Role.ADMIN); val id=eventId(eventRequest(actor,null,"Stale ${UUID.randomUUID()}",cover=image())); val old=events.findById(id).orElseThrow().coverS3Key
+        // Another edit lands while this one's cover is uploading, so its revision is stale at the final write.
+        afterPut={ afterPut={}; eventId(eventRequest(actor,UUID.randomUUID().toString(),"Winner",id,revision=0)) }
+        val key=UUID.randomUUID().toString(); val bytes=image(0xffffff)
+        val stale=eventRequest(actor,key,"Loser",id,bytes,0)
+        assertEquals(409,stale.status); assertEquals("INVALID_STATE_TRANSITION",mapper.readTree(stale.contentAsString)["errors"][0]["code"].asText())
+        assertEquals("FAILED",receiptState(key)); assertEquals(2,puts.size); assertEquals(listOf(puts[1]),deletes.toList())
+        val event=events.findById(id).orElseThrow()
+        assertEquals("Winner",event.name); assertEquals(old,event.coverS3Key); assertEquals(1,event.reviewRevision); eventEffects(id,2)
+        val retry=eventRequest(actor,key,"Loser",id,bytes,0)
+        assertEquals(409,retry.status); assertEquals("CONFLICT",mapper.readTree(retry.contentAsString)["errors"][0]["code"].asText())
+        assertEquals("FAILED",receiptState(key)); assertEquals(2,puts.size); assertEquals(1,deletes.size); eventEffects(id,2)
     }
 
     @ParameterizedTest @ValueSource(booleans=[false,true])
@@ -276,7 +323,7 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         beforeAction: () -> Unit = {}): AdminActionResult =
         service.executeEvent(key, actor, AdminActionOperation.EVENT_UPDATE, id, "a".repeat(64), {}, {
             events.findByIdForReview(id)!!.requireReviewRevision(0)
-        }, prepare, write, { _, _ ->
+        }, prepare, write, { error("no cover") }, { _, _ ->
             beforeAction()
             val event = events.findByIdForReview(id)!!
             event.requireReviewRevision(0)

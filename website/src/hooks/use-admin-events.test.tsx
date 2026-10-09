@@ -29,7 +29,7 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(key, [adminEvent]); client.setQueryData(publicKey, [adminEvent]);
 });
-afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const createArgs = { title: "New race", date: adminEvent.date, location: "Cebu", pricePerPhoto: 80 };
 it.each(["create", "edit"])("transports the complete %s pair and reconciles returned codes", async (mode) => {
   const row = { ...adminEvent, regionCode: "region-vii", provinceCode: "cebu" };
@@ -283,4 +283,77 @@ it("forwards multipart edit fields and cover removal without optimistic patches"
   expect(update.mock.calls[0][0]).toBe(`/admin/events/${adminEvent.id}`);
   expect(form.get("pricePerPhoto")).toBe("120"); expect(form.get("removeCover")).toBe("true");
   expect(form.has("cover")).toBe(false);
+});
+const earlier = { ...adminEvent, id: "earlier", name: "Earlier race" };
+const commandNotFound = () => new ApiError([{ code: "ADMIN_COMMAND_NOT_FOUND", message: "Admin request not found" }], 404);
+async function loseCreateReply() {
+  const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Response lost"));
+  const view = renderHook(() => ({ query: useAdminEvents(), actions: useAdminEventActions() }), { wrapper });
+  await expect(view.result.current.actions.createEvent(createArgs)).rejects.toThrow();
+  post.mockResolvedValue({ ...adminEvent, id: "second" });
+  const reference = (post.mock.calls[0][2]?.headers as Record<string, string>)["Idempotency-Key"];
+  return { post, actions: view.result.current.actions, reference };
+}
+function mockLookup(answer: (path: string) => unknown) {
+  return vi.spyOn(api, "get").mockImplementation(async (path: string) =>
+    path.startsWith("/admin/commands/") ? answer(path) : { items: [earlier, adminEvent] });
+}
+it("names the event an earlier lost create made, then sends the different draft under a new key", async () => {
+  const { post, actions, reference } = await loseCreateReply();
+  const get = mockLookup(() => ({ commandId: reference, state: "SUCCEEDED", resourceId: earlier.id, decisionId: null, messageId: null, completedAt: "2026-10-09T00:00:00Z" }));
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  expect(get).toHaveBeenCalledWith(`/admin/commands/${reference}`);
+  expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ kind: "success", message: expect.stringMatching(/Earlier race.*created/) }));
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+  expect(actions.recoveryNotice("create")).toBeNull();
+});
+it("releases an earlier create the server has no record of only after the wait, then sends the different draft", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const { post, actions, reference } = await loseCreateReply();
+  mockLookup(() => { throw commandNotFound(); });
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).rejects.toThrow(/about 5 minutes/);
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(actions.recoveryNotice("create")).toContain(reference);
+  vi.setSystemTime(Date.now() + 5 * 60_000);
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+  expect(useToastStore.getState().toasts.filter((toast) => toast.kind === "success")).toEqual([]);
+});
+it("releases an earlier create the server recorded as failed at once and sends the different draft", async () => {
+  const { post, actions, reference } = await loseCreateReply();
+  const get = mockLookup(() => ({ commandId: reference, state: "FAILED", resourceId: null, decisionId: null, messageId: null, completedAt: null }));
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  expect(get).toHaveBeenCalledWith(`/admin/commands/${reference}`);
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+  expect(actions.recoveryNotice("create")).toBeNull();
+  expect(useToastStore.getState().toasts.filter((toast) => /went through/.test(toast.message))).toEqual([]);
+});
+it.each([
+  ["PENDING", () => ({ state: "PENDING" })], ["UNKNOWN", () => ({ state: "UNKNOWN" })],
+  ["a lookup failure", () => { throw new Error("Offline"); }],
+  ["an answer with no state in it", () => null],
+  ["a 404 from a server without the lookup route", () => { throw new ApiError([{ code: "NOT_FOUND", message: "Resource not found" }], 404); }],
+])("keeps a different create blocked on %s and shows the reference", async (_name, answer) => {
+  const { post, actions, reference } = await loseCreateReply();
+  mockLookup(answer);
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).rejects.toThrow(/unresolved/i);
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(useToastStore.getState().toasts.at(-1)?.message).toContain(reference);
+  expect(actions.recoveryNotice("create")).toContain(reference);
+  await expect(actions.createEvent(createArgs)).resolves.toBe(true);
+  expect(post.mock.calls[1][2]?.headers).toEqual(post.mock.calls[0][2]?.headers);
+});
+it("does not announce an earlier result to a session that changed while the list refreshed", async () => {
+  const { post, actions } = await loseCreateReply();
+  vi.spyOn(api, "get").mockImplementation(async (path: string) => {
+    if (path.startsWith("/admin/commands/")) return { state: "SUCCEEDED", resourceId: earlier.id };
+    useAuthStore.getState().logout();
+    return { items: [earlier] };
+  });
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(false);
+  expect(useToastStore.getState().toasts.filter((toast) => /earlier request went through/.test(toast.message))).toEqual([]);
+  expect(post).toHaveBeenCalledTimes(1);
 });
