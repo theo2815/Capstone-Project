@@ -285,8 +285,8 @@ The website shows "Request reference: `<key>`" when the reply to a create-event,
 | `SUCCEEDED` | It went through. `resourceId` is the event; `messageId` is the message. | Nothing to repair. Sending a different draft clears the block. |
 | `PENDING` | Still running, or it stopped part-way. | Wait a few minutes (the request's lease, `AdminActionProperties`), then retry the same unchanged draft. |
 | `UNKNOWN` | The server could not confirm the cover upload or the save. | Retry the same unchanged draft. If it stays `UNKNOWN`, follow the reconciliation steps below. |
-| `FAILED` | It did not go through, and this key can never run again. (No code writes this state yet.) | Sign out and in again, then send a new request. |
-| 404 `ADMIN_COMMAND_NOT_FOUND` | The server has recorded nothing for it so far. A request that is still running shows up only when it finishes. | Wait two minutes and look again. If it is still 404, nothing ran; sending a different draft clears the block. |
+| `FAILED` | It did not go through, and this key can never run again. An event save that uploaded a new cover and was then refused (the event changed or was deleted meanwhile) ends here; the unused image is removed. | Sign out and in again, then send a new request. |
+| 404 `ADMIN_COMMAND_NOT_FOUND` | The server has recorded nothing for it so far. A request that is still running shows up only when it finishes. | Nothing to do by hand. The website keeps the block for 5 minutes after the request was last sent and says how long is left; after that, sending a different draft clears it. If you look the key up yourself, trust a 404 only once those 5 minutes have passed. |
 
 **Reconciliation for a request that stays `UNKNOWN`:** vault `_journal/2026-10-08-admin-actions-and-event-location-plan.md`, heading "Safe administrative reconciliation for persistent UNKNOWN" (Session 4). Never edit or delete the `admin_action_commands` row by hand; the database blocks deleting it.
 

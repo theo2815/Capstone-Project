@@ -28,7 +28,7 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(listKey, [adminUser]); client.setQueryData(detailKey, detail); client.setQueryData(settingsKey, adminUserSettings);
 });
-afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const actions = ["approve", "reject", "suspend", "unsuspend", "resetVerification"] as const;
 function invoke(actionsHook: ReturnType<typeof useAdminUserActions>, action: typeof actions[number]) {
   return action === "approve" ? actionsHook.approve(adminUser.userId, 7)
@@ -202,8 +202,17 @@ it.each([
   ["was delivered", () => ({ state: "SUCCEEDED", messageId: "message-1" }), /earlier message.*delivered/i],
   ["was never recorded", () => { throw new ApiError([{ code: "ADMIN_COMMAND_NOT_FOUND", message: "Admin request not found" }], 404); }, null],
 ])("sends a different message under a new key once the earlier one %s", async (_name, answer, notice) => {
+  vi.useFakeTimers({ toFake: ["Date"] });
   const { post, actions, reference } = await loseMessageReply();
   const get = vi.spyOn(api, "get").mockImplementation(async () => answer());
+  if (!notice) {
+    // "No record" is trusted only once the earlier request can no longer be running.
+    await expect(actions.message(adminUser.userId, otherMessage)).resolves.toBe(false);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/about 5 minutes/);
+    expect(actions.messageRecoveryNotice(adminUser.userId)).toContain(reference);
+    useToastStore.getState().clear(); vi.setSystemTime(Date.now() + 5 * 60_000);
+  }
   await expect(actions.message(adminUser.userId, otherMessage)).resolves.toBe(true);
   expect(get).toHaveBeenCalledWith(`/admin/commands/${reference}`);
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);

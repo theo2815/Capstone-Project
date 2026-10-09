@@ -1,5 +1,9 @@
 const storageKey = "quickpitik-admin-action-intents";
-type Intent = { actor: string; operation: string; target: string; key: string; fingerprint: string };
+type Intent = { actor: string; operation: string; target: string; key: string; fingerprint: string; sentAt: number };
+// The server shows a request only once it is saved, so "no record" is believed only after the request can no
+// longer be running: past both browser timeouts (30 s, 120 s with a file; lib/api.ts) and the server's hold on
+// a claimed request (AdminActionProperties lease, 5 minutes by default).
+const NO_RECORD_WAIT_MS = 5 * 60_000;
 let records: Intent[] | undefined;
 let generation = 0;
 
@@ -7,8 +11,10 @@ function read(): Intent[] {
   if (!records) {
     try {
       const value: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? "[]");
+      // A record written before send times existed counts as sent just now.
       records = Array.isArray(value) ? value.filter((row): row is Intent =>
-        row && ["actor", "operation", "target", "key", "fingerprint"].every((field) => typeof row[field] === "string")) : [];
+        row && ["actor", "operation", "target", "key", "fingerprint"].every((field) => typeof row[field] === "string"))
+        .map((row) => ({ ...row, sentAt: typeof row.sentAt === "number" ? row.sentAt : Date.now() })) : [];
     } catch { records = []; }
   }
   return records;
@@ -49,13 +55,19 @@ export async function claimAdminIntent(actor: string, operation: string, target:
     // Fail closed: only a definite answer from the server releases the earlier key.
     const outcome = resolve ? await resolve(existing.key).catch(() => "open" as const) : "open";
     if (started !== generation) throw new Error("Session changed. Reopen the form.");
+    const waitMs = existing.sentAt + NO_RECORD_WAIT_MS - Date.now();
+    if (outcome === "missing" && waitMs > 0) {
+      const minutes = Math.ceil(waitMs / 60_000);
+      throw new Error(`An earlier request may still be on its way: the server has no record of it yet, so this one was not sent. Try again in about ${minutes} minute${minutes === 1 ? "" : "s"}. Request reference: ${existing.key}.`);
+    }
     if (outcome === "open") {
       throw new Error(`An earlier request is still unresolved, so this one was not sent. Reconstruct the original unchanged draft to retry it, or ask the project maintainer to reconcile it (admin manual, "Unresolved admin request"). Request reference: ${existing.key}.`);
     }
     completeAdminIntent(existing);
     existing = undefined;
   }
-  const intent = existing ?? { actor, operation, target, fingerprint, key: crypto.randomUUID() };
+  const intent = existing ?? { actor, operation, target, fingerprint, key: crypto.randomUUID(), sentAt: 0 };
+  intent.sentAt = Date.now(); // A retry of the same draft sends it again.
   if (!existing) read().push(intent);
   return { ...intent, reused: !!existing, reloadSafe: save() };
 }

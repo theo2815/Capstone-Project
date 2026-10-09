@@ -29,7 +29,7 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(key, [adminEvent]); client.setQueryData(publicKey, [adminEvent]);
 });
-afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const createArgs = { title: "New race", date: adminEvent.date, location: "Cebu", pricePerPhoto: 80 };
 it.each(["create", "edit"])("transports the complete %s pair and reconciles returned codes", async (mode) => {
   const row = { ...adminEvent, regionCode: "region-vii", provinceCode: "cebu" };
@@ -308,9 +308,14 @@ it("names the event an earlier lost create made, then sends the different draft 
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
   expect(actions.recoveryNotice("create")).toBeNull();
 });
-it("releases an earlier create the server has no record of and sends the different draft", async () => {
-  const { post, actions } = await loseCreateReply();
+it("releases an earlier create the server has no record of only after the wait, then sends the different draft", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const { post, actions, reference } = await loseCreateReply();
   mockLookup(() => { throw commandNotFound(); });
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).rejects.toThrow(/about 5 minutes/);
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(actions.recoveryNotice("create")).toContain(reference);
+  vi.setSystemTime(Date.now() + 5 * 60_000);
   await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
