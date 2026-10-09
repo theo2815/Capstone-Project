@@ -358,6 +358,11 @@ class AdminEventService(
                 ErrorCodes.FORBIDDEN, "An active admin is required")
     }
 
+    private fun writeCover(storageKey: String, recovery: Boolean, processed: ByteArray) {
+        if (recovery) eventCoverService.recover(storageKey, processed, eventCoverService.digest(processed))
+        else eventCoverService.uploadPrepared(storageKey, processed)
+    }
+
     private fun createCommand(adminId: UUID, req: CreateAdminEventRequest, cover: CoverUpload?,
         key: IdempotencyKey): AdminListEventDto {
         // Cheap input checks before the cover is hashed or decoded; the claim checks them again.
@@ -374,10 +379,7 @@ class AdminEventService(
             }, {
                 processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
                 processed?.let(eventCoverService::digest)
-            }, { storageKey, recovery ->
-                if (recovery) eventCoverService.recover(storageKey, processed!!, eventCoverService.digest(processed!!))
-                else eventCoverService.uploadPrepared(storageKey, processed!!)
-            }, eventCoverService::delete, { eventId, coverKey ->
+            }, { storageKey, recovery -> writeCover(storageKey, recovery, processed!!) }, eventCoverService::delete, { eventId, coverKey ->
                 val (event, decision) = createEvent(adminId, req, eventId, coverKey, parseDate(req.date), validatedPrice(req.pricePerPhoto))
                 AdminActionResult(event.id, decision, null)
             })
@@ -402,10 +404,7 @@ class AdminEventService(
             }, {
                 processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
                 processed?.let(eventCoverService::digest)
-            }, { storageKey, recovery ->
-                if (recovery) eventCoverService.recover(storageKey, processed!!, eventCoverService.digest(processed!!))
-                else eventCoverService.uploadPrepared(storageKey, processed!!)
-            }, eventCoverService::delete, { _, coverKey ->
+            }, { storageKey, recovery -> writeCover(storageKey, recovery, processed!!) }, eventCoverService::delete, { _, coverKey ->
                 if (req.pricePerPhoto != null) lockEventPhotos(eventId)
                 val event = loadForReview(eventId)
                 event.requireReviewRevision(req.expectedRevision)
