@@ -4,7 +4,7 @@
 > **Scope:** `website/` automated unit, component and mocked API-boundary regression tests.
 > **Recorded baseline:** 391 passing tests across 46 test files, measured on 2026-09-12 at application commit `ba239c7`.
 > **Candidate check:** 438 passing tests across 48 test files, measured on 2026-09-20 at `c90736ee` with Node 22.23.2.
-> **Admin action safety and event location branch check:** 781 passing tests across 74 test files, measured on 2026-10-09 at `b2311e7c` (local branch `fix/admin-actions-event-location`, unmerged) with Node 22.23.3.
+> **Admin action safety and event location branch check:** 783 passing tests across 74 test files, measured on 2026-10-09 at `602dff5a` (local branch `fix/admin-actions-event-location`, unmerged) with Node 22.23.3.
 
 ## 1. Objectives and Evidence
 
@@ -95,7 +95,7 @@ The admin action safety and event location branch was also checked on 2026-10-09
 | Admin photographer decisions | Two tabs and two admins approving together, review drawer and bulk approval with repeated input: one accepted decision each, the other session told the submission changed |
 | Admin messages | Five-second send with repeated Enter, and a dropped reply followed by a retry: one delivered message |
 | Admin events | Create with keyboard-picked Region/Province at 375/768/1024 CSS pixels under a slow save, edit of an older event without a province, two admins editing one event with recovery after the refused save |
-| Public Events | Province options and results across two catalog pages (212 events), keyboard selection, unknown and legacy URL filters, option removed with its last event |
+| Public Events | Province options and results across two catalog pages (213 events), keyboard selection, unknown and legacy URL filters, option removed with its last event, events still listed when the province list cannot be loaded |
 | Photographer Settings and upload | Region/Province pick, save and reload at 375/768/1024; upload event picker still requests one page |
 
 Not exercised in that browser pass: payout step-up cancellation, a real session switch during a pending action, flags, disputes, payout reports and refunds. Those remain covered by the automated tests above and the backend's database tests only.
