@@ -436,6 +436,23 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(EventReviewStatus.APPROVED, events.findById(e.id).get().reviewStatus)
     }
 
+    @Test fun `the repricing photo lock lets a cart row for a locked photo be inserted`() {
+        val p = photo(); val runner = user(Role.RUNNER).id
+        TransactionTemplate(txManager).executeWithoutResult {
+            assertEquals(listOf(p.id), photos.lockIdsByEventIdForUpdate(p.eventId))
+            // The repricing lock is still held here: a runner adding the photo to a cart must not wait for it.
+            dataSource.connection.use { writer ->
+                writer.autoCommit = false
+                writer.createStatement().use { it.execute("SET LOCAL lock_timeout = '2s'") }
+                writer.prepareStatement("INSERT INTO cart_items (user_id, photo_id, event_id, price_php_at_add) VALUES (?, ?, ?, 150.00)").use {
+                    it.setObject(1, runner); it.setObject(2, p.id); it.setObject(3, p.eventId)
+                    assertEquals(1, it.executeUpdate())
+                }
+                writer.rollback()
+            }
+        }
+    }
+
     @Test fun `withdrawn dispute cannot be resurrected by a delayed escalation`() {
         val p = photo(); val runner = user(Role.RUNNER).id
         val order = orders.saveAndFlush(Order(eventId = p.eventId, recipientEmail = "test@example.test",
