@@ -92,6 +92,17 @@ Open `backend/build/test-results/integrationTest/TEST-*.xml`. Check the files we
 - `aws rekognition describe-collection` on each `qp-smoke-test-…` and `qp-event-…` name printed in the test output should return `ResourceNotFoundException`.
 - `smoke-test/` in `quickpitik-dev` should match your baseline.
 
+### Looking at R2 by hand (`cf` CLI)
+
+For ad-hoc checks (list buckets or objects, read bucket settings) use Cloudflare's `cf` CLI (`npm i -g cf`, open beta, replaces Wrangler). Nothing in this repo needs Wrangler.
+
+- Both buckets live on Cloudflare account `277f145551e9715f57bc8e8f70182d5d`. If you have more than one Cloudflare login, make a profile for this account and bind it to your checkout: `cf auth create quickpitik`, then `cf auth activate quickpitik <checkout path>`.
+- **Run `cf auth whoami` from the checkout first** and confirm that account ID. Stop if it shows another one.
+- List objects: `cf r2 objects list --bucket-name quickpitik-dev` (page with `--cursor`). Bucket-info object counts and sizes lag a live listing.
+- Find other commands with `cf cli search "<task>"`; preview changes with `--dry-run`. Writes and deletes on `quickpitik-prod` follow rule 2.
+- A delete run without a terminal and without `--force` prints `Aborted.` and still exits 0. Exit 0 does not mean it was deleted.
+- `cf` caches the chosen account in `.cloudflare/` (gitignored).
+
 ### Known problems
 
 | Symptom | Cause | What to do |
