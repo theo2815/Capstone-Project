@@ -360,6 +360,8 @@ class AdminEventService(
 
     private fun createCommand(adminId: UUID, req: CreateAdminEventRequest, cover: CoverUpload?,
         key: IdempotencyKey): AdminListEventDto {
+        // Cheap input checks before the cover is hashed or decoded; the claim checks them again.
+        parseDate(req.date); validatedPrice(req.pricePerPhoto)
         // Omitted pairs keep the fingerprint of receipts created before location support.
         val fields = listOf(req.title.trim(), req.date.trim(), req.location.trim(),
             req.pricePerPhoto.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
