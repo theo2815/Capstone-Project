@@ -207,6 +207,10 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
             val blocked = TransactionTemplate(tx.transactionManager!!).apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
                 .execute { jdbc.queryForList("SELECT id FROM photos WHERE id IN (?, ?) FOR UPDATE SKIP LOCKED", photo.id, second.id) }
             assertEquals(emptyList<Map<String, Any>>(), blocked, "Another transaction could still lock the rows")
+            // A cart or order row that points at the photo takes this lock on insert; trash must not make it wait.
+            val shared = TransactionTemplate(tx.transactionManager!!).apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
+                .execute { jdbc.queryForList("SELECT id FROM photos WHERE id = ? FOR KEY SHARE NOWAIT", photo.id) }
+            assertEquals(1, shared!!.size)
         }
     }
 
