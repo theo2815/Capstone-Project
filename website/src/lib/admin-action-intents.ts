@@ -29,7 +29,7 @@ export function adminIntentRecoveryNotice(actor: string, operation: string, targ
   const guidance = operation === "event.update"
     ? "Retry only with the original edit snapshot still open. After reload or a changed event, the original revision and submitted fields cannot be reconstructed here. Saving again checks the earlier request first; if it is still open, ask the project maintainer to reconcile it."
     : `Keep or reconstruct the original unchanged draft${operation === "event.create" ? " and cover" : ""}, then retry to check it. A blank form does not mean it failed.`;
-  return `An earlier request is unresolved. ${guidance} Request reference: ${intent.key}.`;
+  return `An earlier request is unresolved. ${guidance} If the server has no record of it, a different request is held back for about ${NO_RECORD_WAIT_MS / 60_000} minutes after it was sent. Request reference: ${intent.key}.`;
 }
 async function hash(bytes: ArrayBuffer) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");

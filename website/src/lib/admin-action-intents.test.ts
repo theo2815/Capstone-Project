@@ -106,3 +106,9 @@ it.each(["open", "lookup failure"])("keeps the earlier key and blocks the new dr
   expect((await claimAdminIntent(admin.id, "event.create", "create", { title: "First" }, resolve)).key).toBe(first.key);
   expect(adminIntentRecoveryNotice(admin.id, "event.create", "create")).toContain(first.key);
 });
+it.each(["event.create", "event.update", "user.message"])("says in the lasting notice how long a different %s request is held", async (operation) => {
+  await claimAdminIntent(admin.id, operation, "target-1", { title: "First" });
+  const notice = adminIntentRecoveryNotice(admin.id, operation, "target-1");
+  expect(notice).toMatch(/held back for about 5 minutes after it was sent/);
+  expect(notice).toMatch(/Request reference: \S+\.$/);
+});
