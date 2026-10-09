@@ -121,6 +121,15 @@
 - [ ] **TC-ADM-21: Reset Verification Flow**
   - **Action:** Click "Reset Verification" on a suspended or rejected photographer.
   - **Expected Result:** Resets status back to `PENDING` or unverified state, allowing the photographer to re-submit documentation.
+- [ ] **TC-ADM-51: Slow Approval, Repeated Clicks**
+  - **Action:** Throttle the network (DevTools "Slow 3G"). Click "Approve", then click it again and press `Enter` while it is still working.
+  - **Expected Result:** The button reads "Approving…" and the other decision buttons are disabled until it finishes. The photographer is approved once and receives one inbox notice.
+- [ ] **TC-ADM-52: Two Admins (or Two Tabs) Decide the Same Photographer**
+  - **Action:** Open the same pending photographer in two admin sessions and click "Approve" in both at the same moment.
+  - **Expected Result:** One session shows "Approved". The other shows "This submission changed. Close this form and review the current submission before deciding again." Only one decision and one inbox notice are recorded.
+- [ ] **TC-ADM-53: Bulk Approve Overlapping a Row Action**
+  - **Action:** Tick two pending photographers and click "Approve 2". While it is working, try to open and approve one of those rows.
+  - **Expected Result:** The bulk bar reads "Approving…" with its buttons disabled, and the rows in the batch cannot start a second decision. Each photographer is approved once.
 
 ---
 
@@ -193,12 +202,23 @@
   - **Action:** Navigate to `/admin/events`.
   - **Expected Result:** Renders all registered running events with Event Cover, Name, Race Date, Location, Total Photos Uploaded, and Current Status (Draft, Active, Archived).
 - [ ] **TC-ADM-38: Create New Event Form**
-  - **Action:** Click "Create Event" button.
-  - **Expected Result:** Opens `admin-event-form-modal.tsx`. Fill out Name, Slug, Date, Location, and upload a Banner cover image. Submit form.
-  - **Expected Result:** Event is created and immediately appears in the events list. Public URL `/events/[slug]` becomes accessible.
+  - **Action:** Click "+ New event". Fill out Title, Location, Region, Province, Date, and Price per photo; optionally upload a cover. Submit form.
+  - **Expected Result:** Province stays disabled until a Region is picked, and changing the Region clears the Province. A new event cannot be created without both. The event is created and immediately appears in the events list. Public URL `/events/[slug]` becomes accessible.
 - [ ] **TC-ADM-39: Edit Existing Event**
-  - **Action:** Click "Edit" on an existing event card. Update location or date. Save changes.
+  - **Action:** Click "Edit" on an existing event card. Update location, region/province, or date. Save changes.
   - **Expected Result:** Changes persist to backend and reflect in both admin table and public runner event cockpit.
+- [ ] **TC-ADM-54: Slow Create, Repeated Submit**
+  - **Action:** Throttle the network. Submit the Create form, then press `Enter` again and `Escape` while it is saving.
+  - **Expected Result:** The button reads "Creating…", the form stays open with its fields and pickers locked, and exactly one event is created.
+- [ ] **TC-ADM-55: Two Admins Edit the Same Event**
+  - **Action:** Open "Edit" on the same event in two admin sessions. Save in the first, then save in the second.
+  - **Expected Result:** The second save is refused with "Event has changed… Close this form and reopen the event to edit its current version." and keeps the typed draft. After reopening the event, the second admin can edit and save normally.
+- [ ] **TC-ADM-56: Edit an Older Event Without a Province**
+  - **Action:** Open "Edit" on an event created before Region/Province existed. Change only the Organizer and save. Then edit again and pick a Region and Province.
+  - **Expected Result:** The first save succeeds without forcing a province. Once a Region is picked a Province is required; the saved pair shows on the next edit.
+- [ ] **TC-ADM-57: Province Appears on the Public Events Filter**
+  - **Action:** Create a live event with a province no other event uses, then open `/events` and the "Filter by province" menu. Delete that event and reload `/events`.
+  - **Expected Result:** The province is offered and selecting it lists the event. After the delete the province is no longer offered. Events without a province stay listed under "All provinces".
 - [ ] **TC-ADM-40: Event State Override**
   - **Action:** Toggle event state between "Live", "Open", and "Archived".
   - **Expected Result:** Overrides take effect; archiving an event closes upload windows for photographers while keeping gallery readable.
@@ -216,6 +236,9 @@
 - [ ] **TC-ADM-43: Admin Direct Message (DM)**
   - **Action:** Click "Send Message" on the photographer profile. Enter subject and body (e.g. "Please check your watermark position on race photos"). Send.
   - **Expected Result:** Toast confirms dispatch. Log in as that photographer on another tab or phone: verify the message arrives in their notification bell modal with unread badge counter.
+- [ ] **TC-ADM-58: Message Send Interrupted**
+  - **Action:** Throttle the network and click "Send"; press `Enter` again while it reads "Sending…". Then repeat with the network switched to Offline right after clicking "Send", go back Online, and click "Send" again without changing the text.
+  - **Expected Result:** The form stays open with the subject and message until the send is confirmed. After the interrupted send it says an earlier request is unresolved and keeps the draft; sending the unchanged draft again delivers exactly one message to the photographer.
 
 ---
 
