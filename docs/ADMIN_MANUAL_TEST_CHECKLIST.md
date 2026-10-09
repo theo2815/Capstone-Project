@@ -291,3 +291,16 @@ The website shows "Request reference: `<key>`" when the reply to a create-event,
 **Reconciliation for a request that stays `UNKNOWN`:** vault `_journal/2026-10-08-admin-actions-and-event-location-plan.md`, heading "Safe administrative reconciliation for persistent UNKNOWN" (Session 4). Never edit or delete the `admin_action_commands` row by hand; the database blocks deleting it.
 
 Signing out clears every stored reference in that browser tab. Do that only after the lookup shows the request did not go through, or you may send it twice.
+
+---
+
+## Classifying an event the admin list does not show
+
+`/admin/events` loads the newest 200 events and has no search, so an older event cannot be opened in the form. Its region and province can still be set with the same request the form sends. (Owner's decision, 2026-10-09: no search box until a real environment holds more than 200 events.)
+
+1. Get the event's id, and its `review_revision` if you have database access: `SELECT id, review_revision, region_code, province_code FROM events WHERE slug = '<slug>';`
+2. Take both codes from `GET /api/v1/regions`. Never retype them from memory, and send both or neither.
+3. Signed in as an admin, send `PATCH /api/v1/admin/events/<id>` as `multipart/form-data` with the fields `regionCode`, `provinceCode` and `expectedRevision`, and a new UUID in the `Idempotency-Key` header. Fields you leave out keep their values.
+4. Check `GET /api/v1/events/<slug>`: it shows the pair.
+
+A 409 means the event changed after you read its revision: read it again and resend under a new key. If the reply is lost, follow "Unresolved admin request" above with the key you sent. The request cannot clear a pair, and a province must come from confirmed event information, never from the location text or the title.
