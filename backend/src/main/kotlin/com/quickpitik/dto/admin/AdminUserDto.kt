@@ -2,6 +2,8 @@ package com.quickpitik.dto.admin
 
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
+import jakarta.validation.constraints.PositiveOrZero
+import io.swagger.v3.oas.annotations.media.Schema
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -39,6 +41,8 @@ data class AdminUserRowDto(
     val suspendedAt: String?,
     val suspensionReason: String?,
     val settingsSnapshot: PhotographerSettingsSnapshotDto?,
+    @field:Schema(description = "Photographer review generation; zero before the first submission or decision")
+    val verificationRevision: Long = 0,
 )
 
 // Mirrors website/src/store/admin-user-store.ts DecisionLogEntry.
@@ -67,6 +71,14 @@ data class AdminUserDetailDto(
     val suspensionReason: String?,
     val settingsSnapshot: PhotographerSettingsSnapshotDto?,
     val decisionLog: List<DecisionLogEntryDto>,
+    @field:Schema(description = "Photographer review generation; zero before the first submission or decision")
+    val verificationRevision: Long = 0,
+)
+
+data class ApproveUserRequest(
+    @field:PositiveOrZero
+    @field:Schema(description = "Optional v1 precondition; a stale review generation returns 409")
+    val expectedRevision: Long? = null,
 )
 
 // POST /admin/users/{id}/reject — body { reason }.
@@ -74,6 +86,9 @@ data class RejectUserRequest(
     @field:NotBlank
     @field:Size(max = 500)
     val reason: String,
+    @field:PositiveOrZero
+    @field:Schema(description = "Optional v1 precondition; a stale review generation returns 409")
+    val expectedRevision: Long? = null,
 )
 
 // POST /admin/users/{id}/suspend — body { reason }.
@@ -88,5 +103,8 @@ data class ResetVerificationRequest(
     @field:NotBlank
     @field:Size(max = 500)
     val reason: String,
+    @field:PositiveOrZero
+    @field:Schema(description = "Optional v1 precondition; a stale review generation returns 409")
+    val expectedRevision: Long? = null,
 )
 

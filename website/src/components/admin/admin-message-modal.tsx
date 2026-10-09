@@ -10,18 +10,20 @@ import {
 interface AdminMessageModalProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (payload: { subject: string; body: string }) => void;
+  onSubmit: (payload: { subject: string; body: string }) => Promise<boolean>;
+  submitting: boolean;
+  recoveryNotice?: string | null;
   photographerName: string;
 }
 
-// Send-message modal. On submit, the parent pushes the message into the
-// photographer's inbox via notifyAdminMessage(). Audit-log persistence
-// arrives with backend Phase F; until then the inbox row is the receipt.
+// Drafts stay in memory until the domain hook confirms the keyed send.
 export function AdminMessageModal({
   open,
   onClose,
   onSubmit,
   photographerName,
+  submitting,
+  recoveryNotice,
 }: AdminMessageModalProps) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -30,11 +32,12 @@ export function AdminMessageModal({
   const bodyValid = body.trim().length > 0;
   const canSend = subjectValid && bodyValid;
 
-  function handleSubmit() {
-    if (!canSend) return;
-    onSubmit({ subject: subject.trim(), body: body.trim() });
-    setSubject("");
-    setBody("");
+  async function handleSubmit() {
+    if (!canSend || submitting) return;
+    if (await onSubmit({ subject: subject.trim(), body: body.trim() })) {
+      setSubject("");
+      setBody("");
+    }
   }
 
   return (
@@ -45,8 +48,11 @@ export function AdminMessageModal({
       title="Send message"
       intro={`Reach out to ${photographerName} privately. The message lands directly in their dashboard inbox.`}
       submitLabel="Send"
+      submitting={submitting}
+      pendingLabel="Sending…"
       submitDisabled={!canSend}
     >
+      {recoveryNotice && <p role="status" className="font-sans text-sm text-slate">{recoveryNotice}</p>}
       <AdminTextInput
         id="msg-subject"
         label="Subject"

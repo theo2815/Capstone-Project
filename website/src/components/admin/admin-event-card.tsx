@@ -33,6 +33,7 @@ interface AdminEventCardProps {
   event: ListEvent;
   index?: number;
   review?: AdminEventReview;
+  pendingLabel?: string | null;
   onEdit: (event: ListEvent) => void;
   onDelete: (event: ListEvent) => void;
 }
@@ -41,6 +42,7 @@ export function AdminEventCard({
   event,
   index = 0,
   review,
+  pendingLabel,
   onEdit,
   onDelete,
 }: AdminEventCardProps) {
@@ -52,6 +54,7 @@ export function AdminEventCard({
 
   return (
     <article
+      aria-busy={!!pendingLabel}
       className="rounded-2xl border border-line bg-bone overflow-hidden"
       style={{
         animation: `fade-up 0.5s ${0.05 * index + 0.05}s both`,
@@ -97,6 +100,7 @@ export function AdminEventCard({
             <button
               type="button"
               onClick={() => onEdit(event)}
+              disabled={!!pendingLabel}
               className={actionBtn}
             >
               Edit
@@ -104,12 +108,14 @@ export function AdminEventCard({
             <button
               type="button"
               onClick={() => onDelete(event)}
+              disabled={!!pendingLabel}
               className={actionBtn}
               aria-label={`Delete ${event.name}`}
             >
               Delete
             </button>
           </div>
+          {pendingLabel && <p role="status" className="font-sans text-sm text-slate">{pendingLabel}</p>}
           {awaitingReview ? (
             <Link
               href={ROUTES.ADMIN_EVENT_REQUESTS}
@@ -134,7 +140,7 @@ export function AdminEventCard({
 }
 
 const actionBtn =
-  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors";
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 
 function formatShortDate(iso: string) {
   const d = new Date(iso + "T00:00:00");

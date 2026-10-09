@@ -34,7 +34,7 @@ vi.mock("@/hooks/use-admin-disputes", async () => {
     EMPTY_DISPUTES: [], useAdminDisputes: () => ({ data: [{
       ...dispute, photoSnapshot: { ...dispute.photoSnapshot, thumbnailUrl: "https://photos.test/admin.jpg" },
     }], isPending: false, isError: false, isSuccess: true, isFetching: false }),
-    useDisputeActions: () => ({ resolve: vi.fn(), deny: vi.fn(), escalate: vi.fn() }),
+    useDisputeActions: () => ({ resolve: vi.fn(), deny: vi.fn(), escalate: vi.fn(), isPending: () => false, pendingAction: () => null }),
   };
 });
 vi.mock("@/hooks/use-admin-keyboard", () => ({ useQueueKeyboardNav: () => ({ focusedId: null, setFocusedId: vi.fn() }) }));

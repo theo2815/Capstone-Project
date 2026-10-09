@@ -63,7 +63,7 @@ class EventFormBindingTest {
             .thenAnswer { created = it.getArgument(1); null }
         Mockito.`when`(ownedEvents.update(anyArg(), anyArg(), anyArg(), anyArg()))
             .thenAnswer { updated = it.getArgument(2); null }
-        Mockito.`when`(adminEvents.create(anyArg(), anyArg(), anyArg()))
+        Mockito.`when`(adminEvents.create(anyArg(), anyArg(), anyArg(), Mockito.isNull()))
             .thenAnswer { adminCreated = it.getArgument(1); null }
         photographer = mvc(
             MePhotographerController(
@@ -189,6 +189,20 @@ class EventFormBindingTest {
             .andExpect(jsonPath("$.errors[0].field").value("location"))
 
         assertNull(adminCreated)
+    }
+
+    @Test
+    fun `admin location codes trim supplied values but preserve explicit blanks`() {
+        val json = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+        for ((region, province) in listOf(" region-7 " to " cebu ", " " to "")) {
+            admin.perform(multipart("/api/v1/admin/events")
+                .param("title", "Run").param("date", "2026-11-08").param("location", "Venue")
+                .param("regionCode", region).param("provinceCode", province))
+                .andExpect(status().isOk)
+            val bound = json.valueToTree<com.fasterxml.jackson.databind.JsonNode>(assertNotNull(adminCreated))
+            assertEquals(region.trim(), bound["regionCode"]?.asText())
+            assertEquals(province.trim(), bound["provinceCode"]?.asText())
+        }
     }
 
     private fun mvc(controller: Any): MockMvc =

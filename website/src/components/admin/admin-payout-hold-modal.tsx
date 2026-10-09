@@ -61,6 +61,7 @@ export function AdminPayoutHoldModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel="Holding…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Hold ${titleSuffix}`}

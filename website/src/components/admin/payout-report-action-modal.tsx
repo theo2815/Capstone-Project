@@ -82,6 +82,7 @@ export function PayoutReportActionModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel={mode === "acknowledge" ? "Acknowledging…" : "Resolving…"}
       onClose={onClose}
       onSubmit={handleSubmit}
       title={config.title(report.id)}

@@ -51,14 +51,14 @@ function statusTone(status: PayoutReportStatus): AdminStatusPillTone {
 // within each bucket, newest reportedAt first.
 
 export function PayoutReportsSection() {
-  const { acknowledge, resolve } = usePayoutReportActions();
+  const { acknowledge, resolve, isPending, pendingAction } = usePayoutReportActions();
   const reportsQuery = useAdminPayoutReports();
   const serverReports = reportsQuery.data ?? EMPTY_REPORTS;
   const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   const { showToast } = useToast();
 
   const [reportRowId, setReportRowId] = useUrlState<string>("report", "");
-  const [submitting, setSubmitting] = useState(false);
+  const submitting = isPending(reportRowId);
   const [actionMode, setActionMode] = useState<PayoutReportActionMode | null>(
     null,
   );
@@ -92,9 +92,7 @@ export function PayoutReportsSection() {
 
   async function handleAcknowledge(note: string) {
     if (!openReport || submitting) return;
-    setSubmitting(true);
     const ok = await acknowledge(openReport.id, note);
-    setSubmitting(false);
     if (!ok) return;
     setActionMode(null);
     showToast({
@@ -105,9 +103,7 @@ export function PayoutReportsSection() {
 
   async function handleResolve(note: string) {
     if (!openReport || submitting) return;
-    setSubmitting(true);
     const ok = await resolve(openReport.id, note);
-    setSubmitting(false);
     if (!ok) return;
     setActionMode(null);
     setReportRowId("");
@@ -186,6 +182,7 @@ export function PayoutReportsSection() {
             />
           }
         >
+          {submitting && <p role="status">{pendingAction(reportRowId)}</p>}
           <ReportDetailBody
             report={openReport}
             cycleAmount={cyclesById.get(openReport.payoutCycleId)?.amount}

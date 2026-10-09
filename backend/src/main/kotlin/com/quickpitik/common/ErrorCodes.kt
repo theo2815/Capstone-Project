@@ -62,6 +62,7 @@ object ErrorCodes {
     const val ORDER_NOT_FOUND = "ORDER_NOT_FOUND"
     const val PAYMENT_FAILED = "PAYMENT_FAILED"
     const val INVALID_IDEMPOTENCY_KEY = "INVALID_IDEMPOTENCY_KEY"
+    const val ADMIN_COMMAND_RECOVERY_REQUIRED = "ADMIN_COMMAND_RECOVERY_REQUIRED"
     const val IDEMPOTENT_REPLAY_IN_PROGRESS = "IDEMPOTENT_REPLAY_IN_PROGRESS"
     // Photographer coupons (V45). INVALID covers unknown + inactive so a guess
     // can't tell a switched-off code from a nonexistent one.

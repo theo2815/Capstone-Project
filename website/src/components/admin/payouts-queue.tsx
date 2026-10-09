@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
@@ -96,23 +96,8 @@ function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
 // drawer-footer triggers, and the bulk bar — single source of truth.
 
 export function PayoutsQueue() {
-  const { approve, hold, markPaid, reject, markProcessing, markFailed, markReturned, bulkApprove, bulkHold } = usePayoutActions();
+  const { approve, hold, markPaid, reject, markProcessing, markFailed, markReturned, bulkApprove, bulkHold, isPending, pendingAction } = usePayoutActions();
   const { showToast } = useToast();
-  const [submitting, setSubmitting] = useState(false);
-  const submittingRef = useRef(false);
-
-  async function runAction(action: () => Promise<boolean>): Promise<boolean> {
-    if (submittingRef.current) return false;
-    submittingRef.current = true;
-    setSubmitting(true);
-    try {
-      return await action();
-    } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
-    }
-  }
-
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
   const [holdTarget, setHoldTarget] = useState<HoldTarget>(null);
@@ -125,6 +110,13 @@ export function PayoutsQueue() {
     cycle: AdminPayoutCycle;
   } | null>(null);
   const [rowId, setRowId] = useUrlState<string>("row", "");
+
+  const actionIds = holdTarget?.kind === "single" ? [holdTarget.payoutId]
+    : holdTarget?.kind === "bulk" ? holdTarget.payoutIds
+    : markPaidTarget ? [markPaidTarget.id]
+    : reasonTarget ? [reasonTarget.cycle.id]
+    : bulkApproveOpen ? [...selected] : rowId ? [rowId] : [...selected];
+  const submitting = isPending(actionIds);
 
   // Canonical server rows drive every status and available action.
   const query = useAdminPayouts();
@@ -319,7 +311,7 @@ export function PayoutsQueue() {
   }, [rowId, setFocusedId]);
 
   function toggleSelect(id: string) {
-    if (submittingRef.current) return;
+    if (isPending(actionIds)) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -329,25 +321,24 @@ export function PayoutsQueue() {
   }
 
   function clearSelection() {
-    if (submittingRef.current) return;
+    if (isPending(actionIds)) return;
     setSelected(new Set());
   }
 
   function handleRowActivate(id: string) {
-    if (submittingRef.current) return;
+    if (isPending(actionIds)) return;
     setFocusedId(id);
     if (selectionActive) toggleSelect(id);
     else setRowId(id);
   }
 
   function handleOpenDrawer(id: string) {
-    if (submittingRef.current) return;
     setFocusedId(id);
     setRowId(id);
   }
 
   async function handleSingleApprove(cycle: AdminPayoutCycle) {
-    const ok = await runAction(() => approve(cycle.id));
+    const ok = await approve(cycle.id);
     if (ok) showToast({ kind: "success", message: `Approval recorded · ${cycle.id}` });
   }
   function handleSingleHoldRequest(cycle: AdminPayoutCycle) {
@@ -364,7 +355,7 @@ export function PayoutsQueue() {
   async function handleDrawerApprove() {
     if (!openRow) return;
     const id = openRow.id;
-    const ok = await runAction(() => approve(id));
+    const ok = await approve(id);
     if (ok) {
       showToast({ kind: "success", message: `Approval recorded · ${id}` });
       setRowId("");
@@ -386,7 +377,7 @@ export function PayoutsQueue() {
   // mark-processing takes no reason — fire directly. The drawer stays open
   // (a processing cycle is still actionable: mark paid / mark failed).
   async function runMarkProcessing(id: string) {
-    const ok = await runAction(() => markProcessing(id));
+    const ok = await markProcessing(id);
     if (ok) showToast({ kind: "success", message: `Processing · ${id}` });
   }
   function handleSingleMarkProcessing(cycle: AdminPayoutCycle) {
@@ -413,7 +404,7 @@ export function PayoutsQueue() {
     const { kind, cycle } = reasonTarget;
     const fn =
       kind === "reject" ? reject : kind === "failed" ? markFailed : markReturned;
-    const ok = await runAction(() => fn(cycle.id, reason));
+    const ok = await fn(cycle.id, reason);
     if (ok) {
       setReasonTarget(null);
       const label =
@@ -433,7 +424,7 @@ export function PayoutsQueue() {
 
   async function handleBulkApproveConfirm() {
     const ids = Array.from(selected);
-    const ok = await runAction(() => bulkApprove(ids, (failedIds) => setSelected(new Set(failedIds))));
+    const ok = await bulkApprove(ids, (failedIds) => setSelected(new Set(failedIds)));
     if (ok) {
       setBulkApproveOpen(false);
       clearSelection();
@@ -456,7 +447,7 @@ export function PayoutsQueue() {
     if (!holdTarget) return;
     const target = holdTarget;
     if (target.kind === "single") {
-      const ok = await runAction(() => hold(target.payoutId, reason));
+      const ok = await hold(target.payoutId, reason);
       if (ok) {
         setHoldTarget(null);
         showToast({
@@ -468,13 +459,13 @@ export function PayoutsQueue() {
         if (openRow && openRow.id === target.payoutId) setRowId("");
       }
     } else {
-      const ok = await runAction(() => bulkHold(target.payoutIds, reason, (failedIds) => {
+      const ok = await bulkHold(target.payoutIds, reason, (failedIds) => {
         setSelected(new Set(failedIds));
         setHoldTarget({
           kind: "bulk", payoutIds: failedIds,
           totalAmount: failedIds.reduce((total, id) => total + (byId.get(id)?.amount ?? 0), 0),
         });
-      }));
+      });
       if (ok) {
         setHoldTarget(null);
         clearSelection();
@@ -489,7 +480,7 @@ export function PayoutsQueue() {
   async function handleMarkPaidSubmit(reference: string) {
     if (!markPaidTarget) return;
     const target = markPaidTarget;
-    const ok = await runAction(() => markPaid(target.id, reference));
+    const ok = await markPaid(target.id, reference);
     if (ok) {
       setMarkPaidTarget(null);
       showToast({
@@ -542,7 +533,6 @@ export function PayoutsQueue() {
         empty="No payouts pending review."
         selected={selected}
         selectionActive={selectionActive}
-        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -562,7 +552,6 @@ export function PayoutsQueue() {
         empty="No payouts in progress."
         selected={selected}
         selectionActive={selectionActive}
-        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -589,7 +578,6 @@ export function PayoutsQueue() {
         empty="No held payouts."
         selected={selected}
         selectionActive={selectionActive}
-        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -616,7 +604,6 @@ export function PayoutsQueue() {
         empty="No paid payouts yet."
         selected={selected}
         selectionActive={selectionActive}
-        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -643,7 +630,6 @@ export function PayoutsQueue() {
         empty="No closed payouts."
         selected={selected}
         selectionActive={selectionActive}
-        submitting={submitting}
         toggleSelect={toggleSelect}
         onActivate={handleRowActivate}
         onOpenDrawer={handleOpenDrawer}
@@ -722,7 +708,7 @@ export function PayoutsQueue() {
       {openRow && (
         <AdminDetailDrawer
           open={true}
-          onClose={() => { if (!submittingRef.current) setRowId(""); }}
+          onClose={() => { if (!isPending(actionIds)) setRowId(""); }}
           escDisabled={drawerEscDisabled}
           kicker={`Payout · ${openRow.id}`}
           title={openRow.brandName ?? openRow.photographerName}
@@ -747,6 +733,7 @@ export function PayoutsQueue() {
             />
           }
         >
+          {submitting && <p role="status" aria-busy="true">{pendingAction(actionIds)}</p>}
           <PayoutDetailBody cycle={openRow} />
         </AdminDetailDrawer>
       )}
@@ -764,7 +751,6 @@ function PayoutSlab({
   empty,
   selected,
   selectionActive,
-  submitting,
   focusedId,
   toggleSelect,
   onActivate,
@@ -784,7 +770,6 @@ function PayoutSlab({
   empty: string;
   selected: Set<string>;
   selectionActive: boolean;
-  submitting: boolean;
   focusedId: string | null;
   toggleSelect: (id: string) => void;
   onActivate: (id: string) => void;
@@ -800,6 +785,7 @@ function PayoutSlab({
     onLoadMore: () => void;
   };
 }) {
+  const { isPending, pendingAction } = usePayoutActions();
   const noun = totalCount === 1 ? "payout" : "payouts";
   return (
     <Slab
@@ -820,7 +806,8 @@ function PayoutSlab({
                   cycle={row}
                   selected={selected.has(row.id)}
                   selectionActive={selectionActive}
-                  submitting={submitting}
+                  submitting={isPending([row.id])}
+                  pendingLabel={pendingAction([row.id])}
                   focused={focusedId === row.id}
                   onToggleSelect={() => toggleSelect(row.id)}
                   onActivate={() => onActivate(row.id)}

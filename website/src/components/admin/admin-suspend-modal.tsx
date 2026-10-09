@@ -59,6 +59,7 @@ export function AdminSuspendModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel="Suspending…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Suspend account"

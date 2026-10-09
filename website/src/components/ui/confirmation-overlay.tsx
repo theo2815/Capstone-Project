@@ -13,8 +13,8 @@ export function ConfirmationOverlay() {
   const loading = useConfirmationStore((s) => s.loading);
   const error = useConfirmationStore((s) => s.error);
   const close = useConfirmationStore((s) => s.close);
-  const setLoading = useConfirmationStore((s) => s.setLoading);
-  const setError = useConfirmationStore((s) => s.setError);
+  const claim = useConfirmationStore((s) => s.claim);
+  const fail = useConfirmationStore((s) => s.fail);
 
   // Restore focus to the element that triggered the confirmation when it closes.
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -49,29 +49,27 @@ export function ConfirmationOverlay() {
   const cancelLabel = config.cancelLabel ?? "Cancel";
 
   function handleCancel() {
-    if (loading) return;
-    close(false);
+    if (active) close(active.id, false);
   }
 
   async function runConfirm() {
-    if (!active) return;
+    if (!active || !claim(active.id)) return;
     const cb = active.config.onConfirm;
     if (!cb) {
-      close(true);
+      close(active.id, true);
       return;
     }
-    setError(null);
-    setLoading(true);
     try {
       await cb();
-      close(true);
+      close(active.id, true);
     } catch (err) {
-      setLoading(false);
+      // A synchronous throw must retain the claim through same-turn Enter/click.
+      await Promise.resolve();
       const msg =
         err instanceof Error && err.message
           ? err.message
           : "Something went wrong. Please try again.";
-      setError(msg);
+      fail(active.id, msg);
     }
   }
 
@@ -106,6 +104,7 @@ export function ConfirmationOverlay() {
             type="button"
             onClick={runConfirm}
             disabled={loading}
+            aria-busy={loading}
             className={cn(
               "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-5 py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
               config.danger

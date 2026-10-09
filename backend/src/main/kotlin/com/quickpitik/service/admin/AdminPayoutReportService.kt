@@ -112,9 +112,8 @@ class AdminPayoutReportService(
     }
 
     private fun loadReport(reportId: UUID): PayoutReport =
-        payoutReportRepository.findById(reportId).orElseThrow {
+        payoutReportRepository.findByIdForUpdate(reportId) ?: throw
             NotFoundException(code = ErrorCodes.REPORT_NOT_FOUND, message = "Report not found")
-        }
 
     private fun parseStatus(raw: String): PayoutReportStatus =
         runCatching { PayoutReportStatus.fromWire(raw) }.getOrElse {

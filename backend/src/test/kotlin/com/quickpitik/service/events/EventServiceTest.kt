@@ -67,6 +67,22 @@ class EventServiceTest {
         assertNull(service.findBySlug("pending-run"))
     }
 
+    @Test
+    fun `public list detail and admin mapping expose the stored pair including legacy nulls`() {
+        val json = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().findAndRegisterModules()
+        for ((region, province) in listOf(null to null, "region-7" to "cebu")) {
+            val event = event(EventStatus.ACTIVE).apply { regionCode = region; provinceCode = province }
+            Mockito.`when`(eventRepository.findPublicBySlug(event.slug)).thenReturn(event)
+            for (dto in listOf(mapper.toListDto(event), service.findBySlug(event.slug), mapper.toAdminListDto(event))) {
+                val wire = json.valueToTree<com.fasterxml.jackson.databind.JsonNode>(dto)
+                kotlin.test.assertTrue(wire.has("regionCode"))
+                kotlin.test.assertTrue(wire.has("provinceCode"))
+                assertEquals(region, wire["regionCode"].takeUnless { it.isNull }?.asText())
+                assertEquals(province, wire["provinceCode"].takeUnless { it.isNull }?.asText())
+            }
+        }
+    }
+
     private fun event(status: EventStatus) = Event(
         slug = "run-${UUID.randomUUID().toString().take(6)}",
         name = "Run",

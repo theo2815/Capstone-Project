@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
@@ -28,17 +28,11 @@ import { cn } from "@/lib/utils";
 export function EventRequestsQueue() {
   const query = useAdminEvents({ review: "queue" });
   const rows = query.data;
-  const { approve, reject } = useAdminEventActions();
+  const { approve, reject, isPending, pendingAction } = useAdminEventActions();
   const { showToast } = useToast();
   const [rejecting, setRejecting] = useState<AdminEventRow | null>(null);
   const [reason, setReason] = useState("");
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const busyRef = useRef(false);
-
-  async function run(row: AdminEventRow, action: () => Promise<boolean>, message: string) {
-    if (busyRef.current) return false;
-    busyRef.current = true;
-    setBusyId(row.id);
+  async function run(action: () => Promise<boolean>, message: string) {
     try {
       const ok = await action();
       if (ok) showToast({ kind: "success", message });
@@ -46,9 +40,6 @@ export function EventRequestsQueue() {
     } catch {
       // The hook surfaces backend errors and reconciles conflicting reviews.
       return false;
-    } finally {
-      busyRef.current = false;
-      setBusyId(null);
     }
   }
 
@@ -57,8 +48,7 @@ export function EventRequestsQueue() {
     const text = reason.trim();
     if (!row || !text) return;
     const ok = await run(
-      row,
-      () => reject(row.id, text),
+      () => reject(row.id, text, row.reviewRevision),
       row.reviewStatus === "change_pending"
         ? `Change declined — ${row.name} keeps its current pricing.`
         : `${row.name} sent back to the photographer.`,
@@ -106,11 +96,11 @@ export function EventRequestsQueue() {
             <RequestRow
               key={row.id}
               row={row}
-              busy={busyId !== null}
+              busy={isPending(row.id)}
+              pendingLabel={pendingAction(row.id)}
               onApprove={() =>
                 run(
-                  row,
-                  () => approve(row.id),
+                  () => approve(row.id, row.reviewRevision),
                   row.reviewStatus === "change_pending"
                     ? `Change applied to ${row.name}.`
                     : `${row.name} is live. Uploads are open.`,
@@ -142,7 +132,8 @@ export function EventRequestsQueue() {
         submitLabel={
           rejecting?.reviewStatus === "change_pending" ? "Decline" : "Send back"
         }
-        submitting={busyId !== null}
+        submitting={!!rejecting && isPending(rejecting.id)}
+        pendingLabel="Sending back…"
         submitDisabled={reason.trim().length === 0}
       >
         <AdminTextarea
@@ -161,11 +152,13 @@ export function EventRequestsQueue() {
 function RequestRow({
   row,
   busy,
+  pendingLabel,
   onApprove,
   onReject,
 }: {
   row: AdminEventRow;
   busy: boolean;
+  pendingLabel: string | null;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -213,9 +206,10 @@ function RequestRow({
           type="button"
           onClick={onApprove}
           disabled={busy}
+          aria-busy={busy}
           className={cn(BTN_PRIMARY, BTN_SIZE.sm)}
         >
-          {busy ? "Working…" : "Approve"}
+          {busy ? pendingLabel : "Approve"}
         </button>
         <button
           type="button"

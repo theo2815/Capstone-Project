@@ -46,6 +46,8 @@ class EventDtoMapper(
         status = event.status,
         visibility = event.visibility.wire,
         pricingMode = event.pricingMode.wire,
+        regionCode = event.regionCode,
+        provinceCode = event.provinceCode,
     )
 
     // `ownerHandle` — the creating photographer's public handle (V46),
@@ -70,6 +72,8 @@ class EventDtoMapper(
         pricingMode = event.pricingMode.wire,
         watermarkPolicy = event.watermarkPolicy.wire,
         photographerHandle = ownerHandle,
+        regionCode = event.regionCode,
+        provinceCode = event.provinceCode,
     )
 
     // `owner` is the photographer who created the event (V46), resolved in
@@ -99,6 +103,9 @@ class EventDtoMapper(
         reviewStatus = event.reviewStatus.wire,
         reviewNote = event.reviewNote,
         pendingChange = event.pendingChange,
+        reviewRevision = event.reviewRevision,
+        regionCode = event.regionCode,
+        provinceCode = event.provinceCode,
     )
 
     fun resolveBannerUrl(event: Event): String? =

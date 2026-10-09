@@ -1,7 +1,10 @@
 package com.quickpitik.controller
 
+import com.quickpitik.common.IdempotencyKey
+import org.springframework.web.bind.annotation.RequestHeader
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.dto.admin.ApproveEventRequest
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.AdminReindexResponseDto
@@ -64,14 +67,15 @@ class AdminEventsController(
     fun approve(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
-    ): AdminListEventDto = adminEventService.approve(principal.userId, eventId)
+        @Valid @RequestBody(required = false) body: ApproveEventRequest? = null,
+    ): AdminListEventDto = adminEventService.approve(principal.userId, eventId, body?.expectedRevision)
 
     @PostMapping("/{eventId}/reject")
     fun reject(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: RejectEventRequest,
-    ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason)
+    ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason, body.expectedRevision)
 
     // multipart/form-data — the text parts bind onto the request DTO and the
     // optional `cover` part carries the image bytes (jpeg/png/webp).
@@ -83,7 +87,8 @@ class AdminEventsController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @Valid @ModelAttribute("form") form: CreateAdminEventRequest,
         @RequestPart("cover", required = false) cover: MultipartFile?,
-    ): AdminListEventDto = adminEventService.create(principal.userId, form, coverOf(cover))
+        @RequestHeader(IdempotencyKey.HEADER, required = false) key: String? = null,
+    ): AdminListEventDto = adminEventService.create(principal.userId, form, coverOf(cover), IdempotencyKey.parse(key))
 
     // multipart/form-data so the cover image can ride alongside text fields,
     // mirroring POST. Text-only edits still work — they just send a form
@@ -96,12 +101,14 @@ class AdminEventsController(
         @Valid @ModelAttribute("form") form: UpdateAdminEventRequest,
         @RequestParam(required = false) removeCover: Boolean?,
         @RequestPart("cover", required = false) cover: MultipartFile?,
+        @RequestHeader(IdempotencyKey.HEADER, required = false) key: String? = null,
     ): AdminListEventDto = adminEventService.update(
         adminId = principal.userId,
         eventId = eventId,
         req = form,
         cover = coverOf(cover),
         removeCover = removeCover == true,
+        key = IdempotencyKey.parse(key),
     )
 
     @DeleteMapping("/{eventId}")
@@ -129,6 +136,9 @@ class AdminEventsController(
     @InitBinder("form")
     fun trimEventForm(binder: WebDataBinder) {
         binder.registerCustomEditor(String::class.java, StringTrimmerEditor(true))
+        // A supplied blank pair is invalid, not an omitted PATCH.
+        binder.registerCustomEditor(String::class.java, "regionCode", StringTrimmerEditor(false))
+        binder.registerCustomEditor(String::class.java, "provinceCode", StringTrimmerEditor(false))
     }
 
     private fun coverOf(cover: MultipartFile?): AdminEventService.CoverUpload? =

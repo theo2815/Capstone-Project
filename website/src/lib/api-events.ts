@@ -26,9 +26,10 @@ function eventToListEvent(e: Event): ListEvent {
   };
 }
 
-export async function fetchEventsList(
+export async function fetchEventsPage(
   filters: EventsListFilters = {},
-): Promise<ListEvent[]> {
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<ListEvent>> {
   const params = new URLSearchParams();
   // DRAFT is filtered out server-side (Q-001) — runners never see drafts.
   params.set("status", "ACTIVE,COMPLETED,ARCHIVED");
@@ -40,8 +41,43 @@ export async function fetchEventsList(
   params.set("limit", String(filters.limit ?? 200));
   const res = await api.get<PaginatedResponse<Event>>(
     `/events?${params.toString()}`,
+    { signal },
   );
-  return res.items.map(eventToListEvent);
+  return { ...res, items: res.items.map(eventToListEvent) };
+}
+
+export async function fetchEventsList(
+  filters: EventsListFilters = {},
+): Promise<ListEvent[]> {
+  return (await fetchEventsPage(filters)).items;
+}
+
+// ponytail: full-catalog cost grows with events; move facets AND results to server pagination when measured payload/latency warrants it.
+export async function fetchPublicEventsCatalog(signal?: AbortSignal): Promise<ListEvent[]> {
+  const incomplete = () => new Error("Events changed or could not be fully loaded. Please refresh and try again.");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const events = new Map<string, ListEvent>();
+    let offset = 0;
+    let total: number | undefined;
+    while (true) {
+      signal?.throwIfAborted();
+      const page = await fetchEventsPage({ offset }, signal);
+      signal?.throwIfAborted();
+      if (page.offset !== offset || !Number.isSafeInteger(page.total) || page.total < 0) throw incomplete();
+      if (total !== undefined && page.total !== total) break;
+      total = page.total;
+      if (page.items.length === 0 && offset < total) throw incomplete();
+      let overlap = false;
+      for (const event of page.items) {
+        if (events.has(event.id)) overlap = true;
+        events.set(event.id, event);
+      }
+      offset += page.items.length;
+      if (overlap || offset > total) break;
+      if (offset === total) return [...events.values()];
+    }
+  }
+  throw incomplete();
 }
 
 export async function fetchEventDetail(

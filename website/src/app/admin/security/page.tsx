@@ -6,6 +6,9 @@ import { BTN_PRIMARY, BTN_DANGER, BTN_SIZE } from "@/components/ui/button-styles
 import { FieldError } from "@/components/ui/field-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
+import { useAdminMutation } from "@/hooks/use-admin-mutation";
+import { useAuthStore } from "@/store/auth-store";
+import { captureAuthSession } from "@/lib/auth-session";
 import {
   confirmMfa,
   disableMfa,
@@ -26,7 +29,10 @@ export default function AdminSecurityPage() {
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [code, setCode] = useState("");
   const [disarming, setDisarming] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const mutation = useAdminMutation();
+  const userId = useAuthStore((state) => state.user?.id);
+  const targets = [{ kind: "security" as const, id: userId ?? "" }];
+  const busy = mutation.isPending(targets);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,15 +59,22 @@ export default function AdminSecurityPage() {
   }
 
   async function handleEnroll() {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
+    await run("Starting…", "Could not start setup. Please try again.", async (current) => {
+      const response = await enrollMfa();
+      if (current()) setEnroll(response);
+    });
+  }
+
+  async function run(action: string, fallback: string, operation: (current: () => boolean) => Promise<void>) {
+    const current = captureAuthSession();
     try {
-      setEnroll(await enrollMfa());
+      await mutation.run({ targets, action, execute: async () => {
+        setError(null);
+        // Sensitive results stay in local state, never in mutation results or receipts.
+        await operation(current);
+      } });
     } catch (err) {
-      setError(messageFor(err, "Could not start setup. Please try again."));
-    } finally {
-      setBusy(false);
+      if (current()) setError(messageFor(err, fallback));
     }
   }
 
@@ -71,19 +84,14 @@ export default function AdminSecurityPage() {
       setError("Enter the 6-digit code from your authenticator app.");
       return;
     }
-    setBusy(true);
-    setError(null);
-    try {
+    await run("Verifying…", "That code didn't work. Please try again.", async (current) => {
       const res = await confirmMfa(code.trim());
+      if (!current()) return;
       setRecoveryCodes(res.recoveryCodes);
       setEnroll(null);
       setEnabled(true);
       setCode("");
-    } catch (err) {
-      setError(messageFor(err, "That code didn't work. Please try again."));
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   async function handleDisable() {
@@ -92,21 +100,17 @@ export default function AdminSecurityPage() {
       setError("Enter a current code to turn off two-step verification.");
       return;
     }
-    setBusy(true);
-    setError(null);
-    try {
+    await run("Turning off…", "That code didn't work. Please try again.", async (current) => {
       await disableMfa(code.trim());
+      if (!current()) return;
       setEnabled(false);
       setDisarming(false);
       setCode("");
-    } catch (err) {
-      setError(messageFor(err, "That code didn't work. Please try again."));
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   function cancelFlow() {
+    if (mutation.isPending(targets)) return;
     setEnroll(null);
     setDisarming(false);
     setCode("");
@@ -177,6 +181,7 @@ export default function AdminSecurityPage() {
               type="button"
               onClick={handleEnroll}
               disabled={busy}
+              aria-busy={busy}
               className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
             >
               {busy ? "Starting…" : "Enable 2-step verification"}
@@ -231,6 +236,7 @@ function EnrollPanel({
           type="text"
           inputMode="numeric"
           autoComplete="one-time-code"
+          disabled={busy}
           value={code}
           onChange={(e) => onCode(e.target.value)}
           placeholder="123456"
@@ -244,6 +250,7 @@ function EnrollPanel({
           type="button"
           onClick={onConfirm}
           disabled={busy}
+              aria-busy={busy}
           className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
         >
           {busy ? "Verifying…" : "Turn on"}
@@ -252,6 +259,7 @@ function EnrollPanel({
           type="button"
           onClick={onCancel}
           disabled={busy}
+              aria-busy={busy}
           className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50"
         >
           Cancel
@@ -332,7 +340,8 @@ function EnabledPanel({
             type="text"
             inputMode="numeric"
             autoComplete="one-time-code"
-            value={code}
+            disabled={busy}
+          value={code}
             onChange={(e) => onCode(e.target.value)}
             placeholder="123456"
             className="w-full max-w-xs bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors font-mono tnum"
@@ -343,6 +352,7 @@ function EnabledPanel({
               type="button"
               onClick={onDisable}
               disabled={busy}
+              aria-busy={busy}
               className={`${BTN_DANGER} ${BTN_SIZE.md}`}
             >
               {busy ? "Turning off…" : "Turn off"}
@@ -351,6 +361,7 @@ function EnabledPanel({
               type="button"
               onClick={onCancel}
               disabled={busy}
+              aria-busy={busy}
               className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50"
             >
               Cancel

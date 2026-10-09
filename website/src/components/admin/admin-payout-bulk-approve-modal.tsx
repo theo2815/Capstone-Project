@@ -27,6 +27,7 @@ export function AdminPayoutBulkApproveModal({
     <AdminConfirmModal
       open={open}
       submitting={submitting}
+      pendingLabel="Approving…"
       onClose={onCancel}
       onConfirm={onConfirm}
       title="Approve payouts"

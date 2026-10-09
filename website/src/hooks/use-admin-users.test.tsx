@@ -1,4 +1,6 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { webcrypto } from "node:crypto";
+import { clearAdminActionIntents } from "@/lib/admin-action-intents";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -21,21 +23,78 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 beforeEach(() => {
+  vi.stubGlobal("crypto", webcrypto); clearAdminActionIntents();
   useAuthStore.getState().setUser(admin); useToastStore.getState().clear();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(listKey, [adminUser]); client.setQueryData(detailKey, detail); client.setQueryData(settingsKey, adminUserSettings);
 });
-afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const actions = ["approve", "reject", "suspend", "unsuspend", "resetVerification"] as const;
 function invoke(actionsHook: ReturnType<typeof useAdminUserActions>, action: typeof actions[number]) {
-  return actionsHook[action](adminUser.userId, "Please fix the watermark");
+  return action === "approve" ? actionsHook.approve(adminUser.userId, 7)
+    : action === "unsuspend" ? actionsHook.unsuspend(adminUser.userId)
+    : action === "suspend" ? actionsHook.suspend(adminUser.userId, "Please fix the watermark")
+    : actionsHook[action](adminUser.userId, "Please fix the watermark", 7);
 }
+it("shares user claims across views and forwards the reviewed revision", async () => {
+  const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValue(request.promise);
+  const { result } = renderHook(() => [useAdminUserActions(), useAdminUserActions()], { wrapper });
+  let first!: Promise<boolean>, blocked!: Promise<boolean>;
+  act(() => { first = result.current[0].approve(adminUser.userId, 7); blocked = result.current[1].reject(adminUser.userId, "Fix", 7); });
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  expect(await blocked).toBe(false);
+  expect(post).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}/approve`, { expectedRevision: 7 });
+  await act(async () => { request.resolve(adminUser); expect(await first).toBe(true); });
+});
+it("names the action in plain words when the request never reaches the server", async () => {
+  vi.spyOn(api, "post").mockRejectedValue(new TypeError("Failed to fetch"));
+  const { result } = renderHook(() => useAdminUserActions(), { wrapper });
+  await act(async () => { expect(await result.current.approve(adminUser.userId, 7)).toBe(false); });
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Couldn't approve — please try again.");
+});
+it("reserves a whole verification batch and refreshes once while retaining partial failures", async () => {
+  const request = deferred<unknown>();
+  const post = vi.spyOn(api, "post").mockImplementation((path) => path.includes("second") ? Promise.reject(new Error("Refused")) : request.promise);
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  const { result } = renderHook(() => [useAdminUserActions(), useAdminUserActions()], { wrapper });
+  let batch!: Promise<boolean[] | null>;
+  act(() => { batch = result.current[0].verifyBatch([{ userId: adminUser.userId, verificationRevision: 7 }, { userId: "second", verificationRevision: 9 }], "reject", "Fix"); });
+  await expect(result.current[1].approve("second", 9)).resolves.toBe(false);
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+  expect(invalidate).not.toHaveBeenCalled();
+  await act(async () => { request.resolve(adminUser); expect(await batch).toEqual([true, false]); });
+  expect(invalidate).toHaveBeenCalledTimes(2);
+});
+it("does not turn an accepted user action into failure when refresh rejects", async () => {
+  vi.spyOn(api, "post").mockResolvedValue(adminUser);
+  vi.spyOn(client, "invalidateQueries").mockRejectedValue(new Error("Refresh unavailable"));
+  const { result } = renderHook(useAdminUserActions, { wrapper });
+  await expect(result.current.approve(adminUser.userId, 7)).resolves.toBe(true);
+  expect(client.getQueryData(listKey)).toEqual([adminUser]);
+  expect(useToastStore.getState().toasts.some((toast) => toast.kind === "error")).toBe(false);
+});
+it("messages share the user guard and retry the same key until confirmed, then allow another intentional send", async () => {
+  const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
+  const { result } = renderHook(useAdminUserActions, { wrapper });
+  let pending!: Promise<boolean>;
+  act(() => { pending = result.current.message(adminUser.userId, { subject: "Hello", body: "Private" }); });
+  await expect(result.current.approve(adminUser.userId, 7)).resolves.toBe(false);
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  const firstKey = post.mock.calls[0][2]?.headers;
+  expect(firstKey).toEqual({ "Idempotency-Key": expect.any(String) });
+  await act(async () => { request.reject(new Error("Lost response")); expect(await pending).toBe(false); });
+  post.mockResolvedValue({ id: "sent" });
+  await result.current.message(adminUser.userId, { subject: "Hello", body: "Private" });
+  expect(post.mock.calls[1][2]?.headers).toEqual(firstKey);
+  await result.current.message(adminUser.userId, { subject: "Hello", body: "Private" });
+  expect(post.mock.calls[2][2]?.headers).not.toEqual(firstKey);
+});
 it.each(actions)("%s retains canonical data while pending and on failure", async (action) => {
   const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValue(request.promise);
   const { result } = renderHook(useAdminUserActions, { wrapper });
   const pending = invoke(result.current, action);
   expect(client.getQueryData(listKey)).toEqual([adminUser]); expect(client.getQueryData(detailKey)).toEqual(detail);
-  expect(useToastStore.getState().toasts).toEqual([]); expect(post).toHaveBeenCalledTimes(1);
+  expect(useToastStore.getState().toasts).toEqual([]); await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
   request.reject(new Error("Backend refused")); await expect(pending).resolves.toBe(false);
   expect(client.getQueryData(listKey)).toEqual([adminUser]); expect(client.getQueryData(detailKey)).toEqual(detail);
   expect(client.getQueryData(settingsKey)).toEqual(adminUserSettings);
@@ -57,7 +116,8 @@ it.each(["logout", "switch", "same-user-login"])("discards late success and fail
   const success = deferred<unknown>(), failure = deferred<unknown>();
   vi.spyOn(api, "post").mockReturnValueOnce(success.promise).mockReturnValueOnce(failure.promise);
   const { result } = renderHook(useAdminUserActions, { wrapper });
-  const first = result.current.approve(adminUser.userId), second = result.current.reject(adminUser.userId, "Fix");
+  const first = result.current.approve(adminUser.userId), second = result.current.reject("another-user", "Fix", 7);
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
   act(() => {
     useAuthStore.getState().logout(); client.clear();
     if (transition !== "logout") useAuthStore.getState().setUser(transition === "switch" ? { ...admin, id: "admin-b" } : admin);

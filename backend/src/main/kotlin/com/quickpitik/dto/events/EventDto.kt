@@ -1,6 +1,7 @@
 package com.quickpitik.dto.events
 
 import com.quickpitik.entity.EventStatus
+import io.swagger.v3.oas.annotations.media.Schema
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
@@ -22,6 +23,10 @@ data class EventDto(
     // `visibility` here is informational; `pricingMode` tells a tile "free".
     val visibility: String = "public",
     val pricingMode: String = "paid",
+    @field:Schema(description = "Canonical region code from /regions; null when unclassified", nullable = true)
+    val regionCode: String? = null,
+    @field:Schema(description = "Canonical province code from /regions; null when unclassified", nullable = true)
+    val provinceCode: String? = null,
 )
 
 // `photographerHandle` is the owner of a photographer-created event (V46) —
@@ -46,4 +51,8 @@ data class EventDetailDto(
     val pricingMode: String = "paid",
     val watermarkPolicy: String = "platform",
     val photographerHandle: String? = null,
+    @field:Schema(description = "Canonical region code from /regions; null when unclassified", nullable = true)
+    val regionCode: String? = null,
+    @field:Schema(description = "Canonical province code from /regions; null when unclassified", nullable = true)
+    val provinceCode: String? = null,
 )

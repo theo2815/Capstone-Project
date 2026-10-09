@@ -101,7 +101,7 @@ describe.each(cases)("$action", ({ action, method, endpoint, payload, base, conf
     let operation!: Promise<boolean | Dispute | null>;
     act(() => { operation = result.current(); });
 
-    expect(request).toHaveBeenCalledWith(endpoint, payload);
+    await waitFor(() => expect(request).toHaveBeenCalledWith(endpoint, payload));
     expect(client.getQueryData(listKey)).toEqual([base]);
     expect(useToastStore.getState().toasts).toEqual([]);
     await act(async () => { response.resolve(confirmed); expect(await operation).toEqual(action === "resolve dispute" ? confirmed : true); });
@@ -187,6 +187,7 @@ describe.each(["resolve dispute", "resolve report"])("stale session: %s", (actio
     const { result } = renderHook(() => useActionRunner(action), { wrapper: Wrapper });
     let operation!: Promise<boolean | Dispute | null>;
     act(() => { operation = result.current(); });
+    await waitFor(() => expect(action === "resolve dispute" ? api.post : api.fetch).toHaveBeenCalledTimes(1));
     act(() => {
       useAuthStore.getState().logout();
       client.clear();

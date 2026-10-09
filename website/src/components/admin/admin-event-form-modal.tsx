@@ -14,6 +14,10 @@ import {
   validateImageFile,
 } from "@/lib/image-utils";
 import { cn } from "@/lib/utils";
+import { RegionProvinceFields, type RegionProvinceValue } from "@/components/ui/region-province-fields";
+import { useRegions } from "@/hooks/use-regions";
+import { getRegion } from "@/lib/ph-regions";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 
 // Create / edit form modal for admin events. Fields: Title, Location, Date,
 // and an optional cover banner. The cover File is handed back to the caller
@@ -33,11 +37,15 @@ type Mode = "create" | "edit";
 interface AdminEventFormModalProps {
   open: boolean;
   mode: Mode;
+  pending?: boolean;
+  recoveryNotice?: string | null;
   event?: ListEvent | null;
   onClose: () => void;
   onSubmit: (payload: {
     name: string;
     location: string;
+    regionCode: string | null;
+    provinceCode: string | null;
     date: string;
     /** Per-photo price in PHP (admin-set). On edit, send only when changed
      *  from the prefilled value; on create, always send. The BE re-prices
@@ -52,18 +60,24 @@ interface AdminEventFormModalProps {
      *  file — signals to the caller to send `removeCover` to the backend.
      *  Always false in create mode (no existing cover to remove). */
     removeCover: boolean;
-  }) => void | Promise<void>;
+  }) => Promise<boolean>;
 }
 
 export function AdminEventFormModal({
   open,
   mode,
+  pending = false,
+  recoveryNotice,
   event,
   onClose,
   onSubmit,
 }: AdminEventFormModalProps) {
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
+  const [pair, setPair] = useState<RegionProvinceValue>({ regionCode: null, provinceCode: null });
+  const initialPair = useRef<RegionProvinceValue>({ regionCode: null, provinceCode: null });
+  const [locationOpen, setLocationOpen] = useState(false);
+  const { regions, isLoading: regionsLoading, error: regionsError, retry: retryRegions } = useRegions();
   const [date, setDate] = useState("");
   // Price is captured as a string so the user can clear / retype freely;
   // we coerce to a number at submit time. Stored separately from the
@@ -88,10 +102,20 @@ export function AdminEventFormModal({
   const [coverError, setCoverError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const draftTarget = useRef<string | null>(null);
+  const wasOpen = useRef(false);
 
   // Reset / prefill whenever the modal opens or the target event flips.
   useEffect(() => {
-    if (!open) return;
+    if (!open) { wasOpen.current = false; return; }
+    const target = mode === "create" ? "create" : event?.id;
+    if (wasOpen.current && draftTarget.current === target) return;
+    wasOpen.current = true;
+    if (target && draftTarget.current === target && recoveryNotice) return;
+    draftTarget.current = target ?? null;
+    const savedPair = { regionCode: mode === "edit" ? event?.regionCode ?? null : null, provinceCode: mode === "edit" ? event?.provinceCode ?? null : null };
+    initialPair.current = savedPair;
+    setPair(savedPair);
     if (mode === "edit" && event) {
       setName(event.name);
       setLocation(event.location);
@@ -114,7 +138,7 @@ export function AdminEventFormModal({
     setCoverFile(null);
     setCoverError(null);
     setSubmitting(false);
-  }, [open, mode, event]);
+  }, [open, mode, event, recoveryNotice]);
 
   // Object URL preview for newly picked files. Revoke on swap/close so we
   // don't leak the blob references the browser holds per createObjectURL.
@@ -142,12 +166,19 @@ export function AdminEventFormModal({
   const priceHint = !priceValid
     ? "Enter a price above zero (e.g. 80 or 80.50)."
     : undefined;
+  const selectedRegion = pair.regionCode ? getRegion(regions, pair.regionCode) : undefined;
+  const selectedProvince = selectedRegion?.provinces.find((p) => p.code === pair.provinceCode);
+  const pairChanged = pair.regionCode !== initialPair.current.regionCode || pair.provinceCode !== initialPair.current.provinceCode;
+  const pairRequired = mode === "create" || pairChanged;
+  const pairValid = !pairRequired || (!regionsLoading && !regionsError && !!selectedProvince);
+  const catalogReady = !regionsLoading && !regionsError;
   const canSubmit =
     trimmedName.length > 0 &&
     trimmedLocation.length > 0 &&
     dateValid &&
     priceValid &&
-    !submitting;
+    pairValid &&
+    !submitting && !pending;
 
   async function handleSubmit() {
     if (!canSubmit || parsedPrice === null || submittingRef.current) return;
@@ -159,9 +190,10 @@ export function AdminEventFormModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      await onSubmit({
+      const completed = await onSubmit({
         name: trimmedName,
         location: trimmedLocation,
+        ...pair,
         date,
         pricePerPhoto: parsedPrice,
         organizerName: organizerName.trim(),
@@ -169,6 +201,7 @@ export function AdminEventFormModal({
         cover: coverFile,
         removeCover,
       });
+      if (completed) draftTarget.current = null;
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -196,9 +229,12 @@ export function AdminEventFormModal({
       title={title}
       intro={intro}
       submitLabel={submitLabel}
-      submitting={submitting}
+      submitting={submitting || pending}
+      pendingLabel={mode === "create" ? "Creating…" : "Saving…"}
       submitDisabled={!canSubmit}
+      escDisabled={locationOpen}
     >
+      {recoveryNotice && <p role="status" className="font-sans text-sm text-slate">{recoveryNotice}</p>}
       <AdminTextInput
         id="event-name"
         label="Title"
@@ -217,6 +253,21 @@ export function AdminEventFormModal({
         maxLength={120}
         showCounter
         placeholder="SRP Boulevard, Cebu City"
+      />
+      {mode === "edit" && !pair.regionCode && !pair.provinceCode && <p className="font-sans text-sm text-slate">Unclassified event. You can keep this unchanged when editing other details.</p>}
+      {regionsLoading && <p role="status" className="font-sans text-sm text-slate">Loading regions… Saved values are kept.</p>}
+      {!!regionsError && <div role="alert" className="space-y-2"><p className="font-sans text-sm text-error">Couldn&apos;t load regions. Saved values are kept.</p><button type="button" onClick={() => void retryRegions()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry regions</button></div>}
+      <RegionProvinceFields
+        value={pair}
+        onChange={setPair}
+        regions={regions}
+        disabled={submitting || pending || regionsLoading || !!regionsError}
+        panelClassName="z-[70]"
+        onOpenChange={setLocationOpen}
+        errors={{
+          region: catalogReady && pair.regionCode && !selectedRegion ? "Unrecognized region. Choose a current region to change this pair." : null,
+          province: catalogReady && pair.provinceCode && !selectedProvince ? "Unrecognized province. Choose a province in the selected region." : pair.regionCode && !pair.provinceCode ? "Choose a province before saving." : null,
+        }}
       />
       <div className="space-y-2">
         <AdminFieldLabel htmlFor="event-date">Date</AdminFieldLabel>

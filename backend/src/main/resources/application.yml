@@ -76,6 +76,8 @@ jwt:
   refresh-token-ttl: P7D
 
 app:
+  admin-action:
+    lease: ${ADMIN_ACTION_LEASE:5m}
   photo-removal:
     photographer-response-window: PT72H
     cleanup-interval: ${PHOTO_REMOVAL_CLEANUP_INTERVAL:PT1M}

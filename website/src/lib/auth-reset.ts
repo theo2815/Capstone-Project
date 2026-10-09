@@ -9,6 +9,7 @@ import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 import { resetPhotographerHydrationGuard } from "@/hooks/use-photographer-settings-hydration";
 import { useViewModeStore } from "@/store/view-mode-store";
+import { clearAdminActionIntents } from "@/lib/admin-action-intents";
 
 // Reset every Zustand store that carries user-scoped data and clear any
 // legacy persistence slots. Call this on every
@@ -37,6 +38,7 @@ export function clearLegacyPhotographerSettings(): void {
 }
 
 export function resetUserScopedStores(): void {
+  clearAdminActionIntents();
   useCartStore.getState().setSyncEnabled(false);
   useSavedEventsStore.getState().setSyncEnabled(false);
 

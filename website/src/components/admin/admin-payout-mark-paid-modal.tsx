@@ -49,6 +49,7 @@ export function AdminPayoutMarkPaidModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel="Marking paid…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Mark paid · ${cycle.id}`}

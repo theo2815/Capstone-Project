@@ -58,6 +58,7 @@ export function AdminResetVerificationModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel="Resetting verification…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Reset verification"

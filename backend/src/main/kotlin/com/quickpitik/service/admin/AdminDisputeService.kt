@@ -160,7 +160,7 @@ class AdminDisputeService(
     fun escalate(adminId: UUID, disputeId: UUID, reason: String?): AdminDisputeDto {
         val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: throw
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
-        if (dispute.status == DisputeStatus.RESOLVED || dispute.status == DisputeStatus.DENIED) {
+        if (dispute.status != DisputeStatus.OPEN) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,
                 code = ErrorCodes.INVALID_STATE_TRANSITION,

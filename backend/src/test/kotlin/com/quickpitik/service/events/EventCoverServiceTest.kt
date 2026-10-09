@@ -103,6 +103,32 @@ class EventCoverServiceTest {
         verifyNothingStored()
     }
 
+    @Test fun `caller owned key stores normalized JPEG at the reserved identity`() {
+        val key="events/$eventId/cover/intent.jpg"
+        val processed=service.prepare(jpeg(400,300),"image/jpeg")
+        assertEquals(key,service.uploadPrepared(key,processed))
+        assertEquals(400,ImageIO.read(processed.inputStream()).width)
+        Mockito.verify(storageService).put(key,processed,"image/jpeg")
+    }
+
+    @Test fun `recovery accepts matching bytes and rejects a conflicting object`() {
+        val key="events/$eventId/cover/intent.jpg"; val bytes=service.prepare(jpeg(40,30),"image/jpeg")
+        val digest=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
+        Mockito.`when`(storageService.metadata(key)).thenReturn(StoredObject(key,bytes.size.toLong(),"image/jpeg"))
+        Mockito.`when`(storageService.getBytes(key)).thenReturn(bytes)
+        assertEquals(key,service.recover(key,bytes,digest))
+        Mockito.`when`(storageService.getBytes(key)).thenReturn(ByteArray(bytes.size))
+        assertFailsWith<com.quickpitik.exception.ApiException> { service.recover(key,bytes,digest) }
+        verifyNothingStored()
+    }
+
+    @Test fun `recovery uploads missing object at its reserved key`() {
+        val key="events/$eventId/cover/intent.jpg"; val bytes=service.prepare(jpeg(40,30),"image/jpeg")
+        Mockito.`when`(storageService.metadata(key)).thenReturn(null)
+        assertEquals(key,service.recover(key,bytes,"a".repeat(64)))
+        Mockito.verify(storageService).put(key,bytes,"image/jpeg")
+    }
+
     private fun upload(bytes: ByteArray) = service.upload(eventId, bytes, "image/jpeg")
 
     private fun verifyNothingStored() = Mockito.verify(storageService, Mockito.never())

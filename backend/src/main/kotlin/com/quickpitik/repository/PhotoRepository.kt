@@ -118,6 +118,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     """)
     fun findRemovalReviewCandidates(eventId: UUID, personIds: Collection<String>): List<Photo>
 
+    @Query(value = "SELECT id FROM photos WHERE event_id = :eventId ORDER BY id FOR UPDATE", nativeQuery = true)
+    fun lockIdsByEventIdForUpdate(@Param("eventId") eventId: UUID): List<UUID>
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     // DISTINCT forces follow-on locking: checkout could hydrate availability
     // before waiting for a review's lock. Lock the row in the initial read.

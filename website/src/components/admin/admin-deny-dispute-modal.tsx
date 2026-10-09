@@ -60,6 +60,7 @@ export function AdminDenyDisputeModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel="Denying…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Deny ${disputeId}`}

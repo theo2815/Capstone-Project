@@ -1,5 +1,6 @@
 package com.quickpitik.service.admin
 
+import com.quickpitik.common.IdempotencyKey
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
@@ -18,6 +19,7 @@ import com.quickpitik.dto.photographer.PayoutQrDto
 import com.quickpitik.dto.photographer.PhotographerMessageDto
 import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.toDto
+import com.quickpitik.entity.AdminActionOperation
 import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
@@ -42,6 +44,7 @@ import com.quickpitik.service.runner.RunnerMessagesService
 import org.springframework.data.domain.PageRequest
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -62,6 +65,9 @@ class AdminUserService(
     private val runnerMessagesService: RunnerMessagesService,
     private val photographerSettingsService: PhotographerSettingsService,
     private val refreshTokenService: RefreshTokenService,
+    private val adminActionCommandService: AdminActionCommandService,
+    private val photographerMessageRepository: com.quickpitik.repository.PhotographerMessageRepository,
+    private val runnerMessageRepository: com.quickpitik.repository.RunnerMessageRepository,
 ) {
 
     @Transactional(readOnly = true)
@@ -135,6 +141,7 @@ class AdminUserService(
             suspensionReason = row.suspensionReason,
             settingsSnapshot = row.settingsSnapshot,
             decisionLog = log,
+            verificationRevision = row.verificationRevision,
         )
     }
 
@@ -203,9 +210,10 @@ class AdminUserService(
         )
     }
 
-    fun approve(adminId: UUID, userId: UUID): AdminUserRowDto {
-        val (user, settings) = loadUserAndSettings(userId)
+    fun approve(adminId: UUID, userId: UUID, expectedRevision: Long? = null): AdminUserRowDto {
+        val (user, settings) = lockUserAndSettings(userId)
         val s = requirePhotographerSettings(user, settings, persistIfMissing = true)
+        requireVerificationRevision(s, expectedRevision)
         // Re-validate against the SAME required-field set the photographer's own
         // submit gate uses, so admin approval and self-submit can never diverge.
         // Without this an admin could approve a profile that never passed submit
@@ -219,7 +227,9 @@ class AdminUserService(
                 message = "Cannot approve — profile is missing: ${incomplete.labels.joinToString(", ")}",
             )
         }
+        requireVerificationState(s, VerificationStatus.PENDING)
         s.verificationStatus = VerificationStatus.APPROVED
+        s.verificationRevision++
         photographerSettingsRepository.save(s)
         val decision = adminDecisionLogService.logUserDecision(
             adminId = adminId,
@@ -236,12 +246,15 @@ class AdminUserService(
         return hydrateRow(user, s)
     }
 
-    fun reject(adminId: UUID, userId: UUID, reason: String): AdminUserRowDto {
-        val (user, settings) = loadUserAndSettings(userId)
+    fun reject(adminId: UUID, userId: UUID, reason: String, expectedRevision: Long? = null): AdminUserRowDto {
+        val (user, settings) = lockUserAndSettings(userId)
         val s = requirePhotographerSettings(user, settings, persistIfMissing = true)
+        requireVerificationRevision(s, expectedRevision)
+        requireVerificationState(s, VerificationStatus.PENDING)
         // Mirrors the FE store: reject lands the row back at "incomplete"
         // with the rejection reason carried in the decision log.
         s.verificationStatus = VerificationStatus.INCOMPLETE
+        s.verificationRevision++
         photographerSettingsRepository.save(s)
         val decision = adminDecisionLogService.logUserDecision(
             adminId = adminId,
@@ -259,10 +272,13 @@ class AdminUserService(
         return hydrateRow(user, s)
     }
 
-    fun resetVerification(adminId: UUID, userId: UUID, reason: String): AdminUserRowDto {
-        val (user, settings) = loadUserAndSettings(userId)
+    fun resetVerification(adminId: UUID, userId: UUID, reason: String, expectedRevision: Long? = null): AdminUserRowDto {
+        val (user, settings) = lockUserAndSettings(userId)
         val s = requirePhotographerSettings(user, settings, persistIfMissing = true)
+        requireVerificationRevision(s, expectedRevision)
+        requireVerificationState(s, VerificationStatus.PENDING, VerificationStatus.APPROVED, VerificationStatus.REJECTED)
         s.verificationStatus = VerificationStatus.INCOMPLETE
+        s.verificationRevision++
         photographerSettingsRepository.save(s)
         val decision = adminDecisionLogService.logUserDecision(
             adminId = adminId,
@@ -281,13 +297,16 @@ class AdminUserService(
     }
 
     fun suspend(adminId: UUID, userId: UUID, reason: String): AdminUserRowDto {
-        val (user, settings) = loadUserAndSettings(userId)
+        val (user, settings) = lockUserAndSettings(userId)
         if (user.role == Role.ADMIN) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
                 message = "Admin accounts cannot be suspended",
                 field = "userId",
             )
+        }
+        if (user.suspendedAt != null) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION, "Account is already suspended")
         }
         user.suspendedAt = OffsetDateTime.now()
         user.suspensionReason = reason
@@ -324,13 +343,16 @@ class AdminUserService(
     }
 
     fun unsuspend(adminId: UUID, userId: UUID): AdminUserRowDto {
-        val (user, settings) = loadUserAndSettings(userId)
+        val (user, settings) = lockUserAndSettings(userId)
         if (user.role == Role.ADMIN) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
                 message = "Admin accounts cannot be suspended",
                 field = "userId",
             )
+        }
+        if (user.suspendedAt == null) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION, "Account is not suspended")
         }
         user.suspendedAt = null
         user.suspensionReason = null
@@ -360,12 +382,38 @@ class AdminUserService(
         return hydrateRow(user, settings)
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun sendMessage(
         adminId: UUID,
         userId: UUID,
         subject: String,
         body: String,
+        key: IdempotencyKey? = null,
     ): PhotographerMessageDto {
+        val trimmedSubject = subject.trim()
+        val trimmedBody = body.trim()
+        val result = adminActionCommandService.execute(key, adminId, AdminActionOperation.USER_MESSAGE, userId,
+            adminActionCommandService.inputHash(listOf(trimmedSubject, trimmedBody)), {
+                val actor = userRepository.findById(adminId).orElse(null)
+                if (actor == null || actor.role != Role.ADMIN || actor.suspendedAt != null)
+                    throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.FORBIDDEN, "An active admin is required")
+                requireMessageRecipient(userId)
+            }, {
+                val message = sendUserMessage(adminId, userId, trimmedSubject, trimmedBody)
+                AdminActionResult(userId, message.sourceDecisionId, message.id)
+            })
+        val messageId = result.messageId!!
+        photographerMessageRepository.findByIdAndPhotographerId(messageId, userId).orElse(null)?.let {
+            return PhotographerMessageDto(it.id, it.kindWire, it.title, it.body, result.decisionId, it.createdAt, it.readAt)
+        }
+        val message = runnerMessageRepository.findByIdAndRunnerId(messageId, userId).orElseThrow {
+            NotFoundException(ErrorCodes.NOT_FOUND, "Original message not found")
+        }
+        return PhotographerMessageDto(message.id, message.kindWire, message.title, message.body,
+            result.decisionId, message.createdAt, message.readAt)
+    }
+
+    private fun requireMessageRecipient(userId: UUID): User {
         val (user, _) = loadUserAndSettings(userId)
         // Free-form admin DM lands in the role-appropriate inbox. ADMIN
         // accounts can't receive messages (they're the ones sending).
@@ -376,8 +424,11 @@ class AdminUserService(
                 field = "userId",
             )
         }
-        val trimmedSubject = subject.trim()
-        val trimmedBody = body.trim()
+        return user
+    }
+
+    private fun sendUserMessage(adminId: UUID, userId: UUID, trimmedSubject: String, trimmedBody: String): PhotographerMessageDto {
+        val user = requireMessageRecipient(userId)
         val decision = adminDecisionLogService.logUserDecision(
             adminId = adminId,
             targetUserId = userId,
@@ -433,6 +484,30 @@ class AdminUserService(
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────
+    // All verification writers take the parent lock first, including when settings are missing.
+    private fun lockUserAndSettings(userId: UUID): Pair<User, PhotographerSettings?> {
+        val user = userRepository.lockById(userId) ?: throw
+            NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
+        val settings = if (user.role == Role.PHOTOGRAPHER) {
+            photographerSettingsRepository.findByUserIdForUpdate(userId)
+        } else null
+        return user to settings
+    }
+
+    private fun requireVerificationState(settings: PhotographerSettings, vararg allowed: VerificationStatus) {
+        if (settings.verificationStatus !in allowed) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "Cannot make this verification decision from ${settings.verificationStatus.toWire()}")
+        }
+    }
+
+    private fun requireVerificationRevision(settings: PhotographerSettings, expected: Long?) {
+        if (expected != null && expected != settings.verificationRevision) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "Verification has changed. Refresh the profile before deciding.", field = "expectedRevision")
+        }
+    }
+
     private fun loadUserAndSettings(userId: UUID): Pair<User, PhotographerSettings?> {
         val user = userRepository.findById(userId).orElseThrow {
             NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "User not found")
@@ -500,6 +575,7 @@ class AdminUserService(
             suspendedAt = user.suspendedAt?.toString(),
             suspensionReason = user.suspensionReason,
             settingsSnapshot = snapshot,
+            verificationRevision = settings?.verificationRevision ?: 0,
         )
     }
 
