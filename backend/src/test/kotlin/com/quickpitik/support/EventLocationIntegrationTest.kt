@@ -137,7 +137,7 @@ class EventLocationIntegrationTest : PostgresIntegrationTest() {
         pair(history["before"], null, null)
         pair(history["after"], "region-7", "cebu")
         assertEquals(created["reviewRevision"].asLong() + 1, classified["reviewRevision"].asLong())
-        assertEquals(created["location"].asText(), classified["location"].asText())
+        assertEquals(2, decisions(eventId))
         pair(json.valueToTree(dtos.toListDto(events.findById(eventId).orElseThrow())), "region-7", "cebu")
     }
 
