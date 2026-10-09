@@ -108,6 +108,7 @@ export function useAdminEventActions() {
         if (!command) return "missing";
         if (command.state !== "SUCCEEDED" || !current()) return "open";
         await qc.invalidateQueries({ queryKey: adminEventKeys.owner(userId) });
+        if (!current()) return "open";
         const name = qc.getQueriesData<AdminEventRow[]>({ queryKey: adminEventKeys.owner(userId) })
           .flatMap(([, rows]) => rows ?? []).find((row) => row.id === command.resourceId)?.name;
         useToastStore.getState().showToast({ kind: "success", duration: 10_000,

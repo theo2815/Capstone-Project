@@ -319,6 +319,7 @@ it("releases an earlier create the server has no record of and sends the differe
 it.each([
   ["PENDING", () => ({ state: "PENDING" })], ["UNKNOWN", () => ({ state: "UNKNOWN" })],
   ["a lookup failure", () => { throw new Error("Offline"); }],
+  ["an answer with no state in it", () => null],
   ["a 404 from a server without the lookup route", () => { throw new ApiError([{ code: "NOT_FOUND", message: "Resource not found" }], 404); }],
 ])("keeps a different create blocked on %s and shows the reference", async (_name, answer) => {
   const { post, actions, reference } = await loseCreateReply();
@@ -329,4 +330,15 @@ it.each([
   expect(actions.recoveryNotice("create")).toContain(reference);
   await expect(actions.createEvent(createArgs)).resolves.toBe(true);
   expect(post.mock.calls[1][2]?.headers).toEqual(post.mock.calls[0][2]?.headers);
+});
+it("does not announce an earlier result to a session that changed while the list refreshed", async () => {
+  const { post, actions } = await loseCreateReply();
+  vi.spyOn(api, "get").mockImplementation(async (path: string) => {
+    if (path.startsWith("/admin/commands/")) return { state: "SUCCEEDED", resourceId: earlier.id };
+    useAuthStore.getState().logout();
+    return { items: [earlier] };
+  });
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(false);
+  expect(useToastStore.getState().toasts.filter((toast) => /earlier request went through/.test(toast.message))).toEqual([]);
+  expect(post).toHaveBeenCalledTimes(1);
 });

@@ -301,7 +301,9 @@ export interface AdminCommand {
  */
 export async function fetchAdminCommand(key: string): Promise<AdminCommand | null> {
   try {
-    return await api.get<AdminCommand>(`/admin/commands/${encodeURIComponent(key)}`);
+    const command = await api.get<AdminCommand>(`/admin/commands/${encodeURIComponent(key)}`);
+    if (typeof command?.state !== "string") throw new Error("Unreadable admin request lookup.");
+    return command;
   } catch (error) {
     if (error instanceof ApiError && error.status === 404 && error.errors[0]?.code === "ADMIN_COMMAND_NOT_FOUND") return null;
     throw error;

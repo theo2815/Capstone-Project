@@ -286,7 +286,7 @@ The website shows "Request reference: `<key>`" when the reply to a create-event,
 | `PENDING` | Still running, or it stopped part-way. | Wait a few minutes (the request's lease, `AdminActionProperties`), then retry the same unchanged draft. |
 | `UNKNOWN` | The server could not confirm the cover upload or the save. | Retry the same unchanged draft. If it stays `UNKNOWN`, follow the reconciliation steps below. |
 | `FAILED` | It did not go through, and this key can never run again. (No code writes this state yet.) | Sign out and in again, then send a new request. |
-| 404 `ADMIN_COMMAND_NOT_FOUND` | The server has no record of it: nothing ran. | Sending a different draft clears the block. |
+| 404 `ADMIN_COMMAND_NOT_FOUND` | The server has recorded nothing for it so far. A request that is still running shows up only when it finishes. | Wait two minutes and look again. If it is still 404, nothing ran; sending a different draft clears the block. |
 
 **Reconciliation for a request that stays `UNKNOWN`:** vault `_journal/2026-10-08-admin-actions-and-event-location-plan.md`, heading "Safe administrative reconciliation for persistent UNKNOWN" (Session 4). Never edit or delete the `admin_action_commands` row by hand; the database blocks deleting it.
 
