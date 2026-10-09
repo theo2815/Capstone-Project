@@ -151,7 +151,7 @@ it("retains changed geography and cover after a conflict refresh, then sends the
   expect(within(dialog).getByLabelText("Title")).toHaveValue("Cebu Race");
   expect(within(dialog).getByRole("button", { name: "Province: Leyte" })).toBeInTheDocument();
   expect(within(dialog).getByAltText("Cover preview")).toHaveAttribute("src", "blob:cover");
-  expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/event changed.*reconcile/i);
+  expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/event changed.*reopen the event/i);
   const confirmed = { ...rows[0], regionCode: "region-viii", provinceCode: "leyte" };
   update.mockResolvedValue(confirmed);
   await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
@@ -161,7 +161,8 @@ it("retains changed geography and cover after a conflict refresh, then sends the
     expect(form.get("regionCode")).toBe("region-viii"); expect(form.get("provinceCode")).toBe("leyte");
     expect(form.get("cover")).toBeInstanceOf(File); expect(form.get("expectedRevision")).toBe("4");
   }
-  expect(update.mock.calls[0][1]?.headers).toEqual(update.mock.calls[1][1]?.headers);
+  // A refused stale edit is released, so the next save is a new request.
+  expect(update.mock.calls[0][1]?.headers).not.toEqual(update.mock.calls[1][1]?.headers);
   expect(objectUrl).toHaveBeenCalledOnce();
 });
 it("keeps a delete confirmation open when another view owns the event", async () => {

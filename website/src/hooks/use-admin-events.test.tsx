@@ -124,16 +124,17 @@ it("allows correcting form fields rejected by server validation before execution
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
 });
-it("keeps a revision-conflicted edit key and asks for reconciliation instead of unchanged retries", async () => {
-  const update = vi.spyOn(api, "fetch").mockRejectedValue(new ApiError([{ code: "INVALID_STATE_TRANSITION", field: "expectedRevision", message: "Event has changed" }], 409));
+it("releases an edit the server refused as stale so the refreshed event can be edited with a new key", async () => {
+  const update = vi.spyOn(api, "fetch").mockRejectedValueOnce(new ApiError([{ code: "INVALID_STATE_TRANSITION", field: "expectedRevision", message: "Event has changed" }], 409));
   const { result } = renderHook(useAdminEventActions, { wrapper });
   const patch = { title: "Race", expectedRevision: 4, cover: new File(["cover"], "cover.jpg") };
-  await expect(result.current.editEvent(adminEvent.id, patch)).rejects.toThrow(/reconcil/i);
-  const reference = (update.mock.calls[0][1]?.headers as Record<string, string>)["Idempotency-Key"];
-  expect(useToastStore.getState().toasts[0].message).toContain(reference);
-  expect(useToastStore.getState().toasts[0].message).not.toContain("Retry the unchanged draft");
-  await expect(result.current.editEvent(adminEvent.id, { ...patch, expectedRevision: 5 })).rejects.toThrow(/reconcil/i);
-  expect(update).toHaveBeenCalledTimes(1);
+  await expect(result.current.editEvent(adminEvent.id, patch)).rejects.toThrow(/reopen the event/i);
+  expect(useToastStore.getState().toasts[0].message).not.toMatch(/reconcil|Retry the unchanged draft/i);
+  expect(result.current.recoveryNotice(adminEvent.id)).toBeFalsy();
+  update.mockResolvedValue({ ...adminEvent, reviewRevision: 6 });
+  await expect(result.current.editEvent(adminEvent.id, { ...patch, expectedRevision: 5 })).resolves.toBe(true);
+  expect(update).toHaveBeenCalledTimes(2);
+  expect(update.mock.calls[1][1]?.headers).not.toEqual(update.mock.calls[0][1]?.headers);
 });
 function invoke(apiActions: ReturnType<typeof useAdminEventActions>, name: typeof actions[number]) {
   return name === "createEvent" ? apiActions.createEvent(createArgs)

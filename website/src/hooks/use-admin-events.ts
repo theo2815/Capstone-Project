@@ -120,14 +120,17 @@ export function useAdminEventActions() {
           throw error;
         }
         const revisionConflict = error instanceof ApiError && error.errors.some((entry) => entry.field === "expectedRevision");
+        // The server refuses a stale edit without changing the event, and this key
+        // is bound to the old revision, so it can never succeed: release it.
+        if (revisionConflict) completeAdminIntent(intent);
         const locationConflict = intent.reused && error instanceof ApiError && error.errors.some((entry) =>
           ["regionCode", "provinceCode"].includes(entry.field ?? ""));
         const guidance = locationConflict
           ? `An earlier request is unresolved. Ask the project maintainer to reconcile it before changing the location. Request reference: ${intent.key}.`
           : revisionConflict
-          ? `The event changed. This request may already have written a cover. Ask the project maintainer to reconcile it before another edit. Request reference: ${intent.key}.`
+          ? "Close this form and reopen the event to edit its current version."
           : "Retry the unchanged draft to check the same request.";
-        const message = `${error instanceof Error ? error.message : "Request failed."} ${guidance}${!intent.reloadSafe ? " Recovery after reload is unavailable; keep this page open." : ""}`;
+        const message = `${error instanceof Error ? error.message : "Request failed."} ${guidance}${!revisionConflict && !intent.reloadSafe ? " Recovery after reload is unavailable; keep this page open." : ""}`;
         if (error instanceof ApiError) throw new ApiError(error.errors.map((entry) => ({ ...entry, message })), error.status);
         throw new Error(message);
       }
