@@ -367,7 +367,7 @@ class AdminEventService(
             }, { storageKey, recovery ->
                 if (recovery) eventCoverService.recover(storageKey, processed!!, eventCoverService.digest(processed!!))
                 else eventCoverService.uploadPrepared(storageKey, processed!!)
-            }, { eventId, coverKey ->
+            }, eventCoverService::delete, { eventId, coverKey ->
                 val (event, decision) = createEvent(adminId, req, eventId, coverKey, parseDate(req.date), validatedPrice(req.pricePerPhoto))
                 AdminActionResult(event.id, decision, null)
             })
@@ -395,7 +395,7 @@ class AdminEventService(
             }, { storageKey, recovery ->
                 if (recovery) eventCoverService.recover(storageKey, processed!!, eventCoverService.digest(processed!!))
                 else eventCoverService.uploadPrepared(storageKey, processed!!)
-            }, { _, coverKey ->
+            }, eventCoverService::delete, { _, coverKey ->
                 if (req.pricePerPhoto != null) lockEventPhotos(eventId)
                 val event = loadForReview(eventId)
                 event.requireReviewRevision(req.expectedRevision)

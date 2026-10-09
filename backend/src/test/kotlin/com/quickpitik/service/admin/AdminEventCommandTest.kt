@@ -28,7 +28,52 @@ class AdminEventCommandTest {
 
     private fun run(action: (UUID, String?) -> AdminActionResult = { _, _ -> error("must not execute") }) =
         service.executeEvent(key, actor, AdminActionOperation.EVENT_UPDATE, id, "a".repeat(64), {}, {},
-            { null }, { _, _ -> error("no cover") }, action)
+            { null }, { _, _ -> error("no cover") }, { error("no cover") }, action)
+
+    private val coverKey = "events/$id/cover/${key.value}.jpg"
+    private val deleted = mutableListOf<String>()
+    private fun claimedWithCover(): () -> AdminActionCommand? {
+        var claimed: AdminActionCommand? = null
+        Mockito.`when`(receipts.insertEventClaim(anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg()))
+            .thenAnswer {
+                claimed = AdminActionCommand(commandId=UUID.fromString(key.value),actorId=actor,
+                    operation=AdminActionOperation.EVENT_UPDATE,targetId=id,inputHash="a".repeat(64),
+                    claimOwner=it.getArgument(5),leaseExpiresAt=now.plusSeconds(300),intendedEventId=id,
+                    intendedStorageKey=coverKey,processedCoverDigest="b".repeat(64),claimedAt=now,updatedAt=now)
+                1
+            }
+        Mockito.`when`(receipts.findForUpdate(UUID.fromString(key.value))).thenAnswer { claimed }
+        return { claimed }
+    }
+    private fun runWithCover(write: (String, Boolean) -> Unit = { _, _ -> }, action: (UUID, String?) -> AdminActionResult) =
+        service.executeEvent(key, actor, AdminActionOperation.EVENT_UPDATE, id, "a".repeat(64), {}, {},
+            { "b".repeat(64) }, write, { deleted += it }, action)
+
+    @Test fun `typed failure after the cover is written fails the receipt and deletes that cover`() {
+        val claimed = claimedWithCover()
+        val error = assertFailsWith<ApiException> { runWithCover { _, _ ->
+            throw ApiException(org.springframework.http.HttpStatus.CONFLICT, "INVALID_STATE_TRANSITION", "Event has changed") } }
+        assertEquals("INVALID_STATE_TRANSITION", error.code)
+        assertEquals(AdminActionCommandState.FAILED, claimed()!!.state)
+        assertEquals(listOf(coverKey), deleted)
+    }
+
+    @Test fun `unknown failure after the cover is written stays UNKNOWN and keeps the cover`() {
+        val claimed = claimedWithCover()
+        val error = assertFailsWith<ApiException> { runWithCover { _, _ -> throw IllegalStateException("connection reset") } }
+        assertEquals("ADMIN_COMMAND_RECOVERY_REQUIRED", error.code)
+        assertEquals(AdminActionCommandState.UNKNOWN, claimed()!!.state)
+        assertTrue(deleted.isEmpty())
+    }
+
+    @Test fun `typed failure of the cover write itself stays UNKNOWN and deletes nothing`() {
+        val claimed = claimedWithCover()
+        assertFailsWith<ApiException> { runWithCover(write = { _, _ ->
+            throw ApiException(org.springframework.http.HttpStatus.CONFLICT, "ADMIN_COMMAND_RECOVERY_REQUIRED", "Cover object does not match") }) {
+            _, _ -> error("must not execute") } }
+        assertEquals(AdminActionCommandState.UNKNOWN, claimed()!!.state)
+        assertTrue(deleted.isEmpty())
+    }
 
     @Test fun `failed final event validation preserves its domain error and unresolved receipt`() {
         var claimed: AdminActionCommand? = null
@@ -63,7 +108,7 @@ class AdminEventCommandTest {
             resultDecisionId=UUID.randomUUID(),completedAt=now)
         Mockito.`when`(receipts.findForUpdate(receipt.commandId)).thenReturn(receipt)
         val result=service.executeEvent(key,actor,AdminActionOperation.EVENT_UPDATE,id,"a".repeat(64),{},
-            { error("old revision") },{ error("image decoding") },{ _, _ -> error("storage") },{ _, _ -> error("duplicate edit") })
+            { error("old revision") },{ error("image decoding") },{ _, _ -> error("storage") },{ error("storage") },{ _, _ -> error("duplicate edit") })
         assertEquals(id,result.resourceId); assertEquals(receipt.resultDecisionId,result.decisionId)
     }
 

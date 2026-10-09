@@ -280,8 +280,24 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         afterPut={ eventAdmin.delete(actor,id) }
         val key=UUID.randomUUID().toString()
         assertEquals(404,eventRequest(actor,key,"Changed",id,image(0xffffff),0).status)
-        assertEquals(old,events.findById(id).orElseThrow().coverS3Key); assertTrue(deletes.isEmpty()); eventEffects(id,2)
-        afterPut={}; assertEquals(404,eventRequest(actor,key,"Changed",id,image(0xffffff),0).status); assertEquals(2,puts.size)
+        assertEquals(old,events.findById(id).orElseThrow().coverS3Key); assertEquals(listOf(puts[1]),deletes.toList()); eventEffects(id,2)
+        assertEquals("FAILED",receiptState(key))
+        afterPut={}; assertEquals(409,eventRequest(actor,key,"Changed",id,image(0xffffff),0).status); assertEquals(2,puts.size)
+    }
+
+    @Test fun `stale revision after cover PUT fails the receipt, deletes the new cover and never uploads again`() {
+        val actor=user(Role.ADMIN); val id=eventId(eventRequest(actor,null,"Stale ${UUID.randomUUID()}",cover=image())); val old=events.findById(id).orElseThrow().coverS3Key
+        // Another edit lands while this one's cover is uploading, so its revision is stale at the final write.
+        afterPut={ afterPut={}; eventId(eventRequest(actor,UUID.randomUUID().toString(),"Winner",id,revision=0)) }
+        val key=UUID.randomUUID().toString(); val bytes=image(0xffffff)
+        val stale=eventRequest(actor,key,"Loser",id,bytes,0)
+        assertEquals(409,stale.status); assertEquals("INVALID_STATE_TRANSITION",mapper.readTree(stale.contentAsString)["errors"][0]["code"].asText())
+        assertEquals("FAILED",receiptState(key)); assertEquals(2,puts.size); assertEquals(listOf(puts[1]),deletes.toList())
+        val event=events.findById(id).orElseThrow()
+        assertEquals("Winner",event.name); assertEquals(old,event.coverS3Key); assertEquals(1,event.reviewRevision); eventEffects(id,2)
+        val retry=eventRequest(actor,key,"Loser",id,bytes,0)
+        assertEquals(409,retry.status); assertEquals("CONFLICT",mapper.readTree(retry.contentAsString)["errors"][0]["code"].asText())
+        assertEquals("FAILED",receiptState(key)); assertEquals(2,puts.size); assertEquals(1,deletes.size); eventEffects(id,2)
     }
 
     @ParameterizedTest @ValueSource(booleans=[false,true])
@@ -307,7 +323,7 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         beforeAction: () -> Unit = {}): AdminActionResult =
         service.executeEvent(key, actor, AdminActionOperation.EVENT_UPDATE, id, "a".repeat(64), {}, {
             events.findByIdForReview(id)!!.requireReviewRevision(0)
-        }, prepare, write, { _, _ ->
+        }, prepare, write, { error("no cover") }, { _, _ ->
             beforeAction()
             val event = events.findByIdForReview(id)!!
             event.requireReviewRevision(0)

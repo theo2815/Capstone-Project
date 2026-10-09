@@ -87,7 +87,8 @@ class AdminActionCommandService(
 
     fun executeEvent(key: IdempotencyKey, actorId: UUID, operation: AdminActionOperation, targetId: UUID?,
         inputHash: String, authorize: () -> Unit, validate: () -> Unit, prepare: () -> String?,
-        writeCover: (String, Boolean) -> Unit, action: (UUID, String?) -> AdminActionResult): AdminActionResult {
+        writeCover: (String, Boolean) -> Unit, deleteCover: (String) -> Unit,
+        action: (UUID, String?) -> AdminActionResult): AdminActionResult {
         val commandId = UUID.fromString(key.value)
         val completed = tx.execute {
             authorize()
@@ -124,8 +125,9 @@ class AdminActionCommandService(
             commands.findForUpdate(commandId)!!
         }!!
         if (receipt.state == AdminActionCommandState.SUCCEEDED) return replay(receipt, actorId, operation, targetId, inputHash)
+        var coverWritten = false
         try {
-            receipt.intendedStorageKey?.let { writeCover(it, recovery) }
+            receipt.intendedStorageKey?.let { writeCover(it, recovery); coverWritten = true }
             return tx.execute {
                 authorize()
                 val current = commands.findForUpdate(commandId)!!
@@ -142,17 +144,24 @@ class AdminActionCommandService(
                 result
             }!!
         } catch (error: Exception) {
+            val typed = error is ApiException || error is NotFoundException ||
+                error is ConflictException || error is ValidationException
+            // A typed error after the cover was written came from the final transaction, which rolled back:
+            // nothing was saved and no event points at the new object, so the outcome is known.
+            val failed = typed && coverWritten
+            var orphan: String? = null
             tx.executeWithoutResult {
                 val current = commands.findForUpdate(commandId)!!
                 if (current.claimOwner == owner && current.state != AdminActionCommandState.SUCCEEDED) {
-                    current.state = AdminActionCommandState.UNKNOWN
+                    current.state = if (failed) AdminActionCommandState.FAILED else AdminActionCommandState.UNKNOWN
                     current.updatedAt = clock.instant()
                     current.leaseExpiresAt = current.updatedAt
                     commands.saveAndFlush(current)
+                    if (failed) orphan = current.intendedStorageKey
                 }
             }
-            if (error is ApiException || error is NotFoundException ||
-                error is ConflictException || error is ValidationException) throw error
+            orphan?.let(deleteCover)
+            if (typed) throw error
             throw recoveryRequired()
         }
     }
