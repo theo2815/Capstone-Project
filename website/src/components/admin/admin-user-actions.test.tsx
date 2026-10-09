@@ -146,3 +146,8 @@ it("names the pending bulk approval and blocks repeat Enter until it settles", a
   await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   await act(async () => { request.resolve(adminUser); });
 });
+it("shows the join month for a backend timestamp instead of an invalid date", async () => {
+  mount(true);
+  await waitFor(() => expect(document.body).toHaveTextContent("Joined SEP 2026"));
+  expect(document.body).not.toHaveTextContent(/invalid date/i);
+});

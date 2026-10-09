@@ -40,6 +40,7 @@ import {
   type EffectivePhotographerSettings,
 } from "@/lib/admin-photographer-view";
 import { formatPayoutNumber } from "@/lib/payout-format";
+import { formatMemberSince } from "@/lib/format";
 import { formatRegionLabel } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
 
@@ -437,7 +438,7 @@ export function VerificationsQueue() {
               {openRow.region ?? openRow.city}
               <span className="text-slate-soft"> · </span>
               <span className="tnum">
-                Joined {formatJoinDate(openRow.createdAt)}
+                Joined {formatMemberSince(openRow.createdAt)}
               </span>
             </p>
           }
@@ -549,7 +550,7 @@ function PendingRow({
                 {row.region ?? row.city}
                 <span className="text-slate-soft"> · </span>
                 <span className="tnum">
-                  Joined {formatJoinDate(row.createdAt)}
+                  Joined {formatMemberSince(row.createdAt)}
                 </span>
               </p>
 
@@ -754,7 +755,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow
             label="Joined"
-            value={formatJoinDate(row.createdAt)}
+            value={formatMemberSince(row.createdAt)}
             mono
           />
           <FieldRow label="Status" value="Pending review" mono />
@@ -1101,10 +1102,4 @@ function QueueEmpty() {
       </p>
     </div>
   );
-}
-
-function formatJoinDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  return `${month} ${d.getFullYear()}`;
 }

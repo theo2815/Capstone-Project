@@ -292,3 +292,17 @@ it.each(["acknowledge", "resolve"])("keeps payout report %s open on failure and 
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["photographer", "payouts", "reports"] });
   expect(useToastStore.getState().toasts.map((toast) => toast.kind)).toEqual(["error", "success"]);
 });
+
+it.each(["detail", "queue"])("offers no Escalate on a denied dispute in the %s view", async (surface) => {
+  const user = userEvent.setup();
+  const denied: Dispute = { ...dispute, status: "denied" };
+  fixtures.disputes = [denied];
+  client.setQueryData(adminDisputeKeys.list(admin.id), [denied]);
+  render(<QueryClientProvider client={client}>{surface === "detail"
+    ? <AdminDisputeActionAside dispute={denied} runnerHandle={denied.runnerHandle} />
+    : <DisputesQueue />}</QueryClientProvider>);
+  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  // The server escalates open disputes only.
+  expect(screen.queryByRole("button", { name: "Escalate…" })).not.toBeInTheDocument();
+  expect(screen.getByText("This dispute is closed. No further actions are available.")).toBeInTheDocument();
+});
