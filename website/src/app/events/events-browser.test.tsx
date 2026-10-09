@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
+import { fetchPublicEventsCatalog } from "@/lib/api-events";
 import type { Event } from "@/types/event";
 import { EventsBrowser } from "./events-browser";
 
@@ -133,6 +134,19 @@ it("keeps only the last complete catalog on refresh failure and removes a delete
   fireEvent.click(screen.getByRole("button", { name: "Retry events" }));
   await screen.findByText("Nothing here yet."); expect(navigation.search).toBe("province=bohol");
   await provinceMenu(); expect(screen.queryByRole("menuitem", { name: "Bohol" })).not.toBeInTheDocument();
+});
+it("shows a server-seeded catalog without loading it again, and still loads one that was not seeded", async () => {
+  rows = [event("seeded")];
+  const seed = await fetchPublicEventsCatalog(); // what the server page passes down
+  rows = [event("a")]; get.mockClear();
+  const seeded = render(<QueryClientProvider client={client}><EventsBrowser events={seed} /></QueryClientProvider>);
+  await waitFor(() => expect(get.mock.calls.some(([path]: unknown[]) => path === "/regions")).toBe(true));
+  expect(raceLink("seeded")).not.toBeNull();
+  expect(get.mock.calls.filter(([path]: unknown[]) => String(path).startsWith("/events?"))).toEqual([]);
+  seeded.unmount(); client.clear(); get.mockClear();
+  mount();
+  await waitFor(() => expect(raceLink("a")).not.toBeNull());
+  expect(get.mock.calls.filter(([path]: unknown[]) => String(path).startsWith("/events?"))).toHaveLength(1);
 });
 it("never treats a one-page query cache as a complete catalog", async () => {
   client.setQueryData(["public", "events", {}], []); mount();
