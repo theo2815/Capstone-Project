@@ -34,8 +34,8 @@ export function adminIntentRecoveryNotice(actor: string, operation: string, targ
 async function hash(bytes: ArrayBuffer) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-/** What the server says happened to an earlier key: it ran, it has no record of it, or it cannot say yet. */
-export type AdminIntentOutcome = "succeeded" | "missing" | "open";
+/** What the server says happened to an earlier key: it ran, it was refused for good, it has no record of it, or it cannot say yet. */
+export type AdminIntentOutcome = "succeeded" | "failed" | "missing" | "open";
 export async function claimAdminIntent(actor: string, operation: string, target: string, draft: object,
   resolve?: (key: string) => Promise<AdminIntentOutcome>) {
   const started = generation;

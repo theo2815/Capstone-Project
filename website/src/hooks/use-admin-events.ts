@@ -106,6 +106,8 @@ export function useAdminEventActions() {
       const intent = await claimAdminIntent(userId, operation, target, draft, async (key) => {
         const command = await fetchAdminCommand(key);
         if (!command) return "missing";
+        // The server refused it after the upload and saved nothing; that key can never run again.
+        if (command.state === "FAILED") return "failed";
         if (command.state !== "SUCCEEDED" || !current()) return "open";
         await qc.invalidateQueries({ queryKey: adminEventKeys.owner(userId) });
         if (!current()) return "open";

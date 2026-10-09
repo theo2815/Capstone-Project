@@ -321,6 +321,16 @@ it("releases an earlier create the server has no record of only after the wait, 
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
   expect(useToastStore.getState().toasts.filter((toast) => toast.kind === "success")).toEqual([]);
 });
+it("releases an earlier create the server recorded as failed at once and sends the different draft", async () => {
+  const { post, actions, reference } = await loseCreateReply();
+  const get = mockLookup(() => ({ commandId: reference, state: "FAILED", resourceId: null, decisionId: null, messageId: null, completedAt: null }));
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  expect(get).toHaveBeenCalledWith(`/admin/commands/${reference}`);
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+  expect(actions.recoveryNotice("create")).toBeNull();
+  expect(useToastStore.getState().toasts.filter((toast) => /went through/.test(toast.message))).toEqual([]);
+});
 it.each([
   ["PENDING", () => ({ state: "PENDING" })], ["UNKNOWN", () => ({ state: "UNKNOWN" })],
   ["a lookup failure", () => { throw new Error("Offline"); }],
