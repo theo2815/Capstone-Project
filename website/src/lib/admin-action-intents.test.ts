@@ -112,3 +112,19 @@ it.each(["event.create", "event.update", "user.message"])("says in the lasting n
   expect(notice).toMatch(/held back for about 5 minutes after it was sent/);
   expect(notice).toMatch(/Request reference: \S+\.$/);
 });
+it("stores the send time it gives an old record once, so a reload does not restart the wait", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  sessionStorage.setItem("quickpitik-admin-action-intents", JSON.stringify([
+    { actor: admin.id, operation: "event.create", target: "create", key: "old-key", fingerprint: "old" }]));
+  vi.resetModules();
+  const reloaded = await import("./admin-action-intents");
+  expect(reloaded.adminIntentRecoveryNotice(admin.id, "event.create", "create")).toContain("old-key");
+  const given = stored()[0].sentAt;
+  expect(given).toBe(Date.now());
+  vi.setSystemTime(Date.now() + 2 * minute);
+  vi.resetModules();
+  const again = await import("./admin-action-intents");
+  await expect(again.claimAdminIntent(admin.id, "event.create", "create", { title: "Second" }, async () => "missing")).rejects.toThrow(/about 3 minutes/);
+  expect(stored()[0].sentAt).toBe(given);
+  again.clearAdminActionIntents();
+});

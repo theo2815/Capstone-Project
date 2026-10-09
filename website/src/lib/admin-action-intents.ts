@@ -11,10 +11,12 @@ function read(): Intent[] {
   if (!records) {
     try {
       const value: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? "[]");
-      // A record written before send times existed counts as sent just now.
-      records = Array.isArray(value) ? value.filter((row): row is Intent =>
-        row && ["actor", "operation", "target", "key", "fingerprint"].every((field) => typeof row[field] === "string"))
-        .map((row) => ({ ...row, sentAt: typeof row.sentAt === "number" ? row.sentAt : Date.now() })) : [];
+      const rows = Array.isArray(value) ? value.filter((row): row is Intent =>
+        row && ["actor", "operation", "target", "key", "fingerprint"].every((field) => typeof row[field] === "string")) : [];
+      // A record written before send times existed counts as sent just now; that time is stored once,
+      // so a reload does not start the wait again.
+      records = rows.map((row) => ({ ...row, sentAt: typeof row.sentAt === "number" ? row.sentAt : Date.now() }));
+      if (rows.some((row) => typeof row.sentAt !== "number")) save();
     } catch { records = []; }
   }
   return records;
