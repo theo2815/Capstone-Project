@@ -121,6 +121,10 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query(value = "SELECT id FROM photos WHERE event_id = :eventId ORDER BY id FOR UPDATE", nativeQuery = true)
     fun lockIdsByEventIdForUpdate(@Param("eventId") eventId: UUID): List<UUID>
 
+    // Same row locks and order as findAllByIdForUpdate, without hydrating entities.
+    @Query(value = "SELECT id FROM photos WHERE id IN (:ids) ORDER BY id FOR UPDATE", nativeQuery = true)
+    fun lockIdsForUpdate(@Param("ids") ids: Collection<UUID>): List<UUID>
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     // DISTINCT forces follow-on locking: checkout could hydrate availability
     // before waiting for a review's lock. Lock the row in the initial read.
