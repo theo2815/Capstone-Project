@@ -8,8 +8,11 @@ import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-style
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import type { PhotoRemovalRequestDto } from "@/types/photo-removal";
 
 const PAGE = 20;
+// List rows arrive without items; count photos that passed verification from server phase counts.
+const verifiedPhotos = (c: PhotoRemovalRequestDto["phaseCounts"]) => c.verified + c.removalAuthorized + c.removed + c.retained + c.retainedRestricted;
 
 export function RemovalRequestList() {
   const [offset, setOffset] = useState(0);
@@ -34,7 +37,7 @@ export function RemovalRequestList() {
                 <span className="block font-display font-bold text-ink truncate">{row.event.name}</span>
                 <span className="block text-sm text-slate truncate">{row.supportReference}</span>
               </span>
-              <span className="font-mono tnum text-sm text-slate">{row.items.length} photos · {formatLongDate(row.createdAt)}</span>
+              <span className="font-mono tnum text-sm text-slate">{verifiedPhotos(row.phaseCounts)} photos · {formatLongDate(row.createdAt)}</span>
               <AdminStatusPill label={row.status} tone={row.status === "DRAFT" ? "amber" : row.status === "OPEN" ? "ink" : "slate"} />
             </Link>
           </li>

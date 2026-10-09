@@ -22,13 +22,14 @@ const UNASSIGNED = "Unassigned owner";
 type Selected = { photo: RemovalPhotoDto; source: RemovalMatchSource; note: string };
 type MatchState = { kind: "idle" | "running" } | { kind: "result"; result: RemovalMatchResult } | { kind: "error"; message: string };
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Something went wrong. Try again.";
-const ownerOf = (name: string | null) => name ?? UNASSIGNED;
+const ownerOf = (id: string | null, name: string | null) => id ? name ?? "Unnamed photographer" : UNASSIGNED;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function RemovalRequestReview({ requestId }: { requestId: string }) {
   const detail = useAdminRemovalRequest(requestId);
   if (detail.isPending) return <p role="status" className="mt-8 text-slate">Loading case…</p>;
-  if (detail.isError) return (
+  // A failed background refresh keeps showing the last server copy.
+  if (!detail.data) return (
     <div role="alert" className="mt-8 space-y-4">
       <p>Couldn&apos;t load this case.</p>
       <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={() => void detail.refetch()}>Try again</button>
@@ -39,7 +40,7 @@ export function RemovalRequestReview({ requestId }: { requestId: string }) {
     <>
       <CaseHeader request={request} />
       {request.status === "DRAFT"
-        ? <DraftWorkspace request={request} refreshing={detail.isFetching} />
+        ? <DraftWorkspace request={request} refreshing={detail.isFetching} refresh={detail.refetch} />
         : <VerifiedSummary request={request} />}
     </>
   );
@@ -60,7 +61,7 @@ function CaseHeader({ request }: { request: PhotoRemovalRequestDto }) {
   );
 }
 
-function DraftWorkspace({ request, refreshing }: { request: PhotoRemovalRequestDto; refreshing: boolean }) {
+function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemovalRequestDto; refreshing: boolean; refresh: () => Promise<{ data?: PhotoRemovalRequestDto; isError: boolean }> }) {
   const actions = useAdminRemovalActions();
   const id = request.id;
   const [file, setFile] = useState<File | null>(null);
@@ -73,6 +74,7 @@ function DraftWorkspace({ request, refreshing }: { request: PhotoRemovalRequestD
   const [method, setMethod] = useState("");
   const [note, setNote] = useState("");
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [reviewStatus, setReviewStatus] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ items: RemovalPhotoDto[]; index: number } | null>(null);
   const gallery = useRemovalPhotos(id, { offset, limit: PAGE, bib: bibFilter || undefined });
   // A retry of the same action after a failure reuses its command ID; any changed action gets a new one.
@@ -103,6 +105,21 @@ function DraftWorkspace({ request, refreshing }: { request: PhotoRemovalRequestD
         : status === 404 ? "Upload a selfie before matching."
         : errorText(error) });
     }
+  }
+
+  // The hook only accepts a review of a fresh, idle read; otherwise read the case again first.
+  async function reviewCurrent() {
+    let version = request.version;
+    if (!actions.reviewCurrentState(id, version)) {
+      setReviewStatus("Refreshing the case…");
+      const read = await refresh();
+      if (read.isError || !read.data) { setReviewStatus("Couldn't refresh the case. Try again."); return; }
+      version = read.data.version;
+      if (!actions.reviewCurrentState(id, version)) { setReviewStatus("Couldn't refresh the case. Try again."); return; }
+    }
+    setReviewStatus(null);
+    setMatch({ kind: "idle" });
+    dropSelfieSelections();
   }
 
   async function search() {
@@ -166,9 +183,10 @@ function DraftWorkspace({ request, refreshing }: { request: PhotoRemovalRequestD
         <div role="alert" className="rounded-2xl border border-amber-600/30 bg-bone-deep p-4 space-y-3">
           <p className="text-sm text-ink">This case changed while you were working. Review the current state before continuing.</p>
           <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} disabled={refreshing}
-            onClick={() => { if (actions.reviewCurrentState(id, request.version)) { setMatch({ kind: "idle" }); dropSelfieSelections(); } }}>
+            onClick={() => void reviewCurrent()}>
             Review current state
           </button>
+          {reviewStatus && <p role="status" className="text-sm text-slate">{reviewStatus}</p>}
         </div>
       )}
 
@@ -224,10 +242,10 @@ function DraftWorkspace({ request, refreshing }: { request: PhotoRemovalRequestD
         <section aria-label="Confirm verification" className="space-y-5 border-t border-line pt-8">
           <h2 className="font-display text-xl font-extrabold text-ink">Confirm verification</h2>
           <p className="text-sm text-ink"><span className="tnum">{plural(selected.length, "photo")}</span> will be hidden from sale and search while owners review.</p>
-          {groupByOwner(selected, (item) => item.photo.photographerName).map(([owner, items]) => (
-            <div key={owner} className="space-y-2">
+          {groupByOwner(selected, (item) => [item.photo.photographerId, item.photo.photographerName]).map(([key, owner, items]) => (
+            <div key={key} className="space-y-2">
               <h3 className="font-display font-bold text-ink">{owner}</h3>
-              {owner === UNASSIGNED
+              {key === ""
                 ? <p className="text-sm text-amber-700">No photographer will be asked to review these photos — they have no owner on record.</p>
                 : <p className="text-sm text-slate">Will receive a review request for <span className="tnum">{plural(items.length, "photo")}</span>.</p>}
               <ul className="space-y-2">
@@ -274,10 +292,17 @@ function DraftWorkspace({ request, refreshing }: { request: PhotoRemovalRequestD
   );
 }
 
-function groupByOwner<T>(items: T[], owner: (item: T) => string | null): [string, T[]][] {
-  const groups = new Map<string, T[]>();
-  for (const item of items) groups.set(ownerOf(owner(item)), [...(groups.get(ownerOf(owner(item))) ?? []), item]);
-  return [...groups].sort(([a], [b]) => a === UNASSIGNED ? 1 : b === UNASSIGNED ? -1 : a.localeCompare(b));
+// Groups by owner ID (names can repeat); a null ID is the unassigned group.
+function groupByOwner<T>(items: T[], owner: (item: T) => [string | null, string | null]): [string, string, T[]][] {
+  const groups = new Map<string, [string, string, T[]]>();
+  for (const item of items) {
+    const [ownerId, name] = owner(item);
+    const key = ownerId ?? "";
+    const group = groups.get(key) ?? [key, ownerOf(ownerId, name), []];
+    group[2].push(item);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort(([a, nameA], [b, nameB]) => !a ? 1 : !b ? -1 : nameA.localeCompare(nameB));
 }
 
 function PhotoTile({ item, checked, disabled, onToggle, onPreview }: {
@@ -294,8 +319,8 @@ function PhotoTile({ item, checked, disabled, onToggle, onPreview }: {
         <input type="checkbox" value={photo.id} checked={checked} disabled={disabled} onChange={onToggle}
           aria-label={`Include ${photo.bib ? `bib ${photo.bib}` : "untagged photo"} · ${photo.id}`} className="mt-1" />
         <span className="min-w-0">
-          <span className={cn("block truncate", !item.photographerName && "text-amber-700")}>{ownerOf(item.photographerName)}</span>
-          <span className="block font-mono tnum text-slate">{photo.bib ?? "No bib"}{item.matchScore != null && <> · {item.matchScore.toFixed(0)}%</>}</span>
+          <span className={cn("block truncate", !item.photographerId && "text-amber-700")}>{ownerOf(item.photographerId, item.photographerName)}</span>
+          <span className="block font-mono tnum text-slate">{photo.bib ?? "No bib"}{item.matchScore != null && <> · {Math.round(item.matchScore * 100)}%</>}</span>
           {(item.trashed || item.removalState !== "NONE" || !item.bytesAvailable) && (
             <span className="block text-amber-700">{item.trashed ? "In trash" : item.removalState === "REMOVED" ? "Removed" : item.removalState === "REVIEW" ? "Under review" : "File unavailable"}</span>
           )}
@@ -336,10 +361,10 @@ function VerifiedSummary({ request }: { request: PhotoRemovalRequestDto }) {
         <p className="text-slate">{request.verificationNote}</p>
         {request.verifiedAt && <p className="font-mono tnum text-slate">{formatLongDate(request.verifiedAt)}</p>}
       </div>
-      {groupByOwner(request.items, (item) => item.ownerNameSnapshot).map(([owner, items]) => (
-        <div key={owner} className="space-y-2">
+      {groupByOwner(request.items, (item) => [item.ownerIdSnapshot, item.ownerNameSnapshot]).map(([key, owner, items]) => (
+        <div key={key} className="space-y-2">
           <h3 className="font-display font-bold text-ink">{owner}</h3>
-          {owner === UNASSIGNED && <p className="text-sm text-amber-700">No photographer was asked to review these photos.</p>}
+          {key === "" && <p className="text-sm text-amber-700">No photographer was asked to review these photos.</p>}
           <ul className="space-y-1">
             {items.map((item) => (
               <li key={item.id} className="text-sm text-ink">

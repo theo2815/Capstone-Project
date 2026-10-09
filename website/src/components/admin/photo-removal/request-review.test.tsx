@@ -12,10 +12,10 @@ import { draftCase, removalPhoto } from "./removal-fixtures";
 
 vi.mock("@/lib/api-photo-removal");
 
-const photoA = removalPhoto("photo-a", "Photographer A", { matchSource: "SELFIE", matchScore: 98 });
-const photoB = removalPhoto("photo-b", "Photographer B", { matchSource: "SELFIE", matchScore: 91 });
-const photoC = removalPhoto("photo-c", "Photographer C", { matchSource: "SELFIE", matchScore: 88 });
-const falsePositive = removalPhoto("photo-fp", "Photographer A", { matchSource: "SELFIE", matchScore: 71 });
+const photoA = removalPhoto("photo-a", "Photographer A", { matchSource: "SELFIE", matchScore: 0.98 });
+const photoB = removalPhoto("photo-b", "Photographer B", { matchSource: "SELFIE", matchScore: 0.91 });
+const photoC = removalPhoto("photo-c", "Photographer C", { matchSource: "SELFIE", matchScore: 0.88 });
+const falsePositive = removalPhoto("photo-fp", "Photographer A", { matchSource: "SELFIE", matchScore: 0.71 });
 const orphan = removalPhoto("photo-orphan", null);
 const matchResult: RemovalMatchResult = {
   items: [photoA, photoB, photoC, falsePositive], candidateLimit: 50, possiblyTruncated: false,
@@ -60,6 +60,7 @@ it("matchCandidatesAreNotAutoSelected", async () => {
   await runMatch(user);
   expect(selectedPhotoIds()).toEqual([]);
   expect(screen.getByText(/up to/i)).toHaveTextContent("50");
+  expect(screen.getByText(/98%/)).toBeInTheDocument();
 });
 
 it("selectionListsThreeOwners", async () => {
@@ -113,6 +114,41 @@ it("refreshRestoresServerCaseWithoutPersistingSelfie", async () => {
   expect(stored.join("\n")).not.toMatch(/runner-selfie|runner-face|runner@example\.test|blob:/);
   expect(location.search).toBe("");
   expect(location.pathname).toBe("/admin/photo-removal-requests/case-1");
+});
+
+it("keeps photographers who share a display name in separate owner groups", async () => {
+  const user = userEvent.setup();
+  const twinOne = removalPhoto("photo-t1", "Photographer A", { photographerId: "owner-1", matchSource: "SELFIE", matchScore: 0.9 });
+  const twinTwo = removalPhoto("photo-t2", "Photographer A", { photographerId: "owner-2", matchSource: "SELFIE", matchScore: 0.9 });
+  vi.mocked(removalApi.findRemovalMatches).mockResolvedValue({ ...matchResult, items: [twinOne, twinTwo] });
+  renderReview();
+  await user.click(await screen.findByRole("button", { name: "Match stored selfie" }));
+  await user.click(await screen.findByRole("checkbox", { name: /photo-t1/ }));
+  await user.click(screen.getByRole("checkbox", { name: /photo-t2/ }));
+  expect(ownerSections()).toEqual(["Photographer A", "Photographer A"]);
+  expect(within(confirmation()).getAllByText((_, el) => el?.tagName === "P" && /review request for 1 photo\./.test(el.textContent ?? ""))).toHaveLength(2);
+});
+
+it("refreshes the case when the post-conflict read is not current yet", async () => {
+  const user = userEvent.setup();
+  let reads = 0;
+  vi.mocked(removalApi.getAdminRemovalRequest).mockImplementation(async () => {
+    reads += 1;
+    if (reads === 2 || reads === 3) throw new Error("Backend unavailable");
+    return serverCase;
+  });
+  vi.mocked(removalApi.findRemovalMatches).mockImplementationOnce(async () => {
+    serverCase = { ...serverCase, version: 6 };
+    throw new ApiError([{ code: "CONFLICT", message: "Case changed" }], 409);
+  });
+  renderReview();
+  await user.click(await screen.findByRole("button", { name: "Match stored selfie" }));
+  await user.click(await screen.findByRole("button", { name: "Review current state" }));
+  expect(await screen.findByText(/Couldn.t refresh the case/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review current state" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Review current state" })).not.toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: "Match stored selfie" }));
+  await waitFor(() => expect(vi.mocked(removalApi.findRemovalMatches).mock.calls[1][1].expectedVersion).toBe(6));
 });
 
 it("warns about unassigned owners and requires a note for manual additions", async () => {
@@ -180,7 +216,7 @@ it("shows the verified case grouped by owner after refresh", async () => {
   serverCase = { ...draftCase, status: "OPEN", verificationMethod: "Ticket", verificationNote: "Checked", verifiedAt: "2026-10-08T02:00:00Z",
     items: [
       { id: "i1", photoIdSnapshot: "photo-a", ownerIdSnapshot: "owner-a", ownerNameSnapshot: "Photographer A", reviewId: "r1", state: "VERIFIED",
-        matchSource: "SELFIE", matchScore: 98, verificationActorId: "admin-a", verifiedAt: "2026-10-08T02:00:00Z", verificationReason: null,
+        matchSource: "SELFIE", matchScore: 0.98, verificationActorId: "admin-a", verifiedAt: "2026-10-08T02:00:00Z", verificationReason: null,
         ownerResponse: null, ownerResponseReason: null, ownerRespondedAt: null, adminDecision: null, adminDecisionReason: null,
         adminDecisionActorId: null, adminDecidedAt: null, retentionReviewAt: null, cleanupJobId: null, cleanupState: null, photo: null,
         reviewOwnerId: "owner-a", ownerReviewPending: true },
