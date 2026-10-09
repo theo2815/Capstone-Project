@@ -152,4 +152,38 @@ describe("confirmation ID ownership", () => {
     await expect(decision).resolves.toBe(true);
     trigger.remove();
   });
+
+  it("leaves Enter on the focused Cancel button to the button so it cancels", () => {
+    const execute = vi.fn();
+    render(<ConfirmationOverlay />);
+    const resolve = open(execute);
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    cancel.focus();
+    // true = not prevented, so the browser still turns this key press into Cancel's click.
+    expect(fireEvent.keyDown(cancel, { key: "Enter" })).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    fireEvent.click(cancel);
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("does not confirm on a held Enter key", () => {
+    const execute = vi.fn();
+    render(<ConfirmationOverlay />);
+    const resolve = open(execute);
+    fireEvent.keyDown(document, { key: "Enter", repeat: true });
+    expect(execute).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("still confirms once on Enter while focus is on the trigger behind the dialog", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger); trigger.focus();
+    const execute = vi.fn();
+    render(<ConfirmationOverlay />);
+    const resolve = open(execute);
+    expect(fireEvent.keyDown(trigger, { key: "Enter" })).toBe(false);
+    await waitFor(() => expect(resolve).toHaveBeenCalledExactlyOnceWith(true));
+    expect(execute).toHaveBeenCalledTimes(1);
+    trigger.remove();
+  });
 });
