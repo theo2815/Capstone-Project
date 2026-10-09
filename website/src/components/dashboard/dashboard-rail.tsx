@@ -43,6 +43,7 @@ const DASHBOARD_ROUTES: ReadonlyArray<DashboardRoute> = [
   },
   { href: ROUTES.DASHBOARD_EARNINGS, label: "Earnings" },
   { href: ROUTES.DASHBOARD_BILLING, label: "Billing" },
+  { href: ROUTES.DASHBOARD_PHOTO_REMOVAL_REQUESTS, label: "Removal requests" },
   { href: ROUTES.DASHBOARD_SETTINGS, label: "Settings" },
 ];
 
