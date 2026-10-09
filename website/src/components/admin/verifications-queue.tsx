@@ -244,7 +244,8 @@ export function VerificationsQueue() {
 
   async function handleBulkDecision(reason?: string) {
     const sessionVersion = useAuthStore.getState().sessionVersion;
-    const ids = Array.from(selected).filter((id) => pendingIds.has(id));
+    // A row ticked after the send-back form opened has no captured revision; the server would skip its stale check.
+    const ids = Array.from(selected).filter((id) => pendingIds.has(id) && (reason === undefined || id in rejectRevisions));
     if (!ids.length) return;
     const results = await verifyBatch(ids.map((id) => ({ userId: id, verificationRevision: reason === undefined ? byId.get(id)!.verificationRevision : rejectRevisions[id] })), reason === undefined ? "approve" : "reject", reason);
     if (!results) return;
@@ -298,8 +299,13 @@ export function VerificationsQueue() {
 
   return (
     <>
-      {rowId && detail.isPending && !openRow && <p role="status">Loading verification…</p>}
-      {rowId && detail.isError && <p role="alert">Couldn&apos;t load verification. <button onClick={() => void detail.refetch()}>Try again</button></p>}
+      {rowId && detail.isPending && !openRow && <p role="status" className="font-sans text-sm text-slate">Loading verification…</p>}
+      {rowId && detail.isError && (
+        <div role="alert" className="space-y-3">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load verification.</p>
+          <button type="button" onClick={() => void detail.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Try again</button>
+        </div>
+      )}
       {(showFirstLoad || showError) && (
         <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           {showFirstLoad
@@ -334,7 +340,6 @@ export function VerificationsQueue() {
                 <PendingRow
                   row={row}
                   disabled={submitting}
-                  aria-busy={submitting}
                   selected={selected.has(row.userId)}
                   selectionActive={selectionActive}
                   focused={focusedId === row.userId}
@@ -514,6 +519,7 @@ function PendingRow({
     <article
       role="button"
       aria-disabled={disabled}
+      aria-busy={disabled}
       tabIndex={0}
       data-row-id={row.userId}
       aria-label={`${row.brandName ?? row.name}${
@@ -624,8 +630,13 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const payoutsCount = effective?.payouts.length ?? 0;
   const avatarUrl = effective?.avatarUrl ?? row.avatarUrl ?? null;
 
-  if (settings.isPending) return <p role="status">Loading verification details…</p>;
-  if (settings.isError) return <p role="alert">Couldn&apos;t load verification details. <button onClick={() => void settings.refetch()}>Try again</button></p>;
+  if (settings.isPending) return <p role="status" className="font-sans text-sm text-slate">Loading verification details…</p>;
+  if (settings.isError) return (
+    <div role="alert" className="space-y-3">
+      <p className="font-sans text-sm text-error">Couldn&apos;t load verification details.</p>
+      <button type="button" onClick={() => void settings.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Try again</button>
+    </div>
+  );
 
   return (
     <div className="space-y-6">

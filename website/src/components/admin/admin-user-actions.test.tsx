@@ -117,6 +117,7 @@ it("preserves a deep-linked verification through loading, failure, and retry", a
   expect(navigation.replace).not.toHaveBeenCalled(); expect(screen.getByRole("status")).toHaveTextContent("Loading verification");
   await act(async () => request.reject(new Error("Unavailable")));
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load verification"); expect(navigation.replace).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Try again" })).toHaveAttribute("type", "button");
   await userEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByRole("dialog")).toHaveTextContent("Test Studio"); expect(navigation.replace).not.toHaveBeenCalled();
 });
@@ -143,6 +144,7 @@ it("names the pending bulk approval and blocks repeat Enter until it settles", a
   await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
   await user.click(screen.getByRole("button", { name: "Approve 1" }));
   expect(screen.getByRole("button", { name: "Approving…" })).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByRole("button", { name: /Test Studio — toggle selection/ })).toHaveAttribute("aria-busy", "true");
   await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   await act(async () => { request.resolve(adminUser); });
 });
@@ -150,4 +152,15 @@ it("shows the join month for a backend timestamp instead of an invalid date", as
   mount(true);
   await waitFor(() => expect(document.body).toHaveTextContent("Joined SEP 2026"));
   expect(document.body).not.toHaveTextContent(/invalid date/i);
+});
+it("does not send back a row ticked after the bulk rejection form opened", async () => {
+  rows = [adminUser, { ...adminUser, userId: "photographer-2", brandName: "Second Studio" }]; client.setQueryData(key, rows);
+  const post = vi.spyOn(api, "post").mockImplementation(async () => rows[0]); const user = userEvent.setup();
+  mount(true); await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
+  await user.click(screen.getByRole("button", { name: "Reject 1…" })); const dialog = screen.getByRole("dialog");
+  // Focus is not trapped in the form, so the keyboard can still tick a row whose revision was never captured.
+  await user.click(screen.getByRole("checkbox", { name: "Select Second Studio", hidden: true }));
+  await user.click(within(dialog).getByRole("button", { name: "Send back" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(post.mock.calls.map((call) => call[0])).toEqual([`/admin/users/${adminUser.userId}/reject`]);
 });
