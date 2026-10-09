@@ -4,7 +4,7 @@
 > **Scope:** `website/` automated unit, component and mocked API-boundary regression tests.
 > **Recorded baseline:** 391 passing tests across 46 test files, measured on 2026-09-12 at application commit `ba239c7`.
 > **Candidate check:** 438 passing tests across 48 test files, measured on 2026-09-20 at `c90736ee` with Node 22.23.2.
-> **Admin action safety and event location branch check:** 783 passing tests across 74 test files, measured on 2026-10-09 at `602dff5a` (local branch `fix/admin-actions-event-location`, unmerged) with Node 22.23.3.
+> **Admin action safety and event location branch check:** 834 passing tests across 77 test files, measured on 2026-10-09 on `dev-main` at merge `f9243328` with Node 22.23.3.
 
 ## 1. Objectives and Evidence
 
@@ -71,8 +71,8 @@ Paths below are relative to `website/src/`. This inventory identifies the 48 tes
 | Settings separation | Query hydration and editable Settings workflow | `use-photographer-settings-hydration.test.tsx`, Settings `page.test.tsx` |
 | Checkout separation | Pending-payment recovery, QR creation, paid receipt snapshots, zero-total settlement, retry/idempotency, cancellation outcomes, dead capabilities and timer cleanup | `use-checkout-workflow.test.tsx`, `use-checkout-actions.test.tsx`, Checkout component tests |
 | Checkout review fixes | Late create/status/cancel failures after a session switch do not affect the new session; QR and receipt totals use the server-confirmed order amount, including zero-total settlement | `use-checkout-workflow.test.tsx` |
-| Admin action safety (unmerged branch) | One shared pending guard per admin target across mounted views, bulk and row overlap, confirmation ownership, old-session results, retained drafts, request keys kept across uncertain retries and released after a refused stale edit, accepted command versus failed refresh | `hooks/use-admin-mutation.test.tsx`, `hooks/admin-action-adoption.test.tsx`, `lib/admin-action-intents.test.ts`, `components/ui/confirmation-overlay.test.tsx`, `components/admin/admin-flag-actions.test.tsx`, `app/admin/security/page.test.tsx`, existing admin hook, component and route tests |
-| Event region and province (unmerged branch) | Shared controlled Region/Province fields in Settings and the admin event form, keyboard and disabled states, create requires a pair, older events editable without one, complete public catalog beyond 200 rows, province options and URL rules, later-page and reference errors | `components/ui/region-province-fields.test.tsx`, `components/ui/dropdown.test.tsx`, `components/admin/admin-event-form-modal.test.tsx`, `lib/api-events.test.ts`, `app/events/events-browser.test.tsx`, `app/events/page.test.tsx` |
+| Admin action safety | One shared pending guard per admin target across mounted views, bulk and row overlap, confirmation ownership, old-session results, retained drafts, request keys kept across uncertain retries and released after a refused stale edit, accepted command versus failed refresh | `hooks/use-admin-mutation.test.tsx`, `hooks/admin-action-adoption.test.tsx`, `lib/admin-action-intents.test.ts`, `components/ui/confirmation-overlay.test.tsx`, `components/admin/admin-flag-actions.test.tsx`, `app/admin/security/page.test.tsx`, existing admin hook, component and route tests |
+| Event region and province | Shared controlled Region/Province fields in Settings and the admin event form, keyboard and disabled states, create requires a pair, older events editable without one, complete public catalog beyond 200 rows, province options and URL rules, later-page and reference errors | `components/ui/region-province-fields.test.tsx`, `components/ui/dropdown.test.tsx`, `components/admin/admin-event-form-modal.test.tsx`, `lib/api-events.test.ts`, `app/events/events-browser.test.tsx`, `app/events/page.test.tsx` |
 
 The original six-suite proposal is superseded by this implemented inventory. Proposed standalone auth-validation, image-utils, bib-search and order-return polling test files are not listed as delivered. Existing related tests do not establish complete coverage of those earlier proposed scenarios.
 
@@ -110,6 +110,6 @@ The architecture implementation and its local regression workstream are closed a
 | Actual receipt email and full-resolution/signed downloads | Open; not established by fixture receipt checks |
 | Physical Android/iOS browsers and FB/Instagram/Messenger webviews | Evidence remains incomplete; S9 is accepted and excluded from the TASK 11 release gate. No physical-device acceptance is claimed. |
 | Additional proposed test scenarios and coverage reporting | Not claimed by this baseline; assess separately when those surfaces change |
-| Admin action safety and event location on staging or production, with real providers, WebSocket pushes and a screen reader | Open; the 2026-10-09 evidence is local only and the branch is unmerged |
+| Admin action safety and event location on staging or production, with real providers, WebSocket pushes and a screen reader | Open; the 2026-10-09 evidence is local only and the work is merged to `dev-main` but not deployed |
 
 Live ownership and follow-up scheduling belong in the Second Brain `website/tasks.md`; implementation evidence and closeout rationale are in `_journal/2026-09-11-phase-3-settings.md`. Keep this specification as the versioned testing reference, not a second live task board.
