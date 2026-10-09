@@ -67,6 +67,12 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
     label: "Sales",
     body: "Where the money comes from — GMV, platform cut, refunds, top photographers and events.",
   },
+  {
+    number: "11",
+    href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
+    label: "Photo removals",
+    body: "Runner privacy requests from support. Find their photos across every photographer in one event and verify which to hide.",
+  },
 ];
 
 export const ADMIN_SECTION_GUIDE: ReadonlyArray<SectionGuideEntry> =

@@ -42,6 +42,11 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     label: "Photographers",
     nestedPrefix: ROUTES.ADMIN_PHOTOGRAPHERS,
   },
+  {
+    href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
+    label: "Photo removals",
+    nestedPrefix: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
+  },
   { href: ROUTES.ADMIN_OVERVIEW, label: "Overview" },
   { href: ROUTES.ADMIN_SALES, label: "Sales" },
   { href: ROUTES.ADMIN_SECURITY, label: "Security", nestedPrefix: ROUTES.ADMIN_SECURITY },

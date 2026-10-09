@@ -46,6 +46,7 @@ export const ROUTES = {
   ADMIN_FLAGS: "/admin/flags",
   ADMIN_SALES: "/admin/sales",
   ADMIN_SECURITY: "/admin/security",
+  ADMIN_PHOTO_REMOVAL_REQUESTS: "/admin/photo-removal-requests",
 } as const;
 
 export const ROLES = {
