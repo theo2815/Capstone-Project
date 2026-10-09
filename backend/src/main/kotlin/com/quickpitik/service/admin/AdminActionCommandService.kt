@@ -42,10 +42,11 @@ class AdminActionCommandService(
     }
 
     // Another admin's receipt answers exactly like a missing one, so a key's existence is never revealed.
+    // The code differs from an unmapped path's NOT_FOUND: clients release a stored key only on this answer.
     fun find(actorId: UUID, key: IdempotencyKey?): AdminActionCommandDto =
         key?.let { commands.findById(UUID.fromString(it.value)).orElse(null) }
             ?.takeIf { it.actorId == actorId }?.toDto()
-            ?: throw NotFoundException("Admin request not found")
+            ?: throw NotFoundException("Admin request not found", ErrorCodes.ADMIN_COMMAND_NOT_FOUND)
 
     fun execute(key: IdempotencyKey?, actorId: UUID, operation: AdminActionOperation, targetId: UUID?,
         inputHash: String, authorize: () -> Unit, action: () -> AdminActionResult): AdminActionResult {

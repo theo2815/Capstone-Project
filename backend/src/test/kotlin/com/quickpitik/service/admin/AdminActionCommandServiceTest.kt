@@ -105,6 +105,7 @@ class AdminActionCommandServiceTest {
         Mockito.`when`(repository.findById(UUID.fromString(key.value))).thenReturn(Optional.empty())
         val unknown = assertFailsWith<NotFoundException> { service.find(actor, key) }
         assertEquals(unknown.message, foreign.message)
+        assertEquals(listOf("ADMIN_COMMAND_NOT_FOUND", "ADMIN_COMMAND_NOT_FOUND"), listOf(foreign.code, unknown.code))
     }
 
     @Test fun `malformed lookup id is a validation error before any read`() {

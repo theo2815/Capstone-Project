@@ -171,7 +171,8 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val admin = adminToken()
         val missing = get(path, admin)
         assertEquals(404, missing.statusCode())
-        assertEquals("NOT_FOUND", errorCode(missing))
+        // Not the generic NOT_FOUND an unmapped path answers: the website releases a stored key only on this code.
+        assertEquals("ADMIN_COMMAND_NOT_FOUND", errorCode(missing))
         assertEquals(400, get("/api/v1/admin/commands/not-a-uuid", admin).statusCode())
     }
 
