@@ -81,6 +81,9 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
   existing photo instead. Adds a test for the retry case.
   ```
 
+**Cloud testing & deploys**
+- **Read `docs/testing-cloud-services.md` in full before** running backend `integrationTest`, any test that calls AWS / R2 / PayMongo, any Railway or Vercel command, or pushing `dev-main`. Two traps it covers: a plain `integrationTest` in a checkout with `application-local.yml` makes real, billed AWS calls (and that file's bucket is the **production** one — never point a test at it), and a `dev-main` push that changes `backend/**` deploys to staging and runs its migrations.
+
 **Cross-module changes**
 - Changes spanning `ai-api` ↔ backend ↔ client require coordination — update the integration docs in the same commit.
 - Breaking API changes go under a new version prefix (`/api/v2/...`); existing clients must not be silently broken.
@@ -177,6 +180,7 @@ Do not start editing, planning, or searching before the vault is read and a modu
 | API keys, scopes, rate tiers | `docs/api-keys.md` (gitignored — canonical) |
 | Desktop → ai-api blur specifics | `docs/desktop-blur-detection-integration-guide.md` |
 | Running ai-api locally, end-to-end | `docs/run-ai-api-locally.md` |
+| Testing AWS, R2, Railway staging, Vercel preview | `docs/testing-cloud-services.md` |
 | Why a decision was made (ADRs) | vault `_project/decisions.md` and module `decisions.md` |
 
 ---

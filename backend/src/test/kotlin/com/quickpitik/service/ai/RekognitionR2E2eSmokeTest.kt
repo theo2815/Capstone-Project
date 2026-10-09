@@ -32,6 +32,10 @@ import java.util.UUID
 // SearchFacesByImage (a real cross-image face match), DetectText — but NOT the
 // unchanged HTTP/auth/upload/event plumbing (that needs the full app + Postgres).
 //
+// The R2 test takes its bucket from R2_SMOKE_BUCKET (skips without it, refuses a
+// production bucket); endpoint and keys still come from application-local.yml.
+// See docs/testing-cloud-services.md.
+//
 // Tagged "integration" so the default `test` task skips it. Run it with:
 //   ./gradlew -p backend integrationTest --tests "*RekognitionR2E2eSmokeTest"
 @Tag("integration")
@@ -41,7 +45,7 @@ class RekognitionR2E2eSmokeTest {
     fun `R2 storage put get presign delete round-trips`() {
         val storage = storageServiceOrNull()
         assumeTrue(storage != null) {
-            "No R2 storage config in application-local.yml (need app.storage.backend=S3 + endpoint) — skipping"
+            "Set R2_SMOKE_BUCKET to the test bucket (and keep app.storage.backend=S3 + endpoint in application-local.yml) — skipping"
         }
         storage!!.use { s ->
             val key = "smoke-test/${UUID.randomUUID()}.txt"
@@ -149,6 +153,9 @@ class RekognitionR2E2eSmokeTest {
     // ── helpers ────────────────────────────────────────────────────────────────
 
     private fun storageServiceOrNull(): S3StorageService? {
+        // Never the bucket in application-local.yml: that file names production.
+        val bucket = System.getenv("R2_SMOKE_BUCKET")?.takeIf { it.isNotBlank() } ?: return null
+        require(!bucket.contains("prod", ignoreCase = true)) { "Production buckets are forbidden for this probe" }
         val s = nested(loadYaml(), "app", "storage") ?: return null
         if ((s["backend"] as? String)?.uppercase() != "S3") return null
         val endpoint = (s["endpoint"] as? String)?.takeIf { it.isNotBlank() } ?: return null
@@ -157,7 +164,7 @@ class RekognitionR2E2eSmokeTest {
         return S3StorageService(
             StorageProperties(
                 backend = StorageProperties.Backend.S3,
-                bucket = (s["bucket"] as? String) ?: "quickpitik-dev",
+                bucket = bucket,
                 region = (s["region"] as? String) ?: "auto",
                 endpoint = endpoint,
                 accessKey = accessKey,

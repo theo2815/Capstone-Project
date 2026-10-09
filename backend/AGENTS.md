@@ -94,6 +94,10 @@ App boots on `http://localhost:8080`. Frontend talks to `http://localhost:8080/a
 
 ### Run tests
 
+**Stop — read `docs/testing-cloud-services.md` before `integrationTest` in the main checkout.** When
+`application-local.yml` exists, the suite also makes real AWS Rekognition calls with the local keys. The
+R2 tests need `R2_SMOKE_BUCKET` (the test bucket); that file's own bucket is the production one.
+
 ```powershell
 .\gradlew.bat test              # unit suite — no Docker, no Postgres
 .\gradlew.bat integrationTest   # real Postgres via Testcontainers — needs Docker running
