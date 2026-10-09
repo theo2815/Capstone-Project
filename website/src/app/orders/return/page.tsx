@@ -176,9 +176,9 @@ function PaidState({
     ? buildOrderBundleUrl(detail.id, detail.shareToken)
     : null;
   const savablePhotos = detail.photos
-    .filter((p) => p.downloadUrl)
+    .filter((p) => p.downloadUrl && p.availability !== "REMOVED")
     .map((p) => ({ url: p.downloadUrl as string }));
-  const showDownloadAll = photoCount >= 2 && bundleUrl != null;
+  const showDownloadAll = savablePhotos.length >= 2 && bundleUrl != null;
 
   // When the master Save-all owns the fresh slot, per-photo CTAs demote
   // to ghost so the one-fresh-per-viewport rule holds. Single-photo orders
@@ -330,6 +330,18 @@ function PhotoCard({
   const downloadUrl = photo.downloadUrl ?? null;
   const label = photo.bib ? `BIB ${photo.bib}` : "Untagged";
   const previewSrc = photo.previewUrl || photo.thumbnailUrl;
+
+  // Removed after purchase: the receipt stays, the image and download do not.
+  if (photo.availability === "REMOVED") {
+    return (
+      <article className="aspect-[4/5] w-full rounded-2xl border border-dashed border-line bg-bone-deep flex flex-col items-center justify-center gap-2 px-6 text-center">
+        <p className="font-display font-bold text-ink">Photo removed</p>
+        <p className="font-sans text-sm text-slate">
+          This photo is no longer available. Your receipt is unchanged; for refunds, use your order history or contact support.
+        </p>
+      </article>
+    );
+  }
 
   return (
     <article className="space-y-4">

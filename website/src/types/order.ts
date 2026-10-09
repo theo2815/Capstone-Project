@@ -54,7 +54,13 @@ export interface OrderItem {
   downloadUrl?: string;
   price: number;
   discount?: number;
+  availability?: OrderPhotoAvailability;
+  unavailableReason?: string | null;
 }
+
+// REMOVAL_REVIEW keeps a paid buyer's access; REMOVED ("PHOTO_REMOVED") drops
+// the image and download but never the receipt, amounts or refund access.
+export type OrderPhotoAvailability = "AVAILABLE" | "REMOVAL_REVIEW" | "REMOVED";
 
 // Phase E hydration shape for /me/orders/{id}.photos[]. Server bakes the
 // presigned URLs (Q-005); mock fallback leaves URL fields undefined so
@@ -67,6 +73,9 @@ export interface OrderPhotoDetail {
   thumbnailUrl?: string;
   previewUrl?: string;
   downloadUrl?: string;
+  // api-orders defaults these for payloads from before the field existed.
+  availability: OrderPhotoAvailability;
+  unavailableReason: string | null;
 }
 
 // Backend order-history row, distinct from the checkout creation response.
