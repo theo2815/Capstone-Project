@@ -90,6 +90,13 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     nestedPrefix: ROUTES.ADMIN_PHOTOGRAPHERS,
   },
   {
+    href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
+    label: "Photo removals",
+    number: "11",
+    group: "catalog",
+    nestedPrefix: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
+  },
+  {
     href: ROUTES.ADMIN_OVERVIEW,
     label: "Overview",
     number: "08",
