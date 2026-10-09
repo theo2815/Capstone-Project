@@ -8,6 +8,7 @@ import { admin } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import type { PhotoRemovalRequestDto, RemovalMatchResult } from "@/types/photo-removal";
 import { RemovalRequestReview } from "./request-review";
+import { RemovalRequestDecision } from "./request-decision";
 import { draftCase, removalPhoto } from "./removal-fixtures";
 
 vi.mock("@/lib/api-photo-removal");
@@ -221,8 +222,9 @@ it("shows the verified case grouped by owner after refresh", async () => {
         adminDecisionActorId: null, adminDecidedAt: null, retentionReviewAt: null, cleanupJobId: null, cleanupState: null, photo: null,
         reviewOwnerId: "owner-a", ownerReviewPending: true },
     ] };
-  renderReview();
-  expect(await screen.findByRole("heading", { level: 3, name: "Photographer A" })).toBeInTheDocument();
+  // Owner grouping now lives in the decision panel the case page renders beside the review.
+  render(<QueryClientProvider client={client}><RemovalRequestReview requestId="case-1" /><RemovalRequestDecision requestId="case-1" /></QueryClientProvider>);
+  expect(await screen.findByRole("heading", { level: 3, name: /^Photographer A — / })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Verify/ })).not.toBeInTheDocument();
   expect(removalApi.listRemovalPhotos).not.toHaveBeenCalled();
 });

@@ -61,7 +61,39 @@ function CaseHeader({ request }: { request: PhotoRemovalRequestDto }) {
   );
 }
 
-function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemovalRequestDto; refreshing: boolean; refresh: () => Promise<{ data?: PhotoRemovalRequestDto; isError: boolean }> }) {
+type RefreshCase = () => Promise<{ data?: PhotoRemovalRequestDto; isError: boolean }>;
+
+// After a 409 the hook blocks new commands until this panel's admin reviews a fresh, idle read of the case.
+export function ReviewCurrentState({ request, actions, refreshing, refresh, onReviewed }: {
+  request: PhotoRemovalRequestDto; actions: ReturnType<typeof useAdminRemovalActions>; refreshing: boolean;
+  refresh: RefreshCase; onReviewed?: () => void;
+}) {
+  const [status, setStatus] = useState<string | null>(null);
+  if (!actions.reviewRequired(request.id)) return null;
+  async function review() {
+    let version = request.version;
+    if (!actions.reviewCurrentState(request.id, version)) {
+      setStatus("Refreshing the case…");
+      const read = await refresh();
+      if (read.isError || !read.data) { setStatus("Couldn't refresh the case. Try again."); return; }
+      version = read.data.version;
+      if (!actions.reviewCurrentState(request.id, version)) { setStatus("Couldn't refresh the case. Try again."); return; }
+    }
+    setStatus(null);
+    onReviewed?.();
+  }
+  return (
+    <div role="alert" className="rounded-2xl border border-amber-600/30 bg-bone-deep p-4 space-y-3">
+      <p className="text-sm text-ink">This case changed while you were working. Review the current state before continuing.</p>
+      <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} disabled={refreshing} onClick={() => void review()}>
+        Review current state
+      </button>
+      {status && <p role="status" className="text-sm text-slate">{status}</p>}
+    </div>
+  );
+}
+
+function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemovalRequestDto; refreshing: boolean; refresh: RefreshCase }) {
   const actions = useAdminRemovalActions();
   const id = request.id;
   const [file, setFile] = useState<File | null>(null);
@@ -74,7 +106,6 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
   const [method, setMethod] = useState("");
   const [note, setNote] = useState("");
   const [verifyError, setVerifyError] = useState<string | null>(null);
-  const [reviewStatus, setReviewStatus] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ items: RemovalPhotoDto[]; index: number } | null>(null);
   const gallery = useRemovalPhotos(id, { offset, limit: PAGE, bib: bibFilter || undefined });
   // A retry of the same action after a failure reuses its command ID; any changed action gets a new one.
@@ -105,21 +136,6 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
         : status === 404 ? "Upload a selfie before matching."
         : errorText(error) });
     }
-  }
-
-  // The hook only accepts a review of a fresh, idle read; otherwise read the case again first.
-  async function reviewCurrent() {
-    let version = request.version;
-    if (!actions.reviewCurrentState(id, version)) {
-      setReviewStatus("Refreshing the case…");
-      const read = await refresh();
-      if (read.isError || !read.data) { setReviewStatus("Couldn't refresh the case. Try again."); return; }
-      version = read.data.version;
-      if (!actions.reviewCurrentState(id, version)) { setReviewStatus("Couldn't refresh the case. Try again."); return; }
-    }
-    setReviewStatus(null);
-    setMatch({ kind: "idle" });
-    dropSelfieSelections();
   }
 
   async function search() {
@@ -179,16 +195,8 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
 
   return (
     <div className="mt-8 space-y-12">
-      {reviewRequired && (
-        <div role="alert" className="rounded-2xl border border-amber-600/30 bg-bone-deep p-4 space-y-3">
-          <p className="text-sm text-ink">This case changed while you were working. Review the current state before continuing.</p>
-          <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} disabled={refreshing}
-            onClick={() => void reviewCurrent()}>
-            Review current state
-          </button>
-          {reviewStatus && <p role="status" className="text-sm text-slate">{reviewStatus}</p>}
-        </div>
-      )}
+      <ReviewCurrentState request={request} actions={actions} refreshing={refreshing} refresh={refresh}
+        onReviewed={() => { setMatch({ kind: "idle" }); dropSelfieSelections(); }} />
 
       <section aria-labelledby="removal-find" className="space-y-4">
         <h2 id="removal-find" className="font-display text-xl font-extrabold text-ink">Find the runner&apos;s photos</h2>
@@ -293,7 +301,7 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
 }
 
 // Groups by owner ID (names can repeat); a null ID is the unassigned group.
-function groupByOwner<T>(items: T[], owner: (item: T) => [string | null, string | null]): [string, string, T[]][] {
+export function groupByOwner<T>(items: T[], owner: (item: T) => [string | null, string | null]): [string, string, T[]][] {
   const groups = new Map<string, [string, string, T[]]>();
   for (const item of items) {
     const [ownerId, name] = owner(item);
@@ -353,37 +361,13 @@ function EvidencePreview({ requestId }: { requestId: string }) {
   );
 }
 
+// Per-owner responses and decisions live in RemovalRequestDecision; this keeps the verification record.
 function VerifiedSummary({ request }: { request: PhotoRemovalRequestDto }) {
   return (
-    <section aria-label="Verified photos" className="mt-8 space-y-6">
-      <div className="space-y-1 text-sm">
-        <p className="text-ink">Verified by: {request.verificationMethod ?? "—"}</p>
-        <p className="text-slate">{request.verificationNote}</p>
-        {request.verifiedAt && <p className="font-mono tnum text-slate">{formatLongDate(request.verifiedAt)}</p>}
-      </div>
-      {groupByOwner(request.items, (item) => [item.ownerIdSnapshot, item.ownerNameSnapshot]).map(([key, owner, items]) => (
-        <div key={key} className="space-y-2">
-          <h3 className="font-display font-bold text-ink">{owner}</h3>
-          {key === "" && <p className="text-sm text-amber-700">No photographer was asked to review these photos.</p>}
-          <ul className="space-y-1">
-            {items.map((item) => (
-              <li key={item.id} className="text-sm text-ink">
-                <span className="font-mono tnum">{item.photoIdSnapshot}</span> · {item.matchSource} · {item.state}
-                {item.ownerReviewPending && <span className="text-slate"> · awaiting owner review</span>}
-                {item.ownerResponse && <span className="text-slate"> · owner: {item.ownerResponse}</span>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-      {request.reviews.length > 0 && (
-        <ul className="space-y-1 text-sm text-slate">
-          {request.reviews.map((review) => (
-            <li key={review.id}>Owner review {review.notifiedAt ? <>notified <span className="tnum">{formatLongDate(review.notifiedAt)}</span></> : "not yet notified"}
-              {review.unavailableReason && <> · {review.unavailableReason}</>}{review.overdue && " · overdue"}</li>
-          ))}
-        </ul>
-      )}
+    <section aria-label="Verification" className="mt-8 space-y-1 text-sm">
+      <p className="text-ink">Verified by: {request.verificationMethod ?? "—"}</p>
+      <p className="text-slate">{request.verificationNote}</p>
+      {request.verifiedAt && <p className="font-mono tnum text-slate">{formatLongDate(request.verifiedAt)}</p>}
     </section>
   );
 }

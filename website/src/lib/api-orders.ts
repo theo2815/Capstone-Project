@@ -59,11 +59,19 @@ export async function fetchOrders(
   return res.items;
 }
 
+// Older payloads omit availability; treat those photos as available.
+function withAvailability(detail: OrderDetail | null): OrderDetail | null {
+  return detail && {
+    ...detail,
+    photos: (detail.photos ?? []).map((photo) => ({ ...photo, availability: photo.availability ?? "AVAILABLE", unavailableReason: photo.unavailableReason ?? null })),
+  };
+}
+
 export async function fetchOrderDetail(
   orderId: string,
   signal?: AbortSignal,
 ): Promise<OrderDetail | null> {
-  return api.get<OrderDetail>(`/me/orders/${encodeURIComponent(orderId)}`, { signal });
+  return withAvailability(await api.get<OrderDetail>(`/me/orders/${encodeURIComponent(orderId)}`, { signal }));
 }
 
 export async function postOrder(args: CreateOrderArgs): Promise<Order> {
@@ -189,7 +197,7 @@ export async function fetchGuestOrderDetail(
   token: string,
 ): Promise<OrderDetail | null> {
   const qs = `?token=${encodeURIComponent(token)}`;
-  return api.get<OrderDetail>(`/orders/${encodeURIComponent(orderId)}${qs}`);
+  return withAvailability(await api.get<OrderDetail>(`/orders/${encodeURIComponent(orderId)}${qs}`));
 }
 
 // Absolute URL to the bundle-download endpoint. Token-only auth on the BE

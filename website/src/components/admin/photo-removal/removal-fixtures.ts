@@ -1,4 +1,4 @@
-import type { PhotoRemovalRequestDto, RemovalPhotoDto } from "@/types/photo-removal";
+import type { PhotoRemovalItemDto, PhotoRemovalRequestDto, PhotoRemovalReviewDto, RemovalPhotoDto } from "@/types/photo-removal";
 
 export const draftCase: PhotoRemovalRequestDto = {
   id: "case-1", event: { id: "event-unlisted", name: "Private Fun Run" }, status: "DRAFT", version: 3,
@@ -22,3 +22,25 @@ export function removalPhoto(id: string, photographerName: string | null, extra:
     itemId: null, removalState: "NONE", trashed: false, bytesAvailable: true, matchScore: null, matchSource: null, ...extra,
   };
 }
+
+export function removalItem(id: string, owner: string | null, extra: Partial<PhotoRemovalItemDto> = {}): PhotoRemovalItemDto {
+  return {
+    id, photoIdSnapshot: `photo-${id}`, ownerIdSnapshot: owner && `owner-${owner}`, ownerNameSnapshot: owner,
+    reviewId: owner && `review-${owner}`, state: "VERIFIED", matchSource: "SELFIE", matchScore: 0.9, verificationActorId: "admin-a",
+    verifiedAt: "2026-10-08T02:00:00Z", verificationReason: null, ownerResponse: null, ownerResponseReason: null, ownerRespondedAt: null,
+    adminDecision: null, adminDecisionReason: null, adminDecisionActorId: null, adminDecidedAt: null, retentionReviewAt: null,
+    cleanupJobId: null, cleanupState: null, photo: null, reviewOwnerId: owner && `owner-${owner}`, ownerReviewPending: !!owner, ...extra,
+  };
+}
+
+export function ownerReview(owner: string, extra: Partial<PhotoRemovalReviewDto> = {}): PhotoRemovalReviewDto {
+  return {
+    id: `review-${owner}`, ownerIdSnapshot: `owner-${owner}`, notifiedMessageId: "message-1", notifiedAt: "2026-10-08T03:00:00Z",
+    deadline: "2026-10-15T03:00:00Z", overdue: false, overdueAt: null, unavailableReason: null, ...extra,
+  };
+}
+
+export const openCase: PhotoRemovalRequestDto = {
+  ...draftCase, status: "OPEN", version: 7, verificationMethod: "Ticket", verificationNote: "Checked", verifiedAt: "2026-10-08T02:00:00Z",
+  evidenceCleanupState: "PRESENT",
+};
