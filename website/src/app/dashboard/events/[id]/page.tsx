@@ -888,7 +888,7 @@ function PhotoLibrary({
         message: (kind === "trash"
             ? `${n} photo${n > 1 ? "s" : ""} moved to Deleted.`
             : `${n} photo${n > 1 ? "s" : ""} restored.`) +
-          (remaining > 0 ? ` ${remaining} unchanged. Refresh or retry the remaining photos.` : ""),
+          (remaining > 0 ? ` ${remaining} unchanged. ${result.conflict ?? "Refresh or retry the remaining photos."}` : ""),
       });
     } catch {
       showToast({ kind: "error", message: "Something went wrong. Try again." });

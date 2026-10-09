@@ -212,3 +212,16 @@ it("shows a not-found message for a case outside this photographer's scope", asy
   renderDetail();
   expect(await screen.findByText(/isn't available to your account/)).toBeVisible();
 });
+
+it("never reads a failed or unconfirmed cleanup as progress or erasure", async () => {
+  serverCase = { ...ownerACase, status: "RESOLVING", items: [
+    ownItem("a1", { state: "REMOVAL_AUTHORIZED", decision: "REMOVE", cleanupState: "RETRY_REQUIRED", ownerReviewPending: false }),
+    ownItem("a2", { state: "REMOVED", decision: "REMOVE", cleanupState: "UNCONFIRMED", ownerReviewPending: false }),
+    ownItem("a3", { state: "REMOVAL_AUTHORIZED", decision: "REMOVE", cleanupState: null, ownerReviewPending: false }),
+  ] };
+  renderDetail();
+  expect(await screen.findByText("Removal authorized · cleanup delayed, QuickPitik is retrying")).toBeVisible();
+  expect(screen.getByText("Removal authorized · cleanup not yet confirmed")).toBeVisible();
+  expect(screen.getByText("Removal authorized · cleanup still running")).toBeVisible();
+  expect(screen.queryByText(/erased/)).not.toBeInTheDocument();
+});

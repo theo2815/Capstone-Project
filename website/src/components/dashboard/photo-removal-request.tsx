@@ -43,7 +43,10 @@ function outcome(item: PhotographerRemovalItemDto): string {
   switch (item.state) {
     case "REMOVAL_AUTHORIZED":
     case "REMOVED":
-      return item.cleanupState === "COMPLETE" ? "Removed · erased from QuickPitik" : "Removal authorized · cleanup still running";
+      return item.cleanupState === "COMPLETE" ? "Removed · erased from QuickPitik"
+        : item.cleanupState === "RETRY_REQUIRED" ? "Removal authorized · cleanup delayed, QuickPitik is retrying"
+        : item.cleanupState === "UNCONFIRMED" ? "Removal authorized · cleanup not yet confirmed"
+        : "Removal authorized · cleanup still running";
     case "RETAINED_RESTRICTED":
       return `Kept restricted · still hidden, not erased${item.retentionReviewAt ? ` · next review ${formatLongDate(item.retentionReviewAt)}` : ""}`;
     case "RETAINED": return "Kept";
@@ -210,14 +213,14 @@ export function PhotographerPhotoRemovalRequest({ requestId }: { requestId: stri
             </label>
           )}
         </div>
-        <ul className="grid gap-3 sm:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {request.items.map((item) => (
-            <li key={item.id} className="flex gap-3 rounded-xl border border-line p-3 text-sm">
+            <li key={item.id} className="flex min-w-0 gap-3 rounded-xl border border-line p-3 text-sm">
               <span className="size-20 shrink-0 overflow-hidden rounded-lg bg-bone-deep">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 {item.photo?.imageUrl && <img src={item.photo.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />}
               </span>
-              <div className="min-w-0 space-y-1">
+              <div className="min-w-0 flex-1 space-y-1 break-words">
                 <p className="font-mono tnum text-ink truncate">{item.photoIdSnapshot}</p>
                 <p className="text-ink">{outcome(item)}</p>
                 {item.response && (
@@ -229,7 +232,7 @@ export function PhotographerPhotoRemovalRequest({ requestId }: { requestId: stri
                 )}
                 {item.decisionReason && <p className="text-slate break-words">QuickPitik: {item.decisionReason}</p>}
                 {canRespond(request, item) && (
-                  <label className="flex items-center gap-2 text-ink">
+                  <label className="flex min-w-0 items-center gap-2 text-ink">
                     <input type="checkbox" checked={selected.has(item.id)} disabled={busy} onChange={() => toggle(item.id)}
                       aria-label={`Select ${item.photoIdSnapshot}`} />
                     Include in response
@@ -249,7 +252,7 @@ export function PhotographerPhotoRemovalRequest({ requestId }: { requestId: stri
             {RESPONSES.map(([value, label, hint]) => (
               <label key={value} className="flex items-start gap-2 text-sm">
                 <input type="radio" name="removal-response" value={value} checked={response === value} onChange={() => setResponse(value)} className="mt-1" />
-                <span><span className="font-semibold text-ink">{label}</span> <span className="text-slate">— {hint}</span></span>
+                <span className="min-w-0 break-words"><span className="font-semibold text-ink">{label}</span> <span className="text-slate">— {hint}</span></span>
               </label>
             ))}
           </fieldset>

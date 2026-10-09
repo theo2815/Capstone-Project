@@ -283,6 +283,22 @@ describe('photographer photo management', () => {
     mocks.rows = 120;
   });
 
+  it('keeps the backend restriction in the toast when only some batches restore', async () => {
+    const { ApiError } = await import('@/lib/api');
+    const restriction = 'This photo is restricted by a removal case. Contact support for its case decision.';
+    mocks.rows = 501;
+    mocks.post.mockResolvedValueOnce({ affected: 500 } as never)
+      .mockRejectedValueOnce(new ApiError([{ code: 'INVALID_STATE_TRANSITION', message: restriction }], 409));
+    render(<EventPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Deleted' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Restore 501' }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining(restriction) })));
+    expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('500 photos restored.') }));
+    mocks.rows = 120;
+  });
+
   it('does not offer restore after permanent deletion has started', () => {
     mocks.purging = true;
     render(<EventPage />);
