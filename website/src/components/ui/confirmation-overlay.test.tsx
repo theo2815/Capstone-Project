@@ -170,7 +170,8 @@ describe("confirmation ID ownership", () => {
     const execute = vi.fn();
     render(<ConfirmationOverlay />);
     const resolve = open(execute);
-    fireEvent.keyDown(document, { key: "Enter", repeat: true });
+    // false = prevented, so the repeat cannot re-click the trigger behind the dialog.
+    expect(fireEvent.keyDown(document, { key: "Enter", repeat: true })).toBe(false);
     expect(execute).not.toHaveBeenCalled();
     expect(resolve).not.toHaveBeenCalled();
   });

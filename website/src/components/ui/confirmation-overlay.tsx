@@ -33,9 +33,9 @@ export function ConfirmationOverlay() {
   useEffect(() => {
     if (!active) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !loading && !e.repeat && !cancelRef.current?.contains(e.target as Node)) {
+      if (e.key === "Enter" && !loading && !cancelRef.current?.contains(e.target as Node)) {
         e.preventDefault();
-        runConfirm();
+        if (!e.repeat) runConfirm();
       }
     };
     document.addEventListener("keydown", handler);
