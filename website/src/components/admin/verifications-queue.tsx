@@ -242,11 +242,16 @@ export function VerificationsQueue() {
     else setDrawerRejectOpen(true);
   }
 
+  // A row ticked after the send-back form opened has no captured revision; the server would skip its stale check.
+  const sendBackIds = Array.from(selected).filter((id) => pendingIds.has(id) && id in rejectRevisions);
+
   async function handleBulkDecision(reason?: string) {
     const sessionVersion = useAuthStore.getState().sessionVersion;
-    // A row ticked after the send-back form opened has no captured revision; the server would skip its stale check.
-    const ids = Array.from(selected).filter((id) => pendingIds.has(id) && (reason === undefined || id in rejectRevisions));
-    if (!ids.length) return;
+    const ids = reason === undefined ? Array.from(selected).filter((id) => pendingIds.has(id)) : sendBackIds;
+    if (!ids.length) {
+      if (reason !== undefined) showToast({ kind: "error", message: "These rows changed after this form opened. Close the form and tick them again." });
+      return;
+    }
     const results = await verifyBatch(ids.map((id) => ({ userId: id, verificationRevision: reason === undefined ? byId.get(id)!.verificationRevision : rejectRevisions[id] })), reason === undefined ? "approve" : "reject", reason);
     if (!results) return;
     if (useAuthStore.getState().sessionVersion !== sessionVersion) return;
@@ -419,8 +424,8 @@ export function VerificationsQueue() {
         open={bulkRejectOpen}
         onClose={() => setBulkRejectOpen(false)}
         onSubmit={handleBulkRejectSubmit}
-        photographerName={`${selected.size} ${
-          selected.size === 1 ? "photographer" : "photographers"
+        photographerName={`${sendBackIds.length} ${
+          sendBackIds.length === 1 ? "photographer" : "photographers"
         }`}
       />
 

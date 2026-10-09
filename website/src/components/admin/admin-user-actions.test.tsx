@@ -164,3 +164,22 @@ it("does not send back a row ticked after the bulk rejection form opened", async
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post.mock.calls.map((call) => call[0])).toEqual([`/admin/users/${adminUser.userId}/reject`]);
 });
+async function lateTick(user: ReturnType<typeof userEvent.setup>) {
+  rows = [adminUser, { ...adminUser, userId: "photographer-2", brandName: "Second Studio" }]; client.setQueryData(key, rows);
+  mount(true); await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
+  await user.click(screen.getByRole("button", { name: "Reject 1…" })); const dialog = screen.getByRole("dialog");
+  await user.click(screen.getByRole("checkbox", { name: "Select Second Studio", hidden: true }));
+  return dialog;
+}
+it("counts in the bulk rejection form only the rows that will be sent back", async () => {
+  expect(await lateTick(userEvent.setup())).toHaveTextContent("1 photographer will see your reason");
+});
+it("says so when no ticked row can be sent back", async () => {
+  const post = vi.spyOn(api, "post").mockImplementation(async () => rows[0]); const user = userEvent.setup();
+  const dialog = await lateTick(user);
+  await user.click(screen.getByRole("checkbox", { name: "Select Test Studio", hidden: true }));
+  await user.click(within(dialog).getByRole("button", { name: "Send back" }));
+  expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ kind: "error",
+    message: "These rows changed after this form opened. Close the form and tick them again." })]);
+  expect(post).not.toHaveBeenCalled(); expect(dialog).toBeInTheDocument();
+});
