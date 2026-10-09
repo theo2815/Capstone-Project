@@ -102,7 +102,11 @@ class AdminEventService(
     // a LIVE event) is applied — and only here — or dropped.
 
     fun approve(adminId: UUID, eventId: UUID, expectedRevision: Long? = null): AdminListEventDto {
-        lockEventPhotos(eventId)
+        // Only a pricing change writes photo rows, so a new submission leaves them
+        // unlocked for uploads and trash. This read holds no lock: the state is
+        // checked again below, under the event lock.
+        val photosLocked = eventRepository.findReviewStatus(eventId) == EventReviewStatus.CHANGE_PENDING
+        if (photosLocked) lockEventPhotos(eventId)
         val event = loadForReview(eventId)
         event.requireReviewRevision(expectedRevision)
         when (event.reviewStatus) {
@@ -123,6 +127,10 @@ class AdminEventService(
                 )
             }
             EventReviewStatus.CHANGE_PENDING -> {
+                // Became a pricing change after the unlocked read. Locking photos now
+                // would invert the photos -> events order, so the admin retries.
+                if (!photosLocked) throw ConflictException(code = ErrorCodes.INVALID_STATE_TRANSITION,
+                    message = "This event changed while it was being approved. Refresh and try again.")
                 val change = PricingTrio.fromJson(event.pendingChange.orEmpty())
                 val priceChanged = change.pricePerPhoto.compareTo(event.pricePerPhoto) != 0
                 val policyChanged = change.watermarkPolicy != event.watermarkPolicy
@@ -350,8 +358,15 @@ class AdminEventService(
                 ErrorCodes.FORBIDDEN, "An active admin is required")
     }
 
+    private fun writeCover(storageKey: String, recovery: Boolean, processed: ByteArray) {
+        if (recovery) eventCoverService.recover(storageKey, processed, eventCoverService.digest(processed))
+        else eventCoverService.uploadPrepared(storageKey, processed)
+    }
+
     private fun createCommand(adminId: UUID, req: CreateAdminEventRequest, cover: CoverUpload?,
         key: IdempotencyKey): AdminListEventDto {
+        // Cheap input checks before the cover is hashed or decoded; the claim checks them again.
+        parseDate(req.date); validatedPrice(req.pricePerPhoto)
         // Omitted pairs keep the fingerprint of receipts created before location support.
         val fields = listOf(req.title.trim(), req.date.trim(), req.location.trim(),
             req.pricePerPhoto.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
@@ -364,10 +379,7 @@ class AdminEventService(
             }, {
                 processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
                 processed?.let(eventCoverService::digest)
-            }, { storageKey, recovery ->
-                if (recovery) eventCoverService.recover(storageKey, processed!!, eventCoverService.digest(processed!!))
-                else eventCoverService.uploadPrepared(storageKey, processed!!)
-            }, eventCoverService::delete, { eventId, coverKey ->
+            }, { storageKey, recovery -> writeCover(storageKey, recovery, processed!!) }, eventCoverService::delete, { eventId, coverKey ->
                 val (event, decision) = createEvent(adminId, req, eventId, coverKey, parseDate(req.date), validatedPrice(req.pricePerPhoto))
                 AdminActionResult(event.id, decision, null)
             })
@@ -392,10 +404,7 @@ class AdminEventService(
             }, {
                 processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
                 processed?.let(eventCoverService::digest)
-            }, { storageKey, recovery ->
-                if (recovery) eventCoverService.recover(storageKey, processed!!, eventCoverService.digest(processed!!))
-                else eventCoverService.uploadPrepared(storageKey, processed!!)
-            }, eventCoverService::delete, { _, coverKey ->
+            }, { storageKey, recovery -> writeCover(storageKey, recovery, processed!!) }, eventCoverService::delete, { _, coverKey ->
                 if (req.pricePerPhoto != null) lockEventPhotos(eventId)
                 val event = loadForReview(eventId)
                 event.requireReviewRevision(req.expectedRevision)

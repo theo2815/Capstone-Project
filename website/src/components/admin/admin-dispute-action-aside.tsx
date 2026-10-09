@@ -14,7 +14,6 @@ import {
   BTN_DANGER,
   BTN_GHOST,
   BTN_PRIMARY,
-  BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
 
@@ -56,9 +55,8 @@ export function AdminDisputeActionAside({
     null,
   );
 
+  // Every action needs an open dispute: the server escalates open ones only.
   const isOpen = dispute.status === "open";
-  const isDenied = dispute.status === "denied";
-  const escalateAllowed = isOpen || isDenied;
 
   async function handleContinueResolve(args: PendingResolve) {
     if (submitting) return;
@@ -147,17 +145,17 @@ export function AdminDisputeActionAside({
             </button>
           </>
         )}
-        {escalateAllowed && (
+        {isOpen && (
           <button
             type="button"
             onClick={() => setEscalateOpen(true)}
             disabled={submitting}
-            className={isOpen ? tertiaryBtn : secondaryBtn}
+            className={tertiaryBtn}
           >
             Escalate…
           </button>
         )}
-        {!isOpen && !isDenied && (
+        {!isOpen && (
           <p className="font-sans text-sm text-slate-soft">
             {dispute.refundStatus === "manual_review"
               ? "Review the payment in PayMongo before another refund attempt."
@@ -212,6 +210,5 @@ export function AdminDisputeActionAside({
 }
 
 const primaryFreshBtn = `${BTN_PRIMARY} ${BTN_SIZE.sm} w-full`;
-const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm} w-full`;
 const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} w-full`;
 const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm} w-full`;

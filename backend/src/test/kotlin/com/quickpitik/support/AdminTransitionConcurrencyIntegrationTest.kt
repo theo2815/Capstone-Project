@@ -418,6 +418,41 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         } finally { pool.shutdownNow() }
     }
 
+    @Test fun `approving a submission leaves its photo rows free for a concurrent photo writer`() {
+        val e = event(EventReviewStatus.PENDING); val a = user(Role.ADMIN).id
+        val p = photos.saveAndFlush(Photo(eventId = e.id, photographerId = e.createdBy, s3Key = "test/original.jpg",
+            pricePhp = BigDecimal("150.00"), status = PhotoStatus.LIVE))
+        TransactionTemplate(txManager).executeWithoutResult {
+            eventAdmin.approve(a, e.id)
+            // The approval is still open here: a photo writer must get the row at once.
+            dataSource.connection.use { writer ->
+                writer.autoCommit = false
+                writer.prepareStatement("SELECT id FROM photos WHERE id = ? FOR UPDATE NOWAIT").use {
+                    it.setObject(1, p.id); it.executeQuery().use { rows -> assertTrue(rows.next()) }
+                }
+                writer.rollback()
+            }
+        }
+        assertEquals(EventReviewStatus.APPROVED, events.findById(e.id).get().reviewStatus)
+    }
+
+    @Test fun `the repricing photo lock lets a cart row for a locked photo be inserted`() {
+        val p = photo(); val runner = user(Role.RUNNER).id
+        TransactionTemplate(txManager).executeWithoutResult {
+            assertEquals(listOf(p.id), photos.lockIdsByEventIdForUpdate(p.eventId))
+            // The repricing lock is still held here: a runner adding the photo to a cart must not wait for it.
+            dataSource.connection.use { writer ->
+                writer.autoCommit = false
+                writer.createStatement().use { it.execute("SET LOCAL lock_timeout = '2s'") }
+                writer.prepareStatement("INSERT INTO cart_items (user_id, photo_id, event_id, price_php_at_add) VALUES (?, ?, ?, 150.00)").use {
+                    it.setObject(1, runner); it.setObject(2, p.id); it.setObject(3, p.eventId)
+                    assertEquals(1, it.executeUpdate())
+                }
+                writer.rollback()
+            }
+        }
+    }
+
     @Test fun `withdrawn dispute cannot be resurrected by a delayed escalation`() {
         val p = photo(); val runner = user(Role.RUNNER).id
         val order = orders.saveAndFlush(Order(eventId = p.eventId, recipientEmail = "test@example.test",

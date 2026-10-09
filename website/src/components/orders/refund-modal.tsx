@@ -104,6 +104,7 @@ function RefundRequestModal({
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reason, setReason] = useState<DisputeReason | null>(null);
+  const [reasonOpen, setReasonOpen] = useState(false);
   const [note, setNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [photosError, setPhotosError] = useState<string | null>(null);
@@ -185,7 +186,7 @@ function RefundRequestModal({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Request a refund">
+    <Modal isOpen={isOpen} onClose={onClose} title="Request a refund" escDisabled={reasonOpen}>
       <div className="space-y-6">
         <div>
           <Kicker as="p" tnum>
@@ -315,6 +316,7 @@ function RefundRequestModal({
               </span>
             }
             panelClassName="z-[70]"
+            onOpenChange={setReasonOpen}
           >
             {REASON_ORDER.map((r) => (
               <DropdownItem
