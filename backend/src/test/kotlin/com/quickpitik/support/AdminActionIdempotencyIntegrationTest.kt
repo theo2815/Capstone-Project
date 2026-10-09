@@ -143,6 +143,37 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         assertNotEquals(id,eventId(eventRequest(actor,UUID.randomUUID().toString(),title,cover=bytes)))
     }
 
+    private fun lookup(actor: UUID, key: String): org.springframework.mock.web.MockHttpServletResponse {
+        val principal = AuthPrincipal(actor, "fixture@test.local", Role.ADMIN)
+        SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
+        try {
+            return MockMvcBuilders.standaloneSetup(com.quickpitik.controller.AdminCommandsController(commands))
+                .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
+                .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
+                .perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/admin/commands/$key"))
+                .andReturn().response
+        } finally { SecurityContextHolder.clearContext() }
+    }
+
+    @Test fun `lookup after a lost response shows the original result only to its own admin`() {
+        val actor=user(Role.ADMIN); val key=UUID.randomUUID().toString()
+        val id=eventId(eventRequest(actor,key,"Lookup ${UUID.randomUUID()}"))
+        val found=lookup(actor,key); assertEquals(200,found.status,found.contentAsString)
+        val data=mapper.readTree(found.contentAsString)["data"]
+        assertEquals(setOf("commandId","state","resourceId","decisionId","messageId","completedAt"),data.fieldNames().asSequence().toSet())
+        assertEquals(key,data["commandId"].asText()); assertEquals("SUCCEEDED",data["state"].asText())
+        assertEquals(id.toString(),data["resourceId"].asText()); assertFalse(data["completedAt"].isNull)
+        assertEquals(404,lookup(user(Role.ADMIN),key).status)
+        assertEquals(404,lookup(actor,UUID.randomUUID().toString()).status)
+        assertEquals(400,lookup(actor,"bad-key").status)
+
+        val target=user(Role.RUNNER); val messageKey=UUID.randomUUID().toString()
+        val sent=mapper.readTree(send(actor,target,messageKey).contentAsString)["data"]
+        val message=mapper.readTree(lookup(actor,messageKey).contentAsString)["data"]
+        assertEquals(sent["id"],message["messageId"]); assertEquals(sent["sourceDecisionId"],message["decisionId"])
+        eventEffects(id,1); effects(target,Role.RUNNER,1)
+    }
+
     @Test fun `completed cover edit replay precedes old revision and never overwrites a later edit`() {
         val actor=user(Role.ADMIN); val id=eventId(eventRequest(actor,null,"Edit ${UUID.randomUUID()}",cover=image()))
         val key=UUID.randomUUID().toString(); val bytes=image(0xffffff)

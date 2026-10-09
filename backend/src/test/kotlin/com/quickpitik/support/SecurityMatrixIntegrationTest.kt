@@ -163,6 +163,19 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `admin command lookup is admin only and hides unknown keys`() {
+        val path = "/api/v1/admin/commands/${UUID.randomUUID()}"
+        assertEquals(401, get(path).statusCode())
+        assertEquals(403, get(path, register(Role.RUNNER)).statusCode())
+        assertEquals(403, get(path, register(Role.PHOTOGRAPHER)).statusCode())
+        val admin = adminToken()
+        val missing = get(path, admin)
+        assertEquals(404, missing.statusCode())
+        assertEquals("NOT_FOUND", errorCode(missing))
+        assertEquals(400, get("/api/v1/admin/commands/not-a-uuid", admin).statusCode())
+    }
+
+    @Test
     fun `private removed event history keeps photographer role gate`() {
         val path = "/api/v1/me/photographer/events/${UUID.randomUUID()}?includeRemoved=true"
         assertEquals(401, get(path).statusCode())

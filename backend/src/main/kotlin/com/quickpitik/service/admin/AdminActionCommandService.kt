@@ -7,6 +7,8 @@ import com.quickpitik.exception.ValidationException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.IdempotencyKey
+import com.quickpitik.dto.admin.AdminActionCommandDto
+import com.quickpitik.dto.admin.toDto
 import com.quickpitik.entity.AdminActionCommand
 import com.quickpitik.entity.AdminActionCommandState
 import com.quickpitik.entity.AdminActionOperation
@@ -38,6 +40,12 @@ class AdminActionCommandService(
     private val tx = TransactionTemplate(txManager).apply {
         propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
     }
+
+    // Another admin's receipt answers exactly like a missing one, so a key's existence is never revealed.
+    fun find(actorId: UUID, key: IdempotencyKey?): AdminActionCommandDto =
+        key?.let { commands.findById(UUID.fromString(it.value)).orElse(null) }
+            ?.takeIf { it.actorId == actorId }?.toDto()
+            ?: throw NotFoundException("Admin request not found")
 
     fun execute(key: IdempotencyKey?, actorId: UUID, operation: AdminActionOperation, targetId: UUID?,
         inputHash: String, authorize: () -> Unit, action: () -> AdminActionResult): AdminActionResult {

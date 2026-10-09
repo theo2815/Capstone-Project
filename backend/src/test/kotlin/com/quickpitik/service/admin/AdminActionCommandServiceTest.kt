@@ -2,9 +2,14 @@ package com.quickpitik.service.admin
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.common.IdempotencyKey
+import com.quickpitik.controller.AdminCommandsController
+import com.quickpitik.dto.admin.AdminActionCommandDto
 import com.quickpitik.entity.*
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.AdminActionCommandRepository
+import com.quickpitik.security.AuthPrincipal
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
@@ -85,6 +90,28 @@ class AdminActionCommandServiceTest {
         assertEquals(AdminActionCommandState.SUCCEEDED, saved.last().state)
         assertEquals(now, saved.last().completedAt)
         assertEquals(result.messageId, saved.last().resultMessageId)
+    }
+
+    @ParameterizedTest @EnumSource(value = AdminActionCommandState::class, names = ["SUCCEEDED", "PENDING", "UNKNOWN"])
+    fun `owner looks up a receipt and gets its state and result ids`(state: AdminActionCommandState) {
+        Mockito.`when`(repository.findById(UUID.fromString(key.value))).thenReturn(Optional.of(receipt(state)))
+        assertEquals(AdminActionCommandDto(UUID.fromString(key.value), state.name, result.resourceId, result.decisionId,
+            result.messageId, if (state == AdminActionCommandState.SUCCEEDED) now else null), service.find(actor, key))
+    }
+
+    @Test fun `another admin's receipt and an unknown key both look up as not found`() {
+        Mockito.`when`(repository.findById(UUID.fromString(key.value))).thenReturn(Optional.of(receipt()))
+        val foreign = assertFailsWith<NotFoundException> { service.find(UUID.randomUUID(), key) }
+        Mockito.`when`(repository.findById(UUID.fromString(key.value))).thenReturn(Optional.empty())
+        val unknown = assertFailsWith<NotFoundException> { service.find(actor, key) }
+        assertEquals(unknown.message, foreign.message)
+    }
+
+    @Test fun `malformed lookup id is a validation error before any read`() {
+        val principal = AuthPrincipal(actor, "admin@test.local", Role.ADMIN)
+        val ex = assertFailsWith<ValidationException> { AdminCommandsController(service).find(principal, "not-a-uuid") }
+        assertEquals("INVALID_IDEMPOTENCY_KEY", ex.code)
+        Mockito.verifyNoInteractions(repository)
     }
 
     @Test fun `canonical field encoding cannot confuse field boundaries or separators`() {
