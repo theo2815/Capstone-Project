@@ -152,6 +152,12 @@ it("preserves grouped lifecycle counts and Load More across the complete catalog
   await waitFor(() => expect(screen.getByText("of").parentElement).toHaveTextContent("202 of 202 races"));
   expect(document.querySelectorAll("a[href^='/events/']")).toHaveLength(before);
 });
+it("still lists events under All provinces when the province list cannot be loaded", async () => {
+  referenceFailed = true; mount();
+  await waitFor(() => expect(raceLink("a")).toBeInTheDocument());
+  expect(screen.getByRole("alert")).toHaveTextContent(/province/i);
+  expect(screen.getByRole("button", { name: "Filter by province" })).toBeDisabled();
+});
 it("removes even the legacy all sentinel when province and city arrive together", async () => {
   navigation.search = "province=cebu&city=all"; mount();
   await waitFor(() => expect(navigation.search).toBe("province=cebu"));

@@ -46,6 +46,12 @@ it("shares user claims across views and forwards the reviewed revision", async (
   expect(post).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}/approve`, { expectedRevision: 7 });
   await act(async () => { request.resolve(adminUser); expect(await first).toBe(true); });
 });
+it("names the action in plain words when the request never reaches the server", async () => {
+  vi.spyOn(api, "post").mockRejectedValue(new TypeError("Failed to fetch"));
+  const { result } = renderHook(() => useAdminUserActions(), { wrapper });
+  await act(async () => { expect(await result.current.approve(adminUser.userId, 7)).toBe(false); });
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Couldn't approve — please try again.");
+});
 it("reserves a whole verification batch and refreshes once while retaining partial failures", async () => {
   const request = deferred<unknown>();
   const post = vi.spyOn(api, "post").mockImplementation((path) => path.includes("second") ? Promise.reject(new Error("Refused")) : request.promise);

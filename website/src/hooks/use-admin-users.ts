@@ -111,8 +111,8 @@ export function useAdminUserActions() {
       if (!batch) refresh(owner);
       return isCurrent();
     };
-    const run = async (id: string, action: string, operation: () => Promise<AdminUserRow>) => {
-      const result = await mutation.run({ targets: [{ kind: "user", id }], action, execute: () => settle(id, action, operation) });
+    const run = async (id: string, action: string, operation: () => Promise<AdminUserRow>, verb = action) => {
+      const result = await mutation.run({ targets: [{ kind: "user", id }], action, execute: () => settle(id, verb, operation) });
       return result.kind === "completed" && result.value;
     };
     return {
@@ -138,11 +138,11 @@ export function useAdminUserActions() {
       },
       isPending: (ids: string[]) => mutation.isPending(ids.map((id) => ({ kind: "user", id }))),
       pendingAction: (id: string) => mutation.pendingAction([{ kind: "user", id }]),
-      approve: (id: string, revision?: number) => run(id, "Approving…", () => approveUser(id, revision)),
-      reject: (id: string, reason: string, revision?: number) => run(id, "Sending back…", () => rejectUser(id, reason, revision)),
+      approve: (id: string, revision?: number) => run(id, "Approving…", () => approveUser(id, revision), "approve"),
+      reject: (id: string, reason: string, revision?: number) => run(id, "Sending back…", () => rejectUser(id, reason, revision), "reject"),
       suspend: (id: string, reason: string) => run(id, "suspend", () => suspendUser(id, reason)),
-      unsuspend: (id: string) => run(id, "Unsuspending…", () => unsuspendUser(id)),
-      resetVerification: (id: string, reason: string, revision?: number) => run(id, "Resetting verification…", () => resetUserVerification(id, reason, revision)),
+      unsuspend: (id: string) => run(id, "Unsuspending…", () => unsuspendUser(id), "unsuspend"),
+      resetVerification: (id: string, reason: string, revision?: number) => run(id, "Resetting verification…", () => resetUserVerification(id, reason, revision), "reset verification"),
       verifyBatch: async (rows: { userId: string; verificationRevision: number }[], action: "approve" | "reject", reason = ""): Promise<boolean[] | null> => {
         const result = await mutation.run({ targets: rows.map((row) => ({ kind: "user", id: row.userId })), action: action === "approve" ? "Approving…" : "Sending back…", execute: async () => {
           const session = useAuthStore.getState();

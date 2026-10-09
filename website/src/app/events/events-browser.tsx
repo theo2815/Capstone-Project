@@ -158,8 +158,9 @@ export function EventsBrowser({ events: seed }: EventsBrowserProps) {
       {catalog.error && <LoadError message="Events could not be fully refreshed. Please try again." label="Retry events" retry={catalog.retry} pending={catalog.isFetching} />}
       {regionsError && <LoadError message="Province options could not be loaded. Please try again." label="Retry provinces" retry={retryRegions} />}
       {invalidProvince && <p role="alert" className="px-6 md:px-10 py-4 text-error break-words">Unrecognized province: {province}. Clear the filter or choose another province.</p>}
-      {(catalog.isPending || regionsLoading) && <p role="status" className="px-6 md:px-10 py-8">Loading events and provinces…</p>}
-      {catalog.data && !regionsLoading && !regionsError && <Results
+      {(catalog.isPending || (province && regionsLoading)) && <p role="status" className="px-6 md:px-10 py-8">Loading events and provinces…</p>}
+      {/* Only a province filter needs the reference list; never hide the whole catalog behind it. */}
+      {catalog.data && (!province || (!regionsLoading && !regionsError)) && <Results
         events={filtered}
         totalCount={events.length}
         isFiltered={isFiltered}
