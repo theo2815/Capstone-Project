@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAdminPhotographerView } from "@/lib/admin-photographer-view";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { admin, adminUser, adminUserSettings } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
@@ -189,4 +189,54 @@ it.each([false, true])("waits for a photographer deep link before returning not 
   await act(async () => request.resolve({ items: [adminUser], total: 1 }));
   await waitFor(() => expect(result.current.view?.row.userId).toBe(adminUser.userId));
   expect(result.current.error).toBeNull();
+});
+const firstMessage = { subject: "Hello", body: "Private" }, otherMessage = { subject: "Hello", body: "Corrected" };
+async function loseMessageReply() {
+  const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Response lost"));
+  const { result } = renderHook(useAdminUserActions, { wrapper });
+  await expect(result.current.message(adminUser.userId, firstMessage)).resolves.toBe(false);
+  post.mockResolvedValue({ id: "sent" }); useToastStore.getState().clear();
+  return { post, actions: result.current, reference: (post.mock.calls[0][2]?.headers as Record<string, string>)["Idempotency-Key"] };
+}
+it.each([
+  ["was delivered", () => ({ state: "SUCCEEDED", messageId: "message-1" }), /earlier message.*delivered/i],
+  ["was never recorded", () => { throw new ApiError([{ code: "ADMIN_COMMAND_NOT_FOUND", message: "Admin request not found" }], 404); }, null],
+])("sends a different message under a new key once the earlier one %s", async (_name, answer, notice) => {
+  const { post, actions, reference } = await loseMessageReply();
+  const get = vi.spyOn(api, "get").mockImplementation(async () => answer());
+  await expect(actions.message(adminUser.userId, otherMessage)).resolves.toBe(true);
+  expect(get).toHaveBeenCalledWith(`/admin/commands/${reference}`);
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+  expect(useToastStore.getState().toasts.map((toast) => toast.message).filter((message) => /earlier/i.test(message)))
+    .toEqual(notice ? [expect.stringMatching(notice)] : []);
+  expect(actions.messageRecoveryNotice(adminUser.userId)).toBeNull();
+});
+it.each([
+  ["PENDING", () => ({ state: "PENDING" })], ["UNKNOWN", () => ({ state: "UNKNOWN" })],
+  ["a lookup failure", () => { throw new Error("Offline"); }],
+])("keeps a different message blocked on %s and shows the reference", async (_name, answer) => {
+  const { post, actions, reference } = await loseMessageReply();
+  vi.spyOn(api, "get").mockImplementation(async () => answer());
+  await expect(actions.message(adminUser.userId, otherMessage)).resolves.toBe(false);
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(useToastStore.getState().toasts.at(-1)?.message).toContain(reference);
+  expect(actions.messageRecoveryNotice(adminUser.userId)).toContain(reference);
+});
+it.each([400, 403, 404, 422])("releases a message the server refused outright with %s so a corrected one is a new request", async (status) => {
+  const post = vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code: "REFUSED", message: "Refused" }], status));
+  const get = vi.spyOn(api, "get");
+  const { result } = renderHook(useAdminUserActions, { wrapper });
+  await expect(result.current.message(adminUser.userId, firstMessage)).resolves.toBe(false);
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Refused");
+  expect(result.current.messageRecoveryNotice(adminUser.userId)).toBeNull();
+  post.mockResolvedValue({ id: "sent" });
+  await expect(result.current.message(adminUser.userId, otherMessage)).resolves.toBe(true);
+  expect(get).not.toHaveBeenCalled();
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+});
+it("keeps the key when a retry of an uncertain message is refused, because the first attempt may have been delivered", async () => {
+  const { post, actions, reference } = await loseMessageReply();
+  post.mockRejectedValueOnce(new ApiError([{ code: "USER_NOT_FOUND", message: "Gone" }], 404));
+  await expect(actions.message(adminUser.userId, firstMessage)).resolves.toBe(false);
+  expect(actions.messageRecoveryNotice(adminUser.userId)).toContain(reference);
 });

@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminEvents, createAdminEvent, updateAdminEvent, deleteAdminEvent,
-  approveAdminEvent, rejectAdminEvent,
+  approveAdminEvent, rejectAdminEvent, fetchAdminCommand,
   type AdminEventListArgs, type AdminEventRow,
   type CreateAdminEventArgs, type UpdateAdminEventPatch,
 } from "@/lib/api-admin";
@@ -102,7 +102,18 @@ export function useAdminEventActions() {
     };
     const keyed = async (operation: "event.create" | "event.update", target: string, draft: CreateAdminEventArgs | UpdateAdminEventPatch, send: (key: string) => Promise<AdminEventRow>) => {
       const current = captureAuthSession();
-      const intent = await claimAdminIntent(useAuthStore.getState().user!.id, operation, target, draft);
+      const userId = useAuthStore.getState().user!.id;
+      const intent = await claimAdminIntent(userId, operation, target, draft, async (key) => {
+        const command = await fetchAdminCommand(key);
+        if (!command) return "missing";
+        if (command.state !== "SUCCEEDED" || !current()) return "open";
+        await qc.invalidateQueries({ queryKey: adminEventKeys.owner(userId) });
+        const name = qc.getQueriesData<AdminEventRow[]>({ queryKey: adminEventKeys.owner(userId) })
+          .flatMap(([, rows]) => rows ?? []).find((row) => row.id === command.resourceId)?.name;
+        useToastStore.getState().showToast({ kind: "success", duration: 10_000,
+          message: `Your earlier request went through: ${name ? `“${name}”` : "the event"} was ${operation === "event.create" ? "created" : "saved"}. It is in the list.` });
+        return "succeeded";
+      });
       if (!current()) throw new Error("Session changed.");
       try {
         const row = await send(intent.key);

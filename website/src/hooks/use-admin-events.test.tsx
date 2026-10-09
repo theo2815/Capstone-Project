@@ -284,3 +284,49 @@ it("forwards multipart edit fields and cover removal without optimistic patches"
   expect(form.get("pricePerPhoto")).toBe("120"); expect(form.get("removeCover")).toBe("true");
   expect(form.has("cover")).toBe(false);
 });
+const earlier = { ...adminEvent, id: "earlier", name: "Earlier race" };
+const commandNotFound = () => new ApiError([{ code: "ADMIN_COMMAND_NOT_FOUND", message: "Admin request not found" }], 404);
+async function loseCreateReply() {
+  const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Response lost"));
+  const view = renderHook(() => ({ query: useAdminEvents(), actions: useAdminEventActions() }), { wrapper });
+  await expect(view.result.current.actions.createEvent(createArgs)).rejects.toThrow();
+  post.mockResolvedValue({ ...adminEvent, id: "second" });
+  const reference = (post.mock.calls[0][2]?.headers as Record<string, string>)["Idempotency-Key"];
+  return { post, actions: view.result.current.actions, reference };
+}
+function mockLookup(answer: (path: string) => unknown) {
+  return vi.spyOn(api, "get").mockImplementation(async (path: string) =>
+    path.startsWith("/admin/commands/") ? answer(path) : { items: [earlier, adminEvent] });
+}
+it("names the event an earlier lost create made, then sends the different draft under a new key", async () => {
+  const { post, actions, reference } = await loseCreateReply();
+  const get = mockLookup(() => ({ commandId: reference, state: "SUCCEEDED", resourceId: earlier.id, decisionId: null, messageId: null, completedAt: "2026-10-09T00:00:00Z" }));
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  expect(get).toHaveBeenCalledWith(`/admin/commands/${reference}`);
+  expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ kind: "success", message: expect.stringMatching(/Earlier race.*created/) }));
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+  expect(actions.recoveryNotice("create")).toBeNull();
+});
+it("releases an earlier create the server has no record of and sends the different draft", async () => {
+  const { post, actions } = await loseCreateReply();
+  mockLookup(() => { throw commandNotFound(); });
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  expect(post).toHaveBeenCalledTimes(2);
+  expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+  expect(useToastStore.getState().toasts.filter((toast) => toast.kind === "success")).toEqual([]);
+});
+it.each([
+  ["PENDING", () => ({ state: "PENDING" })], ["UNKNOWN", () => ({ state: "UNKNOWN" })],
+  ["a lookup failure", () => { throw new Error("Offline"); }],
+  ["a 404 from a server without the lookup route", () => { throw new ApiError([{ code: "NOT_FOUND", message: "Resource not found" }], 404); }],
+])("keeps a different create blocked on %s and shows the reference", async (_name, answer) => {
+  const { post, actions, reference } = await loseCreateReply();
+  mockLookup(answer);
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).rejects.toThrow(/unresolved/i);
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(useToastStore.getState().toasts.at(-1)?.message).toContain(reference);
+  expect(actions.recoveryNotice("create")).toContain(reference);
+  await expect(actions.createEvent(createArgs)).resolves.toBe(true);
+  expect(post.mock.calls[1][2]?.headers).toEqual(post.mock.calls[0][2]?.headers);
+});

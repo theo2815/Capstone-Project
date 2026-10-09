@@ -21,14 +21,17 @@ export function adminIntentRecoveryNotice(actor: string, operation: string, targ
   const intent = read().find((row) => row.actor === actor && row.operation === operation && row.target === target);
   if (!intent) return null;
   const guidance = operation === "event.update"
-    ? "Retry only with the original edit snapshot still open. After reload or a changed event, the original revision and submitted fields cannot be reconstructed here. Ask the project maintainer to reconcile this request before another edit."
+    ? "Retry only with the original edit snapshot still open. After reload or a changed event, the original revision and submitted fields cannot be reconstructed here. Saving again checks the earlier request first; if it is still open, ask the project maintainer to reconcile it."
     : `Keep or reconstruct the original unchanged draft${operation === "event.create" ? " and cover" : ""}, then retry to check it. A blank form does not mean it failed.`;
   return `An earlier request is unresolved. ${guidance} Request reference: ${intent.key}.`;
 }
 async function hash(bytes: ArrayBuffer) {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-export async function claimAdminIntent(actor: string, operation: string, target: string, draft: object) {
+/** What the server says happened to an earlier key: it ran, it has no record of it, or it cannot say yet. */
+export type AdminIntentOutcome = "succeeded" | "missing" | "open";
+export async function claimAdminIntent(actor: string, operation: string, target: string, draft: object,
+  resolve?: (key: string) => Promise<AdminIntentOutcome>) {
   const started = generation;
   const fields = await Promise.all(Object.entries(draft).sort(([a], [b]) => a.localeCompare(b)).filter(([, value]) => value !== undefined).map(async ([name, value]) => {
     if (value instanceof Blob) {
@@ -41,9 +44,16 @@ export async function claimAdminIntent(actor: string, operation: string, target:
   }));
   const fingerprint = await hash(new TextEncoder().encode(JSON.stringify(fields)).buffer);
   if (started !== generation) throw new Error("Session changed. Reopen the form.");
-  const existing = read().find((row) => row.actor === actor && row.operation === operation && row.target === target);
+  let existing = read().find((row) => row.actor === actor && row.operation === operation && row.target === target);
   if (existing && existing.fingerprint !== fingerprint) {
-    throw new Error(`An earlier request is unresolved. Reconstruct the original unchanged draft to check it. If the original edit snapshot is lost or the event changed, ask the project maintainer to reconcile this request. Do not start a replacement request. Request reference: ${existing.key}.`);
+    // Fail closed: only a definite answer from the server releases the earlier key.
+    const outcome = resolve ? await resolve(existing.key).catch(() => "open" as const) : "open";
+    if (started !== generation) throw new Error("Session changed. Reopen the form.");
+    if (outcome === "open") {
+      throw new Error(`An earlier request is still unresolved, so this one was not sent. Reconstruct the original unchanged draft to retry it, or ask the project maintainer to reconcile it (admin manual, "Unresolved admin request"). Request reference: ${existing.key}.`);
+    }
+    completeAdminIntent(existing);
+    existing = undefined;
   }
   const intent = existing ?? { actor, operation, target, fingerprint, key: crypto.randomUUID() };
   if (!existing) read().push(intent);

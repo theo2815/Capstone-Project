@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import type {
   PayoutAccount,
@@ -283,6 +283,29 @@ export async function sendAdminMessage(
     input,
     { headers: { "Idempotency-Key": idempotencyKey } },
   );
+}
+
+export interface AdminCommand {
+  commandId: string;
+  state: "PENDING" | "UNKNOWN" | "SUCCEEDED" | "FAILED";
+  resourceId: string | null;
+  decisionId: string | null;
+  messageId: string | null;
+  completedAt: string | null;
+}
+
+/**
+ * What happened to one of this admin's keyed requests. Null means the server
+ * has no receipt for the key, so nothing ran. Only the route's own code counts:
+ * a server without the route answers a plain 404 that proves nothing.
+ */
+export async function fetchAdminCommand(key: string): Promise<AdminCommand | null> {
+  try {
+    return await api.get<AdminCommand>(`/admin/commands/${encodeURIComponent(key)}`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.errors[0]?.code === "ADMIN_COMMAND_NOT_FOUND") return null;
+    throw error;
+  }
 }
 
 // ───────────────────────────────────────────── Disputes

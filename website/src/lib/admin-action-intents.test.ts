@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { admin } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { resetUserScopedStores } from "./auth-reset";
-import { clearAdminActionIntents, claimAdminIntent, completeAdminIntent } from "./admin-action-intents";
+import { adminIntentRecoveryNotice, clearAdminActionIntents, claimAdminIntent, completeAdminIntent } from "./admin-action-intents";
 
 beforeEach(() => { vi.stubGlobal("crypto", webcrypto); sessionStorage.clear(); useAuthStore.getState().setUser(admin); });
 afterEach(() => { clearAdminActionIntents(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -37,4 +37,23 @@ it("retains the in-memory key and reports lost reload recovery when storage is u
   expect(intent.reloadSafe).toBe(false);
   expect((await claimAdminIntent(admin.id, "user.message", "one", { body: "Hi" })).key).toBe(intent.key);
   completeAdminIntent(intent);
+});
+it.each(["succeeded", "missing"] as const)("releases the earlier key and claims the new draft when the server answers %s", async (outcome) => {
+  const first = await claimAdminIntent(admin.id, "event.create", "create", { title: "First" });
+  const resolve = vi.fn().mockResolvedValue(outcome);
+  expect((await claimAdminIntent(admin.id, "event.create", "create", { title: "First" }, resolve)).key).toBe(first.key);
+  expect(resolve).not.toHaveBeenCalled();
+  const next = await claimAdminIntent(admin.id, "event.create", "create", { title: "Second" }, resolve);
+  expect(resolve).toHaveBeenCalledExactlyOnceWith(first.key);
+  expect(next.key).not.toBe(first.key); expect(next.reused).toBe(false);
+  expect(sessionStorage.getItem("quickpitik-admin-action-intents")).not.toContain(first.key);
+});
+it.each(["open", "lookup failure"])("keeps the earlier key and blocks the new draft on %s", async (outcome) => {
+  const first = await claimAdminIntent(admin.id, "event.create", "create", { title: "First" });
+  const resolve = outcome === "open" ? vi.fn().mockResolvedValue("open") : vi.fn().mockRejectedValue(new Error("Offline"));
+  const blocked = claimAdminIntent(admin.id, "event.create", "create", { title: "Second" }, resolve);
+  await expect(blocked).rejects.toThrow(first.key);
+  await expect(blocked).rejects.toThrow(/Unresolved admin request/);
+  expect((await claimAdminIntent(admin.id, "event.create", "create", { title: "First" }, resolve)).key).toBe(first.key);
+  expect(adminIntentRecoveryNotice(admin.id, "event.create", "create")).toContain(first.key);
 });
