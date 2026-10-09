@@ -418,6 +418,24 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         } finally { pool.shutdownNow() }
     }
 
+    @Test fun `approving a submission leaves its photo rows free for a concurrent photo writer`() {
+        val e = event(EventReviewStatus.PENDING); val a = user(Role.ADMIN).id
+        val p = photos.saveAndFlush(Photo(eventId = e.id, photographerId = e.createdBy, s3Key = "test/original.jpg",
+            pricePhp = BigDecimal("150.00"), status = PhotoStatus.LIVE))
+        TransactionTemplate(txManager).executeWithoutResult {
+            eventAdmin.approve(a, e.id)
+            // The approval is still open here: a photo writer must get the row at once.
+            dataSource.connection.use { writer ->
+                writer.autoCommit = false
+                writer.prepareStatement("SELECT id FROM photos WHERE id = ? FOR UPDATE NOWAIT").use {
+                    it.setObject(1, p.id); it.executeQuery().use { rows -> assertTrue(rows.next()) }
+                }
+                writer.rollback()
+            }
+        }
+        assertEquals(EventReviewStatus.APPROVED, events.findById(e.id).get().reviewStatus)
+    }
+
     @Test fun `withdrawn dispute cannot be resurrected by a delayed escalation`() {
         val p = photo(); val runner = user(Role.RUNNER).id
         val order = orders.saveAndFlush(Order(eventId = p.eventId, recipientEmail = "test@example.test",

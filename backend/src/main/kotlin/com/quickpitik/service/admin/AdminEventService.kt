@@ -102,7 +102,11 @@ class AdminEventService(
     // a LIVE event) is applied — and only here — or dropped.
 
     fun approve(adminId: UUID, eventId: UUID, expectedRevision: Long? = null): AdminListEventDto {
-        lockEventPhotos(eventId)
+        // Only a pricing change writes photo rows, so a new submission leaves them
+        // unlocked for uploads and trash. This read holds no lock: the state is
+        // checked again below, under the event lock.
+        val photosLocked = eventRepository.findReviewStatus(eventId) == EventReviewStatus.CHANGE_PENDING
+        if (photosLocked) lockEventPhotos(eventId)
         val event = loadForReview(eventId)
         event.requireReviewRevision(expectedRevision)
         when (event.reviewStatus) {
@@ -123,6 +127,10 @@ class AdminEventService(
                 )
             }
             EventReviewStatus.CHANGE_PENDING -> {
+                // Became a pricing change after the unlocked read. Locking photos now
+                // would invert the photos -> events order, so the admin retries.
+                if (!photosLocked) throw ConflictException(code = ErrorCodes.INVALID_STATE_TRANSITION,
+                    message = "This event changed while it was being approved. Refresh and try again.")
                 val change = PricingTrio.fromJson(event.pendingChange.orEmpty())
                 val priceChanged = change.pricePerPhoto.compareTo(event.pricePerPhoto) != 0
                 val policyChanged = change.watermarkPolicy != event.watermarkPolicy
