@@ -527,7 +527,7 @@ function ReceiptRow({
             />
           )}
           <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
-            {photoCount > 0 && bundleUrl && (
+            {savablePhotos.length > 0 && bundleUrl && (
               <SavePhotosButton
                 variant="secondary"
                 photos={savablePhotos}

@@ -184,14 +184,34 @@ it("staleDecisionRefetchesWithoutPretendSuccess", async () => {
 it("shows stored notice time, unavailable owners and evidence state from the server", async () => {
   serverCase = { ...mixedCase, evidencePresent: false, evidenceCleanupState: "RETRY_REQUIRED",
     items: [removalItem("a1", "Photographer A"), removalItem("b1", "Photographer B"), removalItem("u1", null)],
-    reviews: [ownerReview("Photographer A"), ownerReview("Photographer B", { notifiedAt: null, notifiedMessageId: null, unavailableReason: "OWNER_INACTIVE" })] };
+    reviews: [ownerReview("Photographer A"), ownerReview("Photographer B", { notifiedAt: null, notifiedMessageId: null, unavailableReason: "Owner account inactive" })] };
   renderDecision();
   expect(await screen.findByText("Photographer A — no response")).toBeVisible();
   expect(screen.getByText(/Notice stored/)).toBeVisible();
   expect(screen.queryByText(/\bread\b/i)).not.toBeInTheDocument();
   expect(screen.getByText("Photographer B — unavailable")).toBeVisible();
-  expect(screen.getByText(/OWNER_INACTIVE/)).toBeVisible();
+  expect(screen.getByText(/Owner unavailable: Owner account inactive/)).toBeVisible();
   expect(screen.getByText(/Unassigned owner/)).toBeVisible();
   expect(screen.getByText(/Evidence deletion blocked/)).toBeVisible();
   expect(screen.getByText(/cannot recall/i)).toBeVisible();
+});
+
+it("limits the retention review date to the future", async () => {
+  const user = userEvent.setup();
+  renderDecision();
+  await decideItem(user, "photo-a1", "RETAIN_RESTRICTED", "Legal hold");
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const expected = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+  expect(screen.getByLabelText("Retention review date for photo-a1")).toHaveAttribute("min", expected);
+});
+
+it("shows readable decisions and the deadline time from the server", async () => {
+  serverCase = { ...mixedCase, items: [removalItem("a1", "Photographer A", { state: "RETAINED", adminDecision: "RETAIN", adminDecisionReason: "Not the runner" })],
+    reviews: [ownerReview("Photographer A", { overdue: true, overdueAt: "2026-10-15T03:00:00Z" })] };
+  renderDecision();
+  expect(await screen.findByText(/Decision: Retain/)).toBeVisible();
+  expect(screen.queryByText(/Decision: RETAIN/)).not.toBeInTheDocument();
+  // 03:00 UTC is 11:00 AM in Manila: notice stored, deadline and overdue-since all need the time, not just the day.
+  expect(screen.getAllByText(/11:00/)).toHaveLength(3);
 });

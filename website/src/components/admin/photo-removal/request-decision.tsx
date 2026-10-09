@@ -6,7 +6,7 @@ import { useConfirmation } from "@/hooks/use-confirmation";
 import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
 import { FieldError } from "@/components/ui/field-error";
 import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, formatSalesDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { REMOVAL_INPUT } from "./request-intake";
 import { ReviewCurrentState, groupByOwner } from "./request-review";
@@ -21,6 +21,7 @@ const DECIDABLE = new Set<RemovalItemState>(["VERIFIED", "RETAINED_RESTRICTED"])
 const DECISIONS: [RemovalDecision, string][] = [
   ["REMOVE", "Remove"], ["RETAIN", "Retain"], ["MORE_EVIDENCE", "Ask for more evidence"], ["RETAIN_RESTRICTED", "Retain restricted (stays hidden)"],
 ];
+const DECISION_LABEL = Object.fromEntries(DECISIONS) as Record<RemovalDecision, string>;
 const RESPONSE: Record<PhotographerRemovalResponse, string> = { AGREE: "agreed", OBJECT: "objected", ALREADY_DELETED: "already deleted" };
 // Only COMPLETE is proof of erasure; anything else is shown as what it is.
 const CLEANUP: Record<string, string> = {
@@ -30,6 +31,12 @@ const EVIDENCE: Record<RemovalEvidenceCleanupState, string> = {
   NONE: "No selfie evidence on file.", PRESENT: "Selfie evidence on file (private to admins).", PENDING: "Evidence deletion pending.",
   DELETED: "Evidence deleted.", RETRY_REQUIRED: "Evidence deletion blocked — it has not been deleted yet.",
 };
+// The backend requires a future review date; the picker starts at tomorrow (local).
+function tomorrow() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Something went wrong. Try again.";
 
 function itemStatus(item: PhotoRemovalItemDto): string {
@@ -150,9 +157,9 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
             <h3 className="font-display font-bold text-ink">{key ? `${owner} — ${ownerState(items, review)}` : `${owner} — no owner on record`}</h3>
             {review && (
               <p className="text-sm text-slate">
-                {review.notifiedAt ? <>Notice stored <span className="tnum">{formatLongDate(review.notifiedAt)}</span></> : "Notice not stored yet"}
-                {review.deadline && <> · Respond by <span className="tnum">{formatLongDate(review.deadline)}</span></>}
-                {review.overdue && <> · Overdue{review.overdueAt && <> since <span className="tnum">{formatLongDate(review.overdueAt)}</span></>}</>}
+                {review.notifiedAt ? <>Notice stored <span className="tnum">{formatSalesDate(review.notifiedAt)}</span></> : "Notice not stored yet"}
+                {review.deadline && <> · Respond by <span className="tnum">{formatSalesDate(review.deadline)}</span></>}
+                {review.overdue && <> · Overdue{review.overdueAt && <> since <span className="tnum">{formatSalesDate(review.overdueAt)}</span></>}</>}
                 {review.unavailableReason && <> · Owner unavailable: {review.unavailableReason}</>}
               </p>
             )}
@@ -218,7 +225,7 @@ function ItemRow({ item, draft, busy, onChange, onRetry }: {
       ) : item.reviewId && <p className="text-slate">No owner response recorded.</p>}
       {item.adminDecision && (
         <p className="text-slate">
-          Decision: {item.adminDecision}{item.adminDecisionReason && <> — {item.adminDecisionReason}</>}
+          Decision: {DECISION_LABEL[item.adminDecision]}{item.adminDecisionReason && <> — {item.adminDecisionReason}</>}
           {item.adminDecidedAt && <> · <span className="tnum">{formatLongDate(item.adminDecidedAt)}</span></>}
         </p>
       )}
@@ -247,7 +254,7 @@ function ItemRow({ item, draft, busy, onChange, onRetry }: {
           {draft.decision === "RETAIN_RESTRICTED" && (
             <div className="space-y-1">
               <AdminFieldLabel htmlFor={`review-${item.id}`}>Retention review date<span className="sr-only"> for {photo}</span></AdminFieldLabel>
-              <input id={`review-${item.id}`} type="date" value={draft.reviewDate} disabled={busy} className={REMOVAL_INPUT}
+              <input id={`review-${item.id}`} type="date" min={tomorrow()} value={draft.reviewDate} disabled={busy} className={REMOVAL_INPUT}
                 aria-invalid={!draft.reviewDate} onChange={(e) => onChange({ reviewDate: e.target.value })} />
             </div>
           )}
