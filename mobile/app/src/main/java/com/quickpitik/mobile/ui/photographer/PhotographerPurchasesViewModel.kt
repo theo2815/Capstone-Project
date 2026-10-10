@@ -60,6 +60,7 @@ data class PurchasePreviewState(
     val isRefreshingPhoto: Boolean = false,
     val photoRefreshError: String? = null,
     val photoRefreshGeneration: Long = 0,
+    val pinnedPurchase: PhotographerPurchaseDto? = null,
 )
 
 /** Read-only purchase history; loads only routes the photographer opens. */
@@ -203,7 +204,7 @@ class PhotographerPurchasesViewModel(application: Application) : AndroidViewMode
                     else page.selectedPurchase?.takeIf { it.orderId == orderId } ?: page.items.find { it.orderId == orderId }
                 _previewState.value = PurchasePreviewState(photoId, orderId, transactionId, page.photo, page.event,
                     page.items.distinctBy { it.orderId to it.photoId }, selected,
-                    page.total, next, hasMore = page.items.isNotEmpty() && next < page.total)
+                    page.total, next, hasMore = page.items.isNotEmpty() && next < page.total, pinnedPurchase = page.selectedPurchase)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (request == previewRequest && current(generation))
@@ -237,7 +238,7 @@ class PhotographerPurchasesViewModel(application: Application) : AndroidViewMode
 
     fun selectPurchase(orderId: String) {
         val state = _previewState.value
-        val local = state.items.find { it.orderId == orderId }
+        val local = (state.items + listOfNotNull(state.pinnedPurchase)).find { it.orderId == orderId }
         if (local != null) _previewState.value = state.copy(orderId = orderId, selectedPurchase = local)
         else state.photoId?.let { openPurchase(it, orderId, state.transactionId) }
     }

@@ -224,6 +224,14 @@ class PhotographerPurchasePreviewTest {
             onNodeWithText("Aira S. · B1B2C3D4").assertIsSelected()
             onNodeWithText("Aira S. · A1B2C3D4").assertIsNotSelected()
             assertEquals(1, onAllNodesWithText("Aira S. · B1B2C3D4").fetchSemanticsNodes().size)
+            val requests = backend.server.requestCount
+            onNodeWithText("Aira S. · A1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+            onNodeWithText("Aira S. · A1B2C3D4").assertIsSelected()
+            onNodeWithText("Aira S. · B1B2C3D4").assertIsNotSelected()
+            onNodeWithText("Aira S. · B1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+            onNodeWithText("Aira S. · B1B2C3D4").assertIsSelected()
+            onNodeWithText("B1B2C3D4").assertExists()
+            runOnIdle { assertEquals(requests, backend.server.requestCount) }
         }
     }
 

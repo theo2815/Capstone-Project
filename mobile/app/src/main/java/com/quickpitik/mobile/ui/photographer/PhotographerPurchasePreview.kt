@@ -198,7 +198,7 @@ private fun PurchaseDetails(
         }
         if (state.items.size > 1 || state.total > 1) {
             Kicker("Purchase history", color = Ink)
-            (listOfNotNull(selected) + state.items).distinctBy { it.orderId to it.photoId }.forEach { purchase ->
+            (listOfNotNull(state.pinnedPurchase ?: selected) + state.items).distinctBy { it.orderId to it.photoId }.forEach { purchase ->
                 Text(
                     "${purchase.buyer} · ${formatOrderRef(purchase.orderId)}",
                     style = Typography.bodyMedium,

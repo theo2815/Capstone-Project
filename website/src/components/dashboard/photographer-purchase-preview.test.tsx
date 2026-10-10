@@ -22,7 +22,7 @@ function view(selection: { photoId: string; orderId?: string; transactionId?: st
   return <QueryClientProvider client={client}><PhotographerPurchasePreview selection={selection} transaction={transaction} onClose={vi.fn()} /></QueryClientProvider>;
 }
 const fact = (label: string) => screen.getByText(label, { exact: true }).nextElementSibling;
-afterEach(() => { onlineManager.setOnline(true); vi.restoreAllMocks(); useAuthStore.getState().logout(); });
+afterEach(() => { onlineManager.setOnline(true); vi.restoreAllMocks(); vi.unstubAllGlobals(); useAuthStore.getState().logout(); });
 
 it.each([true, false])("receipt history offline initial=%s preserves selected receipt on append and stays closed on reconnect", async (initialOffline) => {
   login();
@@ -275,7 +275,6 @@ it("distinguishes repeated buyer choices by reference and copies the selected fu
   fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
   await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(orderB));
   expect(writeText.mock.calls.flat().join(" ")).not.toMatch(/@|token/i);
-  vi.unstubAllGlobals();
   client.clear();
 });
 
@@ -289,7 +288,6 @@ it("reports a rejected clipboard write honestly", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't copy reference.");
   expect(screen.queryByText("Reference copied.")).not.toBeInTheDocument();
-  vi.unstubAllGlobals();
   client.clear();
 });
 
@@ -336,7 +334,6 @@ it("drops copy feedback across an account switch and copies the new seller's ord
   expect(screen.queryByText("Reference copied.")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
   await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(orderB));
-  vi.unstubAllGlobals();
   client.clear();
 });
 
@@ -449,7 +446,6 @@ it("same photo different order replaces context", async () => {
   vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
   fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith(orderB));
-  vi.unstubAllGlobals();
   client.clear();
 });
 
