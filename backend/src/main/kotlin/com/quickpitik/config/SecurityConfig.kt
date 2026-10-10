@@ -72,6 +72,10 @@ class SecurityConfig(
                     // credential, verified against Google's JWKS.
                     "/api/v1/auth/google",
                     "/api/v1/auth/refresh",
+                    // Desktop connect (V85): the one-time code in the body is the
+                    // credential. /auth/desktop/codes is deliberately NOT here —
+                    // its caller is the signed-in website.
+                    "/api/v1/auth/desktop/exchange",
                     "/api/v1/auth/logout",
                     "/api/v1/auth/forgot-password",
                     "/api/v1/auth/verify-reset-otp",

@@ -79,3 +79,16 @@ export async function requestEmailChange(
 export async function confirmEmailChange(token: string): Promise<void> {
   await api.post<unknown>("/auth/confirm-email-change", { token });
 }
+
+// Desktop connect (docs/desktop-upload-integration-guide.md § 1): the signed-in
+// photographer asks for a one-time code bound to the BatchMyPhotos PKCE
+// challenge. The code goes back to the app through a batchmyphotos:// link; the
+// app redeems it with the verifier it kept. Photographers only (403 otherwise).
+export interface DesktopAuthCode {
+  code: string;
+  expiresInSeconds: number;
+}
+
+export async function mintDesktopAuthCode(codeChallenge: string): Promise<DesktopAuthCode> {
+  return api.post<DesktopAuthCode>("/auth/desktop/codes", { codeChallenge });
+}

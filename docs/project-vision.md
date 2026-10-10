@@ -125,17 +125,18 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 
 **Purpose:** Professional tool for photographers handling large photo volumes (5,000-15,000 images per event).
 
-**Architecture:** The desktop app has its **own backend and database**, separate from the web/mobile backend. It communicates with ai-api for ML inference.
+**Architecture:** The desktop app has its **own backend and database**, separate from the web/mobile backend. It communicates with ai-api for ML inference. For the upload workflow it also signs in to the web/mobile backend as a photographer (see `docs/desktop-upload-integration-guide.md`).
 
 **Features:**
 - **User accounts** — Photographer login and profile management
 - **Automatic blur detection** — AI identifies and separates blurred/unusable images
 - **Automatic batch sorting** — Organize photos into folders (e.g., 500 per folder) for upload
+- **Upload to QuickPitik** — Drop a whole shoot folder and upload every photo to a QuickPitik event, one subfolder at a time, after signing in through the browser (feature-flagged)
 - **Batch processing** — Process thousands of images without manual review
 
 **Impact:** A task that normally takes photographers **1-2 hours** (manual review and sorting) is completed in **5-10 seconds**.
 
-**Scope:** The desktop app focuses on blur detection and photo organization. It does not handle face search, bib recognition, or marketplace features — those live on the website and mobile app.
+**Scope:** The desktop app focuses on blur detection, photo organization, and uploading to QuickPitik. It does not handle face search, bib recognition, or marketplace features — those live on the website and mobile app.
 
 ---
 
@@ -167,7 +168,7 @@ photographer wants to clean up the set (see Journey 2).
 3. Imports 10,000 photos from SD card
 4. Desktop app auto-detects and separates 800 blurry images
 5. Desktop app sorts remaining 9,200 photos into 19 folders of 500
-6. Photographer uploads sorted folders to QuickPitik website
+6. Photographer uploads the shoot to a QuickPitik event from the desktop app's Upload view (or through the website)
 7. Total time: ~5-10 minutes (vs 1-2 hours manual)
 ```
 
@@ -203,7 +204,7 @@ photographer wants to clean up the set (see Journey 2).
 | Feature | Mobile (Photographer) | Mobile (Runner) | Website | Desktop |
 |---------|----------------------|-----------------|---------|---------|
 | Camera-to-cloud upload | Yes | — | — | — |
-| Manual photo upload | — | — | Yes | — |
+| Manual photo upload | — | — | Yes | Yes (whole folder, feature-flagged) |
 | Face photo search | — | Yes | Yes | — |
 | Bib number search | — | Yes | Yes | — |
 | Push notifications | — | Yes | — | — |

@@ -20,6 +20,8 @@ export const ROUTES = {
   // Same contract, different mail: the backend builds this one as
   // `${frontendOrigin}/verify-email?token=…` in the registration email.
   VERIFY_EMAIL: "/verify-email",
+  // BatchMyPhotos sign-in hand-off (docs/desktop-upload-integration-guide.md).
+  CONNECT_DESKTOP: "/connect/desktop",
   ONBOARDING: "/onboarding",
   EVENTS: "/events",
   VERIFY: "/verify",
