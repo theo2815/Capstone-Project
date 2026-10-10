@@ -134,11 +134,12 @@ export default function FocusedSharePage() {
       <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
         <BackChip />
         <Hero event={event} />
-        <p className="mb-8 font-mono text-sm uppercase tracking-wide text-slate">Removed event</p>
+        <p className="mb-2 font-mono text-sm uppercase tracking-wide text-slate">Removed event</p>
+        <p className="mb-8 font-sans text-base text-slate">This event was removed. Your purchase history is still available.</p>
         <Stats photographer={photographer} />
         <section>
           <div role="tablist" aria-label="Photo library" className="mb-6 border-b border-line pb-4"><TabPill active onClick={() => { }}>Purchased</TabPill></div>
-          <RemovedPurchasedGallery eventId={liveDetail.id} />
+          <RemovedPurchasedGallery eventId={liveDetail.id} free={liveDetail.pricingMode === "free"} />
         </section>
       </div>
     </main>;
@@ -235,7 +236,7 @@ export default function FocusedSharePage() {
               <ShareHeroBand event={event} handle={liveDetail.handle ?? null} />
             )}
             <Stats photographer={photographer} />
-            <PhotoLibrary event={event} eventId={liveDetail.id} />
+            <PhotoLibrary event={event} eventId={liveDetail.id} free={liveDetail.pricingMode === "free"} />
           </>
         )}
       </div>
@@ -801,9 +802,11 @@ function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
 function PhotoLibrary({
   event,
   eventId,
+  free,
 }: {
   event: ListEvent;
   eventId: string;
+  free: boolean;
 }) {
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
@@ -1001,7 +1004,7 @@ function PhotoLibrary({
           <TabPill active onClick={() => switchSection("purchased")}>Purchased</TabPill>
         </div>
       </div>
-      <PurchasedGallery eventId={eventId} />
+      <PurchasedGallery eventId={eventId} free={free} />
     </section>;
   }
 
@@ -1156,7 +1159,7 @@ function PhotoLibrary({
   );
 }
 
-function RemovedPurchasedGallery({ eventId }: { eventId: string }) {
+function RemovedPurchasedGallery({ eventId, free }: { eventId: string; free: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   useEffect(() => {
@@ -1164,16 +1167,17 @@ function RemovedPurchasedGallery({ eventId }: { eventId: string }) {
       router.replace(`${ROUTES.DASHBOARD_EVENTS}/${eventId}?tab=purchased`, { scroll: false });
     }
   }, [eventId, router, searchParams]);
-  return <PurchasedGallery eventId={eventId} />;
+  return <PurchasedGallery eventId={eventId} free={free} />;
 }
 
-function PurchasedGallery({ eventId }: { eventId: string }) {
+function PurchasedGallery({ eventId, free }: { eventId: string; free: boolean }) {
   const list = usePhotographerPurchasedPhotos(eventId, true);
   const [selection, setSelection] = useState<PurchaseSelection | null>(null);
   const photos = list.items.map((item) => item.photo);
 
   return <>
     <p className="font-mono uppercase tracking-[0.14em] text-sm text-slate-soft tnum mb-6"><span className="text-ink">{list.total.toLocaleString()}</span> purchased photos</p>
+    {free && <p className="mb-6 font-sans text-sm text-slate">Direct downloads from free events do not create purchase or buyer records.</p>}
     {list.isPaused && photos.length === 0 ? (
       <div role="alert"><p>You&apos;re offline. Reconnect to load purchased photos, or retry once connected.</p><button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div>
     ) : list.isLoading ? (
@@ -1183,7 +1187,7 @@ function PurchasedGallery({ eventId }: { eventId: string }) {
     ) : list.error ? (
       <div role="alert"><p>Couldn&apos;t load purchased photos.</p><button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div>
     ) : photos.length === 0 ? (
-      <p className="font-sans text-base text-slate">No purchased photos yet.</p>
+      <p className="font-sans text-base text-slate">No completed purchases yet.</p>
     ) : (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
         {list.items.map((item, i) => <PhotoTile key={item.photo.id} photo={item.photo} index={i} purchaseCount={item.purchaseCount} selecting={false} selected={false} onOpen={() => setSelection({ photoId: item.photo.id })} onToggle={() => { }} />)}

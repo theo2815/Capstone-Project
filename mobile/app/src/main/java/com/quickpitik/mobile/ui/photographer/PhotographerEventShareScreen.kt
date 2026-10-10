@@ -280,6 +280,7 @@ fun PhotographerEventShareScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     PurchasedGallery(
                         state = purchasedState,
+                        free = event.pricingMode == "free",
                         onOpenPhoto = { selectedPurchaseOrderId = null; selectedPurchasePhotoId = it },
                         onRetry = { purchaseViewModel.loadPurchasedPhotos(event.id, refresh = true) },
                         onLoadMore = purchaseViewModel::loadMorePurchasedPhotos,
@@ -387,6 +388,7 @@ fun PhotographerEventShareScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     PurchasedGallery(
                         state = purchasedState,
+                        free = event.pricingMode == "free",
                         onOpenPhoto = { selectedPurchaseOrderId = null; selectedPurchasePhotoId = it },
                         onRetry = { purchaseViewModel.loadPurchasedPhotos(event.id, refresh = true) },
                         onLoadMore = purchaseViewModel::loadMorePurchasedPhotos,
@@ -704,6 +706,7 @@ private fun LibraryTab(label: String, active: Boolean, onClick: () -> Unit) {
 @Composable
 private fun PurchasedGallery(
     state: PurchasedPhotosState,
+    free: Boolean,
     onOpenPhoto: (String) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
@@ -711,6 +714,10 @@ private fun PurchasedGallery(
     Column {
         Kicker("${state.total} purchased photos", color = Slate)
         Spacer(modifier = Modifier.height(12.dp))
+        if (free) {
+            Text("Direct downloads from free events do not create purchase or buyer records.", style = Typography.bodySmall, color = Slate)
+            Spacer(modifier = Modifier.height(12.dp))
+        }
         when {
             state.isLoading -> CircularProgressIndicator(color = Fresh)
             state.error != null -> ErrorView(
@@ -752,7 +759,7 @@ private fun PurchasedGallery(
 @Composable
 private fun PurchasedGalleryEmptyPreview() {
     StudioTheme {
-        PurchasedGallery(PurchasedPhotosState(), onOpenPhoto = {}, onRetry = {}, onLoadMore = {})
+        PurchasedGallery(PurchasedPhotosState(), free = false, onOpenPhoto = {}, onRetry = {}, onLoadMore = {})
     }
 }
 

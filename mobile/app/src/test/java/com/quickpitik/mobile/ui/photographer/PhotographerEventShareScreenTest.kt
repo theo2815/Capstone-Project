@@ -64,11 +64,40 @@ class PhotographerEventShareScreenTest {
 
     @After fun tearDown() { SessionManager.getInstance(application).clearSession() }
 
-    private fun event(removed: Boolean) = PhotographerEventDetailDto(
+    private fun event(removed: Boolean, pricingMode: String = "paid") = PhotographerEventDetailDto(
         id = "event-a", slug = "cebu", name = "Cebu Run", date = "2026-10-01", location = "Cebu",
-        state = "past", photoCount = 1, salesCount = 1, revenueKept = 25.0,
+        state = "past", photoCount = 1, salesCount = 1, revenueKept = 25.0, pricingMode = pricingMode,
         deletedAt = if (removed) "2026-10-02T00:00:00Z" else null,
     )
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun assertPurchasedWording(pricingMode: String, populated: Boolean, removed: Boolean = false) {
+        showPurchasedPhoto = populated
+        runComposeUiTest {
+            setContent {
+                PhotographerEventShareScreen(
+                    event = event(removed, pricingMode), viewModel = dashboard, purchaseViewModel = purchases,
+                    initialTab = "purchased", onBack = {},
+                )
+            }
+            waitUntil(timeoutMillis = 5_000) { purchases.purchasedPhotosState.value.let { it.eventId == "event-a" && !it.isLoading && it.total == if (populated) 1L else 0L } }
+            waitForIdle()
+            val note = onNodeWithText("Direct downloads from free events do not create purchase or buyer records.")
+            if (pricingMode == "free") note.assertExists() else note.assertDoesNotExist()
+            val empty = onNodeWithText("No completed purchases yet.")
+            if (populated) empty.assertDoesNotExist() else empty.assertExists()
+            val tile = onNodeWithText("1 purchase")
+            if (populated) tile.assertExists() else tile.assertDoesNotExist()
+        }
+    }
+
+    @Test fun `empty free event explains direct downloads`() = assertPurchasedWording("free", populated = false)
+
+    @Test fun `populated free event keeps the direct-download note beside recorded purchases`() = assertPurchasedWording("free", populated = true)
+
+    @Test fun `removed free event explains direct downloads in history`() = assertPurchasedWording("free", populated = false, removed = true)
+
+    @Test fun `paid event 100 percent coupon purchase stays a recorded purchase without the free note`() = assertPurchasedWording("paid", populated = true)
 
     @OptIn(ExperimentalTestApi::class)
     @Test fun `loaded receipt 51 retains both pages without a request online and offline`() {

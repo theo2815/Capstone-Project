@@ -91,7 +91,7 @@ it.each([true, false])("Purchased offline initial=%s and append pause preserve g
   if (initialOffline) {
     expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.queryByText("No purchased photos yet.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No completed purchases yet.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     act(() => onlineManager.setOnline(true));
   }
@@ -117,6 +117,7 @@ it("removed event renders read-only purchase history", () => {
   mocks.purchased.mockReturnValue({ items: [{ photo, purchaseCount: 3, lastPurchasedAt: "2026-09-07T10:00:00Z" }], total: 1, isLoading: false, error: null, appendError: null, hasNextPage: false, fetchNextPage: vi.fn(), refetch: vi.fn() });
   renderPage();
   expect(screen.getByText("Removed event")).toBeInTheDocument();
+  expect(screen.getByText("This event was removed. Your purchase history is still available.")).toBeInTheDocument();
   expect(screen.getByText("₱0.00")).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Upload/ })).toBeNull();
   expect(screen.getByText("3 purchases")).toBeInTheDocument();
@@ -126,6 +127,23 @@ it("removed event renders read-only purchase history", () => {
   expect(mocks.visibility).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: /Open photo/ }));
   expect(screen.getByText("ABCDEF12")).toBeInTheDocument();
+});
+
+const FREE_NOTE = "Direct downloads from free events do not create purchase or buyer records.";
+it.each([
+  ["empty FREE", "free", null, 0],
+  ["populated FREE", "free", null, 1],
+  ["removed empty FREE", "free", "2026-09-08", 0],
+  ["paid with 100% coupon", "paid", null, 1],
+])("%s Purchased shows the completed-purchase wording", (_, pricingMode, deletedAt, count) => {
+  mocks.detail = { ...detail, deletedAt, ownedByMe: false, pricingMode };
+  mocks.error = null;
+  mocks.active.mockReturnValue({ items: [], total: 0, isLoading: false, isFetchingNextPage: false, fetchNextPage: vi.fn() });
+  mocks.purchased.mockReturnValue({ items: count ? [{ photo, purchaseCount: 3, lastPurchasedAt: "2026-09-07T10:00:00Z" }] : [], total: count, isLoading: false, error: null, appendError: null, hasNextPage: false, fetchNextPage: vi.fn(), refetch: vi.fn() });
+  renderPage();
+  expect(screen.queryByText("No completed purchases yet.") !== null).toBe(count === 0);
+  expect(screen.queryByText(FREE_NOTE) !== null).toBe(pricingMode === "free");
+  expect(screen.queryAllByRole("button", { name: "Open photo 1, 3 purchases" })).toHaveLength(count);
 });
 
 it("event error is retryable rather than notFound, while a genuine 404 stays missing", () => {
