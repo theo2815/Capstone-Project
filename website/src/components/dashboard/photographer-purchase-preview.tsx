@@ -12,7 +12,7 @@ import { captureAuthSession } from "@/lib/auth-session";
 import { formatSalesDate } from "@/lib/format";
 import type { PhotographerLibraryPhoto, PhotographerTransaction } from "@/lib/photographer-mock";
 import { savePhoto } from "@/lib/save-photo";
-import { formatOrderRef, formatPrice } from "@/lib/utils";
+import { copyToClipboard, formatOrderRef, formatPrice } from "@/lib/utils";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 
 export interface PurchaseSelection {
@@ -59,6 +59,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
   const [imageReloadKey, setImageReloadKey] = useState(0);
+  const [copied, setCopied] = useState<{ orderId: string; ok: boolean } | null>(null);
   const refreshingImage = useRef(false);
   const purchase = usePhotographerPhotoPurchases(selection.photoId, pinnedOrderId, true);
   const photo = purchase.photo ?? photos?.find((item) => item.id === selection.photoId) ?? null;
@@ -116,17 +117,26 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
 
   const refundRecordedAt = selected?.transactions.filter((row) => row.isRefund).at(-1)?.recordedAt;
   const factClass = "min-w-0 break-words text-right tnum";
+  const reference = selected?.orderId ?? orderId;
+  const eventLabel = purchase.event?.name ?? transaction?.eventName ?? (purchase.isLoading && !purchase.isPaused ? "Loading…" : "Event unavailable");
+  const pinned = purchase.selectedPurchase;
+  const choices = pinned && !purchase.items.some((item) => item.orderId === pinned.orderId && item.photoId === pinned.photoId) ? [pinned, ...purchase.items] : purchase.items;
+
+  async function copyReference() {
+    if (!reference) return;
+    setCopied({ orderId: reference, ok: await copyToClipboard(reference) });
+  }
 
   const details = <div className="space-y-3 text-sm text-ink">
     <p className="font-display font-bold">Purchase details</p>
     <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
       <dt className="text-slate">Buyer</dt><dd className={factClass}>{selected?.buyer || fallback?.buyer || "Unavailable"}</dd>
-      <dt className="text-slate">Reference</dt><dd className={factClass}>{selected?.orderId || orderId ? formatOrderRef(selected?.orderId ?? orderId ?? "") : "Unavailable"}</dd>
+      <dt className="text-slate">Reference</dt><dd className={factClass}>{reference ? formatOrderRef(reference) : "Unavailable"}</dd>
       <dt className="text-slate">Purchased</dt><dd className={factClass}>{selected?.purchasedAt ? formatSalesDate(selected.purchasedAt) : fallback?.paidAt ? formatSalesDate(fallback.paidAt) : "Unavailable"}</dd>
       {selected && !selected.purchasedAt && <><dt className="text-slate">Order created</dt><dd className={factClass}>{formatSalesDate(selected.orderCreatedAt)}</dd></>}
       <dt className="text-slate">Event</dt><dd className={factClass}>{eventId
-        ? <Link href={`/dashboard/events/${encodeURIComponent(eventId)}?tab=purchased`} className="underline decoration-line-strong underline-offset-4 hover:decoration-fresh">{purchase.event?.name ?? transaction?.eventName ?? "Event archived"} · Purchased photos</Link>
-        : "Event archived"}</dd>
+        ? <Link href={`/dashboard/events/${encodeURIComponent(eventId)}?tab=purchased`} className="underline decoration-line-strong underline-offset-4 hover:decoration-fresh">{eventLabel} · Purchased photos</Link>
+        : eventLabel}</dd>
       <dt className="text-slate">Photo</dt><dd className={factClass}>{photo?.bib ? `Bib ${photo.bib}` : selection.photoId}</dd>
       <dt className="text-slate">Photo price</dt><dd className={factClass}>{selected ? formatPrice(selected.pricePhp) : "Unavailable"}</dd>
       <dt className="text-slate">Discount</dt><dd className={factClass}>{selected ? formatPrice(selected.discountPhp) : "Unavailable"}</dd>
@@ -137,6 +147,8 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
       {!selected?.refundedAt && refundRecordedAt && <><dt className="text-slate">Refund recorded</dt><dd className={factClass}>{formatSalesDate(refundRecordedAt)}</dd></>}
       <dt className="text-slate">Your net earnings</dt><dd className={factClass}>{selected?.netKeptPhp == null ? "Unavailable" : formatPrice(selected.netKeptPhp)}</dd>
     </dl>
+    <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} disabled={!reference} onClick={() => void copyReference()}>Copy reference</button>
+    {copied && copied.orderId === reference && (copied.ok ? <p role="status">Reference copied.</p> : <p role="alert">Couldn&apos;t copy reference.</p>)}
     {selected?.refundPending && <p>Refund pending</p>}
     {selected?.transactions.map((row) => <p key={row.id} aria-current={row.id === selection.transactionId ? "true" : undefined} className={row.id === selection.transactionId ? "rounded-lg border border-ink bg-fresh-tint/40 p-2 tnum" : "p-2 tnum"}>
       {row.isRefund ? "Earnings adjustment" : "Sale earnings"} · {formatPrice(row.amountKept)} · Recorded {formatSalesDate(row.recordedAt)}
@@ -147,10 +159,10 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     {purchase.isPaused && <p role="alert">You&apos;re offline. Reconnect to continue loading purchases, or retry once connected.</p>}
     {purchase.error && <p role="alert">{errorText}</p>}
     {((purchase.isPaused && purchase.items.length === 0) || purchase.error || ((orderId || fallback) && !selected && !purchase.isLoading)) && <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void purchase.refetch()}>Retry purchases</button>}
-    {purchase.items.length > 1 && <div className="space-y-2 border-t border-line pt-3">
+    {choices.length > 1 && <div className="space-y-2 border-t border-line pt-3">
       <p className="font-display font-bold">Purchase history</p>
-      {purchase.items.map((item: PhotographerPurchase) => <button key={`${item.orderId}:${item.photoId}`} type="button" aria-pressed={item.orderId === orderId} onClick={() => setOrderId(item.orderId)} className="block w-full rounded-lg border border-line p-2 text-left hover:bg-bone-deep aria-pressed:border-ink aria-pressed:bg-fresh-tint/30">
-        {item.buyer || "Buyer unavailable"} · {item.purchasedAt ? `Purchased ${formatSalesDate(item.purchasedAt)}` : `Order created ${formatSalesDate(item.orderCreatedAt)}`}
+      {choices.map((item: PhotographerPurchase) => <button key={`${item.orderId}:${item.photoId}`} type="button" aria-pressed={item.orderId === selected?.orderId} onClick={() => setOrderId(item.orderId)} className="block w-full rounded-lg border border-line p-2 text-left tnum hover:bg-bone-deep aria-pressed:border-ink aria-pressed:bg-fresh-tint/30">
+        {item.buyer || "Buyer unavailable"} · {formatOrderRef(item.orderId)} · {item.purchasedAt ? `Purchased ${formatSalesDate(item.purchasedAt)}` : `Order created ${formatSalesDate(item.orderCreatedAt)}`}
       </button>)}
     </div>}
     {purchase.appendError && <p role="alert">Could not load more purchases.</p>}
@@ -162,7 +174,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     mode="owned"
     metadataAccess={photo && photo.mediaAvailable !== false && !photo.deletionStartedAt ? "owner" : undefined}
     photo={preview}
-    eventName={purchase.event?.name ?? transaction?.eventName ?? "Event archived"}
+    eventName={eventLabel}
     eventDate={purchase.event?.date}
     index={index >= 0 ? index + 1 : 1}
     total={gallery.length || 1}

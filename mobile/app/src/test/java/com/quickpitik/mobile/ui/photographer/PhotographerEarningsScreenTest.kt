@@ -122,6 +122,21 @@ class PhotographerEarningsScreenTest {
     }
 
     @OptIn(ExperimentalTestApi::class)
+    @Test fun `transaction with no event name is unavailable rather than archived`() {
+        ledgerData = """{"items":[{"id":"tx-a","paidAt":"2026-10-01T00:00:00Z","eventId":"event-a","eventName":null,"eventSlug":null,"photoId":"photo-a","orderId":"a1b2c3d4-order","buyer":"Aira S.","amountKept":25.5,"isRefund":false,"refundOf":null,"recordedAt":"2026-10-01T00:00:00Z","thumbnailUrl":null}],"total":1,"offset":0,"limit":50,"monthTotals":{"2026-10":25.5}}"""
+        earnings.fetchEarningsAndTransactions()
+        earnings.transactionsState.awaitFirst { it.items.size == 1 }
+        earnings.earningsUiState.awaitFirst { it is EarningsUiState.Success }
+        runComposeUiTest {
+            setContent { PhotographerEarningsScreen(dashboard, earnings, purchases, onOpenEvent = {}) }
+            onNode(hasScrollAction()).performScrollToNode(hasText("View transactions (1)", substring = true))
+            onNodeWithText("View transactions (1)", substring = true).performClick()
+            onNodeWithText("Event unavailable", useUnmergedTree = true).assertExists()
+            onNodeWithText("Event archived", useUnmergedTree = true).assertDoesNotExist()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
     @Test fun `transaction preview hides and restores the sheet then event navigation closes both`() {
         ledgerData = """{"items":[{"id":"tx-a","paidAt":"2026-10-01T00:00:00Z","eventId":"event-a","eventName":"Transaction Run","eventSlug":"run","photoId":"photo-a","orderId":"a1b2c3d4-order","buyer":"Aira S.","amountKept":25.5,"isRefund":false,"refundOf":null,"recordedAt":"2026-10-01T00:00:00Z","thumbnailUrl":null}],"total":1,"offset":0,"limit":50,"monthTotals":{"2026-10":25.5}}"""
         earnings.fetchEarningsAndTransactions()

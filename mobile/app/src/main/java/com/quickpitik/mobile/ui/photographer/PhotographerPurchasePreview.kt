@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -20,7 +21,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.quickpitik.mobile.data.download.PhotoDownloader
@@ -58,6 +62,8 @@ fun PhotographerPurchasePreview(
     val state by viewModel.previewState.collectAsState()
     val photoId = state.photoId ?: return
     val context = LocalContext.current
+    // Read outside PhotoPreview's Dialog, whose own view re-provides platform locals.
+    val clipboard = LocalClipboardManager.current
     val session = remember(context) { SessionManager.getInstance(context) }
     val scope = rememberCoroutineScope()
     val downloadingPhotoIds = remember { mutableStateMapOf<String, Boolean>() }
@@ -122,6 +128,10 @@ fun PhotographerPurchasePreview(
                 onSelectPurchase = { orderId -> viewModel.selectPurchase(orderId); onSelectPurchase(orderId) },
                 onRetry = viewModel::retryPreview,
                 onLoadMore = viewModel::loadMorePurchases,
+                onCopyReference = { orderId ->
+                    val copied = runCatching { clipboard.setText(AnnotatedString(orderId)) }.isSuccess
+                    Toast.makeText(context, if (copied) "Reference copied." else "Couldn't copy reference.", Toast.LENGTH_SHORT).show()
+                },
                 downloadError = downloadErrorPhotoId == photoId,
             )
         },
@@ -136,21 +146,29 @@ private fun PurchaseDetails(
     onSelectPurchase: (String) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
+    onCopyReference: (String) -> Unit,
     downloadError: Boolean,
 ) {
     val selected = state.selectedPurchase
     val eventId = state.event?.id ?: transaction?.eventId
+    val reference = selected?.orderId ?: state.orderId ?: transaction?.orderId
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Kicker("Purchase details", color = Ink)
         if (state.photoRefreshError != null) Text("Image refresh failed. Try again.", style = Typography.bodyMedium, color = ErrorRed)
         Fact("Buyer", selected?.buyer ?: transaction?.buyer ?: "Unavailable")
-        Fact("Reference", (selected?.orderId ?: state.orderId ?: transaction?.orderId)?.let(::formatOrderRef) ?: "Unavailable")
+        Fact("Reference", reference?.let(::formatOrderRef) ?: "Unavailable")
+        GhostCta(
+            text = "Copy reference",
+            enabled = reference != null,
+            onClick = { reference?.let(onCopyReference) },
+            modifier = Modifier.fillMaxWidth(),
+        )
         Fact("Purchased", formatManila(selected?.purchasedAt ?: transaction?.paidAt, "MMM d, yyyy · h:mm a") ?: "Unavailable")
         if (selected != null && selected.purchasedAt == null) Fact("Order created", formatManila(selected.orderCreatedAt, "MMM d, yyyy · h:mm a") ?: "Unavailable")
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Event", style = Typography.bodyMedium, color = Slate)
             Text(
-                state.event?.name ?: transaction?.eventName ?: "Event archived",
+                state.event?.name ?: transaction?.eventName ?: if (state.isLoading) "Loading…" else "Event unavailable",
                 style = Typography.bodyMedium,
                 color = Ink,
                 modifier = Modifier.then(if (eventId != null) Modifier.clickable { onOpenEvent(eventId) }.heightIn(min = 48.dp) else Modifier),
@@ -180,12 +198,12 @@ private fun PurchaseDetails(
         }
         if (state.items.size > 1 || state.total > 1) {
             Kicker("Purchase history", color = Ink)
-            (listOfNotNull(selected) + state.items).distinctBy { it.orderId to it.photoId }.forEach { purchase ->
+            (listOfNotNull(state.pinnedPurchase ?: selected) + state.items).distinctBy { it.orderId to it.photoId }.forEach { purchase ->
                 Text(
                     "${purchase.buyer} · ${formatOrderRef(purchase.orderId)}",
                     style = Typography.bodyMedium,
                     color = Ink,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { onSelectPurchase(purchase.orderId) }.padding(vertical = 12.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(purchase.orderId == selected?.orderId, role = Role.Button) { onSelectPurchase(purchase.orderId) }.padding(vertical = 12.dp),
                 )
             }
         }
@@ -221,6 +239,7 @@ private fun PurchaseDetailsUnavailablePreview() {
             onSelectPurchase = {},
             onRetry = {},
             onLoadMore = {},
+            onCopyReference = {},
             downloadError = false,
         )
     }

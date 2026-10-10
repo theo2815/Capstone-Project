@@ -1,8 +1,19 @@
 package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.text.AnnotatedString
+import org.robolectric.shadows.ShadowToast
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -155,6 +166,133 @@ class PhotographerPurchasePreviewTest {
             onNodeWithText("Order created").assertExists()
             onNodeWithText("Oct 2, 2026 · 8:00 AM").assertExists()
             onNodeWithText("Oct 1, 2026 · 8:00 AM").assertDoesNotExist()
+        }
+    }
+
+    private val orderA = "a1b2c3d4-0000-4000-8000-00000000000a"
+    private val orderB = "b1b2c3d4-0000-4000-8000-00000000000b"
+
+    private fun serve(items: List<String>, selected: String?, event: String? = """{"id":"event-a","name":"Cebu Run","date":"2026-10-01","deletedAt":null}""", total: Int = items.size) {
+        backend.server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val photo = """{"id":"photo-a","bib":"123","status":"ready","salesCount":2,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null,"deletedAt":null,"deletionStartedAt":null}"""
+                fun receipt(orderId: String) = """{"orderId":"$orderId","photoId":"photo-a","buyer":"Aira S.","purchasedAt":"2026-10-01T00:00:00Z","orderCreatedAt":"2026-10-01T00:00:00Z","paymentMethod":"gcash","pricePhp":50.0,"discountPhp":0.0,"paidPhp":50.0,"kind":"paid","refundStatus":"none","refundPending":false,"refundedPhp":0.0,"refundedAt":null,"netKeptPhp":25.5,"transactions":[]}"""
+                return ok("""{"photo":$photo,"event":$event,"items":[${items.joinToString(",") { receipt(it) }}],"total":$total,"offset":0,"limit":50,"selectedPurchase":${selected?.let(::receipt) ?: "null"}}""")
+            }
+        }
+    }
+
+    private class RecordingClipboard(private val fail: Boolean = false) : ClipboardManager {
+        val copied = mutableListOf<String>()
+        override fun getText(): AnnotatedString? = null
+        override fun setText(annotatedString: AnnotatedString) {
+            if (fail) throw SecurityException("denied")
+            copied += annotatedString.text
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `repeated buyer choices show references, selected semantics and copy the selected full UUID`() {
+        serve(listOf(orderA, orderB), orderA)
+        vm.openPurchase("photo-a")
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        val clipboard = RecordingClipboard()
+        runComposeUiTest {
+            setContent { CompositionLocalProvider(LocalClipboardManager provides clipboard) { PhotographerPurchasePreview(vm, onClose = {}, onOpenEvent = {}) } }
+            onNodeWithText("Aira S. · A1B2C3D4").assertIsSelected()
+            onNodeWithText("Aira S. · B1B2C3D4").assertIsNotSelected()
+            onNodeWithText("Copy reference").performSemanticsAction(SemanticsActions.OnClick)
+            runOnIdle { assertEquals(listOf(orderA), clipboard.copied) }
+            assertEquals("Reference copied.", ShadowToast.getTextOfLatestToast())
+            onNodeWithText("Aira S. · B1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+            waitUntil(timeoutMillis = 5_000) { vm.previewState.value.selectedPurchase?.orderId == orderB }
+            onNodeWithText("B1B2C3D4").assertExists()
+            onNodeWithText("Aira S. · B1B2C3D4").assertIsSelected()
+            onNodeWithText("Aira S. · A1B2C3D4").assertIsNotSelected()
+            onNodeWithText("Copy reference").performSemanticsAction(SemanticsActions.OnClick)
+            runOnIdle { assertEquals(listOf(orderA, orderB), clipboard.copied) }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `pinned receipt outside the loaded page is listed once and selected`() {
+        serve(listOf(orderA), orderB, total = 51)
+        vm.openPurchase("photo-a", orderB)
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        runComposeUiTest {
+            setContent { PhotographerPurchasePreview(vm, onClose = {}, onOpenEvent = {}) }
+            onNodeWithText("Aira S. · B1B2C3D4").assertIsSelected()
+            onNodeWithText("Aira S. · A1B2C3D4").assertIsNotSelected()
+            assertEquals(1, onAllNodesWithText("Aira S. · B1B2C3D4").fetchSemanticsNodes().size)
+            val requests = backend.server.requestCount
+            onNodeWithText("Aira S. · A1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+            onNodeWithText("Aira S. · A1B2C3D4").assertIsSelected()
+            onNodeWithText("Aira S. · B1B2C3D4").assertIsNotSelected()
+            onNodeWithText("Aira S. · B1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+            onNodeWithText("Aira S. · B1B2C3D4").assertIsSelected()
+            onNodeWithText("B1B2C3D4").assertExists()
+            runOnIdle { assertEquals(requests, backend.server.requestCount) }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `rejected clipboard write reports failure`() {
+        serve(listOf(orderB), orderB)
+        vm.openPurchase("photo-a", orderB)
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        runComposeUiTest {
+            setContent { CompositionLocalProvider(LocalClipboardManager provides RecordingClipboard(fail = true)) { PhotographerPurchasePreview(vm, onClose = {}, onOpenEvent = {}) } }
+            onNodeWithText("Copy reference").performSemanticsAction(SemanticsActions.OnClick)
+            runOnIdle { assertEquals("Couldn't copy reference.", ShadowToast.getTextOfLatestToast()) }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `missing event context is neutral and keeps a known transaction name`() {
+        serve(listOf(orderB), orderB, event = "null")
+        vm.openPurchase("photo-a", orderB)
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        val transaction = PhotographerTransactionDto(
+            id = "tx-b", paidAt = "2026-10-01T00:00:00Z", eventId = "event-a", eventName = "Cebu Run",
+            eventSlug = "cebu", photoId = "photo-a", orderId = orderB, buyer = "Aira S.", amountKept = 25.5,
+        )
+        var withTransaction by mutableStateOf(false)
+        runComposeUiTest {
+            setContent { PhotographerPurchasePreview(vm, transaction = transaction.takeIf { withTransaction }, onClose = {}, onOpenEvent = {}) }
+            onNodeWithText("Event unavailable").assertExists()
+            onNodeWithText("Event archived").assertDoesNotExist()
+            withTransaction = true
+            onNodeWithText("Cebu Run").assertExists()
+            onNodeWithText("Event unavailable").assertDoesNotExist()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `failed and loading purchases never claim an archived event and cannot copy`() {
+        val release = CountDownLatch(1)
+        var fail = false
+        backend.server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (!fail) release.await(5, TimeUnit.SECONDS)
+                return MockResponse().setResponseCode(if (fail) 500 else 404)
+            }
+        }
+        try {
+            vm.openPurchase("photo-a")
+            runComposeUiTest {
+                setContent { PhotographerPurchasePreview(vm, onClose = {}, onOpenEvent = {}) }
+                onNodeWithText("Loading…").assertExists()
+                onNodeWithText("Copy reference").assertIsNotEnabled()
+                release.countDown()
+                fail = true
+                runOnIdle { vm.retryPreview() }
+                waitUntil(timeoutMillis = 5_000) { vm.previewState.value.errorStatus == 500 }
+                onNodeWithText("Event unavailable").assertExists()
+                onNodeWithText("Copy reference").assertIsNotEnabled()
+                onNodeWithText("Event archived").assertDoesNotExist()
+            }
+        } finally {
+            release.countDown()
         }
     }
 
