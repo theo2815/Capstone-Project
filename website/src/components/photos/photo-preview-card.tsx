@@ -169,20 +169,23 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     setMounted(true);
   }, []);
 
-  // Modal focus: start inside, keep the page behind inert, and hand focus back
-  // to the opener on close. Mount-only so metadata's later portal stays live.
+  // Modal focus: start on the dialog itself (a keyed remount after Prev/Next
+  // must not land on Close), keep the page behind inert except the toast
+  // region preview actions report into, and hand focus back on close.
+  // Mount-only so metadata's later portal stays live.
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!mounted) return;
     const trigger = document.activeElement;
-    const background = Array.from(document.body.children).filter((el) => el !== dialogRef.current && !el.hasAttribute("inert"));
+    const background = Array.from(document.body.children).filter((el) => el !== dialogRef.current
+      && !el.hasAttribute("inert") && !el.matches('[role="region"][aria-label="Notifications"]'));
     background.forEach((el) => el.setAttribute("inert", ""));
-    focusPreviewClose();
+    dialogRef.current?.focus();
     return () => {
       background.forEach((el) => el.removeAttribute("inert"));
-      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
+      if (trigger instanceof HTMLElement) trigger.focus({ preventScroll: true });
     };
-  }, [mounted, focusPreviewClose]);
+  }, [mounted]);
 
   useEffect(() => {
     if (metadataOpen) return;
@@ -195,8 +198,8 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
           .filter((el) => el.checkVisibility?.() ?? true);
         const first = controls[0];
         const last = controls[controls.length - 1];
-        const inside = dialogRef.current?.contains(document.activeElement);
-        if (e.shiftKey ? !inside || document.activeElement === first : !inside || document.activeElement === last) {
+        const active = document.activeElement;
+        if (!dialogRef.current?.contains(active) || active === dialogRef.current || active === (e.shiftKey ? first : last)) {
           e.preventDefault();
           (e.shiftKey ? last : first)?.focus();
         }
@@ -268,10 +271,11 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
       ref={dialogRef}
       role="dialog"
       aria-modal="true"
+      tabIndex={-1}
       aria-label={
         photo.bib ? `Preview photo ${photo.bib}` : "Preview untagged photo"
       }
-      className="fixed inset-0 z-50 flex items-center justify-center md:p-8 lg:p-10"
+      className="fixed inset-0 z-50 flex items-center justify-center outline-none md:p-8 lg:p-10"
     >
       <button
         type="button"

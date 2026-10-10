@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import type { PhotoMetadataDto } from "@/types/photo-metadata";
+import { useState } from "react";
+import { ToastContainer } from "@/components/ui/toast";
 import { PhotoPreviewCard, type PhotoPreviewItem } from "./photo-preview-card";
 
 describe("PhotoPreviewCard coupon offer", () => {
@@ -296,21 +298,45 @@ describe("PhotoPreviewCard keyboard focus", () => {
     const view = render(page(false, cb));
     screen.getByRole("button", { name: "Open preview" }).focus();
     view.rerender(page(true, cb));
-    const [backdrop, mobileClose] = await screen.findAllByRole("button", { name: "Close preview" });
-    expect(mobileClose).toHaveFocus();
-    expect(backdrop).toHaveAttribute("tabindex", "-1");
+    const dialog = await screen.findByRole("dialog", { name: "Preview photo 101" });
+    const [backdrop, mobileClose] = screen.getAllByRole("button", { name: "Close preview" });
     const metadataButton = screen.getByRole("button", { name: "Show Metadata" });
-    metadataButton.focus();
+    expect(dialog).toHaveFocus();
+    expect(backdrop).toHaveAttribute("tabindex", "-1");
+    await user.tab({ shift: true });
+    expect(metadataButton).toHaveFocus();
     await user.tab();
     expect(mobileClose).toHaveFocus();
     await user.tab({ shift: true });
     expect(metadataButton).toHaveFocus();
   });
 
+  it("does not land on Close after Next remounts the preview, so a repeated Enter cannot close it", async () => {
+    belowLg();
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    function Keyed() {
+      const [current, setCurrent] = useState(photo);
+      return withQuery(<PhotoPreviewCard key={current.id} photo={current} mode="owned" eventName="Cebu Run" index={1} total={2}
+        onClose={onClose} onDownload={vi.fn()} onNext={() => setCurrent({ ...photo, id: "photo-b" })} />);
+    }
+    render(<Keyed />);
+    await screen.findByRole("dialog", { name: "Preview photo 101" });
+    screen.getAllByRole("button", { name: "Next photo" })[1].focus();
+    await user.keyboard("{Enter}{Enter}");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("keeps the page inert while open, then restores the trigger and prior inert state", async () => {
     const alreadyInert = document.body.appendChild(document.createElement("div"));
     alreadyInert.setAttribute("inert", "");
-    onTestFinished(() => alreadyInert.remove());
+    // Providers mounts the toast region beside the page; preview actions raise toasts into it.
+    render(<ToastContainer />);
+    const toasts = document.body.appendChild(document.createElement("div"));
+    toasts.setAttribute("role", "region");
+    toasts.setAttribute("aria-label", "Notifications");
+    expect(screen.getAllByRole("region", { name: "Notifications" })).toHaveLength(2);
+    onTestFinished(() => { alreadyInert.remove(); toasts.remove(); });
     const cb = callbacks();
     const view = render(page(false, cb));
     const opener = screen.getByRole("button", { name: "Open preview" });
@@ -319,6 +345,7 @@ describe("PhotoPreviewCard keyboard focus", () => {
     await screen.findByRole("dialog", { name: "Preview photo 101" });
     expect(opener.closest("[inert]")).not.toBeNull();
     expect(screen.getByRole("dialog", { name: "Preview photo 101" }).closest("[inert]")).toBeNull();
+    expect(toasts).not.toHaveAttribute("inert");
     view.rerender(page(false, cb));
     expect(opener.closest("[inert]")).toBeNull();
     expect(alreadyInert).toHaveAttribute("inert");
