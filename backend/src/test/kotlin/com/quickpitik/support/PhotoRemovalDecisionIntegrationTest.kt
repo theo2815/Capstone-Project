@@ -328,6 +328,13 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         assertNull(requests.findById(case.id).orElseThrow().resolvedAt)
     }
 
+    @Test fun `more evidence on a restricted exception reopens the case while cleanup retries`() {
+        val (case, _, restricted) = resolvingWithRestriction()
+        assertEquals(200, decide(case.id, restricted.id, RemovalDecision.MORE_EVIDENCE).statusCode())
+        assertEquals(RemovalRequestStatus.OPEN, requests.findById(case.id).orElseThrow().status)
+        assertEquals(RemovalItemState.VERIFIED, items.findById(restricted.id).orElseThrow().state)
+    }
+
     @Test fun `cleanup-stage decisions stay refused for verified items and cancellations`() {
         val (case, _, restricted) = resolvingWithRestriction()
         jdbc.update("UPDATE photo_removal_items SET state = 'VERIFIED' WHERE id = ?", restricted.id)
