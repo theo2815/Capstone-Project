@@ -50,7 +50,7 @@ export function RemovalRequestIntake() {
   const rows = events.data ?? [];
   return (
     <form onSubmit={submit} className="mt-8 space-y-10 max-w-2xl">
-      <fieldset className="space-y-4" disabled={create.isPending}>
+      <fieldset className="min-w-0 space-y-4" disabled={create.isPending}>
         <legend className="font-display text-xl font-extrabold text-ink">1. Event</legend>
         <p className="text-sm text-slate">One event per case. Public and unlisted events can both be chosen.</p>
         {events.isPending && <p role="status" className="text-sm text-slate">Loading events…</p>}

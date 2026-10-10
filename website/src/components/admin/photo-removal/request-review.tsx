@@ -330,7 +330,7 @@ function PhotoTile({ item, checked, disabled, onToggle, onPreview }: {
           <span className={cn("block truncate", !item.photographerId && "text-amber-700")}>{ownerOf(item.photographerId, item.photographerName)}</span>
           <span className="block font-mono tnum text-slate">{photo.bib ?? "No bib"}{item.matchScore != null && <> · {Math.round(item.matchScore * 100)}%</>}</span>
           {(item.trashed || item.removalState !== "NONE" || !item.bytesAvailable) && (
-            <span className="block text-amber-700">{item.trashed ? "In trash" : item.removalState === "REMOVED" ? "Removed" : item.removalState === "REVIEW" ? "Under review" : "File unavailable"}</span>
+            <span className="block text-amber-700">{item.removalState === "REMOVED" ? "Removed" : item.removalState === "REVIEW" ? "Under review" : item.trashed ? "In trash" : "File unavailable"}</span>
           )}
         </span>
       </label>

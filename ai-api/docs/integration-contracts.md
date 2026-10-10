@@ -411,6 +411,8 @@ async def remove_participant(participant, event):
 targets and their recorded provider independently of active `AI_PROVIDER`.
 It does not delete blobs or create photo-erasure jobs.
 
+Operations, retention limits and release/rollback for the removal workflow: `docs/photo-removal-workflow.md`.
+
 New face records carry `AI_API` or `REKOGNITION`; legacy records migrate to
 `UNKNOWN`. Composite Rekognition IDs must exactly match the event/photo UUIDs.
 Ambiguous legacy ai-api IDs require the exact photo UUID `person_name` within a

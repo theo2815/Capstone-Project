@@ -241,3 +241,23 @@ it("explains when the response window starts if no deadline is set yet", async (
   renderDetail();
   expect(await screen.findByText("Your 72-hour response window starts when your notice is delivered.")).toBeVisible();
 });
+
+it("listRowShowsDateWithoutAPhotoCount", async () => {
+  vi.mocked(removalApi.listPhotographerRemovalRequests).mockResolvedValue({ items: [{ ...ownerACase, items: [] }], total: 1, offset: 0, limit: 20 });
+  wrap(<PhotographerRemovalRequestList />);
+  expect(await screen.findByRole("link", { name: /Cebu City Marathon/ })).toBeVisible();
+  expect(screen.queryByText(/\b0 photos?\b/)).not.toBeInTheDocument();
+});
+
+it("listRowFlagsRequestsWithUnansweredReviews", async () => {
+  const review = ownerACase.reviews[0];
+  const withUnanswered = (unanswered: number) => ({ ...ownerACase, items: [], reviews: [{ ...review, responses: { ...review.responses, unanswered } }] });
+  vi.mocked(removalApi.listPhotographerRemovalRequests).mockResolvedValue({ items: [withUnanswered(1)], total: 1, offset: 0, limit: 20 });
+  wrap(<PhotographerRemovalRequestList />);
+  expect(await screen.findByText("Needs your response")).toBeVisible();
+  cleanup(); client.clear();
+  vi.mocked(removalApi.listPhotographerRemovalRequests).mockResolvedValue({ items: [withUnanswered(0)], total: 1, offset: 0, limit: 20 });
+  wrap(<PhotographerRemovalRequestList />);
+  expect(await screen.findByRole("link", { name: /Cebu City Marathon/ })).toBeVisible();
+  expect(screen.queryByText("Needs your response")).not.toBeInTheDocument();
+});
