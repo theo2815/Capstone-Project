@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import type { PhotoMetadataDto } from "@/types/photo-metadata";
@@ -275,5 +275,99 @@ describe("PhotoPreviewCard metadata access", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Could not refresh preview. Try again.");
     fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
     expect(onRefreshImage).toHaveBeenCalledOnce();
+  });
+});
+
+describe("PhotoPreviewCard keyboard focus", () => {
+  // jsdom has no layout; model the below-lg viewport, where `hidden lg:*` controls are display:none.
+  const belowLg = () => Object.defineProperty(HTMLElement.prototype, "checkVisibility", {
+    configurable: true, value(this: HTMLElement) { return !this.closest(".hidden"); },
+  });
+  afterEach(() => { delete (HTMLElement.prototype as Partial<HTMLElement>).checkVisibility; });
+  const page = (open: boolean, cb: ReturnType<typeof callbacks>, withOpener = true) => withQuery(<>
+    {withOpener && <button type="button">Open preview</button>}
+    {open && <PhotoPreviewCard photo={photo} metadataAccess="public" mode="owned" eventName="Cebu Run" index={1} total={2} {...cb} />}
+  </>);
+
+  it("moves focus inside and wraps Tab and Shift+Tab across the visible controls only", async () => {
+    belowLg();
+    const user = userEvent.setup();
+    const cb = callbacks();
+    const view = render(page(false, cb));
+    screen.getByRole("button", { name: "Open preview" }).focus();
+    view.rerender(page(true, cb));
+    const [backdrop, mobileClose] = await screen.findAllByRole("button", { name: "Close preview" });
+    expect(mobileClose).toHaveFocus();
+    expect(backdrop).toHaveAttribute("tabindex", "-1");
+    const metadataButton = screen.getByRole("button", { name: "Show Metadata" });
+    metadataButton.focus();
+    await user.tab();
+    expect(mobileClose).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(metadataButton).toHaveFocus();
+  });
+
+  it("keeps the page inert while open, then restores the trigger and prior inert state", async () => {
+    const alreadyInert = document.body.appendChild(document.createElement("div"));
+    alreadyInert.setAttribute("inert", "");
+    onTestFinished(() => alreadyInert.remove());
+    const cb = callbacks();
+    const view = render(page(false, cb));
+    const opener = screen.getByRole("button", { name: "Open preview" });
+    opener.focus();
+    view.rerender(page(true, cb));
+    await screen.findByRole("dialog", { name: "Preview photo 101" });
+    expect(opener.closest("[inert]")).not.toBeNull();
+    expect(screen.getByRole("dialog", { name: "Preview photo 101" }).closest("[inert]")).toBeNull();
+    view.rerender(page(false, cb));
+    expect(opener.closest("[inert]")).toBeNull();
+    expect(alreadyInert).toHaveAttribute("inert");
+    expect(opener).toHaveFocus();
+  });
+
+  it("lets metadata own Tab and Escape, then returns through the preview to the page", async () => {
+    belowLg();
+    vi.spyOn(api, "get").mockResolvedValue(metadata);
+    const user = userEvent.setup();
+    const cb = callbacks();
+    const view = render(page(false, cb));
+    const opener = screen.getByRole("button", { name: "Open preview" });
+    opener.focus();
+    view.rerender(page(true, cb));
+    const metadataButton = await screen.findByRole("button", { name: "Show Metadata" });
+    await user.click(metadataButton);
+    await screen.findByText("Canon EOS R6");
+    const metadataDialog = screen.getByRole("dialog", { name: "Photo metadata" });
+    expect(metadataDialog.closest("[inert]")).toBeNull();
+    await user.tab();
+    expect(metadataDialog).toContainElement(document.activeElement as HTMLElement);
+    await user.tab({ shift: true });
+    expect(metadataDialog).toContainElement(document.activeElement as HTMLElement);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Photo metadata" })).toBeNull();
+    expect(metadataButton).toHaveFocus();
+    expect(cb.onClose).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(cb.onClose).toHaveBeenCalledTimes(1);
+    view.rerender(page(false, cb));
+    expect(opener).toHaveFocus();
+  });
+
+  it("cleans up on unmount with metadata open and never focuses a removed trigger", async () => {
+    vi.spyOn(api, "get").mockResolvedValue(metadata);
+    const user = userEvent.setup();
+    const cb = callbacks();
+    const view = render(page(false, cb));
+    screen.getByRole("button", { name: "Open preview" }).focus();
+    view.rerender(page(true, cb));
+    await user.click(await screen.findByRole("button", { name: "Show Metadata" }));
+    await screen.findByText("Canon EOS R6");
+    view.rerender(page(true, cb, false));
+    act(() => useAuthStore.getState().logout());
+    view.rerender(page(false, cb, false));
+    expect(document.querySelector("[inert]")).toBeNull();
+    expect(document.activeElement).toBe(document.body);
+    await user.keyboard("{Escape}");
+    expect(cb.onClose).not.toHaveBeenCalled();
   });
 });

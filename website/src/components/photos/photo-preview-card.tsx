@@ -169,12 +169,38 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     setMounted(true);
   }, []);
 
+  // Modal focus: start inside, keep the page behind inert, and hand focus back
+  // to the opener on close. Mount-only so metadata's later portal stays live.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!mounted) return;
+    const trigger = document.activeElement;
+    const background = Array.from(document.body.children).filter((el) => el !== dialogRef.current && !el.hasAttribute("inert"));
+    background.forEach((el) => el.setAttribute("inert", ""));
+    focusPreviewClose();
+    return () => {
+      background.forEach((el) => el.removeAttribute("inert"));
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
+    };
+  }, [mounted, focusPreviewClose]);
+
   useEffect(() => {
     if (metadataOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowLeft" && onPrev) onPrev();
       else if (e.key === "ArrowRight" && onNext) onNext();
+      else if (e.key === "Tab") {
+        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), a[href]') ?? [])
+          .filter((el) => el.checkVisibility?.() ?? true);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        const inside = dialogRef.current?.contains(document.activeElement);
+        if (e.shiftKey ? !inside || document.activeElement === first : !inside || document.activeElement === last) {
+          e.preventDefault();
+          (e.shiftKey ? last : first)?.focus();
+        }
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => {
@@ -239,6 +265,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
 
   const content = (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={
@@ -248,6 +275,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     >
       <button
         type="button"
+        tabIndex={-1}
         onClick={onClose}
         aria-label="Close preview"
         className="absolute inset-0 bg-ink/85 backdrop-blur-md cursor-default"
