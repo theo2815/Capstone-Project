@@ -131,6 +131,44 @@ class AdminEventServiceReviewTest {
     }
 
     @Test
+    fun `approving a submission takes no photo locks`() {
+        val event = submitted()
+
+        service.approve(adminId, event.id)
+
+        Mockito.verify(photoRepository, Mockito.never()).lockIdsByEventIdForUpdate(anyArg())
+    }
+
+    @Test
+    fun `approving a pricing change locks its photos before the event row`() {
+        val event = live().apply {
+            reviewStatus = EventReviewStatus.CHANGE_PENDING
+            pendingChange = mapOf("pricingMode" to "paid", "pricePerPhoto" to "200.00", "watermarkPolicy" to "platform")
+        }
+
+        service.approve(adminId, event.id)
+
+        val order = Mockito.inOrder(photoRepository, eventRepository)
+        order.verify(photoRepository).lockIdsByEventIdForUpdate(event.id)
+        order.verify(eventRepository).findByIdForReview(event.id)
+    }
+
+    @Test
+    fun `a pricing change that appears after the unlocked read is refused, not applied without photo locks`() {
+        val event = live().apply {
+            reviewStatus = EventReviewStatus.CHANGE_PENDING
+            pendingChange = mapOf("pricingMode" to "paid", "pricePerPhoto" to "200.00", "watermarkPolicy" to "platform")
+        }
+        Mockito.`when`(eventRepository.findReviewStatus(event.id)).thenReturn(EventReviewStatus.PENDING)
+
+        assertFailsWith<ConflictException> { service.approve(adminId, event.id) }
+
+        assertEquals(EventReviewStatus.CHANGE_PENDING, event.reviewStatus)
+        Mockito.verify(photoRepository, Mockito.never()).updatePriceByEventId(anyArg(), anyArg())
+        Mockito.verifyNoInteractions(decisions)
+    }
+
+    @Test
     fun `a price-only change does not re-render previews`() {
         val event = live().apply {
             reviewStatus = EventReviewStatus.CHANGE_PENDING
@@ -485,6 +523,7 @@ class AdminEventServiceReviewTest {
             reviewStatus = review,
         )
         Mockito.`when`(eventRepository.findByIdForReview(event.id)).thenReturn(event)
+        Mockito.`when`(eventRepository.findReviewStatus(event.id)).thenAnswer { event.reviewStatus }
         Mockito.`when`(eventRepository.findById(event.id)).thenReturn(Optional.of(event))
         return event
     }

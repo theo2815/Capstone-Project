@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.yaml.snakeyaml.Yaml
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
 import software.amazon.awssdk.core.exception.SdkClientException
 import software.amazon.awssdk.regions.Region
@@ -20,10 +19,9 @@ import kotlin.test.assertTrue
 // creating then deleting a throwaway collection. Free (a metadata op, not billed
 // per image), non-destructive, in your own AWS account.
 //
-// Credentials come from app.ai.rekognition.{access-key,secret-key} in
-// application-local.yml when present, else the AWS default chain (env vars /
-// ~/.aws/credentials) — the same order the app's RekognitionConfig uses, so this
-// tests exactly what the running app will do. Skips itself if no creds are found.
+// Credentials come only from app.ai.rekognition.{access-key,secret-key} in
+// application-local.yml. Without them (a worktree, CI) the test skips at once and
+// sends nothing to AWS: the machine's own default credentials are never tried.
 //
 // Tagged "integration" so the default `test` task ignores it. Run just this one:
 //   ./gradlew -p backend integrationTest --tests "*RekognitionCredentialsSmokeTest"
@@ -33,18 +31,18 @@ class RekognitionCredentialsSmokeTest {
     @Test
     fun `rekognition credentials can create and delete a collection`() {
         val cfg = readLocalRekognitionConfig()
-        val region = cfg?.region ?: "ap-southeast-1"
+        if (cfg?.accessKey == null || cfg.secretKey == null) {
+            assumeTrue(false) {
+                "No AWS credentials found. Put access-key/secret-key under " +
+                    "app.ai.rekognition in application-local.yml, then re-run."
+            }
+            return
+        }
+        val region = cfg.region ?: "ap-southeast-1"
 
         val builder = RekognitionClient.builder().region(Region.of(region))
-        if (cfg?.accessKey != null && cfg.secretKey != null) {
-            builder.credentialsProvider(
-                StaticCredentialsProvider.create(AwsBasicCredentials.create(cfg.accessKey, cfg.secretKey)),
-            )
-            println("Using credentials from application-local.yml (region=$region)")
-        } else {
-            builder.credentialsProvider(DefaultCredentialsProvider.create())
-            println("No keys in application-local.yml; trying the AWS default chain (env / ~/.aws), region=$region")
-        }
+            .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(cfg.accessKey, cfg.secretKey)))
+        println("Using credentials from application-local.yml (region=$region)")
 
         val collectionId = "qp-smoke-test-${System.nanoTime()}"
         try {
@@ -56,12 +54,8 @@ class RekognitionCredentialsSmokeTest {
                 assertTrue(created.collectionArn().endsWith("/$collectionId"), created.collectionArn())
             }
         } catch (ex: SdkClientException) {
-            // Client-side: no credentials could be resolved, or no network — can't
-            // run the check, so skip (not fail) with guidance.
-            assumeTrue(false) {
-                "No AWS credentials found (or no network). Put access-key/secret-key under " +
-                    "app.ai.rekognition in application-local.yml, then re-run. Detail: ${ex.message}"
-            }
+            // Client-side: no network — can't run the check, so skip (not fail).
+            assumeTrue(false) { "AWS could not be reached (no network?). Detail: ${ex.message}" }
         }
         // Any AWS *service* error (bad key → UnrecognizedClientException, missing
         // permission → AccessDeniedException) is NOT caught above and FAILS the

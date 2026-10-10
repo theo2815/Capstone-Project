@@ -291,3 +291,16 @@ The website shows "Request reference: `<key>`" when the reply to a create-event,
 **Reconciliation for a request that stays `UNKNOWN`:** vault `_journal/2026-10-08-admin-actions-and-event-location-plan.md`, heading "Safe administrative reconciliation for persistent UNKNOWN" (Session 4). Never edit or delete the `admin_action_commands` row by hand; the database blocks deleting it.
 
 Signing out clears every stored reference in that browser tab. Do that only after the lookup shows the request did not go through, or you may send it twice.
+
+---
+
+## Classifying an event the admin list does not show
+
+`/admin/events` loads the 200 events with the latest race dates and has no search, so an event with an earlier date cannot be opened in the form. Its region and province can still be set with the same request the form sends. (Owner's decision, 2026-10-09: no search box until a real environment holds more than 200 events.)
+
+1. Get the event's `id` and `reviewRevision`: signed in as an admin, page the list with `GET /api/v1/admin/events?offset=200&limit=200` (then 400, and so on) until the event appears. With database access: `SELECT id, review_revision, region_code, province_code FROM events WHERE slug = '<slug>';`
+2. Take both codes from `GET /api/v1/regions`. Never retype them from memory, and send both or neither.
+3. Signed in as an admin, send `PATCH /api/v1/admin/events/<id>` as `multipart/form-data` with the fields `regionCode`, `provinceCode` and `expectedRevision`, and a new UUID in the `Idempotency-Key` header. Fields you leave out keep their values. Always send `expectedRevision`: without it nothing checks that the event is still as you read it.
+4. Check the reply: it carries `regionCode` and `provinceCode`. `GET /api/v1/events/<slug>` shows the pair too, except for a draft (a pending or rejected photographer submission), which has no public page and answers 404 there.
+
+A 409 means the event changed after you read its revision: read it again and resend under a new key. A 404 on the request means the event is deleted or the id is wrong. If the reply is lost, follow "Unresolved admin request" above with the key you sent. The request cannot clear a pair, and a province must come from confirmed event information, never from the location text or the title.

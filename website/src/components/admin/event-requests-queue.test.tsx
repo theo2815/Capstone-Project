@@ -27,6 +27,8 @@ it.each(["pending", "change_pending"] as const)("retains %s rejection input thro
   const dialog = screen.getByRole("dialog"); const reason = within(dialog).getByLabelText("Reason (max 500)");
   await user.type(reason, "Please clarify pricing"); await user.click(within(dialog).getByRole("button", { name: label }));
   expect(reason).toBeDisabled(); await user.keyboard("{Escape}{Enter}"); expect(post).toHaveBeenCalledTimes(1);
+  expect(within(dialog).getByRole("button", { name: reviewStatus === "pending" ? "Sending back…" : "Declining…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Approve", hidden: true })).toBeDisabled();
   await act(async () => { fail(new Error("Unavailable")); });
   expect(reason).toHaveValue("Please clarify pricing"); await waitFor(() => expect(reason).toBeEnabled()); expect(dialog).toBeInTheDocument();
   post.mockResolvedValueOnce({ ...adminEvent, reviewStatus: reviewStatus === "pending" ? "rejected" : "approved" });

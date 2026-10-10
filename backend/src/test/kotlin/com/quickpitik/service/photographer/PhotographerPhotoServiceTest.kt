@@ -66,6 +66,19 @@ class PhotographerPhotoServiceTest {
         assertEquals(emptyList(), service.permanentDelete(seller, eventId, listOf(photoId)).deleted)
     }
 
+    @Test
+    fun `trash locks its photos with one id-only query in id order`() {
+        val event = event(null)
+        Mockito.`when`(events.findById(event.id)).thenReturn(Optional.of(event))
+        val low = UUID.fromString("10000000-0000-0000-0000-000000000001")
+        val high = UUID.fromString("70000000-0000-0000-0000-000000000002")
+
+        service.trash(seller, event.id, listOf(high, low, high))
+
+        Mockito.verify(photos).lockIdsForUpdate(listOf(low, high))
+        Mockito.verify(photos, Mockito.never()).findAllByIdForUpdate(Mockito.anyCollection())
+    }
+
     private fun event(deletedAt: OffsetDateTime?) = Event(
         slug = "photo-management-${UUID.randomUUID()}",
         name = "Photo management",

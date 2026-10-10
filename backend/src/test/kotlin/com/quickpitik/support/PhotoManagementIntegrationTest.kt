@@ -46,6 +46,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var grants: DownloadGrantRepository
     @Autowired lateinit var reconciler: com.quickpitik.service.orders.PaymongoCheckoutReconciler
     @Autowired lateinit var tx: TransactionTemplate
+    @Autowired lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
     lateinit var event: Event
     lateinit var owner: User
     lateinit var photo: Photo
@@ -195,6 +196,22 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertTrue(result.deleted.isEmpty(), "The staging capability can still produce another object")
         assertEquals(listOf(photo.id), result.failed)
         assertNotNull(photos.findById(photo.id).orElseThrow().deletionStartedAt)
+    }
+
+    @Test fun `the id-only photo lock returns existing ids in order and holds their rows`() {
+        val second = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/${UUID.randomUUID()}/original.jpg", pricePhp = BigDecimal("125")))
+        val ids = listOf(photo.id, second.id)
+        tx.execute {
+            // PostgreSQL orders UUIDs by their bytes (the text order), not by Java's signed compareTo.
+            assertEquals(ids.sortedBy { it.toString() }, photos.lockIdsForUpdate(ids.sortedByDescending { it.toString() } + UUID.randomUUID()))
+            val blocked = TransactionTemplate(tx.transactionManager!!).apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
+                .execute { jdbc.queryForList("SELECT id FROM photos WHERE id IN (?, ?) FOR UPDATE SKIP LOCKED", photo.id, second.id) }
+            assertEquals(emptyList<Map<String, Any>>(), blocked, "Another transaction could still lock the rows")
+            // A cart or order row that points at the photo takes this lock on insert; trash must not make it wait.
+            val shared = TransactionTemplate(tx.transactionManager!!).apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
+                .execute { jdbc.queryForList("SELECT id FROM photos WHERE id = ? FOR KEY SHARE NOWAIT", photo.id) }
+            assertEquals(1, shared!!.size)
+        }
     }
 
     @Test fun `trash counter update must preserve a concurrent upload increment`() {

@@ -83,6 +83,7 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
 
 **Cloud testing & deploys**
 - **Read `docs/testing-cloud-services.md` in full before** running backend `integrationTest`, any test that calls AWS / R2 / PayMongo, any Railway or Vercel command, or pushing `dev-main`. Two traps it covers: a plain `integrationTest` in a checkout with `application-local.yml` makes real, billed AWS calls (and that file's bucket is the **production** one — never point a test at it), and a `dev-main` push that changes `backend/**` deploys to staging and runs its migrations.
+- **Cloudflare (R2) from the command line: use the `cf` CLI, not Wrangler**, and run `cf auth whoami` first to confirm the QuickPitik account. Setup and account ID: `docs/testing-cloud-services.md` § Looking at R2 by hand.
 
 **Cross-module changes**
 - Changes spanning `ai-api` ↔ backend ↔ client require coordination — update the integration docs in the same commit.

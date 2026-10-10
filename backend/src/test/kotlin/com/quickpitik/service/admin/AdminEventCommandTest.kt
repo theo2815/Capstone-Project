@@ -75,6 +75,43 @@ class AdminEventCommandTest {
         assertTrue(deleted.isEmpty())
     }
 
+    @Test fun `keyed create with an invalid date is refused before the cover is decoded`() {
+        var claimed: AdminActionCommand? = null
+        Mockito.`when`(receipts.insertEventClaim(anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg()))
+            .thenAnswer {
+                claimed = AdminActionCommand(commandId=it.getArgument(0),actorId=actor,
+                    operation=AdminActionOperation.EVENT_CREATE,targetId=null,inputHash=it.getArgument(4),
+                    claimOwner=it.getArgument(5),leaseExpiresAt=now.plusSeconds(300),intendedEventId=it.getArgument(8),
+                    claimedAt=now,updatedAt=now)
+                1
+            }
+        Mockito.`when`(receipts.findForUpdate(UUID.fromString(key.value))).thenAnswer { claimed }
+        val covers = Mockito.mock(com.quickpitik.service.events.EventCoverService::class.java)
+        Mockito.`when`(covers.digest(anyArg())).thenReturn("b".repeat(64))
+        val users = Mockito.mock(com.quickpitik.repository.UserRepository::class.java)
+        Mockito.`when`(users.findById(actor)).thenReturn(java.util.Optional.of(
+            User(id = actor, email = "admin@test.local", passwordHash = "test-only", name = "Admin", role = Role.ADMIN)))
+        val photos = Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java)
+        val events = AdminEventService(Mockito.mock(com.quickpitik.repository.EventRepository::class.java), photos,
+            Mockito.mock(AdminDecisionLogService::class.java),
+            com.quickpitik.service.events.EventDtoMapper(Mockito.mock(com.quickpitik.service.storage.StorageService::class.java),
+                com.quickpitik.config.StorageProperties(), photos),
+            covers, Mockito.mock(com.quickpitik.service.ai.FaceBibProvider::class.java),
+            Mockito.mock(com.quickpitik.config.AiApiProperties::class.java),
+            Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java), users,
+            testTransactionTemplate(), service,
+            com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() })
+
+        val error = assertFailsWith<com.quickpitik.exception.ValidationException> {
+            events.create(actor, com.quickpitik.dto.admin.CreateAdminEventRequest(title = "Fun Run", date = "10/10/2026",
+                location = "Cebu", pricePerPhoto = java.math.BigDecimal("150")),
+                AdminEventService.CoverUpload(byteArrayOf(1), "image/jpeg"), key)
+        }
+
+        assertEquals("date", error.field)
+        Mockito.verify(covers, Mockito.never()).prepare(anyArg(), anyArg())
+    }
+
     @Test fun `failed final event validation preserves its domain error and unresolved receipt`() {
         var claimed: AdminActionCommand? = null
         Mockito.`when`(receipts.insertEventClaim(anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),Mockito.isNull(),Mockito.isNull()))

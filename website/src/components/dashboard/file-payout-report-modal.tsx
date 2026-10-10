@@ -48,6 +48,7 @@ export function FilePayoutReportModal({
   const { showToast } = useToast();
 
   const [reason, setReason] = useState<PayoutReportReason | null>(null);
+  const [reasonOpen, setReasonOpen] = useState(false);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -95,7 +96,7 @@ export function FilePayoutReportModal({
   const reasonLabel = reason ? PAYOUT_REPORT_REASON_LABEL[reason] : "Pick a reason";
 
   return (
-    <Modal isOpen={cycle !== null} onClose={() => { if (!submitting) onClose(); }} hideClose={submitting} title="File a report">
+    <Modal isOpen={cycle !== null} onClose={() => { if (!submitting) onClose(); }} hideClose={submitting} title="File a report" escDisabled={reasonOpen}>
       <Kicker as="p" tone="soft" tnum className="mb-5">
         PAYOUT · {cycle.id} · {formatLongDate(cycle.requestedAt)} ·{" "}
         {formatPrice(cycle.amount)}
@@ -109,6 +110,7 @@ export function FilePayoutReportModal({
           <Dropdown
             ariaLabel="Report reason"
             panelClassName="z-[70]"
+            onOpenChange={setReasonOpen}
             trigger={
               <DropdownTrigger
                 className={cn(

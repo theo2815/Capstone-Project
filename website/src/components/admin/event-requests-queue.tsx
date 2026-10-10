@@ -133,7 +133,7 @@ export function EventRequestsQueue() {
           rejecting?.reviewStatus === "change_pending" ? "Decline" : "Send back"
         }
         submitting={!!rejecting && isPending(rejecting.id)}
-        pendingLabel="Sending back…"
+        pendingLabel={rejecting?.reviewStatus === "change_pending" ? "Declining…" : "Sending back…"}
         submitDisabled={reason.trim().length === 0}
       >
         <AdminTextarea
@@ -209,7 +209,7 @@ function RequestRow({
           aria-busy={busy}
           className={cn(BTN_PRIMARY, BTN_SIZE.sm)}
         >
-          {busy ? pendingLabel : "Approve"}
+          {pendingLabel === "Approving…" ? pendingLabel : "Approve"}
         </button>
         <button
           type="button"

@@ -44,7 +44,7 @@ class PhotographerPhotoService(
     fun trash(photographerId: UUID, eventId: UUID, photoIds: List<UUID>): Int {
         requireNotRemovedEvent(eventId)
         if (photoIds.isEmpty()) return 0
-        photoRepository.findAllByIdForUpdate(photoIds.distinct().sorted())
+        photoRepository.lockIdsForUpdate(photoIds.distinct().sorted())
         val affected = photoRepository.trashOwned(photographerId, eventId, photoIds, OffsetDateTime.now())
         if (affected > 0) adjustPhotoCount(eventId, photographerId, -affected)
         return affected

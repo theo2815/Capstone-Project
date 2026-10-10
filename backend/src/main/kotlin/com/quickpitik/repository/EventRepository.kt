@@ -49,6 +49,11 @@ interface EventRepository : JpaRepository<Event, UUID> {
     @Query("SELECT e FROM Event e WHERE e.id = :id")
     fun findByIdForReview(@Param("id") id: UUID): Event?
 
+    // Unlocked scalar read: lets approve decide whether photo rows must be
+    // locked before the event row, without loading the entity it locks next.
+    @Query("SELECT e.reviewStatus FROM Event e WHERE e.id = :id")
+    fun findReviewStatus(@Param("id") id: UUID): EventReviewStatus?
+
     // Public /events list: admin-created events only. Photographer-owned events
     // (createdBy != null) surface on the owner's profile / a direct link, never
     // the general list — so a foreign photographer never sees them in the upload

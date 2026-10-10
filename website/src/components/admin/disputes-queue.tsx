@@ -509,11 +509,10 @@ function DisputeDrawerActions({
   onDeny: () => void;
   onEscalate: () => void;
 }) {
+  // Every action needs an open dispute: the server escalates open ones only.
   const isOpen = dispute.status === "open";
-  const isDenied = dispute.status === "denied";
-  const escalateAllowed = isOpen || isDenied;
 
-  if (!isOpen && !escalateAllowed) {
+  if (!isOpen) {
     return (
       <p className="font-sans text-sm text-slate-soft">
         {dispute.refundStatus === "manual_review"
@@ -525,7 +524,7 @@ function DisputeDrawerActions({
 
   return (
     <>
-      {escalateAllowed && (
+      {isOpen && (
         <button
           type="button"
           onClick={onEscalate}
