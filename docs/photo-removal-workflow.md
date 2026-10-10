@@ -5,7 +5,7 @@ How admins run the photo-removal workflow and how to release or roll it back. Th
 ## Admin operations
 
 - **Intake is through support only.** There is no public form. An admin opens the case from what support received.
-- **Overdue reviews.** Photographers get a response window (`app.photo-removal.photographer-response-window` in `backend/src/main/resources/application.yml`, bound by `PhotoRemovalProperties`; currently 72 h). After it passes, an admin may decide without the owner's answer. Deciding earlier, or with no reachable owner, needs an urgent reason.
+- **Overdue reviews.** Photographers get a response window (`app.photo-removal.photographer-response-window` in `backend/src/main/resources/application.yml`, bound by `PhotoRemovalProperties`). After it passes, an admin may decide without the owner's answer. Deciding earlier, or with no reachable owner, needs an urgent reason.
 - **Cleanup retries.** Erasure that cannot be confirmed (storage, face provider, AI disabled or misconfigured) stays pending and is retried by a sweep. Tune it with `PHOTO_REMOVAL_CLEANUP_INTERVAL` (how often it runs) and `PHOTO_REMOVAL_CLEANUP_BACKOFF` (wait after a failure). A case stays RESOLVING until every authorized erasure is confirmed. Fix the cause (credentials, `AI_API_ENABLED`, permissions) rather than clearing state by hand.
 - **Retained-restricted items.** RETAIN_RESTRICTED needs a reason and a future review date. The photo stays unavailable and the item comes back to admins on that date for a new decision. It is not a deletion.
 - **Deciding while RESOLVING.** An admin may decide a RETAINED_RESTRICTED item while the case is RESOLVING (another photo's cleanup is still retrying). Any other item state is a 409, and so is any decision on a case with a cancel requested. Rule: `PhotoRemovalService.decide()`.
@@ -14,7 +14,7 @@ How admins run the photo-removal workflow and how to release or roll it back. Th
 
 ## Media and retention facts
 
-What deletion covers. The shared eraser `PhotoErasureService` (`backend/src/main/kotlin/com/quickpitik/service/photos/`) deletes the photo's `s3Key`, `thumbnailS3Key`, `watermarkS3Key`, and the staging and original keys of its upload receipts. A key still used by another photo is skipped (`SHARED_REFERENCE`). A key counts as `ABSENT` only after `storage.exists` confirms it; otherwise it retries. Face records go through `FaceBibProvider.erasePhotoFaces`. The case selfie is removed by `PhotoRemovalEvidenceService`. The photo row can remain as a tombstone: `PhotoRepository.minimizeErasedPhoto` clears the blob keys and descriptive fields but keeps the ID and the attribution and finance links. So a database backup holds case rows and tombstones, not image bytes (bytes live only in object storage).
+What deletion covers. The shared eraser `PhotoErasureService` (`backend/src/main/kotlin/com/quickpitik/service/photos/`) deletes the photo's `s3Key`, `thumbnailS3Key`, `watermarkS3Key`, the fixed `events/{eventId}/photos/{id}/watermark.jpg` key, the keys of its `photo_work_outputs` (`erasureWorkKeys`), and the staging and original keys of its upload receipts. A key still used by another photo is skipped (`SHARED_REFERENCE`). A key counts as `ABSENT` only after `storage.exists` confirms it; otherwise it retries. Face records go through `FaceBibProvider.erasePhotoFaces`. The case selfie is removed by `PhotoRemovalEvidenceService`. The photo row can remain as a tombstone: `PhotoRepository.minimizeErasedPhoto` clears the blob keys and descriptive fields but keeps the ID and the attribution and finance links. So a database backup holds case rows and tombstones, not image bytes (bytes live only in object storage).
 
 What deletion does not cover:
 
@@ -24,10 +24,10 @@ What deletion does not cover:
 
 ## Release order
 
-1. **Migrations.** The removal migrations are additive: V68 to V76 and V80 under `backend/src/main/resources/db/migration`. V77 to V79 and V81 to V84 belong to other work. Flyway applies them at backend boot and they cannot be undone. Rehearse on a throwaway database first: a clean install, and an upgrade from the version the target is on now (`docs/testing-cloud-services.md` section 4).
+1. **Migrations.** The removal migrations are additive: V68 to V76 and V80 under `backend/src/main/resources/db/migration`. V81 to V84 belong to other lanes (V77 to V79 were reserved but are not present). Flyway applies them at backend boot and they cannot be undone. Rehearse on a throwaway database first: a clean install, and an upgrade from the version the target is on now (`docs/testing-cloud-services.md` section 4).
 2. **Backend** (safety chain: availability restrictions, erasure, decisions). Deploy it before any client.
 3. **Website** last, once the backend is live. It only uses the additive API.
-4. **Do not roll out while required cleanup is unverified.** In an authorized nonproduction environment, confirm the selected provider's least-privilege selective-delete permission works: Rekognition `DeleteFaces` on the event collection, or ai-api `DELETE /faces/persons?event_id=`.
+4. **Do not roll out while required cleanup is unverified.** In an authorized nonproduction environment, confirm the selected provider's least-privilege per-photo erase permissions work. ai-api (`AiApiClient.erasePhotoFaces`): list the event's persons, `DELETE /api/v1/faces/persons/{id}`, list again (the `?event_id=` form is the event-wide bulk erase, not this path). Rekognition (`RekognitionAiClient.erasePhotoFaces`): `ListFaces` and `DeleteFaces` on the event collection.
 
 Release gates (steps and rules in `docs/testing-cloud-services.md` section 1; ask the owner first; skipped is not passed):
 
