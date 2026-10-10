@@ -210,9 +210,11 @@ class PhotoRemovalQueryService(
 
     private fun present(row: ReviewPhoto): RemovalPhotoDto {
         try {
-            val available = row.originalKey?.let(storage::exists) == true && photos.isDeliveryAvailable(row.dto.photo.id)
-            val preview = if (available && row.previewKey?.let(storage::exists) == true && photos.isDeliveryAvailable(row.dto.photo.id))
-                storage.presignedGetUrl(row.previewKey, storageProperties.presignedTtl.thumbnail) else null
+            val deliverable = photos.isDeliveryAvailable(row.dto.photo.id)
+            val available = deliverable && row.originalKey?.let(storage::exists) == true
+            // ponytail: one HEAD per photo (the original). Previews are presigned without a HEAD; a missing
+            // thumbnail renders as a blank tile. Batch the availability query if admin lists ever get large.
+            val preview = if (available && row.previewKey != null) storage.presignedGetUrl(row.previewKey, storageProperties.presignedTtl.thumbnail) else null
             return row.dto.copy(photo = row.dto.photo.copy(imageUrl = preview), bytesAvailable = available)
         } catch (error: Exception) {
             throw ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, "Photo review storage is unavailable")

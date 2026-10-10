@@ -230,6 +230,17 @@ class PhotoRemovalMatchingIntegrationTest : PostgresIntegrationTest() {
         assertEquals(404, get(UUID.randomUUID()).statusCode())
     }
 
+    @Test fun `gallery hydration costs one storage existence check per photo`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        photo(owner, "a"); photo(owner, "b")
+        val case = case()
+        clearInvocations(storage)
+        val page = queries.photos(admin.id, case.id, null, 0, 50)
+        assertTrue(page.items.isNotEmpty())
+        assertTrue(page.items.all { it.bytesAvailable && it.photo.imageUrl != null })
+        verify(storage, times(page.items.size)).exists(anyString())
+    }
+
     @Test fun `cache stores only latest server provenance and exact committed version`() {
         val photo = photo(user(Role.PHOTOGRAPHER), "candidate")
         provider(FacesSearchResult(listOf(FaceMatch("candidate", similarity = 0.88))))
