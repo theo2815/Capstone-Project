@@ -254,7 +254,25 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertTrue(json.readTree(exchanged.body()).path("data").path("accessToken").asText().isNotBlank())
         assertTrue(json.readTree(exchanged.body()).path("data").path("refreshToken").asText().isNotBlank())
 
-        assertEquals(401, post("/api/v1/auth/desktop/exchange", exchangeBody).statusCode())
+        val replay = post("/api/v1/auth/desktop/exchange", exchangeBody)
+        assertEquals(401, replay.statusCode())
+        assertEquals("INVALID_TOKEN", errorCode(replay))
+    }
+
+    @Test
+    fun `desktop code exchange shares the login rate limit`() {
+        val body = """{"code":"${"x".repeat(43)}","codeVerifier":"${"v".repeat(43)}"}"""
+        val responses = (1..11).map {
+            val request = HttpRequest.newBuilder(uri("/api/v1/auth/desktop/exchange"))
+                .header("Content-Type", "application/json")
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build()
+            client.send(request, HttpResponse.BodyHandlers.ofString())
+        }
+
+        assertEquals(401, responses.first().statusCode())
+        assertEquals(429, responses.last().statusCode())
     }
 
     @Test

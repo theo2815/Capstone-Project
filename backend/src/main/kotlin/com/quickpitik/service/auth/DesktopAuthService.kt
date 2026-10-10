@@ -69,12 +69,12 @@ class DesktopAuthService(
         val now = OffsetDateTime.now(clock)
         val row = desktopAuthCodeRepository.findByCodeHash(OpaqueTokens.hash(code)) ?: throw invalidCode()
         if (!row.isUsable(now) || challengeOf(codeVerifier) != row.codeChallenge) throw invalidCode()
-        if (desktopAuthCodeRepository.markUsed(row.id, now) != 1) throw invalidCode()
         val user = userRepository.findById(row.userId).orElse(null) ?: throw invalidCode()
         if (user.suspendedAt != null) {
             throw UnauthorizedException("Account suspended", ErrorCodes.ACCOUNT_SUSPENDED)
         }
         if (user.role != Role.PHOTOGRAPHER) throw invalidCode()
+        if (desktopAuthCodeRepository.markUsed(row.id, now) != 1) throw invalidCode()
         return authService.buildAuthResponse(user)
     }
 

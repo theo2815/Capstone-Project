@@ -121,6 +121,7 @@ class DesktopAuthServiceTest {
         Mockito.`when`(authService.buildAuthResponse(user)).thenReturn(pair)
 
         assertEquals(pair, service().exchange(code, verifier))
+        Mockito.verify(codes).markUsed(row.id, now)
     }
 
     @Test
@@ -174,6 +175,7 @@ class DesktopAuthServiceTest {
         val row = stored(user, code)
         Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code))).thenReturn(row)
         Mockito.`when`(codes.markUsed(row.id, now)).thenReturn(0)
+        Mockito.`when`(users.findById(user.id)).thenReturn(Optional.of(user))
 
         val ex = assertFailsWith<UnauthorizedException> { service().exchange(code, verifier) }
 
@@ -187,12 +189,12 @@ class DesktopAuthServiceTest {
         val code = OpaqueTokens.generate()
         val row = stored(user, code)
         Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code))).thenReturn(row)
-        Mockito.`when`(codes.markUsed(row.id, now)).thenReturn(1)
         Mockito.`when`(users.findById(user.id)).thenReturn(Optional.of(user))
 
         val ex = assertFailsWith<UnauthorizedException> { service().exchange(code, verifier) }
 
         assertEquals(ErrorCodes.ACCOUNT_SUSPENDED, ex.code)
+        Mockito.verify(codes, Mockito.never()).markUsed(anyArg(), anyArg())
     }
 
     @Test
@@ -201,12 +203,12 @@ class DesktopAuthServiceTest {
         val code = OpaqueTokens.generate()
         val row = stored(user, code)
         Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code))).thenReturn(row)
-        Mockito.`when`(codes.markUsed(row.id, now)).thenReturn(1)
         Mockito.`when`(users.findById(user.id)).thenReturn(Optional.of(user))
 
         val ex = assertFailsWith<UnauthorizedException> { service().exchange(code, verifier) }
 
         assertEquals(ErrorCodes.INVALID_TOKEN, ex.code)
+        Mockito.verify(codes, Mockito.never()).markUsed(anyArg(), anyArg())
     }
 
     @Test
