@@ -83,7 +83,8 @@ class AdminPhotoRemovalController(
     fun photos(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID,
         @RequestParam(required = false) bib: String?, @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?, response: HttpServletResponse): RemovalPage<RemovalPhotoDto> {
-        limit(principal, response, Bucket4jRateLimiter.POLICY_PHOTO_SEARCH)
+        // Browsing is an ordinary read; only /matches burns inference.
+        limit(principal, response)
         return queries.photos(principal.userId, id, bib, offset, limit)
     }
 

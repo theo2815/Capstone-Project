@@ -303,6 +303,19 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `removal gallery browsing is not bound by the face-search policy`() {
+        val token = adminToken()
+        val id = UUID.randomUUID()
+        val gallery = (1..31).map { page -> get("/api/v1/admin/photo-removal-requests/$id/photos?offset=${page * 24}&limit=24", token) }
+        assertTrue(gallery.none { it.statusCode() == 429 }, "gallery paging must not drain the 30-per-15-minute search bucket")
+        assertEquals(404, gallery.last().statusCode())
+        val body = """{"commandId":"${UUID.randomUUID()}","expectedVersion":0}"""
+        val matches = (1..31).map { post("/api/v1/admin/photo-removal-requests/$id/matches", body, token) }
+        assertEquals(429, matches.last().statusCode())
+        assertTrue(matches.last().headers().firstValue("Retry-After").isPresent)
+    }
+
+    @Test
     fun `mixed case local evidence prefix cannot reveal a known physical key`() {
         val key = "photo-removal/${UUID.randomUUID()}/evidence/${UUID.randomUUID()}"
         val path = Path.of("build/test-storage", key)
