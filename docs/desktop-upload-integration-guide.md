@@ -17,7 +17,9 @@ Code: `backend/src/main/kotlin/com/quickpitik/service/auth/DesktopAuthService.kt
 
 ## 2. Events the app offers for upload
 
-Public events from `GET /api/v1/events?limit=200` whose date is within race day and the next 3 days (Asia/Manila), plus the photographer's own and covered events from `GET /api/v1/me/photographer/events?limit=200` (owned events until one month after their date). Same rules as `website/src/lib/event-catalog.ts`; the backend gate in `PhotoUploadService.gate` has the final say on every upload.
+Public events from `GET /api/v1/events?limit=200` whose date is within race day and the next 3 days (Asia/Manila), plus the photographer's own and covered events from `GET /api/v1/me/photographer/events?limit=200`. Each item of that list carries `ownedByMe`: an owned event (`true`) takes uploads until one calendar month after its date, with no lower bound; a covered event (`false`) gets the same race-day-plus-3 window as a public one. Same rules as `website/src/lib/event-catalog.ts`.
+
+That list is not filtered by status or date, and only ACTIVE or COMPLETED events take uploads, so an owned event still waiting for review, or an archived one, can pass the date check and still be refused. The backend gate in `PhotoUploadService.gate` has the final say on every upload: it answers `422 EVENT_NOT_UPLOADABLE` with a message the app shows to the photographer.
 
 ## 3. Upload protocol (unchanged, per photo)
 
@@ -34,7 +36,7 @@ Accepted: `image/jpeg`, `image/png`, `image/webp`, at most `storage.direct-uploa
 
 ## 4. Desktop configuration
 
-Set in BatchMyPhotos `desktop/src/main/config.js` (packaged defaults) and overridable in development with `BATCH_QUICKPITIK_API_URL`, `BATCH_QUICKPITIK_WEB_URL`, `BATCH_QUICKPITIK_UPLOAD_ORIGIN`, `BATCH_QUICKPITIK_UPLOAD_ENABLED`. The upload origin is the storage host every presigned `uploadUrl` must match before bytes are sent, the same value as the website's `NEXT_PUBLIC_R2_UPLOAD_ORIGIN`.
+Set in BatchMyPhotos `desktop/src/main/config.js` (packaged defaults) and overridable in development with `BATCH_QUICKPITIK_API_URL`, `BATCH_QUICKPITIK_WEB_URL`, `BATCH_QUICKPITIK_UPLOAD_ORIGIN`, `BATCH_QUICKPITIK_UPLOAD_ENABLED`. The upload origin is the storage host every presigned `uploadUrl` must match before bytes are sent, the same value as the website's `NEXT_PUBLIC_R2_UPLOAD_ORIGIN`. Any environment can answer `multipart` on begin, not only local: staging and production do too while direct upload is switched off (`STORAGE_DIRECT_UPLOAD_ENABLED`, off by default), so the app supports both paths everywhere.
 
 | | Local | Staging | Production |
 |---|---|---|---|
