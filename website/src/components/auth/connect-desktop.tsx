@@ -118,7 +118,7 @@ function Copy({ heading, children }: { heading: string; children: ReactNode }) {
     <div className="space-y-5">
       <Kicker>BatchMyPhotos</Kicker>
       <h1 className="text-3xl md:text-4xl font-extrabold leading-tight">{heading}</h1>
-      <div className="text-slate text-base leading-relaxed">{children}</div>
+      <div className="text-slate text-base leading-relaxed break-words">{children}</div>
     </div>
   );
 }
