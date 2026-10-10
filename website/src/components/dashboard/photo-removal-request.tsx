@@ -74,7 +74,7 @@ export function PhotographerRemovalRequestList() {
       {rows.length === 0 && <p className="text-slate">No removal requests involve your photos.</p>}
       <ul className="divide-y divide-line border-y border-line">
         {rows.map((row) => {
-          const waiting = row.items.some((item) => canRespond(row, item));
+          const waiting = row.status === "OPEN" && row.reviews.some((review) => review.responses.unanswered > 0);
           return (
             <li key={row.id}>
               <Link href={requestHref(row.id)} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-4 px-2 hover:bg-bone-deep/50">
