@@ -208,25 +208,135 @@ it("shows free purchase facts without inventing paid or refunded money", async (
   client.clear();
 });
 
-it("does not link an archived event from a transaction ID alone", async () => {
+it("does not link an unavailable event from a transaction ID alone", async () => {
   login();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.spyOn(api, "get").mockResolvedValue({ ...response([receipt(orderB)], receipt(orderB)), event: null });
   render(view({ photoId: photo.id, orderId: orderB }, client, clicked(orderB)));
   await screen.findByText("Aira S.");
-  expect(fact("Event")).toHaveTextContent("Event archived");
+  expect(fact("Event")).toHaveTextContent("Event unavailable");
   expect(fact("Event")?.querySelector("a")).toBeNull();
+  expect(screen.queryByText(/archived/i)).not.toBeInTheDocument();
   client.clear();
 });
 
-it("does not link a deleted event from a stale transaction name", async () => {
+it("keeps a clicked transaction's event name without linking an unconfirmed event", async () => {
   login();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.spyOn(api, "get").mockResolvedValue({ ...response([receipt(orderB)], receipt(orderB)), event: null });
   render(view({ photoId: photo.id, orderId: orderB }, client, { ...clicked(orderB), eventName: "Cebu Run" }));
   await screen.findByText("Aira S.");
-  expect(fact("Event")).toHaveTextContent("Event archived");
+  expect(fact("Event")).toHaveTextContent("Cebu Run");
   expect(fact("Event")?.querySelector("a")).toBeNull();
+  expect(screen.queryByText(/archived/i)).not.toBeInTheDocument();
+  client.clear();
+});
+
+it.each([
+  ["404", () => Promise.reject(new ApiError([{ code: "NOT_FOUND", message: "Missing" }], 404))],
+  ["500", () => Promise.reject(new ApiError([{ code: "INTERNAL", message: "Down" }], 500))],
+  ["loading", () => new Promise(() => undefined)],
+  ["offline", null],
+] as const)("shows neutral event context while purchases are %s", async (state, reply) => {
+  login();
+  if (!reply) onlineManager.setOnline(false);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockImplementation(reply ?? (() => new Promise(() => undefined)));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  render(view({ photoId: photo.id, orderId: orderB }, client));
+  // A 500 is retried with backoff before the error settles.
+  if (state === "500") await act(() => vi.advanceTimersByTimeAsync(10_000));
+  vi.useRealTimers();
+  await waitFor(() => expect(fact("Event")).toHaveTextContent(state === "loading" ? "Loading…" : "Event unavailable"));
+  expect(screen.queryByText(/archived/i)).not.toBeInTheDocument();
+  client.clear();
+});
+
+it("distinguishes repeated buyer choices by reference and copies the selected full UUID", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+  vi.spyOn(api, "get").mockResolvedValue(response([receipt(orderA), receipt(orderB)], receipt(orderA)));
+  render(view({ photoId: photo.id }, client));
+  const choiceA = await screen.findByRole("button", { name: /Aira S\. · AAAAAAAA/ });
+  const choiceB = screen.getByRole("button", { name: /Aira S\. · BBBBBBBB/ });
+  expect(choiceA).toHaveAttribute("aria-pressed", "true");
+  expect(choiceB).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
+  await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(orderA));
+  expect(await screen.findByText("Reference copied.")).toBeVisible();
+
+  fireEvent.click(choiceB);
+  expect(fact("Reference")).toHaveTextContent(/^BBBBBBBB$/);
+  expect(choiceB).toHaveAttribute("aria-pressed", "true");
+  expect(choiceA).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByText("Reference copied.")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
+  await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(orderB));
+  expect(writeText.mock.calls.flat().join(" ")).not.toMatch(/@|token/i);
+  vi.unstubAllGlobals();
+  client.clear();
+});
+
+it("reports a rejected clipboard write honestly", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+  vi.spyOn(api, "get").mockResolvedValue(response([receipt(orderB)], receipt(orderB)));
+  render(view({ photoId: photo.id, orderId: orderB }, client));
+  await screen.findByText("Aira S.");
+  fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't copy reference.");
+  expect(screen.queryByText("Reference copied.")).not.toBeInTheDocument();
+  vi.unstubAllGlobals();
+  client.clear();
+});
+
+it("disables reference copy when no order is known", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockResolvedValue(response([{ ...receipt(orderA), buyer: "Other Buyer" }]));
+  render(view({ photoId: photo.id }, client, clicked()));
+  expect(await screen.findByText("Purchase unavailable.")).toBeVisible();
+  expect(fact("Reference")).toHaveTextContent("Unavailable");
+  expect(screen.getByRole("button", { name: "Copy reference" })).toBeDisabled();
+  client.clear();
+});
+
+it("lists a pinned receipt outside the loaded page once and marks it selected", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockResolvedValue({ ...response([receipt(orderA)], receipt(orderB)), total: 51 });
+  render(view({ photoId: photo.id, orderId: orderB }, client));
+  const pinned = await screen.findByRole("button", { name: /BBBBBBBB/ });
+  expect(pinned).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getAllByRole("button", { name: /Aira S\. · / })).toHaveLength(2);
+  fireEvent.click(screen.getByRole("button", { name: /AAAAAAAA/ }));
+  expect(fact("Reference")).toHaveTextContent("AAAAAAAA");
+  expect(screen.getByRole("button", { name: /BBBBBBBB/ })).toHaveAttribute("aria-pressed", "false");
+  client.clear();
+});
+
+it("drops copy feedback across an account switch and copies the new seller's order", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+  vi.spyOn(api, "get").mockResolvedValueOnce(response([receipt(orderA)], receipt(orderA))).mockResolvedValue(response([receipt(orderB)], receipt(orderB)));
+  const rendered = render(view({ photoId: photo.id }, client));
+  await screen.findByText("Aira S.");
+  fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
+  expect(await screen.findByText("Reference copied.")).toBeVisible();
+  act(() => login("seller-b"));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  rendered.rerender(view(null, client));
+  rendered.rerender(view({ photoId: photo.id }, client));
+  await waitFor(() => expect(fact("Reference")).toHaveTextContent("BBBBBBBB"));
+  expect(screen.queryByText("Reference copied.")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
+  await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(orderB));
+  vi.unstubAllGlobals();
   client.clear();
 });
 
@@ -335,6 +445,11 @@ it("same photo different order replaces context", async () => {
   rendered.rerender(view({ photoId: photo.id, orderId: orderB }, client));
   expect(await screen.findByText(formatOrderRef(orderB))).toBeVisible();
   expect(screen.queryByText(formatOrderRef(orderA))).not.toBeInTheDocument();
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+  fireEvent.click(screen.getByRole("button", { name: "Copy reference" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(orderB));
+  vi.unstubAllGlobals();
   client.clear();
 });
 

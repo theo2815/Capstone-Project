@@ -288,7 +288,7 @@ export interface PhotographerTransaction {
   paidAt: string;
   eventId: string;
   /** Snapshot of the event title at sale time. Null when the event was
-   *  hard-deleted — the row then renders the "Event archived" fallback. */
+   *  hard-deleted — the row then renders the "Event unavailable" fallback. */
   eventName?: string | null;
   /** Event slug snapshot — kept for future deep-linking from the row. */
   eventSlug?: string | null;

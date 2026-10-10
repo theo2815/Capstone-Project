@@ -984,7 +984,7 @@ private fun TransactionRow(transaction: PhotographerTransactionDto, onClick: () 
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = transaction.eventName ?: "Event archived",
+                    text = transaction.eventName ?: "Event unavailable",
                     color = Slate,
                     style = Typography.bodySmall,
                 )

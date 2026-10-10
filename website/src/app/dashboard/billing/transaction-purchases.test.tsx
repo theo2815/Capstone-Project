@@ -150,6 +150,12 @@ it("keeps a legacy row readable without opening fabricated purchase data", async
   expect(screen.queryByRole("button", { name: /sale.*aira s/i })).not.toBeInTheDocument();
 });
 
+it("labels a row with no event name as unavailable rather than archived", async () => {
+  setup(async () => page([{ ...sale, eventName: null }]));
+  expect(await screen.findByText("Event unavailable")).toBeVisible();
+  expect(screen.queryByText(/archived/i)).not.toBeInTheDocument();
+});
+
 it("falls back after a thumbnail error and shows a fresh URL on refetch", async () => {
   const fresh = "https://cdn.example.test/fresh.jpg";
   let reads = 0;

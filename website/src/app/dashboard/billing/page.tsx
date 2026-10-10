@@ -732,9 +732,9 @@ function TransactionsSlab() {
 
 function TransactionRow({ tx, onOpen }: { tx: PhotographerTransaction; onOpen: (button: HTMLButtonElement) => void }) {
   const [failedThumbnailUrl, setFailedThumbnailUrl] = useState<string | null>(null);
-  // BE snapshots eventName onto the row; only genuinely hard-deleted events
-  // fall through to the "Event archived" copy.
-  const eventLabel = tx.eventName ?? "Event archived";
+  // BE resolves eventName from the retained event; null means the event row is
+  // gone, which says nothing about ARCHIVED status.
+  const eventLabel = tx.eventName ?? "Event unavailable";
 
   const content = <span className="py-4 md:py-5 flex items-center justify-between gap-4">
       <span className="size-14 shrink-0 overflow-hidden rounded-md bg-bone-deep flex items-center justify-center text-slate-soft">
