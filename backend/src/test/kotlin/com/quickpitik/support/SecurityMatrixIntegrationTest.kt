@@ -9,6 +9,7 @@ import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.entity.Role
 import com.quickpitik.security.JwtTokenProvider
 import com.quickpitik.service.auth.AuthService
+import com.quickpitik.service.auth.DesktopAuthService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
@@ -223,6 +224,37 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(403, commit.statusCode())
         assertTrue("no-store" in begin.headers().firstValue("Cache-Control").orElse(""))
         assertTrue("no-store" in commit.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
+    fun `desktop connect mints for photographers only and redeems a code once`() {
+        val verifier = "v".repeat(43)
+        val challenge = DesktopAuthService.challengeOf(verifier)
+        val mintBody = """{"codeChallenge":"$challenge"}"""
+
+        assertEquals(401, post("/api/v1/auth/desktop/codes", mintBody).statusCode())
+        assertEquals(403, post("/api/v1/auth/desktop/codes", mintBody, register(Role.RUNNER)).statusCode())
+
+        val minted = post("/api/v1/auth/desktop/codes", mintBody, register(Role.PHOTOGRAPHER))
+        assertEquals(200, minted.statusCode())
+        assertTrue("no-store" in minted.headers().firstValue("Cache-Control").orElse(""))
+        val code = json.readTree(minted.body()).path("data").path("code").asText()
+        assertEquals(43, code.length)
+
+        // Anonymous and permitAll: a bogus code reaches the service and is refused
+        // there (INVALID_TOKEN), not by the filter chain (UNAUTHORIZED).
+        val bogus = post("/api/v1/auth/desktop/exchange", """{"code":"${"x".repeat(43)}","codeVerifier":"$verifier"}""")
+        assertEquals(401, bogus.statusCode())
+        assertEquals("INVALID_TOKEN", errorCode(bogus))
+
+        val exchangeBody = """{"code":"$code","codeVerifier":"$verifier"}"""
+        val exchanged = post("/api/v1/auth/desktop/exchange", exchangeBody)
+        assertEquals(200, exchanged.statusCode())
+        assertTrue("no-store" in exchanged.headers().firstValue("Cache-Control").orElse(""))
+        assertTrue(json.readTree(exchanged.body()).path("data").path("accessToken").asText().isNotBlank())
+        assertTrue(json.readTree(exchanged.body()).path("data").path("refreshToken").asText().isNotBlank())
+
+        assertEquals(401, post("/api/v1/auth/desktop/exchange", exchangeBody).statusCode())
     }
 
     @Test
