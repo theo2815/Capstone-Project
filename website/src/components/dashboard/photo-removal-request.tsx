@@ -43,7 +43,9 @@ function outcome(item: PhotographerRemovalItemDto): string {
   switch (item.state) {
     case "REMOVAL_AUTHORIZED":
     case "REMOVED":
-      return item.cleanupState === "COMPLETE" ? "Removed · erased from QuickPitik"
+      // The server sets REMOVED only after confirming erasure; COMPLETE alone is not proof.
+      return item.state === "REMOVED" && item.cleanupState === "COMPLETE" ? "Removed · erased from QuickPitik"
+        : item.cleanupState === "COMPLETE" ? "Removal authorized · cleanup not yet confirmed"
         : item.cleanupState === "RETRY_REQUIRED" ? "Removal authorized · cleanup delayed, QuickPitik is retrying"
         : item.cleanupState === "UNCONFIRMED" ? "Removal authorized · cleanup not yet confirmed"
         : "Removal authorized · cleanup still running";
@@ -182,7 +184,8 @@ export function PhotographerPhotoRemovalRequest({ requestId }: { requestId: stri
 
       {request.reviews.map((review) => (
         <p key={review.id} className="text-sm text-ink">
-          {review.deadline && <>Respond by <span className="tnum">{formatSalesDate(review.deadline)}</span>. </>}
+          {review.deadline ? <>Respond by <span className="tnum">{formatSalesDate(review.deadline)}</span>. </>
+            : !review.overdue && "Your 72-hour response window starts when your notice is delivered."}
           {review.overdue && (
             <span className="text-warning">
               Overdue{review.overdueAt && <> since <span className="tnum">{formatSalesDate(review.overdueAt)}</span></>}. QuickPitik can decide

@@ -225,3 +225,19 @@ it("never reads a failed or unconfirmed cleanup as progress or erasure", async (
   expect(screen.getByText("Removal authorized · cleanup still running")).toBeVisible();
   expect(screen.queryByText(/erased/)).not.toBeInTheDocument();
 });
+
+it("shows erased only for a REMOVED item whose cleanup is COMPLETE", async () => {
+  serverCase = { ...ownerACase, status: "RESOLVING", items: [
+    ownItem("a1", { state: "REMOVAL_AUTHORIZED", decision: "REMOVE", cleanupState: "COMPLETE", ownerReviewPending: false }),
+    ownItem("a2", { state: "REMOVED", decision: "REMOVE", cleanupState: "COMPLETE", ownerReviewPending: false }),
+  ] };
+  renderDetail();
+  expect(await screen.findByText("Removal authorized · cleanup not yet confirmed")).toBeVisible();
+  expect(screen.getAllByText("Removed · erased from QuickPitik")).toHaveLength(1);
+});
+
+it("explains when the response window starts if no deadline is set yet", async () => {
+  serverCase = { ...ownerACase, reviews: [{ ...ownerACase.reviews[0], notifiedAt: null, deadline: null, overdue: false }] };
+  renderDetail();
+  expect(await screen.findByText("Your 72-hour response window starts when your notice is delivered.")).toBeVisible();
+});
