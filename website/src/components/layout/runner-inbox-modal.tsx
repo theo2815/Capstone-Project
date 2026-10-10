@@ -30,6 +30,7 @@ const KIND_TONE: Record<RunnerMessageKind, string> = {
   admin_message: "text-ink",
   account_suspended: "text-error",
   account_unsuspended: "text-fresh",
+  photo_removed: "text-warning",
 };
 
 export function RunnerInboxModal({ isOpen, onClose }: RunnerInboxModalProps) {

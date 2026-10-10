@@ -117,3 +117,13 @@ it("runner receipt navigation waits for mark-read confirmation and remains retry
   await waitFor(() => expect(push).toHaveBeenCalledWith("/orders?expand=order%20%2F1"));
   expect(screen.queryByRole("dialog", { name: "Inbox" })).not.toBeInTheDocument();
 });
+it("runner photo_removed notice shows its label and keeps the receipt link", async () => {
+  rows = [{ ...message, id: "message-2", kind: "photo_removed", title: null, orderId: "order-9",
+    body: "A photo in this order was removed following a verified privacy request. Your purchase record remains available; contact support for help." }];
+  const user = userEvent.setup();
+  mount("RUNNER");
+  await user.click(await screen.findByRole("button", { name: /Inbox ·/ }));
+  const labels = screen.getAllByText("Photo removed"); // kind kicker + null-title fallback
+  expect(labels).toHaveLength(2); labels.forEach((label) => expect(label).toBeVisible());
+  expect(screen.getByRole("button", { name: "View receipt →" })).toBeEnabled();
+});
