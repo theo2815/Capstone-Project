@@ -311,6 +311,19 @@ describe("PhotoPreviewCard keyboard focus", () => {
     expect(metadataButton).toHaveFocus();
   });
 
+  it("closes only itself on Escape, not a drawer or modal listening underneath", async () => {
+    const underneath = vi.fn();
+    document.addEventListener("keydown", underneath);
+    onTestFinished(() => document.removeEventListener("keydown", underneath));
+    const user = userEvent.setup();
+    const cb = callbacks();
+    render(page(true, cb));
+    await screen.findByRole("dialog", { name: "Preview photo 101" });
+    await user.keyboard("{Escape}");
+    expect(cb.onClose).toHaveBeenCalledTimes(1);
+    expect(underneath).not.toHaveBeenCalled();
+  });
+
   it("does not land on Close after Next remounts the preview, so a repeated Enter cannot close it", async () => {
     belowLg();
     const user = userEvent.setup();

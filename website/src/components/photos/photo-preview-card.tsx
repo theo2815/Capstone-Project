@@ -190,8 +190,11 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   useEffect(() => {
     if (metadataOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowLeft" && onPrev) onPrev();
+      if (e.key === "Escape") {
+        // Capture phase + stop: one Escape closes only the preview, not a drawer or modal under it.
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === "ArrowLeft" && onPrev) onPrev();
       else if (e.key === "ArrowRight" && onNext) onNext();
       else if (e.key === "Tab") {
         const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), a[href]') ?? [])
@@ -205,9 +208,9 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         }
       }
     };
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     return () => {
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
     };
   }, [metadataOpen, onClose, onPrev, onNext]);
 
