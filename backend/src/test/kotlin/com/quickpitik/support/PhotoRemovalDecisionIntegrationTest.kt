@@ -319,6 +319,47 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         assertNull(requests.findById(case.id).orElseThrow().resolvedAt)
     }
 
+    @Test fun `restricted exception can be removed while another photo cleanup retries`() {
+        val (case, pending, restricted) = resolvingWithRestriction()
+        assertEquals(200, decide(case.id, restricted.id, urgentReason = "Exception no longer justified").statusCode())
+        assertEquals(RemovalItemState.REMOVED, items.findById(restricted.id).orElseThrow().state)
+        assertEquals(RemovalItemState.REMOVAL_AUTHORIZED, items.findById(pending.id).orElseThrow().state)
+        assertEquals(RemovalRequestStatus.RESOLVING, requests.findById(case.id).orElseThrow().status)
+        assertNull(requests.findById(case.id).orElseThrow().resolvedAt)
+    }
+
+    @Test fun `cleanup-stage decisions stay refused for verified items and cancellations`() {
+        val (case, _, restricted) = resolvingWithRestriction()
+        jdbc.update("UPDATE photo_removal_items SET state = 'VERIFIED' WHERE id = ?", restricted.id)
+        assertEquals(409, decide(case.id, restricted.id, RemovalDecision.RETAIN).statusCode())
+        assertEquals(RemovalItemState.VERIFIED, items.findById(restricted.id).orElseThrow().state)
+
+        val cancelled = verified(listOf(photo(user()))); val item = cancelled.items.single()
+        val key = "photo-removal/${cancelled.id}/evidence/synthetic"
+        tx.executeWithoutResult { requests.findForUpdate(cancelled.id)!!.apply {
+            evidenceKey = key; evidenceContentType = "image/png"; evidenceCleanupState = RemovalEvidenceCleanupState.PRESENT
+        } }
+        doThrow(IllegalStateException("synthetic evidence failure")).`when`(storage).delete(key)
+        service.cancel(admin.id, cancelled.id, CancelRemovalCommand(UUID.randomUUID(), queries.adminDetail(admin.id, cancelled.id).version, "Requester withdrew"))
+        assertEquals(RemovalRequestStatus.RESOLVING, requests.findById(cancelled.id).orElseThrow().status)
+        jdbc.update("UPDATE photo_removal_items SET state = 'RETAINED_RESTRICTED', retention_review_at = now() + interval '1 day' WHERE id = ?", item.id)
+        assertEquals(409, decide(cancelled.id, item.id, RemovalDecision.RETAIN).statusCode())
+        assertEquals(RemovalItemState.RETAINED_RESTRICTED, items.findById(item.id).orElseThrow().state)
+    }
+
+    // One photo's cleanup keeps the case RESOLVING while another photo is under a restricted exception.
+    private fun resolvingWithRestriction(): Triple<PhotoRemovalRequestDto, PhotoRemovalItemDto, PhotoRemovalItemDto> {
+        val failing = photo(user()); val case = verified(listOf(failing, photo(user())))
+        val pending = case.items.single { it.photoIdSnapshot == failing.id }; val restricted = case.items.single { it.id != pending.id }
+        doThrow(IllegalStateException("synthetic storage failure")).`when`(storage).delete(failing.s3Key)
+        assertEquals(200, post(case.id, "decisions", DecideRemovalCommand(UUID.randomUUID(), case.version, listOf(
+            RemovalItemDecision(pending.id, RemovalDecision.REMOVE, "Reviewed"),
+            RemovalItemDecision(restricted.id, RemovalDecision.RETAIN_RESTRICTED, "Temporary exception", java.time.Instant.now().plusSeconds(3600))),
+            "Immediate exposure")).statusCode())
+        assertEquals(RemovalRequestStatus.RESOLVING, requests.findById(case.id).orElseThrow().status)
+        return Triple(case, pending, restricted)
+    }
+
     // Verification-only: the existing atomic decision path must support the promised batch cap.
     @Test fun `hundred item mixed owner decision is atomic audited and replay safe`() {
         val a = user(); val b = user(); val case = verified((1..100).map { photo(if (it % 2 == 0) a else b) })

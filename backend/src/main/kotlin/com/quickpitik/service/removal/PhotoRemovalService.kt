@@ -55,7 +55,7 @@ class PhotoRemovalService(
                 return@execute it.replay(adminId, requestId, RemovalCommandOperation.DECIDE, hash, mapper)
             }
             transitions.ensureVersion(request, command.expectedVersion)
-            if (request.status !in setOf(RemovalRequestStatus.OPEN, RemovalRequestStatus.RESOLVED) ||
+            if (request.status !in setOf(RemovalRequestStatus.OPEN, RemovalRequestStatus.RESOLVING, RemovalRequestStatus.RESOLVED) ||
                 commands.findByRequestIdAndStateIn(requestId, listOf(RemovalCommandState.PENDING, RemovalCommandState.UNKNOWN)).isNotEmpty()) removalConflict()
             if (command.decisions.isEmpty() || command.decisions.size > 100 || command.decisions.map { it.itemId }.toSet().size != command.decisions.size)
                 removalInvalid("Select one to 100 distinct items")
@@ -64,6 +64,9 @@ class PhotoRemovalService(
                 validateText(decision.reason, 2000)
                 items.findByIdAndRequestId(decision.itemId, requestId) ?: removalNotFound()
             }
+            // While another photo's cleanup retries, only restricted exceptions stay revisitable; never during cancellation.
+            if (request.status == RemovalRequestStatus.RESOLVING && (selected.any { it.state != RemovalItemState.RETAINED_RESTRICTED } ||
+                    audit.existsByRequestIdAndAction(requestId, RemovalHistoryActions.CANCEL_REQUESTED))) removalConflict()
             val current = photos.findAllByIdForUpdate(selected.map { it.photoIdSnapshot }.sorted()).associateBy { it.id }
             val groups = reviews.findByRequestIdOrderByIdAsc(requestId).associateBy { it.id }
             val now = clock.instant()
