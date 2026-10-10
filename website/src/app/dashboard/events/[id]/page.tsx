@@ -882,12 +882,13 @@ function PhotoLibrary({
       else exitSelect();
       const n = result.affected;
       const remaining = ids.length - n;
+      if (result.conflict && n === 0) return showToast({ kind: "error", message: result.conflict });
       showToast({
         kind: remaining > 0 ? "info" : "success",
         message: (kind === "trash"
             ? `${n} photo${n > 1 ? "s" : ""} moved to Deleted.`
             : `${n} photo${n > 1 ? "s" : ""} restored.`) +
-          (remaining > 0 ? ` ${remaining} unchanged. Refresh or retry the remaining photos.` : ""),
+          (remaining > 0 ? ` ${remaining} unchanged. ${result.conflict ?? "Refresh or retry the remaining photos."}` : ""),
       });
     } catch {
       showToast({ kind: "error", message: "Something went wrong. Try again." });

@@ -23,11 +23,13 @@ export type PhotographerMessageKind =
   | "payout_paid"
   | "payout_report_acknowledged"
   | "payout_report_resolved"
-  | "admin_message";
+  | "admin_message"
+  | "photo_removal_request"
+  | "photo_removal_outcome";
 
 // FE shape mirrors the BE PhotographerMessageDto (see
 // backend/dto/photographer/PhotographerMessageDtos.kt). `title` is non-null
-// only for admin_message (admin-supplied subject); every other kind has
+// for admin_message (admin-supplied subject) and some removal notices; others have
 // title=null and the FE derives the label from MESSAGE_KIND_LABEL[kind].
 export interface PhotographerMessage {
   id: string;
@@ -37,6 +39,9 @@ export interface PhotographerMessage {
   sourceDecisionId: string | null;
   createdAt: string;
   readAt: string | null;
+  // Removal notices carry their case ID; the inbox links only to the local
+  // dashboard route built from it, never to anything in the body.
+  photoRemovalRequestId?: string | null;
 }
 
 export const MESSAGE_KIND_LABEL: Record<PhotographerMessageKind, string> = {
@@ -59,6 +64,8 @@ export const MESSAGE_KIND_LABEL: Record<PhotographerMessageKind, string> = {
   payout_report_acknowledged: "Report acknowledged",
   payout_report_resolved: "Report resolved",
   admin_message: "Message from admin",
+  photo_removal_request: "Removal review",
+  photo_removal_outcome: "Removal decision",
 };
 
 // Resolve the title shown in the inbox row header. admin_message carries

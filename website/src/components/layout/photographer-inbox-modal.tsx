@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Modal } from "@/components/ui/modal";
 import { Kicker } from "@/components/ui/kicker";
 import {
@@ -13,6 +14,7 @@ import { useMyPhotographerMessages } from "@/hooks/use-inbox-messages";
 import { useConfirmationStore } from "@/store/confirmation-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { formatLongDate } from "@/lib/format";
+import { ROUTES } from "@/lib/constants";
 import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +43,8 @@ const KIND_TONE: Record<PhotographerMessageKind, string> = {
   payout_report_acknowledged: "text-slate",
   payout_report_resolved: "text-fresh",
   admin_message: "text-ink",
+  photo_removal_request: "text-warning",
+  photo_removal_outcome: "text-slate",
 };
 
 export function PhotographerInboxModal({
@@ -115,6 +119,7 @@ export function PhotographerInboxModal({
                   if (m.readAt === null) void markRead(m.id);
                 }}
                 onRemove={() => handleRemove(m)}
+                onOpenRequest={onClose}
               />
             ))}
           </ul>
@@ -151,9 +156,10 @@ interface InboxRowProps {
   pending: boolean;
   onMarkRead: () => void;
   onRemove: () => void;
+  onOpenRequest: () => void;
 }
 
-function InboxRow({ message, pending, onMarkRead, onRemove }: InboxRowProps) {
+function InboxRow({ message, pending, onMarkRead, onRemove, onOpenRequest }: InboxRowProps) {
   const isUnread = message.readAt === null;
   const title = resolveMessageTitle(message);
 
@@ -199,7 +205,19 @@ function InboxRow({ message, pending, onMarkRead, onRemove }: InboxRowProps) {
           {message.body}
         </p>
       </button>
-      <div className="mt-3 flex items-center justify-end">
+      <div className="mt-3 flex items-center justify-end gap-2">
+        {message.photoRemovalRequestId && (
+          <Link
+            href={`${ROUTES.DASHBOARD_PHOTO_REMOVAL_REQUESTS}/${encodeURIComponent(message.photoRemovalRequestId)}`}
+            onClick={() => {
+              onMarkRead();
+              onOpenRequest();
+            }}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            View request →
+          </Link>
+        )}
         <button
           type="button"
           onClick={(e) => {

@@ -210,19 +210,20 @@ export async function fetchPhotographerPhotoDownload(
 export async function trashPhotographerPhotos(
   eventId: string,
   photoIds: string[],
-): Promise<{ affected: number; failed: string[] }> {
+): Promise<{ affected: number; failed: string[]; conflict?: string }> {
   return movePhotographerPhotos(eventId, photoIds, "trash");
 }
 
 export async function restorePhotographerPhotos(
   eventId: string,
   photoIds: string[],
-): Promise<{ affected: number; failed: string[] }> {
+): Promise<{ affected: number; failed: string[]; conflict?: string }> {
   return movePhotographerPhotos(eventId, photoIds, "restore");
 }
 
 async function movePhotographerPhotos(eventId: string, photoIds: string[], action: "trash" | "restore") {
-  const result = { affected: 0, failed: [] as string[] };
+  // `conflict` keeps the server's 409 reason (e.g. a removal-case restriction) for the caller to show.
+  const result: { affected: number; failed: string[]; conflict?: string } = { affected: 0, failed: [] };
   const ids = [...new Set(photoIds)];
   // PhotoIdsRequest caps trash/restore at 500; the UI can select many pages.
   for (let offset = 0; offset < ids.length; offset += 500) {
@@ -233,7 +234,8 @@ async function movePhotographerPhotos(eventId: string, photoIds: string[], actio
         { photoIds: batch },
       );
       result.affected += res.affected;
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) result.conflict ??= error.message;
       result.failed.push(...batch);
     }
   }
