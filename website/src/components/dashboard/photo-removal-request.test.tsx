@@ -241,3 +241,10 @@ it("explains when the response window starts if no deadline is set yet", async (
   renderDetail();
   expect(await screen.findByText("Your 72-hour response window starts when your notice is delivered.")).toBeVisible();
 });
+
+it("listRowShowsDateWithoutAPhotoCount", async () => {
+  vi.mocked(removalApi.listPhotographerRemovalRequests).mockResolvedValue({ items: [{ ...ownerACase, items: [] }], total: 1, offset: 0, limit: 20 });
+  wrap(<PhotographerRemovalRequestList />);
+  expect(await screen.findByRole("link", { name: /Cebu City Marathon/ })).toBeVisible();
+  expect(screen.queryByText(/\b0 photos?\b/)).not.toBeInTheDocument();
+});

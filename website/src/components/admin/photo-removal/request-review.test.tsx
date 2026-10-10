@@ -228,3 +228,13 @@ it("shows the verified case grouped by owner after refresh", async () => {
   expect(screen.queryByRole("button", { name: /Verify/ })).not.toBeInTheDocument();
   expect(removalApi.listRemovalPhotos).not.toHaveBeenCalled();
 });
+
+it("labelsAnErasedPhotoRemovedNotInTrash", async () => {
+  vi.mocked(removalApi.listRemovalPhotos).mockResolvedValue({
+    items: [removalPhoto("photo-gone", "Photographer A", { removalState: "REMOVED", trashed: true, bytesAvailable: false })],
+    total: 1, offset: 0, limit: 24,
+  });
+  renderReview();
+  expect(await screen.findByText("Removed")).toBeInTheDocument();
+  expect(screen.queryByText("In trash")).not.toBeInTheDocument();
+});

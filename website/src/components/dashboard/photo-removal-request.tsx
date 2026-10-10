@@ -82,7 +82,7 @@ export function PhotographerRemovalRequestList() {
                   <span className="block font-display font-bold text-ink truncate">{row.event.name}</span>
                   <span className="block text-sm text-slate">{waiting ? "Needs your response" : STATUS[row.status]}</span>
                 </span>
-                <span className="font-mono tnum text-sm text-slate">{row.items.length} photo{row.items.length === 1 ? "" : "s"} · {formatLongDate(row.createdAt)}</span>
+                <span className="font-mono tnum text-sm text-slate">{formatLongDate(row.createdAt)}</span>
               </Link>
             </li>
           );
