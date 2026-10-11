@@ -380,7 +380,7 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         val first = post(case.id, "decisions", command)
         assertEquals(200, first.statusCode())
         assertEquals(mapper.readTree(first.body()), mapper.readTree(post(case.id, "decisions", command).body()))
-        assertTrue(items.findByRequestIdOrderByIdAsc(case.id).all { it.state == RemovalItemState.REMOVED })
+        assertEquals(5, items.findByRequestIdOrderByIdAsc(case.id).count { it.state == RemovalItemState.REMOVED }) // in-request cap; the sweep erases the rest
         val audit = history.findByRequestIdAndCommandId(case.id, command.commandId)
         assertEquals(100, audit.size)
         assertEquals(100, audit.map { it.metadata.getValue("decisionLogId") }.toSet().size)

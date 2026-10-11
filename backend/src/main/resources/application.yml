@@ -82,6 +82,7 @@ app:
     photographer-response-window: PT72H
     cleanup-interval: ${PHOTO_REMOVAL_CLEANUP_INTERVAL:PT1M}
     cleanup-backoff: ${PHOTO_REMOVAL_CLEANUP_BACKOFF:PT5M}
+    in-request-cleanup-jobs: ${PHOTO_REMOVAL_IN_REQUEST_CLEANUP_JOBS:5}
   security:
     origin-secret: ${ORIGIN_SECRET:}
   # Externally-reachable URLs the BE needs to embed in artifacts whose request

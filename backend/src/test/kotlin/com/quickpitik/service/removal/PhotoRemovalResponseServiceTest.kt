@@ -56,7 +56,7 @@ class PhotoRemovalResponseServiceTest {
         queries, history, PhotoRemovalTransitions(), tx, mapper, clock, publisher,
         mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
         mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
-        mock(PhotoRemovalHistoryRepository::class.java))
+        mock(PhotoRemovalHistoryRepository::class.java), com.quickpitik.config.PhotoRemovalProperties())
     private val receipts = mutableMapOf<UUID, PhotoRemovalCommand>()
     private val audit = mutableListOf<RemovalHistoryEvent>()
     private val events = mutableListOf<AdminInboxEvent>()

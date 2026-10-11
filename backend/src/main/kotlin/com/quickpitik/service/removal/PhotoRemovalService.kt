@@ -8,6 +8,7 @@ import com.quickpitik.service.photos.PhotoAvailabilityService
 import com.quickpitik.service.photos.PhotoErasureService
 import com.quickpitik.service.orders.OrderPhotoRemovalService
 import com.quickpitik.service.admin.AdminDecisionLogService
+import com.quickpitik.config.PhotoRemovalProperties
 import com.quickpitik.dto.photos.*
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.context.ApplicationEventPublisher
@@ -45,6 +46,7 @@ class PhotoRemovalService(
     private val orderRemoval: OrderPhotoRemovalService,
     private val adminLog: AdminDecisionLogService,
     private val audit: PhotoRemovalHistoryRepository,
+    private val properties: PhotoRemovalProperties,
 ) {
     @Transactional(propagation = Propagation.NEVER)
     fun decide(adminId: UUID, requestId: UUID, command: DecideRemovalCommand): PhotoRemovalRequestDto {
@@ -125,9 +127,7 @@ class PhotoRemovalService(
             detail
         }!!
         val selectedIds = command.decisions.map { it.itemId }.toSet()
-        result.items.filter { it.id in selectedIds }.mapNotNull { it.cleanupJobId }.distinct().forEach { job ->
-            runCatching { erasure.attempt(job) }.onFailure { log.warn("Removal cleanup remains pending for job {} ({})", job, it.javaClass.simpleName) }
-        }
+        attemptInRequest(result.items.filter { it.id in selectedIds }.mapNotNull { it.cleanupJobId })
         reconcileAffected(requestId, result.items.filter { it.id in selectedIds }.map { it.photoIdSnapshot })
         return result
     }
@@ -162,9 +162,7 @@ class PhotoRemovalService(
             commands.flush()
             detail
         }!!
-        result.items.filter { it.id in command.itemIds }.mapNotNull { it.cleanupJobId }.distinct().forEach { job ->
-            runCatching { erasure.attempt(job) }.onFailure { log.warn("Removal retry remains pending for job {} ({})", job, it.javaClass.simpleName) }
-        }
+        attemptInRequest(result.items.filter { it.id in command.itemIds }.mapNotNull { it.cleanupJobId })
         reconcileAffected(requestId, result.items.filter { it.id in command.itemIds }.map { it.photoIdSnapshot })
         return result
     }
@@ -198,6 +196,14 @@ class PhotoRemovalService(
             publisher.publishEvent(removalChangedEvent(requestId, adminId, now))
             result
         }!!
+    }
+
+    // ponytail: a count cap, not a wall-clock budget; PhotoErasureSweep finishes the rest within cleanupInterval.
+    // Upgrade to a bounded executor with a timeout if provider stalls ever surface as 524s.
+    private fun attemptInRequest(jobIds: List<UUID>) {
+        jobIds.distinct().take(properties.inRequestCleanupJobs).forEach { job ->
+            runCatching { erasure.attempt(job) }.onFailure { log.warn("Removal cleanup remains pending for job {} ({})", job, it.javaClass.simpleName) }
+        }
     }
 
     private fun reconcileAffected(requestId: UUID, photoIds: List<UUID>) {
