@@ -138,6 +138,7 @@ class RefreshTokenServiceTest {
     @Test
     fun `outside the grace window, or once its child is revoked, or revoked by a sign-out, the parent stays dead`() {
         val orphan = stored("orphan-child")
+        Mockito.`when`(repository.findById(orphan.id)).thenReturn(Optional.of(orphan))
         stored("late-parent", revokedAt = OffsetDateTime.now().minusMinutes(3)).apply { replacedById = orphan.id }
         stored("signed-out", revokedAt = OffsetDateTime.now().minusSeconds(5)) // revoked by logout: no child, no grace
         // A password change or "revoke all" kills the child; the parent's grace dies with it.
@@ -165,6 +166,20 @@ class RefreshTokenServiceTest {
 
         assertEquals(listOf(userId, OpaqueTokens.hash("this-device")), kept.take(2))
         Mockito.verify(repository, Mockito.never()).revokeAllForUser(anyArg(), anyArg())
+    }
+
+    // The kept device's token stays live, so without this its just-rotated
+    // parent would keep its grace through the password change.
+    @Test
+    fun `revokeAllForUserExcept ends the grace of the kept token's parent`() {
+        val kept = stored("this-device")
+        val parent = stored("parent-token", revokedAt = OffsetDateTime.now().minusSeconds(30)).apply { replacedById = kept.id }
+        Mockito.`when`(repository.findById(kept.id)).thenReturn(Optional.of(kept))
+        Mockito.`when`(repository.findByReplacedById(kept.id)).thenReturn(parent)
+
+        service().revokeAllForUserExcept(userId, "this-device")
+
+        assertFailsWith<UnauthorizedException> { service().validateAndRotate("parent-token") }
     }
 
     @Test

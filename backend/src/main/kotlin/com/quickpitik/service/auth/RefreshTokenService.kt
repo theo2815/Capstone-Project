@@ -88,5 +88,12 @@ class RefreshTokenService(
             return
         }
         refreshTokenRepository.revokeAllForUserExcept(userId, keepHash, OffsetDateTime.now())
+        // The kept token stays live, so a parent rotated into it moments ago
+        // would keep its grace through the password change: cut the link.
+        // ponytail: unindexed lookup, once per password change; index
+        // replaced_by_id if refresh_tokens grows large.
+        refreshTokenRepository.findByTokenHash(keepHash)
+            ?.let { refreshTokenRepository.findByReplacedById(it.id) }
+            ?.let { it.replacedById = null; refreshTokenRepository.save(it) }
     }
 }

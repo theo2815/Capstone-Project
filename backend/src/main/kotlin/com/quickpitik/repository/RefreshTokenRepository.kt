@@ -13,6 +13,8 @@ import java.util.UUID
 interface RefreshTokenRepository : JpaRepository<RefreshToken, UUID> {
     fun findByTokenHash(tokenHash: String): RefreshToken?
 
+    fun findByReplacedById(replacedById: UUID): RefreshToken?
+
     @Modifying
     @Query(
         """
