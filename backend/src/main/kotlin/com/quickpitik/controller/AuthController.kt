@@ -98,9 +98,9 @@ class AuthController(
     // behind a shared NAT (campus, café) can legitimately fire refreshes
     // when access tokens expire. Abuse is bounded by refresh-token rotation:
     // the parent is revoked on every refresh, and a parent re-presented within
-    // jwt.refresh-rotation-grace (a lost answer) is rotated once more with its
-    // orphan child revoked, so one token stays live. There is no revoke-on-reuse
-    // of the whole family.
+    // jwt.refresh-rotation-grace (a lost answer, or a second browser tab) gets
+    // one more token while its first child is still live. There is no
+    // revoke-on-reuse of the whole family.
     @PostMapping("/refresh")
     fun refresh(@Valid @RequestBody req: RefreshRequest): AuthResponse =
         authService.refresh(req)

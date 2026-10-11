@@ -17,6 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 // Every caller in the suite mocks this service, so rotation itself — the
@@ -112,33 +113,39 @@ class RefreshTokenServiceTest {
     }
 
     // A rotation whose answer was lost: the client still holds the parent and
-    // presents it again. Inside the grace window it gets a fresh pair and the
-    // child it never received dies, so one token stays live, not two.
+    // presents it again. Inside the grace window it gets one more pair. The
+    // first child is left alone: a second browser tab may have received it
+    // (two tabs refreshing at once look the same as a lost answer), and
+    // killing it would sign both tabs out.
     @Test
-    fun `a parent presented again inside the grace window is rotated once more and its orphan child dies`() {
-        val orphan = stored("orphan-child")
-        val parent = stored("parent-token", revokedAt = OffsetDateTime.now().minusSeconds(30)).apply { replacedById = orphan.id }
-        Mockito.`when`(repository.findById(orphan.id)).thenReturn(Optional.of(orphan))
+    fun `a parent presented again inside the grace window gets one more token and its first child stays live`() {
+        val firstChild = stored("first-child")
+        val parent = stored("parent-token", revokedAt = OffsetDateTime.now().minusSeconds(30)).apply { replacedById = firstChild.id }
+        Mockito.`when`(repository.findById(firstChild.id)).thenReturn(Optional.of(firstChild))
 
         val (owner, child) = service().validateAndRotate("parent-token")
 
         assertEquals(userId, owner)
-        assertNotEquals("orphan-child", child)
-        assertNotNull(orphan.revokedAt, "the child nobody received must be dead")
-        assertNotEquals(orphan.id, parent.replacedById)
+        assertNotEquals("first-child", child)
+        assertNull(firstChild.revokedAt, "the first child may be in another tab's hands")
+        assertEquals(firstChild.id, parent.replacedById, "grace stays tied to the first child")
         val saved = ArgumentCaptor.forClass(RefreshToken::class.java)
-        Mockito.verify(repository, Mockito.atLeast(3)).save(saved.capture())
-        assertTrue(saved.allValues.any { it.tokenHash == OpaqueTokens.hash(child) && it.isActive() })
-        assertEquals(saved.allValues.last { it.tokenHash == parent.tokenHash }.replacedById, saved.allValues.first { it.tokenHash == OpaqueTokens.hash(child) }.id)
+        Mockito.verify(repository, Mockito.times(1)).save(saved.capture())
+        assertEquals(OpaqueTokens.hash(child), saved.value.tokenHash)
+        assertTrue(saved.value.isActive())
     }
 
     @Test
-    fun `outside the grace window, or revoked by a sign-out, the parent stays dead`() {
+    fun `outside the grace window, or once its child is revoked, or revoked by a sign-out, the parent stays dead`() {
         val orphan = stored("orphan-child")
         stored("late-parent", revokedAt = OffsetDateTime.now().minusMinutes(3)).apply { replacedById = orphan.id }
         stored("signed-out", revokedAt = OffsetDateTime.now().minusSeconds(5)) // revoked by logout: no child, no grace
+        // A password change or "revoke all" kills the child; the parent's grace dies with it.
+        val deadChild = stored("dead-child", revokedAt = OffsetDateTime.now().minusSeconds(5))
+        stored("family-revoked", revokedAt = OffsetDateTime.now().minusSeconds(30)).apply { replacedById = deadChild.id }
+        Mockito.`when`(repository.findById(deadChild.id)).thenReturn(Optional.of(deadChild))
 
-        for (presented in listOf("late-parent", "signed-out")) {
+        for (presented in listOf("late-parent", "signed-out", "family-revoked")) {
             val ex = assertFailsWith<UnauthorizedException> { service().validateAndRotate(presented) }
             assertEquals("INVALID_REFRESH_TOKEN", ex.code, presented)
         }

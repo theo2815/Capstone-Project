@@ -75,7 +75,8 @@ jwt:
   access-token-ttl: PT15M
   refresh-token-ttl: P7D
   # A refresh token presented again within this window after it was rotated is
-  # rotated once more (its orphan child revoked). Covers a lost rotation answer.
+  # given one more token, while the token it was rotated into is still live.
+  # Covers a lost rotation answer and two browser tabs refreshing at once.
   refresh-rotation-grace: ${JWT_REFRESH_ROTATION_GRACE:PT2M}
 
 app:

@@ -40,35 +40,34 @@ class RefreshTokenService(
         val token = refreshTokenRepository.findByTokenHash(hash)
             ?: throw UnauthorizedException("Invalid refresh token", "INVALID_REFRESH_TOKEN")
         val now = OffsetDateTime.now()
-        if (!token.isActive(now)) {
-            if (!withinRotationGrace(token, now)) {
-                throw UnauthorizedException("Refresh token expired or revoked", "INVALID_REFRESH_TOKEN")
-            }
-            // The rotation's answer was lost: the child nobody received dies
-            // and the parent is rotated once more. revokedAt is kept, so the
-            // window runs from the first rotation, not from each reuse.
-            // ponytail: any number of reuses inside the window; add a
-            // reuse counter if one grace per rotation is ever required.
-            token.replacedById?.let { childId ->
-                refreshTokenRepository.findById(childId).orElse(null)
-                    ?.takeIf { it.revokedAt == null }
-                    ?.let { child -> child.revokedAt = now; refreshTokenRepository.save(child) }
-            }
-        } else {
-            token.revokedAt = now
+        if (!token.isActive(now) && !withinRotationGrace(token, now)) {
+            throw UnauthorizedException("Refresh token expired or revoked", "INVALID_REFRESH_TOKEN")
         }
         val (child, childPlaintext) = newToken(token.userId)
-        token.replacedById = child.id
-        refreshTokenRepository.save(token)
+        // Inside the grace window the parent is left as it is: revokedAt and
+        // replacedById stay on the first rotation, so the window runs from
+        // there and the grace stays tied to the first child. That child is
+        // not revoked: a second browser tab may hold it (two tabs refreshing
+        // at once look the same as a lost answer).
+        // ponytail: any number of reuses inside the window, each a live
+        // token; add a reuse counter or a token family if that must be capped.
+        if (token.revokedAt == null) {
+            token.revokedAt = now
+            token.replacedById = child.id
+            refreshTokenRepository.save(token)
+        }
         refreshTokenRepository.save(child)
         return token.userId to childPlaintext
     }
 
+    // The child must still be live: a password change or "revoke all" kills
+    // it, and the parent's grace with it.
     private fun withinRotationGrace(token: RefreshToken, now: OffsetDateTime): Boolean {
         val revokedAt = token.revokedAt ?: return false
-        return token.replacedById != null &&
-            token.expiresAt.isAfter(now) &&
-            revokedAt.plus(jwtProperties.refreshRotationGrace).isAfter(now)
+        val childId = token.replacedById ?: return false
+        return token.expiresAt.isAfter(now) &&
+            revokedAt.plus(jwtProperties.refreshRotationGrace).isAfter(now) &&
+            refreshTokenRepository.findById(childId).map { it.revokedAt == null }.orElse(false)
     }
 
     fun revoke(plaintext: String) {
