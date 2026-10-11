@@ -42,6 +42,7 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var messages: PhotographerMessageRepository
     @Autowired lateinit var history: PhotoRemovalHistoryRepository
     @Autowired lateinit var sweep: PhotoRemovalSweep
+    @Autowired lateinit var erasureSweep: com.quickpitik.service.photos.PhotoErasureSweep
     @Autowired lateinit var notifier: PhotoRemovalNotifier
     @Autowired lateinit var recorder: PhotoRemovalHistoryRecorder
     @Autowired lateinit var orders: OrderRepository
@@ -381,6 +382,9 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         assertEquals(200, first.statusCode())
         assertEquals(mapper.readTree(first.body()), mapper.readTree(post(case.id, "decisions", command).body()))
         assertEquals(5, items.findByRequestIdOrderByIdAsc(case.id).count { it.state == RemovalItemState.REMOVED }) // in-request cap; the sweep erases the rest
+        while (erasureSweep.sweepDue(clock.instant(), 50) > 0) {}
+        service.reconcile(case.id)
+        assertTrue(items.findByRequestIdOrderByIdAsc(case.id).all { it.state == RemovalItemState.REMOVED })
         val audit = history.findByRequestIdAndCommandId(case.id, command.commandId)
         assertEquals(100, audit.size)
         assertEquals(100, audit.map { it.metadata.getValue("decisionLogId") }.toSet().size)
