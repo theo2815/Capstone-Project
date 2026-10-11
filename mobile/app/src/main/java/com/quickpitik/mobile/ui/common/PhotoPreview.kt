@@ -326,8 +326,8 @@ fun PhotoPreview(
     val canPrev = safeIndex > 0
     val canNext = safeIndex < photos.size - 1
 
-    // Not saveable: the caller restores currentIndex by photo identity, and a
-    // restored position could point into a list that is not loaded yet.
+    // Not saveable: the caller owns restoring currentIndex, and a restored
+    // pager position could point into a list that is not loaded yet.
     val pageCount by rememberUpdatedState(photos.size)
     val pagerState = remember { PagerState(currentPage = safeIndex) { pageCount } }
 
@@ -356,7 +356,11 @@ fun PhotoPreview(
         } finally {
             // A newer currentIndex cancels this effect; its own effect owns the
             // flag, and stale pages from this scroll must stay ignored until then.
-            if (isActive) parentScroll = false
+            if (isActive && parentScroll) {
+                parentScroll = false
+                // A user drag that interrupted the scroll owns the page it left.
+                if (pagerState.currentPage != latestCurrentIndex) latestOnIndexChange(pagerState.currentPage)
+            }
         }
     }
 

@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.Density
@@ -76,6 +77,7 @@ class PhotoPreviewLayoutTest {
         setContent { PhotoPreview(photos, index, {}, { reported += it; index = it }, mode = PhotoPreviewMode.OwnerReview) }
         mainClock.autoAdvance = false
         onNodeWithContentDescription("Next").performClick()
+        // Second tap must land before the 10 → 11 slide reaches page 11.
         mainClock.advanceTimeBy(48)
         onNodeWithContentDescription("Next").performClick()
         mainClock.advanceTimeBy(5_000)
@@ -83,6 +85,24 @@ class PhotoPreviewLayoutTest {
         waitForIdle()
         assertEquals(listOf(11, 12), reported)
         onNodeWithText("13 / 20").assertExists()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Config(qualifiers = "w411dp-h914dp")
+    @Test fun `grabbing the pager mid-slide reports the page the user settles on`() = runComposeUiTest {
+        val photos = (0 until 20).map { PhotoPreviewData("photo-$it", 50.0, null, "Cebu Run") }
+        var index by mutableStateOf(10)
+        val reported = mutableListOf<Int>()
+        setContent { PhotoPreview(photos, index, {}, { reported += it; index = it }, mode = PhotoPreviewMode.OwnerReview) }
+        mainClock.autoAdvance = false
+        onNodeWithContentDescription("Next").performClick()
+        mainClock.advanceTimeBy(48)
+        onNodeWithText("QUICKPITIK PREVIEW").performTouchInput { down(center); moveBy(Offset(5f, 0f)); up() }
+        mainClock.advanceTimeBy(5_000)
+        mainClock.autoAdvance = true
+        waitForIdle()
+        assertEquals(listOf(11, 10), reported)
+        onNodeWithText("11 / 20").assertExists()
     }
 
     @OptIn(ExperimentalTestApi::class)
