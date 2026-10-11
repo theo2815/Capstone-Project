@@ -153,6 +153,19 @@ class RefreshTokenServiceTest {
         Mockito.verify(repository, Mockito.never()).save(anyArg())
     }
 
+    // A client whose rotation answer was lost still holds the parent, so its
+    // sign-out presents the parent. That must end the grace, not restart it.
+    @Test
+    fun `signing out with an already-rotated token ends its grace`() {
+        val child = stored("first-child")
+        Mockito.`when`(repository.findById(child.id)).thenReturn(Optional.of(child))
+        stored("parent-token", revokedAt = OffsetDateTime.now().minusMinutes(3)).apply { replacedById = child.id }
+
+        service().revoke("parent-token")
+
+        assertFailsWith<UnauthorizedException> { service().validateAndRotate("parent-token") }
+    }
+
     // Binds the shipped application.yml so the production default is what is
     // tested. Ten minutes: an upload from a venue with a poor connection must
     // survive a lost rotation answer followed by several minutes offline.

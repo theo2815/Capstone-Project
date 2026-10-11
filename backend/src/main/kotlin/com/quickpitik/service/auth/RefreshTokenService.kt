@@ -74,6 +74,9 @@ class RefreshTokenService(
         val hash = OpaqueTokens.hash(plaintext)
         val token = refreshTokenRepository.findByTokenHash(hash) ?: return
         token.revokedAt = OffsetDateTime.now()
+        // A sign-out ends the token for good: with the link left in place,
+        // signing out with an already-rotated token restarted its grace.
+        token.replacedById = null
         refreshTokenRepository.save(token)
     }
 
