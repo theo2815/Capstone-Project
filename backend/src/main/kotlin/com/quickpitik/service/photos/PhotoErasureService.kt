@@ -10,6 +10,7 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.*
 import com.quickpitik.service.storage.StorageService
+import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
@@ -36,6 +37,7 @@ class PhotoErasureService(
     private val tx: TransactionTemplate,
     private val json: ObjectMapper,
     private val clock: Clock,
+    private val metrics: MeterRegistry,
 ) {
     fun request(command: PhotoErasureCommand): UUID {
         if (command.reason.isBlank() || command.reason.length > 2000) invalid()
@@ -189,7 +191,7 @@ class PhotoErasureService(
         receipts.forEach { saved ->
             if (clock.instant().isBefore(saved.recheckUntil)) pending = true
         }
-        return tx.execute {
+        val settled = tx.execute {
             val photo = photos.findAllByIdForUpdate(listOf(claim.photoId)).singleOrNull()
             val job = jobs.lock(jobId) ?: return@execute PhotoErasureOutcome.PENDING
             if (job.leaseToken != claim.leaseToken) return@execute PhotoErasureOutcome.PENDING
@@ -222,6 +224,8 @@ class PhotoErasureService(
             jobs.saveAndFlush(job)
             job.outcome
         }!!
+        metrics.counter("qp.removal.erasure", "outcome", settled.name).increment()
+        return settled
     }
 
     private fun invalid(): Nothing = throw ConflictException(code = ErrorCodes.INVALID_STATE_TRANSITION,

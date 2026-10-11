@@ -26,7 +26,8 @@ class PhotoErasureServiceTest {
     }
     private val service = PhotoErasureService(mock(), jobs, mock(), mock(), mock(), mock(), mock(), mock(), mock(),
         storage, mock(), com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
-        TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC())
+        TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC(),
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry())
 
     @Test fun `privacy purpose alone never authorizes resource deletion`() {
         assertFailsWith<ConflictException> {

@@ -129,7 +129,8 @@ ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.durati
 `qp.upload.dedup{outcome}`, `qp.upload.direct{outcome}`, `qp.upload.cleanup{outcome}`,
 `qp.upload.direct.pending.{count,bytes,oldest.age}`,
 `qp.indexing.outcome{outcome,provider}`, `qp.ai.call{op}`, `qp.ratelimit.denied{policy}`,
-`qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28) —
+`qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28),
+`qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}` —
 plus Hikari/JVM/HTTP-server metrics for free.
 
 ### Stop Postgres

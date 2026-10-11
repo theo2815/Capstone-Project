@@ -1,5 +1,6 @@
 package com.quickpitik.repository
 
+import com.quickpitik.dto.photos.PhotoErasureOutcome
 import com.quickpitik.entity.PhotoErasureJob
 import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Pageable
@@ -11,6 +12,7 @@ import java.util.UUID
 
 interface PhotoErasureJobRepository : JpaRepository<PhotoErasureJob, UUID> {
     fun findByPhotoId(photoId: UUID): PhotoErasureJob?
+    fun countByOutcomeNot(outcome: PhotoErasureOutcome): Long
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT j FROM PhotoErasureJob j WHERE j.id = :id")
