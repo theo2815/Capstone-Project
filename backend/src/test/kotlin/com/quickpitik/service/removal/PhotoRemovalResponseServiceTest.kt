@@ -51,7 +51,8 @@ class PhotoRemovalResponseServiceTest {
     private val queries = PhotoRemovalQueryService(requests, items, reviews, mock(PhotoRemovalHistoryRepository::class.java), photos,
         mock(UserRepository::class.java), commands, mock(PhotoRemovalEvidenceService::class.java), mock(PhotoSearchService::class.java),
         mock(StorageService::class.java), StorageProperties(), tx, mapper, clock, mock(PhotoErasureJobRepository::class.java))
-    private val service = PhotoRemovalService(requests, commands, mock(EventRepository::class.java), mock(UserRepository::class.java), items,
+    private val users = mock(UserRepository::class.java)
+    private val service = PhotoRemovalService(requests, commands, mock(EventRepository::class.java), users, items,
         photos, reviews, mock(PhotoRemovalNotifier::class.java), mock(PhotoAvailabilityService::class.java), mock(PhotoRemovalEvidenceService::class.java),
         queries, history, PhotoRemovalTransitions(), tx, mapper, clock, publisher,
         mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
@@ -64,6 +65,7 @@ class PhotoRemovalResponseServiceTest {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
         `when`(requests.findForUpdate(request.id)).thenReturn(request)
         `when`(requests.findById(request.id)).thenReturn(Optional.of(request))
+        `when`(users.findById(request.creatorId)).thenReturn(Optional.of(User(email = "admin@test.local", passwordHash = "unused", name = "Admin", role = Role.ADMIN)))
         `when`(items.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(request.id, owner)).thenReturn(listOf(item))
         `when`(reviews.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(request.id, owner)).thenReturn(listOf(review))
         `when`(requests.advanceVersion(request.id, now)).thenAnswer { request.version++; request.updatedAt = now; 1 }

@@ -10,6 +10,9 @@ import com.quickpitik.service.orders.OrderPhotoRemovalService
 import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.config.PhotoRemovalProperties
 import com.quickpitik.dto.photos.*
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.context.ApplicationEventPublisher
 import com.quickpitik.websocket.AdminInboxEvent
@@ -52,6 +55,7 @@ class PhotoRemovalService(
     fun decide(adminId: UUID, requestId: UUID, command: DecideRemovalCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         val result = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let {
                 return@execute it.replay(adminId, requestId, RemovalCommandOperation.DECIDE, hash, mapper)
@@ -136,6 +140,7 @@ class PhotoRemovalService(
     fun retryCleanup(adminId: UUID, requestId: UUID, command: RetryRemovalCleanupCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         val result = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let {
                 return@execute it.replay(adminId, requestId, RemovalCommandOperation.RETRY_CLEANUP, hash, mapper)
@@ -172,6 +177,7 @@ class PhotoRemovalService(
     fun supportUpdate(adminId: UUID, requestId: UUID, command: RemovalSupportUpdateCommand): RemovalHistoryDto {
         val hash = commandHash(mapper, command)
         return tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             fun PhotoRemovalCommand.replaySupport(): RemovalHistoryDto {
                 ensureIdentity(adminId, requestId, RemovalCommandOperation.SUPPORT_UPDATE, hash)
@@ -356,6 +362,7 @@ class PhotoRemovalService(
     fun verify(adminId: UUID, requestId: UUID, command: VerifyRemovalCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         val result = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let {
                 return@execute it.replay(adminId, requestId, RemovalCommandOperation.VERIFY, hash, mapper)
@@ -487,6 +494,7 @@ class PhotoRemovalService(
     fun create(adminId: UUID, command: CreateRemovalRequestCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         fun attempt(): PhotoRemovalRequestDto = tx.execute {
+            requireActiveAdmin(users, adminId)
             commands.findByCommandId(command.commandId)?.let { return@execute it.replay(adminId, null, RemovalCommandOperation.CREATE, hash, mapper) }
             validateText(command.supportReference, 1000)
             validateText(command.requesterContact, 1000)
@@ -526,6 +534,7 @@ class PhotoRemovalService(
     fun cancel(adminId: UUID, requestId: UUID, command: CancelRemovalCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         val replay = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let { return@execute it.replay(adminId, requestId, RemovalCommandOperation.CANCEL, hash, mapper) }
             transitions.ensureVersion(request, command.expectedVersion)
@@ -569,6 +578,11 @@ class PhotoRemovalService(
 
 internal fun validateText(value: String, max: Int) {
     if (value.isBlank() || value.length > max) removalInvalid("Photo removal field is empty or too long")
+}
+internal fun requireActiveAdmin(users: UserRepository, adminId: UUID) {
+    val actor = users.findById(adminId).orElse(null)
+    if (actor == null || actor.role != Role.ADMIN || actor.suspendedAt != null)
+        throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.FORBIDDEN, "An active admin is required")
 }
 internal fun removalChangedEvent(requestId: UUID, actorId: UUID?, now: java.time.Instant) = AdminInboxEvent(mapOf(
     "type" to "photo_removal_changed", "entityId" to requestId.toString(), "actorId" to actorId?.toString(), "occurredAt" to now.toString()))

@@ -47,11 +47,12 @@ class PhotoRemovalMatchingUnitTest {
     private val search = mock(com.quickpitik.service.photos.PhotoSearchService::class.java)
     private val storage = mock(StorageService::class.java)
     private val commands = mock(PhotoRemovalCommandRepository::class.java)
+    private val users = mock(UserRepository::class.java)
     private val manager = mock(org.springframework.transaction.PlatformTransactionManager::class.java)
     private val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().findAndRegisterModules()
     private val service = PhotoRemovalQueryService(requests, mock(PhotoRemovalItemRepository::class.java),
         mock(PhotoRemovalReviewRepository::class.java), mock(PhotoRemovalHistoryRepository::class.java), photos,
-        mock(UserRepository::class.java), commands, evidence, search, storage, com.quickpitik.config.StorageProperties(),
+        users, commands, evidence, search, storage, com.quickpitik.config.StorageProperties(),
         org.springframework.transaction.support.TransactionTemplate(manager), mapper, java.time.Clock.systemUTC(), mock(PhotoErasureJobRepository::class.java))
 
     init {
@@ -74,6 +75,7 @@ class PhotoRemovalMatchingUnitTest {
             requesterContact = "contact", supportReference = "ticket", requesterReason = "privacy", publicToOwnerReason = "privacy",
             creatorId = admin, creationCommandId = UUID.randomUUID(), version = 3)
         `when`(requests.findForUpdate(request.id)).thenReturn(request)
+        `when`(users.findById(admin)).thenReturn(java.util.Optional.of(User(email = "admin@test.local", passwordHash = "unused", name = "Admin", role = Role.ADMIN)))
         assertEquals(409, assertFailsWith<com.quickpitik.exception.ApiException> {
             service.matches(admin, request.id, MatchRemovalCommand(UUID.randomUUID(), 2))
         }.status.value())

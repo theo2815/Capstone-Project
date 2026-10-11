@@ -50,11 +50,13 @@ class PhotoRemovalEvidenceService(
     private val clock: Clock,
     private val properties: PhotoRemovalProperties,
     private val metrics: MeterRegistry,
+    private val users: UserRepository,
 ) {
     fun replace(adminId: UUID, requestId: UUID, commandId: UUID, expectedVersion: Long, image: SearchImage): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, listOf(expectedVersion.toString(), image.contentType, image.filename, hashBytes(image.bytes)))
         val key = "photo-removal/$requestId/evidence/$commandId"
         val replay = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(commandId)?.let { return@execute it.replay(adminId, requestId, RemovalCommandOperation.REPLACE_EVIDENCE, hash, mapper) }
             transitions.ensureVersion(request, expectedVersion)
@@ -146,6 +148,7 @@ class PhotoRemovalEvidenceService(
 
     fun stream(adminId: UUID, requestId: UUID): RemovalEvidenceStream {
         val evidence = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
             EvidenceSnapshot(request.evidenceKey ?: removalNotFound(), request.evidenceContentType ?: removalNotFound(),
                 request.eventIdSnapshot, request.version, request.evidenceGeneration)

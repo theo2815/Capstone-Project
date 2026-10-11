@@ -98,6 +98,23 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         assertEquals(RemovalItemState.REMOVED, after.state)
     }
 
+    // The token is minted before the suspension: JwtTokenProvider bakes the `suspended` claim in at issue
+    // time, so a token issued earlier passes the filter for up to 15 minutes. That is the gap this closes.
+    @Test fun suspendedAdminTokenCannotDecide() {
+        val owner = user()
+        val case = verified(listOf(photo(owner)))
+        val issuedBeforeSuspension = tokens.createAccessToken(admin)
+        admin.suspendedAt = java.time.OffsetDateTime.now()
+        users.saveAndFlush(admin)
+        val body = DecideRemovalCommand(UUID.randomUUID(), case.version,
+            listOf(RemovalItemDecision(case.items.single().id, RemovalDecision.REMOVE, "Support reviewed the verified request")), "urgent")
+        val response = client.send(HttpRequest.newBuilder(URI.create("http://localhost:$port/api/v1/admin/photo-removal-requests/${case.id}/decisions"))
+            .header("Authorization", "Bearer $issuedBeforeSuspension").header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build(), HttpResponse.BodyHandlers.ofString())
+        assertEquals(403, response.statusCode())
+        assertEquals(RemovalItemState.VERIFIED, items.findById(case.items.single().id).orElseThrow().state)
+    }
+
     // Final photo cleanup alone cannot close a case while its biometric evidence remains.
     @Test fun resolutionWaitsForEvidenceDeletion() {
         val case = verified(listOf(photo(user()))); val item = case.items.single()

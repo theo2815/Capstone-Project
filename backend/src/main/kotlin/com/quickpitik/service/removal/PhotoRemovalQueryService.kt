@@ -131,6 +131,7 @@ class PhotoRemovalQueryService(
     fun matches(adminId: UUID, requestId: UUID, command: MatchRemovalCommand): RemovalMatchResult {
         val hash = commandHash(mapper, command)
         val replay = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let { return@execute it.replayMatch(adminId, requestId, hash) }
             ensureCanMatch(request, command.expectedVersion)
