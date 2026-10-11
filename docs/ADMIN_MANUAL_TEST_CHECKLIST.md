@@ -314,7 +314,7 @@ Admin `/admin/photo-removal-requests`, photographer `/dashboard/photo-removal-re
 
 - [ ] **Intake:** "New request" lists public and unlisted events; create a case with a support reference and requester contact; it opens as a draft in the admin area.
 - [ ] **Evidence:** upload a selfie under 5 MB; "Selfie on file" shows. A file over 5 MB is refused. The selfie never appears in the runner's selfie library.
-- [ ] **Matching:** with `AI_API_ENABLED=false`, searching with the selfie says "Selfie matching is unavailable right now…" and shows no matches; a selfie with no face says "No face was found in the selfie…". Bib search and browsing still list photos.
+- [ ] **Matching:** with `AI_API_ENABLED=false`, searching with the selfie says "Selfie matching is unavailable right now…" and shows no matches; with AI enabled, a selfie with no face says "No face was found in the selfie…". Bib search and browsing still list photos.
 - [ ] **Preview:** open a photo; the arrow keys move between photos, `Escape` closes the preview and focus returns to the photo.
 - [ ] **Verify:** select photos, give a method and a note, "Confirm verification". The photos leave the public gallery; each owner gets one notice; an inactive owner shows "Owner unavailable".
 - [ ] **Owner notice:** as the photographer, the inbox notice's "View request" opens the case; the case shows only their photos, with no requester contact, support reference or selfie.
