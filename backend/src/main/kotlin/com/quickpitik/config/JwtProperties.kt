@@ -11,5 +11,5 @@ data class JwtProperties(
     // How long a just-rotated refresh token is still accepted, for a
     // client whose rotation answer was lost (RefreshTokenService). Default
     // keeps the ten test constructions compiling.
-    val refreshRotationGrace: Duration = Duration.ofMinutes(2),
+    val refreshRotationGrace: Duration = Duration.ofMinutes(10),
 )

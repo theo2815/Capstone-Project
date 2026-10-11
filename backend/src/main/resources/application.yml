@@ -77,7 +77,7 @@ jwt:
   # A refresh token presented again within this window after it was rotated is
   # given one more token, while the token it was rotated into is still live.
   # Covers a lost rotation answer and two browser tabs refreshing at once.
-  refresh-rotation-grace: ${JWT_REFRESH_ROTATION_GRACE:PT2M}
+  refresh-rotation-grace: ${JWT_REFRESH_ROTATION_GRACE:PT10M}
 
 app:
   admin-action:

@@ -153,6 +153,30 @@ class RefreshTokenServiceTest {
         Mockito.verify(repository, Mockito.never()).save(anyArg())
     }
 
+    // Binds the shipped application.yml so the production default is what is
+    // tested. Ten minutes: an upload from a venue with a poor connection must
+    // survive a lost rotation answer followed by several minutes offline.
+    @Test
+    fun `the shipped grace window is ten minutes`() {
+        val environment = org.springframework.mock.env.MockEnvironment()
+        org.springframework.boot.env.YamlPropertySourceLoader()
+            .load("application", org.springframework.core.io.ClassPathResource("application.yml"))
+            .forEach { environment.propertySources.addLast(it) }
+        val shipped = RefreshTokenService(
+            repository,
+            org.springframework.boot.context.properties.bind.Binder.get(environment)
+                .bindOrCreate("jwt", JwtProperties::class.java),
+        )
+        val child = stored("first-child")
+        Mockito.`when`(repository.findById(child.id)).thenReturn(Optional.of(child))
+        stored("nine-minutes", revokedAt = OffsetDateTime.now().minusMinutes(9)).apply { replacedById = child.id }
+        stored("eleven-minutes", revokedAt = OffsetDateTime.now().minusMinutes(11)).apply { replacedById = child.id }
+
+        shipped.validateAndRotate("nine-minutes")
+
+        assertFailsWith<UnauthorizedException> { shipped.validateAndRotate("eleven-minutes") }
+    }
+
     // Arguments are captured through thenAnswer, not eq()/captors: Mockito's
     // matchers hand Kotlin a null that the call site null-checks before the
     // mock is ever reached (the same reason anyArg() exists).
