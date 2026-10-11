@@ -26,6 +26,11 @@ class RefreshToken(
     @Column(name = "revoked_at")
     var revokedAt: OffsetDateTime? = null,
 
+    // The child this token was rotated into; set together with revokedAt by
+    // RefreshTokenService.validateAndRotate. Null for every other revocation.
+    @Column(name = "replaced_by_id")
+    var replacedById: UUID? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 ) {

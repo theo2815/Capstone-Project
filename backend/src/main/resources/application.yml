@@ -74,6 +74,9 @@ jwt:
   secret: ${JWT_SECRET:dev-only-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
   access-token-ttl: PT15M
   refresh-token-ttl: P7D
+  # A refresh token presented again within this window after it was rotated is
+  # rotated once more (its orphan child revoked). Covers a lost rotation answer.
+  refresh-rotation-grace: ${JWT_REFRESH_ROTATION_GRACE:PT2M}
 
 app:
   admin-action:

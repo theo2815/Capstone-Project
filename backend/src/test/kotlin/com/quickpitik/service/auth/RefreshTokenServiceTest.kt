@@ -11,6 +11,7 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import java.time.Duration
 import java.time.OffsetDateTime
+import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -42,6 +43,7 @@ class RefreshTokenServiceTest {
             secret = "test-secret-min-32-bytes-for-HS256-signing-purposes-only-do-not-use-in-prod",
             accessTokenTtl = Duration.ofMinutes(15),
             refreshTokenTtl = Duration.ofDays(7),
+            refreshRotationGrace = Duration.ofMinutes(2),
         ),
     )
 
@@ -94,6 +96,52 @@ class RefreshTokenServiceTest {
         val ex = assertFailsWith<UnauthorizedException> { service().validateAndRotate("never-issued") }
 
         assertEquals("INVALID_REFRESH_TOKEN", ex.code)
+        Mockito.verify(repository, Mockito.never()).save(anyArg())
+    }
+
+    @Test
+    fun `rotation records which child replaced the parent`() {
+        val parent = stored("parent-token")
+
+        val (_, child) = service().validateAndRotate("parent-token")
+
+        val saved = ArgumentCaptor.forClass(RefreshToken::class.java)
+        Mockito.verify(repository, Mockito.times(2)).save(saved.capture())
+        val issued = saved.allValues.first { it.tokenHash == OpaqueTokens.hash(child) }
+        assertEquals(issued.id, parent.replacedById)
+    }
+
+    // A rotation whose answer was lost: the client still holds the parent and
+    // presents it again. Inside the grace window it gets a fresh pair and the
+    // child it never received dies, so one token stays live, not two.
+    @Test
+    fun `a parent presented again inside the grace window is rotated once more and its orphan child dies`() {
+        val orphan = stored("orphan-child")
+        val parent = stored("parent-token", revokedAt = OffsetDateTime.now().minusSeconds(30)).apply { replacedById = orphan.id }
+        Mockito.`when`(repository.findById(orphan.id)).thenReturn(Optional.of(orphan))
+
+        val (owner, child) = service().validateAndRotate("parent-token")
+
+        assertEquals(userId, owner)
+        assertNotEquals("orphan-child", child)
+        assertNotNull(orphan.revokedAt, "the child nobody received must be dead")
+        assertNotEquals(orphan.id, parent.replacedById)
+        val saved = ArgumentCaptor.forClass(RefreshToken::class.java)
+        Mockito.verify(repository, Mockito.atLeast(3)).save(saved.capture())
+        assertTrue(saved.allValues.any { it.tokenHash == OpaqueTokens.hash(child) && it.isActive() })
+        assertEquals(saved.allValues.last { it.tokenHash == parent.tokenHash }.replacedById, saved.allValues.first { it.tokenHash == OpaqueTokens.hash(child) }.id)
+    }
+
+    @Test
+    fun `outside the grace window, or revoked by a sign-out, the parent stays dead`() {
+        val orphan = stored("orphan-child")
+        stored("late-parent", revokedAt = OffsetDateTime.now().minusMinutes(3)).apply { replacedById = orphan.id }
+        stored("signed-out", revokedAt = OffsetDateTime.now().minusSeconds(5)) // revoked by logout: no child, no grace
+
+        for (presented in listOf("late-parent", "signed-out")) {
+            val ex = assertFailsWith<UnauthorizedException> { service().validateAndRotate(presented) }
+            assertEquals("INVALID_REFRESH_TOKEN", ex.code, presented)
+        }
         Mockito.verify(repository, Mockito.never()).save(anyArg())
     }
 
