@@ -15,6 +15,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.Optional
 import java.util.UUID
 import kotlin.test.*
 
@@ -33,17 +34,19 @@ class PhotoRemovalVerificationServiceTest {
         creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID(), createdAt = now)
     private val command = VerifyRemovalCommand(UUID.randomUUID(), 0, "Verified support identity", "Confirmed",
         listOf(VerifyRemovalSelection(UUID.randomUUID(), RemovalMatchSource.MANUAL, "Visually confirmed")))
-    private val service = PhotoRemovalService(requests, commands, mock(EventRepository::class.java), mock(UserRepository::class.java), items,
+    private val users = mock(UserRepository::class.java)
+    private val service = PhotoRemovalService(requests, commands, mock(EventRepository::class.java), users, items,
         photos, mock(PhotoRemovalReviewRepository::class.java), mock(PhotoRemovalNotifier::class.java), mock(PhotoAvailabilityService::class.java),
         mock(PhotoRemovalEvidenceService::class.java), mock(PhotoRemovalQueryService::class.java), mock(PhotoRemovalHistoryRecorder::class.java),
         PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.fixed(now, ZoneOffset.UTC), mock(org.springframework.context.ApplicationEventPublisher::class.java),
         mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
         mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
-        mock(PhotoRemovalHistoryRepository::class.java))
+        mock(PhotoRemovalHistoryRepository::class.java), com.quickpitik.config.PhotoRemovalProperties())
 
     init {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
         `when`(requests.findForUpdate(request.id)).thenReturn(request)
+        `when`(users.findById(request.creatorId)).thenReturn(Optional.of(User(email = "admin@test.local", passwordHash = "unused", name = "Admin", role = Role.ADMIN)))
     }
 
     @Test fun `stale verification rejects before selection or persistence`() {

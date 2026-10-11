@@ -61,10 +61,12 @@ function ownerState(items: PhotoRemovalItemDto[], review: PhotoRemovalReviewDto 
   return response ? RESPONSE[response] : review.overdue ? "overdue" : "no response";
 }
 
-// Mirrors the backend rule: removing without the owner's agreement before the
-// server-marked deadline (or with no reachable owner) is an urgent override.
-function needsUrgentReason(item: PhotoRemovalItemDto, review: PhotoRemovalReviewDto | undefined) {
-  return item.ownerResponse !== "AGREE" && (!review || !!review.unavailableReason || !review.overdue);
+// Mirrors PhotoRemovalService.decide: an urgent reason is needed unless the owner agreed or the
+// server deadline has passed; a missing or unreachable owner always needs one.
+function needsUrgentReason(item: PhotoRemovalItemDto, review: PhotoRemovalReviewDto | undefined, now = Date.now()) {
+  if (item.ownerResponse === "AGREE") return false;
+  if (!review || review.unavailableReason || !review.deadline) return true;
+  return new Date(review.deadline).getTime() > now;
 }
 
 export function RemovalRequestDecision({ requestId }: { requestId: string }) {

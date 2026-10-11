@@ -8,7 +8,11 @@ import com.quickpitik.service.photos.PhotoAvailabilityService
 import com.quickpitik.service.photos.PhotoErasureService
 import com.quickpitik.service.orders.OrderPhotoRemovalService
 import com.quickpitik.service.admin.AdminDecisionLogService
+import com.quickpitik.config.PhotoRemovalProperties
 import com.quickpitik.dto.photos.*
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.context.ApplicationEventPublisher
 import com.quickpitik.websocket.AdminInboxEvent
@@ -45,11 +49,13 @@ class PhotoRemovalService(
     private val orderRemoval: OrderPhotoRemovalService,
     private val adminLog: AdminDecisionLogService,
     private val audit: PhotoRemovalHistoryRepository,
+    private val properties: PhotoRemovalProperties,
 ) {
     @Transactional(propagation = Propagation.NEVER)
     fun decide(adminId: UUID, requestId: UUID, command: DecideRemovalCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         val result = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let {
                 return@execute it.replay(adminId, requestId, RemovalCommandOperation.DECIDE, hash, mapper)
@@ -125,9 +131,7 @@ class PhotoRemovalService(
             detail
         }!!
         val selectedIds = command.decisions.map { it.itemId }.toSet()
-        result.items.filter { it.id in selectedIds }.mapNotNull { it.cleanupJobId }.distinct().forEach { job ->
-            runCatching { erasure.attempt(job) }.onFailure { log.warn("Removal cleanup remains pending for job {} ({})", job, it.javaClass.simpleName) }
-        }
+        attemptInRequest(result.items.filter { it.id in selectedIds }.mapNotNull { it.cleanupJobId })
         reconcileAffected(requestId, result.items.filter { it.id in selectedIds }.map { it.photoIdSnapshot })
         return result
     }
@@ -136,6 +140,7 @@ class PhotoRemovalService(
     fun retryCleanup(adminId: UUID, requestId: UUID, command: RetryRemovalCleanupCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         val result = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let {
                 return@execute it.replay(adminId, requestId, RemovalCommandOperation.RETRY_CLEANUP, hash, mapper)
@@ -149,6 +154,7 @@ class PhotoRemovalService(
                 val job = item.cleanupJobId?.let { jobs.lock(it) } ?: removalConflict()
                 if (job.photoId != item.photoIdSnapshot || job.outcome == PhotoErasureOutcome.COMPLETE ||
                     item.state !in setOf(RemovalItemState.REMOVAL_AUTHORIZED, RemovalItemState.REMOVED)) removalConflict()
+                erasure.makeDue(job)
             }
             val now = clock.instant()
             if (commands.insertClaim(command.commandId, requestId, RemovalCommandOperation.RETRY_CLEANUP.name, adminId, hash, null, now) == 0)
@@ -162,9 +168,7 @@ class PhotoRemovalService(
             commands.flush()
             detail
         }!!
-        result.items.filter { it.id in command.itemIds }.mapNotNull { it.cleanupJobId }.distinct().forEach { job ->
-            runCatching { erasure.attempt(job) }.onFailure { log.warn("Removal retry remains pending for job {} ({})", job, it.javaClass.simpleName) }
-        }
+        attemptInRequest(result.items.filter { it.id in command.itemIds }.mapNotNull { it.cleanupJobId })
         reconcileAffected(requestId, result.items.filter { it.id in command.itemIds }.map { it.photoIdSnapshot })
         return result
     }
@@ -173,6 +177,7 @@ class PhotoRemovalService(
     fun supportUpdate(adminId: UUID, requestId: UUID, command: RemovalSupportUpdateCommand): RemovalHistoryDto {
         val hash = commandHash(mapper, command)
         return tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             fun PhotoRemovalCommand.replaySupport(): RemovalHistoryDto {
                 ensureIdentity(adminId, requestId, RemovalCommandOperation.SUPPORT_UPDATE, hash)
@@ -198,6 +203,14 @@ class PhotoRemovalService(
             publisher.publishEvent(removalChangedEvent(requestId, adminId, now))
             result
         }!!
+    }
+
+    // ponytail: a count cap, not a wall-clock budget; PhotoErasureSweep finishes the rest within cleanupInterval.
+    // Upgrade to a bounded executor with a timeout if provider stalls ever surface as 524s.
+    private fun attemptInRequest(jobIds: List<UUID>) {
+        jobIds.distinct().take(properties.inRequestCleanupJobs).forEach { job ->
+            runCatching { erasure.attempt(job) }.onFailure { log.warn("Removal cleanup remains pending for job {} ({})", job, it.javaClass.simpleName) }
+        }
     }
 
     private fun reconcileAffected(requestId: UUID, photoIds: List<UUID>) {
@@ -349,6 +362,7 @@ class PhotoRemovalService(
     fun verify(adminId: UUID, requestId: UUID, command: VerifyRemovalCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         val result = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let {
                 return@execute it.replay(adminId, requestId, RemovalCommandOperation.VERIFY, hash, mapper)
@@ -480,6 +494,7 @@ class PhotoRemovalService(
     fun create(adminId: UUID, command: CreateRemovalRequestCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         fun attempt(): PhotoRemovalRequestDto = tx.execute {
+            requireActiveAdmin(users, adminId)
             commands.findByCommandId(command.commandId)?.let { return@execute it.replay(adminId, null, RemovalCommandOperation.CREATE, hash, mapper) }
             validateText(command.supportReference, 1000)
             validateText(command.requesterContact, 1000)
@@ -519,6 +534,7 @@ class PhotoRemovalService(
     fun cancel(adminId: UUID, requestId: UUID, command: CancelRemovalCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
         val replay = tx.execute {
+            requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
             commands.findByCommandId(command.commandId)?.let { return@execute it.replay(adminId, requestId, RemovalCommandOperation.CANCEL, hash, mapper) }
             transitions.ensureVersion(request, command.expectedVersion)
@@ -562,6 +578,11 @@ class PhotoRemovalService(
 
 internal fun validateText(value: String, max: Int) {
     if (value.isBlank() || value.length > max) removalInvalid("Photo removal field is empty or too long")
+}
+internal fun requireActiveAdmin(users: UserRepository, adminId: UUID) {
+    val actor = users.findById(adminId).orElse(null)
+    if (actor == null || actor.role != Role.ADMIN || actor.suspendedAt != null)
+        throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.FORBIDDEN, "An active admin is required")
 }
 internal fun removalChangedEvent(requestId: UUID, actorId: UUID?, now: java.time.Instant) = AdminInboxEvent(mapOf(
     "type" to "photo_removal_changed", "entityId" to requestId.toString(), "actorId" to actorId?.toString(), "occurredAt" to now.toString()))

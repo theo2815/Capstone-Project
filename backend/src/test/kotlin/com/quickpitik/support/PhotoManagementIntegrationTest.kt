@@ -69,7 +69,8 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         PhotographerPhotoService(photos, coverageRepo, items, events, grants, reconciler,
             com.quickpitik.service.photos.PhotoErasureService(photos, erasureJobs, uploadIntents, removalItems,
                 items, grants, coverage, events, metadata, storage, faceErasure,
-                com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(), tx, json, clock))
+                com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(), tx, json, clock,
+                io.micrometer.core.instrument.simple.SimpleMeterRegistry()))
 
     @Test fun `delete acknowledgement with retained derivative must not report physical erasure`() {
         manager.trash(owner.id, event.id, listOf(photo.id))

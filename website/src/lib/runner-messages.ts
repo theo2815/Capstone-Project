@@ -1,8 +1,8 @@
 // Runner-facing inbox messages — written BE-side by RunnerMessagesService
 // in the same TX as every admin decision targeting a runner (dispute
 // outcome, suspension, admin DM). FE reads via GET /me/runner/messages.
-// Wire forms below MUST stay aligned with the V20 CHECK constraint +
-// RunnerMessageKind enum in the BE.
+// Wire forms below MUST stay aligned with the V20 CHECK constraint (V73
+// added photo_removed) + RunnerMessageKind enum in the BE.
 
 export type RunnerMessageKind =
   | "dispute_resolved"
@@ -10,7 +10,8 @@ export type RunnerMessageKind =
   | "dispute_escalated"
   | "admin_message"
   | "account_suspended"
-  | "account_unsuspended";
+  | "account_unsuspended"
+  | "photo_removed";
 
 // FE shape mirrors the BE RunnerMessageDto (see
 // backend/dto/runner/RunnerMessageDtos.kt). `orderId` deep-links the
@@ -35,6 +36,7 @@ export const RUNNER_MESSAGE_KIND_LABEL: Record<RunnerMessageKind, string> = {
   admin_message: "Message from admin",
   account_suspended: "Account suspended",
   account_unsuspended: "Account reinstated",
+  photo_removed: "Photo removed",
 };
 
 // Resolve the title shown in the inbox row header. admin_message carries

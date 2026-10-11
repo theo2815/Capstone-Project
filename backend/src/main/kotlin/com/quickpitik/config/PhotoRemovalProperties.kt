@@ -9,11 +9,13 @@ data class PhotoRemovalProperties(
     val cleanupInterval: Duration = Duration.ofMinutes(1),
     val cleanupBackoff: Duration = Duration.ofMinutes(5),
     val sweepBatchSize: Int = 50,
+    val inRequestCleanupJobs: Int = 5,
 ) {
     init {
         require(photographerResponseWindow > Duration.ZERO)
         require(cleanupInterval > Duration.ZERO)
         require(cleanupBackoff > Duration.ZERO)
         require(sweepBatchSize in 1..100)
+        require(inRequestCleanupJobs in 0..100)
     }
 }

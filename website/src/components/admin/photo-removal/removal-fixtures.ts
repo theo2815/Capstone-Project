@@ -36,7 +36,7 @@ export function removalItem(id: string, owner: string | null, extra: Partial<Pho
 export function ownerReview(owner: string, extra: Partial<PhotoRemovalReviewDto> = {}): PhotoRemovalReviewDto {
   return {
     id: `review-${owner}`, ownerIdSnapshot: `owner-${owner}`, notifiedMessageId: "message-1", notifiedAt: "2026-10-08T03:00:00Z",
-    deadline: "2026-10-15T03:00:00Z", overdue: false, overdueAt: null, unavailableReason: null, ...extra,
+    deadline: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(), overdue: false, overdueAt: null, unavailableReason: null, ...extra,
   };
 }
 

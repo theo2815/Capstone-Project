@@ -22,6 +22,7 @@
 12. [Phase 11: Sales Analytics & Leaderboards (`/admin/sales`)](#phase-11-sales-analytics--leaderboards-adminsales)
 13. [Phase 12: Real-Time WebSocket Updates & Toast Sync](#phase-12-real-time-websocket-updates--toast-sync)
 14. [Unresolved admin request](#unresolved-admin-request)
+15. [Runner photo removal](#runner-photo-removal)
 
 ---
 
@@ -304,3 +305,23 @@ Signing out clears every stored reference in that browser tab. Do that only afte
 4. Check the reply: it carries `regionCode` and `provinceCode`. `GET /api/v1/events/<slug>` shows the pair too, except for a draft (a pending or rejected photographer submission), which has no public page and answers 404 there.
 
 A 409 means the event changed after you read its revision: read it again and resend under a new key. A 404 on the request means the event is deleted or the id is wrong. If the reply is lost, follow "Unresolved admin request" above with the key you sent. The request cannot clear a pair, and a province must come from confirmed event information, never from the location text or the title.
+
+---
+
+## Runner photo removal
+
+Admin `/admin/photo-removal-requests`, photographer `/dashboard/photo-removal-requests`. Use synthetic accounts and images only. Rules: `docs/photo-removal-workflow.md`.
+
+- [ ] **Intake:** "New request" lists public and unlisted events; create a case with a support reference and requester contact; it opens as a draft in the admin area.
+- [ ] **Evidence:** upload a selfie under 5 MB; "Selfie on file" shows. A file over 5 MB is refused. The selfie never appears in the runner's selfie library.
+- [ ] **Matching:** with `AI_API_ENABLED=false`, searching with the selfie says "Selfie matching is unavailable right now…" and shows no matches; with AI enabled, a selfie with no face says "No face was found in the selfie…". Bib search and browsing still list photos.
+- [ ] **Preview:** open a photo; the arrow keys move between photos, `Escape` closes the preview and focus returns to the photo.
+- [ ] **Verify:** select photos, give a method and a note, "Confirm verification". The photos leave the public gallery; each owner gets one notice; an inactive owner shows "Owner unavailable".
+- [ ] **Owner notice:** as the photographer, the inbox notice's "View request" opens the case; the case shows only their photos, with no requester contact, support reference or selfie.
+- [ ] **Response:** the owner agrees, or objects with a required reason.
+- [ ] **Override reason:** while an objection's deadline is open, "Authorize removal" needs an urgent reason; after the deadline it does not.
+- [ ] **Decide:** remove one photo and retain another; each removed photo reads "Removed · erasure complete", or "cleanup pending" / "cleanup failed" until erased; history lists each step.
+- [ ] **Cleanup retry:** when cleanup failed, "Retry cleanup" runs it again; the case resolves once every erasure is confirmed.
+- [ ] **Support update:** "Record update" under Support update; it appears in the history.
+- [ ] **Runner notice:** a runner who bought the removed photo sees "Photo removed" in the inbox and under "View photos" in `/orders`; the order and its receipt stay.
+- [ ] **Restore refused:** the photographer cannot restore a photo held by a removal case from the trash.

@@ -32,13 +32,14 @@ class PhotoRemovalEvidenceServiceTest {
     private val history = mock(PhotoRemovalHistoryRecorder::class.java)
     private val transactionManager = mock(PlatformTransactionManager::class.java)
     private val tx = TransactionTemplate(transactionManager)
+    private val users = mock(UserRepository::class.java)
     private val request = PhotoRemovalRequest(eventIdSnapshot = UUID.randomUUID(), eventNameSnapshot = "Synthetic run",
         requesterContact = "Support contact", supportReference = "ticket-1", requesterReason = "Privacy",
         publicToOwnerReason = "Privacy request", creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID())
     private val service = PhotoRemovalEvidenceService(requests, commands, items, storage, reviews, history,
         mock(PhotoRemovalHistoryRepository::class.java),
         PhotoRemovalTransitions(), tx, jacksonObjectMapper().findAndRegisterModules(), Clock.systemUTC(),
-        PhotoRemovalProperties(), SimpleMeterRegistry())
+        PhotoRemovalProperties(), SimpleMeterRegistry(), users)
 
     init {
         `when`(transactionManager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition()))
@@ -46,6 +47,7 @@ class PhotoRemovalEvidenceServiceTest {
         `when`(requests.findForUpdate(request.id)).thenReturn(request)
         `when`(requests.existsById(request.id)).thenReturn(true)
         `when`(items.findByRequestIdOrderByIdAsc(request.id)).thenReturn(emptyList())
+        `when`(users.findById(request.creatorId)).thenReturn(Optional.of(User(email = "admin@test.local", passwordHash = "unused", name = "Admin", role = Role.ADMIN)))
     }
 
     @Test fun `failedReplaceKeepsPreviousEvidence`() {
@@ -157,22 +159,24 @@ class PhotoRemovalIntakeUnitTest {
     private val evidence = mock(PhotoRemovalEvidenceService::class.java)
     private val manager = mock(PlatformTransactionManager::class.java)
     private val mapper = jacksonObjectMapper().findAndRegisterModules()
+    private val adminId = UUID.randomUUID()
     private val service = PhotoRemovalService(requests, commands, events, users, items,
         mock(PhotoRepository::class.java), mock(PhotoRemovalReviewRepository::class.java), mock(PhotoRemovalNotifier::class.java),
         mock(com.quickpitik.service.photos.PhotoAvailabilityService::class.java), evidence, queries,
         mock(PhotoRemovalHistoryRecorder::class.java), PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.systemUTC(), mock(org.springframework.context.ApplicationEventPublisher::class.java),
         mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
         mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
-        mock(PhotoRemovalHistoryRepository::class.java))
+        mock(PhotoRemovalHistoryRepository::class.java), PhotoRemovalProperties())
     init {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
+        `when`(users.findById(adminId)).thenReturn(Optional.of(User(email = "admin@test.local", passwordHash = "unused", name = "Admin", role = Role.ADMIN)))
     }
 
     @Test fun `intake rejects a missing event before writing a case`() {
         val event = UUID.randomUUID()
         `when`(events.findById(event)).thenReturn(Optional.empty())
         val command = com.quickpitik.dto.removal.CreateRemovalRequestCommand(event, "ticket", "contact", null, "privacy", UUID.randomUUID())
-        assertEquals(404, assertFailsWith<ApiException> { service.create(UUID.randomUUID(), command) }.status.value())
+        assertEquals(404, assertFailsWith<ApiException> { service.create(adminId, command) }.status.value())
         assertTrue(mockingDetails(requests).invocations.isEmpty())
     }
 
@@ -182,7 +186,7 @@ class PhotoRemovalIntakeUnitTest {
             creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID(), version = 3)
         `when`(requests.findForUpdate(request.id)).thenReturn(request)
         assertEquals(409, assertFailsWith<ApiException> {
-            service.cancel(request.creatorId, request.id, com.quickpitik.dto.removal.CancelRemovalCommand(UUID.randomUUID(), 2, "withdraw"))
+            service.cancel(adminId, request.id, com.quickpitik.dto.removal.CancelRemovalCommand(UUID.randomUUID(), 2, "withdraw"))
         }.status.value())
         assertEquals(RemovalRequestStatus.DRAFT, request.status)
         verifyNoInteractions(evidence)

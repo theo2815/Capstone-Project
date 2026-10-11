@@ -129,7 +129,8 @@ ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.durati
 `qp.upload.dedup{outcome}`, `qp.upload.direct{outcome}`, `qp.upload.cleanup{outcome}`,
 `qp.upload.direct.pending.{count,bytes,oldest.age}`,
 `qp.indexing.outcome{outcome,provider}`, `qp.ai.call{op}`, `qp.ratelimit.denied{policy}`,
-`qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28) —
+`qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28),
+`qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}` —
 plus Hikari/JVM/HTTP-server metrics for free.
 
 ### Stop Postgres
@@ -173,6 +174,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `WATERMARK_RECONCILE_INTERVAL_MS` | `60000` | Cadence of the watermark reconcile sweep (re-drives stuck `PROCESSING` photos) and of the V42 pHash backfill. |
 | `WATERMARK_VERIFY_MAX_DISTANCE` | `12` | Max Hamming distance (of 64 pHash bits) for `POST /public/photos/verify` to report a match; ≤ 6 reports `strong`, 7–12 `weak`. Compared against the marked, clean and centre-crop hashes (V43). |
 | `WATERMARK_SEED_SECRET` | dev-only placeholder | **MUST OVERRIDE.** Seeds each preview's stripe geometry via HMAC(secret, photoId). Keep stable: a change re-seeds every future render; existing previews are unaffected. |
+| `PHOTO_REMOVAL_IN_REQUEST_CLEANUP_JOBS` | `5` | Photo-removal erasures a decision or cleanup retry attempts before answering (0–100); the cleanup sweep finishes the rest. Keeps a large authorization inside the proxy timeout. |
 | `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |
 | `LOG_LEVEL_APP` | `INFO` | `com.quickpitik` log level (set `DEBUG` for local debugging). |
 | `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |

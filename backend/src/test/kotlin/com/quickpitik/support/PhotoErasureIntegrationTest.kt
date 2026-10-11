@@ -43,6 +43,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var json: com.fasterxml.jackson.databind.ObjectMapper
     @Autowired lateinit var uploads: com.quickpitik.service.photographer.PhotoUploadService
     @Autowired lateinit var settings: PhotographerSettingsRepository
+    @Autowired lateinit var registry: io.micrometer.core.instrument.MeterRegistry
     @MockBean lateinit var storage: StorageService
     lateinit var owner: User
     lateinit var admin: User
@@ -112,7 +113,9 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         orderItems.saveAndFlush(OrderItem(financialId, pricePhpAtPurchase = photo.pricePhp))
         val before = orderItems.findAll().map { it.id }.toSet()
         val job = eraser.request(privacy())
+        val completed = registry.counter("qp.removal.erasure", "outcome", "COMPLETE").count()
         assertEquals(PhotoErasureOutcome.COMPLETE, eraser.attempt(job))
+        assertEquals(completed + 1.0, registry.counter("qp.removal.erasure", "outcome", "COMPLETE").count())
         val tombstone = photos.findById(photo.id).orElseThrow()
         assertNotNull(tombstone.purgedAt)
         assertTrue(tombstone.s3Key.isBlank())
@@ -327,7 +330,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
             com.quickpitik.config.AiApiProperties(enabled = true), fence, json, tx, java.time.Clock.systemUTC())
         val retry = PhotoErasureService(photos, jobs, intents, items, orderItems, grants, coverage, events, metadata,
             storage, faceService, com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
-            tx, json, java.time.Clock.systemUTC())
+            tx, json, java.time.Clock.systemUTC(), registry)
         assertEquals(PhotoErasureOutcome.COMPLETE, retry.attempt(job))
         assertFalse(metadata.existsById(photo.id))
         val tombstone = photos.findById(photo.id).orElseThrow()
@@ -459,7 +462,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         val later = java.time.Clock.offset(java.time.Clock.systemUTC(), java.time.Duration.ofDays(10))
         val resumed = PhotoErasureService(photos, jobs, intents, items, orderItems, grants, coverage, events, metadata,
             storage, faceErasure, com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
-            tx, json, later)
+            tx, json, later, registry)
         assertEquals(PhotoErasureOutcome.COMPLETE, resumed.attempt(job))
         assertFalse(receipt.stagingKey in blobs)
         assertFalse(receipt.originalKey in blobs)

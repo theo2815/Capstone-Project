@@ -42,6 +42,7 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var messages: PhotographerMessageRepository
     @Autowired lateinit var history: PhotoRemovalHistoryRepository
     @Autowired lateinit var sweep: PhotoRemovalSweep
+    @Autowired lateinit var erasureSweep: com.quickpitik.service.photos.PhotoErasureSweep
     @Autowired lateinit var notifier: PhotoRemovalNotifier
     @Autowired lateinit var recorder: PhotoRemovalHistoryRecorder
     @Autowired lateinit var orders: OrderRepository
@@ -95,6 +96,23 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         val after = items.findById(item.id).orElseThrow()
         assertNull(after.ownerResponse)
         assertEquals(RemovalItemState.REMOVED, after.state)
+    }
+
+    // The token is minted before the suspension: JwtTokenProvider bakes the `suspended` claim in at issue
+    // time, so a token issued earlier passes the filter for up to 15 minutes. That is the gap this closes.
+    @Test fun suspendedAdminTokenCannotDecide() {
+        val owner = user()
+        val case = verified(listOf(photo(owner)))
+        val issuedBeforeSuspension = tokens.createAccessToken(admin)
+        admin.suspendedAt = java.time.OffsetDateTime.now()
+        users.saveAndFlush(admin)
+        val body = DecideRemovalCommand(UUID.randomUUID(), case.version,
+            listOf(RemovalItemDecision(case.items.single().id, RemovalDecision.REMOVE, "Support reviewed the verified request")), "urgent")
+        val response = client.send(HttpRequest.newBuilder(URI.create("http://localhost:$port/api/v1/admin/photo-removal-requests/${case.id}/decisions"))
+            .header("Authorization", "Bearer $issuedBeforeSuspension").header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build(), HttpResponse.BodyHandlers.ofString())
+        assertEquals(403, response.statusCode())
+        assertEquals(RemovalItemState.VERIFIED, items.findById(case.items.single().id).orElseThrow().state)
     }
 
     // Final photo cleanup alone cannot close a case while its biometric evidence remains.
@@ -380,6 +398,9 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         val first = post(case.id, "decisions", command)
         assertEquals(200, first.statusCode())
         assertEquals(mapper.readTree(first.body()), mapper.readTree(post(case.id, "decisions", command).body()))
+        assertEquals(5, items.findByRequestIdOrderByIdAsc(case.id).count { it.state == RemovalItemState.REMOVED }) // in-request cap; the sweep erases the rest
+        while (erasureSweep.sweepDue(clock.instant(), 50) > 0) {}
+        service.reconcile(case.id)
         assertTrue(items.findByRequestIdOrderByIdAsc(case.id).all { it.state == RemovalItemState.REMOVED })
         val audit = history.findByRequestIdAndCommandId(case.id, command.commandId)
         assertEquals(100, audit.size)

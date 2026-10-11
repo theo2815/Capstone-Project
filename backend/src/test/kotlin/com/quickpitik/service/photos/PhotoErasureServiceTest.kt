@@ -26,7 +26,8 @@ class PhotoErasureServiceTest {
     }
     private val service = PhotoErasureService(mock(), jobs, mock(), mock(), mock(), mock(), mock(), mock(), mock(),
         storage, mock(), com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
-        TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC())
+        TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC(),
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry())
 
     @Test fun `privacy purpose alone never authorizes resource deletion`() {
         assertFailsWith<ConflictException> {
@@ -80,6 +81,15 @@ class PhotoErasureServiceTest {
         assertEquals(1L, job.revision)
         assertEquals(PhotoErasureOutcome.PENDING, job.outcome)
         kotlin.test.assertNull(job.completedAt)
+        Mockito.verifyNoInteractions(storage)
+    }
+
+    @Test fun `makeDue moves a backed-off job to now without other changes`() {
+        val job = job().also { it.nextAttemptAt = Instant.now().plusSeconds(3600); it.outcome = PhotoErasureOutcome.RETRY_REQUIRED }
+        service.makeDue(job)
+        kotlin.test.assertTrue(!job.nextAttemptAt.isAfter(Instant.now()))
+        assertEquals(PhotoErasureOutcome.RETRY_REQUIRED, job.outcome)
+        Mockito.verify(jobs).saveAndFlush(job)
         Mockito.verifyNoInteractions(storage)
     }
 
