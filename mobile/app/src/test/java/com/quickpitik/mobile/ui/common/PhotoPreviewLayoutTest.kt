@@ -12,9 +12,11 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.Density
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -64,6 +66,24 @@ class PhotoPreviewLayoutTest {
     @Test @Config(qualifiers = "w914dp-h411dp") fun `details fit landscape`() = checkDetails()
     @Test @Config(qualifiers = "w640dp-h360dp") fun `details fit large font short landscape`() = checkDetails(1.5f)
     @Test @Config(qualifiers = "w768dp-h1024dp") fun `details fit tablet`() = checkDetails()
+
+    @OptIn(ExperimentalTestApi::class)
+    @Config(qualifiers = "w411dp-h914dp")
+    @Test fun `tapping next during the page animation moves forward without bouncing back`() = runComposeUiTest {
+        val photos = (0 until 20).map { PhotoPreviewData("photo-$it", 50.0, null, "Cebu Run") }
+        var index by mutableStateOf(10)
+        val reported = mutableListOf<Int>()
+        setContent { PhotoPreview(photos, index, {}, { reported += it; index = it }, mode = PhotoPreviewMode.OwnerReview) }
+        mainClock.autoAdvance = false
+        onNodeWithContentDescription("Next").performClick()
+        mainClock.advanceTimeBy(48)
+        onNodeWithContentDescription("Next").performClick()
+        mainClock.advanceTimeBy(5_000)
+        mainClock.autoAdvance = true
+        waitForIdle()
+        assertEquals(listOf(11, 12), reported)
+        onNodeWithText("13 / 20").assertExists()
+    }
 
     @OptIn(ExperimentalTestApi::class)
     @Config(qualifiers = "w411dp-h914dp")

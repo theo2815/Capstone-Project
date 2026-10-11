@@ -75,6 +75,7 @@ import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
 import coil.size.Size
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import com.quickpitik.mobile.data.remote.CartItemDto
 import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
@@ -330,23 +331,32 @@ fun PhotoPreview(
     val pageCount by rememberUpdatedState(photos.size)
     val pagerState = remember { PagerState(currentPage = safeIndex) { pageCount } }
 
-    // Pager → parent: settled-page emissions update the parent's currentIndex.
+    // Pager → parent: swiped-page emissions update the parent's currentIndex.
     // rememberUpdatedState lets the long-running collector see the latest
     // currentIndex/onIndexChange without restarting (which would skip events).
     val latestOnIndexChange by rememberUpdatedState(onIndexChange)
     val latestCurrentIndex by rememberUpdatedState(currentIndex)
+    // Pages passed while catching up to currentIndex are not the user's choice.
+    var parentScroll by remember { mutableStateOf(false) }
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }.collect { page ->
-            if (page != latestCurrentIndex) latestOnIndexChange(page)
+        snapshotFlow { pagerState.currentPage }.collect { page ->
+            if (!parentScroll && page != latestCurrentIndex) latestOnIndexChange(page)
         }
     }
     // Parent → pager: chevron taps push currentIndex; animate the pager to
     // catch up. Guarded so swipe-driven changes don't re-animate.
     LaunchedEffect(currentIndex) {
-        if (currentIndex in photos.indices &&
-            pagerState.currentPage != currentIndex
-        ) {
-            pagerState.animateScrollToPage(currentIndex)
+        try {
+            if (currentIndex in photos.indices &&
+                pagerState.currentPage != currentIndex
+            ) {
+                parentScroll = true
+                pagerState.animateScrollToPage(currentIndex)
+            }
+        } finally {
+            // A newer currentIndex cancels this effect; its own effect owns the
+            // flag, and stale pages from this scroll must stay ignored until then.
+            if (isActive) parentScroll = false
         }
     }
 
