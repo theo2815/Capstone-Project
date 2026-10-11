@@ -85,12 +85,22 @@ it("overrideRequiresVisibleReason", async () => {
 it("does not require an urgent reason once the server marks the review overdue", async () => {
   const user = userEvent.setup();
   serverCase = { ...mixedCase, items: [removalItem("b1", "Photographer B")],
-    reviews: [ownerReview("Photographer B", { overdue: true, overdueAt: "2026-10-15T03:00:00Z" })] };
+    reviews: [ownerReview("Photographer B", { deadline: "2026-10-01T03:00:00Z", overdue: true, overdueAt: "2026-10-15T03:00:00Z" })] };
   renderDecision();
   expect(await screen.findByText("Photographer B — overdue")).toBeVisible();
   await decideItem(user, "photo-b1", "REMOVE", "No response by the deadline");
   expect(screen.getByRole("button", { name: "Authorize removal" })).toBeEnabled();
   expect(screen.queryByText(/urgent reason is required/i)).not.toBeInTheDocument();
+});
+
+it("overrideNotRequiredAfterObjectionDeadline", async () => {
+  const user = userEvent.setup();
+  serverCase = { ...mixedCase, items: [mixedCase.items[1]], reviews: [ownerReview("Photographer B", { deadline: "2026-10-01T03:00:00Z", overdue: false })] };
+  vi.mocked(removalApi.decideRemovalRequest).mockResolvedValue({ ...serverCase, version: 8 });
+  renderDecision();
+  await decideItem(user, "photo-b1", "REMOVE", "Runner verified");
+  expect(screen.queryByText(/urgent reason is required/i)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Authorize removal" })).toBeEnabled();
 });
 
 it("requires a review date before retaining a photo restricted", async () => {
@@ -208,7 +218,7 @@ it("limits the retention review date to the future", async () => {
 
 it("shows readable decisions and the deadline time from the server", async () => {
   serverCase = { ...mixedCase, items: [removalItem("a1", "Photographer A", { state: "RETAINED", adminDecision: "RETAIN", adminDecisionReason: "Not the runner" })],
-    reviews: [ownerReview("Photographer A", { overdue: true, overdueAt: "2026-10-15T03:00:00Z" })] };
+    reviews: [ownerReview("Photographer A", { deadline: "2026-10-15T03:00:00Z", overdue: true, overdueAt: "2026-10-15T03:00:00Z" })] };
   renderDecision();
   expect(await screen.findByText(/Decision: Retain/)).toBeVisible();
   expect(screen.queryByText(/Decision: RETAIN/)).not.toBeInTheDocument();
