@@ -219,6 +219,21 @@ class RefreshTokenServiceTest {
         assertFailsWith<UnauthorizedException> { service().validateAndRotate("parent-token") }
     }
 
+    // The token to keep comes from the request body: naming another user's
+    // token must not reach into that user's rows (review 2026-10-11, R1).
+    @Test
+    fun `revokeAllForUserExcept never touches another user's tokens`() {
+        val other = RefreshToken(userId = UUID.randomUUID(), tokenHash = OpaqueTokens.hash("other-device"), expiresAt = OffsetDateTime.now().plusDays(1))
+        val otherParent = RefreshToken(userId = other.userId, tokenHash = OpaqueTokens.hash("other-parent"), expiresAt = OffsetDateTime.now().plusDays(1), revokedAt = OffsetDateTime.now().minusSeconds(30)).apply { replacedById = other.id }
+        Mockito.`when`(repository.findByTokenHash(other.tokenHash)).thenReturn(other)
+        Mockito.`when`(repository.findByReplacedById(other.id)).thenReturn(otherParent)
+
+        service().revokeAllForUserExcept(userId, "other-device")
+
+        assertEquals(other.id, otherParent.replacedById, "the other user's grace must survive")
+        Mockito.verify(repository, Mockito.never()).save(anyArg())
+    }
+
     @Test
     fun `revokeAllForUserExcept with nothing to keep revokes everything`() {
         var revokedFor: UUID? = null

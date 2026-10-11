@@ -96,6 +96,7 @@ class RefreshTokenService(
         // ponytail: unindexed lookup, once per password change; index
         // replaced_by_id if refresh_tokens grows large.
         refreshTokenRepository.findByTokenHash(keepHash)
+            ?.takeIf { it.userId == userId } // the hash comes from the request body
             ?.let { refreshTokenRepository.findByReplacedById(it.id) }
             ?.let { it.replacedById = null; refreshTokenRepository.save(it) }
     }
