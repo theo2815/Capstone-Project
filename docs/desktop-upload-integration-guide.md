@@ -27,7 +27,7 @@ The desktop uses the same three calls the website and mobile app use, with no `c
 
 | Step | Call | Notes |
 |---|---|---|
-| Pre-flight | `POST /me/photographer/events/{eventId}/photos/exists { hashes: [sha256 hex…] }` | Up to 500 hashes; answers `new` / `same_event` / `different_event` per hash |
+| Pre-flight | `POST /me/photographer/events/{eventId}/photos/exists { hashes: [sha256 hex…] }` | Up to 500 hashes; answers `new` / `same_event` / `different_event` per hash, with `inTrash: true` when that photo sits in the photographer's trash (begin's `existing` carries the same flag); the desktop counts those apart from "already there" |
 | Begin | `POST /me/photographer/events/{eventId}/photos/direct { contentHash, contentType, sizeBytes, originalFilename, requestId }` | Answers `mode: direct` (PUT the bytes to `uploadUrl` with `uploadHeaders` before `expiresAt`), `existing` (already stored) or `multipart` |
 | Commit | `POST /me/photographer/events/{eventId}/photos/direct/commit { photoId, key, contentHash, sizeBytes, contentType }` | Idempotent; `UPLOAD_IN_PROGRESS` means wait |
 | Multipart | `POST /me/photographer/events/{eventId}/photos` with form field `file` | Only when begin answered `multipart` |
