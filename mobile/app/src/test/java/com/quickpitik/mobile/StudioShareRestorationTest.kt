@@ -66,6 +66,7 @@ class StudioShareRestorationTest {
     private val requestedOrderId = AtomicReference<String?>()
     private val restoring = AtomicBoolean(false)
     private val failPinned = AtomicBoolean(false)
+    private val manyPhotos = AtomicBoolean(false)
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -76,6 +77,13 @@ class StudioShareRestorationTest {
                     request.path.orEmpty().contains("/events/event-a?includeRemoved=true") -> {
                         eventCalls.incrementAndGet()
                         ok("""{"id":"event-a","slug":"cebu","name":"Cebu Run","date":"2026-10-01","location":"Cebu","state":"past","photoCount":1,"salesCount":1,"revenueKept":25.5,"deletedAt":null}""")
+                    }
+                    request.path.orEmpty().contains("purchased-photos") && manyPhotos.get() -> {
+                        val items = (0 until 20).map { i ->
+                            val id = if (i == 14) "photo-a" else "photo-$i"
+                            """{"photo":{"id":"$id","bib":"$i","status":"ready","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null},"purchaseCount":1,"lastPurchasedAt":"2026-10-01T00:00:00Z"}"""
+                        }
+                        ok("""{"items":[${items.joinToString(",")}],"total":20,"offset":0,"limit":50}""")
                     }
                     request.path.orEmpty().contains("purchased-photos") -> ok("""{"items":[{"photo":{"id":"photo-a","bib":"123","status":"ready","salesCount":1,"uploadedAt":"2026-10-01T00:00:00Z","tone":0,"span":"normal","thumbnailUrl":null},"purchaseCount":1,"lastPurchasedAt":"2026-10-01T00:00:00Z"}],"total":1,"offset":0,"limit":50}""")
                     request.path.orEmpty().contains("/photos/photo-a/purchases") -> {
@@ -213,6 +221,70 @@ class StudioShareRestorationTest {
         compose.waitUntil(5_000) { compose.waitForIdle(); purchases.previewState.value.photoId == null }
         compose.waitForIdle()
         compose.onNodeWithText("Cora R.").assertDoesNotExist()
+    }
+
+    @Test fun `cold restore in a multi-photo gallery keeps the exact photo and order`() {
+        manyPhotos.set(true)
+        lateinit var nav: NavHostController
+        lateinit var purchases: PhotographerPurchasesViewModel
+        var owner: ViewModelStoreOwner = newOwner()
+        val restore = StateRestorationTester(compose)
+        restore.setContent {
+            DisposableEffect(Unit) {
+                onDispose {
+                    owner.viewModelStore.clear()
+                    owner = newOwner()
+                }
+            }
+            CompositionLocalProvider(LocalViewModelStoreOwner provides owner) {
+                nav = rememberNavController()
+                NavHost(nav, startDestination = "studio") {
+                    navigation(startDestination = "studio/home", route = "studio") {
+                        composable("studio/home") {}
+                        composable(
+                            "studio/share/{eventId}?tab={tab}",
+                            arguments = listOf(
+                                navArgument("eventId") { type = NavType.StringType },
+                                navArgument("tab") { type = NavType.StringType; defaultValue = "active" },
+                            ),
+                        ) { entry ->
+                            val graph = nav.getBackStackEntry("studio")
+                            purchases = viewModel(graph)
+                            StudioShareDestination(
+                                eventId = entry.arguments?.getString("eventId"),
+                                initialTab = entry.arguments?.getString("tab") ?: "active",
+                                dashboard = viewModel<PhotographerDashboardViewModel>(graph),
+                                purchases = purchases,
+                                onBack = { nav.popBackStack() },
+                                onOpenEvent = {},
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        compose.runOnIdle { nav.navigate(shareRoute("event-a", "purchased")) }
+        compose.waitUntil(5_000) { compose.waitForIdle(); purchases.purchasedPhotosState.value.items.size == 20 }
+        compose.runOnIdle { purchases.openPurchase("photo-a") }
+        compose.waitUntil(5_000) { compose.waitForIdle(); purchases.previewState.value.selectedPurchase?.buyer == "Aira S." }
+        compose.onNodeWithText("15 / 20").assertExists()
+        compose.onNodeWithText("Load more purchases").performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(5_000) { compose.waitForIdle(); purchases.previewState.value.items.size == 51 }
+        compose.onNodeWithText("Bea T. · B1B2C3D4").performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(5_000) { compose.waitForIdle(); purchases.previewState.value.selectedPurchase?.buyer == "Bea T." && !purchases.previewState.value.isLoading }
+
+        restoring.set(true)
+        val firstVm = purchases
+        restore.emulateSavedInstanceStateRestore()
+        compose.waitForIdle()
+        assertNotSame(firstVm, purchases)
+        compose.waitUntil(5_000) { compose.waitForIdle(); purchases.purchasedPhotosState.value.items.size == 20 && purchases.previewState.value.selectedPurchase != null }
+        compose.waitForIdle()
+        assertEquals("photo-a", purchases.previewState.value.photoId)
+        assertEquals("b1b2c3d4-order", purchases.previewState.value.orderId)
+        assertEquals("b1b2c3d4-order", requestedOrderId.get())
+        compose.onNodeWithText("Cora R.").assertExists()
+        compose.onNodeWithText("15 / 20").assertExists()
     }
 
     @Test fun `NavHost restores transaction ids and refetches their buyer and URL`() {

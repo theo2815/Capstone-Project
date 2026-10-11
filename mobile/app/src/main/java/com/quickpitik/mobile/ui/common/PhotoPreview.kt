@@ -26,7 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -325,10 +325,10 @@ fun PhotoPreview(
     val canPrev = safeIndex > 0
     val canNext = safeIndex < photos.size - 1
 
-    val pagerState = rememberPagerState(
-        initialPage = safeIndex,
-        pageCount = { photos.size },
-    )
+    // Not saveable: the caller restores currentIndex by photo identity, and a
+    // restored position could point into a list that is not loaded yet.
+    val pageCount by rememberUpdatedState(photos.size)
+    val pagerState = remember { PagerState(currentPage = safeIndex) { pageCount } }
 
     // Pager → parent: settled-page emissions update the parent's currentIndex.
     // rememberUpdatedState lets the long-running collector see the latest
@@ -336,7 +336,7 @@ fun PhotoPreview(
     val latestOnIndexChange by rememberUpdatedState(onIndexChange)
     val latestCurrentIndex by rememberUpdatedState(currentIndex)
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.currentPage }.collect { page ->
+        snapshotFlow { pagerState.settledPage }.collect { page ->
             if (page != latestCurrentIndex) latestOnIndexChange(page)
         }
     }
