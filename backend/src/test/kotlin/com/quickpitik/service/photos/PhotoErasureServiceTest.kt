@@ -83,6 +83,15 @@ class PhotoErasureServiceTest {
         Mockito.verifyNoInteractions(storage)
     }
 
+    @Test fun `makeDue moves a backed-off job to now without other changes`() {
+        val job = job().also { it.nextAttemptAt = Instant.now().plusSeconds(3600); it.outcome = PhotoErasureOutcome.RETRY_REQUIRED }
+        service.makeDue(job)
+        kotlin.test.assertTrue(!job.nextAttemptAt.isAfter(Instant.now()))
+        assertEquals(PhotoErasureOutcome.RETRY_REQUIRED, job.outcome)
+        Mockito.verify(jobs).saveAndFlush(job)
+        Mockito.verifyNoInteractions(storage)
+    }
+
     private fun job() = PhotoErasureJob(photoId = UUID.randomUUID(), eventId = UUID.randomUUID(),
         ownerId = UUID.randomUUID(), purpose = PhotoErasurePurpose.PHOTOGRAPHER_DELETE,
         authorizedActorType = RemovalActorType.PHOTOGRAPHER, authorizedActorId = UUID.randomUUID(),

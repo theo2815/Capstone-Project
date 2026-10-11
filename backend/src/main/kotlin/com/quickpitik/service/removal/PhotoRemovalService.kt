@@ -149,6 +149,7 @@ class PhotoRemovalService(
                 val job = item.cleanupJobId?.let { jobs.lock(it) } ?: removalConflict()
                 if (job.photoId != item.photoIdSnapshot || job.outcome == PhotoErasureOutcome.COMPLETE ||
                     item.state !in setOf(RemovalItemState.REMOVAL_AUTHORIZED, RemovalItemState.REMOVED)) removalConflict()
+                erasure.makeDue(job)
             }
             val now = clock.instant()
             if (commands.insertClaim(command.commandId, requestId, RemovalCommandOperation.RETRY_CLEANUP.name, adminId, hash, null, now) == 0)

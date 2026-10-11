@@ -89,6 +89,14 @@ class PhotoErasureService(
         }!!
     }
 
+    // An admin retry must not wait out the failure backoff for jobs the in-request cap leaves to the sweep.
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun makeDue(job: PhotoErasureJob) {
+        job.nextAttemptAt = clock.instant()
+        job.updatedAt = job.nextAttemptAt
+        jobs.saveAndFlush(job)
+    }
+
     @Transactional(propagation = Propagation.MANDATORY)
     fun recordUploadIntent(photoId: UUID, intent: PhotoUploadIntent) {
         // Keep receipt association and cleanup invalidation under photo → job → receipt locks.
