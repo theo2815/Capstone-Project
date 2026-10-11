@@ -11,7 +11,7 @@ The desktop never calls `ai-api` for this flow and uses no API key. It is a sign
 3. On Connect the website calls `POST /api/v1/auth/desktop/codes` with `{ "codeChallenge": "<challenge>" }` (bearer, PHOTOGRAPHER role). Answer: `{ "code": "<43 chars>", "expiresInSeconds": 120 }`, `Cache-Control: no-store`.
 4. The website sends the browser to `batchmyphotos://quickpitik/callback?code=<code>&state=<state>`.
 5. The app checks `state` against its pending request, then calls the public `POST /api/v1/auth/desktop/exchange` with `{ "code": "<code>", "codeVerifier": "<verifier>" }`. Answer: the normal `AuthResponse` `{ accessToken, refreshToken, user }`. The code is single use; expired, used, mismatched or malformed codes all answer `401 INVALID_TOKEN` with "This connect code is invalid or has expired." A suspended account answers `401 ACCOUNT_SUSPENDED`. The route shares the `auth-login` per-IP rate policy.
-6. The app stores the pair in its own encrypted store and refreshes with `POST /api/v1/auth/refresh { refreshToken }` (rotating; save both new tokens at once). Disconnect calls `POST /api/v1/auth/logout { refreshToken }` best effort, then clears the store.
+6. The app stores the pair in its own encrypted store and refreshes with `POST /api/v1/auth/refresh { refreshToken }` (rotating; save both new tokens at once). If the answer to a refresh is lost, presenting the same refresh token again within `jwt.refresh-rotation-grace` (10 minutes) gives a fresh pair, unless the session was revoked in between (password change, "revoke all"). Disconnect calls `POST /api/v1/auth/logout { refreshToken }` best effort, then clears the store.
 
 Code: `backend/src/main/kotlin/com/quickpitik/service/auth/DesktopAuthService.kt`, `AuthController.kt`, table `desktop_auth_codes` (V85). Website page: `website/src/components/auth/connect-desktop.tsx`.
 
@@ -27,7 +27,7 @@ The desktop uses the same three calls the website and mobile app use, with no `c
 
 | Step | Call | Notes |
 |---|---|---|
-| Pre-flight | `POST /me/photographer/events/{eventId}/photos/exists { hashes: [sha256 hex…] }` | Up to 500 hashes; answers `new` / `same_event` / `different_event` per hash |
+| Pre-flight | `POST /me/photographer/events/{eventId}/photos/exists { hashes: [sha256 hex…] }` | Up to 500 hashes; answers `new` / `same_event` / `different_event` per hash, with `inTrash: true` when that photo sits in the photographer's trash (begin's `existing` carries the same flag); the desktop counts those apart from "already there" |
 | Begin | `POST /me/photographer/events/{eventId}/photos/direct { contentHash, contentType, sizeBytes, originalFilename, requestId }` | Answers `mode: direct` (PUT the bytes to `uploadUrl` with `uploadHeaders` before `expiresAt`), `existing` (already stored) or `multipart` |
 | Commit | `POST /me/photographer/events/{eventId}/photos/direct/commit { photoId, key, contentHash, sizeBytes, contentType }` | Idempotent; `UPLOAD_IN_PROGRESS` means wait |
 | Multipart | `POST /me/photographer/events/{eventId}/photos` with form field `file` | Only when begin answered `multipart` |

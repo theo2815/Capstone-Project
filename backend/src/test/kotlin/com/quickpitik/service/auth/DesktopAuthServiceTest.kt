@@ -128,8 +128,13 @@ class DesktopAuthServiceTest {
     fun `exchange refuses an expired code`() {
         val user = photographer()
         val code = OpaqueTokens.generate()
-        Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code)))
-            .thenReturn(stored(user, code, expiresAt = now.minusSeconds(1)))
+        val row = stored(user, code, expiresAt = now.minusSeconds(1))
+        Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code))).thenReturn(row)
+        // The user and the mark are real here, so a check that goes missing
+        // runs on to markUsed and fails the never() below instead of stopping
+        // on an empty user lookup with the same error (review 2026-10-11, F4).
+        Mockito.`when`(users.findById(user.id)).thenReturn(Optional.of(user))
+        Mockito.`when`(codes.markUsed(row.id, now)).thenReturn(1)
 
         val ex = assertFailsWith<UnauthorizedException> { service().exchange(code, verifier) }
 
@@ -141,19 +146,25 @@ class DesktopAuthServiceTest {
     fun `exchange refuses a code that was already used`() {
         val user = photographer()
         val code = OpaqueTokens.generate()
-        Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code)))
-            .thenReturn(stored(user, code, usedAt = now.minusSeconds(30)))
+        val row = stored(user, code, usedAt = now.minusSeconds(30))
+        Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code))).thenReturn(row)
+        Mockito.`when`(users.findById(user.id)).thenReturn(Optional.of(user))
+        Mockito.`when`(codes.markUsed(row.id, now)).thenReturn(1)
 
         val ex = assertFailsWith<UnauthorizedException> { service().exchange(code, verifier) }
 
         assertEquals(ErrorCodes.INVALID_TOKEN, ex.code)
+        Mockito.verify(codes, Mockito.never()).markUsed(anyArg(), anyArg())
     }
 
     @Test
     fun `exchange refuses the wrong verifier`() {
         val user = photographer()
         val code = OpaqueTokens.generate()
-        Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code))).thenReturn(stored(user, code))
+        val row = stored(user, code)
+        Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(code))).thenReturn(row)
+        Mockito.`when`(users.findById(user.id)).thenReturn(Optional.of(user))
+        Mockito.`when`(codes.markUsed(row.id, now)).thenReturn(1)
 
         val ex = assertFailsWith<UnauthorizedException> { service().exchange(code, "w".repeat(43)) }
 
@@ -222,6 +233,8 @@ class DesktopAuthServiceTest {
         Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(used)))
             .thenReturn(stored(user, used, usedAt = now))
         Mockito.`when`(codes.findByCodeHash(OpaqueTokens.hash(live))).thenReturn(stored(user, live))
+        Mockito.`when`(users.findById(user.id)).thenReturn(Optional.of(user))
+        Mockito.`when`(codes.markUsed(anyArg(), anyArg())).thenReturn(1)
 
         val messages = listOf(
             assertFailsWith<UnauthorizedException> { service().exchange(expired, verifier) }.message,
