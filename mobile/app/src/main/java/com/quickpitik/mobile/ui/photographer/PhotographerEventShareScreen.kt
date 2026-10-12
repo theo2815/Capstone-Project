@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -678,7 +679,10 @@ fun PhotographerEventShareScreen(
 
 @Composable
 private fun LibraryTabs(section: PhotoSection, removed: Boolean, onSelect: (PhotoSection) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         if (!removed) {
             LibraryTab("Active", section == PhotoSection.Active) { onSelect(PhotoSection.Active) }
             LibraryTab("Deleted", section == PhotoSection.Deleted) { onSelect(PhotoSection.Deleted) }

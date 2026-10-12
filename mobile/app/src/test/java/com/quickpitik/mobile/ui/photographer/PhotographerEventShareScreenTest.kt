@@ -1,9 +1,17 @@
 package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import org.robolectric.annotation.Config
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.onAncestors
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.test.core.app.ApplicationProvider
@@ -183,6 +191,27 @@ class PhotographerEventShareScreenTest {
             waitForIdle()
             onNodeWithText("1 purchased photos", ignoreCase = true).assertExists()
             onNodeWithText("1 purchase").assertExists()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Config(qualifiers = "w360dp-h800dp")
+    @Test fun `library tabs stay whole by scrolling sideways at large font scale`() {
+        runComposeUiTest {
+            setContent {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, 1.45f)) {
+                    PhotographerEventShareScreen(
+                        event = event(false), viewModel = dashboard, purchaseViewModel = purchases,
+                        initialTab = "active", onBack = {},
+                    )
+                }
+            }
+            for (label in listOf("Active", "Deleted", "Purchased")) {
+                val scrolls = onNodeWithText(label, useUnmergedTree = true).onAncestors()
+                    .filter(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange))
+                assertTrue("$label sits in a row that cannot scroll sideways", scrolls.fetchSemanticsNodes().isNotEmpty())
+            }
         }
     }
 }

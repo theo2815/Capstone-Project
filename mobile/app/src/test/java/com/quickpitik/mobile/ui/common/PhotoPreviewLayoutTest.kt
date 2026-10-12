@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
@@ -67,6 +68,47 @@ class PhotoPreviewLayoutTest {
     @Test @Config(qualifiers = "w914dp-h411dp") fun `details fit landscape`() = checkDetails()
     @Test @Config(qualifiers = "w640dp-h360dp") fun `details fit large font short landscape`() = checkDetails(1.5f)
     @Test @Config(qualifiers = "w768dp-h1024dp") fun `details fit tablet`() = checkDetails()
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun checkChromeApart(fontScale: Float = 1f, withDetails: Boolean = false) = runComposeUiTest {
+        val photos = (0 until 3).map { PhotoPreviewData("photo-$it", 50.0, null, "Cebu Run") }
+        setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+                PhotoPreview(
+                    photos, 1, {}, {}, mode = PhotoPreviewMode.OwnerReview,
+                    details = if (withDetails) ({ Column { repeat(24) { Text("Purchase fact $it") } } }) else null,
+                )
+            }
+        }
+        val dp = density.density
+        val chrome = listOf(
+            "Close preview" to onNodeWithContentDescription("Close preview").fetchSemanticsNode().boundsInRoot,
+            "Previous" to onNodeWithContentDescription("Previous").fetchSemanticsNode().boundsInRoot,
+            "Next" to onNodeWithContentDescription("Next").fetchSemanticsNode().boundsInRoot,
+            "Counter" to onNodeWithText("2 / 3", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.let {
+                // The pill is 48dp high with 16dp side padding around its text.
+                Rect(it.left - 16f * dp, it.center.y - 24f * dp, it.right + 16f * dp, it.center.y + 24f * dp)
+            },
+        )
+        chrome.take(3).forEach { (name, r) ->
+            assertTrue("$name is ${r.width / dp} x ${r.height / dp} dp", r.width >= 48f * dp - 0.5f && r.height >= 48f * dp - 0.5f)
+        }
+        for (i in chrome.indices) for (j in i + 1 until chrome.size) {
+            assertTrue("${chrome[i].first} ${chrome[i].second} overlaps ${chrome[j].first} ${chrome[j].second}", !chrome[i].second.overlaps(chrome[j].second))
+        }
+    }
+
+    @Test @Config(qualifiers = "w411dp-h914dp") fun `chrome apart portrait`() = checkChromeApart()
+    @Test @Config(qualifiers = "w914dp-h411dp") fun `chrome apart landscape`() = checkChromeApart()
+    @Test @Config(qualifiers = "w640dp-h360dp") fun `chrome apart short landscape`() = checkChromeApart()
+    @Test @Config(qualifiers = "w640dp-h360dp") fun `chrome apart short landscape large font`() = checkChromeApart(1.5f)
+    @Test @Config(qualifiers = "w768dp-h1024dp") fun `chrome apart tablet`() = checkChromeApart()
+    @Test @Config(qualifiers = "w411dp-h914dp") fun `chrome apart portrait with details`() = checkChromeApart(withDetails = true)
+    @Test @Config(qualifiers = "w914dp-h411dp") fun `chrome apart landscape with details`() = checkChromeApart(withDetails = true)
+    @Test @Config(qualifiers = "w640dp-h360dp") fun `chrome apart short landscape with details`() = checkChromeApart(withDetails = true)
+    @Test @Config(qualifiers = "w640dp-h360dp") fun `chrome apart short landscape large font with details`() = checkChromeApart(1.5f, true)
+    @Test @Config(qualifiers = "w768dp-h1024dp") fun `chrome apart tablet with details`() = checkChromeApart(withDetails = true)
 
     @OptIn(ExperimentalTestApi::class)
     @Config(qualifiers = "w411dp-h914dp")

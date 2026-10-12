@@ -509,25 +509,29 @@ fun PhotoPreview(
                             .align(Alignment.TopEnd)
                             .padding(12.dp),
                     )
-                    if (canPrev) {
-                        ChromeButton(
-                            icon = Icons.Default.KeyboardArrowLeft,
-                            contentDescription = "Previous",
-                            onClick = { onIndexChange(safeIndex - 1) },
-                            modifier = Modifier
-                                .align(Alignment.CenterStart)
-                                .padding(12.dp),
-                        )
-                    }
-                    if (canNext) {
-                        ChromeButton(
-                            icon = Icons.Default.KeyboardArrowRight,
-                            contentDescription = "Next",
-                            onClick = { onIndexChange(safeIndex + 1) },
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .padding(12.dp),
-                        )
+                    // Centred below the 12dp + 48dp top row, so a short stage can
+                    // never slide prev/next under close or the counter.
+                    Box(modifier = Modifier.matchParentSize().padding(top = 60.dp)) {
+                        if (canPrev) {
+                            ChromeButton(
+                                icon = Icons.Default.KeyboardArrowLeft,
+                                contentDescription = "Previous",
+                                onClick = { onIndexChange(safeIndex - 1) },
+                                modifier = Modifier
+                                    .align(Alignment.CenterStart)
+                                    .padding(horizontal = 12.dp),
+                            )
+                        }
+                        if (canNext) {
+                            ChromeButton(
+                                icon = Icons.Default.KeyboardArrowRight,
+                                contentDescription = "Next",
+                                onClick = { onIndexChange(safeIndex + 1) },
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(horizontal = 12.dp),
+                            )
+                        }
                     }
                 }
 
