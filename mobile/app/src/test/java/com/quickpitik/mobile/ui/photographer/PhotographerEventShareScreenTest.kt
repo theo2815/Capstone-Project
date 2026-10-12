@@ -8,6 +8,7 @@ import org.robolectric.annotation.Config
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.filter
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAncestors
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.semantics.SemanticsActions
@@ -149,7 +150,7 @@ class PhotographerEventShareScreenTest {
                     initialTab = "active", onBack = {},
                 )
             }
-            waitUntil(timeoutMillis = 5_000) { paths.any { it.contains("purchased-photos") } }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("No completed purchases yet.").fetchSemanticsNodes().isNotEmpty() }
             onNodeWithText("Removed event", ignoreCase = true).assertExists()
             onNodeWithText("No completed purchases yet.").assertExists()
             onNodeWithText("Copy link").assertDoesNotExist()

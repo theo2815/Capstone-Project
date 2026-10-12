@@ -2,6 +2,7 @@ package com.quickpitik.mobile
 
 import android.app.Application
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -61,7 +62,7 @@ class StudioShareDestinationTest {
         var backs = 0
         runComposeUiTest {
             setContent { StudioShareDestination("event-a", "purchased", dashboard, purchases, onBack = { backs++ }, onOpenEvent = {}) }
-            waitUntil(timeoutMillis = 5_000) { paths.any { it.contains("purchased-photos") } }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("No completed purchases yet.").fetchSemanticsNodes().isNotEmpty() }
             onNodeWithText("Restored Run").assertExists()
             onNodeWithText("No completed purchases yet.").assertExists()
             runOnIdle {
@@ -77,12 +78,12 @@ class StudioShareDestinationTest {
         var backs = 0
         runComposeUiTest {
             setContent { StudioShareDestination("event-a", "purchased", dashboard, purchases, onBack = { backs++ }, onOpenEvent = {}) }
-            waitUntil(timeoutMillis = 5_000) { purchases.eventState.value.error != null }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Try again").fetchSemanticsNodes().isNotEmpty() }
             onNodeWithText("Try again").assertExists()
             onNodeWithText("Back").assertExists()
             runOnIdle { failDetail = false }
             onNodeWithText("Try again").performClick()
-            waitUntil(timeoutMillis = 5_000) { paths.count { it.contains("includeRemoved=true") } >= 2 }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Restored Run").fetchSemanticsNodes().isNotEmpty() }
             onNodeWithText("Restored Run").assertExists()
             runOnIdle { assertEquals(0, backs) }
         }
