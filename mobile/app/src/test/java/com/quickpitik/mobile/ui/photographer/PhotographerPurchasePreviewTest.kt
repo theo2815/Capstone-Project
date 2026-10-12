@@ -365,4 +365,35 @@ class PhotographerPurchasePreviewTest {
             releaseB.countDown()
         }
     }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `opening the last loaded purchased photo shows the total and loads the next page once`() {
+        val photos = (1..4).map { PhotographerLibraryPhotoDto("photo-$it", null, "ready", 1, "2026-10-01T00:00:00Z", 0, "normal") } +
+            PhotographerLibraryPhotoDto("photo-a", null, "ready", 2, "2026-10-01T00:00:00Z", 0, "normal")
+        var loads = 0
+        vm.openPurchase("photo-a", "a1b2c3d4-order")
+        vm.previewState.awaitFirst { it.selectedPurchase != null }
+        runComposeUiTest {
+            setContent {
+                PhotographerPurchasePreview(vm, photos = photos, onClose = {}, onOpenEvent = {},
+                    galleryTotal = 210, galleryHasMore = true, onLoadMoreGallery = { loads++ })
+            }
+            onNodeWithText("5 / 210").assertExists()
+            waitForIdle()
+            assertEquals(1, loads)
+        }
+    }
+
+    @Test fun `paging shows the purchased total and loads ahead only near the loaded end`() {
+        assertEquals(PurchasePreviewPaging(total = 210, loadAhead = false), purchasePreviewPaging(index = 0, loaded = 50, total = 210, hasMore = true, isLoadingMore = false, appendFailed = false))
+        assertEquals(PurchasePreviewPaging(total = 210, loadAhead = true), purchasePreviewPaging(index = 48, loaded = 50, total = 210, hasMore = true, isLoadingMore = false, appendFailed = false))
+        assertEquals(PurchasePreviewPaging(total = 210, loadAhead = true), purchasePreviewPaging(index = 49, loaded = 50, total = 210, hasMore = true, isLoadingMore = false, appendFailed = false))
+    }
+
+    @Test fun `paging never loads ahead while busy, after a failed append or when all are loaded`() {
+        assertEquals(false, purchasePreviewPaging(index = 49, loaded = 50, total = 210, hasMore = true, isLoadingMore = true, appendFailed = false).loadAhead)
+        assertEquals(false, purchasePreviewPaging(index = 49, loaded = 50, total = 210, hasMore = true, isLoadingMore = false, appendFailed = true).loadAhead)
+        // A total the server can no longer reach (photos left the list) is not promised in the counter.
+        assertEquals(PurchasePreviewPaging(total = 50, loadAhead = false), purchasePreviewPaging(index = 49, loaded = 50, total = 210, hasMore = false, isLoadingMore = false, appendFailed = false))
+    }
 }

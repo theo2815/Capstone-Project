@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -49,6 +50,18 @@ import com.quickpitik.mobile.ui.theme.Typography
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+internal data class PurchasePreviewPaging(val total: Int, val loadAhead: Boolean)
+
+/**
+ * The counter shows the whole purchased list; nearing the loaded end loads its next page.
+ * A total the server can no longer reach (hasMore false) is not promised, and a busy or
+ * failed append waits for the gallery's own Load more, so this never loops.
+ */
+internal fun purchasePreviewPaging(index: Int, loaded: Int, total: Long, hasMore: Boolean, isLoadingMore: Boolean, appendFailed: Boolean): PurchasePreviewPaging {
+    val shown = if (hasMore) maxOf(total.toInt(), loaded) else loaded
+    return PurchasePreviewPaging(shown, hasMore && !isLoadingMore && !appendFailed && shown > loaded && index >= loaded - 2)
+}
+
 /** Seller purchase context inside the existing owner preview shell. */
 @Composable
 fun PhotographerPurchasePreview(
@@ -58,6 +71,12 @@ fun PhotographerPurchasePreview(
     onClose: () -> Unit,
     onOpenEvent: (String) -> Unit,
     onSelectPurchase: (String) -> Unit = {},
+    // The gallery list behind `photos`: its full size and how to load its next page.
+    galleryTotal: Long = 0,
+    galleryHasMore: Boolean = false,
+    galleryLoadingMore: Boolean = false,
+    galleryAppendFailed: Boolean = false,
+    onLoadMoreGallery: () -> Unit = {},
 ) {
     val state by viewModel.previewState.collectAsState()
     val photoId = state.photoId ?: return
@@ -74,6 +93,8 @@ fun PhotographerPurchasePreview(
         (if (photo.id == photoId) state.photo ?: photo else photo).toOwnerPreviewData(state.event?.name ?: transaction?.eventName)
     } else listOf(PhotoPreviewData(photoId, 0.0, transaction?.thumbnailUrl, transaction?.eventName))
     val index = previewPhotos.indexOfFirst { it.id == photoId }.coerceAtLeast(0)
+    val paging = if (gallery === photos) purchasePreviewPaging(index, photos.size, galleryTotal, galleryHasMore, galleryLoadingMore, galleryAppendFailed) else null
+    LaunchedEffect(paging?.loadAhead) { if (paging?.loadAhead == true) onLoadMoreGallery() }
 
     fun close() {
         viewModel.closePreview()
@@ -86,6 +107,7 @@ fun PhotographerPurchasePreview(
         onClose = ::close,
         onIndexChange = { next -> viewModel.openPurchase(previewPhotos[next].id) },
         mode = PhotoPreviewMode.OwnerReview,
+        totalCount = paging?.total,
         onRefreshImage = state.photo?.let { { photo: PhotoPreviewData -> if (photo.id == state.photoId) viewModel.refreshPhoto() } },
         imageReloadKey = state.photoRefreshGeneration,
         isRefreshingImage = state.isRefreshingPhoto,

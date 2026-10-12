@@ -85,7 +85,9 @@ it.each([true, false])("Purchased offline initial=%s and append pause preserve g
   const get = vi.spyOn(api, "get").mockImplementation(async (path) => {
     if (!path.includes("purchased-photos")) { if (initialOffline) onlineManager.setOnline(false); return detail; }
     const offset = Number(new URL(path, "https://test.invalid").searchParams.get("offset"));
-    return { items: [{ photo: offset === 0 ? photo : { ...photo, id: "photo-2" }, purchaseCount: 3 }], total: 25, offset, limit: 24 };
+    // Five on page one: photo 1 is not near the loaded end, so the preview does not load ahead.
+    const items = offset === 0 ? [photo, ...[2, 3, 4, 5].map((n) => ({ ...photo, id: `photo-${n}` }))] : [{ ...photo, id: "photo-6" }];
+    return { items: items.map((item) => ({ photo: item, purchaseCount: 3 })), total: 30, offset, limit: 24 };
   });
   renderPage();
   if (initialOffline) {
@@ -95,18 +97,18 @@ it.each([true, false])("Purchased offline initial=%s and append pause preserve g
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     act(() => onlineManager.setOnline(true));
   }
-  fireEvent.click(await screen.findByRole("button", { name: /Open photo/ }));
+  fireEvent.click((await screen.findAllByRole("button", { name: /Open photo/ }))[0]);
   expect(screen.getByRole("dialog")).toHaveTextContent("ABCDEF12");
   act(() => onlineManager.setOnline(false));
-  fireEvent.click(screen.getByRole("button", { name: "Load 24 more" }));
+  fireEvent.click(screen.getByRole("button", { name: "Load 25 more" }));
   expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
-  expect(screen.getByRole("button", { name: /Open photo/ })).toBeEnabled();
+  expect(screen.getAllByRole("button", { name: /Open photo/ })[0]).toBeEnabled();
   expect(screen.getByRole("dialog")).toHaveTextContent("ABCDEF12");
   expect(screen.getByRole("button", { name: /waiting for connection/i })).toBeDisabled();
   expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
   expect(get.mock.calls.filter(([path]) => path.includes("purchased-photos"))).toHaveLength(1);
   act(() => onlineManager.setOnline(true));
-  await waitFor(() => expect(screen.getAllByRole("button", { name: /Open photo/ })).toHaveLength(2));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: /Open photo/ })).toHaveLength(6));
   expect(screen.getByRole("dialog")).toHaveTextContent("ABCDEF12");
 });
 
@@ -195,4 +197,20 @@ it("does not force an active event back to Purchased after external URL navigati
   rerender();
   expect(screen.getByRole("tab", { name: "Deleted" })).toHaveAttribute("aria-selected", "true");
   expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["more pages, idle", { hasNextPage: true, isFetchingNextPage: false, appendError: null }, 1],
+  ["already fetching", { hasNextPage: true, isFetchingNextPage: true, appendError: null }, 0],
+  ["append failed", { hasNextPage: true, isFetchingNextPage: false, appendError: new Error("500") }, 0],
+  ["no more pages", { hasNextPage: false, isFetchingNextPage: false, appendError: null }, 0],
+])("preview at the last loaded purchased photo loads the next page: %s", (_, state, calls) => {
+  useAuthStore.getState().setUser({ id: "seller", role: "PHOTOGRAPHER", name: "Seller", email: "seller@example.test", createdAt: "2026-09-01" });
+  mocks.detail = detail;
+  mocks.error = null;
+  const fetchNextPage = vi.fn();
+  mocks.purchased.mockReturnValue({ items: [{ photo, purchaseCount: 3, lastPurchasedAt: "2026-09-07T10:00:00Z" }], total: 210, isLoading: false, error: null, ...state, fetchNextPage, refetch: vi.fn() });
+  renderPage();
+  fireEvent.click(screen.getByRole("button", { name: "Open photo 1, 3 purchases" }));
+  expect(fetchNextPage).toHaveBeenCalledTimes(calls);
 });

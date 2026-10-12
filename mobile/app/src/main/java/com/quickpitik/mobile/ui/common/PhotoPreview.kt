@@ -286,6 +286,8 @@ fun PhotoPreview(
     onRefreshImage: ((PhotoPreviewData) -> Unit)? = null,
     imageReloadKey: Long = 0,
     isRefreshingImage: Boolean = false,
+    // Size of the whole list when only part of it is loaded; the counter shows it.
+    totalCount: Int? = null,
 ) {
     if (photos.isEmpty()) {
         onClose()
@@ -322,7 +324,8 @@ fun PhotoPreview(
     }
     DisposableEffect(metadataViewModel) { onDispose { metadataViewModel.clear() } }
     val photoInCart = isInCart(activePhoto)
-    val hasMultiple = photos.size > 1
+    val shownTotal = maxOf(totalCount ?: 0, photos.size)
+    val hasMultiple = shownTotal > 1
     val canPrev = safeIndex > 0
     val canNext = safeIndex < photos.size - 1
 
@@ -492,7 +495,7 @@ fun PhotoPreview(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = "${safeIndex + 1} / ${photos.size}",
+                                text = "${safeIndex + 1} / $shownTotal",
                                 style = NumeralStyle.copy(fontSize = 13.sp),
                                 color = Ink,
                             )

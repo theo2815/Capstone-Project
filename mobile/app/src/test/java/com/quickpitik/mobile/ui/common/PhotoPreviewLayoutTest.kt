@@ -70,6 +70,14 @@ class PhotoPreviewLayoutTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Config(qualifiers = "w411dp-h914dp")
+    @Test fun `counter shows the whole set when only part of it is loaded`() = runComposeUiTest {
+        val photos = (0 until 5).map { PhotoPreviewData("photo-$it", 50.0, null, "Cebu Run") }
+        setContent { PhotoPreview(photos, 1, {}, {}, mode = PhotoPreviewMode.OwnerReview, totalCount = 210) }
+        onNodeWithText("2 / 210").assertExists()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Config(qualifiers = "w411dp-h914dp")
     @Test fun `tapping next during the page animation moves forward without bouncing back`() = runComposeUiTest {
         val photos = (0 until 20).map { PhotoPreviewData("photo-$it", 50.0, null, "Cebu Run") }
         var index by mutableStateOf(10)

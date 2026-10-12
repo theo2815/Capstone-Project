@@ -1196,7 +1196,15 @@ function PurchasedGallery({ eventId, free }: { eventId: string; free: boolean })
     {list.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more purchased photos. Try again.</p>}
     {list.isPaused && photos.length > 0 && <div role="alert" className="mt-4"><p>You&apos;re offline. Reconnect to continue loading purchased photos.</p><button type="button" disabled className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Waiting for connection</button></div>}
     {!list.isPaused && list.total > 0 && <LoadMoreButton shown={photos.length} total={list.hasNextPage ? list.total : photos.length} increment={PAGE_SIZE.PHOTO_INCREMENT} onLoadMore={list.fetchNextPage} isLoading={list.isFetchingNextPage} terminalLabel={!list.hasNextPage && photos.length < list.total ? "All available purchased photos loaded" : undefined} />}
-    <PhotographerPurchasePreview selection={selection} photos={photos} onClose={() => setSelection(null)} onSelectPhoto={(photoId) => setSelection({ photoId })} />
+    <PhotographerPurchasePreview
+      selection={selection}
+      photos={photos}
+      totalPhotos={list.hasNextPage ? list.total : photos.length}
+      // A failed or paused append waits for the page's own Load more, so this never loops.
+      onNeedMore={list.hasNextPage && !list.isFetchingNextPage && !list.appendError && !list.isPaused ? list.fetchNextPage : undefined}
+      onClose={() => setSelection(null)}
+      onSelectPhoto={(photoId) => setSelection({ photoId })}
+    />
   </>;
 }
 

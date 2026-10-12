@@ -27,6 +27,10 @@ interface Props {
   transaction?: PhotographerTransaction;
   onClose: () => void;
   onSelectPhoto?: (photoId: string) => void;
+  /** All purchased photos in the list, loaded or not; the counter shows this. */
+  totalPhotos?: number;
+  /** Loads the list's next page; called when the preview nears the loaded end. */
+  onNeedMore?: () => void;
 }
 
 export function PhotographerPurchasePreview(props: Props) {
@@ -50,7 +54,7 @@ export function PhotographerPurchasePreview(props: Props) {
   return <OpenPurchasePreview key={`${selection.photoId}:${selection.orderId ?? ""}:${selection.transactionId ?? ""}`} {...props} selection={selection} />;
 }
 
-function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelectPhoto }: Props & { selection: PurchaseSelection }) {
+function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelectPhoto, totalPhotos, onNeedMore }: Props & { selection: PurchaseSelection }) {
   const selectionKey = `${selection.photoId}:${selection.orderId ?? ""}:${selection.transactionId ?? ""}`;
   const activeSelection = useRef<string | null>(selectionKey);
   useLayoutEffect(() => { activeSelection.current = selectionKey; return () => { activeSelection.current = null; }; }, [selectionKey]);
@@ -65,6 +69,9 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
   const photo = purchase.photo ?? photos?.find((item) => item.id === selection.photoId) ?? null;
   const gallery = photos?.length ? photos : photo ? [photo] : [];
   const index = gallery.findIndex((item) => item.id === selection.photoId);
+  const total = Math.max(totalPhotos ?? 0, gallery.length);
+  const nearLoadedEnd = index >= 0 && index >= gallery.length - 2 && total > gallery.length;
+  useEffect(() => { if (nearLoadedEnd) onNeedMore?.(); }, [nearLoadedEnd, onNeedMore]);
   const fallback = transaction && transaction.photoId === selection.photoId && (!orderId || transaction.orderId === orderId) ? transaction : null;
   const eventId = purchase.event?.id;
   const selected = (orderId && purchase.selectedPurchase?.orderId === orderId ? purchase.selectedPurchase : null)
@@ -177,7 +184,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     eventName={eventLabel}
     eventDate={purchase.event?.date}
     index={index >= 0 ? index + 1 : 1}
-    total={gallery.length || 1}
+    total={total || 1}
     onClose={onClose}
     onPrev={onSelectPhoto && index > 0 ? () => onSelectPhoto(gallery[index - 1].id) : undefined}
     onNext={onSelectPhoto && index >= 0 && index < gallery.length - 1 ? () => onSelectPhoto(gallery[index + 1].id) : undefined}

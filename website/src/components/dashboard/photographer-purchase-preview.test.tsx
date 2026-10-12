@@ -549,3 +549,38 @@ it("does not fetch after close or account switch", async () => {
   expect(get).toHaveBeenCalledTimes(1);
   client.clear();
 });
+
+const gallery = (n: number) => Array.from({ length: n }, (_, i) => ({ ...photo, id: i === 0 ? photo.id : `photo-${i}` }));
+const counter = (text: string) => screen.getAllByText((_, el) => el?.tagName === "SPAN" && el.textContent === text)[0];
+
+it("counter shows the purchased total, not only the loaded photos", async () => {
+  login();
+  vi.spyOn(api, "get").mockResolvedValue(response([receipt(orderA)]));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><PhotographerPurchasePreview selection={{ photoId: photo.id }} photos={gallery(5)} totalPhotos={210} onSelectPhoto={vi.fn()} onClose={vi.fn()} /></QueryClientProvider>);
+  await waitFor(() => expect(fact("Reference")).toHaveTextContent("AAAAAAAA"));
+  expect(counter("1 / 210")).toBeVisible();
+});
+
+it.each([[0, false], [3, true], [4, true]])("near the loaded end (photo %i of 5) asks for more = %s", async (at, asks) => {
+  login();
+  vi.spyOn(api, "get").mockResolvedValue(response([receipt(orderA)]));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const photos = gallery(5);
+  const onNeedMore = vi.fn();
+  render(<QueryClientProvider client={client}><PhotographerPurchasePreview selection={{ photoId: photos[at].id }} photos={photos} totalPhotos={210} onNeedMore={onNeedMore} onSelectPhoto={vi.fn()} onClose={vi.fn()} /></QueryClientProvider>);
+  await screen.findByRole("dialog");
+  expect(onNeedMore).toHaveBeenCalledTimes(asks ? 1 : 0);
+});
+
+it("does not ask for more once every purchased photo is loaded", async () => {
+  login();
+  vi.spyOn(api, "get").mockResolvedValue(response([receipt(orderA)]));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const photos = gallery(5);
+  const onNeedMore = vi.fn();
+  render(<QueryClientProvider client={client}><PhotographerPurchasePreview selection={{ photoId: photos[4].id }} photos={photos} totalPhotos={5} onNeedMore={onNeedMore} onSelectPhoto={vi.fn()} onClose={vi.fn()} /></QueryClientProvider>);
+  await screen.findByRole("dialog");
+  expect(counter("5 / 5")).toBeVisible();
+  expect(onNeedMore).not.toHaveBeenCalled();
+});

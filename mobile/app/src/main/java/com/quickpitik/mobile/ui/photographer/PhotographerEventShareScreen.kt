@@ -612,6 +612,11 @@ fun PhotographerEventShareScreen(
             onClose = { selectedPurchasePhotoId = null; selectedPurchaseOrderId = null },
             onOpenEvent = onOpenEvent,
             onSelectPurchase = { selectedPurchaseOrderId = it },
+            galleryTotal = purchasedState.total,
+            galleryHasMore = purchasedState.hasMore,
+            galleryLoadingMore = purchasedState.isLoadingMore,
+            galleryAppendFailed = purchasedState.appendError != null,
+            onLoadMoreGallery = purchaseViewModel::loadMorePurchasedPhotos,
         )
     }
 
