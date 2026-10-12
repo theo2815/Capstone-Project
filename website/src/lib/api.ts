@@ -1,6 +1,7 @@
 import { captureAuthSession } from "./auth-session";
 import { getAccessToken, getRefreshToken, setTokens, clearTokens } from "./auth";
-import { API_BASE_URL } from "./constants";
+import { API_BASE_URL, ROUTES } from "./constants";
+import { useAuthStore } from "@/store/auth-store";
 import { buildLoginRedirect, currentUrlForRedirect } from "./redirect";
 import type { ApiResponse } from "@/types/api";
 
@@ -201,7 +202,12 @@ class ApiClient {
   private redirectToLogin(): void {
     if (typeof window !== "undefined") {
       clearTokens();
-      window.location.href = buildLoginRedirect(currentUrlForRedirect());
+      // Signed out on purpose (store cleared in this page's life): the next
+      // account must not be sent to this page.
+      const { isAuthenticated, sessionVersion } = useAuthStore.getState();
+      window.location.href = !isAuthenticated && sessionVersion > 0
+        ? ROUTES.LOGIN
+        : buildLoginRedirect(currentUrlForRedirect());
     }
   }
 }

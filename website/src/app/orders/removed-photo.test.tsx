@@ -61,11 +61,11 @@ it("removedOrderStillShowsFinancialHistory", async () => {
   expect(screen.getAllByText("₱160")[0]).toBeVisible();
   expect(screen.getByText(/RUN20/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Request a refund" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Preview removed-photo" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Preview photo 2 of 2" })).not.toBeInTheDocument();
   expect(document.querySelector('img[src*="removed"]')).toBeNull();
   expect(screen.queryByRole("link", { name: "Download removed photo" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save photo" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Preview kept-photo" }));
+  await user.click(screen.getByRole("button", { name: "Preview photo 1 of 2" }));
   expect(await screen.findByRole("button", { name: "Download photo" })).toBeInTheDocument();
   // The lightbox only steps through photos that still exist.
   expect(screen.queryByRole("button", { name: "Next photo" })).not.toBeInTheDocument();

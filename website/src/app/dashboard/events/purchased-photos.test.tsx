@@ -214,3 +214,31 @@ it.each([
   fireEvent.click(screen.getByRole("button", { name: "Open photo 1, 3 purchases" }));
   expect(fetchNextPage).toHaveBeenCalledTimes(calls);
 });
+
+it.each([
+  ["failed", { error: new Error("500"), isPaused: false }],
+  ["paused offline", { error: null, isPaused: true }],
+])("Purchased header shows no count while the list is %s", (_, state) => {
+  mocks.detail = { ...detail, deletedAt: null, ownedByMe: false, pricingMode: "paid" };
+  mocks.error = null;
+  mocks.active.mockReturnValue({ items: [], total: 0, isLoading: false, isFetchingNextPage: false, fetchNextPage: vi.fn() });
+  mocks.purchased.mockReturnValue({ items: [], total: 0, isLoading: false, appendError: null, hasNextPage: false, fetchNextPage: vi.fn(), refetch: vi.fn(), ...state });
+  renderPage();
+  expect(screen.getByText("Purchased photos")).not.toHaveTextContent(/\d/);
+});
+
+it("a purchased thumbnail that failed to load is fetched again with a fresh URL after reconnecting", async () => {
+  mocks.realReads = true;
+  useAuthStore.getState().setUser({ id: "seller", role: "PHOTOGRAPHER", name: "Seller", email: "seller@example.test", createdAt: "2026-09-01" });
+  let signed = 0;
+  vi.spyOn(api, "get").mockImplementation(async (path) => path.includes("purchased-photos")
+    ? { items: [{ photo: { ...photo, thumbnailUrl: `https://cdn.example.test/sig-${++signed}.jpg` }, purchaseCount: 3 }], total: 1, offset: 0, limit: 24 }
+    : detail);
+  renderPage();
+  await screen.findByRole("button", { name: /Open photo/ });
+  const img = () => document.querySelector("img") as HTMLImageElement;
+  expect(img()).toHaveAttribute("src", "https://cdn.example.test/sig-1.jpg");
+  fireEvent.error(img());
+  act(() => { window.dispatchEvent(new Event("online")); });
+  await waitFor(() => expect(img().getAttribute("src")).not.toContain("sig-1"));
+});

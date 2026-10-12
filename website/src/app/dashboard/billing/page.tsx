@@ -128,6 +128,14 @@ function PayoutsSlab() {
     ? (reportByCycleId.get(trackingCycle.id) ?? null)
     : null;
 
+  if (isLoading && livePayouts.isPaused) {
+    return (
+      <Slab id="payouts" number="01" title="Payouts" caption="Weekly · GCash">
+        <div role="alert" aria-label="Payouts" className="font-sans text-base text-slate"><p>You&apos;re offline. Reconnect to load payouts, or retry once connected.</p><button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm} mt-4`} onClick={livePayouts.refetch}>Retry payouts</button></div>
+      </Slab>
+    );
+  }
+
   if (isLoading) {
     return (
       <Slab id="payouts" number="01" title="Payouts" caption="Weekly · GCash">

@@ -411,3 +411,22 @@ describe("PhotoPreviewCard keyboard focus", () => {
     expect(cb.onClose).not.toHaveBeenCalled();
   });
 });
+
+describe("PhotoPreviewCard byline target", () => {
+  it("gives the photographer link a target at least 24px tall", async () => {
+    render(
+      <PhotoPreviewCard
+        photo={{ id: "photo-target", bib: null, time: "", tone: 0, price: 0, photographerName: "Studio", photographerHandle: "studio" }}
+        eventName="Run"
+        index={1}
+        total={1}
+        inCart={false}
+        onClose={vi.fn()}
+        onToggleCart={vi.fn()}
+        onBuyNow={vi.fn()}
+      />,
+    );
+    // jsdom has no layout: 18px line + 3px padding each side = 24px.
+    for (const link of await screen.findAllByRole("link", { name: /Studio/ })) expect(link).toHaveClass("py-[3px]");
+  });
+});

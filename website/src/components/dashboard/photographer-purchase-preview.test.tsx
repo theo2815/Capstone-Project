@@ -584,3 +584,21 @@ it("does not ask for more once every purchased photo is loaded", async () => {
   expect(counter("5 / 5")).toBeVisible();
   expect(onNeedMore).not.toHaveBeenCalled();
 });
+
+it("keeps the opener's event and shows the load error when only receipt history fails", async () => {
+  login();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockRejectedValue(new ApiError([{ code: "INTERNAL", message: "Down" }], 500));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  render(<QueryClientProvider client={client}><PhotographerPurchasePreview selection={{ photoId: photo.id }} event={{ id: "event-a", name: "Cebu Run", date: "2026-10-01" }} onClose={vi.fn()} /></QueryClientProvider>);
+  await act(() => vi.advanceTimersByTimeAsync(10_000));
+  vi.useRealTimers();
+  expect(await screen.findByText("Couldn't load purchases.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Retry purchases" })).toBeVisible();
+  expect(fact("Event")).toHaveTextContent("Cebu Run");
+  expect(screen.getByRole("link", { name: /Cebu Run.*Purchased photos/ })).toHaveAttribute("href", "/dashboard/events/event-a?tab=purchased");
+  expect(screen.queryAllByText(/Event unavailable/)).toHaveLength(0);
+  expect(screen.queryByText("Unavailable")).not.toBeInTheDocument();
+  expect(screen.queryByText(/archived/i)).not.toBeInTheDocument();
+  client.clear();
+});

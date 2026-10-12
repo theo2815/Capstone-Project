@@ -631,7 +631,7 @@ function PhotoStrip({
             key={id}
             type="button"
             onClick={() => onSelect(i)}
-            aria-label={`Preview ${id.replace(/^mock-/, "")}`}
+            aria-label={`Preview photo ${i + 1} of ${photoIds.length}`}
             className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink hover:shadow-[var(--shadow-card)] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             {thumb ? (

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { notFound, useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EventState, ListEvent } from "@/types/event";
 import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
@@ -139,7 +139,7 @@ export default function FocusedSharePage() {
         <Stats photographer={photographer} />
         <section>
           <div role="tablist" aria-label="Photo library" className="mb-6 border-b border-line pb-4"><TabPill active onClick={() => { }}>Purchased</TabPill></div>
-          <RemovedPurchasedGallery eventId={liveDetail.id} free={liveDetail.pricingMode === "free"} />
+          <RemovedPurchasedGallery eventId={liveDetail.id} event={event} free={liveDetail.pricingMode === "free"} />
         </section>
       </div>
     </main>;
@@ -1004,7 +1004,7 @@ function PhotoLibrary({
           <TabPill active onClick={() => switchSection("purchased")}>Purchased</TabPill>
         </div>
       </div>
-      <PurchasedGallery eventId={eventId} free={free} />
+      <PurchasedGallery eventId={eventId} event={event} free={free} />
     </section>;
   }
 
@@ -1159,7 +1159,7 @@ function PhotoLibrary({
   );
 }
 
-function RemovedPurchasedGallery({ eventId, free }: { eventId: string; free: boolean }) {
+function RemovedPurchasedGallery({ eventId, event, free }: { eventId: string; event: { name: string; date?: string }; free: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   useEffect(() => {
@@ -1167,16 +1167,31 @@ function RemovedPurchasedGallery({ eventId, free }: { eventId: string; free: boo
       router.replace(`${ROUTES.DASHBOARD_EVENTS}/${eventId}?tab=purchased`, { scroll: false });
     }
   }, [eventId, router, searchParams]);
-  return <PurchasedGallery eventId={eventId} free={free} />;
+  return <PurchasedGallery eventId={eventId} event={event} free={free} />;
 }
 
-function PurchasedGallery({ eventId, free }: { eventId: string; free: boolean }) {
+function PurchasedGallery({ eventId, event, free }: { eventId: string; event: { name: string; date?: string }; free: boolean }) {
   const list = usePhotographerPurchasedPhotos(eventId, true);
+  // Tiles that failed to load. Signed URLs expire, so reconnecting refetches the
+  // list for fresh URLs once, then re-sets the still-broken tiles.
+  const failedImgs = useRef(new Set<HTMLImageElement>());
+  useEffect(() => {
+    const retryFailed = () => {
+      const imgs = [...failedImgs.current];
+      if (!imgs.length) return;
+      failedImgs.current.clear();
+      void list.refetch().then(() => imgs.forEach((img) => {
+        if (img.isConnected) img.setAttribute("src", img.getAttribute("src") ?? "");
+      }));
+    };
+    window.addEventListener("online", retryFailed);
+    return () => window.removeEventListener("online", retryFailed);
+  }, [list]);
   const [selection, setSelection] = useState<PurchaseSelection | null>(null);
   const photos = list.items.map((item) => item.photo);
 
   return <>
-    <p className="font-mono uppercase tracking-[0.14em] text-sm text-slate-soft tnum mb-6"><span className="text-ink">{list.total.toLocaleString()}</span> purchased photos</p>
+    <p className="font-mono uppercase tracking-[0.14em] text-sm text-slate-soft tnum mb-6">{photos.length === 0 && (list.isLoading || list.error || list.isPaused) ? "Purchased photos" : <><span className="text-ink">{list.total.toLocaleString()}</span> purchased photos</>}</p>
     {free && <p className="mb-6 font-sans text-sm text-slate">Direct downloads from free events do not create purchase or buyer records.</p>}
     {list.isPaused && photos.length === 0 ? (
       <div role="alert"><p>You&apos;re offline. Reconnect to load purchased photos, or retry once connected.</p><button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div>
@@ -1190,7 +1205,7 @@ function PurchasedGallery({ eventId, free }: { eventId: string; free: boolean })
       <p className="font-sans text-base text-slate">No completed purchases yet.</p>
     ) : (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
-        {list.items.map((item, i) => <PhotoTile key={item.photo.id} photo={item.photo} index={i} purchaseCount={item.purchaseCount} selecting={false} selected={false} onOpen={() => setSelection({ photoId: item.photo.id })} onToggle={() => { }} />)}
+        {list.items.map((item, i) => <PhotoTile key={item.photo.id} photo={item.photo} index={i} purchaseCount={item.purchaseCount} onImageState={(img, failed) => failed ? failedImgs.current.add(img) : failedImgs.current.delete(img)} selecting={false} selected={false} onOpen={() => setSelection({ photoId: item.photo.id })} onToggle={() => { }} />)}
       </div>
     )}
     {list.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more purchased photos. Try again.</p>}
@@ -1198,6 +1213,7 @@ function PurchasedGallery({ eventId, free }: { eventId: string; free: boolean })
     {!list.isPaused && list.total > 0 && <LoadMoreButton shown={photos.length} total={list.hasNextPage ? list.total : photos.length} increment={PAGE_SIZE.PHOTO_INCREMENT} onLoadMore={list.fetchNextPage} isLoading={list.isFetchingNextPage} terminalLabel={!list.hasNextPage && photos.length < list.total ? "All available purchased photos loaded" : undefined} />}
     <PhotographerPurchasePreview
       selection={selection}
+      event={{ id: eventId, name: event.name, date: event.date }}
       photos={photos}
       totalPhotos={list.hasNextPage ? list.total : photos.length}
       // A failed or paused append waits for the page's own Load more, so this never loops.
@@ -1362,6 +1378,7 @@ function PhotoTile({
   onOpen,
   onToggle,
   purchaseCount,
+  onImageState,
 }: {
   photo: PhotographerLibraryPhoto;
   index: number;
@@ -1370,6 +1387,7 @@ function PhotoTile({
   onOpen: () => void;
   onToggle: () => void;
   purchaseCount?: number;
+  onImageState?: (img: HTMLImageElement, failed: boolean) => void;
 }) {
   const colorIdx = photo.tone % TONE_COLORS.length;
   const wide = photo.span === "wide";
@@ -1416,6 +1434,8 @@ function PhotoTile({
               className="absolute inset-0 w-full h-full object-cover"
               draggable={false}
               loading="lazy"
+              onError={(e) => onImageState?.(e.currentTarget, true)}
+              onLoad={(e) => onImageState?.(e.currentTarget, false)}
             />
           )}
           {selecting && (

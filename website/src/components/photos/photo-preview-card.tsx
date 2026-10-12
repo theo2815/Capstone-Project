@@ -631,12 +631,12 @@ function PhotographerCredit({
     // tracking measures roughly double its intuitive width, so a long handle
     // overflows the 375px strip without it. See vault notes/ui-pitfalls
     // 2026-05-06 "mono-uppercase chip wrapped mid-word at 375px".
-    <Kicker as="p" tone="soft" className="min-w-0 truncate">
+    <Kicker as="p" tone="soft" className="min-w-0 truncate -my-[3px] py-[3px]">
       Photo by{" "}
       {handle ? (
         <Link
           href={`/${handle}`}
-          className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone rounded-sm"
+          className="py-[3px] text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone rounded-sm"
         >
           {name ?? `@${handle}`}
           <span aria-hidden="true" className="ml-1.5 no-underline">

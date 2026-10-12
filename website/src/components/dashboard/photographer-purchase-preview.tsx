@@ -31,6 +31,8 @@ interface Props {
   totalPhotos?: number;
   /** Loads the list's next page; called when the preview nears the loaded end. */
   onNeedMore?: () => void;
+  /** The event the opener already knows; shown when the receipt history cannot be loaded. */
+  event?: { id: string; name: string; date?: string };
 }
 
 export function PhotographerPurchasePreview(props: Props) {
@@ -54,7 +56,7 @@ export function PhotographerPurchasePreview(props: Props) {
   return <OpenPurchasePreview key={`${selection.photoId}:${selection.orderId ?? ""}:${selection.transactionId ?? ""}`} {...props} selection={selection} />;
 }
 
-function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelectPhoto, totalPhotos, onNeedMore }: Props & { selection: PurchaseSelection }) {
+function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelectPhoto, totalPhotos, onNeedMore, event }: Props & { selection: PurchaseSelection }) {
   const selectionKey = `${selection.photoId}:${selection.orderId ?? ""}:${selection.transactionId ?? ""}`;
   const activeSelection = useRef<string | null>(selectionKey);
   useLayoutEffect(() => { activeSelection.current = selectionKey; return () => { activeSelection.current = null; }; }, [selectionKey]);
@@ -73,7 +75,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
   const nearLoadedEnd = index >= 0 && index >= gallery.length - 2 && total > gallery.length;
   useEffect(() => { if (nearLoadedEnd) onNeedMore?.(); }, [nearLoadedEnd, onNeedMore]);
   const fallback = transaction && transaction.photoId === selection.photoId && (!orderId || transaction.orderId === orderId) ? transaction : null;
-  const eventId = purchase.event?.id;
+  const eventId = purchase.event?.id ?? (purchase.error ? event?.id : undefined);
   const selected = (orderId && purchase.selectedPurchase?.orderId === orderId ? purchase.selectedPurchase : null)
     ?? purchase.items.find((item) => item.orderId === orderId)
     ?? (!orderId && !fallback ? purchase.selectedPurchase ?? purchase.items[0] : null);
@@ -125,8 +127,9 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
   const refundRecordedAt = selected?.transactions.filter((row) => row.isRefund).at(-1)?.recordedAt;
   const factClass = "min-w-0 break-words text-right tnum";
   const reference = selected?.orderId ?? orderId;
-  const eventLabel = purchase.event?.name ?? transaction?.eventName ?? (purchase.isLoading && !purchase.isPaused ? "Loading…" : "Event unavailable");
+  const eventLabel = purchase.event?.name ?? event?.name ?? transaction?.eventName ?? (purchase.isLoading && !purchase.isPaused ? "Loading…" : "Event unavailable");
   const pinned = purchase.selectedPurchase;
+  const failed = !!purchase.error && !selected && !fallback;
   const choices = pinned && !purchase.items.some((item) => item.orderId === pinned.orderId && item.photoId === pinned.photoId) ? [pinned, ...purchase.items] : purchase.items;
 
   async function copyReference() {
@@ -137,15 +140,16 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
   const details = <div className="space-y-3 text-sm text-ink">
     <p className="font-display font-bold">Purchase details</p>
     <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
-      <dt className="text-slate">Buyer</dt><dd className={factClass}>{selected?.buyer || fallback?.buyer || "Unavailable"}</dd>
+      {!failed && <><dt className="text-slate">Buyer</dt><dd className={factClass}>{selected?.buyer || fallback?.buyer || "Unavailable"}</dd>
       <dt className="text-slate">Reference</dt><dd className={factClass}>{reference ? formatOrderRef(reference) : "Unavailable"}</dd>
       <dt className="text-slate">Purchased</dt><dd className={factClass}>{selected?.purchasedAt ? formatSalesDate(selected.purchasedAt) : fallback?.paidAt ? formatSalesDate(fallback.paidAt) : "Unavailable"}</dd>
       {selected && !selected.purchasedAt && <><dt className="text-slate">Order created</dt><dd className={factClass}>{formatSalesDate(selected.orderCreatedAt)}</dd></>}
+      </>}
       <dt className="text-slate">Event</dt><dd className={factClass}>{eventId
         ? <Link href={`/dashboard/events/${encodeURIComponent(eventId)}?tab=purchased`} className="underline decoration-line-strong underline-offset-4 hover:decoration-fresh">{eventLabel} · Purchased photos</Link>
         : eventLabel}</dd>
       <dt className="text-slate">Photo</dt><dd className={factClass}>{photo?.bib ? `Bib ${photo.bib}` : selection.photoId}</dd>
-      <dt className="text-slate">Photo price</dt><dd className={factClass}>{selected ? formatPrice(selected.pricePhp) : "Unavailable"}</dd>
+      {!failed && <><dt className="text-slate">Photo price</dt><dd className={factClass}>{selected ? formatPrice(selected.pricePhp) : "Unavailable"}</dd>
       <dt className="text-slate">Discount</dt><dd className={factClass}>{selected ? formatPrice(selected.discountPhp) : "Unavailable"}</dd>
       <dt className="text-slate">Paid for this photo</dt><dd className={factClass}>{selected ? selected.kind === "free" ? `Free (${formatPrice(selected.paidPhp)})` : formatPrice(selected.paidPhp) : "Unavailable"}</dd>
       <dt className="text-slate">Refunded</dt><dd className={factClass}>{selected?.refundedPhp == null ? "Unavailable" : formatPrice(selected.refundedPhp)}</dd>
@@ -153,6 +157,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
       {selected?.refundedAt && <><dt className="text-slate">Refund completed</dt><dd className={factClass}>{formatSalesDate(selected.refundedAt)}</dd></>}
       {!selected?.refundedAt && refundRecordedAt && <><dt className="text-slate">Refund recorded</dt><dd className={factClass}>{formatSalesDate(refundRecordedAt)}</dd></>}
       <dt className="text-slate">Your net earnings</dt><dd className={factClass}>{selected?.netKeptPhp == null ? "Unavailable" : formatPrice(selected.netKeptPhp)}</dd>
+      </>}
     </dl>
     <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} disabled={!reference} onClick={() => void copyReference()}>Copy reference</button>
     {copied && copied.orderId === reference && (copied.ok ? <p role="status">Reference copied.</p> : <p role="alert">Couldn&apos;t copy reference.</p>)}
@@ -182,7 +187,7 @@ function OpenPurchasePreview({ selection, photos, transaction, onClose, onSelect
     metadataAccess={photo && photo.mediaAvailable !== false && !photo.deletionStartedAt ? "owner" : undefined}
     photo={preview}
     eventName={eventLabel}
-    eventDate={purchase.event?.date}
+    eventDate={purchase.event?.date ?? event?.date}
     index={index >= 0 ? index + 1 : 1}
     total={total || 1}
     onClose={onClose}

@@ -54,7 +54,7 @@ it.each([true, false])("transactions offline initial=%s recovers and retains row
   onlineManager.setOnline(!initialOffline);
   const get = setup(async (offset) => offset === 0 ? page([sale], 0, 50) : page([refund], 25, 50));
   if (initialOffline) {
-    expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+    expect(within(await screen.findByRole("alert", { name: "Transactions" })).getByText(/offline.*reconnect/i)).toBeVisible();
     expect(screen.getByRole("button", { name: "Retry transactions" })).toBeEnabled();
     expect(screen.queryByText(/Sales will land here/)).not.toBeInTheDocument();
     act(() => onlineManager.setOnline(true));
@@ -181,4 +181,14 @@ it("stops pagination when a stale total returns an empty page", async () => {
   expect(screen.getByRole("button", { name: /sale.*aira s\..*aaaa/i })).toBeVisible();
   await waitFor(() => expect(screen.queryByRole("button", { name: /load .*more/i })).not.toBeInTheDocument());
   expect(get.mock.calls.filter(([path]) => path.includes("/billing/transactions"))).toHaveLength(2);
+});
+
+it("payouts show an offline message and retry instead of a skeleton on an offline first load", async () => {
+  onlineManager.setOnline(false);
+  setup(async () => page([sale]));
+  expect(await screen.findByRole("button", { name: "Retry payouts" })).toBeEnabled();
+  expect(screen.getByText(/offline.*load payouts/i)).toBeVisible();
+  act(() => onlineManager.setOnline(true));
+  expect(await screen.findByRole("button", { name: "Request payout" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Retry payouts" })).not.toBeInTheDocument();
 });

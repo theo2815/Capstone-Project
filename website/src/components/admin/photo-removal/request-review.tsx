@@ -188,7 +188,7 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
 
   const tile = (items: RemovalPhotoDto[], source: RemovalMatchSource) => items.map((item, index) => (
     <PhotoTile key={item.photo.id} item={item} checked={selection.has(item.photo.id)} disabled={busy}
-      onToggle={() => toggle(item, source)} onPreview={() => setPreview({ items, index })} />
+      onToggle={() => toggle(item, source)} onPreview={() => setPreview({ items, index })} position={`${index + 1} of ${items.length}`} />
   ));
   const galleryItems = gallery.data?.items ?? [];
   const galleryTotal = gallery.data?.total ?? 0;
@@ -313,13 +313,13 @@ export function groupByOwner<T>(items: T[], owner: (item: T) => [string | null, 
   return [...groups.values()].sort(([a, nameA], [b, nameB]) => !a ? 1 : !b ? -1 : nameA.localeCompare(nameB));
 }
 
-function PhotoTile({ item, checked, disabled, onToggle, onPreview }: {
-  item: RemovalPhotoDto; checked: boolean; disabled: boolean; onToggle: () => void; onPreview: () => void;
+function PhotoTile({ item, checked, disabled, onToggle, onPreview, position }: {
+  item: RemovalPhotoDto; checked: boolean; disabled: boolean; onToggle: () => void; onPreview: () => void; position: string;
 }) {
   const { photo } = item;
   return (
     <li className={cn("rounded-xl border p-2 space-y-2", checked ? "border-ink bg-fresh-tint/30" : "border-line")}>
-      <button type="button" onClick={onPreview} aria-label={`Preview ${photo.id}`} className="block w-full aspect-[3/4] overflow-hidden rounded-lg bg-bone-deep">
+      <button type="button" onClick={onPreview} aria-label={`Preview photo ${position}`} className="block w-full aspect-[3/4] overflow-hidden rounded-lg bg-bone-deep">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {photo.imageUrl && <img src={photo.imageUrl} alt={photo.alt ?? ""} loading="lazy" className="h-full w-full object-cover" />}
       </button>

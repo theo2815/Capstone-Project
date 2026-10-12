@@ -238,3 +238,13 @@ it("labelsAnErasedPhotoRemovedNotInTrash", async () => {
   expect(await screen.findByText("Removed")).toBeInTheDocument();
   expect(screen.queryByText("In trash")).not.toBeInTheDocument();
 });
+
+it("names photo thumbnails by position, never by the raw photo ID", async () => {
+  const user = userEvent.setup();
+  renderReview();
+  await runMatch(user);
+  const labels = screen.getAllByRole("button", { name: /^Preview / }).map((button) => button.getAttribute("aria-label"));
+  expect(labels.length).toBeGreaterThan(0);
+  for (const label of labels) expect(label).toMatch(/^Preview photo \d+ of \d+$/);
+  expect(labels).toContain("Preview photo 1 of 4");
+});

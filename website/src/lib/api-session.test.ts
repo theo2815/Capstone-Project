@@ -162,3 +162,22 @@ it.each(["query cancellation", "request timeout"])("GET Blob distinguishes %s wh
     await reading; (cause === "query cancellation" ? query : timeout).abort(); await result;
   } finally { timer.mockRestore(); }
 });
+
+it("an explicit sign-out reaches the login page without a redirect to the previous page", async () => {
+  const location = { pathname: "/dashboard/events/event-1", search: "", hash: "", href: "" };
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("fetch", vi.fn(async () => response([], 401)));
+  useAuthStore.getState().logout();
+  clearTokens();
+  await expect(api.get("/me/photographer/events/event-1")).rejects.toThrow("Unauthorized");
+  expect(location.href).toBe("/login");
+});
+
+it("a session that expired while signed in still redirects back to the page", async () => {
+  const location = { pathname: "/dashboard/events/event-1", search: "", hash: "", href: "" };
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("fetch", vi.fn(async () => response([], 401)));
+  clearTokens();
+  await expect(api.get("/me/photographer/events/event-1")).rejects.toThrow("Unauthorized");
+  expect(location.href).toBe("/login?redirect=" + encodeURIComponent("/dashboard/events/event-1"));
+});

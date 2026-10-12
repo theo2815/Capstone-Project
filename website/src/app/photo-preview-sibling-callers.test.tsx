@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
@@ -69,7 +70,8 @@ it("opens the actual order preview without metadata", async () => {
   const unmount = mount(<OrdersPage />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "View photos" }));
-  await user.click(screen.getByRole("button", { name: "Preview order-photo" }));
+  expect(screen.queryByRole("button", { name: /order-photo/ })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Preview photo 1 of 1" }));
   expect(await screen.findByRole("button", { name: "Download photo" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
   expect(get).not.toHaveBeenCalled();
@@ -85,5 +87,19 @@ it("opens the actual admin dispute review without metadata", async () => {
   expect(await screen.findByText("Admin · Read-only preview")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();
   expect(get).not.toHaveBeenCalled();
+  unmount();
+});
+
+it("returns focus to the cart trigger when the cart closes", async () => {
+  function Host() {
+    const [open, setOpen] = useState(false);
+    return <><button type="button" onClick={() => setOpen(true)}>Open cart</button><CartModal isOpen={open} onClose={() => setOpen(false)} /></>;
+  }
+  const unmount = mount(<Host />);
+  const user = userEvent.setup();
+  const trigger = screen.getByRole("button", { name: "Open cart" });
+  await user.click(trigger);
+  await user.click(screen.getAllByRole("button", { name: "Close cart" })[1]);
+  await waitFor(() => expect(trigger).toHaveFocus());
   unmount();
 });
