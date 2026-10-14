@@ -25,6 +25,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -300,6 +301,34 @@ class AuthViewModelTest {
         }
     }
 
+    // Security audit 2026-10-14, MOB-1: the confirm route is public, so the link
+    // can belong to any account. Only the changed account's refresh is refused.
+    @Ignore("MS-3 reproduction of MOB-1; MS-4 removes this line")
+    @Test fun `a confirmed email change for another account leaves this phone signed in`() {
+        respond = { path, _ -> if (path == "/api/v1/auth/refresh") ok(REFRESHED) else ok(CONFIRMED) }
+        session.saveSession("access-1", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-1")
+        val vm = AuthViewModel(application)
+
+        vm.confirmEmailChange("c-1")
+
+        assertTrue(vm.awaitLink("c-1") is EmailLinkState.Success)
+        assertEquals("access-9", session.getAccessToken())
+        assertEquals("refresh-9", session.getRefreshToken())
+        assertTrue(bodies("/api/v1/auth/refresh").single().contains(""""refreshToken":"refresh-1""""))
+    }
+
+    @Ignore("MS-3 reproduction of MOB-1; MS-4 removes this line")
+    @Test fun `no answer from the refresh keeps this phone signed in`() {
+        respond = { path, _ -> if (path == "/api/v1/auth/refresh") MockResponse().setResponseCode(503) else ok(CONFIRMED) }
+        session.saveSession("access-1", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-1")
+        val vm = AuthViewModel(application)
+
+        vm.confirmEmailChange("c-1")
+
+        assertTrue(vm.awaitLink("c-1") is EmailLinkState.Success)
+        assertEquals("access-1", session.getAccessToken())
+    }
+
     @Test fun `an answered link outlives process death, and one that died in flight is sent again`() {
         val release = CountDownLatch(1)
         respond = { _, body ->
@@ -328,5 +357,7 @@ class AuthViewModelTest {
         const val AUTH = """{"accessToken":"access-1","refreshToken":"refresh-1","user":{"id":"u1","email":"juan@x.com","name":"Juan","role":"RUNNER","createdAt":"2026-09-11T00:00:00Z"}}"""
         const val BLANK_AUTH = """{"accessToken":"","refreshToken":"refresh-1","user":{"id":"u1","email":"juan@x.com","name":"Juan","role":"RUNNER","createdAt":"2026-09-11T00:00:00Z"}}"""
         const val AUTH_PHOTOGRAPHER = """{"accessToken":"access-p","refreshToken":"refresh-p","user":{"id":"u2","email":"juan@x.com","name":"Juan","role":"PHOTOGRAPHER","createdAt":"2026-09-11T00:00:00Z"}}"""
+        const val CONFIRMED = """{"message":"Email updated. Sign in again with your new address."}"""
+        const val REFRESHED = """{"accessToken":"access-9","refreshToken":"refresh-9","user":{"id":"u1","email":"juan@x.com","name":"Juan","role":"RUNNER","avatarUrl":null,"createdAt":"2026-01-01T00:00:00Z"}}"""
     }
 }
