@@ -13,11 +13,13 @@ import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.repository.CartRepository
 import com.quickpitik.mobile.data.repository.CartRepositoryImpl
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -142,6 +144,15 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        // Orders belong to the signed-in account, but this ViewModel lives as
+        // long as MainActivity and so outlives every sign-out. Any change of
+        // account drops them (security audit 2026-10-14, MOB-3), as
+        // PhotographerPurchasesViewModel does. Not in clearCart(): that is also
+        // the runner's own "Clear cart" button. UNDISPATCHED so drop(1) skips
+        // the value current now, never the first real change.
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            sessionManager.authChanges.drop(1).collect { dropAccountState() }
+        }
         // Initial sync if logged in. Skipped for a PHOTOGRAPHER token — the
         // cart endpoints are RUNNER-role-gated, so the merge was one doomed
         // 403 per app start (and the cart UI is hidden for them anyway).
@@ -269,6 +280,7 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     // Returns the Job so pull-to-refresh can join() it and settle its spinner
     // when the fetch actually finishes.
     fun fetchOrders(): Job = viewModelScope.launch {
+        val generation = sessionManager.authChanges.value
         val token = sessionManager.getAccessToken()
         if (token == null) {
             _ordersState.value = OrdersState.Error("Please log in to view order history.")
@@ -282,6 +294,9 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
                 _ordersState.value = OrdersState.Loading
             }
             val result = repository.getOrders(token)
+            // The account changed while this was in flight: the answer is the
+            // previous account's.
+            if (generation != sessionManager.authChanges.value) return@launch
             result.onSuccess { orders ->
                 _ordersState.value = OrdersState.Success(orders)
             }.onFailure { exception ->
@@ -481,6 +496,13 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resetOrderReturnState() {
+        _orderReturnState.value = OrderReturnState.Idle
+    }
+
+    private fun dropAccountState() {
+        pollJob?.cancel()
+        _ordersState.value = OrdersState.Loading
+        _orderDetailState.value = OrderDetailState.Idle
         _orderReturnState.value = OrderReturnState.Idle
     }
 

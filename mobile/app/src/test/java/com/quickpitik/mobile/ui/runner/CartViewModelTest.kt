@@ -18,7 +18,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,6 +51,7 @@ class CartViewModelTest {
                 seen += path to body
                 return when {
                     path == "/api/v1/me/cart" && request.method == "GET" -> ok(cart)
+                    path == "/api/v1/me/cart" && request.method == "DELETE" -> ok("""{"cleared":2}""")
                     path.startsWith("/api/v1/me/cart/items/") -> ok("""{"removed":true}""")
                     path == "/api/v1/coupons/preview" -> preview(body)
                     path == "/api/v1/orders" -> ok(ORDER)
@@ -160,7 +160,6 @@ class CartViewModelTest {
     }
 
     // Security audit 2026-10-14, MOB-3.
-    @Ignore("MS-1 reproduction of MOB-3; MS-2 removes this line")
     @Test fun `a change of account drops the previous runner's orders, even offline`() {
         val vm = newVm()
         vm.fetchOrders()
@@ -176,7 +175,6 @@ class CartViewModelTest {
         vm.ordersState.awaitFirst(1_000) { it is OrdersState.Error }
     }
 
-    @Ignore("MS-1 reproduction of MOB-3; MS-2 removes this line")
     @Test fun `an orders answer that lands after the account changed is dropped`() {
         orders = ok(ORDERS).setHeadersDelay(300, TimeUnit.MILLISECONDS)
         val vm = newVm()
@@ -188,6 +186,28 @@ class CartViewModelTest {
         runBlocking { inFlight.join() }
 
         assertFalse(vm.ordersState.value is OrdersState.Success)
+    }
+
+    @Test fun `the runner's own Clear cart keeps their orders`() {
+        val vm = newVm()
+        vm.fetchOrders()
+        vm.ownedPhotoIds.awaitFirst { it.isNotEmpty() }
+
+        vm.clearCart()
+        vm.cartItems.awaitFirst { it.isEmpty() }
+
+        assertTrue(vm.ordersState.value is OrdersState.Success)
+    }
+
+    @Test fun `a token refresh keeps the orders`() {
+        val vm = newVm()
+        vm.fetchOrders()
+        vm.ownedPhotoIds.awaitFirst { it.isNotEmpty() }
+
+        SessionManager.getInstance(application).updateTokens("t-refreshed", "r-refreshed")
+
+        assertTrue(vm.ordersState.value is OrdersState.Success)
+        assertEquals(setOf("p1", "p2", "p6"), vm.ownedPhotoIds.awaitFirst { true })
     }
 
     private companion object {
