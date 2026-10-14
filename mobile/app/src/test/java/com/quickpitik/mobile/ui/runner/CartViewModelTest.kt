@@ -8,6 +8,7 @@ import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
 import com.quickpitik.mobile.support.signInAs
+import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
@@ -17,11 +18,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 
 /**
  * The money rules of the cart: what the coupon preview does with an empty
@@ -147,6 +150,44 @@ class CartViewModelTest {
         vm.removeFromCart("p2")
         vm.couponPreview.awaitFirst { it == null }
         assertEquals(2, previews().size)
+    }
+
+    // Signs the runner out and a different runner in on the same phone, the way
+    // MainActivity's sign-out and the login screen do.
+    private fun switchAccount() = SessionManager.getInstance(application).run {
+        clearSession()
+        saveSession("t2", "RUNNER", "Maria", "maria@x.com")
+    }
+
+    // Security audit 2026-10-14, MOB-3.
+    @Ignore("MS-1 reproduction of MOB-3; MS-2 removes this line")
+    @Test fun `a change of account drops the previous runner's orders, even offline`() {
+        val vm = newVm()
+        vm.fetchOrders()
+        assertEquals(setOf("p1", "p2", "p6"), vm.ownedPhotoIds.awaitFirst { it.isNotEmpty() })
+
+        switchAccount()
+        vm.ordersState.awaitFirst(1_000) { it !is OrdersState.Success }
+        assertEquals(emptySet<String>(), vm.ownedPhotoIds.awaitFirst(1_000) { it.isEmpty() })
+
+        // The next runner goes offline before opening Profile or Orders.
+        orders = MockResponse().setResponseCode(500)
+        vm.fetchOrders()
+        vm.ordersState.awaitFirst(1_000) { it is OrdersState.Error }
+    }
+
+    @Ignore("MS-1 reproduction of MOB-3; MS-2 removes this line")
+    @Test fun `an orders answer that lands after the account changed is dropped`() {
+        orders = ok(ORDERS).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        val vm = newVm()
+        val inFlight = vm.fetchOrders()
+        // Switch only once the request is on the server, so it is the answer that lands late.
+        generateSequence { backend.server.takeRequest(5, TimeUnit.SECONDS)!! }.first { it.path!!.startsWith("/api/v1/me/orders") }
+
+        switchAccount()
+        runBlocking { inFlight.join() }
+
+        assertFalse(vm.ordersState.value is OrdersState.Success)
     }
 
     private companion object {
