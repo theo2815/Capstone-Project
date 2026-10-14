@@ -32,6 +32,13 @@ back to a different member's directory.
 - **BatchMyPhotos:** `C:\Users\Theo Cedric Chan\Documents\Start Up project\BatchMyPhotos`
 - **Monorepo:** `C:\Users\Theo Cedric Chan\Documents\Start Up project\Capstone-Project`
 
+## Chan, Theo Cedric — cloud session (`theo-cloud-session`)
+
+- **Git identity:** `noreply@anthropic.com` (the Claude Code cloud container's identity, not a person's)
+- **Second Brain (vault):** `/home/user/Capstone-Obsidian-Vault`
+- **BatchMyPhotos:** not cloned in cloud sessions — ask Theo before any desktop work
+- **Monorepo:** `/home/user/Capstone-Project`
+
 ## Ycoy, Dillan Marquin — Developer
 
 - **Git identity:** `dillan@quickpitik.com` · `dillan.dillam@gmail.com` · `dillanycoy@Adubus-MacBook-Air.local`
@@ -56,6 +63,9 @@ back to a different member's directory.
   relative path between the monorepo and the vault — use the absolutes above.
 - **One entry per member assumes one machine each.** If someone starts working
   from a second machine, add its identity line and its own path block.
+- **Cloud sessions all report `noreply@anthropic.com`.** It maps to Theo's
+  cloud block only because Theo is the one running cloud sessions; another
+  member starting one must say so and get their own block.
 - **Kristine Purez and Brye Sy** (Documents leads) have no entry — they work in
   the vault's `Documentation for capstone paper/` workspace and need neither the
   monorepo nor BatchMyPhotos. Add them if that changes.
