@@ -403,8 +403,7 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
     // Poll /me/orders/{id} every 2s for up to 60s, mirroring the website's
     // OrdersReturnPage. Stops on PAID / FULFILLED (success) or REFUNDED
-    // (terminal failure). On success the local cart is cleared so the floating
-    // pill empties before the user comes back to /events.
+    // (terminal failure). On success the photos the order bought leave the cart on this phone.
     fun pollOrderReturn(orderId: String, shareToken: String? = null) {
         val token = sessionManager.getAccessToken()
         if (token == null && shareToken.isNullOrBlank()) {
@@ -433,7 +432,6 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
                         val reported = status.status.uppercase()
                         when {
                             isSettledOrderStatus(status.status) -> {
-                                repository.clearCart(token)
                                 hydrateReturnDetail(orderId, token, shareToken)
                                 true
                             }
@@ -482,7 +480,14 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
             else -> null
         }
         detail
-            ?.onSuccess { _orderReturnState.value = OrderReturnState.Paid(it) }
+            ?.onSuccess {
+                // A receipt link can be anyone's order (security audit 2026-10-14,
+                // MOB-2): drop only what it bought, on this phone. The backend
+                // already took those photos out of a signed-in buyer's server
+                // cart when the order was created; the website does the same.
+                repository.dropLocal(it.photoIds)
+                _orderReturnState.value = OrderReturnState.Paid(it)
+            }
             ?.onFailure {
                 _orderReturnState.value = OrderReturnState.Failed(
                     it.localizedMessage ?: "Payment received — open the receipt from Orders."

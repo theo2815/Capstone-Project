@@ -15,7 +15,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -99,12 +98,16 @@ class CartViewModelPollTest {
 
     private fun poll(vm: CartViewModel, shareToken: String? = null) = settle(vm.also { it.pollOrderReturn("o1", shareToken) })
 
-    @Test fun `PAID clears the cart and hydrates the receipt exactly once`() {
+    @Test fun `PAID drops only the bought photos and hydrates the receipt exactly once`() {
+        cart = CART_TWO
+        val vm = signedIn()
+        runUntil { vm.cartItems.value.size == 2 }
         script = listOf("PENDING", "PAID")
-        val paid = poll(signedIn()) as OrderReturnState.Paid
+        val paid = poll(vm) as OrderReturnState.Paid
         assertEquals("o1", paid.order.id)
         assertEquals(listOf("/api/v1/me/orders/o1/status", "/api/v1/me/orders/o1/status"), statusPaths())
-        assertEquals(1, requests.count { it.method == "DELETE" && it.path == "/api/v1/me/cart" })
+        assertEquals(0, requests.count { it.method == "DELETE" })
+        assertEquals(listOf("p9"), vm.cartItems.value.map { it.photoId })
         assertEquals(1, requests.count { it.path == "/api/v1/me/orders/o1" })
     }
 
@@ -171,7 +174,6 @@ class CartViewModelPollTest {
     }
 
     // Security audit 2026-10-14, MOB-2: a receipt link can be anyone's order.
-    @Ignore("MS-5 reproduction of MOB-2; MS-6 removes this line")
     @Test fun `a stranger's receipt link never touches the signed-in runner's server cart`() {
         cart = CART_TWO
         val vm = signedIn()
@@ -181,6 +183,7 @@ class CartViewModelPollTest {
         assertTrue(poll(vm, shareToken = "tok") is OrderReturnState.Paid)
 
         assertEquals(0, requests.count { it.method == "DELETE" })
+        assertEquals(listOf("p9"), vm.cartItems.value.map { it.photoId })
     }
 
     private companion object {
