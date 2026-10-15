@@ -24,6 +24,7 @@ import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { Eye, EyeOff } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { resetUserScopedStores } from "@/lib/auth-reset";
+import { captureAuthSession } from "@/lib/auth-session";
 import {
   updateProfileName,
   changePassword,
@@ -143,8 +144,10 @@ function NameSlab({ user, number }: { user: User; number: string }) {
     if (fieldError) return;
 
     setIsSaving(true);
+    const isCurrent = captureAuthSession();
     try {
       const updated = await updateProfileName(name.trim());
+      if (!isCurrent()) return;
       setUser(updated);
       showToast({ kind: "success", message: "Name updated." });
     } catch (err) {

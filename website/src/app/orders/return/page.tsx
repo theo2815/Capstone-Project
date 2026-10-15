@@ -59,7 +59,6 @@ function ReturnBody() {
   const orderId = searchParams?.get("orderId") ?? null;
   const token = searchParams?.get("token") ?? null;
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const clearCart = useCartStore((s) => s.clear);
   const queryClient = useQueryClient();
 
   const [pollState, setPollState] = useState<PollState>(
@@ -109,7 +108,11 @@ function ReturnBody() {
         }
         if (cancelled) return;
         if (d && (status === "PAID" || status === "FULFILLED")) {
-          clearCart();
+          // Drop only what this order bought: the link may be anyone's receipt,
+          // and checkout already removed these photos from a signed-in server cart.
+          const bought = new Set(d.photoIds);
+          const cart = useCartStore.getState();
+          cart.setItems(cart.items.filter((i) => !bought.has(i.photoId)));
           queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
           setDetail(d);
           setPollState("paid");
@@ -140,7 +143,7 @@ function ReturnBody() {
     return () => {
       cancelled = true;
     };
-  }, [orderId, token, isAuthenticated, clearCart, queryClient]);
+  }, [orderId, token, isAuthenticated, queryClient]);
 
   if (!orderId) return <MissingOrder />;
   if (pollState === "paid" && detail) {

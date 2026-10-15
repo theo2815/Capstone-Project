@@ -631,8 +631,9 @@ class MainActivity : ComponentActivity() {
                                         // way forcedLogout does: cart + the
                                         // in-memory runner-view flag, which
                                         // survives the prefs wipe. Still signed
-                                        // in means the link was refused (or the
-                                        // local wipe itself failed): go back.
+                                        // in means the link was refused, it
+                                        // changed another account, or the local
+                                        // wipe failed: go back.
                                         val signedIn = sessionManager.getAccessToken() != null
                                         if (!signedIn) {
                                             cartViewModel.clearCart()
@@ -1203,9 +1204,9 @@ internal fun deepLinkTarget(uri: Uri): DeepLinkTarget? {
     val path = uri.path?.lowercase().orEmpty()
     return when {
         host == "confirm-email-change" || path.startsWith("/confirm-email-change") ->
-            DeepLinkTarget.ConfirmEmail(uri.getQueryParameter("token").orEmpty())
+            emailToken(uri)?.let(DeepLinkTarget::ConfirmEmail)
         host == "verify-email" || path.startsWith("/verify-email") ->
-            DeepLinkTarget.VerifyEmail(uri.getQueryParameter("token").orEmpty())
+            emailToken(uri)?.let(DeepLinkTarget::VerifyEmail)
         host == "orders" && path.startsWith("/return") ->
             DeepLinkTarget.OrderReturn(uri.getQueryParameter("orderId"), uri.getQueryParameter("token"))
         host == "orders" -> DeepLinkTarget.Orders
@@ -1213,6 +1214,11 @@ internal fun deepLinkTarget(uri: Uri): DeepLinkTarget? {
         else -> null
     }
 }
+
+// Real tokens are 43 characters. A ~50 KB one rode into the saved state and
+// crashed the app on Home (TransactionTooLargeException), so drop the link.
+private fun emailToken(uri: Uri): String? =
+    uri.getQueryParameter("token").orEmpty().takeIf { it.length <= 256 }
 
 // The "studio" graph's back-stack entry — the owner of every studio ViewModel.
 // They all resolve off this one entry, so they share a lifetime: created lazily

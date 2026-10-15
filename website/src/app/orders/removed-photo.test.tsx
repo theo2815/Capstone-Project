@@ -4,10 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
+import { useCartStore } from "@/store/cart-store";
 import * as ordersApi from "@/lib/api-orders";
 import OrdersPage from "@/app/orders/page";
 import OrdersReturnPage from "@/app/orders/return/page";
-import type { OrderPhotoDetail } from "@/types/order";
+import type { CartItem, OrderPhotoDetail } from "@/types/order";
 
 const receiptReference = "order-removed-1";
 const keptPhoto: OrderPhotoDetail = { id: "kept-photo", bib: "101", time: "07:00", tone: 1, thumbnailUrl: "https://photos.test/kept.jpg",
@@ -18,6 +19,7 @@ const removedPhoto = (id: string): OrderPhotoDetail => ({ id, bib: "102", time: 
 const summary = { id: receiptReference, eventId: "event-1", photoIds: ["kept-photo", "removed-photo"], total: 160, paymentMethod: "qrph",
   paidAt: "2026-09-28T00:00:00Z", eventName: "Cebu Run", status: "PAID" as const, couponCode: "RUN20", discountTotal: 40 };
 const mixedDetail = { ...summary, photos: [keptPhoto, removedPhoto("removed-photo")], shareToken: "share-1" };
+const cartItem = (photoId: string): CartItem => ({ photoId, eventId: "event-1", thumbnailUrl: `https://photos.test/${photoId}.jpg`, price: 80 });
 const allRemovedDetail = { ...summary, photoIds: ["removed-photo", "removed-two"], photos: [removedPhoto("removed-photo"), removedPhoto("removed-two")], shareToken: "share-1" };
 
 vi.mock("next/navigation", () => ({
@@ -31,7 +33,10 @@ vi.mock("@/components/profile-shell", () => ({
 vi.mock("@/components/orders/refund-modal", () => ({ RefundModal: () => null }));
 
 const runner = { id: "runner-1", role: "RUNNER" as const, name: "Runner", email: "runner@example.test", createdAt: "2026-01-01T00:00:00Z" };
-afterEach(() => { vi.restoreAllMocks(); useAuthStore.getState().logout(); });
+afterEach(() => {
+  vi.restoreAllMocks(); useAuthStore.getState().logout();
+  useCartStore.getState().setSyncEnabled(false); useCartStore.getState().setItems([]);
+});
 
 // Network boundary: answers the order-history, order-detail and guest receipt reads.
 function serve(detail: typeof mixedDetail) {
@@ -105,4 +110,24 @@ it("treats order photos from older payloads as available", async () => {
   vi.spyOn(api, "get").mockResolvedValue({ ...mixedDetail, photos: [legacy] });
   const read = await ordersApi.fetchOrderDetail(receiptReference);
   expect(read?.photos[0]).toMatchObject({ availability: "AVAILABLE", unavailableReason: null });
+});
+
+it("a receipt link removes only the photos that order bought from the visitor's cart", async () => {
+  useCartStore.getState().setItems([cartItem("kept-photo"), cartItem("other-photo")]);
+  serve(mixedDetail);
+  mount(<OrdersReturnPage />);
+  expect(await screen.findByText("All yours.")).toBeInTheDocument();
+  expect(useCartStore.getState().items.map((i) => i.photoId)).toEqual(["other-photo"]);
+});
+
+it("a receipt link never clears a signed-in runner's server cart", async () => {
+  useAuthStore.getState().startSession(runner);
+  useCartStore.getState().setSyncEnabled(true);
+  useCartStore.getState().setItems([cartItem("kept-photo"), cartItem("other-photo")]);
+  const del = vi.spyOn(api, "delete").mockResolvedValue(undefined);
+  serve(mixedDetail);
+  mount(<OrdersReturnPage />);
+  expect(await screen.findByText("All yours.")).toBeInTheDocument();
+  expect(useCartStore.getState().items.map((i) => i.photoId)).toEqual(["other-photo"]);
+  expect(del).not.toHaveBeenCalled();
 });

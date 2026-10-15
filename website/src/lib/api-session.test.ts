@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, refreshAccessToken, setStepUpHandler } from "./api";
+import { api, refreshAccessToken, setSessionEndHandler, setStepUpHandler } from "./api";
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "./auth";
+import { resetUserScopedStores } from "./auth-reset";
 import { useAuthStore } from "@/store/auth-store";
+import { useCartStore } from "@/store/cart-store";
+import { useSavedEventsStore } from "@/store/saved-events-store";
 const user = { id: "runner", role: "RUNNER" as const, name: "Runner", email: "runner@example.test", createdAt: "2026-09-10" };
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -16,7 +19,10 @@ function nextSession() {
   setTokens("new-access", "new-refresh");
 }
 beforeEach(() => { useAuthStore.getState().setUser(user); setTokens("old-access", "old-refresh"); });
-afterEach(() => { useAuthStore.getState().logout(); clearTokens(); setStepUpHandler(null); vi.unstubAllGlobals(); });
+afterEach(() => {
+  useAuthStore.getState().logout(); clearTokens(); setStepUpHandler(null); vi.unstubAllGlobals();
+  setSessionEndHandler(null); resetUserScopedStores();
+});
 
 it.each(["query cancellation", "request timeout"])("GET distinguishes %s when supplied a Query signal", async (cause) => {
   const query = new AbortController();
@@ -180,4 +186,46 @@ it("a session that expired while signed in still redirects back to the page", as
   clearTokens();
   await expect(api.get("/me/photographer/events/event-1")).rejects.toThrow("Unauthorized");
   expect(location.href).toBe("/login?redirect=" + encodeURIComponent("/dashboard/events/event-1"));
+});
+
+const item = { photoId: "photo-a", eventId: "event-1", thumbnailUrl: "/a.jpg", price: 80 };
+function seedUserState() {
+  useCartStore.getState().setItems([item]);
+  useSavedEventsStore.getState().setIds(["event-1"]);
+}
+
+it("a session that dies mid-page wipes the user's cart and still returns to the page", async () => {
+  const location = { pathname: "/orders", search: "", hash: "", href: "" };
+  vi.stubGlobal("location", location);
+  // Typed through the generic so `init` is known without an unused parameter (lint).
+  const fetch = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => response([], 401));
+  vi.stubGlobal("fetch", fetch);
+  setSessionEndHandler(resetUserScopedStores); seedUserState();
+  await expect(api.get("/me/orders")).rejects.toThrow("Unauthorized");
+  expect(useCartStore.getState().items).toEqual([]);
+  expect(useSavedEventsStore.getState().ids).toEqual([]);
+  expect(JSON.parse(localStorage.getItem("quickpitik-cart")!).state.items).toEqual([]);
+  // Still returns an expired user to their page after login.
+  expect(location.href).toBe("/login?redirect=" + encodeURIComponent("/orders"));
+  // The runner's own server cart is not deleted because their session expired.
+  expect(fetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});
+
+it("a guest's 401 keeps the guest cart", async () => {
+  vi.stubGlobal("location", { pathname: "/orders", search: "", hash: "", href: "" });
+  vi.stubGlobal("fetch", vi.fn(async () => response([], 401)));
+  useAuthStore.getState().logout(); clearTokens();
+  setSessionEndHandler(resetUserScopedStores); seedUserState();
+  await expect(api.get("/me/orders")).rejects.toThrow("Unauthorized");
+  expect(useCartStore.getState().items).toEqual([item]);
+});
+
+it("a dead session wipes even when the anonymous retry succeeds", async () => {
+  vi.stubGlobal("fetch", vi.fn()
+    .mockResolvedValueOnce(response([], 401))           // the request with the dead token
+    .mockResolvedValueOnce(response([], 401))           // the refresh is refused
+    .mockResolvedValueOnce(response({ events: [] })));  // anonymous retry of a public route
+  setSessionEndHandler(resetUserScopedStores); seedUserState();
+  expect(await api.get("/events")).toEqual({ events: [] });
+  expect(useCartStore.getState().items).toEqual([]);
 });

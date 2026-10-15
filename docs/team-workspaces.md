@@ -42,9 +42,9 @@ back to a different member's directory.
 ## Tapales, Christian Kyle — Developer
 
 - **Git identity:** `tapaleskyle629@gmail.com` · `63660581+christian-tapales@users.noreply.github.com`
-- **Second Brain (vault):** `TBD — ask Christian, then record it here`
+- **Second Brain (vault):** `C:\Users\USER\Documents\School\4th Year 1st Semester\Capstone and Research 2\CAPSTONE PROJECT\Capstone-Obsidian-Vault`
 - **BatchMyPhotos:** `TBD — ask Christian, then record it here`
-- **Monorepo:** `TBD — ask Christian, then record it here`
+- **Monorepo:** `C:\Users\USER\Documents\School\4th Year 1st Semester\Capstone and Research 2\CAPSTONE PROJECT\Capstone-Project`
 
 ---
 

@@ -98,7 +98,7 @@ class ApiClient {
       // a guest must never be bounced to /login mid-flow — while protected
       // ones 401 again and reach redirectToLogin on the retry.
       if (!retried && token) {
-        clearTokens();
+        dropTokens();
         return this.fetchRaw<T>(path, options, true);
       }
       this.redirectToLogin();
@@ -201,7 +201,7 @@ class ApiClient {
 
   private redirectToLogin(): void {
     if (typeof window !== "undefined") {
-      clearTokens();
+      dropTokens();
       // Signed out on purpose (store cleared in this page's life): the next
       // account must not be sent to this page.
       const { isAuthenticated, sessionVersion } = useAuthStore.getState();
@@ -220,6 +220,24 @@ type StepUpHandler = () => Promise<string | null>;
 let stepUpHandler: StepUpHandler | null = null;
 export function setStepUpHandler(handler: StepUpHandler | null): void {
   stepUpHandler = handler;
+}
+
+// The sign-out wipe (user-scoped stores + Query cache), registered by
+// <AuthHydrator>. A handler rather than an import: auth-reset imports the
+// cart store, which imports api-cart, which imports this file.
+let sessionEndHandler: (() => void) | null = null;
+export function setSessionEndHandler(handler: (() => void) | null): void {
+  sessionEndHandler = handler;
+}
+
+// Every place this client drops tokens. A signed-in session's cart, bookmarks
+// and pending payment go with them, as on sign-out; captureGuestBuffer()
+// relies on it. Guests reach redirectToLogin too, and their cart must survive.
+// No logout() here: redirectToLogin reads isAuthenticated to send an expired
+// user back to their page.
+function dropTokens(): void {
+  clearTokens();
+  if (useAuthStore.getState().isAuthenticated) sessionEndHandler?.();
 }
 
 function hasStepUpRequired<T>(data: ApiResponse<T> | null): boolean {
