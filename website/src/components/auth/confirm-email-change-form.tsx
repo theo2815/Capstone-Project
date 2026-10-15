@@ -37,7 +37,7 @@ export function ConfirmEmailChangeForm() {
       // The backend revoked every refresh token, so this session is already
       // dead — the access token just hasn't expired yet. Drop it now rather
       // than let the user browse for ≤15 min and get bounced mid-action.
-      // Same trio as useAuth.logout, minus the /auth/logout POST: there is no
+      // Same steps as useAuth.logout, minus the /auth/logout POST: there is no
       // refresh token left to revoke.
       clearTokens();
       resetUserScopedStores();
