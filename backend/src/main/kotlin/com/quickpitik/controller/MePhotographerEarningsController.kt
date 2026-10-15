@@ -37,8 +37,8 @@ import java.util.UUID
  * MePhotographerSettingsController per the path-overlap dispatch (Q-009) — it
  * was wired here to a real PayoutCycleService call as part of this PR.
  *
- * The report submission endpoint accepts a string cycle id (`PAY-{YYYY}W{NN}-
- * {HANDLE}`) as the path variable, which is distinct from the UUID-typed
+ * The report submission endpoint accepts a string cycle id (e.g. `PAY-{HANDLE}-
+ * {NUMBER}`, see `buildSequencedCycleId`) as the path variable, which is distinct from the UUID-typed
  * payout-account id PR 8 uses for its CRUD. Spring routes correctly because
  * `/payouts/{id}/report` is more specific than `/payouts/{id}`.
  */
@@ -136,8 +136,9 @@ class MePhotographerEarningsController(
     ): PhotographerPayoutDto = payoutRequestService.request(principal.userId)
 
     // /payouts/{id}/withdraw — photographer cancels a HELD request after
-    // fixing whatever the admin flagged. Hard-deletes the cycle so the
-    // photographer can submit a new request immediately. The path doesn't
+    // fixing whatever the admin flagged. Soft-cancels the cycle (the row stays
+    // for the audit trail) so the photographer can submit a new request
+    // immediately. The path doesn't
     // collide with /payouts/{cycleId}/report — different terminal segments.
     @PostMapping("/payouts/{id}/withdraw")
     fun withdrawPayout(
