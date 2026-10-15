@@ -85,6 +85,7 @@ class GoogleAuthService(
                 // Pre-registration guard, per the class comment. OpaqueTokens
                 // gives 32 random bytes — unguessable, never disclosed.
                 user.passwordHash = passwordEncoder.encode(OpaqueTokens.generate())
+                user.credentialVersion += 1  // credential version (V88): retires earlier sessions and email-change links
                 refreshTokenService.revokeAllForUser(user.id)
                 user.emailVerifiedAt = OffsetDateTime.now()
             }

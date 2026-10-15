@@ -46,8 +46,9 @@ class JwtAuthenticationFilter(
                 // Absent claim = token minted before the suspension gate landed;
                 // treat as active so in-flight sessions aren't mass-logged-out.
                 val suspended = claims["suspended"] as? Boolean ?: false
+                val credentialVersion = (claims["cv"] as? Number)?.toInt() ?: 0
                 if (!suspended) {
-                    val principal = AuthPrincipal(userId, email, role)
+                    val principal = AuthPrincipal(userId, email, role, credentialVersion = credentialVersion)
                     val auth = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
                     auth.details = WebAuthenticationDetailsSource().buildDetails(request)
                     SecurityContextHolder.getContext().authentication = auth

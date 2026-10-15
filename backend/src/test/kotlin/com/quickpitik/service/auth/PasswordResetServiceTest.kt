@@ -178,6 +178,7 @@ class PasswordResetServiceTest {
         service().confirmReset(raw, "marathon-cebu-2027")
 
         assertEquals("new-hash", user.passwordHash)
+        assertEquals(1, user.credentialVersion)
         Mockito.verify(refreshTokenService).revokeAllForUser(userId)
     }
 

@@ -51,7 +51,7 @@ class MeProfileController(
         @Valid @RequestBody body: EmailChangeRequest,
     ): MessageResponse {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, principal.userId.toString())
-        emailChangeService.requestChange(principal.userId, body)
+        emailChangeService.requestChange(principal.userId, principal.credentialVersion, body)
         return MessageResponse(
             "Check your new inbox — we sent a confirmation link. " +
                 "Your sign-in email stays the same until you use it.",

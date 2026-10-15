@@ -87,6 +87,7 @@ class PasswordResetService(
 
         PasswordValidator.validate(newPassword, "newPassword")
         user.passwordHash = passwordEncoder.encode(newPassword)
+        user.credentialVersion += 1  // credential version (V88): retires earlier sessions and email-change links
         userRepository.save(user)
 
         token.usedAt = OffsetDateTime.now()

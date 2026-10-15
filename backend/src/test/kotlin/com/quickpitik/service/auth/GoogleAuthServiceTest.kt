@@ -256,6 +256,7 @@ class GoogleAuthServiceTest {
 
         assertEquals("google-sub-1", user.googleSub)
         assertEquals("\$2a\$12\$existing", user.passwordHash)
+        assertEquals(0, user.credentialVersion)
         Mockito.verify(refreshTokenService, Mockito.never()).revokeAllForUser(anyArg())
     }
 
@@ -270,6 +271,7 @@ class GoogleAuthServiceTest {
         assertEquals("google-sub-1", user.googleSub)
         // The squatter's password is gone; the inbox owner OTP-resets a new one.
         assertEquals("\$2a\$12\$rotated", user.passwordHash)
+        assertEquals(1, user.credentialVersion)
         assertNotNull(user.emailVerifiedAt)
         Mockito.verify(refreshTokenService).revokeAllForUser(user.id)
     }
