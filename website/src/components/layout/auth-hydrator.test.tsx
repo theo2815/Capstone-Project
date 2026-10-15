@@ -49,6 +49,7 @@ afterEach(() => {
   useAuthStore.getState().logout();
   resetUserScopedStores();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function startMerge() {
@@ -301,4 +302,19 @@ it("removes retired settings on guest startup without resetting guest buffers", 
   expect(localStorage.getItem("quickpitik-photographer-settings")).toBeNull();
   expect(useCartStore.getState().items).toEqual([mergedItem]);
   expect(useSavedEventsStore.getState().ids).toEqual([savedEvent.id]);
+});
+
+it("a dead session mid-page wipes the cart and the Query cache through the registered handler", async () => {
+  vi.spyOn(cartApi, "mergeCart").mockResolvedValue([]);
+  vi.spyOn(savedApi, "mergeSavedEvents").mockResolvedValue([]);
+  vi.stubGlobal("location", { pathname: "/orders", search: "", hash: "", href: "" });
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify({ success: false, errors: [] }), { status: 401 })));
+  render(<QueryClientProvider client={client}><AuthHydrator /></QueryClientProvider>);
+  await waitFor(() => expect(useCartStore.getState().syncEnabled).toBe(true));
+  useCartStore.getState().setItems([mergedItem]);
+  client.setQueryData(["me", "orders", "runner-a"], ["order-1"]);
+  await expect(api.get("/me/orders")).rejects.toThrow("Unauthorized");
+  expect(useCartStore.getState().items).toEqual([]);
+  expect(client.getQueryData(["me", "orders", "runner-a"])).toBeUndefined();
 });
