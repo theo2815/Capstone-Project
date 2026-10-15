@@ -268,13 +268,14 @@ fun buildCycleId(weekOf: LocalDate, handle: String?): String {
     return "PAY-${isoYear}W${"%02d".format(isoWeek)}-$handlePart"
 }
 
-// Photographer-initiated payouts can fire multiple times per ISO week, so the
-// week-based id collides on the PK. Sequence id is monotonic per photographer:
-// PAY-JUANDC-001, PAY-JUANDC-002, etc. Handle sanitised the same way; falls
-// back to a UUID prefix when handle is missing so the id is still stable.
-fun buildSequencedCycleId(handle: String?, photographerId: UUID, sequence: Long): String {
+// Photographer-initiated payout id: PAY-{HANDLE}-{number}. The handle is only
+// for people reading the id (admins search ids by it); uniqueness comes from
+// `number`, the database-wide payout_cycle_number_seq (V87), so handles that
+// clean up to the same letters can never share an id. Ids made before V87 end
+// in a per-photographer count (001, 002, …) and are left as they are.
+fun buildSequencedCycleId(handle: String?, photographerId: UUID, number: Long): String {
     val handlePart = handle?.uppercase()?.replace(Regex("[^A-Z0-9]"), "")
         ?.takeIf { it.isNotEmpty() }
         ?: photographerId.toString().take(8).uppercase()
-    return "PAY-$handlePart-${"%03d".format(sequence)}"
+    return "PAY-$handlePart-${"%03d".format(number)}"
 }

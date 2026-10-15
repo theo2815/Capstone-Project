@@ -13,6 +13,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
@@ -58,7 +59,6 @@ class PayoutCycleIdCollisionIntegrationTest : PostgresIntegrationTest() {
         accountName = name, isPrimary = true, qrS3Key = "collide/qr-$userId.png",
     ))
 
-    @Disabled("SA-1 reproduction; SA-2 removes this line")
     @Test
     fun `a payout request never writes onto another photographer's cycle`() {
         val a = photographer("jd$tag")    // cleans to JD<TAG>
@@ -98,5 +98,39 @@ class PayoutCycleIdCollisionIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, c2.size)
         assertEquals(0, BigDecimal("700.00").compareTo(c1.single().amountPhp))
         assertEquals(0, BigDecimal("900.00").compareTo(c2.single().amountPhp))
+    }
+
+    @Test
+    fun `insert refuses an existing id and leaves the row alone`() {
+        val owner = photographer("ins$tag")
+        val id = "PAY-INS${tag.uppercase()}-001"
+        cycles.saveAndFlush(PayoutCycle(id = id, photographerId = owner.id, weekOf = LocalDate.now(),
+            amountPhp = BigDecimal("5000.00"), statusWire = PayoutCycleStatus.PAID.wire))
+        val other = photographer("other$tag")
+
+        assertFailsWith<org.springframework.dao.DataIntegrityViolationException> {
+            cycles.insert(PayoutCycle(id = id, photographerId = other.id, weekOf = LocalDate.now(),
+                amountPhp = BigDecimal("1.00"), statusWire = PayoutCycleStatus.PENDING.wire))
+        }
+        val row = cycles.findById(id).get()
+        assertEquals(owner.id, row.photographerId)
+        assertEquals(0, BigDecimal("5000.00").compareTo(row.amountPhp))
+    }
+
+    @Test
+    fun `two photographers without a handle get two cycles`() {
+        val p1 = photographer(null)
+        val p2 = photographer(null)
+        listOf(p1, p2).forEach {
+            sale(it.id, "800.00", OffsetDateTime.now().minusDays(10))
+            primaryAccount(it.id, "No-handle ${it.id}")
+        }
+
+        val first = requests.request(p1.id)
+        val second = requests.request(p2.id)
+
+        assertNotEquals(first.id, second.id)
+        assertEquals(p1.id, cycles.findById(first.id).get().photographerId)
+        assertEquals(p2.id, cycles.findById(second.id).get().photographerId)
     }
 }
