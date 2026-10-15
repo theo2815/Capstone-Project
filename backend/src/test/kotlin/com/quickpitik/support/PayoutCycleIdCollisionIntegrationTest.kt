@@ -4,7 +4,6 @@ import com.quickpitik.entity.*
 import com.quickpitik.repository.*
 import com.quickpitik.service.admin.AdminPayoutService
 import com.quickpitik.service.earnings.PayoutRequestService
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.math.BigDecimal
@@ -81,7 +80,6 @@ class PayoutCycleIdCollisionIntegrationTest : PostgresIntegrationTest() {
         assertNotEquals(victimId, own.single().id)
     }
 
-    @Disabled("SA-1 reproduction; SA-3 removes this line")
     @Test
     fun `the weekly generator gives two photographers without a handle two cycles`() {
         val monday = LocalDate.of(2001, 1, 1)  // a Monday
@@ -98,6 +96,37 @@ class PayoutCycleIdCollisionIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, c2.size)
         assertEquals(0, BigDecimal("700.00").compareTo(c1.single().amountPhp))
         assertEquals(0, BigDecimal("900.00").compareTo(c2.single().amountPhp))
+    }
+
+    @Test
+    fun `the weekly generator leaves another photographer's legacy row alone`() {
+        val monday = LocalDate.of(2001, 1, 8)
+        val a = photographer("wk$tag")
+        val b = photographer("w-k$tag")
+        val legacyId = "PAY-2001W02-WK${tag.uppercase()}"
+        cycles.saveAndFlush(PayoutCycle(id = legacyId, photographerId = a.id, weekOf = monday,
+            amountPhp = BigDecimal("111.00"), statusWire = PayoutCycleStatus.PENDING.wire))
+        sale(b.id, "900.00", monday.plusDays(1).atStartOfDay(manila).toOffsetDateTime())
+
+        admin.generateForWeek(monday)
+
+        assertEquals(0, BigDecimal("111.00").compareTo(cycles.findById(legacyId).get().amountPhp))
+        assertEquals(1, cycles.findAll().count { it.photographerId == b.id })
+    }
+
+    @Test
+    fun `running the same week twice refreshes the photographer's row instead of adding one`() {
+        val monday = LocalDate.of(2001, 1, 15)
+        val p = photographer(null)
+        sale(p.id, "300.00", monday.plusDays(1).atStartOfDay(manila).toOffsetDateTime())
+        admin.generateForWeek(monday)
+        sale(p.id, "200.00", monday.plusDays(2).atStartOfDay(manila).toOffsetDateTime())
+
+        admin.generateForWeek(monday)
+
+        val own = cycles.findAll().filter { it.photographerId == p.id }
+        assertEquals(1, own.size)
+        assertEquals(0, BigDecimal("500.00").compareTo(own.single().amountPhp))
     }
 
     @Test

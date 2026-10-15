@@ -255,7 +255,7 @@ fun privacyGuestBuyerDisplay(email: String): String {
     return "$first $lastInitial."
 }
 
-// Internal: builds the legacy week-based cycle id `PAY-{YYYY}W{NN}-{HANDLE}` —
+// Legacy weekly id `PAY-{YYYY}W{NN}-{HANDLE}`: used only to find a photographer's rows made before buildWeeklyCycleId.
 // kept for the smoke-test seed helper (one cycle per week per photographer).
 // The live request-based flow uses buildSequencedCycleId instead so multiple
 // requests in the same ISO week don't collide on the unique PK.
@@ -266,6 +266,18 @@ fun buildCycleId(weekOf: LocalDate, handle: String?): String {
         ?.takeIf { it.isNotEmpty() }
         ?: "UNKNOWN"
     return "PAY-${isoYear}W${"%02d".format(isoWeek)}-$handlePart"
+}
+
+// Weekly generator id: one per photographer per ISO week, built from the
+// photographer's id, so two photographers can never share it and a re-run of
+// the same week finds the same row. Replaces buildCycleId's handle-based id,
+// which gave every photographer without a handle the same `-UNKNOWN` id
+// (security audit 2026-10-14). buildCycleId stays only to find rows made
+// before this change.
+fun buildWeeklyCycleId(weekOf: LocalDate, photographerId: UUID): String {
+    val isoYear = weekOf.get(java.time.temporal.IsoFields.WEEK_BASED_YEAR)
+    val isoWeek = weekOf.get(java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR)
+    return "PAY-${isoYear}W${"%02d".format(isoWeek)}-${photographerId.toString().replace("-", "").uppercase()}"
 }
 
 // Photographer-initiated payout id: PAY-{HANDLE}-{number}. The handle is only
