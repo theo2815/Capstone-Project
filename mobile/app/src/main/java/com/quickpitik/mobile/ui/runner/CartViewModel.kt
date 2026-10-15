@@ -319,8 +319,12 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
+            val generation = sessionManager.authChanges.value
             _orderDetailState.value = OrderDetailState.Loading
             val result = repository.getOrderDetail(token, orderId)
+            // As in fetchOrders: an answer that lands after the account changed
+            // is the previous account's.
+            if (generation != sessionManager.authChanges.value) return@launch
             result.onSuccess { order ->
                 _orderDetailState.value = OrderDetailState.Success(order)
             }.onFailure { exception ->
@@ -388,7 +392,10 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     // Re-pull the order detail without flipping the screen back to a spinner —
     // the refund banner stays visible while the timeline/chips refresh in place.
     private suspend fun refreshOrderDetailSilently(orderId: String, token: String) {
-        repository.getOrderDetail(token, orderId).onSuccess { order ->
+        val generation = sessionManager.authChanges.value
+        val result = repository.getOrderDetail(token, orderId)
+        if (generation != sessionManager.authChanges.value) return
+        result.onSuccess { order ->
             _orderDetailState.value = OrderDetailState.Success(order)
         }
     }

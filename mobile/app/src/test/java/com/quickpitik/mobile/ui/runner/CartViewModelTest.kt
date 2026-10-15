@@ -40,6 +40,7 @@ class CartViewModelTest {
     private val seen = CopyOnWriteArrayList<Pair<String, String>>() // path to body
     @Volatile private var cart = CART
     @Volatile private var orders: MockResponse = ok(ORDERS)
+    @Volatile private var detail: MockResponse = ok(DETAIL)
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -56,6 +57,8 @@ class CartViewModelTest {
                     path == "/api/v1/coupons/preview" -> preview(body)
                     path == "/api/v1/orders" -> ok(ORDER)
                     path == "/api/v1/me/orders" -> orders
+                    path == "/api/v1/me/orders/o1" -> detail
+                    path == "/api/v1/me/disputes/d1/withdraw" -> ok(DISPUTE)
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -210,7 +213,43 @@ class CartViewModelTest {
         assertEquals(setOf("p1", "p2", "p6"), vm.ownedPhotoIds.awaitFirst { true })
     }
 
+    // Blocks until a request for [path] is on the server, so the switch below
+    // happens while its answer is still on the way.
+    private fun awaitOnServer(path: String) {
+        generateSequence { backend.server.takeRequest(5, TimeUnit.SECONDS)!! }.first { it.path == path }
+    }
+
+    // The late answer lands about 300 ms after the switch; wait well past that.
+    private fun assertDetailNeverShown(vm: CartViewModel) = assertTrue(
+        runCatching { vm.orderDetailState.awaitFirst(1_000) { it is OrderDetailState.Success } }.isFailure,
+    )
+
+    // Security audit 2026-10-14, MOB-3 follow-up (MS-7 finding L1).
+    @Test fun `an order detail answer that lands after the account changed is dropped`() {
+        detail = ok(DETAIL).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        val vm = newVm()
+        vm.fetchOrderDetail("o1")
+        awaitOnServer("/api/v1/me/orders/o1")
+
+        switchAccount()
+
+        assertDetailNeverShown(vm)
+    }
+
+    @Test fun `an order detail refresh that lands after the account changed is dropped`() {
+        detail = ok(DETAIL).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        val vm = newVm()
+        vm.withdrawDispute("o1", "d1")
+        awaitOnServer("/api/v1/me/orders/o1")
+
+        switchAccount()
+
+        assertDetailNeverShown(vm)
+    }
+
     private companion object {
+        const val DETAIL = """{"id":"o1","eventId":"e1","photoIds":["p1"],"total":100.0,"paymentMethod":"GCASH","paidAt":null,"eventName":null,"eventSlug":null,"status":"PAID","photos":[]}"""
+        const val DISPUTE = """{"id":"d1","photoId":"p1","reason":"OTHER","note":"","status":"WITHDRAWN","openedAt":"2026-09-11T00:00:00Z"}"""
         const val CART = """[{"photoId":"p1","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":"B-1","eventName":"Run","eventSlug":"run","tone":null,"time":null},{"photoId":"p2","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null}]"""
         const val ORDER = """{"id":"o1","status":"PENDING","items":[{"photoId":"p1","price":100.0}],"totalAmount":200.0,"paymentMethod":"GCASH","createdAt":"2026-09-11T00:00:00Z","redirectUrl":"https://pay.example/x"}"""
         const val ORDERS = """{"items":[
