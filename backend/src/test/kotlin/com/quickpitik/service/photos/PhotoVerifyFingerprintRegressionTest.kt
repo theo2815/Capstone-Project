@@ -8,7 +8,6 @@ import com.quickpitik.service.image.PerceptualHash
 import com.quickpitik.service.photographer.WatermarkCredit
 import com.quickpitik.service.photographer.WatermarkService
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.awt.image.BufferedImage
@@ -83,7 +82,6 @@ class PhotoVerifyFingerprintRegressionTest {
         }
     }
 
-    @Disabled("SA-11 reproduction; SA-12 removes this line")
     @Test
     fun `verify never decodes a huge image at full size`() {
         val huge = BufferedImage(8000, 6000, BufferedImage.TYPE_BYTE_BINARY)       // 48 MP, under the 80 MP cap; ~6 MB raster in this test

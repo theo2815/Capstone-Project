@@ -9,13 +9,15 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.image.ExifOrientation
-import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.image.PerceptualHash
+import com.quickpitik.service.image.SubsampledDecode
+import com.quickpitik.service.photographer.WatermarkService
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import java.awt.image.BufferedImage
+import java.io.IOException
 import java.util.UUID
 
 // "Is this a QuickPitik photo, and whose?" — fingerprints the uploaded image
@@ -74,5 +76,15 @@ class PhotoVerifyService(
         )
     }
 
-    internal fun decodeForHash(bytes: ByteArray): BufferedImage? = ImageDecode.readOrNull(bytes)
+    // Decode no larger than the frame the stored fingerprints were taken from
+    // (WatermarkService hashes a ≤1280-px frame), so a small file that declares a
+    // huge image cannot make this public route allocate a full-size raster
+    // (security audit 2026-10-14). Subsampling keeps the long edge below 2×1280;
+    // inputs up to 2559 px decode exactly as before. PerceptualHash shrinks to
+    // 256 px itself, so nothing finer is needed.
+    internal fun decodeForHash(bytes: ByteArray): BufferedImage? = try {
+        SubsampledDecode.readForLongEdge(bytes, WatermarkService.MAX_LONG_EDGE)
+    } catch (_: IOException) {
+        null
+    }
 }
