@@ -15,6 +15,7 @@ import com.quickpitik.service.image.PerceptualHash
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import java.awt.image.BufferedImage
 import java.util.UUID
 
 // "Is this a QuickPitik photo, and whose?" — fingerprints the uploaded image
@@ -41,7 +42,7 @@ class PhotoVerifyService(
                 field = "file",
             )
         }
-        val decoded = ImageDecode.readOrNull(bytes)
+        val decoded = decodeForHash(bytes)
             ?: throw ApiException(
                 status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
@@ -72,4 +73,6 @@ class PhotoVerifyService(
             eventDate = event?.date,
         )
     }
+
+    internal fun decodeForHash(bytes: ByteArray): BufferedImage? = ImageDecode.readOrNull(bytes)
 }
