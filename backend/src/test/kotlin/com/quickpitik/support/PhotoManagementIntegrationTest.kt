@@ -47,12 +47,16 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var reconciler: com.quickpitik.service.orders.PaymongoCheckoutReconciler
     @Autowired lateinit var tx: TransactionTemplate
     @Autowired lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
+    @Autowired lateinit var photographerSettings: PhotographerSettingsRepository
+    @Autowired lateinit var accessGuard: com.quickpitik.service.photographer.PhotographerAccessGuard
     lateinit var event: Event
     lateinit var owner: User
     lateinit var photo: Photo
 
     @BeforeEach fun seed() {
         owner = users.save(User(email = "review-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Review", role = Role.PHOTOGRAPHER))
+        // Restore needs an approved photographer (security audit 2026-10-14, D6).
+        photographerSettings.saveAndFlush(PhotographerSettings(userId = owner.id, verificationStatus = VerificationStatus.APPROVED))
         event = events.save(Event(slug = "review-${UUID.randomUUID()}", name = "Review", date = LocalDate.now(), location = "Cebu", status = EventStatus.ACTIVE, photoCount = 1))
         photo = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/${UUID.randomUUID()}/original.jpg", watermarkS3Key = "review/${UUID.randomUUID()}/watermark.jpg", pricePhp = BigDecimal("125")))
         coverage.saveAndFlush(EventPhotographer(id = EventPhotographerId(event.id, owner.id), photoCount = 1, firstUploadAt = OffsetDateTime.now()))
@@ -70,7 +74,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
             com.quickpitik.service.photos.PhotoErasureService(photos, erasureJobs, uploadIntents, removalItems,
                 items, grants, coverage, events, metadata, storage, faceErasure,
                 com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(), tx, json, clock,
-                io.micrometer.core.instrument.simple.SimpleMeterRegistry()))
+                io.micrometer.core.instrument.simple.SimpleMeterRegistry()), accessGuard)
 
     @Test fun `delete acknowledgement with retained derivative must not report physical erasure`() {
         manager.trash(owner.id, event.id, listOf(photo.id))
@@ -271,7 +275,11 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, manager.trash(UUID.randomUUID(), event.id, listOf(photo.id)))
         assertEquals(0, manager.trash(owner.id, UUID.randomUUID(), listOf(photo.id)))
         manager.trash(owner.id, event.id, listOf(photo.id))
-        assertEquals(0, manager.restore(UUID.randomUUID(), event.id, listOf(photo.id)))
+        // A real approved stranger: restore checks approval first (D6), and only
+        // signed-in photographers ever reach it.
+        val stranger = users.save(User(email = "stranger-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Stranger", role = Role.PHOTOGRAPHER))
+        photographerSettings.saveAndFlush(PhotographerSettings(userId = stranger.id, verificationStatus = VerificationStatus.APPROVED))
+        assertEquals(0, manager.restore(stranger.id, event.id, listOf(photo.id)))
         val storage = Mockito.mock(StorageService::class.java)
         assertTrue(deletingWith(storage).permanentDelete(UUID.randomUUID(), event.id, listOf(photo.id)).deleted.isEmpty())
         Mockito.verifyNoInteractions(storage)

@@ -31,7 +31,6 @@ import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.quickpitik.websocket.AdminInboxEvent
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
@@ -258,7 +257,6 @@ class PhotographerOwnedEventServiceTest {
     )
 
     // Security audit 2026-10-14, photographer-events/owner-event-edit-skips-approved-gate.
-    @Disabled("SA-13 reproduction; SA-14 removes this line")
     @Test
     fun `a photographer who lost approval cannot edit their live event`() {
         val event = liveEvent()
@@ -272,6 +270,21 @@ class PhotographerOwnedEventServiceTest {
 
         assertEquals(ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED, ex.code)
         assertNotEquals("Renamed after reset", event.name)
+    }
+
+    @Test
+    fun `a refused edit uploads no cover`() {
+        val event = liveEvent()
+        Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(
+            Optional.of(PhotographerSettings(userId = photographerId, verificationStatus = VerificationStatus.INCOMPLETE)),
+        )
+
+        assertFailsWith<ApiException> {
+            service.update(photographerId, event.id, UpdateMyEventRequest(title = "Renamed after reset"),
+                com.quickpitik.service.admin.AdminEventService.CoverUpload(byteArrayOf(1), "image/jpeg"))
+        }
+
+        Mockito.verifyNoInteractions(covers)
     }
 
     private fun liveEvent(): Event {

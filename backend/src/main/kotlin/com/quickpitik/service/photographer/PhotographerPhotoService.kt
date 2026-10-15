@@ -34,6 +34,7 @@ class PhotographerPhotoService(
     private val downloadGrantRepository: DownloadGrantRepository,
     private val checkoutReconciler: PaymongoCheckoutReconciler,
     private val erasure: PhotoErasureService,
+    private val accessGuard: PhotographerAccessGuard,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -55,6 +56,9 @@ class PhotographerPhotoService(
     // lifecycle status (LIVE/PROCESSING/HIDDEN) untouched.
     @Transactional
     fun restore(photographerId: UUID, eventId: UUID, photoIds: List<UUID>): Int {
+        // Restoring republishes photos, so it needs the same approval as upload
+        // (security audit 2026-10-14, D6); trash and permanent delete stay open.
+        accessGuard.requireApproved(photographerId, "restoring photos")
         requireNotRemovedEvent(eventId)
         if (photoIds.isEmpty()) return 0
         photoRepository.findAllByIdForUpdate(photoIds.distinct().sorted())

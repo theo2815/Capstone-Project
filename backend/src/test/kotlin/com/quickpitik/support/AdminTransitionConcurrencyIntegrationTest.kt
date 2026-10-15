@@ -39,6 +39,7 @@ import kotlin.test.*
 class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var json: ObjectMapper
     @Autowired lateinit var users: UserRepository
+    @Autowired lateinit var photographerSettings: com.quickpitik.repository.PhotographerSettingsRepository
     @Autowired lateinit var events: EventRepository
     @Autowired lateinit var photos: PhotoRepository
     @Autowired lateinit var flags: FlagRepository
@@ -58,7 +59,11 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var txManager: PlatformTransactionManager
 
     private fun user(role: Role) = users.saveAndFlush(User(email = "transition-${UUID.randomUUID()}@test.local",
-        passwordHash = "test-only", name = "Transition fixture", role = role))
+        passwordHash = "test-only", name = "Transition fixture", role = role)).also {
+        // Owner event edits and photo restore need an approved photographer (security audit 2026-10-14, D6).
+        if (role == Role.PHOTOGRAPHER) photographerSettings.saveAndFlush(com.quickpitik.entity.PhotographerSettings(
+            userId = it.id, verificationStatus = com.quickpitik.entity.VerificationStatus.APPROVED))
+    }
 
     private fun event(review: EventReviewStatus = EventReviewStatus.APPROVED): Event = events.saveAndFlush(Event(
         slug = "transition-${UUID.randomUUID()}", name = "Run", date = LocalDate.of(2026, 10, 10), location = "Cebu",
