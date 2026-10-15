@@ -223,6 +223,18 @@ class OrderService(
             )
         }
         if (overlapping.isNotEmpty()) {
+            // A guest is only an email typed into the request, so a guest is never
+            // handed an order created under another Idempotency-Key: whoever made
+            // that order holds its key and would receive its downloads once paid
+            // (security audit 2026-10-14). Signed-in buyers resume below; their
+            // overlap lookup is by their own user id.
+            if (userId == null) {
+                throw checkoutConflict(
+                    "These photos are already in a checkout that is waiting for payment. " +
+                        "Finish it where you started it, or try again after it expires.",
+                    code = ErrorCodes.CHECKOUT_IN_PROGRESS,
+                )
+            }
             val keys = overlapping.mapNotNull { it.idempotencyKey }.toSet()
             if (keys.size != 1) {
                 throw checkoutConflict("One or more photos already belong to another active checkout.")

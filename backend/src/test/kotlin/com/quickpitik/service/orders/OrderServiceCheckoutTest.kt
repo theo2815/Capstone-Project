@@ -58,7 +58,6 @@ import com.quickpitik.service.photographer.PhotographerAccessGuard
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.transaction.support.TransactionSynchronizationManager
@@ -1123,7 +1122,6 @@ class OrderServiceCheckoutTest {
     }
 
     // Security audit 2026-10-14, orders/guest-checkout-resumed-by-unverified-email.
-    @Disabled("SA-4 reproduction; SA-5 removes this line")
     @Test
     fun `a guest request under a new key is never handed another key's pending order`() {
         val plantedKey = UUID.randomUUID().toString()
@@ -1149,12 +1147,9 @@ class OrderServiceCheckoutTest {
             )),
         )
 
-        val response = runCatching { service.create(null, request(), key) }.getOrNull()
-
-        assertTrue(
-            response == null || (response.id != planted.id && response.redirectUrl != "https://pay.test/planted"),
-            "a guest under a new key received the planted order ${response?.id}",
-        )
+        val ex = assertFailsWith<ConflictException> { service.create(null, request(), key) }
+        assertEquals(ErrorCodes.CHECKOUT_IN_PROGRESS, ex.code)
+        Mockito.verify(paymongoClient, Mockito.never()).retrieveCheckoutSession(anyArg())
     }
 
     @Test

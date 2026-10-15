@@ -59,6 +59,11 @@ object ErrorCodes {
     // the generic CONFLICT so clients can steer to a free re-download instead
     // of the QR-failure copy. See OrderService.reserveCheckout.
     const val ALREADY_PURCHASED = "ALREADY_PURCHASED"
+    /** 409 on POST /orders for a guest: these photos are already in another
+     *  checkout that is waiting for payment and was started under a different
+     *  Idempotency-Key. Carries no order data. The guest finishes the earlier
+     *  checkout (same key) or retries after it expires. */
+    const val CHECKOUT_IN_PROGRESS = "CHECKOUT_IN_PROGRESS"
     const val ORDER_NOT_FOUND = "ORDER_NOT_FOUND"
     const val PAYMENT_FAILED = "PAYMENT_FAILED"
     const val INVALID_IDEMPOTENCY_KEY = "INVALID_IDEMPOTENCY_KEY"
