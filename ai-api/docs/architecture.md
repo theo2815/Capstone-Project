@@ -69,7 +69,7 @@ Server starts
     ├── Pre-import torch / insightface / ultralytics    (avoid Windows DLL race)
     │
     ├── Load BlurDetector (Laplacian + FFT)             — registered as "blur", required
-    ├── Load BlurClassifier (YOLOv8n-cls ONNX)          — registered as "blur_classifier", optional
+    ├── Load BlurClassifier (two-stage: whole-frame rule, then person detector + per-person sharpness + logistic rule; four classes reported) — registered as "blur_classifier", optional
     ├── Load FaceEmbedder (InsightFace buffalo_l)       — registered as "face", required
     ├── Load BibDetector (YOLOv8n ONNX, Ultralytics)    — registered as "bib_detector", optional
     ├── Load BibRecognizer (PaddleOCR PP-OCRv5)         — registered as "bib_ocr", required

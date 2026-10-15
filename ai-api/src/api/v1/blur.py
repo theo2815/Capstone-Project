@@ -718,6 +718,9 @@ async def classify_blur_stream(
         first_seen = False
         phase = "stream"
         request_id = getattr(request.state, "request_id", "")
+        snapshot = getattr(classifier, "timing_snapshot", dict)
+        timing_before = snapshot()
+        decode_seconds = 0.0
         sem = (
             request.app.state.blur_decode_semaphore
             if settings.MODEL_PROFILE == "blur"
@@ -758,10 +761,12 @@ async def classify_blur_stream(
                     )
                     sub.append((i, name, data, err))
                 phase = "decode"
+                decode_started = time.perf_counter()
                 decoded = await asyncio.wait_for(
                     asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub]),
                     timeout=max(0, deadline - time.monotonic()),
                 )
+                decode_seconds += time.perf_counter() - decode_started
                 valid = [i for i, ((_, _, _, err), image) in enumerate(zip(sub, decoded))
                          if err is None and image is not None]
                 results = [None] * len(sub)
@@ -842,9 +847,16 @@ async def classify_blur_stream(
             outcome = "completed" if complete and not unaccounted else "interrupted"
             stream_outcomes.labels("classify", outcome).inc()
             stream_duration.labels("classify").observe(time.perf_counter() - start)
+            per_photo = 1000 / max(total, 1)
+            stages = snapshot()
             logger.info("Stream blur classification finished", request_id=request_id,
                         outcome=outcome, successful=successful, errors=errors,
-                        unaccounted=unaccounted)
+                        unaccounted=unaccounted,
+                        ms_per_photo=round((time.perf_counter() - start) * per_photo, 1),
+                        decode_ms_per_photo=round(decode_seconds * per_photo, 1),
+                        **{f"{stage}_ms_per_photo": round(
+                            (seconds - timing_before.get(stage, 0.0)) * per_photo, 1)
+                           for stage, seconds in stages.items()})
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000

@@ -89,8 +89,8 @@ def load_models_on_worker_start(**kwargs):
             from src.ml.blur.classifier import BlurClassifier
 
             _blur_classifier = BlurClassifier(
-                model_path=f"{settings.MODEL_DIR}/blur_classifier/blur_classifier.onnx",
-                class_names_path=f"{settings.MODEL_DIR}/blur_classifier/class_names.json",
+                detector_path=f"{settings.MODEL_DIR}/person_detector/yolov8n_seg_person.onnx",
+                rule_path=f"{settings.MODEL_DIR}/blur_classifier/people_rule.json",
                 use_gpu=settings.USE_GPU,
                 min_detection_confidence=settings.BLUR_DETECTION_MIN_CONFIDENCE,
             )

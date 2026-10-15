@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     BLUR_MAX_IMAGE_PIXELS: int = Field(default=24_000_000, gt=0)
     BLUR_MAX_ACTIVE_REQUESTS: int = Field(default=2, gt=0)
     BLUR_DECODE_CONCURRENCY: int = Field(default=2, gt=0)
+    # Stage-2 photos scored at the same time inside one stream sub-batch. 1 = one after
+    # another (today). 2 uses both native inference slots of this process for one
+    # request: set BLUR_MAX_ACTIVE_REQUESTS=1 beside it, or a second request is still
+    # admitted and either stream can then end part-way, marked incomplete.
+    BLUR_STAGE2_CONCURRENCY: int = Field(default=1, ge=1, le=2)
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik"
@@ -74,20 +79,24 @@ class Settings(BaseSettings):
     # Re-evaluate labeled images before changing it; BLUR_THRESHOLD is scale-sensitive.
     BLUR_DETECT_DECODE_DIM: int = Field(default=640, gt=0)
     BLUR_DETECTION_MIN_CONFIDENCE: float = Field(default=0.5, ge=0, le=1)
-    # Resolution the blur CLASSIFIER decodes to before inference. Calibrated, not
-    # arbitrary: re-measured 2026-08-14 on 1057 labelled val images after
-    # _preprocess switched to INTER_AREA, so this is no longer just standing in
-    # for missing anti-aliasing — 640 is genuinely the better input scale.
-    # Holding preprocess constant and varying only this value:
-    #   640  -> 4/698 blurry called sharp
-    #   1280 -> 7/698 blurry called sharp
-    # (Measured on the historical val split, which shares shoots with training:
-    # a decode-size comparison, not field accuracy — see docs/ai-system-overview.md.)
+    # Resolution the blur CLASSIFIER decodes to before inference: the full desktop
+    # upload (BLUR_AI_MAX_DIMENSION = 1280 in BatchMyPhotos). The two-stage
+    # classifier makes its own smaller views from it (640 gray for the whole-frame
+    # rule, a 640 padded square for the model), so nothing is thrown away here.
+    # The old 640 value was calibrated for the retired 224-px centre-crop model.
     # Shared by /blur/classify, /blur/classify/stream and the blur_classify_batch
     # worker — keep all three on one value or they will disagree on the same
-    # photo. Distinct from MAX_INFERENCE_DIMENSION (1280), which is sized for bib
-    # OCR and must stay there.
-    BLUR_CLASSIFY_DECODE_DIM: int = Field(default=640, gt=0)
+    # photo. Equal to MAX_INFERENCE_DIMENSION today, but a separate setting: that
+    # one is sized for bib OCR.
+    BLUR_CLASSIFY_DECODE_DIM: int = Field(default=1280, gt=0)
+    # Whole-frame rule, stage 1 of the blur classifier (src/ml/blur/whole_frame.py).
+    # Learned from the labelled event folds by scripts/fit_blur_whole_frame_rule.py:
+    # re-fit after the labelled photos change, never hand-tune.
+    #   fine detail <= SOFT_MAX_DETAIL and no sideways smear  -> whole-frame soft
+    #   direction ratio > MOTION_MIN_RATIO and fine detail <= MOTION_MAX_DETAIL -> motion
+    BLUR_SOFT_MAX_DETAIL: float = Field(default=34.1, gt=0)
+    BLUR_MOTION_MIN_RATIO: float = Field(default=2.63, gt=0)
+    BLUR_MOTION_MAX_DETAIL: float = Field(default=52.4, gt=0)
 
     # Face Recognition
     FACE_SIMILARITY_THRESHOLD: float = Field(default=0.4, ge=0, le=1)
@@ -111,6 +120,10 @@ class Settings(BaseSettings):
     # these matter less — batching (dynamic axis) is what drives GPU throughput.
     ONNX_INTRA_OP_THREADS: int = 6
     ONNX_INTER_OP_THREADS: int = 4
+    # Whether ONNX Runtime's worker threads keep spinning between pieces of work. Spinning
+    # is fastest on dedicated cores; inside a CPU quota (a 2-vCPU container) it can burn
+    # the quota and slow everything else down. False is the setting to try on staging.
+    ONNX_ALLOW_SPINNING: bool = True
 
     # OCR
     OCR_MAX_WORKERS: int = 8  # Thread pool size for PaddleOCR batch inference

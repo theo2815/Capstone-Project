@@ -30,8 +30,6 @@ ai-api/
 ├── build_cpp.py                # Manual build script — auto-detects MSVC on Windows.
 │                               # Usage: `python build_cpp.py`
 ├── _quickpitik_cpp.*.pyd/.so     # Compiled C++ extension (gitignored; produced by build).
-├── yolov8n-cls.pt             # Pre-trained YOLOv8 weights used as the base for
-│                               # blur classifier training (gitignored).
 │
 ├── gen_api_key.py              # One-off script to generate a new API key.
 ├── insert_key.py               # One-off script to insert an API key into the DB.
@@ -112,10 +110,16 @@ ai-api/
 │   │   │   │                   # frequency ratio, 640px-normalized). `detect_fast`
 │   │   │   │                   # skips FFT for the hot path. Uses one OpenCV/NumPy
 │   │   │   │                   # score contract across all classical callers.
-│   │   │   └── classifier.py   # BlurClassifier (YOLOv8n-cls, 4 classes via ONNX).
-│   │   │                       # Optional — loads only if
-│   │   │                       # models/blur_classifier/blur_classifier.onnx exists.
-│   │   │                       # Uses C++ `classify_preprocess` when available.
+│   │   │   ├── whole_frame.py  # Stage 1: the whole-frame rule (no model).
+│   │   │   ├── person_detector.py  # Stage 2: letterbox + NMS around the ONNX
+│   │   │   │                   # person detector.
+│   │   │   ├── people.py       # Stage 2: per-person sharpness, the thirteen
+│   │   │   │                   # features, the logistic rule.
+│   │   │   └── classifier.py   # BlurClassifier: two-stage blur classifier (whole-frame
+│   │   │                       # rule, then person detector + per-person sharpness +
+│   │   │                       # logistic rule); four classes reported. Optional —
+│   │   │                       # loads only if models/person_detector/yolov8n_seg_person.onnx
+│   │   │                       # and models/blur_classifier/people_rule.json exist.
 │   │   │
 │   │   ├── faces/
 │   │   │   ├── embedder.py     # FaceEmbedder — wraps InsightFace `buffalo_l`
@@ -147,7 +151,8 @@ ai-api/
 │   │   │                       # batch_blur_metrics.
 │   │   └── preprocess_ops.h/.cpp  # bgr_to_gray, resize_gray (bilinear),
 │   │                           # classify_preprocess (fused resize + normalize +
-│   │                           # transpose for YOLOv8-cls input).
+│   │                           # transpose; served inference no longer calls it:
+│   │                           # the blur classifier measures people at 1280 px).
 │   │
 │   │
 │   ├── db/                     # === LAYER 4: DATABASE ===
@@ -279,8 +284,9 @@ ai-api/
 ├── models/                     # === ML MODEL FILES (gitignored) ===
 │   ├── manifest.json           # Lists required models with sources/notes.
 │   ├── blur_classifier/
-│   │   ├── blur_classifier.onnx  # YOLOv8n-cls, 4 classes; see ai-system-overview.md for quality evidence.
-│   │   └── class_names.json
+│   │   └── people_rule.json      # Stage-2 rule of the two-stage blur classifier (whole-frame rule, then person detector + per-person sharpness + logistic rule); four classes reported; see ai-system-overview.md for quality evidence.
+│   ├── person_detector/
+│   │   └── yolov8n_seg_person.onnx  # COCO person detector for stage 2.
 │   ├── bib_detection/
 │   │   └── yolov8n_bib.onnx    # Custom-trained bib detector (Ultralytics).
 │   └── models/
@@ -302,10 +308,14 @@ ai-api/
 │   ├── benchmark.py                # Performance benchmarks.
 │   ├── backup_db.sh                # pg_dump helper.
 │   │
-│   ├── synthesize_event_blur.py    # Blurred training copies of sharp event photos.
-│   ├── prepare_blur_dataset.py     # Builds train/val splits for the blur classifier.
-│   ├── train_blur_classifier.py    # YOLOv8n-cls fine-tune script.
-│   ├── export_blur_classifier.py   # Exports best.pt → ONNX → models/blur_classifier/.
+│   ├── build_blur_folds.py         # Lays the labelled event photos out as five event folds.
+│   ├── fit_blur_whole_frame_rule.py  # Learns the whole-frame rule's thresholds (stage 1).
+│   ├── export_person_detector.py   # Exports the COCO person detector → ONNX →
+│   │                               # models/person_detector/.
+│   ├── measure_blur_people.py      # Measures the people in every sharp and missed-focus fold photo, once (cache).
+│   ├── fit_blur_people_rule.py     # Fits the stage-2 rule and scores it fold by fold.
+│   ├── ship_blur_rule.py           # Installs the fitted rule → models/blur_classifier/
+│   │                               # and records its hash in the manifest.
 │   │
 │   ├── train_bib_detector.py       # Trains the dedicated YOLOv8n bib detector.
 │   ├── export_bib_detector.py      # Exports bib detector to ONNX (requires --force

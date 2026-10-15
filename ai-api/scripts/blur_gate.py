@@ -267,7 +267,7 @@ def threshold_sweep(labels: dict[int, str], probabilities: dict[int, dict]) -> d
     return sweep
 
 
-def classify_offline(model_file: Path, labels_file: Path, items: list[tuple[int, bytes]],
+def classify_offline(rule_file: Path, detector_file: Path, items: list[tuple[int, bytes]],
                      batch: int, issues: list[str],
                      probabilities_out: dict[int, dict]) -> dict[int, str | None]:
     """Production decode + BlurClassifier in-process, to score candidates without a server.
@@ -281,7 +281,7 @@ def classify_offline(model_file: Path, labels_file: Path, items: list[tuple[int,
     from src.config import get_settings
     from src.ml.blur.classifier import BlurClassifier
 
-    classifier = BlurClassifier(model_path=str(model_file), class_names_path=str(labels_file))
+    classifier = BlurClassifier(detector_path=str(detector_file), rule_path=str(rule_file))
     out: dict[int, str | None] = {gi: None for gi, _ in items}
     if classifier.session is None:
         issues.append("offline model could not be loaded")
@@ -354,12 +354,15 @@ def main() -> int:
     ap.add_argument("--api-key-file", type=Path,
                     help="Untracked X-API-Key file; otherwise use AI_API_KEY environment variable.")
     ap.add_argument("--model-file", type=Path,
-                    default=Path("models/blur_classifier/blur_classifier.onnx"))
+                    default=Path("models/blur_classifier/people_rule.json"),
+                    help="The stage-2 rule file (hash-checked against the manifest).")
     ap.add_argument("--model-manifest", type=Path, default=Path("models/manifest.json"))
     ap.add_argument("--report-json", type=Path, default=Path("blur-gate-report.json"))
     ap.add_argument("--cand-dim", type=int, default=1280, help="Client resize long edge.")
     ap.add_argument("--cand-quality", type=int, default=90, help="Client JPEG quality.")
-    ap.add_argument("--batch", type=int, default=200, help="Images per stream request.")
+    ap.add_argument("--batch", type=int, default=100,
+                    help="Images per stream request (what the desktop sends; 200 ran too close "
+                         "to the 120-second stream limit on staging).")
     ap.add_argument("--limit", type=int, default=0, help="Cap number of images (0 = all).")
     ap.add_argument("--diagnostic-subset", action="store_true",
                     help="Allow --limit or partial class coverage; output is not a release PASS.")
@@ -380,8 +383,12 @@ def main() -> int:
                          "under brighter/darker/grayscale copies (setting it runs the check).")
     ap.add_argument("--offline", action="store_true",
                     help="Score --model-file in-process with the production decode; never PASS.")
-    ap.add_argument("--labels-file", type=Path,
-                    default=Path("models/blur_classifier/class_names.json"))
+    ap.add_argument("--detector-file", type=Path,
+                    default=Path("models/person_detector/yolov8n_seg_person.onnx"),
+                    help="The person detector the rule runs on (offline scoring only).")
+    ap.add_argument("--predictions-json", type=Path, default=None,
+                    help="Also write one row per input (path, label, event, predicted, "
+                         "probabilities, tone_scores) for scripts/blur_cv_report.py.")
     args = ap.parse_args()
 
     if (args.batch < 1 or args.limit < 0 or args.cand_dim < 1
@@ -472,7 +479,7 @@ def main() -> int:
 
     probabilities: dict[int, dict] = {}
     if args.offline:
-        preds = classify_offline(args.model_file, args.labels_file, items, args.batch,
+        preds = classify_offline(args.model_file, args.detector_file, items, args.batch,
                                  issues, probabilities)
     else:
         with httpx.Client(timeout=timeout) as client:
@@ -578,6 +585,19 @@ def main() -> int:
     except OSError as e:
         print(f"Cannot write report: {type(e).__name__}", file=sys.stderr)
         return 2
+    if args.predictions_json:
+        # Strongest blur class of each tone copy, so the report can count flips at any
+        # flag threshold. A photo with a copy that got no answer counts as not checked.
+        tone: dict[int, list[float]] = {}
+        for j, i in variant_of.items():
+            if j in probabilities:
+                tone.setdefault(i, []).append(max(probabilities[j][c] for c in BLUR_CLASSES))
+        rows = [{"path": dataset_manifest[i]["path"], "label": label, "event": event,
+                 "predicted": preds.get(i), "probabilities": probabilities.get(i),
+                 "tone_scores": (tone[i] if len(tone.get(i, ())) == len(PHOTOMETRIC_VARIANTS)
+                                 else None)}
+                for i, (_, label, event) in enumerate(pairs)]
+        args.predictions_json.write_text(json.dumps(rows) + "\n", encoding="utf-8")
 
     print("\n" + "=" * 68)
     print("BLUR STREAM GATE — vs GROUND-TRUTH LABELS")

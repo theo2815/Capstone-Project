@@ -12,8 +12,10 @@ models/
 !models/manifest.json
 !models/blur_classifier/
 models/blur_classifier/*
-!models/blur_classifier/blur_classifier.onnx
-!models/blur_classifier/class_names.json
+!models/blur_classifier/people_rule.json
+!models/person_detector/
+models/person_detector/*
+!models/person_detector/yolov8n_seg_person.onnx
 
 # Training data and training outputs. Training-Images/ alone is ~16 GB; leaving
 # these in meant every `docker build` shipped ~16 GB to the daemon before the

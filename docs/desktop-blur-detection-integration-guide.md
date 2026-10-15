@@ -130,9 +130,9 @@ curl -X POST http://localhost:8000/api/v1/blur/detect \
 
 ---
 
-### 3.2 Blur Classification (CNN -- 4 classes)
+### 3.2 Blur Classification (two-stage classifier (whole-frame rule, then person detector + per-person sharpness + logistic rule), four classes reported)
 
-Classifies the image into one of four blur types using a trained YOLOv8n-cls model. Requires the ONNX model file at `models/blur_classifier/blur_classifier.onnx`.
+Classifies the image into one of four blur types using the two-stage classifier. Requires the two files `models/person_detector/yolov8n_seg_person.onnx` and `models/blur_classifier/people_rule.json`.
 
 ```
 POST /api/v1/blur/classify
@@ -176,10 +176,10 @@ The four classes:
 
 | Class | Meaning |
 |-------|---------|
-| `sharp` | Image is in focus |
-| `defocused_object_portrait` | Subject out of focus (portrait/bokeh style) |
-| `defocused_blurred` | General out-of-focus blur |
-| `motion_blurred` | Motion blur from camera or subject movement |
+| `sharp` | The runner is sharp. Background blur is intended; slight softness still counts as sharp |
+| `defocused_object_portrait` | Subject missed focus: a blurred person in front cuts into the frame, or the runner is soft while the background or road is sharp |
+| `defocused_blurred` | Whole-frame soft: nothing in the frame is sharp |
+| `motion_blurred` | The whole frame is smeared sideways |
 
 #### Mode B: Targeted Detection (with `blur_type` param)
 
@@ -223,7 +223,7 @@ For processing multiple images at once. Requires the Celery worker to be running
 
 ```
 POST /api/v1/blur/detect/batch     (Laplacian)
-POST /api/v1/blur/classify/batch   (CNN classifier, also accepts blur_type param)
+POST /api/v1/blur/classify/batch   (two-stage classifier, also accepts blur_type param)
 ```
 
 **Request** (multipart/form-data):
@@ -273,7 +273,7 @@ works, one JSON object per line.
 
 ```
 POST /api/v1/blur/detect/stream     (Laplacian, fast gate)
-POST /api/v1/blur/classify/stream   (CNN classifier, also accepts blur_type)
+POST /api/v1/blur/classify/stream   (two-stage classifier, also accepts blur_type)
 ```
 
 **Request** (multipart/form-data): `files` — up to 500 images per request
@@ -319,7 +319,7 @@ Client rules that matter:
   stream if its prepared JPEGs approach the blur service's body limit.
 
 Both `/blur/classify` and `/blur/classify/stream` decode to
-`BLUR_CLASSIFY_DECODE_DIM` (640) internally and score identically.
+`BLUR_CLASSIFY_DECODE_DIM` (1280) internally and score identically.
 
 ---
 
@@ -389,7 +389,7 @@ procedure.
 | Max stream batch size | 500 images (`STREAM_*_MAX_SIZE`), subject to the service body limit |
 | Supported formats | JPEG, PNG, WebP |
 | Fast check | `POST /blur/detect` |
-| CNN classify | `POST /blur/classify` |
+| Two-stage classify | `POST /blur/classify` |
 | Stream detect (API only; not used by beta) | `POST /blur/detect/stream` |
 | **Desktop primary path** | `POST /blur/classify/stream` |
 | Batch detect/classify | Optional async; disabled on the initial dedicated Railway blur service |

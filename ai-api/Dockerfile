@@ -37,7 +37,7 @@ WORKDIR /app
 
 COPY src/ /app/src/
 # The audited blur pair is supplied to the build context, never committed.
-# .dockerignore admits only these two small files and the manifest. Full-profile
+# .dockerignore admits only the rule file, the 13 MB person detector and the manifest. Full-profile
 # deployments can still mount their other models as before.
 COPY models/ /app/models/
 COPY alembic.ini /app/alembic.ini

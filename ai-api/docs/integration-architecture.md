@@ -38,7 +38,7 @@ This is the single source of truth for what each layer owns. If a concern is not
 | Responsibility | Details |
 |---------------|---------|
 | Blur detection | Laplacian variance + FFT analysis |
-| Blur classification | YOLOv8n-cls 4-class CNN (sharp, defocused_blurred, defocused_object_portrait, motion_blurred) |
+| Blur classification | Two-stage blur classifier (whole-frame rule, then person detector + per-person sharpness + logistic rule); four classes reported (sharp, defocused_blurred, defocused_object_portrait, motion_blurred) |
 | Face detection | InsightFace RetinaFace — bounding boxes + landmarks |
 | Face embedding | InsightFace ArcFace — 512-dim vectors |
 | Face storage | Store embeddings in pgvector, scoped by `api_key_id` + `event_id` |

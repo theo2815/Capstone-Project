@@ -17,9 +17,18 @@
       "name": "YOLOv8n Bib Detector",
       "file": "bib_detection/yolov8n_bib.onnx",
       "source": "scripts/train_bib_detector.py -> scripts/export_bib_detector.py",
-      "export": { "imgsz": 640, "dynamic": false, "simplify": true },
-      "input_shape": [1, 3, 640, 640],
-      "notes": "Trained and deployed (2026-03-21) on 1,713 Roboflow-annotated event photos. Exported with a STATIC input shape, so the decode dimension never reaches the detector — Ultralytics letterboxes every input down to 640 before the ONNX session and rescales boxes back. MAX_INFERENCE_DIMENSION therefore only affects the crop resolution handed to PaddleOCR, not detection. A dynamic re-export would also need simplify=False (the simplifier folds the dynamic axis back to static — see export_blur_classifier.py) AND an imgsz argument in BibDetector, which currently passes none; measured benefit is unproven (1024 vs 1280 gave identical detections). Source checkpoint: runs/detect/detect/bib_det/weights/best.pt."
+      "export": {
+        "imgsz": 640,
+        "dynamic": false,
+        "simplify": true
+      },
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "notes": "Trained and deployed (2026-03-21) on 1,713 Roboflow-annotated event photos. Exported with a STATIC input shape, so the decode dimension never reaches the detector \u2014 Ultralytics letterboxes every input down to 640 before the ONNX session and rescales boxes back. MAX_INFERENCE_DIMENSION therefore only affects the crop resolution handed to PaddleOCR, not detection. A dynamic re-export would also need simplify=False (the simplifier folds the dynamic axis back to static \u2014 see export_blur_classifier.py) AND an imgsz argument in BibDetector, which currently passes none; measured benefit is unproven (1024 vs 1280 gave identical detections). Source checkpoint: runs/detect/detect/bib_det/weights/best.pt."
     },
     "bib_ocr": {
       "name": "PaddleOCR PP-OCRv5",
@@ -28,16 +37,63 @@
       "notes": "Not stored under models/. PaddleOCR downloads and caches its own weights outside this directory (~/.paddleocr or PADDLE_PDX_MODEL_SOURCE), so there is no artifact here to point at. file is null rather than a path that never resolves."
     },
     "blur_classifier": {
-      "name": "YOLOv8n-cls Blur Classifier (4-class)",
-      "file": "blur_classifier/blur_classifier.onnx",
-      "artifact_version": "2026-08-14-dynamic",
-      "sha256": "1187f4d5c99c7c8c10596db4c7c343c5d4ca029d4c1f893b69502be6d799cb97",
-      "labels_sha256": "bbd45c36351c2084870b033f04b8a45c0c33cfc64b29b90d622a1f8084056a39",
-      "source": "scripts/train_blur_classifier.py -> scripts/export_blur_classifier.py",
-      "classes": ["defocused_blurred", "defocused_object_portrait", "motion_blurred", "sharp"],
-      "export": { "imgsz": 224, "dynamic": true, "simplify": false, "opset": 20 },
-      "input_shape": ["batch", 3, "height", "width"],
-      "notes": "Historical top-1 98.68% was measured on a random file split where 99% of validation images share a shoot with training; it is not field accuracy. On 856 sharp real marathon frames from three events this artifact flagged 61% as blurry (vault journal 2026-09-29-blur-detection-investigation-and-improvement-plan). Re-exported 2026-08-14 with dynamic=True: the batch axis is dynamic so classify_batch issues one (N,3,224,224) ONNX call instead of a per-image loop. Ultralytics also makes H/W dynamic; the wrapper always centre-crops and resizes to 224 so that is inert. Verified bit-identical to the previous static export (max abs diff 0.0) and batched-vs-per-image agreement within float32 epsilon. Measured CPU gain is small (~1.06x on 50 images) because the model is tiny and ONNX Runtime already parallelises a single inference — batching is what pays off on GPU. Required in the blur profile; optional in the full profile. Re-run export_blur_classifier.py to regenerate with a new artifact version and digests; it self-verifies the dynamic axis."
+      "name": "People-first blur rule, stage 2 (sharp vs subject missed focus)",
+      "file": "blur_classifier/people_rule.json",
+      "artifact_version": "2026-10-08-people-first-r3",
+      "sha256": "cad3bfe7acc92e4be9aa3d712823e3ab3586f0218d570dacd76c06b624ddb836",
+      "detector": "person_detector",
+      "source": "scripts/measure_blur_people.py -> scripts/fit_blur_people_rule.py -> scripts/ship_blur_rule.py",
+      "classes": [
+        "defocused_object_portrait",
+        "sharp"
+      ],
+      "features": [
+        "n_big",
+        "subject_es",
+        "subject_conf",
+        "min_es_big_confident",
+        "es_ratio",
+        "max_area_soft_other",
+        "area_edge_soft_other",
+        "soft_bottom_gap",
+        "soft_area_ratio_log",
+        "soft_area_at_feet",
+        "lowconf_big_area",
+        "subject_at_bottom_edge",
+        "biggest_other_es_ratio"
+      ],
+      "notes": "Stage 2 of the blur classifier: the person detector finds the people, src/ml/blur/people.py measures each one's sharpness at the 1280-px upload, and this logistic rule turns those numbers into P(missed focus). Whole-frame soft and motion are decided before it by src/ml/blur/whole_frame.py. Quality evidence: docs/ai-system-overview.md."
+    },
+    "person_detector": {
+      "name": "YOLOv8n-seg COCO person detector (stage 2 of the blur classifier)",
+      "file": "person_detector/yolov8n_seg_person.onnx",
+      "sha256": "d6882c485b393896657adfdd7f1331e351981f3c51f1c1b1dc60710a84f4afa8",
+      "source": "Ultralytics yolov8n-seg.pt (COCO) -> scripts/export_person_detector.py",
+      "export": {
+        "imgsz": 640,
+        "dynamic": false,
+        "simplify": false
+      },
+      "input_shape": [
+        1,
+        3,
+        640,
+        640
+      ],
+      "output_shapes": [
+        [
+          1,
+          116,
+          8400
+        ],
+        [
+          1,
+          32,
+          160,
+          160
+        ]
+      ],
+      "notes": "Only the person class (index 0) is read; each person's mask gives its own pixels for the sharpness measure. Letterbox, score filter, NMS and mask decoding live in src/ml/blur/person_detector.py, so serving needs no torch or Ultralytics. Licence AGPL-3.0 (owner decision 2026-10-06)."
     }
   }
 }

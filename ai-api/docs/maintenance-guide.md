@@ -11,7 +11,7 @@ QuickPitik AI-API is a FastAPI-based computer vision service for marathon/runnin
 
 | Pipeline | Purpose | Models Used | Endpoint Prefix |
 |----------|---------|-------------|-----------------|
-| **Blur Detection** | Filter blurry photos | Laplacian/FFT detector + YOLOv8n-cls ONNX classifier | `/api/v1/blur/` |
+| **Blur Detection** | Filter blurry photos | Laplacian/FFT detector + two-stage blur classifier (whole-frame rule, then person detector + per-person sharpness + logistic rule); four classes reported | `/api/v1/blur/` |
 | **Face Search** | Match runners across photos | InsightFace (RetinaFace + ArcFace) + pgvector | `/api/v1/faces/` |
 | **Bib Number OCR** | Read bib numbers from photos | YOLOv8n detector + PaddleOCR 3.x (PP-OCRv5) | `/api/v1/bibs/` |
 
@@ -133,7 +133,7 @@ celery -A src.workers.celery_app inspect reserved
 | Endpoint | Expected Latency | Notes |
 |----------|------------------|-------|
 | `POST /blur/detect` | 50-200ms | Laplacian + FFT, CPU only |
-| `POST /blur/classify` | 100-300ms | ONNX inference |
+| `POST /blur/classify` | 100-300ms | Whole-frame rule, then ONNX person detector + per-person sharpness + logistic rule |
 | `POST /faces/detect` | 200-800ms | InsightFace detection |
 | `POST /faces/search` | 300-1500ms | Detection + embedding + DB search |
 | `POST /faces/enroll` | 300-1000ms | Detection + embedding + DB write |
@@ -215,8 +215,8 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 | Model | Path | Format | Size | Required |
 |-------|------|--------|------|----------|
 | InsightFace buffalo_l | `models/models/buffalo_l/` (configured via `MODEL_DIR`) | ONNX (multiple) | ~280MB | Yes (required for face endpoints) |
-| Blur classifier | `models/blur_classifier/blur_classifier.onnx` | ONNX | ~5.5MB | No (optional) |
-| Blur class names | `models/blur_classifier/class_names.json` | JSON | <1KB | With classifier |
+| Blur person detector (stage 2) | `models/person_detector/yolov8n_seg_person.onnx` | ONNX | 13.8MB | No (optional; required in the blur profile) |
+| Blur rule (stage 2) | `models/blur_classifier/people_rule.json` | JSON | ~18KB | With the person detector |
 | Bib detector (YOLO) | `models/bib_detection/yolov8n_bib.onnx` | ONNX | ~12MB | No (optional; full-image OCR fallback) |
 | PaddleOCR PP-OCRv5 | Auto-downloaded by PaddleOCR on first run | Multiple | ~150MB | Yes (required for bib endpoints) |
 
@@ -230,11 +230,16 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 
 ### Retraining the Blur Classifier
 
-1. Train using YOLOv8 classification via `scripts/train_blur_classifier.py`
-2. Export to ONNX: `model.export(format='onnx')`
-3. Ensure `class_names.json` matches the training class order (alphabetical by default)
-4. The classifier validates class count against model output at load time -- mismatches disable the model
-5. Place both files in `models/blur_classifier/` and restart
+Run from `ai-api/`, in this order:
+
+1. `scripts/build_blur_folds.py` -- lays the labelled event photos out as five event folds
+2. `scripts/fit_blur_whole_frame_rule.py` -- learns the whole-frame thresholds; copy the printed values into `src/config.py`
+3. `scripts/export_person_detector.py` -- exports the person detector to `models/person_detector/yolov8n_seg_person.onnx` and records its hash (only when the detector itself is replaced)
+4. `scripts/measure_blur_people.py` -- measures the people in every sharp and missed-focus fold photo once and caches the numbers
+5. `scripts/fit_blur_people_rule.py` -- fits the rule and scores it on the folds it never saw
+6. `scripts/ship_blur_rule.py` -- installs the rule as `models/blur_classifier/people_rule.json` and records its hash in `models/manifest.json`; then restart
+
+At load time the classifier checks both files against the hashes in the manifest -- a mismatch disables it (the blur profile refuses to start).
 
 ### Retraining the Bib Detector
 

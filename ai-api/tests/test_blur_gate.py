@@ -138,7 +138,7 @@ def test_complete_gate_writes_reproducible_report(tmp_path, monkeypatch):
     assert len(report["dataset_manifest"]) == 4
     assert report["confusion"]["sharp"]["sharp"] == 1
     assert report["runtime_dependencies"]["python"]
-    assert report["gate_arguments"]["batch"] == 200
+    assert report["gate_arguments"]["batch"] == 100
 
 
 @pytest.mark.parametrize("damage", [
@@ -499,8 +499,10 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
         Image.new("RGB", (32, 16), (shade, shade, shade)).save(buf, "JPEG")
         return buf.getvalue()
 
+    seen = {}
     class FakeClassifier:
-        def __init__(self, model_path, class_names_path):
+        def __init__(self, detector_path, rule_path):
+            seen["detector"], seen["rule"] = detector_path, rule_path
             self.session = object()
 
         def classify_batch(self, images):
@@ -523,10 +525,12 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
     report_path = tmp_path / "report.json"
     monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(root), "--offline",
                                       "--model-file", str(model),
+                                      "--detector-file", str(tmp_path / "detector.onnx"),
                                       "--model-manifest", str(manifest_path),
                                       "--report-json", str(report_path),
                                       "--max-overcull-rate", "0"])
     code = blur_gate.main()
+    assert seen == {"detector": str(tmp_path / "detector.onnx"), "rule": str(model)}
     report = json.loads(report_path.read_text())
     assert code == 2 and report["status"] == "DIAGNOSTIC"
     assert report["counts"] == {"attempted": 2, "scored": 2, "failed": 0}
@@ -534,3 +538,119 @@ def test_offline_mode_uses_production_decode_and_never_passes(tmp_path, monkeypa
     assert report["issues"] == []
     assert report["model"] == {"version": None,
                                "sha256": hashlib.sha256(b"candidate").hexdigest()}
+
+
+def _predictions(tmp_path, monkeypatch, *flags, shade=None, always=None, unreadable=None,
+                 unscored=()):
+    """Offline gate on one sharp and one motion photo: (exit code, --predictions-json rows).
+
+    The fake model reads brightness: P(sharp) = mean / 255, the rest is motion blur.
+    """
+    from src.ml.blur import classifier as classifier_module
+
+    root = _nested(tmp_path, {"event": {"sharp": 1, "motion_blurred": 1}})
+    shade = shade or {"sharp": 255, "motion_blurred": 0}
+
+    def shaded_jpeg(path, *args):
+        if path.parent.name == unreadable:
+            raise OSError("unreadable")
+        buf = io.BytesIO()
+        Image.new("RGB", (32, 16), (shade[path.parent.name],) * 3).save(buf, "JPEG")
+        return buf.getvalue()
+
+    class FakeClassifier:
+        def __init__(self, detector_path, rule_path):
+            self.session = object()
+
+        def classify_batch(self, images):
+            out = []
+            for image in images:
+                if round(image.mean()) in unscored:
+                    out.append(None)
+                    continue
+                p_sharp = float(image.mean()) / 255
+                label = always or ("sharp" if p_sharp > 0.5 else "motion_blurred")
+                out.append({"predicted_class": label, "confidence": 0.9,
+                            "probabilities": {"sharp": p_sharp, "motion_blurred": 1 - p_sharp,
+                                              "defocused_blurred": 0.0,
+                                              "defocused_object_portrait": 0.0}})
+            return out
+
+    monkeypatch.setattr(classifier_module, "BlurClassifier", FakeClassifier)
+    monkeypatch.setattr(blur_gate, "resize_bytes", shaded_jpeg)
+    model = tmp_path / "candidate.onnx"
+    model.write_bytes(b"candidate")
+    predictions = tmp_path / "predictions.json"
+    monkeypatch.setattr(sys, "argv", ["blur_gate.py", str(root), "--offline",
+                                      "--model-file", str(model),
+                                      "--model-manifest", str(tmp_path / "manifest.json"),
+                                      "--report-json", str(tmp_path / "report.json"),
+                                      "--predictions-json", str(predictions), *flags])
+    return blur_gate.main(), json.loads(predictions.read_text())
+
+
+TONE = ("--max-photometric-flip-rate", "0.02")
+GRAY = {"sharp": 140, "motion_blurred": 0}     # 140 gray: brighter 178, darker 98, gray 140
+
+
+def test_predictions_json_lists_every_input_for_the_cv_report(tmp_path, monkeypatch):
+    _, rows = _predictions(tmp_path, monkeypatch, *TONE)
+    assert [(r["path"], r["label"], r["event"], r["predicted"]) for r in rows] == [
+        ("event/sharp/0.jpg", "sharp", "event", "sharp"),
+        ("event/motion_blurred/0.jpg", "motion_blurred", "event", "motion_blurred")]
+    assert rows[0]["probabilities"]["sharp"] > 0.99
+    assert [r["tone_scores"] for r in rows] == [pytest.approx([0.0] * 3, abs=0.01),
+                                                pytest.approx([1.0] * 3, abs=0.01)]
+
+
+def test_tone_scores_are_null_when_the_tone_check_did_not_run(tmp_path, monkeypatch):
+    _, rows = _predictions(tmp_path, monkeypatch)
+    assert [r["tone_scores"] for r in rows] == [None, None]
+
+
+def test_each_tone_copy_keeps_its_own_blur_score(tmp_path, monkeypatch):
+    _, rows = _predictions(tmp_path, monkeypatch, *TONE, shade=GRAY)
+    own = 1 - rows[0]["probabilities"]["sharp"]
+    brighter, darker, gray = rows[0]["tone_scores"]
+    assert brighter < own < 0.5 < darker        # only the darker copy reads as blur
+    assert gray == pytest.approx(own, abs=0.01)
+
+
+def test_a_photo_with_an_unscored_tone_copy_has_no_tone_scores(tmp_path, monkeypatch):
+    _, rows = _predictions(tmp_path, monkeypatch, *TONE, shade=GRAY, unscored=range(50, 120))
+    assert rows[0]["tone_scores"] is None       # its darker copy got no answer
+    assert len(rows[1]["tone_scores"]) == 3
+
+
+def test_a_failing_gate_still_writes_label_and_prediction_apart(tmp_path, monkeypatch):
+    code, rows = _predictions(tmp_path, monkeypatch, *TONE, always="sharp")
+    assert code == 1
+    assert [(r["label"], r["predicted"]) for r in rows] == [
+        ("sharp", "sharp"), ("motion_blurred", "sharp")]
+    assert rows[1]["probabilities"]["sharp"] < 0.1
+    assert len(rows[1]["tone_scores"]) == 3     # a wrong prediction keeps its tone scores
+
+
+def test_an_unprepared_photo_is_listed_with_nulls(tmp_path, monkeypatch):
+    code, rows = _predictions(tmp_path, monkeypatch, *TONE, unreadable="sharp")
+    assert code == 1
+    assert rows[0] == {"path": "event/sharp/0.jpg", "label": "sharp", "event": "event",
+                       "predicted": None, "probabilities": None, "tone_scores": None}
+    assert rows[1]["tone_scores"] == pytest.approx([1.0] * 3, abs=0.01)   # still its own
+
+
+def test_the_stream_path_writes_the_strongest_blur_class_of_each_tone_copy(tmp_path, monkeypatch):
+    root = _nested(tmp_path, {"event": {"sharp": 1, "motion_blurred": 1}})
+    monkeypatch.setattr(blur_gate, "photometric_variants",
+                        lambda data, quality: [data + b"|brighter", data + b"|darker",
+                                               data + b"|grayscale"])
+
+    def server(data):
+        if data.endswith(b"|brighter") and b"/sharp/" in data:
+            return "defocused_blurred"   # brightness alone flips the sharp frame
+        return _truth(data)
+
+    predictions = tmp_path / "predictions.json"
+    _gate(tmp_path, monkeypatch, root, server, *TONE, "--predictions-json", str(predictions))
+    assert [r["tone_scores"] for r in json.loads(predictions.read_text())] == [
+        [0.9, 0.1 / 3, 0.1 / 3], [0.9] * 3]

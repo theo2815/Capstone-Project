@@ -65,6 +65,10 @@ async def lifespan(app: FastAPI):
     await registry.load_all(settings)
     app.state.model_registry = registry
     logger.info("ML models loaded", all_loaded=registry.all_loaded())
+    if settings.MODEL_PROFILE == "blur":
+        from src.utils.host_info import host_facts
+
+        logger.info("Host facts", **host_facts())
     if settings.MODEL_PROFILE == "blur" and settings.METRICS_ENABLED and registry.all_loaded():
         import json
         from pathlib import Path
