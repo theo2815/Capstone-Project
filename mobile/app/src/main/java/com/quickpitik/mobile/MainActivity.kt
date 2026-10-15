@@ -631,8 +631,9 @@ class MainActivity : ComponentActivity() {
                                         // way forcedLogout does: cart + the
                                         // in-memory runner-view flag, which
                                         // survives the prefs wipe. Still signed
-                                        // in means the link was refused (or the
-                                        // local wipe itself failed): go back.
+                                        // in means the link was refused, it
+                                        // changed another account, or the local
+                                        // wipe failed: go back.
                                         val signedIn = sessionManager.getAccessToken() != null
                                         if (!signedIn) {
                                             cartViewModel.clearCart()

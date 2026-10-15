@@ -14,6 +14,7 @@ import com.quickpitik.mobile.data.remote.GoogleLoginRequest
 import com.quickpitik.mobile.data.remote.LoginRequest
 import com.quickpitik.mobile.data.remote.LogoutRequest
 import com.quickpitik.mobile.data.remote.MessageResponse
+import com.quickpitik.mobile.data.remote.RefreshRequest
 import com.quickpitik.mobile.data.remote.RegisterRequest
 import com.quickpitik.mobile.data.remote.ResetPasswordRequest
 import com.quickpitik.mobile.data.remote.RetrofitClient
@@ -25,6 +26,7 @@ import com.quickpitik.mobile.data.remote.uiMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import retrofit2.awaitResponse
 import java.io.Serializable
 
 sealed class AuthState {
@@ -338,23 +340,45 @@ class AuthViewModel(
 
     /**
      * POST /auth/confirm-email-change for the link mailed to the new address.
-     * On success the backend has revoked every refresh token, so this phone's
-     * session is already dead: it is dropped before the answer shows.
+     * The route is public and the link says nothing about whose account it is,
+     * so success signs this phone out only if this phone's account is the one
+     * that changed (security audit 2026-10-14, MOB-1): see [endSessionIfRevoked].
      */
     fun confirmEmailChange(token: String) {
         redeemEmailLink(token, "Invalid or missing email confirmation token.", "Failed to confirm email change.") {
             RetrofitClient.apiService.confirmEmailChange(EmailChangeConfirmRequest(token))
-                // The backend has already moved the address and revoked every refresh token;
-                // a local wipe that throws must not relabel that as a failure.
-                .also {
-                    if (it.success) {
-                        try {
-                            sessionManager.clearSession()
-                        } catch (e: Exception) {
-                            android.util.Log.w("AuthViewModel", "Local sign-out failed after a confirmed email change", e)
-                        }
-                    }
-                }
+                .also { if (it.success) endSessionIfRevoked() }
+        }
+    }
+
+    // The backend revoked every refresh token of the account whose email changed.
+    // One refresh with this phone's token tells whose that was: 401/403 means this
+    // phone's, so sign out; a new pair means someone else's link, so keep the
+    // session and the new pair (the old refresh token is spent now). No answer
+    // keeps the session, as in TokenAuthenticator; its next refresh settles it.
+    // The snapshot lets a sign-out during the call win over this late answer.
+    private suspend fun endSessionIfRevoked() {
+        val access = sessionManager.getAccessToken() ?: return
+        val snapshot = sessionManager.authSnapshot(access) ?: return
+        val refresh = sessionManager.getRefreshToken()
+        val answer = refresh?.let {
+            try {
+                RetrofitClient.refreshApi.refreshToken(RefreshRequest(it)).awaitResponse()
+            } catch (e: Exception) {
+                null
+            }
+        }
+        val auth = answer?.takeIf { it.isSuccessful }?.body()?.data
+        val revoked = refresh == null || answer?.code() == 401 || answer?.code() == 403
+        when {
+            auth != null -> sessionManager.refreshIfCurrent(snapshot, auth.accessToken, auth.refreshToken)
+            // The change is confirmed on the server; a local wipe that throws
+            // must not relabel it as a failure.
+            revoked -> try {
+                sessionManager.clearIfCurrent(snapshot)
+            } catch (e: Exception) {
+                android.util.Log.w("AuthViewModel", "Local sign-out failed after a confirmed email change", e)
+            }
         }
     }
 

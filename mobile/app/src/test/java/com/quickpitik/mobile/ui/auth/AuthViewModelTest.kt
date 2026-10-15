@@ -25,7 +25,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -252,7 +251,15 @@ class AuthViewModelTest {
     }
 
     @Test fun `a confirmed email change signs this phone out and shows the backend's message, a refused one keeps the session`() {
-        respond = { _, _ -> ok("""{"message":"Email updated. Sign in again with your new address."}""") }
+        respond = { path, _ ->
+            if (path == "/api/v1/auth/refresh") {
+                MockResponse().setResponseCode(401).setBody(
+                    """{"success":false,"errors":[{"code":"INVALID_REFRESH_TOKEN","message":"Refresh token expired or revoked"}]}""",
+                )
+            } else {
+                ok(CONFIRMED)
+            }
+        }
         session.saveSession("access-1", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-1")
         val vm = AuthViewModel(application)
 
@@ -260,6 +267,7 @@ class AuthViewModelTest {
         assertEquals(EmailLinkState.Success("Email updated. Sign in again with your new address."), vm.awaitLink("c-1"))
         assertNull(session.getAccessToken())
         assertNull(session.getRefreshToken())
+        assertTrue(bodies("/api/v1/auth/refresh").single().contains(""""refreshToken":"refresh-1""""))
         assertTrue(bodies("/api/v1/auth/confirm-email-change").single().contains(""""token":"c-1""""))
 
         respond = { _, _ ->
@@ -274,7 +282,15 @@ class AuthViewModelTest {
     }
 
     @Test fun `a confirmed email change still reads as confirmed, credentials gone, when the rest of the local sign-out throws`() {
-        respond = { _, _ -> ok("""{"message":"Email updated. Sign in again with your new address."}""") }
+        respond = { path, _ ->
+            if (path == "/api/v1/auth/refresh") {
+                MockResponse().setResponseCode(401).setBody(
+                    """{"success":false,"errors":[{"code":"INVALID_REFRESH_TOKEN","message":"Refresh token expired or revoked"}]}""",
+                )
+            } else {
+                ok(CONFIRMED)
+            }
+        }
         // A phone whose tether prefs cannot be opened: clearSession() throws partway.
         val broken = object : ContextWrapper(application) {
             override fun getApplicationContext(): Context = this
@@ -303,7 +319,6 @@ class AuthViewModelTest {
 
     // Security audit 2026-10-14, MOB-1: the confirm route is public, so the link
     // can belong to any account. Only the changed account's refresh is refused.
-    @Ignore("MS-3 reproduction of MOB-1; MS-4 removes this line")
     @Test fun `a confirmed email change for another account leaves this phone signed in`() {
         respond = { path, _ -> if (path == "/api/v1/auth/refresh") ok(REFRESHED) else ok(CONFIRMED) }
         session.saveSession("access-1", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-1")
@@ -317,7 +332,6 @@ class AuthViewModelTest {
         assertTrue(bodies("/api/v1/auth/refresh").single().contains(""""refreshToken":"refresh-1""""))
     }
 
-    @Ignore("MS-3 reproduction of MOB-1; MS-4 removes this line")
     @Test fun `no answer from the refresh keeps this phone signed in`() {
         respond = { path, _ -> if (path == "/api/v1/auth/refresh") MockResponse().setResponseCode(503) else ok(CONFIRMED) }
         session.saveSession("access-1", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-1")
@@ -327,6 +341,16 @@ class AuthViewModelTest {
 
         assertTrue(vm.awaitLink("c-1") is EmailLinkState.Success)
         assertEquals("access-1", session.getAccessToken())
+    }
+
+    @Test fun `a confirm while signed out sends no refresh`() {
+        respond = { _, _ -> ok(CONFIRMED) }
+        val vm = AuthViewModel(application)
+
+        vm.confirmEmailChange("c-1")
+
+        assertTrue(vm.awaitLink("c-1") is EmailLinkState.Success)
+        assertTrue(bodies("/api/v1/auth/refresh").isEmpty())
     }
 
     @Test fun `an answered link outlives process death, and one that died in flight is sent again`() {
