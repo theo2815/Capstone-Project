@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { ROUTES } from "@/lib/constants";
 import { ApiError } from "@/lib/api";
@@ -18,6 +19,7 @@ export function ConfirmEmailChangeForm() {
   const searchParams = useSearchParams();
   const token = searchParams?.get("token") ?? "";
   const clearUser = useAuthStore((s) => s.logout);
+  const queryClient = useQueryClient();
 
   const [status, setStatus] = useState<Status>("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export function ConfirmEmailChangeForm() {
       // refresh token left to revoke.
       clearTokens();
       resetUserScopedStores();
+      queryClient.clear();
       clearUser();
       setStatus("done");
     } catch (err) {
