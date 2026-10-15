@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
 import org.springframework.security.crypto.password.PasswordEncoder
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
@@ -221,6 +222,7 @@ class PasswordResetServiceTest {
         emailService,
         refreshTokenService,
         resetOtpAttemptService,
+        Clock.systemUTC(),
     )
 
     private fun stubUser(): User {

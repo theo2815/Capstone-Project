@@ -1,5 +1,6 @@
 package com.quickpitik.service.auth
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.entity.PasswordResetToken
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
@@ -8,10 +9,10 @@ import com.quickpitik.repository.PasswordResetTokenRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.email.EmailService
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.security.crypto.password.PasswordEncoder
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -47,13 +48,15 @@ class PasswordResetAccountBudgetTest {
             .`when`(attempts).recordFailure(anyArg())
         Mockito.doAnswer { call -> mailedCodes += call.getArgument<String>(1); null }
             .`when`(mail).sendPasswordResetEmail(anyArg(), anyArg())
+        Mockito.`when`(tokens.sumAttemptsSince(anyArg(), anyArg())).thenAnswer { call ->
+            rows.filter { it.createdAt.isAfter(call.getArgument(1)) }.sumOf { it.attempts.toLong() }
+        }
         service = PasswordResetService(users, tokens, Mockito.mock(PasswordEncoder::class.java), mail,
-            Mockito.mock(RefreshTokenService::class.java), attempts)
+            Mockito.mock(RefreshTokenService::class.java), attempts, Clock.systemUTC())
     }
 
     private fun wrong(code: String) = ((code.toInt() + 1) % 1_000_000).toString().padStart(6, '0')
 
-    @Disabled("SA-9 reproduction; SA-10 removes this line")
     @Test
     fun `wrong guesses across reissued codes run out a per-account budget`() {
         repeat(3) {
@@ -67,5 +70,35 @@ class PasswordResetAccountBudgetTest {
         assertEquals(3, mailedCodes.size, "a fourth code was issued after 15 wrong guesses")
         assertEquals(0, user.failedLoginAttempts)
         assertNull(user.lockedUntil)
+    }
+
+    @Test
+    fun `a spent budget refuses even the right code`() {
+        repeat(3) {
+            service.requestReset(user.email)
+            val code = mailedCodes.last()
+            repeat(4) { assertFailsWith<ValidationException> { service.verifyOtp(user.email, wrong(code)) } }
+        }
+        service.requestReset(user.email)              // 12 spent: a fourth code is still issued
+        val code = mailedCodes.last()
+        repeat(3) { assertFailsWith<ValidationException> { service.verifyOtp(user.email, wrong(code)) } }
+
+        val ex = assertFailsWith<ValidationException> { service.verifyOtp(user.email, code) }
+        assertEquals(ErrorCodes.INVALID_RESET_CODE, ex.code)
+    }
+
+    @Test
+    fun `a spent budget answers like an unknown email and a wrong code`() {
+        repeat(3) {
+            service.requestReset(user.email)
+            val code = mailedCodes.last()
+            repeat(5) { assertFailsWith<ValidationException> { service.verifyOtp(user.email, wrong(code)) } }
+        }
+        service.requestReset(user.email)                       // returns normally, mails nothing
+        service.requestReset("nobody-${UUID.randomUUID()}@test.local") // unknown: also returns normally
+        val spent = assertFailsWith<ValidationException> { service.verifyOtp(user.email, "000000") }
+        val unknown = assertFailsWith<ValidationException> { service.verifyOtp("nobody@test.local", "000000") }
+        assertEquals(unknown.code, spent.code)
+        assertEquals(unknown.message, spent.message)
     }
 }

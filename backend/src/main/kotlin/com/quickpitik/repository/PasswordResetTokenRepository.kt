@@ -28,4 +28,14 @@ interface PasswordResetTokenRepository : JpaRepository<PasswordResetToken, UUID>
         """,
     )
     fun invalidateOutstanding(@Param("userId") userId: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // Wrong guesses this account has used across every reset code created after
+    // `since` (security audit 2026-10-14): the per-account budget.
+    @Query(
+        """
+        SELECT COALESCE(SUM(t.attempts), 0) FROM PasswordResetToken t
+        WHERE t.userId = :userId AND t.createdAt > :since
+        """,
+    )
+    fun sumAttemptsSince(@Param("userId") userId: UUID, @Param("since") since: OffsetDateTime): Long
 }
