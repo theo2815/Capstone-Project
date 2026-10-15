@@ -357,28 +357,28 @@ class AuthViewModel(
     // session and the new pair (the old refresh token is spent now). No answer
     // keeps the session, as in TokenAuthenticator; its next refresh settles it.
     // The snapshot lets a sign-out during the call win over this late answer.
+    // The change is confirmed on the server: a session store that throws here
+    // must not relabel it as a failure, so this logs and keeps going.
     private suspend fun endSessionIfRevoked() {
-        val access = sessionManager.getAccessToken() ?: return
-        val snapshot = sessionManager.authSnapshot(access) ?: return
-        val refresh = sessionManager.getRefreshToken()
-        val answer = refresh?.let {
-            try {
-                RetrofitClient.refreshApi.refreshToken(RefreshRequest(it)).awaitResponse()
-            } catch (e: Exception) {
-                null
+        try {
+            val access = sessionManager.getAccessToken() ?: return
+            val snapshot = sessionManager.authSnapshot(access) ?: return
+            val refresh = sessionManager.getRefreshToken()
+            val answer = refresh?.let {
+                try {
+                    RetrofitClient.refreshApi.refreshToken(RefreshRequest(it)).awaitResponse()
+                } catch (e: Exception) {
+                    null
+                }
             }
-        }
-        val auth = answer?.takeIf { it.isSuccessful }?.body()?.data
-        val revoked = refresh == null || answer?.code() == 401 || answer?.code() == 403
-        when {
-            auth != null -> sessionManager.refreshIfCurrent(snapshot, auth.accessToken, auth.refreshToken)
-            // The change is confirmed on the server; a local wipe that throws
-            // must not relabel it as a failure.
-            revoked -> try {
-                sessionManager.clearIfCurrent(snapshot)
-            } catch (e: Exception) {
-                android.util.Log.w("AuthViewModel", "Local sign-out failed after a confirmed email change", e)
+            val auth = answer?.takeIf { it.isSuccessful }?.body()?.data
+            val revoked = refresh == null || answer?.code() == 401 || answer?.code() == 403
+            when {
+                auth != null -> sessionManager.refreshIfCurrent(snapshot, auth.accessToken, auth.refreshToken)
+                revoked -> sessionManager.clearIfCurrent(snapshot)
             }
+        } catch (e: Exception) {
+            android.util.Log.w("AuthViewModel", "Local session check failed after a confirmed email change", e)
         }
     }
 

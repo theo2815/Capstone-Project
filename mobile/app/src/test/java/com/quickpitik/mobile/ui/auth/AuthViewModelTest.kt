@@ -317,6 +317,39 @@ class AuthViewModelTest {
         }
     }
 
+    // MS-7 finding L2: the change is confirmed on the server, so a session store
+    // that throws while this phone checks whose account it was must not turn it
+    // into "Confirmation Failed".
+    @Test fun `a confirmed email change still reads as confirmed when reading the session throws`() {
+        respond = { path, _ -> if (path == "/api/v1/auth/refresh") ok(REFRESHED) else ok(CONFIRMED) }
+        var unreadable = false
+        val broken = object : ContextWrapper(application) {
+            override fun getApplicationContext(): Context = this
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val real = super.getSharedPreferences(name, mode)
+                return object : SharedPreferences by real {
+                    override fun getString(key: String?, defValue: String?): String? =
+                        if (unreadable && key == "user_email") throw IllegalStateException("keystore locked") else real.getString(key, defValue)
+                }
+            }
+        }
+        val failing = SessionManager::class.java.getDeclaredConstructor(Context::class.java)
+            .apply { isAccessible = true }.newInstance(broken)
+        failing.saveSession("access-1", "RUNNER", "Juan", "juan@x.com", refreshToken = "refresh-1")
+        // Same singleton swap as the test above, for the same reason.
+        RetrofitClient.apiService
+        val singleton = SessionManager::class.java.getDeclaredField("INSTANCE").apply { isAccessible = true }
+        singleton.set(null, failing)
+        try {
+            val vm = AuthViewModel(application)
+            unreadable = true
+            vm.confirmEmailChange("c-1")
+            assertEquals(EmailLinkState.Success("Email updated. Sign in again with your new address."), vm.awaitLink("c-1"))
+        } finally {
+            singleton.set(null, session)
+        }
+    }
+
     // Security audit 2026-10-14, MOB-1: the confirm route is public, so the link
     // can belong to any account. Only the changed account's refresh is refused.
     @Test fun `a confirmed email change for another account leaves this phone signed in`() {
