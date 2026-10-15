@@ -130,6 +130,22 @@ class PayoutCycleIdCollisionIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `re-running a week made before the new ids refreshes the photographer's own legacy row`() {
+        val monday = LocalDate.of(2001, 1, 22)
+        val p = photographer("lg$tag")
+        val legacyId = "PAY-2001W04-LG${tag.uppercase()}"
+        cycles.saveAndFlush(PayoutCycle(id = legacyId, photographerId = p.id, weekOf = monday,
+            amountPhp = BigDecimal("111.00"), statusWire = PayoutCycleStatus.PENDING.wire))
+        sale(p.id, "400.00", monday.plusDays(1).atStartOfDay(manila).toOffsetDateTime())
+
+        admin.generateForWeek(monday)
+
+        val own = cycles.findAll().filter { it.photographerId == p.id }
+        assertEquals(listOf(legacyId), own.map { it.id })
+        assertEquals(0, BigDecimal("400.00").compareTo(own.single().amountPhp))
+    }
+
+    @Test
     fun `insert refuses an existing id and leaves the row alone`() {
         val owner = photographer("ins$tag")
         val id = "PAY-INS${tag.uppercase()}-001"
