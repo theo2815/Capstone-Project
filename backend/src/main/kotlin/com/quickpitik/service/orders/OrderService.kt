@@ -231,7 +231,7 @@ class OrderService(
             if (userId == null) {
                 throw checkoutConflict(
                     "These photos are already in a checkout that is waiting for payment. " +
-                        "Finish it where you started it, or try again after it expires.",
+                        "Finish it where you started it, or sign in to buy them now.",
                     code = ErrorCodes.CHECKOUT_IN_PROGRESS,
                 )
             }

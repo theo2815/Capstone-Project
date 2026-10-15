@@ -1149,6 +1149,9 @@ class OrderServiceCheckoutTest {
 
         val ex = assertFailsWith<ConflictException> { service.create(null, request(), key) }
         assertEquals(ErrorCodes.CHECKOUT_IN_PROGRESS, ex.code)
+        // An unlinked pending order never expires, so the way out is signing in.
+        val message = ex.message.orEmpty()
+        assertTrue("sign in" in message && "expire" !in message, message)
         Mockito.verify(paymongoClient, Mockito.never()).retrieveCheckoutSession(anyArg())
     }
 

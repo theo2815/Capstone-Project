@@ -62,7 +62,8 @@ object ErrorCodes {
     /** 409 on POST /orders for a guest: these photos are already in another
      *  checkout that is waiting for payment and was started under a different
      *  Idempotency-Key. Carries no order data. The guest finishes the earlier
-     *  checkout (same key) or retries after it expires. */
+     *  checkout (same key) or signs in: an unlinked pending order may never
+     *  expire, and signed-in checkouts do not see guest orders. */
     const val CHECKOUT_IN_PROGRESS = "CHECKOUT_IN_PROGRESS"
     const val ORDER_NOT_FOUND = "ORDER_NOT_FOUND"
     const val PAYMENT_FAILED = "PAYMENT_FAILED"
