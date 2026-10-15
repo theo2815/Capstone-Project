@@ -697,7 +697,7 @@ function NotFoundBody({
         <div className="mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
           {handle && (reason === "event" || reason === "not-shot") && (
             <Link
-              href={`/${handle}`}
+              href={`/${encodeURIComponent(handle)}`}
               className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
             >
               ← View their portfolio
