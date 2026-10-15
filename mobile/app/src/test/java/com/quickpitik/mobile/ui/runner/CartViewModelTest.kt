@@ -41,6 +41,7 @@ class CartViewModelTest {
     @Volatile private var cart = CART
     @Volatile private var orders: MockResponse = ok(ORDERS)
     @Volatile private var detail: MockResponse = ok(DETAIL)
+    @Volatile private var order: MockResponse = ok(ORDER)
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -55,7 +56,7 @@ class CartViewModelTest {
                     path == "/api/v1/me/cart" && request.method == "DELETE" -> ok("""{"cleared":2}""")
                     path.startsWith("/api/v1/me/cart/items/") -> ok("""{"removed":true}""")
                     path == "/api/v1/coupons/preview" -> preview(body)
-                    path == "/api/v1/orders" -> ok(ORDER)
+                    path == "/api/v1/orders" -> order
                     path == "/api/v1/me/orders" -> orders
                     path == "/api/v1/me/orders/o1" -> detail
                     path == "/api/v1/me/disputes/d1/withdraw" -> ok(DISPUTE)
@@ -245,6 +246,29 @@ class CartViewModelTest {
         switchAccount()
 
         assertDetailNeverShown(vm)
+    }
+
+    // MS-7 finding L4: a checkout's answer carries the PayMongo link that
+    // CheckoutSheet opens by itself, so it must never reach the next account.
+    @Test fun `a checkout answer that lands after the account changed is dropped`() {
+        order = ok(ORDER).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        val vm = newVm()
+        vm.checkout(null, "GCASH")
+        awaitOnServer("/api/v1/orders")
+
+        switchAccount()
+
+        assertTrue(runCatching { vm.checkoutState.awaitFirst(1_000) { it is CheckoutState.Success } }.isFailure)
+    }
+
+    @Test fun `a change of account drops a finished checkout`() {
+        val vm = newVm()
+        vm.checkout(null, "GCASH")
+        vm.checkoutState.awaitFirst { it is CheckoutState.Success }
+
+        switchAccount()
+
+        vm.checkoutState.awaitFirst(1_000) { it is CheckoutState.Idle }
     }
 
     private companion object {

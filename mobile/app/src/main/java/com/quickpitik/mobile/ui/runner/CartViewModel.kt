@@ -250,8 +250,12 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         val couponCode = _couponPreview.value?.code
 
         viewModelScope.launch {
+            val generation = sessionManager.authChanges.value
             _checkoutState.value = CheckoutState.Loading
             val result = repository.checkout(token, email, paymentMethod, couponCode)
+            // The answer carries the previous account's payment link, which
+            // CheckoutSheet opens by itself: drop it if the account changed.
+            if (generation != sessionManager.authChanges.value) return@launch
             result.onSuccess { order ->
                 _checkoutState.value = CheckoutState.Success(order)
             }.onFailure { exception ->
@@ -516,6 +520,7 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         _ordersState.value = OrdersState.Loading
         _orderDetailState.value = OrderDetailState.Idle
         _orderReturnState.value = OrderReturnState.Idle
+        _checkoutState.value = CheckoutState.Idle
     }
 
     private companion object {
