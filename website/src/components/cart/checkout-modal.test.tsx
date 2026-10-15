@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckoutModal } from "@/components/cart/checkout-modal";
+import { ApiError } from "@/lib/api";
 import { FloatingCart } from "@/components/cart/floating-cart";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
@@ -539,5 +540,22 @@ describe("CheckoutModal QRPH", () => {
         http.get.mock.calls.some(([p]) => String(p).endsWith("&verify=true")),
       ).toBe(true),
     );
+  });
+
+  it("explains a checkout that is already open under another key", async () => {
+    const message = "These photos are already in a checkout that is waiting for payment.";
+    http.post.mockImplementation(async (path: string) => {
+      if (path === "/coupons/preview") return EMPTY_QUOTE;
+      throw new ApiError([{ code: "CHECKOUT_IN_PROGRESS", message }], 409);
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await user.type(screen.getByLabelText("Email"), "runner@example.com");
+    await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
+    await user.click(screen.getByRole("button", { name: "Continue →" }));
+    await user.click(screen.getByRole("button", { name: /Generate QR to pay/ }));
+
+    expect(await screen.findByText("Checkout already open")).toBeInTheDocument();
+    expect(screen.getByText(message)).toBeInTheDocument();
   });
 });
