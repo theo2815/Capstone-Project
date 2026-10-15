@@ -557,5 +557,6 @@ describe("CheckoutModal QRPH", () => {
 
     expect(await screen.findByText("Checkout already open")).toBeInTheDocument();
     expect(screen.getByText(message)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate QR to pay/ })).toBeInTheDocument();
   });
 });

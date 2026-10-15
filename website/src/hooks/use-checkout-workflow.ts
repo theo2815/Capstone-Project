@@ -21,38 +21,53 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // failed response resends the key that created the order. The backend no longer
 // hands a guest an order started under another key (CHECKOUT_IN_PROGRESS,
 // security audit 2026-10-14), so a fresh key on reload would block the retry.
+// One key per fingerprint, so an attempt with a different cart, email or coupon
+// never overwrites the key that can still resume an earlier attempt's order.
 const CHECKOUT_KEY_STORAGE = "qp.checkout-idempotency";
+// Used when sessionStorage is blocked, so a retry on this page still resends its key.
+let memoryKeys: Record<string, string> = {};
 
 function checkoutFingerprint(photoIds: string[], email: string, method: string, coupon: string | null): string {
   return [[...photoIds].sort().join(","), email.trim().toLowerCase(), method, (coupon ?? "").trim().toUpperCase()].join("|");
 }
 
-function storedKeyFor(fingerprint: string): string | null {
+function readKeys(): Record<string, string> {
   try {
     const raw = sessionStorage.getItem(CHECKOUT_KEY_STORAGE);
-    const saved = raw ? (JSON.parse(raw) as { fingerprint?: string; key?: string }) : null;
-    return saved?.fingerprint === fingerprint && saved.key ? saved.key : null;
+    return raw ? ((JSON.parse(raw) as Record<string, string> | null) ?? {}) : {};
   } catch {
-    return null;
+    return memoryKeys;
   }
+}
+
+function writeKeys(keys: Record<string, string>): void {
+  memoryKeys = keys;
+  try {
+    sessionStorage.setItem(CHECKOUT_KEY_STORAGE, JSON.stringify(keys));
+  } catch {
+    // Storage blocked: memoryKeys keeps them for this page.
+  }
+}
+
+function storedKeyFor(fingerprint: string): string | null {
+  const key = readKeys()[fingerprint];
+  return typeof key === "string" ? key : null;
 }
 
 function mintKeyFor(fingerprint: string): string {
   const key = safeUUID();
-  try {
-    sessionStorage.setItem(CHECKOUT_KEY_STORAGE, JSON.stringify({ fingerprint, key }));
-  } catch {
-    // Storage blocked: the key still works for this mount.
-  }
+  writeKeys({ ...readKeys(), [fingerprint]: key });
   return key;
 }
 
-function clearStoredKey(): void {
-  try {
-    sessionStorage.removeItem(CHECKOUT_KEY_STORAGE);
-  } catch {
-    // nothing to clear
-  }
+function forgetKeyFor(fingerprint: string): void {
+  const keys = { ...readKeys() };
+  delete keys[fingerprint];
+  writeKeys(keys);
+}
+
+function clearStoredKeys(): void {
+  writeKeys({});
 }
 
 export type Step = "identify" | "payment" | "processing" | "qr" | "success";
@@ -284,7 +299,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
           itemCount,
           paidAt: null,
         });
-        clearStoredKey();
+        clearStoredKeys();
         clearCart();
         clearPending();
         queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
@@ -333,13 +348,13 @@ export function useCheckoutWorkflow(isOpen: boolean) {
       // for a different checkout) is retired; any other failure keeps it so a
       // retry resumes the order it may have created.
       if (err instanceof ApiError && err.errors.some((e) => e.code === "CHECKOUT_IN_PROGRESS")) {
-        clearStoredKey();
+        forgetKeyFor(fingerprint);
         setOutcome({ kind: "in_progress", message: err.message });
         setStep("payment");
         return;
       }
       if (err instanceof ApiError && err.errors.some((e) => e.code === "CONFLICT")) {
-        clearStoredKey();
+        forgetKeyFor(fingerprint);
       }
       setOutcome({
         kind: "error",
@@ -366,7 +381,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
         itemCount: live?.itemCount ?? itemCount,
         paidAt: status.paidAt,
       });
-      clearStoredKey();
+      clearStoredKeys();
       clearCart();
       clearPending();
       queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
@@ -376,13 +391,13 @@ export function useCheckoutWorkflow(isOpen: boolean) {
   );
 
   // The QR is finished without a payment (expired, declined, or cancelled):
-  // drop the record, mint a fresh key so the next attempt is a new order, and
+  // drop the record, retire the stored keys so the next attempt is a new order, and
   // tell the runner why they're back on the pay step.
   const resetToPayment = useCallback(
     (why: Outcome) => {
       clearPending();
       setQrPayment(null);
-      clearStoredKey();
+      clearStoredKeys();
       setOutcome(why);
       setStep("payment");
     },

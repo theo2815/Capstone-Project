@@ -261,14 +261,63 @@ it("success clears the stored key", async () => {
   expect(next).not.toBe(paid);
 });
 
-it("checkout still works when sessionStorage throws", async () => {
+it("a QR payment that settles clears the stored key", async () => {
+  const first = await openPayment();
+  await act(async () => first.result.current.handlePay());
+  vi.mocked(api.get).mockResolvedValue({ id: live.orderId, status: "PAID", paidAt: null });
+  await act(async () => first.result.current.handlePaidClaim());
+  expect(first.result.current.step).toBe("success");
+  first.unmount();
+
+  useCartStore.setState({ items: [
+    { photoId: "photo-1", eventId: "event-1", price: 125, thumbnailUrl: "" },
+  ] });
+  vi.mocked(api.get).mockResolvedValue({ id: live.orderId, status: "PENDING", paidAt: null });
+  const second = await openPayment();
+  await act(async () => second.result.current.handlePay());
+
+  const [paid, next] = sentKeys();
+  expect(next).not.toBe(paid);
+});
+
+it("a refused attempt with another cart shape keeps the key that can resume the first order", async () => {
+  vi.mocked(api.post).mockImplementation(async (path) =>
+    (path === "/coupons/preview" ? { code: "SAVE10", discountTotal: 10, items: [] } : nextOrder) as never);
+  const first = await openPayment();
+  await act(async () => first.result.current.setCouponInput("save10"));
+  await act(async () => first.result.current.handleApplyCoupon());
+  vi.mocked(api.post).mockRejectedValueOnce(new Error("Offline"));
+  await act(async () => first.result.current.handlePay());
+  first.unmount();
+
+  vi.mocked(api.post).mockImplementation(async (path) =>
+    (path === "/coupons/preview" ? { code: null, discountTotal: 0, items: [] } : nextOrder) as never);
+  const second = await openPayment();
+  vi.mocked(api.post).mockRejectedValueOnce(
+    new ApiError([{ code: "CHECKOUT_IN_PROGRESS", message: "Already open" }], 409),
+  );
+  await act(async () => second.result.current.handlePay());
+  vi.mocked(api.post).mockResolvedValueOnce({ code: "SAVE10", discountTotal: 10, items: [] } as never);
+  await act(async () => second.result.current.setCouponInput("save10"));
+  await act(async () => second.result.current.handleApplyCoupon());
+  await act(async () => second.result.current.handlePay());
+
+  const [withCoupon, withoutCoupon, couponAgain] = sentKeys();
+  expect(withoutCoupon).not.toBe(withCoupon);
+  expect(couponAgain).toBe(withCoupon);
+});
+
+it("checkout still works when sessionStorage throws, and a retry resends its key", async () => {
   vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
   vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
   const { result } = await openPayment();
+  vi.mocked(api.post).mockRejectedValueOnce(new Error("Offline"));
+  await act(async () => result.current.handlePay());
   await act(async () => result.current.handlePay());
 
   expect(result.current.step).toBe("qr");
-  expect(sentKeys()).toHaveLength(1);
+  const [failed, retry] = sentKeys();
+  expect(retry).toBe(failed);
 });
 
 it.each(["PAID", "EXPIRED"] as const)("uses the backend's %s outcome after cancellation", async (status) => {

@@ -811,7 +811,7 @@ function PaymentStep({
           <>Complete order →</>
         ) : (
           <>
-            {outcome && outcome.kind !== "error" ? "Generate a new QR" : "Generate QR to pay"}{" "}
+            {outcome && outcome.kind !== "error" && outcome.kind !== "in_progress" ? "Generate a new QR" : "Generate QR to pay"}{" "}
             <span className="tnum">{formatPrice(total)}</span> →
           </>
         )}
