@@ -8,6 +8,7 @@ import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -106,6 +107,19 @@ class PhotoVerifyServiceTest {
         val ex = assertFailsWith<ApiException> { service.verify("definitely not an image".toByteArray()) }
 
         assertEquals(HttpStatus.UNSUPPORTED_MEDIA_TYPE, ex.status)
+    }
+
+    @Test
+    fun `an image with an extreme long edge is refused before decoding`() {
+        // Far under the 80 MP cap, but a very long edge makes the PNG reader
+        // allocate huge row buffers, which subsampling does not reduce.
+        val out = ByteArrayOutputStream()
+        ImageIO.write(BufferedImage(30_000, 1, BufferedImage.TYPE_BYTE_BINARY), "png", out)
+
+        val ex = assertFailsWith<ValidationException> { service.verify(out.toByteArray()) }
+
+        assertEquals("file", ex.field)
+        Mockito.verifyNoInteractions(photoRepository)
     }
 
     // ─── fixtures ─────────────────────────────────────────────────────────

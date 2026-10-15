@@ -37,7 +37,7 @@ class PhotoVerifyService(
     // Not @Transactional: decode + hash is CPU work that must not pin a
     // connection; the three PK reads afterwards are independent.
     fun verify(bytes: ByteArray): PhotoVerifyResultDto {
-        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
+        if (ImagePixelGuard.exceedsPixelBudget(bytes, maxEdge = MAX_VERIFY_EDGE)) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
                 message = "Image is too large to fingerprint",
@@ -86,5 +86,12 @@ class PhotoVerifyService(
         SubsampledDecode.readForLongEdge(bytes, WatermarkService.MAX_LONG_EDGE)
     } catch (_: IOException) {
         null
+    }
+
+    companion object {
+        // Longest edge this public route decodes (security review 2026-10-15):
+        // the pixel cap allows an 80,000,000 x 1 image whose row buffers are huge.
+        // Above any camera original (the largest are under 12,000 px).
+        const val MAX_VERIFY_EDGE = 20_000
     }
 }
