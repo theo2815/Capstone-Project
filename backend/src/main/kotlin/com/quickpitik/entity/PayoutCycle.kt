@@ -14,9 +14,9 @@ import java.util.UUID
 // Cycle id is a human-readable string PK (Q-A1) so receipts, share URLs, and
 // report references can use it directly without a UUID ↔ display-id
 // translation step. Shapes: `buildSequencedCycleId` (requests),
-// `buildWeeklyCycleId` (weekly generator); older rows keep their ids. status/method are stored as
-// the lowercase wire form (Photo.spanWire pattern) so DTO mapping is a direct
-// pass-through.
+// `buildWeeklyCycleId` (weekly generator); older rows keep their ids.
+// status/method are stored as the lowercase wire form (Photo.spanWire pattern)
+// so DTO mapping is a direct pass-through.
 @Entity
 @Table(name = "payout_cycles")
 class PayoutCycle(
