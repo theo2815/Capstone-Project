@@ -117,6 +117,16 @@ class MainActivityRoutingTest {
         assertNull(deepLinkTarget(Uri.parse("quickpitik://studio")))
     }
 
+    @Test fun `an email link whose token is too long is ignored`() {
+        // A real token is 43 characters; a ~50 KB one crashed the app on Home (NV-1).
+        val max = "a".repeat(256)
+        assertEquals(DeepLinkTarget.ConfirmEmail(max), deepLinkTarget(Uri.parse("quickpitik://confirm-email-change?token=$max")))
+        assertEquals(DeepLinkTarget.VerifyEmail(max), deepLinkTarget(Uri.parse("quickpitik://verify-email?token=$max")))
+        val huge = "a".repeat(257)
+        assertNull(deepLinkTarget(Uri.parse("quickpitik://confirm-email-change?token=$huge")))
+        assertNull(deepLinkTarget(Uri.parse("https://quickpitik.com/verify-email?token=$huge")))
+    }
+
     @OptIn(ExperimentalTestApi::class)
     @Test fun `an email link's exit keeps a live studio when signed in, clears to login when signed out, and ignores a second tap`() {
         runComposeUiTest {
