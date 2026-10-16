@@ -57,6 +57,8 @@ proxy's rate limit and `client_max_body_size` cannot be bypassed.
 The Dockerfile defaults to `MODEL_PROFILE=blur`. Build with `--build-arg MODEL_PROFILE=all` and run
 with `MODEL_PROFILE=all` to install the full application dependencies and turn the face and bib
 routes on; that profile stays available until the face/bib code is removed.
+Because blur is the default, every image build (including `docker-compose.prod.yml` with
+`--build`) checks the blur artifacts at build time and fails if they are missing.
 For the CPU blur image, supply the audited ONNX and ordered labels under
 `models/blur_classifier/` in the trusted build workspace, then build with
 `docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur:2026-08-14-dynamic .` and run it
