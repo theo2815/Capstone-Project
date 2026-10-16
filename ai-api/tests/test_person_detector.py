@@ -198,12 +198,14 @@ def test_detect_keeps_only_the_largest_people():
 
 
 @pytest.mark.parametrize("extra", [0, 1])
-def test_cap_boundary_keeps_detector_order(extra):
+def test_cap_boundary_keeps_the_largest_in_detector_order(extra):
     n = pd.MAX_PEOPLE + extra
-    output, protos = _crowd(n)
+    output, protos = _crowd(n - 1)
+    output[0, :5, n - 1] = (600, 600, 20, 20, 0.3)  # the largest, last in detector order
     detector = pd.PersonDetector(_FakeSession(output, protos), min_conf=0.2)
     found = detector.detect(np.zeros((64, 64, 3), dtype=np.uint8))  # letterbox scale 10, no pad
     assert len(found) == pd.MAX_PEOPLE
+    assert found[-1].box == pytest.approx((59, 59, 61, 61))  # kept, and still last
     boxes = pd.people_from_output(output, 0.2)[0]
     every = [tuple(b) for b in pd.boxes_to_image(boxes, 10.0, (0, 0), (64, 64))]
     positions = [every.index(d.box) for d in found]
