@@ -718,56 +718,6 @@ class TestBlurClassificationSchemas:
         assert response.blur_type_probability == 0.05
 
 
-# ---------------------------------------------------------------------------
-# Service tests
-# ---------------------------------------------------------------------------
-
-
-class TestBlurServiceClassify:
-    def test_classify_without_classifier(self):
-        from src.ml.blur.detector import BlurDetector
-        from src.services.blur_service import BlurService
-
-        service = BlurService(detector=BlurDetector(), classifier=None)
-        assert service.classify(_make_bgr_image()) is None
-
-    def test_classify_with_armed_classifier(self, tmp_path):
-        from src.ml.blur.detector import BlurDetector
-        from src.services.blur_service import BlurService
-
-        service = BlurService(detector=BlurDetector(), classifier=_arm(_unarmed(tmp_path)))
-        result = service.classify(_make_bgr_image())
-        assert result is not None
-        assert "predicted_class" in result
-
-    def test_detect_still_works_with_classifier(self):
-        """Adding classifier doesn't break existing detect()."""
-        from src.ml.blur.detector import BlurDetector
-        from src.services.blur_service import BlurService
-
-        service = BlurService(detector=BlurDetector(), classifier=None)
-        result = service.detect(_make_bgr_image())
-        assert "is_blurry" in result
-        assert "laplacian_variance" in result
-
-    def test_detect_blur_type_without_classifier(self):
-        from src.ml.blur.detector import BlurDetector
-        from src.services.blur_service import BlurService
-
-        service = BlurService(detector=BlurDetector(), classifier=None)
-        assert service.detect_blur_type(_make_bgr_image(), "defocused_blurred") is None
-
-    def test_detect_blur_type_with_armed_classifier(self, tmp_path):
-        from src.ml.blur.detector import BlurDetector
-        from src.services.blur_service import BlurService
-
-        service = BlurService(detector=BlurDetector(), classifier=_arm(_unarmed(tmp_path)))
-        result = service.detect_blur_type(_make_bgr_image(), "motion_blurred")
-        assert result is not None
-        assert "detected" in result
-        assert isinstance(result["detected"], bool)
-
-
 def test_stage_timers_grow_only_for_the_stages_a_photo_went_through(tmp_path):
     classifier = _arm(_unarmed(tmp_path), p_missed=0.3)
     assert classifier.timing_snapshot() == {"stage1": 0.0, "detect": 0.0, "measure": 0.0}

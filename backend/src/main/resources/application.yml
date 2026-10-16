@@ -152,11 +152,12 @@ app:
       cleanup-batch-size: ${STORAGE_DIRECT_UPLOAD_CLEANUP_BATCH_SIZE:100}
       cleanup-recheck-window: ${STORAGE_DIRECT_UPLOAD_CLEANUP_RECHECK_WINDOW:P7D}
   ai:
-    # Which backend fulfils face + bib inference. `ai-api` (default) uses the
-    # self-hosted ai-api service configured under app.ai-api below.
-    # `rekognition` routes face + bib to AWS Rekognition. The AI master on/off
-    # switch stays app.ai-api.enabled; this only selects the provider.
-    provider: ${AI_PROVIDER:ai-api}
+    # Which backend fulfils face + bib inference. `rekognition` (default) routes
+    # face + bib to AWS Rekognition. `ai-api` targets the self-hosted ai-api
+    # service under app.ai-api below, which serves blur only since 2026-10-16,
+    # so its face/bib calls get 404s. The AI master on/off switch stays
+    # app.ai-api.enabled; this only selects the provider.
+    provider: ${AI_PROVIDER:rekognition}
     # AWS Rekognition config (used only when provider=rekognition). Credentials
     # come from the AWS default chain — AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
     # for local dev, or the instance/task role in production. Never put keys here.

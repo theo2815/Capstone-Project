@@ -64,13 +64,8 @@ def decode_image_from_path(path: str, max_dim: int = 0) -> np.ndarray | None:
     Args:
         path: Blob store file path.
         max_dim: Max dimension override (0 = use MAX_INFERENCE_DIMENSION).
-            The face and bib workers deliberately pass no override, so they
-            decode at the same dimension as the single-image endpoints — see
-            the 2026-08-14 decode-dim ADR. Blur is the exception: its detect
-            path passes 640 (the reference resolution its Laplacian score is
-            normalised to) and its classify path passes
-            BLUR_CLASSIFY_DECODE_DIM, both of which are calibrated values
-            shared with the corresponding endpoints.
+            The blur classify worker passes BLUR_CLASSIFY_DECODE_DIM, the
+            calibrated value shared with its endpoint.
     """
     try:
         from src.utils.blob_store import load_blob
@@ -246,19 +241,18 @@ def dispatch_webhook_sync(event: str, payload: dict, api_key_id: str | None = No
         repo = SyncWebhookRepository(session)
         webhooks = repo.list_by_event(event, api_key_id)
 
-    from src.utils.crypto import decrypt_secret
-
     for wh in webhooks:
         from src.workers.tasks.webhook_tasks import deliver_webhook
 
+        # The worker loads and decrypts the secret, so it never sits in plain text in Redis.
         deliver_webhook.delay(
             url=wh.url,
             event=event,
             payload=payload,
-            secret=decrypt_secret(wh.secret) if wh.secret else None,
+            webhook_id=str(wh.id),
         )
         count += 1
 
     if count > 0:
-        logger.info("Webhooks dispatched from worker", event=event, count=count)
+        logger.info("Webhooks dispatched from worker", webhook_event=event, count=count)
     return count

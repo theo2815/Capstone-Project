@@ -18,8 +18,6 @@ celery_app = Celery(
 celery_app.conf.update(
     include=[
         "src.workers.tasks.blur_tasks",
-        "src.workers.tasks.face_tasks",
-        "src.workers.tasks.bib_tasks",
         "src.workers.tasks.webhook_tasks",
         "src.workers.tasks.maintenance_tasks",
     ],
@@ -44,8 +42,6 @@ celery_app.conf.update(
     # Default queue handles webhooks and any unrouted tasks.
     task_routes={
         "blur.*": {"queue": "blur"},
-        "faces.*": {"queue": "face"},
-        "bibs.*": {"queue": "bib"},
         "webhooks.*": {"queue": "default"},
         "maintenance.*": {"queue": "default"},
     },

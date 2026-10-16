@@ -9,8 +9,9 @@ import java.util.UUID
 
 // The synchronous face + bib inference the hot upload/search paths depend on,
 // abstracted over the provider that fulfils it. Two implementations:
-//   - AiApiClient          — the self-hosted ai-api service (default)
-//   - RekognitionAiClient  — AWS Rekognition (app.ai.provider=rekognition)
+//   - RekognitionAiClient  — AWS Rekognition (app.ai.provider=rekognition, default)
+//   - AiApiClient          — the self-hosted ai-api service, which no longer has
+//                            face/bib routes (removed 2026-10-16)
 // The ai-api-only async surface (mega jobs, webhooks, jobStatus) stays on
 // AiApiClient — it has no Rekognition analogue and is inert under that provider.
 interface FaceBibProvider {

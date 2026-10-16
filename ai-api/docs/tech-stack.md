@@ -34,7 +34,7 @@ Every library, framework, and tool used in QuickPitik, with explanations of why 
 
 ### NumPy
 - **What it is**: Numerical computing library
-- **Why chosen**: All images are represented as NumPy arrays. Also used for FFT in blur detection and cosine similarity in face matching.
+- **Why chosen**: All images are represented as NumPy arrays. Also used for FFT in blur detection.
 
 ### Pillow (PIL)
 - **What it is**: Image processing library
@@ -51,37 +51,9 @@ Two models cooperate:
 - **Laplacian/FFT detector (`src/ml/blur/detector.py`)** — no external model, just OpenCV + NumPy. Computes Laplacian variance (edge energy; blurry images have fewer edges → lower variance) and an optional FFT high-frequency ratio. All classical routes decode to `BLUR_DETECT_DECODE_DIM` and normalize the score to a 640-pixel reference; scores still depend on image preparation.
 - **Two-stage blur classifier (`src/ml/blur/classifier.py`)** — whole-frame rule, then person detector + per-person sharpness + logistic rule; four classes reported (`sharp`, `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`). Current quality evidence is in `docs/ai-system-overview.md`. Loaded only if the person detector and the rule file are present; used by `POST /blur/classify` and its streaming/batch/mega variants.
 
-The optional C++ extension is used by the face matcher. Its blur functions remain exported for benchmarks, but the served classical detector uses one OpenCV/NumPy score contract in every build.
+Face recognition (InsightFace) and bib recognition (YOLOv8 + PaddleOCR) were removed on 2026-10-16; the backend uses AWS Rekognition for both.
 
-### Face Recognition: InsightFace (RetinaFace + ArcFace)
-
-#### RetinaFace (face detection)
-- **What it does**: Finds where faces are in an image (bounding boxes + 5 landmarks per face)
-- **Why chosen**: Handles varied angles, occlusions, and small faces better than alternatives (MTCNN, Haar cascades)
-- **Performance**: ~80ms CPU, ~8ms GPU
-
-#### ArcFace (face embedding)
-- **What it does**: Converts a detected face into a 512-number vector (embedding). Two photos of the same person produce vectors that are close together (high cosine similarity).
-- **Why chosen**: State-of-the-art accuracy. Pre-trained model available in ONNX format.
-- **How matching works**: Compute cosine similarity between two embeddings. If similarity > 0.4, it's likely the same person.
-
-#### InsightFace library
-- **What it is**: Python package that bundles RetinaFace and ArcFace together with a simple API
-- **Why chosen**: Unified interface for both detection and embedding. Uses ONNX Runtime backend (fast, no PyTorch runtime dependency).
-
-### Bib Detection: YOLOv8-nano (Ultralytics)
-- **What it does**: Object detection model that finds bib number regions in photos.
-- **Current status**: Custom-trained ONNX at `models/bib_detection/yolov8n_bib.onnx` is in place. `BibDetector` loads it via Ultralytics; for safety it refuses non-`.onnx` paths (no pickle).
-- **Why YOLOv8**: Good accuracy/speed trade-off for small objects. Nano variant keeps memory low.
-
-### Bib OCR: PaddleOCR 3.x (PP-OCRv5)
-- **What it does**: Reads text from cropped bib regions.
-- **Why chosen over alternatives**:
-  - **vs Tesseract**: Tesseract needs heavy preprocessing and performs poorly on photographed text (designed for scanned documents).
-  - **vs EasyOCR**: Slower inference, less accurate on numeric-only text.
-  - PaddleOCR is strong on text "in the wild" (real-world photos) — which is exactly what bib numbers are.
-- **Post-processing**: Results are filtered with a strict character regex (`[A-Za-z0-9\-_]`) and a substitution table for common OCR confusions (`O→0`, `I→1`, `S→5`, `B→8`, `Z→2`). A `BIB_MIN_CHARS` threshold (default 2) drops candidates with too few digits.
-- **Windows compatibility**: `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=False` is set by default because PaddlePaddle 3.x's PIR + oneDNN integration crashes on some Windows setups.
+Nothing in the served code uses the optional C++ extension. Its blur functions remain exported for benchmarks, but the served classical detector uses one OpenCV/NumPy score contract in every build.
 
 ### ONNX Runtime
 - **What it is**: High-performance inference engine from Microsoft
@@ -93,12 +65,11 @@ The optional C++ extension is used by the face matcher. Its blur functions remai
 
 ### PostgreSQL 16
 - **What it is**: Relational database
-- **Why chosen**: Rock-solid, supports complex queries, has the pgvector extension for vector search. One database for both relational data (persons, jobs, API keys) and vector data (face embeddings).
+- **Why chosen**: Rock-solid, supports complex queries. Holds jobs, webhook subscriptions and API keys. The retired `persons` / `face_embeddings` tables are still there.
 
 ### pgvector
 - **What it is**: PostgreSQL extension for vector similarity search
-- **Why chosen**: Stores 512-dimensional face embeddings as a native column type. Supports HNSW index for fast approximate nearest neighbor search (sub-10ms for up to 1M embeddings). Keeps embeddings co-located with metadata (no separate vector database needed at startup scale).
-- **Alternative considered**: Milvus, Pinecone (dedicated vector databases). Overkill for <1M embeddings. pgvector avoids the complexity of a separate service.
+- **Why it is still installed**: the retired `face_embeddings` table and its migrations use pgvector's vector column type. No served code runs a vector search today.
 
 ### SQLAlchemy 2.x (async)
 - **What it is**: Python ORM (Object-Relational Mapper)

@@ -27,8 +27,8 @@ rate tier, and revocation procedure privately. The packaged beta accepts the
 key after installation and encrypts it through Electron `safeStorage`; it is
 never bundled into the installer. Source runs use the development environment
 configuration described in `BatchMyPhotos/desktop/src/main/config.js`.
-`gen_api_key.py` prints a generic wildcard SQL example, so do not execute
-that SQL unchanged for a desktop key. Do not run `seed_db.py` in staging or
+`gen_api_key.py` prints SQL for a desktop key with the restricted scopes
+`["blur:read", "jobs:read"]`; check its name and rate tier before running it. Do not run `seed_db.py` in staging or
 production.
 
 ### Rate Tiers

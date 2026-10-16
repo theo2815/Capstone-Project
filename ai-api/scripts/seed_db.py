@@ -12,8 +12,25 @@ from sqlalchemy import select
 # unreachable and un-erasable through the API entirely.
 DEV_EVENT_ID = "00000000-0000-0000-0000-000000000001"
 
+LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "::1", "db"}  # "db" = the dev Compose service
+
+
+def _require_local_database(url: str) -> None:
+    """Refuse anything but a local database: the seed key's value is published in this file."""
+    from sqlalchemy.engine import make_url
+
+    host = make_url(url).host
+    if host not in LOCAL_DB_HOSTS:
+        raise SystemExit(
+            f"Refusing to seed the database on {host!r}: seed_db.py is for local development only"
+        )
+
 
 async def seed() -> None:
+    from src.config import get_settings
+
+    _require_local_database(get_settings().DATABASE_URL)
+
     from src.db.models import APIKey, Person
     from src.db.session import get_session, init_db
 

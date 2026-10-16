@@ -34,27 +34,5 @@ services:
               count: 1
               capabilities: [gpu]
 
-  celery-face:
-    environment:
-      - USE_GPU=true
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  celery-bib:
-    environment:
-      - USE_GPU=true
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
   # celery-default runs webhook + maintenance tasks only and loads no models
   # (WORKER_QUEUES=default), so it is deliberately left on CPU.

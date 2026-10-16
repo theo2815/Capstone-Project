@@ -168,3 +168,45 @@ def test_matches_ultralytics_on_a_real_picture():
         theirs = reference.masks.data[i].numpy() > 0.5
         overlap = np.logical_and(d.mask, theirs).sum() / max(np.logical_or(d.mask, theirs).sum(), 1)
         assert overlap > 0.9
+
+
+class _FakeSession:
+    def __init__(self, output, protos):
+        self._result = [output, protos]
+
+    def get_inputs(self):
+        return [SimpleNamespace(name="images")]
+
+    def run(self, _names, _feeds):
+        return self._result
+
+
+def _crowd(n_small, big=()):
+    """n_small 6x6 boxes on a 9-px grid (no overlap, so NMS keeps them all), score 0.5,
+    plus big (cx, cy, side) boxes, score 0.9 -> (raw output, empty mask prototypes)."""
+    small = [((i % 70) * 9 + 4.5, (i // 70) * 9 + 4.5, 6, 6, 0.5) for i in range(n_small)]
+    rows = small + [(cx, cy, side, side, 0.9) for cx, cy, side in big]
+    return _raw_output(rows), np.zeros((1, 32, 160, 160), dtype=np.float32)
+
+
+def test_detect_keeps_only_the_largest_people():
+    output, protos = _crowd(300, [(100, 100, 200), (320, 320, 180), (500, 500, 160)])
+    detector = pd.PersonDetector(_FakeSession(output, protos), min_conf=0.2)
+    found = detector.detect(np.zeros((64, 64, 3), dtype=np.uint8))  # small image: cheap masks
+    assert len(found) == pd.MAX_PEOPLE
+    assert sum(d.conf > 0.8 for d in found) == 3  # the three big people are kept
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+def test_cap_boundary_keeps_the_largest_in_detector_order(extra):
+    n = pd.MAX_PEOPLE + extra
+    output, protos = _crowd(n - 1)
+    output[0, :5, n - 1] = (600, 600, 20, 20, 0.3)  # the largest, last in detector order
+    detector = pd.PersonDetector(_FakeSession(output, protos), min_conf=0.2)
+    found = detector.detect(np.zeros((64, 64, 3), dtype=np.uint8))  # letterbox scale 10, no pad
+    assert len(found) == pd.MAX_PEOPLE
+    assert found[-1].box == pytest.approx((59, 59, 61, 61))  # kept, and still last
+    boxes = pd.people_from_output(output, 0.2)[0]
+    every = [tuple(b) for b in pd.boxes_to_image(boxes, 10.0, (0, 0), (64, 64))]
+    positions = [every.index(d.box) for d in found]
+    assert positions == sorted(positions)  # kept people stay in the detector's own order

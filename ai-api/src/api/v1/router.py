@@ -12,12 +12,6 @@ def make_v1_router(model_profile: str) -> APIRouter:
     v1_router = APIRouter()
     v1_router.include_router(health_router)
     v1_router.include_router(blur_router)
-    if model_profile == "all":
-        from src.api.v1.bibs import router as bibs_router
-        from src.api.v1.faces import router as faces_router
-
-        v1_router.include_router(faces_router)
-        v1_router.include_router(bibs_router)
     v1_router.include_router(jobs_router)
     v1_router.include_router(webhooks_router)
     return v1_router

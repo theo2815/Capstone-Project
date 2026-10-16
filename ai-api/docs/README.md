@@ -35,4 +35,4 @@ This folder contains all documentation for the ai-api microservice.
 
 | Document | Description |
 |---|---|
-| [ai-system-overview.md](ai-system-overview.md) | Current state of the three ML pipelines — models, accuracy, artifacts, endpoints |
+| [ai-system-overview.md](ai-system-overview.md) | Current state of the blur pipeline — models, accuracy, artifacts, endpoints |

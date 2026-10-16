@@ -1087,7 +1087,8 @@ class TestBodySizeLimit:
         from src.main import create_app
 
         settings = Settings(
-            DEBUG=True, MODEL_PROFILE="blur", BLUR_MAX_REQUEST_BODY=1024, MAX_FILE_SIZE=100,
+            DEBUG=True, ENVIRONMENT="test", MODEL_PROFILE="blur", BLUR_MAX_REQUEST_BODY=1024,
+            MAX_FILE_SIZE=100,
         )
         with patch("src.main.get_settings", return_value=settings):
             app = create_app()
@@ -1165,7 +1166,7 @@ async def test_blur_streams_share_decode_capacity_and_admission():
     from src.config import Settings
     from src.main import create_app
 
-    settings = Settings(DEBUG=True, MODEL_PROFILE="blur", METRICS_ENABLED=False,
+    settings = Settings(DEBUG=True, ENVIRONMENT="test", MODEL_PROFILE="blur", METRICS_ENABLED=False,
                         BLUR_DECODE_CONCURRENCY=2)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()

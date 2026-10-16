@@ -7,4 +7,5 @@ print(f"Your API key: {raw_key}")
 print()
 print("Run this SQL:")
 print(f"""INSERT INTO api_keys (id, key_hash, name, scopes, rate_tier, active)
-VALUES ('{uuid.uuid4()}', '{key_hash}', 'Desktop App', '["*"]', 'pro', true);""")
+VALUES ('{uuid.uuid4()}', '{key_hash}', 'Desktop App',
+        '["blur:read", "jobs:read"]', 'pro', true);""")

@@ -26,11 +26,6 @@ def _make_request(*, debug: bool = False, redis=None) -> MagicMock:
     return request
 
 
-def _make_settings(*, debug: bool = False, environment: str = "development") -> MagicMock:
-    settings = MagicMock(DEBUG=debug, ENVIRONMENT=environment)
-    return settings
-
-
 def _hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -287,38 +282,6 @@ class TestVerifyApiKey:
         assert result["key_id"] == "debug"
 
     @pytest.mark.asyncio
-    async def test_production_debug_blocked_at_startup(self):
-        """The lifespan guard in main.py raises RuntimeError when
-        DEBUG=true and ENVIRONMENT=production. Auth itself does not check
-        ENVIRONMENT -- it trusts that the startup guard already ran.
-
-        We replicate the guard logic here to verify the invariant without
-        importing src.main (which may pull heavy dependencies).
-        """
-        settings = _make_settings(debug=True, environment="production")
-
-        # This mirrors the exact check in src/main.py lifespan():
-        #   if settings.DEBUG and settings.ENVIRONMENT == "production":
-        #       raise RuntimeError(...)
-        with pytest.raises(RuntimeError, match="DEBUG=true is not allowed"):
-            if settings.DEBUG and settings.ENVIRONMENT == "production":
-                raise RuntimeError(
-                    "FATAL: DEBUG=true is not allowed when ENVIRONMENT=production. "
-                    "Set DEBUG=false in your .env or environment variables."
-                )
-
-    @pytest.mark.asyncio
-    async def test_production_debug_guard_does_not_fire_when_debug_false(self):
-        """When DEBUG=false the production guard does NOT fire."""
-        settings = _make_settings(debug=False, environment="production")
-
-        # The guard should not raise
-        fired = False
-        if settings.DEBUG and settings.ENVIRONMENT == "production":
-            fired = True  # pragma: no cover
-        assert not fired
-
-    @pytest.mark.asyncio
     async def test_valid_key_cached_in_redis_after_db_lookup(self):
         """After a DB hit with Redis available, the key_meta is cached."""
         raw_key = "cache-me-key"
@@ -376,6 +339,45 @@ class TestVerifyApiKey:
             await verify_api_key(_make_request(redis=redis), api_key="valid-key")
         assert error.value.status_code == 503
         assert error.value.headers["Retry-After"] == "1"
+
+
+@pytest.mark.parametrize("extra", [{}, {"ENVIRONMENT": "production"}, {"ENVIRONMENT": "Production"},
+                                   {"ENVIRONMENT": "staging"}, {"ENVIRONMENT": ""}])
+def test_debug_refused_unless_environment_is_an_explicit_dev_value(monkeypatch, extra):
+    from pydantic import ValidationError
+
+    from src.config import Settings
+
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    with pytest.raises(ValidationError, match="DEBUG=true is only allowed"):
+        Settings(_env_file=None, DEBUG=True, **extra)
+
+
+@pytest.mark.parametrize("value", ["development", "local", "test"])
+def test_debug_allowed_when_environment_is_set_to_a_dev_value(monkeypatch, value):
+    from src.config import Settings
+
+    monkeypatch.setenv("ENVIRONMENT", value)  # set the way Compose and CI set it
+    assert Settings(_env_file=None, DEBUG=True).DEBUG is True
+
+
+def test_debug_refusal_does_not_print_secret_settings(monkeypatch):
+    from pydantic import ValidationError
+
+    from src.config import Settings
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("WEBHOOK_SECRET_KEY", "secret-tail-must-not-be-logged")
+    with pytest.raises(ValidationError) as error:
+        Settings(_env_file=None, DEBUG=True)
+    assert "logged" not in str(error.value)  # pydantic keeps the input's tail
+
+
+def test_debug_off_needs_no_environment(monkeypatch):
+    from src.config import Settings
+
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    assert Settings(_env_file=None, DEBUG=False).ENVIRONMENT == "development"
 
 
 # ===================================================================

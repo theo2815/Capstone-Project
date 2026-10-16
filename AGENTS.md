@@ -12,7 +12,7 @@ Global rulebook for **any AI coding agent** (Claude, Codex, or others) and human
 
 **QuickPitik** — a marathon photography ecosystem for Cebu, Philippines. **Camera → Mobile → Cloud → Marketplace**, with AI blur culling on the desktop and face/bib search on web + mobile. It solves two problems: photographers can't upload in real time or cull blur; runners can't find their own photos in a sea of thousands or buy them locally.
 
-Four products + one service: a mobile app, a website, an Electron desktop app (BatchMyPhotos, external repo), and a shared `ai-api` inference service. Full vision, user journeys, and feature matrix: `docs/project-vision.md`.
+Four products + one service: a mobile app, a website, an Electron desktop app (BatchMyPhotos, external repo), and an `ai-api` blur service used by the desktop app. Full vision, user journeys, and feature matrix: `docs/project-vision.md`.
 
 **North-star:** photographer post-event sort 1–2 hrs → 5–10 s; runner photos searchable by selfie or bib within minutes.
 
@@ -36,15 +36,15 @@ Each module rulebook is an `AGENTS.md` (canonical) with a `CLAUDE.md` beside it 
 
 ## Module Boundaries (who talks to whom)
 
-**Data flow:** Mobile / Website → Spring Boot backend → `ai-api` (face / bib). Desktop → `ai-api` directly (blur / batch). Detailed enforcement contract: `.claude/rules/ai-api-boundary.md` — **read it before editing `backend/`, `website/`, or `mobile/`** (Claude auto-loads it on those paths; other agents open it manually).
+**Data flow:** Mobile / Website → Spring Boot backend → AWS Rekognition (face / bib). Desktop → `ai-api` directly (blur / batch). Detailed enforcement contract: `.claude/rules/ai-api-boundary.md` — **read it before editing `backend/`, `website/`, or `mobile/`** (Claude auto-loads it on those paths; other agents open it manually).
 
 **Hard rules (always in force):**
 
-1. **Mobile and website NEVER call `ai-api` directly.** They call the Spring Boot backend; the backend holds the `ai-api` key and proxies inference. (The backend may also serve face/bib via AWS Rekognition — selected by `AI_PROVIDER` — see the boundary rule.)
+1. **Mobile and website NEVER call `ai-api` directly.** They call the Spring Boot backend, which does face/bib through AWS Rekognition (`AI_PROVIDER=rekognition`, the default — see the boundary rule). ai-api has no face/bib routes since 2026-10-16.
 2. **Desktop is the one exception** — it calls `ai-api` directly with its own restricted API key (scopes: `blur:read`, `jobs:read`).
-3. **Each backend owns its own domain data.** `ai-api` is stateless about events/users — it stores only face embeddings tagged with `api_key_id` + `event_id`.
+3. **Each backend owns its own domain data.** `ai-api` is stateless about events/users — it stores only API keys, blur jobs and webhook subscriptions (its old face tables remain, but no served code writes them).
 4. **Confidence thresholds are a backend concern.** `ai-api` returns raw scores; each backend applies its own per-event threshold.
-5. **Event isolation must always be enforced.** Any `faces/enroll` or `faces/search` call MUST pass a non-null `event_id` — this prevents cross-event leakage.
+5. **Event isolation must always be enforced.** Every face enroll or search MUST be scoped to one event (Rekognition: one collection per event) — this prevents cross-event leakage.
 6. **Blur detection is desktop-only.** Web + mobile upload paths MUST NOT call any blur endpoint (no `/blur/detect`, no `BLUR_REJECTED` gate, no `blurScore` writes). The backend's `AiApiClient` intentionally has no `blurDetect()` — do not re-add it. Rationale: vault `backend/decisions.md` (2026-05-18), `website/decisions.md` (2026-05-06).
 7. **`AI_API_ENABLED=false` is the dev default** (env `AI_API_ENABLED`, `application.yml`). When off: photo/selfie upload still works (no embeddings/OCR, `aiDetectionStatus="none"`), face-search short-circuits to 503. It is the single point of control — don't paper over it with mocks or new flags.
 
@@ -118,7 +118,7 @@ Govern **how** any agent writes code here, and must be satisfied **before the fi
 4. **Async batch = blob-store, not base64.** Image bytes never go on the Celery queue; workers read from `BLOB_STORE_PATH`.
 5. **Webhooks are HMAC-signed.** Consumers must verify `X-QuickPitik-Signature`.
 6. **Photos are private by default.** Runners only see their own matched photos; public galleries are opt-in per event.
-7. **Scaling path is known, not premature.** Start with pgvector on RDS + direct S3; migrate to a dedicated vector DB or add a CDN only when metrics demand it.
+7. **Scaling path is known, not premature.** Start with managed face search (Rekognition) + direct object storage; add a CDN only when metrics demand it.
 
 ---
 

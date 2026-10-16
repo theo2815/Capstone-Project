@@ -23,12 +23,14 @@ def _validate_webhook_url_basic(url: str) -> str | None:
     hostname = parsed.hostname
     if not hostname:
         return "Invalid webhook URL: no hostname"
+    if "@" in parsed.netloc:
+        return "Webhook URL must not contain user info"
     if not parsed.scheme or parsed.scheme not in ("http", "https"):
         return "Invalid webhook URL: scheme must be http or https"
     try:
         ip = ipaddress.ip_address(hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local:
-            return "Webhook URL must not target private/internal networks"
+        if not ip.is_global:
+            return "Webhook URL must target a public address"
     except ValueError:
         pass  # Hostname (not IP literal) — allow, validated at delivery
     return None

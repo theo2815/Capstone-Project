@@ -13,7 +13,7 @@ cache:
 
 lint:
   stage: test
-  image: python:3.12-slim
+  image: python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
   before_script:
     - pip install --no-cache-dir ruff
   script:
@@ -21,7 +21,7 @@ lint:
 
 typecheck:
   stage: test
-  image: python:3.12-slim
+  image: python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
   before_script:
     - pip install --no-cache-dir -e ".[dev]"
   script:
@@ -30,7 +30,7 @@ typecheck:
 
 unit-tests:
   stage: test
-  image: python:3.12-slim
+  image: python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libgomp1
     - pip install --no-cache-dir -e ".[dev]"
@@ -45,13 +45,13 @@ unit-tests:
 
 build-image:
   stage: build
-  image: docker:24
+  image: docker:24@sha256:9b17a9f25adf17b88d0a013b4f00160754adf4b07ccbe9986664a49886c2c98e
   services:
-    - docker:24-dind
+    - docker:24-dind@sha256:9b17a9f25adf17b88d0a013b4f00160754adf4b07ccbe9986664a49886c2c98e
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
   before_script:
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   script:
     - docker build -f Dockerfile -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" -t "$CI_REGISTRY_IMAGE:latest" .
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"

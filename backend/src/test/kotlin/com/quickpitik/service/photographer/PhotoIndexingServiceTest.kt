@@ -2,6 +2,7 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.AiProperties
+import com.quickpitik.config.AiProvider
 import com.quickpitik.dto.ai.BibDetection
 import com.quickpitik.dto.ai.BibsRecognizeResult
 import com.quickpitik.dto.ai.FacesEnrollResult
@@ -129,7 +130,7 @@ class PhotoIndexingServiceTest {
             org.springframework.beans.factory.support.StaticListableBeanFactory().getBeanProvider(com.quickpitik.service.ai.RekognitionAiClient::class.java),
             props(), workFence, com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), template(), java.time.Clock.systemUTC())
         service = PhotoIndexingService(
-            photoRepo, storage, aiClient, props(), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
+            photoRepo, storage, aiClient, props(), AiProperties(AiProvider.AI_API), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
         )
     }
 
