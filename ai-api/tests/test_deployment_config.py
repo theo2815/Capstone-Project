@@ -1067,3 +1067,18 @@ def test_async_railway_layout_keeps_default_queue_off_the_blur_worker():
     workers = [s for s in starts if " worker " in s]
     assert any("-Q blur " in s for s in workers) and any("-Q default " in s for s in workers)
     assert not [s for s in workers if "blur,default" in s or "default,blur" in s]
+
+
+def test_supply_chain_is_pinned():
+    root = PROJECT_ROOT
+    lock = (root / "requirements-blur.lock").read_text(encoding="utf-8")
+    pins = re.findall(r"^([A-Za-z0-9_.\-\[\]]+==\S+)", lock, re.M)
+    assert pins and len(re.findall(r"--hash=sha256:", lock)) >= len(pins)
+    gitlab = (root / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    images = re.findall(r"^\s*(?:image|-\s*name):\s*(\S+)", gitlab, re.M)
+    images += re.findall(r"^\s*-\s*(docker:\S+)", gitlab, re.M)
+    assert images and all("@sha256:" in i for i in images), images
+    assert not re.search(r"docker login[^\n]*\s-p\s", gitlab)
+    workflow_file = root.parent / ".github" / "workflows" / "ai-api-blur.yml"
+    refs = re.findall(r"uses:\s*\S+@(\S+)", workflow_file.read_text(encoding="utf-8"))
+    assert refs and all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in refs), refs
