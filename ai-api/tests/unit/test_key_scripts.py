@@ -23,6 +23,7 @@ def test_insert_key_uses_least_privilege_desktop_scopes():
 @pytest.mark.parametrize("url", [
     "postgresql+asyncpg://u:p@db.railway.internal:5432/quickpitik",
     "postgresql+asyncpg://u:p@10.0.0.5:5432/quickpitik",
+    "postgresql+asyncpg://u:p@/quickpitik?host=/var/run/postgresql",  # no host: refuse
 ])
 def test_seed_refuses_a_non_local_database(url):
     from scripts.seed_db import _require_local_database
@@ -35,6 +36,7 @@ def test_seed_refuses_a_non_local_database(url):
     "postgresql+asyncpg://postgres:x@localhost:5433/quickpitik",
     "postgresql+asyncpg://postgres:x@127.0.0.1:5432/quickpitik",
     "postgresql+asyncpg://postgres:x@db:5432/quickpitik",
+    "postgresql+asyncpg://postgres:x@[::1]:5432/quickpitik",
 ])
 def test_seed_allows_a_local_database(url):
     from scripts.seed_db import _require_local_database
