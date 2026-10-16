@@ -40,7 +40,7 @@ app:
   # (.storage) for dev — the app defaults to LOCAL.
   storage:
     backend: S3
-    bucket: quickpitik-prod
+    bucket: quickpitik-dev                # never quickpitik-prod on a dev machine
     region: auto                          # R2 uses "auto"
     endpoint: https://<your-account-id>.r2.cloudflarestorage.com
     access-key: your_r2_access_key_id     # from an R2 "Object Read & Write" token
