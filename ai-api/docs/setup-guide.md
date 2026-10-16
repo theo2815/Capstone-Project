@@ -185,7 +185,7 @@ Make sure PostgreSQL is running: `docker compose up db -d`
 Start Redis with `docker compose up redis -d`. Authenticated requests return 503 until it is available; `/health` remains responsive.
 
 ### Models fail to load
-Nothing is downloaded at startup. The blur classifier needs `models/person_detector/yolov8n_seg_person.onnx` and `models/blur_classifier/people_rule.json`; in the `blur` profile (the default) both are checked against `models/manifest.json`. `python scripts/download_models.py` reports which manifest files are missing. Without them `/blur/classify*` returns `MODEL_UNAVAILABLE` and readiness reports not ready, but `/blur/detect*` still works.
+Nothing is downloaded at startup. The blur classifier needs `models/person_detector/yolov8n_seg_person.onnx` and `models/blur_classifier/people_rule.json`; in the `blur` profile (the default) both are checked against `models/manifest.json`. `python scripts/download_models.py` reports which manifest files are missing. Without them `/blur/classify*` returns `MODEL_UNAVAILABLE` and, in the `blur` profile, readiness reports not ready, but `/blur/detect*` still works.
 
 ### Port 8000 already in use
 Either stop the other process or change the port:

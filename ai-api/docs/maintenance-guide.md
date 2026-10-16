@@ -243,7 +243,7 @@ At load time the classifier checks both files against the hashes in the manifest
 
 | Table | Purpose | Growth Pattern | Cleanup |
 |-------|---------|----------------|---------|
-| `persons` | Retired: runner profiles from the removed face routes | No longer grows (nothing writes it since 2026-10-16) | Manual SQL only (see GDPR / Data Erasure) |
+| `persons` | Retired: runner profiles from the removed face routes | No longer grows (no served code writes it since 2026-10-16; only the dev `scripts/seed_db.py` adds a test row) | Manual SQL only (see GDPR / Data Erasure) |
 | `face_embeddings` | Retired: 512-dim vectors (pgvector) | No longer grows | Cascade-deleted with person |
 | `jobs` | Batch job tracking | Grows with batch requests | Auto-cleaned after `JOB_RETENTION_DAYS` (7) by Celery Beat |
 | `api_keys` | API key hashes + metadata | Slow growth | Manual management |
@@ -272,7 +272,7 @@ No image content is ever logged or stored beyond the blob staging directory.
 
 ### Embedding Management (retired face data)
 
-Nothing reads or writes these tables since the face routes were removed on 2026-10-16; the queries below inspect what is left.
+No served code reads or writes these tables since the face routes were removed on 2026-10-16 (only the dev `scripts/seed_db.py` still adds a test person); the queries below inspect what is left.
 
 ```sql
 -- Count embeddings per person

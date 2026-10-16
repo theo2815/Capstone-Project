@@ -261,7 +261,7 @@ Training scripts live in `scripts/`:
 
 - Blur classifier: `build_blur_folds.py` → `fit_blur_whole_frame_rule.py` → `export_person_detector.py` → `measure_blur_people.py` → `fit_blur_people_rule.py` → `ship_blur_rule.py`
 
-These scripts need the `train` extra (`pip install -e ".[train]"`). Training images live in `Training-Images/` (gitignored). Model artifacts live in `models/` (gitignored except `manifest.json`). See `docs/ai-system-overview.md` for the current state of the pipeline.
+`export_person_detector.py` needs the `train` extra (`pip install -e ".[train]"`). Training images live in `Training-Images/` (gitignored). Model artifacts live in `models/` (gitignored except `manifest.json`). See `docs/ai-system-overview.md` for the current state of the pipeline.
 
 ## Infrastructure Requirements
 

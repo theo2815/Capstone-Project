@@ -270,8 +270,7 @@ docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up --build -
 ```
 Requires NVIDIA Container Toolkit installed on the host. The GPU overlay adds an `nvidia`
 device reservation and `USE_GPU=true` to `ai-api` and `celery-blur`. `celery-default` stays on
-CPU — it runs webhook and maintenance tasks and loads
-no models. Layer it on `docker-compose.prod.yml`, never on `docker-compose.yml`.
+CPU — it runs webhook and maintenance tasks and loads no models. Layer it on `docker-compose.prod.yml`, never on `docker-compose.yml`.
 
 ---
 

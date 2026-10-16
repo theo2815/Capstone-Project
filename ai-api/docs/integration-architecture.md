@@ -15,7 +15,7 @@ QuickPitik is a **multi-product platform** with three client applications. ai-ap
 | QuickPitik Web | Next.js (Vercel) | Face search + Bib recognition through the backend, not ai-api (no blur — rule 6) |
 | QuickPitik Mobile | Kotlin (Android first, iOS planned) | Face search + Bib recognition through the backend, not ai-api (no blur — rule 6) |
 
-**Retired 2026-10-16:** the backend uses AWS Rekognition (`AI_PROVIDER=rekognition`); ai-api serves blur only, to the desktop app. The ai-api face and bib routes, workers and models were removed. The BatchMyPhotos Electron main process calls ai-api directly for blur classification.
+**Retired 2026-10-16:** the backend uses AWS Rekognition (`AI_PROVIDER=rekognition`, set on staging and production; the backend's own default is still `ai-api`, whose face/bib calls now get 404s); ai-api serves blur only, to the desktop app. The ai-api face and bib routes, workers and models were removed. The BatchMyPhotos Electron main process calls ai-api directly for blur classification.
 
 ---
 
@@ -66,7 +66,7 @@ This is the single source of truth for what each layer owns. If a concern is not
 
 ### Web/Mobile Backend — no longer an ai-api caller
 
-Retired 2026-10-16: the backend uses AWS Rekognition (`AI_PROVIDER=rekognition`) for face and bib work; ai-api serves blur only, to the desktop app. The backend's events, participants, thresholds and photo storage are documented in the backend module, not here.
+Retired 2026-10-16: the backend uses AWS Rekognition (`AI_PROVIDER=rekognition`, set on staging and production; its code default is still `ai-api`) for face and bib work; ai-api serves blur only, to the desktop app. The backend's events, participants, thresholds and photo storage are documented in the backend module, not here.
 
 ---
 
@@ -101,7 +101,7 @@ This means:
 
 ## Network Topology
 
-### Production
+### Deployment (dedicated blur service)
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -113,7 +113,7 @@ This means:
 
 - The blur service is its own deployment (`.railway/railway.ts`, service `ai-api-blur`), with PostgreSQL and Redis for keys, jobs and rate limiting.
 - BatchMyPhotos main connects directly to ai-api with its own restricted key.
-- Mobile app, website and the Spring Boot backend **never** talk to ai-api.
+- Mobile app and website **never** talk to ai-api; the Spring Boot backend does not either while `AI_PROVIDER=rekognition`.
 
 ### Development
 

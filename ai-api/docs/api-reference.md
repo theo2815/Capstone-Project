@@ -355,7 +355,7 @@ Prometheus text format. In `DEBUG=true` mode the endpoint is open. In production
 | 400 | `INVALID_INPUT` | Malformed form/query input |
 | 401 | *(FastAPI `HTTPException`)* | Missing or invalid API key |
 | 403 | *(FastAPI `HTTPException`)* | API key lacks the required scope |
-| 404 | `NOT_FOUND` | Person, job, or webhook not found / not owned by this key |
+| 404 | `NOT_FOUND` | Job or webhook not found / not owned by this key |
 | 422 | *(FastAPI validation)* | Pydantic validation error |
 | 429 | *(FastAPI `HTTPException`)* | Rate limit exceeded — honor `Retry-After` header |
 | 429 | `TOO_MANY_JOBS` | `MAX_ACTIVE_JOBS_PER_KEY` (10) already active |

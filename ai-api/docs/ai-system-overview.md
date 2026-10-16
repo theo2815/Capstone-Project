@@ -58,7 +58,7 @@ ai-api/models/
     yolov8n_seg_person.onnx                      COCO person detector, 13.8 MB
 ```
 
-Retraining scripts live in `ai-api/scripts/`: for the blur classifier `build_blur_folds.py` → `fit_blur_whole_frame_rule.py` → `export_person_detector.py` → `measure_blur_people.py` → `fit_blur_people_rule.py` → `ship_blur_rule.py`, in that order (they need `pip install -e ".[train]"`). Training data is under `ai-api/Training-Images/` (gitignored).
+Retraining scripts live in `ai-api/scripts/`: for the blur classifier `build_blur_folds.py` → `fit_blur_whole_frame_rule.py` → `export_person_detector.py` → `measure_blur_people.py` → `fit_blur_people_rule.py` → `ship_blur_rule.py`, in that order (`export_person_detector.py` needs `pip install -e ".[train]"`). Training data is under `ai-api/Training-Images/` (gitignored).
 
 ## Source Layout (ML only)
 

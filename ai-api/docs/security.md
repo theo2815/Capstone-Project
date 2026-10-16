@@ -149,14 +149,14 @@ Status codes:
 | Data | Stored? | Where | Notes |
 |---|---|---|---|
 | Original images | **Batch/mega only, for a while** | Blob store (`BLOB_STORE_PATH`, or the S3 bucket when configured) | Single and stream requests are processed in memory and discarded. Batch/mega uploads are staged until the job ends and then kept `BLOB_RETENTION_SECONDS` (default 24 h) as a retry window; the beat task `cleanup_stale_blobs` deletes them after that. |
-| Face embeddings | No longer written | PostgreSQL (`persons`, `face_embeddings`) | Face endpoints were removed 2026-10-16. Rows written before then stay until deleted in the database. |
-| EXIF metadata | **NO** | Stripped on upload | GPS, device info, timestamps are removed |
+| Face embeddings | No longer written by the service | PostgreSQL (`persons`, `face_embeddings`) | Face endpoints were removed 2026-10-16. Rows written before then stay until deleted in the database. |
+| EXIF metadata | **Batch/mega originals only, for a while** | Blob store, inside the staged original files | The decoded image keeps no EXIF. Staged batch/mega uploads are the raw bytes, so their GPS, device info and timestamps stay until `cleanup_stale_blobs` deletes them (above). |
 | API request logs | Yes | Structured logs | Contains request_id, endpoint, timing. No image data. |
 
 ### GDPR Compliance
 
 - **Right to erasure**: the face erasure endpoints were removed with the face routes on 2026-10-16. Face data stored before then can only be deleted in the database (the tables stay; dropping them is a separate owner decision).
-- **Data minimization**: the service stores no face data today; batch images are deleted after the retry window above.
+- **Data minimization**: the service writes no face data today (rows stored before 2026-10-16 remain until deleted in the database); batch images are deleted after the retry window above.
 
 ---
 
@@ -232,7 +232,7 @@ assert hmac.compare_digest(expected, received)
 - [x] Rate limiting (token bucket via Redis — enforced on every authenticated endpoint)
 - [x] Per-key concurrent batch job cap (`MAX_ACTIVE_JOBS_PER_KEY`)
 - [x] Input validation on single, batch/mega, and stream paths; stream accepts octet-stream parts but checks actual image headers and limits
-- [x] EXIF rotation applied, EXIF metadata discarded (privacy)
+- [x] EXIF rotation applied, EXIF metadata discarded from decoded images (staged batch originals keep it until cleanup)
 - [x] No persistent image storage (only batch staging, deleted `BLOB_RETENTION_SECONDS` after the job ends)
 - [x] CORS configuration
 - [x] Request ID tracing

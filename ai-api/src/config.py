@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     # Shared by /blur/classify, /blur/classify/stream and the blur_classify_batch
     # worker — keep all three on one value or they will disagree on the same
     # photo. Equal to MAX_INFERENCE_DIMENSION today, but a separate setting: that
-    # one is sized for bib OCR.
+    # one is the generic colour-decode cap.
     BLUR_CLASSIFY_DECODE_DIM: int = Field(default=1280, gt=0)
     # Whole-frame rule, stage 1 of the blur classifier (src/ml/blur/whole_frame.py).
     # Learned from the labelled event folds by scripts/fit_blur_whole_frame_rule.py:
@@ -184,11 +184,11 @@ class Settings(BaseSettings):
     BLOB_RETENTION_SECONDS: int = Field(default=86400, gt=0)
 
     # Image preprocessing — downscale large images before inference.
-    # Longest side validate_and_decode and the worker colour decode shrink an image
-    # to (the default of downscale_for_inference). 1280 was measured for the face
-    # and bib pipelines, removed 2026-10-16 (the measurements are in git history);
-    # Blur reads it only as a first cap; its real decode target is
-    # BLUR_CLASSIFY_DECODE_DIM.
+    # Longest side validate_and_decode shrinks a colour image to (the default of
+    # downscale_for_inference). 1280 was measured for the face and bib pipelines,
+    # removed 2026-10-16 (the measurements are in git history). /blur/classify
+    # reads it only as a first cap; its real decode target is
+    # BLUR_CLASSIFY_DECODE_DIM, which the batch worker passes directly.
     MAX_INFERENCE_DIMENSION: int = Field(default=1280, gt=0)
 
     @model_validator(mode="after")
