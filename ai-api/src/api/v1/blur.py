@@ -111,6 +111,16 @@ class BlurAuthRoute(APIRoute):
             key_meta = await verify_api_key(request, request.headers.get("X-API-Key"))
             check_scope("blur:read", key_meta)
             request.state.blur_key_meta = key_meta
+            admit = getattr(request.state, "blur_admit", None)
+            if admit is not None and not admit():
+                from src.utils.blur_metrics import rejected_requests
+
+                rejected_requests.labels("busy").inc()
+                return JSONResponse(status_code=503, headers={"Retry-After": "1"}, content={
+                    "success": False,
+                    "request_id": getattr(request.state, "request_id", ""),
+                    "error": {"code": "BLUR_BUSY", "message": "Blur service is busy"},
+                })
             operation = request.url.path.rsplit("/", 1)[-1]
             if operation not in ("detect", "classify"):
                 return await handler(request)

@@ -28,8 +28,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import pytest
 import yaml
+from fastapi import APIRouter, HTTPException
 from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import ValidationError
@@ -134,6 +136,7 @@ def test_blur_profile_defaults_to_one_process_and_two_cpu_threads():
 
 
 def test_timed_out_request_keeps_admission_until_native_work_exits():
+    from src.api.v1.blur import BlurAuthRoute
     from src.config import Settings
     from src.main import create_app
     from src.utils.timeout import run_with_timeout, start_timeout_executor
@@ -154,26 +157,34 @@ def test_timed_out_request_keeps_admission_until_native_work_exits():
         entered.set()
         release.wait(5)
 
-    @app.get("/api/v1/blur/slow-native")
+    blur = APIRouter(prefix="/api/v1/blur", route_class=BlurAuthRoute)
+
+    @blur.get("/slow-native")
     async def slow_native():
         await asyncio.to_thread(run_with_timeout, native, timeout_seconds=5)
         return {"ok": True}
 
-    @app.get("/api/v1/blur/probe")
+    @blur.get("/probe")
     async def probe():
         return {"ok": True}
+
+    app.include_router(blur)
+
+    async def valid_key(request, api_key):
+        return {"key_id": "k1", "scopes": ["blur:read"], "rate_tier": "pro"}
 
     @asynccontextmanager
     async def no_lifespan(_app):
         yield
 
     app.router.lifespan_context = no_lifespan
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with (patch("src.api.v1.blur.verify_api_key", valid_key),
+          TestClient(app, raise_server_exceptions=False) as client):
         try:
             started = time.monotonic()
             assert client.get("/api/v1/blur/slow-native").status_code == 504
             assert time.monotonic() - started < 0.5
-            assert entered.is_set()
+            assert entered.wait(1)
             blocked = client.get("/api/v1/blur/probe")
             assert blocked.status_code == 503
             assert blocked.json()["error"]["code"] == "BLUR_BUSY"
@@ -186,6 +197,43 @@ def test_timed_out_request_keeps_admission_until_native_work_exits():
             time.sleep(0.01)
         else:
             pytest.fail("admission slot was not released after native work exited")
+
+
+async def test_bad_key_request_does_not_take_a_blur_slot():
+    from src.api.v1.blur import BlurAuthRoute
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False, BLUR_MAX_ACTIVE_REQUESTS=1)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    probe = APIRouter(prefix="/api/v1/blur", route_class=BlurAuthRoute)
+
+    @probe.get("/probe")
+    async def probe_route():
+        return {"ok": True}
+
+    app.include_router(probe)
+    entered, gate = asyncio.Event(), asyncio.Event()
+
+    async def fake_verify(request, api_key):
+        if api_key == "bad":
+            entered.set()
+            await gate.wait()  # a slow bad-key lookup, as under a flood
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        return {"key_id": "k1", "scopes": ["blur:read"], "rate_tier": "pro"}
+
+    with patch("src.api.v1.blur.verify_api_key", fake_verify):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            bad = asyncio.create_task(
+                client.get("/api/v1/blur/probe", headers={"X-API-Key": "bad"})
+            )
+            await asyncio.wait_for(entered.wait(), 2)
+            good = await client.get("/api/v1/blur/probe", headers={"X-API-Key": "good"})
+            gate.set()
+            assert (await bad).status_code == 401
+    assert good.status_code == 200, good.text
 
 
 async def test_slow_stream_upload_has_a_request_deadline():

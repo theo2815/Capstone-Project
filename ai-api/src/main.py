@@ -289,25 +289,16 @@ def create_app() -> FastAPI:
                 and scope.get("path", "").startswith("/api/v1/blur/")
             )
             limit = _blur_body if blur_request else _max_body
-            acquired = False
-            if blur_request:
-                acquired = _blur_admission.acquire(blocking=False)
-                if not acquired:
-                    from src.utils.blur_metrics import rejected_requests
-
-                    rejected_requests.labels("busy").inc()
-                    response = JSONResponse(status_code=503, content={
-                        "success": False,
-                        "request_id": scope.get("state", {}).get("request_id", ""),
-                        "error": {"code": "BLUR_BUSY", "message": "Blur service is busy"},
-                    })
-                    response.headers["Retry-After"] = "1"
-                    await response(scope, receive, send)
-                    return
-
             from src.utils.timeout import RequestWork, request_work
 
-            if acquired:
+            tracker = None
+            token = request_work.set(None)
+
+            def admit_blur() -> bool:
+                """Take a blur slot. BlurAuthRoute calls this only after the key check."""
+                nonlocal tracker
+                if not _blur_admission.acquire(blocking=False):
+                    return False
                 from src.utils.blur_metrics import active_requests
 
                 active_requests.inc()
@@ -317,9 +308,11 @@ def create_app() -> FastAPI:
                     active_requests.dec()
 
                 tracker = RequestWork(release_blur)
-            else:
-                tracker = None
-            token = request_work.set(tracker)
+                request_work.set(tracker)  # seen by the route's tracked native work
+                return True
+
+            if blur_request:
+                scope.setdefault("state", {})["blur_admit"] = admit_blur
 
             async def reject():
                 if blur_request:
@@ -385,7 +378,7 @@ def create_app() -> FastAPI:
                     await reject()
             finally:
                 request_work.reset(token)
-                if acquired:
+                if tracker is not None:
                     tracker.close()
 
     # Middleware (order matters: last added = outermost = first on request)
