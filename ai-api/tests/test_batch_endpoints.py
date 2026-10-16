@@ -125,6 +125,29 @@ class TestBlurBatch:
         resp = client.post("/api/v1/blur/detect/batch")
         assert resp.status_code == 422
 
+    def test_batch_at_job_cap_is_refused_before_reading_files(self, app, client: TestClient):
+        """A key at its active-job cap gets 429 before its photos are read into memory."""
+        from unittest.mock import AsyncMock, patch
+
+        cap = app.state.settings.MAX_ACTIVE_JOBS_PER_KEY
+        data = _make_jpeg()
+        repo = "src.db.repositories.job_repo.JobRepository"
+        with patch(f"{repo}.count_active_by_key", AsyncMock(return_value=cap)), \
+             patch(f"{repo}.lock_admission", AsyncMock()), \
+             patch("src.api.v1.blur.validate_batch_files",
+                   AsyncMock(return_value=[data, data])) as validate:
+            resp = client.post(
+                "/api/v1/blur/detect/batch",
+                files=[
+                    ("files", ("img1.jpg", data, "image/jpeg")),
+                    ("files", ("img2.jpg", data, "image/jpeg")),
+                ],
+            )
+
+        validate.assert_not_called()
+        assert resp.status_code == 429
+        assert resp.json()["error"]["code"] == "TOO_MANY_JOBS"
+
 
 # ---------- Job Endpoint ----------
 

@@ -17,6 +17,7 @@ from starlette.responses import StreamingResponse
 from src.api.v1.batch_utils import (
     batch_accepted_response,
     create_batch_job,
+    reject_if_at_job_cap,
     store_blobs_and_get_paths,
     validate_batch_files,
 )
@@ -475,6 +476,10 @@ async def detect_blur_batch(
     check_scope("blur:read", key_meta)
     settings = request.app.state.settings
 
+    refused = await reject_if_at_job_cap(request, key_meta.get("key_id"))
+    if refused is not None:
+        return refused
+
     result = await validate_batch_files(
         request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE,
         settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
@@ -908,6 +913,10 @@ async def classify_blur_batch(
     check_scope("blur:read", key_meta)
     settings = request.app.state.settings
 
+    refused = await reject_if_at_job_cap(request, key_meta.get("key_id"))
+    if refused is not None:
+        return refused
+
     result = await validate_batch_files(
         request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE,
         settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
@@ -944,6 +953,10 @@ async def detect_blur_mega(
     """
     check_scope("blur:read", key_meta)
     settings = request.app.state.settings
+
+    refused = await reject_if_at_job_cap(request, key_meta.get("key_id"))
+    if refused is not None:
+        return refused
 
     result = await validate_batch_files(
         request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE,
@@ -986,6 +999,10 @@ async def classify_blur_mega(
     """
     check_scope("blur:read", key_meta)
     settings = request.app.state.settings
+
+    refused = await reject_if_at_job_cap(request, key_meta.get("key_id"))
+    if refused is not None:
+        return refused
 
     result = await validate_batch_files(
         request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE,

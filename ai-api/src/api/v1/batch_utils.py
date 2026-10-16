@@ -83,6 +83,59 @@ def store_blobs_and_get_paths(job_id: str, raw_bytes_list: list[bytes]) -> list[
     return store_batch(job_id, raw_bytes_list)
 
 
+async def _job_cap_response(
+    request: Request, repo, api_key_id: str | None, rate_tier: str | None, lock: bool
+) -> JSONResponse | None:
+    """Return the 429 for a key at its active-job cap (SCALE-2 backpressure), else None.
+
+    Internal-tier callers get a higher active-job ceiling. With ``lock``, the
+    count runs under the key's admission lock.
+    """
+    settings = request.app.state.settings
+    max_active = (
+        settings.MAX_ACTIVE_JOBS_PER_KEY_INTERNAL
+        if rate_tier == "internal"
+        else settings.MAX_ACTIVE_JOBS_PER_KEY
+    )
+    if not api_key_id or max_active <= 0:
+        return None
+    if lock:
+        await repo.lock_admission(api_key_id)
+    active_count = await repo.count_active_by_key(api_key_id)
+    if active_count < max_active:
+        return None
+    return JSONResponse(
+        status_code=429,
+        content=APIResponse(
+            success=False,
+            request_id=getattr(request.state, "request_id", ""),
+            error={
+                "code": "TOO_MANY_JOBS",
+                "message": (
+                    f"You already have {active_count} active jobs. "
+                    f"Maximum is {max_active}. Wait for existing jobs to complete."
+                ),
+            },
+        ).model_dump(mode="json"),
+    )
+
+
+async def reject_if_at_job_cap(
+    request: Request, api_key_id: str | None, rate_tier: str | None = None
+) -> JSONResponse | None:
+    """Cheap unlocked cap check, run before a batch's files are read into memory.
+
+    ``create_batch_job`` repeats it under the lock; that check is the final word.
+    """
+    from src.db.repositories.job_repo import JobRepository
+    from src.db.session import get_readonly_session
+
+    async with get_readonly_session() as session:
+        return await _job_cap_response(
+            request, JobRepository(session), api_key_id, rate_tier, lock=False
+        )
+
+
 async def create_batch_job(
     request: Request,
     job_type: str,
@@ -92,41 +145,17 @@ async def create_batch_job(
 ) -> str | JSONResponse:
     """Create a job record and return the job ID string.
 
-    Returns a 429 JSONResponse if the caller already has too many active jobs
-    (SCALE-2 backpressure). Internal-tier callers get a higher active-job
-    ceiling (bulk indexing submits several jobs per drain).
+    Returns a 429 JSONResponse if the caller already has too many active jobs.
     """
     from src.db.repositories.job_repo import JobRepository
     from src.db.session import get_session_ctx
 
-    settings = request.app.state.settings
-    max_active = (
-        settings.MAX_ACTIVE_JOBS_PER_KEY_INTERNAL
-        if rate_tier == "internal"
-        else settings.MAX_ACTIVE_JOBS_PER_KEY
-    )
-
     async with get_session_ctx() as session:
         repo = JobRepository(session)
 
-        if api_key_id and max_active > 0:
-            await repo.lock_admission(api_key_id)
-            active_count = await repo.count_active_by_key(api_key_id)
-            if active_count >= max_active:
-                return JSONResponse(
-                    status_code=429,
-                    content=APIResponse(
-                        success=False,
-                        request_id=getattr(request.state, "request_id", ""),
-                        error={
-                            "code": "TOO_MANY_JOBS",
-                            "message": (
-                                f"You already have {active_count} active jobs. "
-                                f"Maximum is {max_active}. Wait for existing jobs to complete."
-                            ),
-                        },
-                    ).model_dump(mode="json"),
-                )
+        refused = await _job_cap_response(request, repo, api_key_id, rate_tier, lock=True)
+        if refused is not None:
+            return refused
 
         job = await repo.create(
             job_type=job_type,
