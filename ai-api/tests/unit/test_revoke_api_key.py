@@ -4,6 +4,8 @@ import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 
 def _session_returning(key_hash):
     session = MagicMock()
@@ -36,6 +38,18 @@ async def test_revoke_unknown_key_changes_nothing():
     redis = MagicMock(delete=AsyncMock())
     assert await revoke(str(uuid.uuid4()), session_ctx=ctx, redis=redis) is False
     redis.delete.assert_not_awaited()
+
+
+async def test_main_refuses_unless_both_target_urls_are_in_the_environment(monkeypatch):
+    # A missing REDIS_URL would come from .env or the localhost default, so the cache
+    # clear would miss the target while the script still printed "Key revoked".
+    from scripts.revoke_api_key import _main
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@target:5432/db")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setattr("src.db.session.init_db", AsyncMock(side_effect=AssertionError))
+    with pytest.raises(SystemExit, match="REDIS_URL"):
+        await _main(str(uuid.uuid4()))
 
 
 async def test_cache_is_cleared_by_hash():
