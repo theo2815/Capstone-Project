@@ -22,7 +22,7 @@ export function ToastContainer() {
     <div
       role="region"
       aria-label="Notifications"
-      className="fixed inset-x-4 bottom-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-[60] flex flex-col-reverse gap-2.5 pointer-events-none sm:w-[28rem]"
+      className="fixed inset-x-4 bottom-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-[80] flex flex-col-reverse gap-2.5 pointer-events-none sm:w-[28rem]"
     >
       {visible.map((t) => (
         <ToastItem key={t.id} toast={t} />
