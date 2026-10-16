@@ -1209,16 +1209,20 @@ internal fun deepLinkTarget(uri: Uri): DeepLinkTarget? {
             emailToken(uri)?.let(DeepLinkTarget::VerifyEmail)
         host == "orders" && path.startsWith("/return") ->
             DeepLinkTarget.OrderReturn(uri.getQueryParameter("orderId"), uri.getQueryParameter("token"))
+                .takeIf { it.token.orEmpty().length <= MAX_LINK_TOKEN }
         host == "orders" -> DeepLinkTarget.Orders
         host == "cart" -> DeepLinkTarget.Cart
         else -> null
     }
 }
 
-// Real tokens are 43 characters. A ~50 KB one rode into the saved state and
-// crashed the app on Home (TransactionTooLargeException), so drop the link.
+// Real tokens are 43 characters (email) or about 105 (order return). A ~50 KB
+// one rode into the saved state and crashed the app on Home
+// (TransactionTooLargeException), so drop the link.
+private const val MAX_LINK_TOKEN = 256
+
 private fun emailToken(uri: Uri): String? =
-    uri.getQueryParameter("token").orEmpty().takeIf { it.length <= 256 }
+    uri.getQueryParameter("token").orEmpty().takeIf { it.length <= MAX_LINK_TOKEN }
 
 // The "studio" graph's back-stack entry — the owner of every studio ViewModel.
 // They all resolve off this one entry, so they share a lifetime: created lazily
