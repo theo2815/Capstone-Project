@@ -960,3 +960,10 @@ def test_default_model_profile_is_blur(monkeypatch):
 def test_dockerfile_builds_blur_by_default():
     dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert re.findall(r"^ARG MODEL_PROFILE=(\S+)\s*$", dockerfile, re.M) == ["blur", "blur"]
+
+
+def test_dev_compose_publishes_ports_on_loopback_only():
+    compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    published = re.findall(r'-\s*"((?:[\d.]+:)?\d+:\d+)"', compose)
+    assert len(published) >= 3
+    assert all(p.startswith("127.0.0.1:") for p in published), published
