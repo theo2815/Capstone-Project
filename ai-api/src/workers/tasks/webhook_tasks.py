@@ -5,7 +5,7 @@ import hashlib
 import ipaddress
 import json
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -14,47 +14,29 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# SSRF protection: block private/internal IP ranges
-_BLOCKED_NETWORKS = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("0.0.0.0/8"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fe80::/10"),
-]
-
 
 def _validate_webhook_url(url: str) -> tuple[str, str]:
-    """Resolve DNS once and validate that the webhook URL doesn't target internal networks.
+    """Resolve once; return (ip, hostname) only if EVERY answer is a public address.
 
-    Returns (resolved_ip, hostname) to prevent DNS rebinding TOCTOU attacks.
-
-    Raises:
-        ValueError: If URL resolves to a blocked network.
+    deliver_webhook then connects to that checked ip, so no second lookup can pick
+    an internal address.
     """
     parsed = urlparse(url)
+    if "@" in parsed.netloc:
+        raise ValueError("Webhook URL must not contain user info")
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("Invalid webhook URL: no hostname")
-
     try:
-        addr_info = socket.getaddrinfo(hostname, None)
-        resolved_ip = addr_info[0][4][0]
-        ip = ipaddress.ip_address(resolved_ip)
-    except (socket.gaierror, ValueError, IndexError) as e:
+        answers = [info[4][0] for info in socket.getaddrinfo(hostname, None)]
+    except socket.gaierror as e:
         raise ValueError(f"Cannot resolve webhook hostname '{hostname}': {e}")
-
-    for network in _BLOCKED_NETWORKS:
-        if ip in network:
-            raise ValueError(
-                f"Webhook URL targets blocked internal network ({network})"
-            )
-
-    return resolved_ip, hostname
+    if not answers:
+        raise ValueError(f"Cannot resolve webhook hostname '{hostname}'")
+    for answer in answers:
+        if not ipaddress.ip_address(answer).is_global:
+            raise ValueError(f"Webhook URL resolves to a non-public address ({answer})")
+    return answers[0], hostname
 
 
 @celery_app.task(
@@ -91,7 +73,13 @@ def deliver_webhook(
         return
 
     body = json.dumps({"event": event, **payload})
-    headers = {"Content-Type": "application/json", "Host": hostname}
+    parsed = urlparse(url)
+    host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+    netloc = f"{host}:{parsed.port}" if parsed.port else host
+    target_url = urlunparse(
+        (parsed.scheme, netloc, parsed.path or "/", parsed.params, parsed.query, "")
+    )
+    headers = {"Content-Type": "application/json", "Host": parsed.netloc}
 
     if secret:
         signature = hmac.new(
@@ -99,14 +87,15 @@ def deliver_webhook(
         ).hexdigest()
         headers["X-QuickPitik-Signature"] = f"sha256={signature}"
 
-    # Replace hostname with resolved IP to prevent DNS rebinding TOCTOU
-    target_url = url.replace(hostname, resolved_ip, 1)
-
     try:
         with httpx.Client(timeout=timeout, verify=True) as client:
-            response = client.post(target_url, content=body, headers=headers)
+            response = client.post(target_url, content=body, headers=headers,
+                                   extensions={"sni_hostname": hostname})
             response.raise_for_status()
-            logger.info("Webhook delivered", url=url, event=event, status=response.status_code)
+            # structlog's first parameter is named "event": log the webhook's under another key.
+            logger.info(
+                "Webhook delivered", url=url, webhook_event=event, status=response.status_code
+            )
     except httpx.HTTPError as e:
-        logger.error("Webhook delivery failed", url=url, event=event, error=str(e))
+        logger.error("Webhook delivery failed", url=url, webhook_event=event, error=str(e))
         raise
