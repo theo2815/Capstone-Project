@@ -216,3 +216,39 @@ def test_worker_signs_with_secret_loaded_by_id(fernet, monkeypatch):
 def test_message_queued_before_the_change_still_signs():
     [request] = _deliver("https://hooks.example.com/x", PUBLIC_V4, secret="s3cret")
     assert request.headers["X-QuickPitik-Signature"] == _signature(request, b"s3cret")
+
+
+def test_database_blip_while_loading_the_secret_is_retried(monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    calls = []
+
+    class Repo:
+        def __init__(self, session):
+            pass
+
+        def get(self, wid):
+            calls.append(wid)
+            raise OperationalError("SELECT", {}, Exception("connection dropped"))
+
+    monkeypatch.setattr(webhook_tasks, "_validate_webhook_url",
+                        lambda url: (PUBLIC_V4, "hooks.example.com"))
+    monkeypatch.setattr(webhook_tasks, "get_sync_session", contextlib.nullcontext)
+    monkeypatch.setattr(webhook_tasks, "SyncWebhookRepository", Repo)
+    webhook_tasks.deliver_webhook.apply(
+        ("https://hooks.example.com/x", "job.completed", {}),
+        {"webhook_id": str(uuid.uuid4())})
+    assert len(calls) == 1 + webhook_tasks.deliver_webhook.max_retries
+
+
+def test_webhook_deleted_before_delivery_is_not_sent(monkeypatch):
+    class Repo:
+        def __init__(self, session):
+            pass
+
+        def get(self, wid):
+            return None
+
+    monkeypatch.setattr(webhook_tasks, "get_sync_session", contextlib.nullcontext)
+    monkeypatch.setattr(webhook_tasks, "SyncWebhookRepository", Repo)
+    assert _deliver("https://hooks.example.com/x", PUBLIC_V4, webhook_id=str(uuid.uuid4())) == []

@@ -10,6 +10,7 @@ import uuid
 from urllib.parse import urlparse, urlunparse
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.config import get_settings
 from src.db.repositories.sync_webhook_repo import SyncWebhookRepository
@@ -58,7 +59,7 @@ def _validate_webhook_url(url: str) -> tuple[str, str]:
 @celery_app.task(
     bind=True,
     name="webhooks.deliver",
-    autoretry_for=(httpx.HTTPError,),
+    autoretry_for=(httpx.HTTPError, SQLAlchemyError),
     retry_backoff=True,
     retry_backoff_max=30,
     max_retries=3,
