@@ -149,7 +149,7 @@ A **Camera → Mobile → Cloud → Marketplace** system that serves both photog
 2. Opens QuickPitik mobile app → Connects camera
 3. Race starts → Photographer shoots
 4. Every photo auto-uploads to cloud in real-time
-5. ai-api runs face + bib indexing on each upload
+5. The backend indexes faces + bibs on each upload (AWS Rekognition)
 6. Photos appear in event gallery, searchable by selfie/bib
 7. Runners start seeing their photos within minutes
 8. Race ends → All photos already uploaded and indexed
@@ -245,7 +245,7 @@ photographer wants to clean up the set (see Journey 2).
 
 ### Vector Search Strategy
 
-Face embeddings are stored in PostgreSQL with pgvector (AWS RDS). If vector search latency becomes an issue at scale, the plan is to migrate to **Qdrant** as a dedicated vector database.
+Face search runs on **AWS Rekognition**, called by the Spring Boot backend: one face collection per event, so a search never crosses events. QuickPitik stores no face vectors of its own. (Until 2026-10-16 ai-api did face search with pgvector; that code was removed.)
 
 ### CDN Strategy
 
@@ -255,7 +255,7 @@ Photo delivery currently goes through AWS S3 directly. **CloudFront CDN** will b
 
 ## How ai-api Fits In
 
-The ai-api is the **AI engine** that powers the platform's core features. It is an internal service — never exposed directly to end users.
+The ai-api is the **blur engine** behind the desktop app's culling. It is an internal service — never exposed directly to end users. Face search and bib reading do not go through it: the Web/Mobile Backend calls AWS Rekognition for those.
 
 ```
 ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
@@ -276,27 +276,18 @@ The ai-api is the **AI engine** that powers the platform's core features. It is 
              │                  └────────┬──────────┘
              │                           │
              ▼                           ▼
-┌──────────────────────────────────────────────────┐
-│  ai-api (FastAPI + Celery — AWS EC2)             │
-│  ════════════════════════════════════             │
-│  Blur Detection + Classification                 │
-│  Face Recognition + Search (pgvector)            │
-│  Bib Number OCR                                  │
-│  Batch Processing                                │
-├──────────────────────────────────────────────────┤
-│  PostgreSQL + pgvector (AWS RDS)                 │
-│  Redis (Celery broker + cache)                   │
-│  AWS S3 (photo storage)                          │
-└──────────────────────────────────────────────────┘
+┌────────────────────────────┐  ┌────────────────────────────┐
+│  AWS Rekognition           │  │  ai-api (FastAPI + Celery) │
+│  Face search: one          │  │  Blur detect + classify    │
+│  collection per event      │  │  Batch processing          │
+│  Bib numbers: DetectText   │  │  PostgreSQL + Redis        │
+└────────────────────────────┘  └────────────────────────────┘
 ```
 
 | ai-api Feature | Used By | For What |
 |----------------|---------|----------|
 | Blur detect/classify | Desktop Backend (only) | Photographer-side blur culling and auto-sort |
-| Face enroll | Web/Mobile Backend | Register participant faces per event |
-| Face search | Web/Mobile Backend | Find participants in uploaded photos |
-| Bib OCR | Web/Mobile Backend | Read bib numbers from race photos |
-| Batch processing | Web/Mobile Backend | Process bulk uploads asynchronously |
+| Batch processing | Desktop | Blur-check large photo sets asynchronously |
 
 See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contracts.md` for the full technical contract between ai-api and the backends.
 
@@ -334,7 +325,6 @@ See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contr
 
 | When | Action |
 |------|--------|
-| Vector search gets slow | Migrate face embeddings from pgvector (RDS) to Qdrant |
 | S3 egress costs too high | Add CloudFront CDN in front of S3 |
 | EC2 CPU bottleneck | Scale ai-api to separate EC2 instance or add GPU instance |
 | Celery queue backs up | Add more Celery workers (horizontal scaling) |
