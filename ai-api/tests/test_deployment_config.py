@@ -31,7 +31,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import ValidationError
@@ -234,6 +234,43 @@ async def test_bad_key_request_does_not_take_a_blur_slot():
             gate.set()
             assert (await bad).status_code == 401
     assert good.status_code == 200, good.text
+
+
+async def test_blur_slot_cannot_be_taken_after_the_request_ended():
+    # A cancelled route can still resume one step (anyio skips a task whose awaited
+    # result is ready), so its key check may reach admit after the middleware cleaned up.
+    from src.api.v1.blur import BlurAuthRoute
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False, BLUR_MAX_ACTIVE_REQUESTS=1)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    admits = []
+
+    @app.get("/api/v1/blur/capture")
+    async def capture(request: Request):
+        admits.append(request.state.blur_admit)
+        return {"ok": True}
+
+    probe = APIRouter(prefix="/api/v1/blur", route_class=BlurAuthRoute)
+
+    @probe.get("/probe")
+    async def probe_route():
+        return {"ok": True}
+
+    app.include_router(probe)
+
+    async def valid_key(request, api_key):
+        return {"key_id": "k1", "scopes": ["blur:read"], "rate_tier": "pro"}
+
+    with patch("src.api.v1.blur.verify_api_key", valid_key):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.get("/api/v1/blur/capture")).status_code == 200
+            assert admits[0]() is False
+            probed = await client.get("/api/v1/blur/probe")
+    assert probed.status_code == 200, probed.text
 
 
 async def test_slow_stream_upload_has_a_request_deadline():

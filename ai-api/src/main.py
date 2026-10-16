@@ -292,12 +292,14 @@ def create_app() -> FastAPI:
             from src.utils.timeout import RequestWork, request_work
 
             tracker = None
+            closed = False
             token = request_work.set(None)
 
             def admit_blur() -> bool:
                 """Take a blur slot. BlurAuthRoute calls this only after the key check."""
                 nonlocal tracker
-                if not _blur_admission.acquire(blocking=False):
+                # A cancelled route can still get here after cleanup; nothing would release it.
+                if closed or not _blur_admission.acquire(blocking=False):
                     return False
                 from src.utils.blur_metrics import active_requests
 
@@ -377,6 +379,7 @@ def create_app() -> FastAPI:
                         raise
                     await reject()
             finally:
+                closed = True
                 request_work.reset(token)
                 if tracker is not None:
                     tracker.close()
