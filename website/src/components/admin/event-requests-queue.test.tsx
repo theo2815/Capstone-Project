@@ -48,3 +48,16 @@ it("awaits approval before success and prevents duplicate submission", async () 
   await waitFor(() => expect(client.getQueryData(key)).toEqual([]));
   expect(useToastStore.getState().toasts[0].kind).toBe("success");
 });
+it("shows everything the photographer filled in", () => {
+  client.setQueryData(key, [{
+    ...adminEvent, status: "DRAFT", reviewStatus: "pending", visibility: "unlisted",
+    createdByName: "Ana Cruz", createdByHandle: "anashoots", organizerName: "Cebu Runners Club",
+    bannerUrl: "https://cdn.example.test/cover.jpg", description: "Start 5 AM.\nThree loops.",
+  }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByRole("img", { name: "Cover photo for Cebu Race" })).toHaveAttribute("src", "https://cdn.example.test/cover.jpg");
+  expect(screen.getByText("Ana Cruz · @anashoots")).toBeInTheDocument();
+  expect(screen.getByText("Cebu Runners Club")).toBeInTheDocument();
+  expect(screen.getByText("Unlisted · link only")).toBeInTheDocument();
+  expect(screen.getByText(/Start 5 AM\.\s+Three loops\./)).toBeInTheDocument();
+});
