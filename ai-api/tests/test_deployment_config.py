@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import shlex
 import shutil
 import subprocess
@@ -947,3 +948,15 @@ class TestDockerBuildContext:
             )
         for heavy in ("Training-Images", ".venv", "runs"):
             assert heavy not in out, f"{heavy} is in the build context"
+
+
+def test_default_model_profile_is_blur(monkeypatch):
+    from src.config import Settings
+
+    monkeypatch.delenv("MODEL_PROFILE", raising=False)
+    assert Settings(_env_file=None).MODEL_PROFILE == "blur"
+
+
+def test_dockerfile_builds_blur_by_default():
+    dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert re.findall(r"^ARG MODEL_PROFILE=(\S+)\s*$", dockerfile, re.M) == ["blur", "blur"]

@@ -1,6 +1,6 @@
 # ---- Stage 1: Python dependencies ----
 FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS builder
-ARG MODEL_PROFILE=all
+ARG MODEL_PROFILE=blur
 
 WORKDIR /build
 
@@ -22,7 +22,7 @@ RUN case "$MODEL_PROFILE" in \
 
 # ---- Stage 2: Runtime ----
 FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS runtime
-ARG MODEL_PROFILE=all
+ARG MODEL_PROFILE=blur
 ENV MODEL_PROFILE=$MODEL_PROFILE
 ENV HOME=/app
 

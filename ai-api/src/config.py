@@ -68,7 +68,7 @@ class Settings(BaseSettings):
 
     # ML Models
     MODEL_DIR: str = "./models"
-    MODEL_PROFILE: Literal["all", "blur"] = "all"
+    MODEL_PROFILE: Literal["all", "blur"] = "blur"
     USE_GPU: bool = False
     GPU_DEVICE: int = 0
 

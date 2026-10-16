@@ -19,7 +19,9 @@ services:
       - LOG_LEVEL=INFO
       - DEBUG=false
       - ENVIRONMENT=production
-      - WORKERS=2
+      # The default blur profile runs one API process: with metrics on (the
+      # default) src/config.py refuses to start with WORKERS above 1.
+      - WORKERS=1
       - USE_GPU=false
       # No default. This was `${ALLOWED_ORIGINS:-["*"]}`, so a deploy that simply
       # forgot the variable got wildcard CORS in production while

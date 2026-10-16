@@ -54,8 +54,10 @@ standalone stack — API, four per-queue Celery workers, db, redis, nginx and ce
 publishes on `127.0.0.1:8000` only; public traffic arrives through nginx on 80/443, so the
 proxy's rate limit and `client_max_body_size` cannot be bypassed.
 
-The Dockerfile defaults to `MODEL_PROFILE=all` and installs the full application dependencies.
-For a smaller CPU blur image, supply the audited ONNX and ordered labels under
+The Dockerfile defaults to `MODEL_PROFILE=blur`. Build with `--build-arg MODEL_PROFILE=all` and run
+with `MODEL_PROFILE=all` to install the full application dependencies and turn the face and bib
+routes on; that profile stays available until the face/bib code is removed.
+For the CPU blur image, supply the audited ONNX and ordered labels under
 `models/blur_classifier/` in the trusted build workspace, then build with
 `docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur:2026-08-14-dynamic .` and run it
 with `MODEL_PROFILE=blur`. This profile installs the pinned
