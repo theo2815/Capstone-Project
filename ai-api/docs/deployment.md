@@ -135,8 +135,9 @@ The upload contract remains JPEG/PNG/WebP; clients convert HEIF before upload.
 The full `all` profile retains its 2 GiB shared body ceiling and existing
 per-file limits. Tune the blur values in `src/config.py` only after measuring
 real desktop payloads and container peak RSS under the target Railway quota.
-Regenerate the lock from `requirements-blur.in` with `pip-compile` in a clean Python 3.12
-Linux environment with `libpq-dev` installed. The two files are gitignored; the
+Regenerate the lock from `requirements-blur.in` with `pip-compile --generate-hashes` in a
+clean Python 3.12 Linux environment with `build-essential` and `libpq-dev` installed.
+The two files are gitignored; the
 build checks their manifest hashes, label order, ONNX shape, and warm inference,
 then embeds them in a read-only image directory. No model mount is needed at
 runtime. The built image is the immutable artifact containing both files. The
