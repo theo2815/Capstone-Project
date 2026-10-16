@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import os
-
-# Face/bib tests need the old profile until AS-8 deletes them (fix plan 2026-10-16).
-os.environ.setdefault("MODEL_PROFILE", "all")
-
 import pytest
 from fastapi.testclient import TestClient
 

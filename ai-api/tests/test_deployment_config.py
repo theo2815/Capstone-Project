@@ -491,34 +491,22 @@ class TestReadinessVisibility:
         return registry
 
     def test_status_reports_every_model_including_the_optional_ones(self):
-        registry = self._registry(
-            blur=True, face=True, bib_ocr=True, blur_classifier=False, bib_detector=False
-        )
-        assert registry.status() == {
-            "blur": True,
-            "face": True,
-            "bib_ocr": True,
-            "blur_classifier": False,
-            "bib_detector": False,
-        }
+        registry = self._registry(blur=True, blur_classifier=False)
+        assert registry.status() == {"blur": True, "blur_classifier": False}
 
     def test_the_gap_status_exists_to_expose(self):
         """Not a redundant assertion — this pins the exact hole. The verdict
-        stays green with both optional models missing, which is why the payload
-        needs the per-model detail alongside it. If someone later makes them
+        stays green with the optional classifier missing, which is why the payload
+        needs the per-model detail alongside it. If someone later makes it
         required, this failing is the intended signal to update the docs and the
         deployment guide, not to delete the test.
         """
-        registry = self._registry(
-            blur=True, face=True, bib_ocr=True, blur_classifier=False, bib_detector=False
-        )
+        registry = self._registry(blur=True, blur_classifier=False)
         assert registry.all_loaded() is True
         assert registry.status()["blur_classifier"] is False
 
     def test_a_missing_required_model_still_fails_the_verdict(self):
-        registry = self._registry(
-            blur=True, face=False, bib_ocr=True, blur_classifier=True, bib_detector=True
-        )
+        registry = self._registry(blur=False, blur_classifier=True)
         assert registry.all_loaded() is False
 
     def test_classifier_without_a_session_is_unavailable(self):
@@ -883,17 +871,13 @@ async def test_blur_profile_loads_only_blur_models(monkeypatch):
 
     registry = ModelRegistry()
     called = []
-    for name in ("blur", "blur_classifier", "face", "bib_detector", "bib_ocr"):
+    for name in ("blur", "blur_classifier"):
         monkeypatch.setattr(
             registry, f"_load_{name}",
             lambda _settings, n=name: called.append(n) or (
                 SimpleNamespace(session=object()) if n == "blur_classifier" else object()
             )
         )
-    monkeypatch.setattr(
-        registry, "_preimport_libs", lambda: pytest.fail("full ML libraries imported")
-    )
-
     await registry.load_all(SimpleNamespace(MODEL_PROFILE="blur"))
 
     assert set(called) == {"blur", "blur_classifier"}
@@ -1054,3 +1038,13 @@ def test_makefile_serves_the_api_on_loopback_only():
     # reachable from shared Wi-Fi (V-17 follow-up, owner decision D7, 2026-10-16).
     makefile = (PROJECT_ROOT / "Makefile").read_text()
     assert re.findall(r"uvicorn .*--host (\S+)", makefile) == ["127.0.0.1", "127.0.0.1"]
+
+
+def test_no_face_or_bib_workers_or_model_loaders():
+    from src.ml.registry import ModelRegistry
+    from src.workers.celery_app import celery_app
+
+    assert not [m for m in celery_app.conf.include if m.endswith(("face_tasks", "bib_tasks"))]
+    assert not [r for r in celery_app.conf.task_routes if r.startswith(("faces.", "bibs."))]
+    for loader in ("_load_face", "_load_bib_detector", "_load_bib_ocr"):
+        assert not hasattr(ModelRegistry, loader), loader

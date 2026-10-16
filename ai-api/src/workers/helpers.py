@@ -64,13 +64,8 @@ def decode_image_from_path(path: str, max_dim: int = 0) -> np.ndarray | None:
     Args:
         path: Blob store file path.
         max_dim: Max dimension override (0 = use MAX_INFERENCE_DIMENSION).
-            The face and bib workers deliberately pass no override, so they
-            decode at the same dimension as the single-image endpoints — see
-            the 2026-08-14 decode-dim ADR. Blur is the exception: its detect
-            path passes 640 (the reference resolution its Laplacian score is
-            normalised to) and its classify path passes
-            BLUR_CLASSIFY_DECODE_DIM, both of which are calibrated values
-            shared with the corresponding endpoints.
+            The blur classify worker passes BLUR_CLASSIFY_DECODE_DIM, the
+            calibrated value shared with its endpoint.
     """
     try:
         from src.utils.blob_store import load_blob

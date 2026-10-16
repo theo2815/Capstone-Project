@@ -103,14 +103,6 @@ class Settings(BaseSettings):
     BLUR_MOTION_MIN_RATIO: float = Field(default=2.63, gt=0)
     BLUR_MOTION_MAX_DETAIL: float = Field(default=52.4, gt=0)
 
-    # Face Recognition
-    FACE_SIMILARITY_THRESHOLD: float = Field(default=0.4, ge=0, le=1)
-    FACE_DET_SIZE: int = 640
-    FACE_MIN_ENROLLMENT_CONFIDENCE: float = Field(default=0.7, ge=0, le=1)
-
-    # Bib Recognition
-    BIB_MIN_CHARS: int = 2
-
     # Inference
     INFERENCE_TIMEOUT: int = 120  # Per-image inference timeout in seconds
     INFERENCE_BATCH_TIMEOUT: int = 300  # Max seconds for any single batch ONNX call
@@ -129,9 +121,6 @@ class Settings(BaseSettings):
     # is fastest on dedicated cores; inside a CPU quota (a 2-vCPU container) it can burn
     # the quota and slow everything else down. False is the setting to try on staging.
     ONNX_ALLOW_SPINNING: bool = True
-
-    # OCR
-    OCR_MAX_WORKERS: int = 8  # Thread pool size for PaddleOCR batch inference
 
     # Auth
     API_KEY_HEADER: str = "X-API-Key"

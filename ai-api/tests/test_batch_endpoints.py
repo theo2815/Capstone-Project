@@ -6,12 +6,7 @@ All tests use Celery eager mode so tasks run in-process.
 from __future__ import annotations
 
 import io
-import os
 import uuid
-
-# Must set env vars before any paddle import
-os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
-os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "False")
 
 import numpy as np
 import pytest
@@ -49,9 +44,6 @@ def setup_celery_and_models(app, client):
     # Copy models from app's registry to worker module globals
     registry = app.state.model_registry
     ml._blur_detector = registry.get("blur")
-    ml._face_embedder = registry.get("face")
-    ml._bib_detector = registry.get("bib_detector")
-    ml._bib_recognizer = registry.get("bib_ocr")
 
     # Initialize sync DB for task execution
     from src.db.sync_session import init_sync_db
@@ -63,9 +55,6 @@ def setup_celery_and_models(app, client):
     # Restore
     celery_app.conf.update(task_always_eager=False, task_eager_propagates=False)
     ml._blur_detector = None
-    ml._face_embedder = None
-    ml._bib_detector = None
-    ml._bib_recognizer = None
 
 
 def _make_jpeg(width: int = 256, height: int = 256) -> bytes:
