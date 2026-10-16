@@ -6,7 +6,7 @@ The live route reference — every endpoint, its auth, and **which clients consu
 
 ## Role in the project
 
-Spring Boot service. Public API for website and mobile. Owns users, events, participants, photos, marketplace. Proxies all `ai-api` calls — clients never call `ai-api` directly.
+Spring Boot service. Public API for website and mobile. Owns users, events, participants, photos, marketplace. Runs face/bib inference for the clients through AWS Rekognition — clients never call `ai-api` directly.
 
 See root `AGENTS.md` for monorepo-wide rules and `docs/project-vision.md` for product context.
 
@@ -69,9 +69,9 @@ Split a `service/<domain>` subpackage when it passes ~25 files (the 2026-05-05 "
 ## Module boundaries
 
 - **Website + mobile → this backend only.** Never bypass to `ai-api`.
-- **This backend → ai-api via server-to-server with API key** (added Phase C).
-- **Event isolation:** every `ai-api` face call MUST include `event_id` (Phase C).
-- **Confidence thresholds:** apply per-event here, not in `ai-api`.
+- **This backend → AWS Rekognition for face/bib** (`AI_PROVIDER=rekognition`, the default). The `ai-api` provider (`AiApiClient`) remains, but ai-api has had no face/bib routes since 2026-10-16.
+- **Event isolation:** every face call is scoped to one event (Rekognition: one collection per event).
+- **Confidence thresholds:** apply per-event here, not in the provider.
 
 ## Local development
 
@@ -161,6 +161,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `SERVER_PORT` | `8080` | — |
 | `GOOGLE_CLIENT_ID` | *(blank)* | Google OAuth **Web application** client ID — the shared audience for `/auth/google`. Blank makes the endpoint answer 503; the website (`NEXT_PUBLIC_GOOGLE_CLIENT_ID`) and mobile (`QP_GOOGLE_SERVER_CLIENT_ID`) carry the same value and hide their buttons when unset. |
 | `AI_API_ENABLED` | `false` | Set `true` when ai-api is wired and you want face/bib indexing on upload + selfie quality gate + runner face-search. When `false`, every server-side ai-api call is skipped — photographer upload + selfie upload still work, face-search returns 503. See vault `backend/decisions.md` 2026-05-18 master-switch ADR. |
+| `AI_PROVIDER` | `rekognition` | Which face/bib provider runs: `rekognition` (AWS; needs AWS keys or a role) or `ai-api`. ai-api lost its face/bib routes on 2026-10-16, so `ai-api` now gets 404s. Tests pin `ai-api` in `application-test.yml` so they keep their mocked client. |
 | `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Consecutive failed logins before an account locks (V29). Raise it if a demo needs more headroom — there is no separate on/off switch. |
 | `AUTH_LOCKOUT_DURATION` | `PT15M` | How long a lock holds. Auto-clears; a successful login also resets it. Unlike the rate-limit buckets this is **always on**, independent of `RATE_LIMIT_ENABLED`. |
 | `AUTH_LOCKOUT_WINDOW` | `PT15M` | NFR-S-14 (V34): failures only count toward a lock when within this window of the previous one; older streaks restart at 1. |

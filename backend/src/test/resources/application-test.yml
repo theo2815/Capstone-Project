@@ -23,6 +23,10 @@ spring:
 # which stays `per_photo`. (An earlier attempt set the scheduler pool to 0 —
 # Spring rejects that outright: 'poolSize' must be 1 or higher.)
 app:
+  ai:
+    # Tests mock AiApiClient. The rekognition default would inject the real AWS
+    # client instead (it is @Primary), and a dev machine's ~/.aws keys would reach AWS.
+    provider: ai-api
   ai-api:
     # No ai-api in CI. Off, every server-side call short-circuits — see the
     # master-switch ADR (2026-05-18).

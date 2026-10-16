@@ -14,7 +14,8 @@
 
 app:
   # ── AI provider ────────────────────────────────────────────────────────────
-  # `ai-api` (default) = self-hosted service. `rekognition` = AWS Rekognition.
+  # `rekognition` (default) = AWS Rekognition. `ai-api` = self-hosted service, which
+  # has had no face/bib routes since 2026-10-16.
   ai:
     provider: rekognition                 # or: ai-api
     rekognition:

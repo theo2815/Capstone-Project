@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 // The AI master switch (`enabled`) still lives on app.ai-api.
 @ConfigurationProperties(prefix = "app.ai")
 data class AiProperties(
-    val provider: AiProvider = AiProvider.AI_API,
+    val provider: AiProvider = AiProvider.REKOGNITION,
 )
 
 enum class AiProvider {

@@ -763,7 +763,7 @@ Record only the candidate count. This comparison is an observation while uploads
 | `STORAGE_BACKEND` | `LOCAL` | Set to `S3` | File storage provider (`LOCAL` or `S3`) |
 | `STORAGE_BUCKET` | `quickpitik-dev` | Production S3 Bucket | Target S3 bucket name |
 | `AI_API_ENABLED` | `false` | Set to `true` | Master switch for face & bib AI processing |
-| `AI_PROVIDER` | `ai-api` | `ai-api` or `rekognition` | Vision provider implementation selection |
+| `AI_PROVIDER` | `rekognition` | `rekognition` or `ai-api` | Vision provider implementation selection |
 | `PAYMONGO_SECRET_KEY` | *(dev placeholder)* | Production PayMongo Key | PayMongo HTTP Basic API key (`sk_live_...`) |
 | `PAYMONGO_WEBHOOK_SECRET` | *(dev placeholder)* | Production Signing Secret | PayMongo webhook HMAC verification key |
 | `RESEND_API_KEY` | *(dev placeholder)* | Production Resend Key | Resend transactional email API key |

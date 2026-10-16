@@ -68,7 +68,7 @@ BatchMyPhotos/desktop/docs/blur-detection.md for retention and deletion.
 
 ## Contract 2: Web/Mobile Backend (retired)
 
-Retired 2026-10-16: the backend uses AWS Rekognition (`AI_PROVIDER=rekognition`, set on staging and production; the backend's own default is still `ai-api`); ai-api serves blur only, to the desktop app. The face and bib routes this contract described (`/faces/*`, `/bibs/*`) no longer exist.
+Retired 2026-10-16: the backend uses AWS Rekognition (`AI_PROVIDER=rekognition`, the backend's default); ai-api serves blur only, to the desktop app. The face and bib routes this contract described (`/faces/*`, `/bibs/*`) no longer exist.
 
 ---
 
