@@ -108,6 +108,7 @@ def test_slow_receiver_is_cut_off_at_the_deadline(monkeypatch):
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
     server.listen(1)
+    server.settimeout(5)  # never leak the socket if delivery does not connect
     port = server.getsockname()[1]
     stop = threading.Event()
 
@@ -143,3 +144,5 @@ def test_slow_receiver_is_cut_off_at_the_deadline(monkeypatch):
     stop.set()
     assert not worker.is_alive(), "delivery still running after 5 s"
     assert outcome["elapsed"] < 3
+    # the deadline, not the 0.5 s per-read timeout, ended it
+    assert "deadline" in str(outcome.get("error"))
