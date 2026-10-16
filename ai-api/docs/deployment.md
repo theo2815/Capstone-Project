@@ -54,7 +54,8 @@ standalone stack — API, four per-queue Celery workers, db, redis, nginx and ce
 publishes on `127.0.0.1:8000` only; public traffic arrives through nginx on 80/443, so the
 proxy's rate limit and `client_max_body_size` cannot be bypassed.
 As shipped, `nginx.conf` serves plain HTTP only, so do not expose this host to the internet
-until its HTTPS server block is enabled with a real certificate (Railway terminates TLS for you).
+until its HTTPS server block is enabled with a real certificate and its port-80 `location /` proxy
+is replaced by the HTTPS redirect (Railway terminates TLS for you).
 
 The Dockerfile defaults to `MODEL_PROFILE=blur`. Build with `--build-arg MODEL_PROFILE=all` and run
 with `MODEL_PROFILE=all` to install the full application dependencies and turn the face and bib

@@ -963,7 +963,10 @@ def test_dockerfile_builds_blur_by_default():
 
 
 def test_dev_compose_publishes_ports_on_loopback_only():
-    compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    published = re.findall(r'-\s*"((?:[\d.]+:)?\d+:\d+)"', compose)
-    assert len(published) >= 3
-    assert all(p.startswith("127.0.0.1:") for p in published), published
+    compose = yaml.safe_load((PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    ports = [p for svc in compose["services"].values() for p in svc.get("ports", [])]
+    assert len(ports) >= 3
+    assert all(
+        p.get("host_ip") == "127.0.0.1" if isinstance(p, dict) else str(p).startswith("127.0.0.1:")
+        for p in ports
+    ), ports
