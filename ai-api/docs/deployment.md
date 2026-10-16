@@ -216,6 +216,8 @@ the Railway health check. Set `DATABASE_URL`, `REDIS_URL`,
 pgvector availability before routing traffic. Provision a restricted desktop key
 using the private `../docs/api-keys.md` workflow and a separate
 `metrics:read` operations key. Never use `scripts/seed_db.py` in production.
+Revoke a key: `python -m scripts.revoke_api_key <id>` from `ai-api/` with the
+target's `DATABASE_URL`/`REDIS_URL` (owner only).
 
 The initial service exposes single-image and stream blur only. No worker, beat,
 or blob volume is needed while `BLUR_ASYNC_ENABLED=false`. The optional async
