@@ -118,13 +118,13 @@ class PhotographerEventShareScreenTest {
                     initialTab = "purchased", onBack = {},
                 )
             }
-            waitUntil(timeoutMillis = 5_000) { purchases.purchasedPhotosState.value.items.size == 1 }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("1 purchase").fetchSemanticsNodes().isNotEmpty() }
             onNodeWithText("1 purchase").performSemanticsAction(SemanticsActions.OnClick)
             waitForIdle()
-            waitUntil(timeoutMillis = 5_000) { purchases.previewState.value.items.size == 50 }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Load more purchases").fetchSemanticsNodes().isNotEmpty() }
             onNodeWithText("Load more purchases").performSemanticsAction(SemanticsActions.OnClick)
             waitForIdle()
-            waitUntil(timeoutMillis = 5_000) { purchases.previewState.value.items.size == 51 }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Buyer 51 · ORDER-51").fetchSemanticsNodes().isNotEmpty() }
             for (offline in listOf(false, true)) {
                 if (offline) backend.server.shutdown()
                 onNodeWithText("Buyer 51 · ORDER-51").performSemanticsAction(SemanticsActions.OnClick)
