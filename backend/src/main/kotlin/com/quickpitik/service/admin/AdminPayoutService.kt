@@ -15,6 +15,7 @@ import com.quickpitik.dto.admin.BulkPayoutsRequest
 import com.quickpitik.dto.admin.GenerateCyclesResultDto
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.dto.earnings.buildCycleId
+import com.quickpitik.dto.earnings.buildWeeklyCycleId
 import com.quickpitik.entity.PayoutAccount
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
@@ -607,12 +608,16 @@ class AdminPayoutService(
 
             val settings = photographerSettingsRepository.findById(photographerId).orElse(null)
             val handle = settings?.handle
-            val cycleId = buildCycleId(weekOf, handle)
+            val cycleId = buildWeeklyCycleId(weekOf, photographerId)
 
             val primaryAccount = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId)
             val method = primaryAccount?.method ?: PayoutMethod.GCASH
 
-            val existing = payoutCycleRepository.lockById(cycleId)
+            // Rows made before the weekly id carried the photographer: look one up
+            // only together with its owner, so another photographer's row with the
+            // same cleaned handle is never touched.
+            val existing = payoutCycleRepository.lockByIdAndPhotographerId(cycleId, photographerId)
+                ?: payoutCycleRepository.lockByIdAndPhotographerId(buildCycleId(weekOf, handle), photographerId)
 
             when {
                 existing == null -> {
@@ -631,7 +636,7 @@ class AdminPayoutService(
                     cycle.method = method
                     cycle.status = PayoutCycleStatus.PENDING
                     cycle.settledAt = null
-                    payoutCycleRepository.save(cycle)
+                    payoutCycleRepository.insert(cycle)
                     created++
                     totalAmount = totalAmount.add(amount)
                 }

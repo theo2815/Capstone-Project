@@ -66,6 +66,7 @@ data class PhotographerEventDetailDto(
     val description: String = "",
     val organizerName: String = "",
     val pricePerPhoto: Double = 0.0,
+    val deletedAt: String? = null,
 )
 
 // Event coupon (V47) — lives on the event, not Settings.
@@ -104,6 +105,17 @@ data class EarningsOverviewDto(
     val weeklySeries: List<WeeklyRevenuePointDto>,
     val thisWeekSold: Long,
     val thisMonthSold: Long
+)
+
+data class PerEventEarningDto(
+    val eventId: String,
+    val eventName: String,
+    val eventDate: String?,
+    val deletedAt: String? = null,
+    val photoCount: Int,
+    val salesCount: Int,
+    val purchaseCount: Long = 0,
+    val revenueKept: Double,
 )
 
 data class PhotographerPayoutDto(
@@ -156,8 +168,13 @@ data class PhotographerTransactionDto(
     val eventName: String?,
     val eventSlug: String?,
     val photoId: String,
+    val orderId: String? = null,
     val buyer: String,
-    val amountKept: Double
+    val amountKept: Double,
+    val isRefund: Boolean = false,
+    val refundOf: String? = null,
+    val recordedAt: String? = null,
+    val thumbnailUrl: String? = null,
 )
 
 data class TransactionsLedgerResponse(
@@ -355,6 +372,59 @@ data class PhotographerLibraryPhotoDto(
     // on the active list, set on the ?deleted=true (Deleted tab) list.
     val deletedAt: String? = null,
     val deletionStartedAt: String? = null,
+    val mediaAvailable: Boolean? = null,
+)
+
+data class PhotographerPurchasedPhotoDto(
+    val photo: PhotographerLibraryPhotoDto,
+    val purchaseCount: Long,
+    val lastPurchasedAt: String?,
+)
+
+data class PurchaseEventDto(
+    val id: String,
+    val name: String,
+    val date: String,
+    val deletedAt: String? = null,
+)
+
+data class PurchaseTransactionDto(
+    val id: String,
+    val isRefund: Boolean,
+    val refundOf: String?,
+    val amountKept: Double,
+    val discountPhp: Double,
+    val paidAt: String,
+    val recordedAt: String,
+)
+
+data class PhotographerPurchaseDto(
+    val orderId: String,
+    val photoId: String,
+    val buyer: String,
+    val purchasedAt: String?,
+    val orderCreatedAt: String,
+    val paymentMethod: String,
+    val pricePhp: Double,
+    val discountPhp: Double,
+    val paidPhp: Double,
+    val kind: String,
+    val refundStatus: String,
+    val refundPending: Boolean,
+    val refundedPhp: Double?,
+    val refundedAt: String?,
+    val netKeptPhp: Double?,
+    val transactions: List<PurchaseTransactionDto> = emptyList(),
+)
+
+data class PhotographerPhotoPurchasesResponse(
+    val photo: PhotographerLibraryPhotoDto,
+    val event: PurchaseEventDto,
+    val items: List<PhotographerPurchaseDto>,
+    val total: Long,
+    val offset: Int,
+    val limit: Int,
+    val selectedPurchase: PhotographerPurchaseDto?,
 )
 
 // Presigned URL for the photographer's own un-watermarked original — the
@@ -433,6 +503,7 @@ data class DirectUploadBeginRequest(
     val contentHash: String,
     val contentType: String,
     val sizeBytes: Long,
+    val originalFilename: String? = null,
 )
 
 data class DirectUploadBeginResponse(

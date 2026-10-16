@@ -70,15 +70,17 @@ This inserts a development API key into the `api_keys` table. Check `scripts/see
 make dev
 
 # Or manually:
-uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
+uvicorn src.main:create_app --factory --host 127.0.0.1 --port 8000 --reload
 ```
+
+The API then answers only this computer; to test from a phone or a second device, run uvicorn by hand with `--host 0.0.0.0` for that session, on a trusted network.
 
 ### 9. Verify it works
 Open your browser to: http://localhost:8000/docs
 
 This shows the Swagger UI with all endpoints. You can test them interactively.
 
-> **Note:** Swagger UI and `/redoc` are only available when `DEBUG=true`. If `DEBUG=false`, both return 404. The server also refuses to start with `DEBUG=true` when `ENVIRONMENT=production`.
+> **Note:** Swagger UI and `/redoc` are only available when `DEBUG=true`. If `DEBUG=false`, both return 404. The server also refuses to start with `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test`.
 
 Or via curl:
 ```bash
@@ -148,17 +150,13 @@ All configuration is done via environment variables. See `.env.example` for the 
 | Variable | Default | Description |
 |---|---|---|
 | `DEBUG` | `false` | Enable debug mode (opens Swagger, relaxes auth in dev) |
-| `ENVIRONMENT` | `development` | Set to `production` in prod. Startup rejects `DEBUG=true` + `production`. |
+| `ENVIRONMENT` | `development` | Set to `production` in prod. Startup rejects `DEBUG=true` unless this is set to `development`, `local` or `test`. |
 | `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik` | PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `MODEL_DIR` | `./models` | Root directory the registry looks in for model files |
 | `USE_GPU` | `false` | Enable GPU inference (needs `[gpu]` extras + CUDA runtime) |
 | `BLUR_THRESHOLD` | `100.0` | Default Laplacian variance threshold |
 | `BLUR_DETECTION_MIN_CONFIDENCE` | `0.5` | Minimum confidence for targeted blur type detection |
-| `FACE_SIMILARITY_THRESHOLD` | `0.4` | Default cosine similarity threshold for face match |
-| `FACE_MIN_ENROLLMENT_CONFIDENCE` | `0.7` | Skip faces below this detection confidence on enroll |
-| `FACE_DET_SIZE` | `640` | RetinaFace input size |
-| `BIB_MIN_CHARS` | `2` | Minimum digit count for a bib candidate |
 | `MAX_FILE_SIZE` | `26214400` | Max single upload in bytes (25MB) — matches the Spring backend's multipart ceiling |
 | `MAX_IMAGE_DIMENSION` | `12000` | Max px on the longest edge at upload. Fail-closed bomb guard, not a quality gate — enforced by both the single-image and batch validators |
 | `MAX_BATCH_SIZE` | `50` | Max files per `/batch` endpoint |
@@ -167,10 +165,11 @@ All configuration is done via environment variables. See `.env.example` for the 
 | `STREAM_CLASSIFY_MAX_SIZE` | `500` | Max files per `/classify/stream` |
 | `MAX_ACTIVE_JOBS_PER_KEY` | `10` | Backpressure cap on concurrent batch jobs per API key |
 | `JOB_RETENTION_DAYS` | `7` | Auto-delete completed/failed jobs older than this |
-| `MAX_INFERENCE_DIMENSION` | `1280` | Downscale images before inference to this max side. Shared by the face + bib pipelines, endpoints and Celery workers alike |
+| `MAX_INFERENCE_DIMENSION` | `1280` | Default longest side `validate_and_decode` downscales colour images to (blur classify then goes to `BLUR_CLASSIFY_DECODE_DIM`) |
 | `INFERENCE_SUB_BATCH_SIZE` | `50` | Sub-batch size inside Celery batch tasks |
 | `ONNX_INTRA_OP_THREADS` | `6` | ONNX intra-op thread count |
 | `BLOB_STORE_PATH` | `/tmp/quickpitik-blobs` | Shared volume for batch image staging |
+| `BLOB_RETENTION_SECONDS` | `86400` | How long a finished job's staged images are kept before `cleanup_stale_blobs` deletes them (24 h) |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | CORS allowed origins |
 | `WEBHOOK_SECRET_KEY` | (empty) | Fernet key for webhook-secret encryption at rest |
 | `LOG_LEVEL` | `INFO` | Logging level |
@@ -186,7 +185,7 @@ Make sure PostgreSQL is running: `docker compose up db -d`
 Start Redis with `docker compose up redis -d`. Authenticated requests return 503 until it is available; `/health` remains responsive.
 
 ### Models fail to load
-On first run, InsightFace and PaddleOCR download models automatically (~500MB total). Ensure you have internet access. The custom YOLOv8 bib detector ONNX must be placed manually at `models/bib_detection/yolov8n_bib.onnx` — the repo ships with one that's ready to use. The blur classifier ONNX is also optional and lives at `models/blur_classifier/blur_classifier.onnx`; if missing, `/blur/classify*` returns `MODEL_UNAVAILABLE` but `/blur/detect*` still works.
+Nothing is downloaded at startup. The blur classifier needs `models/person_detector/yolov8n_seg_person.onnx` and `models/blur_classifier/people_rule.json`; in the `blur` profile (the default) both are checked against `models/manifest.json`. `python scripts/download_models.py` reports which manifest files are missing. Without them `/blur/classify*` returns `MODEL_UNAVAILABLE` and, in the `blur` profile, readiness reports not ready, but `/blur/detect*` still works.
 
 ### Port 8000 already in use
 Either stop the other process or change the port:

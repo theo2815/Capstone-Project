@@ -6,6 +6,9 @@ export interface Event {
   name: string;
   date: string;
   location: string;
+  /** Optional for older v1 responses; null means unclassified. */
+  regionCode?: string | null;
+  provinceCode?: string | null;
   bannerUrl?: string;
   photoCount: number;
   participantCount: number;
@@ -25,6 +28,8 @@ export interface Event {
   // the default. Wire-lowercase.
   visibility?: EventVisibility;
   pricingMode?: EventPricingMode;
+  /** Review generation, supplied by privileged event responses. */
+  reviewRevision?: number;
 }
 
 export type EventVisibility = "public" | "unlisted";

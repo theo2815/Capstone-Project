@@ -15,11 +15,240 @@ import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
 
+interface PhotoWorkSnapshot {
+    val token: UUID
+    val photoId: UUID
+    val generation: Long
+    val kind: String
+    val expiresAt: java.time.Instant
+}
+
+interface PhotoFaceWork {
+    val token: UUID
+    val eventId: UUID
+    val photoId: UUID
+    val generation: Long
+    val expiresAt: java.time.Instant
+    val provider: String
+    val personName: String?
+    val personIds: String
+    val priorProvider: String?
+    val priorPersonIds: String
+    val jobIds: String
+    val batchPhotoIds: String
+    val finishedAt: java.time.Instant?
+    val facesErasedAt: java.time.Instant?
+}
+
+interface PhotoFaceTarget {
+    val eventId: UUID
+    val photoId: UUID
+}
+
 interface PhotoRepository : JpaRepository<Photo, UUID> {
 
+    @Query(value = """SELECT EXISTS (SELECT 1 FROM photos WHERE id <> :photoId
+        AND (s3_key = :key OR thumbnail_s3_key = :key OR watermark_s3_key = :key))""", nativeQuery = true)
+    fun hasOtherBlobReference(photoId: UUID, key: String): Boolean
+
+    @Query(value = "SELECT DISTINCT storage_key FROM photo_work_outputs WHERE photo_id = :photoId AND storage_key IS NOT NULL", nativeQuery = true)
+    fun erasureWorkKeys(photoId: UUID): List<String>
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photos SET deletion_started_at = COALESCE(deletion_started_at, :now),
+        deleted_at = COALESCE(deleted_at, :now), work_generation = work_generation + 1
+        WHERE id = :id AND deletion_started_at IS NULL""", nativeQuery = true)
+    fun beginErasure(id: UUID, now: OffsetDateTime): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photos SET s3_key = '', thumbnail_s3_key = NULL, watermark_s3_key = NULL,
+        alt_text = NULL, captured_at = NULL, published_at = NULL,
+        km = NULL, phash = NULL, phash_clean = NULL, phash_centre = NULL,
+        indexing_error = NULL, indexed_provider = NULL, indexed_at = NULL, purged_at = :now
+        WHERE id = :id AND deletion_started_at IS NOT NULL AND purged_at IS NULL""", nativeQuery = true)
+    fun minimizeErasedPhoto(id: UUID, now: OffsetDateTime): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = "UPDATE photos SET purged_at = NULL WHERE id = :id AND purged_at IS NOT NULL", nativeQuery = true)
+    fun clearErasureConfirmation(id: UUID): Int
+
+    // Scalar read bypasses an already-hydrated entity immediately before delivery.
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM photos WHERE id = :id AND removal_state <> 'REMOVED' AND deletion_started_at IS NULL AND purged_at IS NULL)", nativeQuery = true)
+    fun isDeliveryAvailable(@Param("id") id: UUID): Boolean
+
+    @Query(value = "SELECT id FROM photos WHERE photographer_id = :photographerId AND id IN (:ids) AND removal_state <> 'REMOVED' AND deletion_started_at IS NULL AND purged_at IS NULL", nativeQuery = true)
+    fun findDeliveryAvailableIds(photographerId: UUID, ids: Collection<UUID>): List<UUID>
+
+    // Public/free streaming also requires the current catalog predicate, not paid access.
+    @Query(value = """
+        SELECT EXISTS (SELECT 1 FROM photos p JOIN events e ON e.id = p.event_id
+            WHERE p.id = :photoId AND p.event_id = :eventId AND p.status = 'LIVE'
+            AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+            AND p.deletion_started_at IS NULL AND p.purged_at IS NULL
+            AND e.pricing_mode = 'FREE' AND e.status NOT IN ('DRAFT', 'ARCHIVED'))
+    """, nativeQuery = true)
+    fun isFreeDeliveryAvailable(eventId: UUID, photoId: UUID): Boolean
+
+    @Query(value = """
+        SELECT EXISTS (SELECT 1 FROM photos WHERE event_id = :eventId AND photographer_id = :photographerId
+            AND deleted_at IS NULL AND deletion_started_at IS NULL AND purged_at IS NULL AND removal_state <> 'REMOVED')
+    """, nativeQuery = true)
+    fun hasDeliverableOwnerPhoto(eventId: UUID, photographerId: UUID): Boolean
+
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM photos WHERE id = :id AND removal_state = 'REMOVED')", nativeQuery = true)
+    fun isRemoved(@Param("id") id: UUID): Boolean
+
+    @Query("SELECT p.removalState FROM Photo p WHERE p.id = :id")
+    fun findCurrentRemovalState(@Param("id") id: UUID): com.quickpitik.entity.RemovalState?
+
+    @Query("""
+        SELECT DISTINCT p FROM Photo p LEFT JOIN p.bibs b
+        WHERE p.eventId = :eventId AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
+        ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
+    """, countQuery = """
+        SELECT COUNT(DISTINCT p) FROM Photo p LEFT JOIN p.bibs b
+        WHERE p.eventId = :eventId AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
+    """)
+    fun searchForRemovalReview(eventId: UUID, bib: String, pageable: Pageable): Page<Photo>
+
+    @Query("""
+        SELECT DISTINCT p FROM Photo p JOIN p.facePersons fp
+        WHERE p.eventId = :eventId AND fp.aiPersonId IN :personIds
+        ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
+    """)
+    fun findRemovalReviewCandidates(eventId: UUID, personIds: Collection<String>): List<Photo>
+
+    @Query(value = "SELECT id FROM photos WHERE event_id = :eventId ORDER BY id FOR NO KEY UPDATE", nativeQuery = true)
+    fun lockIdsByEventIdForUpdate(@Param("eventId") eventId: UUID): List<UUID>
+
+    // Same row locks and order as findAllByIdForUpdate, without hydrating entities.
+    // NO KEY UPDATE is what Hibernate's PESSIMISTIC_WRITE emits on PostgreSQL: a plain
+    // FOR UPDATE would also block inserts of rows that reference the photo (cart, orders).
+    @Query(value = "SELECT id FROM photos WHERE id IN (:ids) ORDER BY id FOR NO KEY UPDATE", nativeQuery = true)
+    fun lockIdsForUpdate(@Param("ids") ids: Collection<UUID>): List<UUID>
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT DISTINCT p FROM Photo p WHERE p.id IN :ids ORDER BY p.id")
+    // DISTINCT forces follow-on locking: checkout could hydrate availability
+    // before waiting for a review's lock. Lock the row in the initial read.
+    @Query("SELECT p FROM Photo p WHERE p.id IN :ids ORDER BY p.id")
     fun findAllByIdForUpdate(@Param("ids") ids: Collection<UUID>): List<Photo>
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """
+        UPDATE photos p
+        SET work_generation = work_generation + 1, removal_state = CASE WHEN EXISTS (
+            SELECT 1 FROM photo_removal_items i
+            WHERE i.photo_id_snapshot = p.id AND i.state IN ('VERIFIED', 'RETAINED_RESTRICTED')
+        ) THEN 'REVIEW' ELSE 'NONE' END
+        WHERE p.id IN :ids AND p.removal_state <> 'REMOVED'
+          AND p.removal_state <> CASE WHEN EXISTS (
+            SELECT 1 FROM photo_removal_items i
+            WHERE i.photo_id_snapshot = p.id AND i.state IN ('VERIFIED', 'RETAINED_RESTRICTED')
+          ) THEN 'REVIEW' ELSE 'NONE' END
+        """, nativeQuery = true)
+    fun refreshRemovalState(@Param("ids") ids: Collection<UUID>): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Photo p SET p.removalState = com.quickpitik.entity.RemovalState.REMOVED, p.workGeneration = p.workGeneration + 1 " +
+        "WHERE p.id = :id AND p.removalState <> com.quickpitik.entity.RemovalState.REMOVED")
+    fun authorizeRemoval(@Param("id") id: UUID): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photos SET
+        watermark_work_token = CASE WHEN :kind = 'WATERMARK' THEN :token ELSE watermark_work_token END,
+        watermark_work_expires_at = CASE WHEN :kind = 'WATERMARK' THEN :expiry ELSE watermark_work_expires_at END,
+        indexing_work_token = CASE WHEN :kind = 'INDEXING' THEN :token ELSE indexing_work_token END,
+        indexing_work_expires_at = CASE WHEN :kind = 'INDEXING' THEN :expiry ELSE indexing_work_expires_at END
+        WHERE id = :id AND removal_state = 'NONE' AND deleted_at IS NULL AND deletion_started_at IS NULL
+          AND CASE WHEN :kind = 'WATERMARK' THEN watermark_work_token ELSE indexing_work_token END IS NULL""", nativeQuery = true)
+    fun claimWork(id: UUID, kind: String, token: UUID, expiry: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = """INSERT INTO photo_work_outputs(token, photo_id, event_id, generation, kind, provider,
+        expires_at, storage_key, person_name, prior_provider, prior_person_ids) VALUES
+        (:token, :photoId, :eventId, :generation, :kind, :provider, :expiry, :key, :personName, :priorProvider, CAST(:priorPersons AS jsonb))""", nativeQuery = true)
+    fun recordWork(token: UUID, photoId: UUID, eventId: UUID, generation: Long, kind: String,
+        provider: String, expiry: OffsetDateTime, key: String?, personName: String?, priorProvider: String?, priorPersons: String): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET person_ids = person_ids || CAST(:persons AS jsonb), faces_erased_at = NULL WHERE token = :token", nativeQuery = true)
+    fun recordWorkPersons(token: UUID, persons: String): Int
+
+    @Query(value = """SELECT w.token, w.event_id AS "eventId", w.photo_id AS "photoId", w.generation,
+        w.expires_at AS "expiresAt", w.provider, w.person_name AS "personName", w.person_ids::text AS "personIds",
+        w.prior_provider AS "priorProvider", w.prior_person_ids::text AS "priorPersonIds", w.job_ids::text AS "jobIds",
+        COALESCE((SELECT jsonb_agg(bp.photo_id ORDER BY bp.idx)::text FROM ai_index_batch_photos bp
+            WHERE bp.batch_id = w.batch_id), '[]') AS "batchPhotoIds",
+        w.finished_at AS "finishedAt", w.faces_erased_at AS "facesErasedAt"
+        FROM photo_work_outputs w WHERE w.event_id = :eventId AND w.photo_id = :photoId AND w.kind = 'INDEXING'
+        ORDER BY w.created_at, w.token""", nativeQuery = true)
+    fun faceWorkForPhoto(eventId: UUID, photoId: UUID): List<PhotoFaceWork>
+
+    @Query(value = """SELECT DISTINCT w.event_id AS "eventId", w.photo_id AS "photoId"
+        FROM photo_work_outputs w WHERE w.kind = 'INDEXING' AND w.faces_erased_at IS NULL
+        AND w.cleanup_next_attempt_at <= CURRENT_TIMESTAMP
+        AND NOT EXISTS (SELECT 1 FROM photos p WHERE p.id = w.photo_id
+            AND p.removal_state <> 'REMOVED' AND p.deletion_started_at IS NULL)
+        ORDER BY w.event_id, w.photo_id""", nativeQuery = true)
+    fun faceWorkPending(pageable: Pageable): List<PhotoFaceTarget>
+
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = """UPDATE photo_work_outputs SET cleanup_next_attempt_at = :retryAt
+        WHERE event_id = :eventId AND photo_id = :photoId AND kind = 'INDEXING' AND faces_erased_at IS NULL""", nativeQuery = true)
+    fun deferFaceCleanup(eventId: UUID, photoId: UUID, retryAt: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = """UPDATE photo_work_outputs SET faces_erased_at = :now
+        WHERE token = :token AND finished_at IS NOT NULL AND person_ids = CAST(:persons AS jsonb)""", nativeQuery = true)
+    fun confirmFaceWorkErased(token: UUID, persons: String, now: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = """UPDATE photo_work_outputs SET
+        provider = CASE WHEN :prior THEN provider ELSE :provider END,
+        prior_provider = CASE WHEN :prior THEN :provider ELSE prior_provider END
+        WHERE token = :token AND event_id = :eventId AND photo_id = :photoId AND kind = 'INDEXING'
+          AND person_name = CAST(:photoId AS text)
+          AND COALESCE(CASE WHEN :prior THEN prior_provider ELSE provider END, 'unknown') IN ('unknown', 'UNKNOWN')
+          AND CASE WHEN :prior THEN prior_person_ids ELSE person_ids END = CAST(:persons AS jsonb)""", nativeQuery = true)
+    fun attributeFaceWorkProvider(token: UUID, eventId: UUID, photoId: UUID, prior: Boolean, persons: String, provider: String): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET batch_id = :batchId WHERE token = :token", nativeQuery = true)
+    fun attributeWorkBatch(token: UUID, batchId: UUID): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET job_ids = job_ids || CAST(:jobs AS jsonb) WHERE token = :token", nativeQuery = true)
+    fun recordWorkJob(token: UUID, jobs: String): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """WITH renewed AS (
+        UPDATE photos SET indexing_work_expires_at = :expiry
+        WHERE id = :photoId AND indexing_work_token = :token RETURNING id
+        ) UPDATE photo_work_outputs SET expires_at = :expiry
+        WHERE token = :token AND finished_at IS NULL AND EXISTS (SELECT 1 FROM renewed)""", nativeQuery = true)
+    fun renewIndexingWork(photoId: UUID, token: UUID, expiry: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET finished_at = :now WHERE token = :token AND finished_at IS NULL", nativeQuery = true)
+    fun finishWorkOutput(token: UUID, now: OffsetDateTime): Int
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """UPDATE photos SET
+        watermark_work_token = CASE WHEN watermark_work_token = :token THEN NULL ELSE watermark_work_token END,
+        watermark_work_expires_at = CASE WHEN watermark_work_token = :token THEN NULL ELSE watermark_work_expires_at END,
+        indexing_work_token = CASE WHEN indexing_work_token = :token THEN NULL ELSE indexing_work_token END,
+        indexing_work_expires_at = CASE WHEN indexing_work_token = :token THEN NULL ELSE indexing_work_expires_at END
+        WHERE id = :id""", nativeQuery = true)
+    fun finishWork(id: UUID, token: UUID): Int
+
+    @Query(value = """SELECT token, photo_id AS "photoId", generation, kind, expires_at AS "expiresAt"
+        FROM photo_work_outputs WHERE batch_id = :batchId ORDER BY photo_id""", nativeQuery = true)
+    fun workForBatch(batchId: UUID): List<PhotoWorkSnapshot>
+
+    @Query(value = """SELECT EXISTS (SELECT 1 FROM photo_work_outputs
+        WHERE photo_id = :photoId AND finished_at IS NULL AND (:kind = 'ANY' OR kind = :kind))""", nativeQuery = true)
+    fun hasUnfinishedWork(photoId: UUID, kind: String): Boolean
 
     @Modifying
     @Query("UPDATE Photo p SET p.deletedAt = :now WHERE p.photographerId = :photographerId " +
@@ -58,7 +287,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Modifying
     @Query(
         "UPDATE Photo p SET p.status = com.quickpitik.entity.PhotoStatus.PROCESSING, p.processingAttempts = 0 " +
-            "WHERE p.eventId = :eventId AND p.status = com.quickpitik.entity.PhotoStatus.LIVE",
+            "WHERE p.eventId = :eventId AND p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
+            "AND p.removalState = com.quickpitik.entity.RemovalState.NONE",
     )
     fun resetForRewatermark(@Param("eventId") eventId: UUID): Int
 
@@ -76,7 +306,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query(
         "UPDATE Photo p SET p.indexingStatus = com.quickpitik.entity.IndexingStatus.PENDING, " +
             "p.indexingAttempts = 0, p.indexingError = null " +
-            "WHERE p.eventId = :eventId AND p.indexingStatus IN :statuses",
+            "WHERE p.eventId = :eventId AND p.indexingStatus IN :statuses " +
+            "AND p.removalState = com.quickpitik.entity.RemovalState.NONE",
     )
     fun requeueIndexing(
         @Param("eventId") eventId: UUID,
@@ -91,6 +322,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT p FROM Photo p
         WHERE p.status = com.quickpitik.entity.PhotoStatus.PROCESSING
           AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.watermarkWorkToken IS NULL
           AND p.processingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -112,7 +346,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
             "p.phashClean = :phashClean, p.phashCentre = :phashCentre, p.publishedAt = CURRENT_TIMESTAMP, " +
             "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
-            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING AND p.deletedAt IS NULL",
+            "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING AND p.deletedAt IS NULL " +
+            "AND p.deletionStartedAt IS NULL AND p.removalState = com.quickpitik.entity.RemovalState.NONE",
     )
     fun publishWatermarked(
         @Param("id") id: UUID,
@@ -157,7 +392,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // Returns [photographer_id, event_id, distance] — deliberately no photo
     // id, so the answer can never become a photo URL.
     // ponytail: full scan of LIVE rows; a BK-tree or pg extension when photos > ~1M.
-    // `LIVE and not trashed` = Photo.isSellable — JPQL/SQL cannot call the
+    // `LIVE, not trashed, removal NONE` = Photo.isSellable — JPQL/SQL cannot call the
     // Kotlin helper, so this copy changes with it.
     @Query(
         value = """
@@ -168,7 +403,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
                  COALESCE(bit_count(CAST((p.phash_centre # :h) AS bit(64))), 64)
                ) AS d
         FROM photos p
-        WHERE p.status = 'LIVE' AND p.deleted_at IS NULL AND p.phash IS NOT NULL
+        WHERE p.status = 'LIVE' AND p.deleted_at IS NULL AND p.removal_state = 'NONE' AND p.phash IS NOT NULL
         ORDER BY d ASC
         LIMIT 1
         """,
@@ -181,7 +416,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // while the visitor pages; the seeded hash only varies near-equal rows.
     // ponytail: this window ranks the event's LIVE rows; materialize only if
     // EXPLAIN shows it hurting at real event scale.
-    // `LIVE and not trashed` = Photo.isSellable — JPQL/SQL cannot call the
+    // `LIVE, not trashed, removal NONE` = Photo.isSellable — JPQL/SQL cannot call the
     // Kotlin helper, so this copy changes with it.
     @Query(
         value = """
@@ -199,6 +434,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
             WHERE p.event_id = :eventId
               AND p.status = 'LIVE'
               AND p.deleted_at IS NULL
+              AND p.removal_state = 'NONE'
               AND p.published_at <= :snapshotAt
         )
         SELECT p.*
@@ -217,6 +453,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.event_id = :eventId
           AND p.status = 'LIVE'
           AND p.deleted_at IS NULL
+          AND p.removal_state = 'NONE'
           AND p.published_at <= :snapshotAt
         """,
         nativeQuery = true,
@@ -240,6 +477,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
@@ -249,6 +487,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
         """,
     )
@@ -266,6 +505,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND fp.aiPersonId IN :aiPersonIds
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
@@ -275,6 +515,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND fp.aiPersonId IN :aiPersonIds
         """,
     )
@@ -344,6 +585,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.photographerId = :photographerId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
         """,
         countQuery = """
         SELECT COUNT(p) FROM Photo p
@@ -351,6 +593,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.photographerId = :photographerId
           AND p.status = :status
           AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
         """,
     )
     fun findPhotographerLibraryByStatus(
@@ -360,7 +603,28 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         pageable: Pageable,
     ): Page<Photo>
 
+    // Public catalog counts use the same predicate as Photo.isSellable;
+    // upload/owner/admin counters retain their existing meaning.
+    @Query("SELECT COUNT(p) FROM Photo p WHERE p.eventId = :eventId " +
+        "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE")
+    fun countPublicForEvent(@Param("eventId") eventId: UUID): Long
+
+    @Query("SELECT p.eventId AS eventId, COUNT(p) AS photoCount FROM Photo p WHERE p.eventId IN :eventIds " +
+        "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE GROUP BY p.eventId")
+    fun countPublicByEventIds(@Param("eventIds") eventIds: Collection<UUID>): List<PublicEventPhotoCount>
+
+    @Query("SELECT p.eventId AS eventId, COUNT(p) AS photoCount FROM Photo p WHERE p.eventId IN :eventIds " +
+        "AND p.photographerId = :photographerId " +
+        "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE GROUP BY p.eventId")
+    fun countPublicForPhotographerByEventIds(@Param("eventIds") eventIds: Collection<UUID>,
+        @Param("photographerId") photographerId: UUID): List<PublicEventPhotoCount>
+
     fun findFirstByIdAndPhotographerId(id: UUID, photographerId: UUID): Photo?
+
+    fun findByIdAndPhotographerIdAndDeletionStartedAtIsNull(id: UUID, photographerId: UUID): Photo?
 
     fun existsByS3Key(s3Key: String): Boolean
 
@@ -426,6 +690,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT p FROM Photo p
         WHERE p.indexingStatus IN :statuses
           AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingWorkToken IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -446,6 +713,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         SELECT DISTINCT p.eventId FROM Photo p
         WHERE p.indexingStatus IN :statuses
           AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingWorkToken IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         """,
@@ -491,6 +761,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         WHERE p.eventId = :eventId
           AND p.indexingStatus IN :statuses
           AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingWorkToken IS NULL
           AND p.indexingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -510,4 +783,9 @@ interface PhotoBundleRow {
     val id: UUID
     val s3Key: String
     val bib: String?
+}
+
+interface PublicEventPhotoCount {
+    val eventId: UUID
+    val photoCount: Long
 }

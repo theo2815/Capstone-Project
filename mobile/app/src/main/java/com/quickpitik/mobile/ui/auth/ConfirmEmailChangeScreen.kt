@@ -44,7 +44,7 @@ fun ConfirmEmailChangeScreen(
 ) {
     val context = LocalContext.current
     // Same one-shot rule as VerifyEmailScreen. On success the ViewModel has
-    // already cleared this phone's session, forcing a sign-in with the new email.
+    // already signed this phone out if its own account changed.
     val key = token.orEmpty()
     LaunchedEffect(key) { viewModel.confirmEmailChange(key) }
     val links by viewModel.emailLinks.collectAsState()
@@ -68,6 +68,9 @@ fun ConfirmEmailChangeScreen(
                 )
             }
             is EmailLinkState.Success -> {
+                // Still signed in: the link changed another account (or the check
+                // got no answer), so this phone was not signed out.
+                val signedIn = remember { SessionManager.getInstance(context).getAccessToken() != null }
                 Icon(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = "Success",
@@ -83,7 +86,7 @@ fun ConfirmEmailChangeScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = state.message?.takeIf { it.isNotBlank() }
+                    text = if (signedIn) "Email change confirmed. This phone is still signed in." else state.message?.takeIf { it.isNotBlank() }
                         ?: "Email updated successfully! Please sign in again with your new address.",
                     color = Slate,
                     fontSize = 16.sp,
@@ -98,7 +101,7 @@ fun ConfirmEmailChangeScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Bone),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Sign In Again", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (signedIn) "Go back" else "Sign In Again", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             is EmailLinkState.Error -> {

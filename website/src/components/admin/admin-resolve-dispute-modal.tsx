@@ -94,6 +94,7 @@ export function AdminResolveDisputeModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel="Resolving…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Resolve ${disputeId}`}

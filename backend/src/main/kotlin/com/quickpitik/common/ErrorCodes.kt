@@ -59,9 +59,17 @@ object ErrorCodes {
     // the generic CONFLICT so clients can steer to a free re-download instead
     // of the QR-failure copy. See OrderService.reserveCheckout.
     const val ALREADY_PURCHASED = "ALREADY_PURCHASED"
+    /** 409 on POST /orders for a guest: these photos are already in another
+     *  checkout that is waiting for payment and was started under a different
+     *  Idempotency-Key. Carries no order data. The guest finishes the earlier
+     *  checkout (same key) or signs in: an unlinked pending order may never
+     *  expire, and signed-in checkouts do not see guest orders. */
+    const val CHECKOUT_IN_PROGRESS = "CHECKOUT_IN_PROGRESS"
     const val ORDER_NOT_FOUND = "ORDER_NOT_FOUND"
     const val PAYMENT_FAILED = "PAYMENT_FAILED"
     const val INVALID_IDEMPOTENCY_KEY = "INVALID_IDEMPOTENCY_KEY"
+    const val ADMIN_COMMAND_RECOVERY_REQUIRED = "ADMIN_COMMAND_RECOVERY_REQUIRED"
+    const val ADMIN_COMMAND_NOT_FOUND = "ADMIN_COMMAND_NOT_FOUND"
     const val IDEMPOTENT_REPLAY_IN_PROGRESS = "IDEMPOTENT_REPLAY_IN_PROGRESS"
     // Photographer coupons (V45). INVALID covers unknown + inactive so a guess
     // can't tell a switched-off code from a nonexistent one.

@@ -80,11 +80,12 @@ export function FlagsQueue() {
   // pushed off the end of the newest-first 200-row page by closed history.
   const openPage = useAdminFlags({ status: "open" });
   const allPage = useAdminFlags();
-  const { hide, dismiss, escalate } = useFlagActions();
+  const { hide, dismiss, escalate, isPending, pendingAction } = useFlagActions();
   const { showToast } = useToast();
 
   const [query, setQuery] = useState("");
   const [rowId, setRowId] = useUrlState<string>("row", "");
+  const submitting = isPending(rowId);
   const [drawerHideOpen, setDrawerHideOpen] = useState(false);
   const [drawerEscalateOpen, setDrawerEscalateOpen] = useState(false);
   const [drawerConfirmDismiss, setDrawerConfirmDismiss] = useState(false);
@@ -165,7 +166,7 @@ export function FlagsQueue() {
     [filtered],
   );
 
-  const drawerEscDisabled = drawerHideOpen || drawerEscalateOpen;
+  const drawerEscDisabled = submitting || drawerHideOpen || drawerEscalateOpen;
 
   // Pagination — load-more model. Open keeps full visibility — that's
   // the actionable triage list. Read-only history slabs start at 10 and
@@ -240,30 +241,28 @@ export function FlagsQueue() {
     if (!openRow) return;
     const id = openRow.id;
     try {
-      if (!(await action(id))) return;
+      if (!(await action(id))) return false;
       showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${id}` });
       setRowId("");
+      return true;
     } catch {
       showToast({
         kind: "error",
-        message: `Could not ${verb} ${id} — nothing changed. Try again.`,
+        message: `Could not ${verb} ${id} — check the current status before retrying.`,
       });
     }
   }
 
-  function handleDrawerHideSubmit(reason: string | null) {
-    setDrawerHideOpen(false);
-    void runDrawerAction("hide", (id) => hide(id, reason));
+  async function handleDrawerHideSubmit(reason: string | null) {
+    if (await runDrawerAction("hide", (id) => hide(id, reason))) setDrawerHideOpen(false);
   }
 
-  function handleDrawerDismissConfirm() {
-    setDrawerConfirmDismiss(false);
-    void runDrawerAction("dismiss", (id) => dismiss(id));
+  async function handleDrawerDismissConfirm() {
+    if (await runDrawerAction("dismiss", (id) => dismiss(id))) setDrawerConfirmDismiss(false);
   }
 
-  function handleDrawerEscalateSubmit(note: string | null) {
-    setDrawerEscalateOpen(false);
-    void runDrawerAction("escalate", (id) => escalate(id, note));
+  async function handleDrawerEscalateSubmit(note: string | null) {
+    if (await runDrawerAction("escalate", (id) => escalate(id, note))) setDrawerEscalateOpen(false);
   }
 
   // Only register H when the flag can still be hidden (open or escalated)
@@ -272,6 +271,7 @@ export function FlagsQueue() {
     active:
       openRow !== null &&
       canHide(openRow) &&
+      !submitting &&
       !drawerHideOpen &&
       !drawerEscalateOpen,
     verbs: openRow
@@ -391,6 +391,7 @@ export function FlagsQueue() {
           subtitle={<FlagSubtitle flag={openRow} />}
           actions={
             <FlagDrawerActions
+              submitting={submitting}
               flag={openRow}
               confirmDismiss={drawerConfirmDismiss}
               onHide={() => setDrawerHideOpen(true)}
@@ -402,6 +403,7 @@ export function FlagsQueue() {
             />
           }
         >
+          {submitting && <p role="status">{pendingAction(rowId)}</p>}
           <FlagDetailBody flag={openRow} />
         </AdminDetailDrawer>
       )}
@@ -409,12 +411,14 @@ export function FlagsQueue() {
       {openRow && (
         <>
           <AdminFlagHideModal
+          submitting={submitting}
             open={drawerHideOpen}
             onClose={() => setDrawerHideOpen(false)}
             onSubmit={handleDrawerHideSubmit}
             flagId={openRow.id}
           />
           <AdminEscalateModal
+          submitting={submitting}
             open={drawerEscalateOpen}
             onClose={() => setDrawerEscalateOpen(false)}
             onSubmit={handleDrawerEscalateSubmit}
@@ -520,6 +524,7 @@ function FlagSubtitle({ flag }: { flag: Flag }) {
 }
 
 function FlagDrawerActions({
+  submitting,
   flag,
   confirmDismiss,
   onHide,
@@ -527,6 +532,7 @@ function FlagDrawerActions({
   onConfirmDismiss,
   onEscalate,
 }: {
+  submitting: boolean;
   flag: Flag;
   confirmDismiss: boolean;
   onHide: () => void;
@@ -546,14 +552,14 @@ function FlagDrawerActions({
     return (
       <>
         <button
-          type="button"
+          type="button" disabled={submitting}
           onClick={onToggleConfirmDismiss}
           className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
           Cancel
         </button>
         <button
-          type="button"
+          type="button" disabled={submitting}
           onClick={onConfirmDismiss}
           className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
@@ -567,7 +573,7 @@ function FlagDrawerActions({
     <>
       {canEscalate(flag) && (
         <button
-          type="button"
+          type="button" disabled={submitting}
           onClick={onEscalate}
           className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
@@ -575,7 +581,7 @@ function FlagDrawerActions({
         </button>
       )}
       <button
-        type="button"
+        type="button" disabled={submitting}
         onClick={onToggleConfirmDismiss}
         className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
       >
@@ -583,7 +589,7 @@ function FlagDrawerActions({
       </button>
       {canHide(flag) && (
         <button
-          type="button"
+          type="button" disabled={submitting}
           onClick={onHide}
           className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
         >

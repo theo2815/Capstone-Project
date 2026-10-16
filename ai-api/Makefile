@@ -2,11 +2,11 @@
 
 # Run the API server (production mode)
 run:
-	uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --workers 2
+	uvicorn src.main:create_app --factory --host 127.0.0.1 --port 8000 --workers 2
 
 # Run the API server (development mode with reload)
 dev:
-	uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
+	uvicorn src.main:create_app --factory --host 127.0.0.1 --port 8000 --reload
 
 # Run tests
 test:

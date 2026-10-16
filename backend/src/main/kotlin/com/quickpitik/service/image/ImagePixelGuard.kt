@@ -16,15 +16,18 @@ object ImagePixelGuard {
     const val MAX_PIXELS = 80_000_000L
 
     // maxPixels is parameterized for tests (a real >80 MP fixture would be
-    // absurd to ship); production call sites use the default.
-    fun exceedsPixelBudget(bytes: ByteArray, maxPixels: Long = MAX_PIXELS): Boolean =
+    // absurd to ship); production call sites use the default. maxEdge also
+    // refuses a long, thin image, whose row buffers the pixel cap misses.
+    fun exceedsPixelBudget(bytes: ByteArray, maxPixels: Long = MAX_PIXELS, maxEdge: Int = Int.MAX_VALUE): Boolean =
         ImageIO.createImageInputStream(ByteArrayInputStream(bytes)).use { stream ->
             val readers = ImageIO.getImageReaders(stream)
             if (!readers.hasNext()) return false
             val reader = readers.next()
             try {
                 reader.input = stream
-                reader.getWidth(0).toLong() * reader.getHeight(0).toLong() > maxPixels
+                val width = reader.getWidth(0)
+                val height = reader.getHeight(0)
+                width.toLong() * height.toLong() > maxPixels || maxOf(width, height) > maxEdge
             } catch (ex: Exception) {
                 false
             } finally {

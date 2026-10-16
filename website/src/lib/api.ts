@@ -1,10 +1,11 @@
 import { captureAuthSession } from "./auth-session";
 import { getAccessToken, getRefreshToken, setTokens, clearTokens } from "./auth";
-import { API_BASE_URL } from "./constants";
+import { API_BASE_URL, ROUTES } from "./constants";
+import { useAuthStore } from "@/store/auth-store";
 import { buildLoginRedirect, currentUrlForRedirect } from "./redirect";
 import type { ApiResponse } from "@/types/api";
 
-type ApiRequestOptions = RequestInit & { timeoutMs?: number };
+type ApiRequestOptions = RequestInit & { timeoutMs?: number; responseType?: "blob" };
 
 class ApiClient {
   private baseUrl: string;
@@ -39,7 +40,7 @@ class ApiClient {
     // FormData gets the long budget: a 10 MB cover on venue Wi-Fi is slow.
     let res: Response;
     try {
-      const { timeoutMs, ...requestOptions } = options ?? {};
+      const { timeoutMs, responseType, ...requestOptions } = options ?? {};
       const timeout = AbortSignal.timeout(timeoutMs ?? (isFormData ? 120_000 : 30_000));
       res = await fetch(`${this.baseUrl}${path}`, {
         ...requestOptions,
@@ -48,6 +49,10 @@ class ApiClient {
           ? AbortSignal.any([options.signal, timeout])
           : timeout,
       });
+      // Decode only successful binary responses; errors retain the envelope path.
+      if (res.ok && responseType === "blob") {
+        return { data: await res.blob() as T, res };
+      }
     } catch (e) {
       if (options?.signal?.aborted) {
         throw new DOMException("Request cancelled", "AbortError");
@@ -93,7 +98,7 @@ class ApiClient {
       // a guest must never be bounced to /login mid-flow — while protected
       // ones 401 again and reach redirectToLogin on the retry.
       if (!retried && token) {
-        clearTokens();
+        dropTokens();
         return this.fetchRaw<T>(path, options, true);
       }
       this.redirectToLogin();
@@ -152,6 +157,10 @@ class ApiClient {
     return this.fetch<T>(path, { method: "GET", ...options });
   }
 
+  async getBlob(path: string, options?: { signal?: AbortSignal }): Promise<Blob> {
+    return this.fetch<Blob>(path, { method: "GET", ...options, responseType: "blob" });
+  }
+
   // GET that also reads the X-Total-Count response header (CORS-exposed) for
   // endpoints whose body stays a bare array for mobile parity (message inboxes).
   // `total` is null when the header is absent or unparseable.
@@ -192,8 +201,13 @@ class ApiClient {
 
   private redirectToLogin(): void {
     if (typeof window !== "undefined") {
-      clearTokens();
-      window.location.href = buildLoginRedirect(currentUrlForRedirect());
+      dropTokens();
+      // Signed out on purpose (store cleared in this page's life): the next
+      // account must not be sent to this page.
+      const { isAuthenticated, sessionVersion } = useAuthStore.getState();
+      window.location.href = !isAuthenticated && sessionVersion > 0
+        ? ROUTES.LOGIN
+        : buildLoginRedirect(currentUrlForRedirect());
     }
   }
 }
@@ -206,6 +220,24 @@ type StepUpHandler = () => Promise<string | null>;
 let stepUpHandler: StepUpHandler | null = null;
 export function setStepUpHandler(handler: StepUpHandler | null): void {
   stepUpHandler = handler;
+}
+
+// The sign-out wipe (user-scoped stores + Query cache), registered by
+// <AuthHydrator>. A handler rather than an import: auth-reset imports the
+// cart store, which imports api-cart, which imports this file.
+let sessionEndHandler: (() => void) | null = null;
+export function setSessionEndHandler(handler: (() => void) | null): void {
+  sessionEndHandler = handler;
+}
+
+// Every place this client drops tokens. A signed-in session's cart, bookmarks
+// and pending payment go with them, as on sign-out; captureGuestBuffer()
+// relies on it. Guests reach redirectToLogin too, and their cart must survive.
+// No logout() here: redirectToLogin reads isAuthenticated to send an expired
+// user back to their page.
+function dropTokens(): void {
+  clearTokens();
+  if (useAuthStore.getState().isAuthenticated) sessionEndHandler?.();
 }
 
 function hasStepUpRequired<T>(data: ApiResponse<T> | null): boolean {

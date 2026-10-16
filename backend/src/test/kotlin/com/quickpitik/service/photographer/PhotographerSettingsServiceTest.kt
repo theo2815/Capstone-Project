@@ -10,6 +10,7 @@ import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -28,6 +29,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder
 import java.sql.SQLException
+import java.util.Base64
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -159,6 +161,32 @@ class PhotographerSettingsServiceTest {
     }
 
     @Test
+    fun `truncated WebP cover is rejected before storage or settings writes`() {
+        val bytes = Base64.getDecoder().decode("UklGRjIAAABXRUJQVlA4ICYAAAA=")
+
+        val ex = assertFailsWith<ValidationException> {
+            service().uploadCover(userId, bytes, "image/webp")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("file", ex.field)
+        Mockito.verifyNoInteractions(storageService, photographerSettingsRepository)
+    }
+
+    @Test
+    fun `truncated WebP watermark is rejected before storage or settings writes`() {
+        val bytes = Base64.getDecoder().decode("UklGRjIAAABXRUJQVlA4ICYAAAA=")
+
+        val ex = assertFailsWith<ValidationException> {
+            service().uploadWatermark(userId, bytes, "image/webp")
+        }
+
+        assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, ex.code)
+        assertEquals("file", ex.field)
+        Mockito.verifyNoInteractions(storageService, photographerSettingsRepository)
+    }
+
+    @Test
     fun `cover dimensions over 80MP are rejected before storage`() {
         val ex = assertFailsWith<ValidationException> {
             service().uploadCover(userId, overBudgetPngHeader(), "image/png")
@@ -287,5 +315,88 @@ class PhotographerSettingsServiceTest {
         val result = service().collectMissing(userId, completeSettings())
 
         assertTrue(result.isComplete)
+    }
+
+    private fun stubVerification(settings: PhotographerSettings, user: User = userNoAvatar().apply {
+        avatarUrl = "https://example.test/avatar.jpg"
+    }) {
+        Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(user))
+        Mockito.`when`(userRepository.lockById(userId)).thenReturn(user)
+        Mockito.`when`(photographerSettingsRepository.findById(userId)).thenReturn(Optional.of(settings))
+        Mockito.`when`(photographerSettingsRepository.findByUserIdForUpdate(userId)).thenReturn(settings)
+        Mockito.`when`(photographerSettingsRepository.save(anyArg<PhotographerSettings>())).thenAnswer { it.arguments[0] }
+        Mockito.`when`(socialLinkRepository.countByUserId(userId)).thenReturn(1L)
+        Mockito.`when`(payoutAccountRepository.countByUserIdAndQrS3KeyIsNotNull(userId)).thenReturn(1L)
+    }
+
+    @Test
+    fun `an approved photographer can deliberately submit a new review generation`() {
+        val settings = completeSettings()
+        stubVerification(settings)
+        assertEquals("pending", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertEquals(1L, settings.verificationRevision)
+        Mockito.verify(eventPublisher).publishEvent(anyArg<Any>())
+    }
+
+    @Test
+    fun `repeated pending submission does not create another generation or notification`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.PENDING }
+        stubVerification(settings)
+        val service = service()
+        assertEquals("pending", service.submitVerification(userId).status)
+        assertEquals("pending", service.submitVerification(userId).status)
+        Mockito.verifyNoInteractions(eventPublisher)
+        assertEquals(0L, settings.verificationRevision)
+    }
+
+    @Test
+    fun `withdraw advances once from pending or approved and repeated withdrawal is a no-op`() {
+        for (state in listOf(VerificationStatus.PENDING, VerificationStatus.APPROVED)) {
+            val settings = completeSettings().apply { verificationStatus = state }
+            stubVerification(settings)
+            val service = service()
+            assertEquals("incomplete", service.withdrawVerification(userId).status)
+            assertEquals(1L, settings.verificationRevision)
+            assertEquals("incomplete", service.withdrawVerification(userId).status)
+            assertEquals(1L, settings.verificationRevision)
+        }
+        Mockito.verifyNoInteractions(eventPublisher)
+    }
+
+    @Test
+    fun `incomplete submission preserves stored state and generation`() {
+        val settings = completeSettings().apply { watermarkS3Key = null }
+        stubVerification(settings)
+        val result = service().submitVerification(userId)
+        assertEquals("incomplete", result.status)
+        assertEquals(listOf("WATERMARK"), result.missingCodes)
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(0L, settings.verificationRevision)
+        Mockito.verifyNoInteractions(eventPublisher)
+    }
+
+    @Test
+    fun `verification writers refuse a wrong role even if settings exist`() {
+        stubVerification(completeSettings(), userNoAvatar().apply { role = Role.RUNNER; avatarUrl = "https://example.test/avatar.jpg" })
+        assertEquals(ErrorCodes.FORBIDDEN, assertFailsWith<ConflictException> { service().submitVerification(userId) }.code)
+        assertEquals(ErrorCodes.FORBIDDEN, assertFailsWith<ConflictException> { service().withdrawVerification(userId) }.code)
+        Mockito.verifyNoInteractions(eventPublisher)
+    }
+
+    @Test
+    fun `resubmission does not reinstate a suspended photographer`() {
+        val settings = completeSettings()
+        val user = userNoAvatar().apply {
+            avatarUrl = "https://example.test/avatar.jpg"
+            suspendedAt = java.time.OffsetDateTime.now()
+            suspensionReason = "Original suspension"
+        }
+        stubVerification(settings, user)
+        val result = service().submitVerification(userId)
+        assertEquals("pending", result.status)
+        assertEquals(user.suspendedAt.toString(), result.suspendedAt)
+        assertEquals("Original suspension", result.suspensionReason)
+        assertEquals(1L, settings.verificationRevision)
     }
 }

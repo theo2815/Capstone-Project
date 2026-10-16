@@ -48,6 +48,7 @@ class PublicPhotographerService(
     private val publicProperties: PublicProperties,
     private val eventDtoMapper: EventDtoMapper,
     private val userDtoMapper: UserDtoMapper,
+    private val photoMetadataService: PhotoMetadataService,
 ) {
     fun getProfile(handle: String): PhotographerProfileDto {
         val normalized = handle.trim().lowercase()
@@ -84,14 +85,20 @@ class PublicPhotographerService(
                 .filter { it.deletedAt == null }
                 .associateBy(Event::id)
         }
+        val publicCounts = if (eventsById.isEmpty()) emptyMap() else photoRepository
+            .countPublicForPhotographerByEventIds(eventsById.keys, settings.userId)
+            .associate { it.eventId to it.photoCount.toInt() }
+        val eventDtos = eventDtoMapper.toListDtos(eventsById.values.toList()).associateBy { it.id }
         val events = coverage.mapNotNull { ep ->
             val event = eventsById[ep.id.eventId] ?: return@mapNotNull null
+            val publicPhotoCount = publicCounts[event.id] ?: 0
+            if (publicPhotoCount == 0) return@mapNotNull null
             PhotographerEventCoverageDto(
                 eventSlug = event.slug,
                 state = deriveEventState(event),
-                photoCount = ep.photoCount,
+                photoCount = publicPhotoCount,
                 salesCount = ep.salesCount,
-                event = eventDtoMapper.toListDto(event),
+                event = eventDtos.getValue(event.id),
                 visibility = event.visibility.wire,
                 pricingMode = event.pricingMode.wire,
             )
@@ -117,6 +124,7 @@ class PublicPhotographerService(
         handle: String,
         eventSlug: String,
         pagination: PaginationParams,
+        requesterUserId: UUID? = null,
     ): PaginatedResponse<PhotoDto> {
         val normalized = handle.trim().lowercase()
         val settings = photographerSettingsRepository.findByHandleIgnoreCase(normalized)
@@ -157,6 +165,7 @@ class PublicPhotographerService(
         // Free event (V46): originals are anyone's — mirror PhotoService.
         val free = event.isFree
         val ttl = storageProperties.presignedTtl.runnerDownload
+        val metadataAccess = photoMetadataService.metadataAccess(event.id, page.content, requesterUserId)
         return PaginatedResponse(
             items = page.content.map {
                 it.toDto(
@@ -168,6 +177,7 @@ class PublicPhotographerService(
                         if (free) PhotoService.freeDownloadUrl(publicProperties.apiBaseUrl, photo) else null
                     },
                     free = free,
+                    metadataAccess = metadataAccess.getValue(it.id),
                 )
             },
             total = page.totalElements,

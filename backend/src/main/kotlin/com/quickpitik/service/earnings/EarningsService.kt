@@ -8,6 +8,7 @@ import com.quickpitik.dto.earnings.PerEventEarningDto
 import com.quickpitik.dto.earnings.WeeklyRevenuePointDto
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.TransactionRepository
 import org.springframework.data.domain.PageRequest
@@ -43,6 +44,7 @@ class EarningsService(
     private val payoutCycleRepository: PayoutCycleRepository,
     private val eventRepository: EventRepository,
     private val eventPhotographerRepository: EventPhotographerRepository,
+    private val orderItemRepository: OrderItemRepository,
 ) {
     fun getOverview(photographerId: UUID): EarningsOverviewDto {
         val zone = DISPLAY_ZONE
@@ -103,18 +105,22 @@ class EarningsService(
             photographerId = photographerId,
             pageable = OffsetLimitPageable(params),
         )
-        if (rows.isEmpty) return PaginatedResponse.empty(params)
+        if (rows.isEmpty) return PaginatedResponse.of(emptyList(), rows.totalElements, params)
 
         val eventIds = rows.content.map { it.id.eventId }
         val events = eventRepository.findAllById(eventIds).associateBy { it.id }
+        val purchaseCounts = orderItemRepository.countPurchasesByEventIds(photographerId, eventIds)
+            .associate { it.eventId to it.purchaseCount }
         val items = rows.content.mapNotNull { row ->
             val event = events[row.id.eventId] ?: return@mapNotNull null
             PerEventEarningDto(
                 eventId = row.id.eventId.toString(),
                 eventName = event.name,
                 eventDate = event.date,
+                deletedAt = event.deletedAt,
                 photoCount = row.photoCount,
                 salesCount = row.salesCount,
+                purchaseCount = purchaseCounts[row.id.eventId] ?: 0,
                 revenueKept = row.revenueKeptPhp,
             )
         }

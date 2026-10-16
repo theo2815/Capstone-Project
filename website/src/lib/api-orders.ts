@@ -12,6 +12,7 @@ import type { Order, OrderPhotoDetail, OrderStatus } from "@/types/order";
 //   POST /api/v1/me/orders/{id}/refund       { photoIds, reason, note } → unknown
 //
 // Idempotency-Key arrives as an HTTP header per RFC 9110 §9.2.2.
+// `POST /orders` 409 `CHECKOUT_IN_PROGRESS` (guests): photos are in another key's pending checkout; keep the key across reloads (see use-checkout-workflow).
 
 export interface OrderDetail extends OrderSummary {
   photos: OrderPhotoDetail[];
@@ -59,11 +60,19 @@ export async function fetchOrders(
   return res.items;
 }
 
+// Older payloads omit availability; treat those photos as available.
+function withAvailability(detail: OrderDetail | null): OrderDetail | null {
+  return detail && {
+    ...detail,
+    photos: (detail.photos ?? []).map((photo) => ({ ...photo, availability: photo.availability ?? "AVAILABLE", unavailableReason: photo.unavailableReason ?? null })),
+  };
+}
+
 export async function fetchOrderDetail(
   orderId: string,
   signal?: AbortSignal,
 ): Promise<OrderDetail | null> {
-  return api.get<OrderDetail>(`/me/orders/${encodeURIComponent(orderId)}`, { signal });
+  return withAvailability(await api.get<OrderDetail>(`/me/orders/${encodeURIComponent(orderId)}`, { signal }));
 }
 
 export async function postOrder(args: CreateOrderArgs): Promise<Order> {
@@ -189,7 +198,7 @@ export async function fetchGuestOrderDetail(
   token: string,
 ): Promise<OrderDetail | null> {
   const qs = `?token=${encodeURIComponent(token)}`;
-  return api.get<OrderDetail>(`/orders/${encodeURIComponent(orderId)}${qs}`);
+  return withAvailability(await api.get<OrderDetail>(`/orders/${encodeURIComponent(orderId)}${qs}`));
 }
 
 // Absolute URL to the bundle-download endpoint. Token-only auth on the BE

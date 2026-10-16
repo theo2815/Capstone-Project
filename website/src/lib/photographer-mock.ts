@@ -159,6 +159,7 @@ export interface PhotographerLibraryPhoto {
    *  Null on the active tab, set on the Deleted Photos tab. */
   deletedAt?: string | null;
   deletionStartedAt?: string | null;
+  mediaAvailable?: boolean;
 }
 
 function hashStr(s: string): number {
@@ -287,7 +288,7 @@ export interface PhotographerTransaction {
   paidAt: string;
   eventId: string;
   /** Snapshot of the event title at sale time. Null when the event was
-   *  hard-deleted — the row then renders the "Event archived" fallback. */
+   *  hard-deleted — the row then renders the "Event unavailable" fallback. */
   eventName?: string | null;
   /** Event slug snapshot — kept for future deep-linking from the row. */
   eventSlug?: string | null;
@@ -296,6 +297,12 @@ export interface PhotographerTransaction {
   buyer: string;
   /** ₱ kept by the photographer after platform cut. */
   amountKept: number;
+  /** Additive ledger fields; absent on older cached responses. */
+  orderId?: string;
+  isRefund?: boolean;
+  refundOf?: string | null;
+  recordedAt?: string;
+  thumbnailUrl?: string | null;
 }
 
 // Most recent first. 6 cycles total — 4 paid, 1 pending, 1 scheduled. Adds up

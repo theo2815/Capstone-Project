@@ -6,13 +6,19 @@ import com.quickpitik.dto.earnings.EarningsOverviewDto
 import com.quickpitik.dto.earnings.PayoutBalanceDto
 import com.quickpitik.dto.earnings.PayoutReportDto
 import com.quickpitik.dto.earnings.PhotographerPayoutDto
+import com.quickpitik.dto.earnings.PhotographerPhotoPurchasesResponse
+import com.quickpitik.dto.earnings.PhotographerPurchasedPhotoDto
 import com.quickpitik.dto.earnings.SubmitPayoutReportRequest
 import com.quickpitik.dto.earnings.TransactionsLedgerResponse
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.earnings.EarningsService
 import com.quickpitik.service.earnings.PayoutReportService
 import com.quickpitik.service.earnings.PayoutRequestService
+import com.quickpitik.service.earnings.PhotographerPurchaseService
 import com.quickpitik.service.earnings.TransactionsLedgerService
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.ratelimit.acquireOrThrow
 import jakarta.validation.Valid
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -23,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import java.util.UUID
 
 /**
  * Phase F.3 photographer-earnings + billing read surface. Photographer-scoped
@@ -30,9 +37,10 @@ import org.springframework.web.bind.annotation.RestController
  * MePhotographerSettingsController per the path-overlap dispatch (Q-009) — it
  * was wired here to a real PayoutCycleService call as part of this PR.
  *
- * The report submission endpoint accepts a string cycle id (`PAY-{YYYY}W{NN}-
- * {HANDLE}`) as the path variable, which is distinct from the UUID-typed
- * payout-account id PR 8 uses for its CRUD. Spring routes correctly because
+ * The report submission endpoint accepts a string cycle id (e.g.
+ * `PAY-{HANDLE}-{NUMBER}`, see `buildSequencedCycleId`) as the path variable,
+ * which is distinct from the UUID-typed payout-account id PR 8 uses for its
+ * CRUD. Spring routes correctly because
  * `/payouts/{id}/report` is more specific than `/payouts/{id}`.
  */
 @RestController
@@ -43,7 +51,32 @@ class MePhotographerEarningsController(
     private val payoutReportService: PayoutReportService,
     private val transactionsLedgerService: TransactionsLedgerService,
     private val payoutRequestService: PayoutRequestService,
+    private val photographerPurchaseService: PhotographerPurchaseService,
+    private val rateLimiter: RateLimiter,
 ) {
+    @GetMapping("/events/{eventId}/purchased-photos")
+    fun listPurchasedPhotos(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @RequestParam(required = false) offset: Int?,
+        @RequestParam(required = false) limit: Int?,
+    ): PaginatedResponse<PhotographerPurchasedPhotoDto> {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_READ, principal.userId.toString())
+        return photographerPurchaseService.listPurchasedPhotos(principal.userId, eventId, PaginationParams.of(offset, limit))
+    }
+
+    @GetMapping("/photos/{photoId}/purchases")
+    fun listPhotoPurchases(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable photoId: UUID,
+        @RequestParam(required = false) orderId: UUID?,
+        @RequestParam(required = false) offset: Int?,
+        @RequestParam(required = false) limit: Int?,
+    ): PhotographerPhotoPurchasesResponse {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_ORDER_READ, principal.userId.toString())
+        return photographerPurchaseService.listPhotoPurchases(principal.userId, photoId, orderId, PaginationParams.of(offset, limit))
+    }
+
     @GetMapping("/earnings")
     fun getEarnings(@AuthenticationPrincipal principal: AuthPrincipal): EarningsOverviewDto =
         earningsService.getOverview(principal.userId)
@@ -104,9 +137,10 @@ class MePhotographerEarningsController(
     ): PhotographerPayoutDto = payoutRequestService.request(principal.userId)
 
     // /payouts/{id}/withdraw — photographer cancels a HELD request after
-    // fixing whatever the admin flagged. Hard-deletes the cycle so the
-    // photographer can submit a new request immediately. The path doesn't
-    // collide with /payouts/{cycleId}/report — different terminal segments.
+    // fixing whatever the admin flagged. Soft-cancels the cycle (the row stays
+    // for the audit trail) so the photographer can submit a new request
+    // immediately. The path doesn't collide with /payouts/{cycleId}/report —
+    // different terminal segments.
     @PostMapping("/payouts/{id}/withdraw")
     fun withdrawPayout(
         @AuthenticationPrincipal principal: AuthPrincipal,

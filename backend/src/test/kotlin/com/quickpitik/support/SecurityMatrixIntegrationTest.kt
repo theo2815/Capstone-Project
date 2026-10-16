@@ -9,6 +9,7 @@ import com.quickpitik.dto.auth.RegisterRequest
 import com.quickpitik.entity.Role
 import com.quickpitik.security.JwtTokenProvider
 import com.quickpitik.service.auth.AuthService
+import com.quickpitik.service.auth.DesktopAuthService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
@@ -19,6 +20,8 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Instant
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.HexFormat
 import java.util.UUID
 import javax.crypto.Mac
@@ -161,6 +164,47 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `admin command lookup is admin only and hides unknown keys`() {
+        val path = "/api/v1/admin/commands/${UUID.randomUUID()}"
+        assertEquals(401, get(path).statusCode())
+        assertEquals(403, get(path, register(Role.RUNNER)).statusCode())
+        assertEquals(403, get(path, register(Role.PHOTOGRAPHER)).statusCode())
+        val admin = adminToken()
+        val missing = get(path, admin)
+        assertEquals(404, missing.statusCode())
+        // Not the generic NOT_FOUND an unmapped path answers: the website releases a stored key only on this code.
+        assertEquals("ADMIN_COMMAND_NOT_FOUND", errorCode(missing))
+        assertEquals(400, get("/api/v1/admin/commands/not-a-uuid", admin).statusCode())
+    }
+
+    @Test
+    fun `private removed event history keeps photographer role gate`() {
+        val path = "/api/v1/me/photographer/events/${UUID.randomUUID()}?includeRemoved=true"
+        assertEquals(401, get(path).statusCode())
+        assertEquals(403, get(path, register(Role.RUNNER)).statusCode())
+        assertEquals(404, get(path, register(Role.PHOTOGRAPHER)).statusCode())
+    }
+
+    @Test
+    fun `metadata routes obey photographer and anonymous gates with no store`() {
+        val id = UUID.randomUUID()
+        val ownerPath = "/api/v1/me/photographer/photos/$id/metadata"
+        val publicPath = "/api/v1/public/photos/$id/metadata"
+        assertEquals(401, get(ownerPath).statusCode())
+        assertEquals(403, get(ownerPath, register(Role.RUNNER)).statusCode())
+        val photographer = register(Role.PHOTOGRAPHER)
+        val settings = get("/api/v1/me/photographer/metadata-settings", photographer)
+        assertEquals(200, settings.statusCode())
+        assertTrue("no-store" in settings.headers().firstValue("Cache-Control").orElse(""))
+        val missingOwner = get(ownerPath, photographer)
+        assertEquals(404, missingOwner.statusCode())
+        assertTrue("no-store" in missingOwner.headers().firstValue("Cache-Control").orElse(""))
+        val missingPublic = get(publicPath)
+        assertEquals(404, missingPublic.statusCode())
+        assertTrue("no-store" in missingPublic.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
     fun `direct upload controls require photographer auth and are never cached`() {
         val eventId = UUID.randomUUID()
         val photoId = UUID.randomUUID()
@@ -180,6 +224,55 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(403, commit.statusCode())
         assertTrue("no-store" in begin.headers().firstValue("Cache-Control").orElse(""))
         assertTrue("no-store" in commit.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
+    fun `desktop connect mints for photographers only and redeems a code once`() {
+        val verifier = "v".repeat(43)
+        val challenge = DesktopAuthService.challengeOf(verifier)
+        val mintBody = """{"codeChallenge":"$challenge"}"""
+
+        assertEquals(401, post("/api/v1/auth/desktop/codes", mintBody).statusCode())
+        assertEquals(403, post("/api/v1/auth/desktop/codes", mintBody, register(Role.RUNNER)).statusCode())
+
+        val minted = post("/api/v1/auth/desktop/codes", mintBody, register(Role.PHOTOGRAPHER))
+        assertEquals(200, minted.statusCode())
+        assertTrue("no-store" in minted.headers().firstValue("Cache-Control").orElse(""))
+        val code = json.readTree(minted.body()).path("data").path("code").asText()
+        assertEquals(43, code.length)
+
+        // Anonymous and permitAll: a bogus code reaches the service and is refused
+        // there (INVALID_TOKEN), not by the filter chain (UNAUTHORIZED).
+        val bogus = post("/api/v1/auth/desktop/exchange", """{"code":"${"x".repeat(43)}","codeVerifier":"$verifier"}""")
+        assertEquals(401, bogus.statusCode())
+        assertEquals("INVALID_TOKEN", errorCode(bogus))
+
+        val exchangeBody = """{"code":"$code","codeVerifier":"$verifier"}"""
+        val exchanged = post("/api/v1/auth/desktop/exchange", exchangeBody)
+        assertEquals(200, exchanged.statusCode())
+        assertTrue("no-store" in exchanged.headers().firstValue("Cache-Control").orElse(""))
+        assertTrue(json.readTree(exchanged.body()).path("data").path("accessToken").asText().isNotBlank())
+        assertTrue(json.readTree(exchanged.body()).path("data").path("refreshToken").asText().isNotBlank())
+
+        val replay = post("/api/v1/auth/desktop/exchange", exchangeBody)
+        assertEquals(401, replay.statusCode())
+        assertEquals("INVALID_TOKEN", errorCode(replay))
+    }
+
+    @Test
+    fun `desktop code exchange shares the login rate limit`() {
+        val body = """{"code":"${"x".repeat(43)}","codeVerifier":"${"v".repeat(43)}"}"""
+        val responses = (1..11).map {
+            val request = HttpRequest.newBuilder(uri("/api/v1/auth/desktop/exchange"))
+                .header("Content-Type", "application/json")
+                .header("CF-Connecting-IP", "203.0.113.10")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build()
+            client.send(request, HttpResponse.BodyHandlers.ofString())
+        }
+
+        assertEquals(401, responses.first().statusCode())
+        assertEquals(429, responses.last().statusCode())
     }
 
     @Test
@@ -213,6 +306,101 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             role = role,
         ),
     ).accessToken
+
+    @Test
+    fun `case evidence and its known local storage key stay private`() {
+        val id = UUID.randomUUID()
+        val route = "/api/v1/admin/photo-removal-requests/$id/evidence"
+        assertEquals(401, get(route).statusCode())
+        assertEquals(403, get(route, register(Role.RUNNER)).statusCode())
+        assertEquals(403, get(route, register(Role.PHOTOGRAPHER)).statusCode())
+        val key = "photo-removal/$id/evidence/${UUID.randomUUID()}"
+        val path = Path.of("build/test-storage", key)
+        Files.createDirectories(path.parent)
+        Files.writeString(path, "synthetic private evidence")
+        try {
+            assertTrue(get("/storage/$key").statusCode() in setOf(401, 403, 404))
+            assertTrue(get("/storage/$key", adminToken()).statusCode() in setOf(401, 403, 404))
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun `known case evidence storage prefix cannot bypass the private stream`() {
+        val key = "photo-removal/${UUID.randomUUID()}/evidence/${UUID.randomUUID()}"
+        val path = Path.of("build/test-storage", key)
+        Files.createDirectories(path.parent)
+        Files.writeString(path, "synthetic private evidence")
+        try {
+            assertTrue(get("/storage/$key").statusCode() in setOf(401, 403, 404))
+            assertTrue(get("/storage/$key", adminToken()).statusCode() in setOf(401, 403, 404))
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun `removal intake shares the bounded admin media write policy`() {
+        val token = adminToken()
+        val responses = (1..21).map {
+            val body = """{"eventId":"${UUID.randomUUID()}","supportReference":"synthetic-ticket","requesterContact":"synthetic-contact","reason":"privacy","commandId":"${UUID.randomUUID()}"}"""
+            post("/api/v1/admin/photo-removal-requests", body, token)
+        }
+        assertEquals(404, responses.first().statusCode())
+        assertEquals(429, responses.last().statusCode())
+        assertTrue(responses.last().headers().firstValue("Retry-After").isPresent)
+    }
+
+    @Test
+    fun `removal gallery browsing is not bound by the face-search policy`() {
+        val token = adminToken()
+        val id = UUID.randomUUID()
+        val gallery = (1..31).map { page -> get("/api/v1/admin/photo-removal-requests/$id/photos?offset=${page * 24}&limit=24", token) }
+        assertTrue(gallery.none { it.statusCode() == 429 }, "gallery paging must not drain the 30-per-15-minute search bucket")
+        assertEquals(404, gallery.last().statusCode())
+        val body = """{"commandId":"${UUID.randomUUID()}","expectedVersion":0}"""
+        val matches = (1..31).map { post("/api/v1/admin/photo-removal-requests/$id/matches", body, token) }
+        assertEquals(429, matches.last().statusCode())
+        assertTrue(matches.last().headers().firstValue("Retry-After").isPresent)
+    }
+
+    @Test
+    fun `mixed case local evidence prefix cannot reveal a known physical key`() {
+        val key = "photo-removal/${UUID.randomUUID()}/evidence/${UUID.randomUUID()}"
+        val path = Path.of("build/test-storage", key)
+        Files.createDirectories(path.parent)
+        Files.writeString(path, "synthetic private evidence")
+        try {
+            assertTrue(get("/storage/$key").statusCode() in setOf(401, 403, 404))
+            val mixedCase = "/storage/PHOTO-REMOVAL/${key.substringAfter('/')}"
+            assertTrue(get(mixedCase).statusCode() in setOf(401, 403, 404))
+            assertTrue(get(mixedCase, adminToken()).statusCode() in setOf(401, 403, 404))
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test
+    fun `photo removal owner routes enforce photographer role and private cache`() {
+        val root = "/api/v1/me/photographer/photo-removal-requests"
+        val runner = register(Role.RUNNER)
+        val admin = adminToken()
+        val photographer = register(Role.PHOTOGRAPHER)
+        assertEquals(200, get(root, photographer).statusCode())
+        val id = UUID.randomUUID()
+        val body = """{"commandId":"${UUID.randomUUID()}","expectedVersion":0,"itemIds":["${UUID.randomUUID()}"],"response":"AGREE"}"""
+        for (path in listOf(root, "$root/$id")) {
+            assertEquals(401, get(path).statusCode())
+            assertEquals(403, get(path, runner).statusCode())
+            assertEquals(403, get(path, admin).statusCode())
+        }
+        assertEquals(401, post("$root/$id/responses", body).statusCode())
+        assertEquals(403, post("$root/$id/responses", body, runner).statusCode())
+        assertEquals(403, post("$root/$id/responses", body, admin).statusCode())
+        val missing = get("$root/$id", photographer)
+        assertEquals(404, missing.statusCode())
+        assertTrue("no-store" in missing.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals(404, post("$root/$id/responses", body, photographer).statusCode())
+    }
 
     private fun adminToken(): String {
         val response = authService.login(LoginRequest(email = adminEmail, password = adminPassword))

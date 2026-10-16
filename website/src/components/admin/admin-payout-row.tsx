@@ -13,6 +13,7 @@ import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
 interface AdminPayoutRowProps {
   cycle: AdminPayoutCycle;
   submitting: boolean;
+  pendingLabel?: string | null;
   selected: boolean;
   selectionActive: boolean;
   /** Phase 4: J/K keyboard focus indicator. Adds an ink ring + offset. */
@@ -61,6 +62,7 @@ function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
 export function AdminPayoutRow({
   cycle,
   submitting,
+  pendingLabel,
   selected,
   selectionActive,
   focused,
@@ -190,6 +192,7 @@ export function AdminPayoutRow({
         </button>
       </div>
 
+      {submitting && <p role="status" aria-busy="true">{pendingLabel}</p>}
       <RowActions
         submitting={submitting}
         status={cycle.status}

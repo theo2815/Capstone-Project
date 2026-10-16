@@ -17,6 +17,7 @@ export function useRegions(): {
   regions: readonly PHRegion[];
   isLoading: boolean;
   error: unknown;
+  retry: () => Promise<unknown>;
 } {
   const query = useQuery<PHRegion[]>({
     queryKey: ["regions"],
@@ -30,5 +31,6 @@ export function useRegions(): {
     regions: query.data ?? [],
     isLoading: query.isPending,
     error: query.error,
+    retry: query.refetch,
   };
 }

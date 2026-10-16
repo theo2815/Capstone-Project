@@ -6,6 +6,7 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
@@ -14,7 +15,6 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.UUID
 import javax.imageio.ImageIO
@@ -107,12 +107,11 @@ class AvatarService(
     }
 
     private fun centerCropToJpeg(input: ByteArray): ByteArray {
-        val original: BufferedImage = ImageIO.read(ByteArrayInputStream(input))
-            ?: throw ValidationException(
-                code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
-                message = "image cannot be decoded",
-                field = "file",
-            )
+        val original: BufferedImage = ImageDecode.readOrNull(input) ?: throw ValidationException(
+            code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+            message = "image cannot be decoded",
+            field = "file",
+        )
         val w = original.width
         val h = original.height
         val crop = minOf(w, h)

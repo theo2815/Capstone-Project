@@ -21,6 +21,8 @@
 11. [Phase 10: Photographers Roster & Messaging (`/admin/photographers`)](#phase-10-photographers-roster--messaging-adminphotographers)
 12. [Phase 11: Sales Analytics & Leaderboards (`/admin/sales`)](#phase-11-sales-analytics--leaderboards-adminsales)
 13. [Phase 12: Real-Time WebSocket Updates & Toast Sync](#phase-12-real-time-websocket-updates--toast-sync)
+14. [Unresolved admin request](#unresolved-admin-request)
+15. [Runner photo removal](#runner-photo-removal)
 
 ---
 
@@ -121,6 +123,15 @@
 - [ ] **TC-ADM-21: Reset Verification Flow**
   - **Action:** Click "Reset Verification" on a suspended or rejected photographer.
   - **Expected Result:** Resets status back to `PENDING` or unverified state, allowing the photographer to re-submit documentation.
+- [ ] **TC-ADM-51: Slow Approval, Repeated Clicks**
+  - **Action:** Throttle the network (DevTools "Slow 3G"). Click "Approve", then click it again and press `Enter` while it is still working.
+  - **Expected Result:** The button reads "Approving…" and the other decision buttons are disabled until it finishes. The photographer is approved once and receives one inbox notice.
+- [ ] **TC-ADM-52: Two Admins (or Two Tabs) Decide the Same Photographer**
+  - **Action:** Open the same pending photographer in two admin sessions and click "Approve" in both at the same moment.
+  - **Expected Result:** One session shows "Approved". The other shows "This submission changed. Close this form and review the current submission before deciding again." Only one decision and one inbox notice are recorded.
+- [ ] **TC-ADM-53: Bulk Approve Overlapping a Row Action**
+  - **Action:** Tick two pending photographers and click "Approve 2". While it is working, try to open and approve one of those rows.
+  - **Expected Result:** The bulk bar reads "Approving…" with its buttons disabled, and the rows in the batch cannot start a second decision. Each photographer is approved once.
 
 ---
 
@@ -193,12 +204,23 @@
   - **Action:** Navigate to `/admin/events`.
   - **Expected Result:** Renders all registered running events with Event Cover, Name, Race Date, Location, Total Photos Uploaded, and Current Status (Draft, Active, Archived).
 - [ ] **TC-ADM-38: Create New Event Form**
-  - **Action:** Click "Create Event" button.
-  - **Expected Result:** Opens `admin-event-form-modal.tsx`. Fill out Name, Slug, Date, Location, and upload a Banner cover image. Submit form.
-  - **Expected Result:** Event is created and immediately appears in the events list. Public URL `/events/[slug]` becomes accessible.
+  - **Action:** Click "+ New event". Fill out Title, Location, Region, Province, Date, and Price per photo; optionally upload a cover. Submit form.
+  - **Expected Result:** Province stays disabled until a Region is picked, and changing the Region clears the Province. A new event cannot be created without both. The event is created and immediately appears in the events list. Public URL `/events/[slug]` becomes accessible.
 - [ ] **TC-ADM-39: Edit Existing Event**
-  - **Action:** Click "Edit" on an existing event card. Update location or date. Save changes.
+  - **Action:** Click "Edit" on an existing event card. Update location, region/province, or date. Save changes.
   - **Expected Result:** Changes persist to backend and reflect in both admin table and public runner event cockpit.
+- [ ] **TC-ADM-54: Slow Create, Repeated Submit**
+  - **Action:** Throttle the network. Submit the Create form, then press `Enter` again and `Escape` while it is saving.
+  - **Expected Result:** The button reads "Creating…", the form stays open with its fields and pickers locked, and exactly one event is created.
+- [ ] **TC-ADM-55: Two Admins Edit the Same Event**
+  - **Action:** Open "Edit" on the same event in two admin sessions. Save in the first, then save in the second.
+  - **Expected Result:** The second save is refused with "Event has changed… Close this form and reopen the event to edit its current version." and keeps the typed draft. After reopening the event, the second admin can edit and save normally.
+- [ ] **TC-ADM-56: Edit an Older Event Without a Province**
+  - **Action:** Open "Edit" on an event created before Region/Province existed. Change only the Organizer and save. Then edit again and pick a Region and Province.
+  - **Expected Result:** The first save succeeds without forcing a province. Once a Region is picked a Province is required; the saved pair shows on the next edit.
+- [ ] **TC-ADM-57: Province Appears on the Public Events Filter**
+  - **Action:** Create a live event with a province no other event uses, then open `/events` and the "Filter by province" menu. Delete that event and reload `/events`.
+  - **Expected Result:** The province is offered and selecting it lists the event. After the delete the province is no longer offered. Events without a province stay listed under "All provinces".
 - [ ] **TC-ADM-40: Event State Override**
   - **Action:** Toggle event state between "Live", "Open", and "Archived".
   - **Expected Result:** Overrides take effect; archiving an event closes upload windows for photographers while keeping gallery readable.
@@ -216,6 +238,9 @@
 - [ ] **TC-ADM-43: Admin Direct Message (DM)**
   - **Action:** Click "Send Message" on the photographer profile. Enter subject and body (e.g. "Please check your watermark position on race photos"). Send.
   - **Expected Result:** Toast confirms dispatch. Log in as that photographer on another tab or phone: verify the message arrives in their notification bell modal with unread badge counter.
+- [ ] **TC-ADM-58: Message Send Interrupted**
+  - **Action:** Throttle the network and click "Send"; press `Enter` again while it reads "Sending…". Then repeat with the network switched to Offline right after clicking "Send", go back Online, and click "Send" again without changing the text.
+  - **Expected Result:** The form stays open with the subject and message until the send is confirmed. After the interrupted send it says an earlier request is unresolved and keeps the draft; sending the unchanged draft again delivers exactly one message to the photographer.
 
 ---
 
@@ -247,3 +272,56 @@
 - [ ] **TC-ADM-50: Network Disconnect & Graceful Reconnect**
   - **Action:** Simulate network offline via DevTools for 5 seconds, then toggle back to online.
   - **Expected Result:** WS reconnect backoff triggers automatically. Upon reconnect, an automatic REST refetch runs to catch any decisions or updates made during the disconnect gap.
+
+---
+
+## Unresolved admin request
+
+The website shows "Request reference: `<key>`" when the reply to a create-event, edit-event or message request was lost and it cannot tell whether the request went through. Sending a different draft makes the website look the key up by itself; use this section when the block stays.
+
+**Look it up.** Signed in as the same admin, call `GET /api/v1/admin/commands/<key>`. Another admin's key and an unknown key both answer 404. With database access, read the same row: `SELECT state, result_resource_id, result_message_id, updated_at FROM admin_action_commands WHERE command_id = '<key>';`
+
+| Answer | Meaning | What to do |
+|---|---|---|
+| `SUCCEEDED` | It went through. `resourceId` is the event; `messageId` is the message. | Nothing to repair. Sending a different draft clears the block. |
+| `PENDING` | Still running, or it stopped part-way. | Wait a few minutes (the request's lease, `AdminActionProperties`), then retry the same unchanged draft. |
+| `UNKNOWN` | The server could not confirm the cover upload or the save. | Retry the same unchanged draft. If it stays `UNKNOWN`, follow the reconciliation steps below. |
+| `FAILED` | It did not go through, and this key can never run again. An event save that uploaded a new cover and was then refused (the event changed or was deleted meanwhile) ends here; the unused image is removed. | Nothing to repair. Reopen the event and save again, or send a different draft: the website sees the answer and clears the block. |
+| 404 `ADMIN_COMMAND_NOT_FOUND` | The server has recorded nothing for it so far. A request that is still running shows up only when it finishes. | Nothing to do by hand. The website keeps the block for 5 minutes after the request was last sent and says how long is left; after that, sending a different draft clears it. If you look the key up yourself, trust a 404 only once those 5 minutes have passed. |
+
+**Reconciliation for a request that stays `UNKNOWN`:** vault `_journal/2026-10-08-admin-actions-and-event-location-plan.md`, heading "Safe administrative reconciliation for persistent UNKNOWN" (Session 4). Never edit or delete the `admin_action_commands` row by hand; the database blocks deleting it.
+
+Signing out clears every stored reference in that browser tab. Do that only after the lookup shows the request did not go through, or you may send it twice.
+
+---
+
+## Classifying an event the admin list does not show
+
+`/admin/events` loads the 200 events with the latest race dates and has no search, so an event with an earlier date cannot be opened in the form. Its region and province can still be set with the same request the form sends. (Owner's decision, 2026-10-09: no search box until a real environment holds more than 200 events.)
+
+1. Get the event's `id` and `reviewRevision`: signed in as an admin, page the list with `GET /api/v1/admin/events?offset=200&limit=200` (then 400, and so on) until the event appears. With database access: `SELECT id, review_revision, region_code, province_code FROM events WHERE slug = '<slug>';`
+2. Take both codes from `GET /api/v1/regions`. Never retype them from memory, and send both or neither.
+3. Signed in as an admin, send `PATCH /api/v1/admin/events/<id>` as `multipart/form-data` with the fields `regionCode`, `provinceCode` and `expectedRevision`, and a new UUID in the `Idempotency-Key` header. Fields you leave out keep their values. Always send `expectedRevision`: without it nothing checks that the event is still as you read it.
+4. Check the reply: it carries `regionCode` and `provinceCode`. `GET /api/v1/events/<slug>` shows the pair too, except for a draft (a pending or rejected photographer submission), which has no public page and answers 404 there.
+
+A 409 means the event changed after you read its revision: read it again and resend under a new key. A 404 on the request means the event is deleted or the id is wrong. If the reply is lost, follow "Unresolved admin request" above with the key you sent. The request cannot clear a pair, and a province must come from confirmed event information, never from the location text or the title.
+
+---
+
+## Runner photo removal
+
+Admin `/admin/photo-removal-requests`, photographer `/dashboard/photo-removal-requests`. Use synthetic accounts and images only. Rules: `docs/photo-removal-workflow.md`.
+
+- [ ] **Intake:** "New request" lists public and unlisted events; create a case with a support reference and requester contact; it opens as a draft in the admin area.
+- [ ] **Evidence:** upload a selfie under 5 MB; "Selfie on file" shows. A file over 5 MB is refused. The selfie never appears in the runner's selfie library.
+- [ ] **Matching:** with `AI_API_ENABLED=false`, searching with the selfie says "Selfie matching is unavailable right now…" and shows no matches; with AI enabled, a selfie with no face says "No face was found in the selfie…". Bib search and browsing still list photos.
+- [ ] **Preview:** open a photo; the arrow keys move between photos, `Escape` closes the preview and focus returns to the photo.
+- [ ] **Verify:** select photos, give a method and a note, "Confirm verification". The photos leave the public gallery; each owner gets one notice; an inactive owner shows "Owner unavailable".
+- [ ] **Owner notice:** as the photographer, the inbox notice's "View request" opens the case; the case shows only their photos, with no requester contact, support reference or selfie.
+- [ ] **Response:** the owner agrees, or objects with a required reason.
+- [ ] **Override reason:** while an objection's deadline is open, "Authorize removal" needs an urgent reason; after the deadline it does not.
+- [ ] **Decide:** remove one photo and retain another; each removed photo reads "Removed · erasure complete", or "cleanup pending" / "cleanup failed" until erased; history lists each step.
+- [ ] **Cleanup retry:** when cleanup failed, "Retry cleanup" runs it again; the case resolves once every erasure is confirmed.
+- [ ] **Support update:** "Record update" under Support update; it appears in the history.
+- [ ] **Runner notice:** a runner who bought the removed photo sees "Photo removed" in the inbox and under "View photos" in `/orders`; the order and its receipt stay.
+- [ ] **Restore refused:** the photographer cannot restore a photo held by a removal case from the trash.

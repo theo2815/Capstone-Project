@@ -1,545 +1,101 @@
-# Integration Contracts — Backend-to-ai-api
+# Integration Contracts — Clients-to-ai-api
 
-**Date:** 2026-04-23
+**Date:** 2026-04-23 · **Updated 2026-10-16:** face and bib retired; the desktop app is the only client
 **Companion doc:** `integration-architecture.md` (read that first for the full picture)
-**Purpose:** Exact API usage patterns for each backend. Copy-paste ready.
+**Purpose:** Exact API usage patterns for each client. Copy-paste ready.
 
 ---
 
-## Contract 1: Desktop Backend (Blur Only)
+## Contract 1: BatchMyPhotos desktop (blur only)
 
-The Desktop Backend uses ai-api for image quality assessment. It calls two endpoints.
+BatchMyPhotos' Electron **main process** calls ai-api directly. Its Express backend is
+not a blur proxy. In the invited beta, analysis starts only after **Start Analysis**;
+results are suggestions and never change batch routing or original files. See
+the [desktop integration guide](../../docs/desktop-blur-detection-integration-guide.md)
+and the implementation in
+BatchMyPhotos/desktop/src/main/blurDetectionService.js.
 
-### Endpoints Used
+### Routes used by this client
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/v1/blur/detect` | Quick blur check (Laplacian + optional FFT) |
-| `POST /api/v1/blur/detect/stream` | NDJSON streaming check for up to 500 images (no polling) |
-| `POST /api/v1/blur/detect/batch` | Async Celery batch, up to 50 |
-| `POST /api/v1/blur/detect/mega` | Async Celery chord, up to 500 (server splits) |
-| `POST /api/v1/blur/classify` | Detailed blur-type classification (CNN) |
-| `POST /api/v1/blur/classify/stream` | NDJSON streaming classify |
-| `POST /api/v1/blur/classify/batch` | Async batch classify |
-| `POST /api/v1/blur/classify/mega` | Async mega-batch classify |
-| `GET /api/v1/jobs/{job_id}` | Poll batch job status (supports `offset`/`limit`) |
-| `GET /api/v1/health/ready` | Health check before processing |
+| Endpoint | Use |
+|----------|-----|
+| `POST /api/v1/blur/classify/stream` | Main CNN path; multipart prepared JPEGs, NDJSON rows and terminal summary |
+| `POST /api/v1/blur/classify` | One image when the stream route is unsupported or a valid stream summary omits a row |
 
-### Authentication
+The API also offers `/blur/detect`, `/batch`, `/mega`, and `/jobs/{id}` for other
+clients. This desktop beta does not use a classical pre-check, Celery jobs,
+polling, or webhooks.
 
-```
-X-API-Key: sk_desktop_prod_<your_key>
-```
+### Credential and configuration
 
-Scope: `blur:read` (covers both detect and classify endpoints).
+Give each invited tester a separate, revocable **staging** key with exactly
+`blur:read` and `jobs:read`. Record owner, tier, expiry or revocation, and scope
+in the private `docs/api-keys.md` workflow. The main process sends the key only
+in the `X-API-Key` header. Packaged beta builds require a validated staging
+`blur-beta.json` with an HTTPS origin, then accept the key through Settings
+after installation. Electron `safeStorage` encrypts it in the dedicated
+`blur-beta-key` store; IPC reveals only whether a key is configured. Neither
+the installer nor key-status IPC returns the raw saved key. Source runs use the
+`BATCH_BLUR_*` settings in BatchMyPhotos/desktop/src/main/config.js; packaged
+environment overrides cannot redirect the origin or inject a key.
 
-### Flow 1: Single Photo Quality Check
+### Analysis and response handling
 
-Use when user imports one photo or selects a photo for review.
+1. Choose one supported raster companion per JPG/RAW group; RAW-only and
+   undecodable groups remain unanalysed. Sharp auto-orients, resizes, and
+   re-encodes each selected image as a JPEG before upload.
+2. Split prepared JPEGs by count **and byte budget**. The authoritative
+   limits, concurrency and timeouts are in BatchMyPhotos/desktop/src/main/constants.js.
+3. Match each NDJSON row by the uploaded chunk index, not arrival order or
+   original filename. Require one consistent terminal `_summary` with
+   `complete:true`; reject malformed, duplicate, or contradictory rows.
+4. A per-image error marks only that group unanalysed. Recover missing rows
+   through the single route only after a valid summary. An unsupported stream
+   route also uses singles. Retry a retryable stream failure once within the
+   configured backoff bound. A truncated or invalid stream fails visibly.
+5. Map returned probabilities using the client's sensitivity and selected
+   categories. This mapping is advisory and must not remove a group from
+   preview, copy/move, or rollback.
 
-```
-Desktop App                Desktop Backend                ai-api
-    │                           │                           │
-    │  "Check this photo"       │                           │
-    │─────────────────────────►│                           │
-    │                           │  POST /blur/detect        │
-    │                           │  + file                   │
-    │                           │─────────────────────────►│
-    │                           │                           │
-    │                           │  { is_blurry: false,      │
-    │                           │    confidence: 0.85,      │
-    │                           │    metrics: {             │
-    │                           │      laplacian: 185.4,    │
-    │                           │      hf_ratio: 0.72 } }  │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │                           │  (Optional) If not blurry │
-    │                           │  but user wants detail:   │
-    │                           │  POST /blur/classify      │
-    │                           │  + file                   │
-    │                           │─────────────────────────►│
-    │                           │                           │
-    │                           │  { predicted_class:       │
-    │                           │    "sharp",               │
-    │                           │    confidence: 0.96,      │
-    │                           │    probabilities: {...} } │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "Sharp (96% confident)"  │                           │
-    │◄─────────────────────────│                           │
-```
-
-**Desktop Backend logic:**
-```python
-# 1. Call ai-api blur detect
-response = httpx.post(
-    f"{AI_API_URL}/api/v1/blur/detect",
-    headers={"X-API-Key": AI_API_KEY},
-    files={"file": (filename, image_bytes, content_type)},
-)
-result = response.json()["data"]
-
-# 2. Store result in desktop DB
-photo.blur_score = result["metrics"]["laplacian_variance"]
-photo.is_blurry = result["is_blurry"]
-photo.blur_confidence = result["confidence"]
-photo.hf_ratio = result["metrics"]["hf_ratio"]
-db.save(photo)
-
-# 3. Optionally classify for blur type
-if not result["is_blurry"] or user_wants_detail:
-    classify_resp = httpx.post(
-        f"{AI_API_URL}/api/v1/blur/classify",
-        headers={"X-API-Key": AI_API_KEY},
-        files={"file": (filename, image_bytes, content_type)},
-    )
-    classify_result = classify_resp.json()["data"]
-    photo.blur_type = classify_result["predicted_class"]
-    photo.blur_type_confidence = classify_result["confidence"]
-    db.save(photo)
-
-# 4. Return to desktop UI
-return {
-    "quality": "sharp" if not photo.is_blurry else "blurry",
-    "blur_score": photo.blur_score,
-    "blur_type": photo.blur_type,  # e.g., "motion_blurred"
-    "confidence": photo.blur_confidence,
-}
-```
-
-### Flow 2: Batch Import (Multiple Photos)
-
-Use when user imports a folder of photos. Desktop backend should batch them.
-
-```
-Desktop App                Desktop Backend                ai-api
-    │                           │                           │
-    │  "Import 50 photos"       │                           │
-    │─────────────────────────►│                           │
-    │                           │  POST /blur/detect/batch  │
-    │                           │  + 50 files               │
-    │                           │─────────────────────────►│
-    │                           │                           │
-    │                           │  { job_id: "abc-123",     │
-    │                           │    status: "pending",     │
-    │                           │    poll_url: "/jobs/..." }│
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "Processing 50 photos…"  │                           │
-    │◄─────────────────────────│                           │
-    │                           │                           │
-    │                           │  (poll every 2-5 seconds) │
-    │                           │  GET /jobs/abc-123        │
-    │                           │─────────────────────────►│
-    │                           │  { status: "processing",  │
-    │                           │    progress: 0.60 }       │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "60% complete"           │                           │
-    │◄─────────────────────────│                           │
-    │                           │                           │
-    │                           │  GET /jobs/abc-123        │
-    │                           │─────────────────────────►│
-    │                           │  { status: "completed",   │
-    │                           │    result: [50 results] } │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "Done! 42 sharp, 8 blurry"│                          │
-    │◄─────────────────────────│                           │
-```
-
-**Desktop Backend logic:**
-```python
-# 1. Submit batch
-files = [("files", (f.name, f.bytes, f.content_type)) for f in photos]
-response = httpx.post(
-    f"{AI_API_URL}/api/v1/blur/detect/batch",
-    headers={"X-API-Key": AI_API_KEY},
-    files=files,
-)
-job_id = response.json()["data"]["job_id"]
-
-# 2. Poll for results (or use webhook)
-while True:
-    status = httpx.get(
-        f"{AI_API_URL}/api/v1/jobs/{job_id}",
-        headers={"X-API-Key": AI_API_KEY},
-    ).json()["data"]
-
-    if status["status"] == "completed":
-        break
-    if status["status"] == "failed":
-        raise ProcessingError(status["error"])
-
-    notify_progress(status["progress"])
-    await asyncio.sleep(3)
-
-# 3. Store all results
-for item in status["result"]:
-    photo = photos[item["index"]]
-    photo.is_blurry = item["is_blurry"]
-    photo.blur_score = item["metrics"]["laplacian_variance"]
-    db.save(photo)
-```
-
-### Desktop Backend Response Shaping
-
-The desktop UI doesn't need raw ai-api responses. Shape them:
-
-```json
-// What desktop UI receives from desktop backend:
-{
-  "photo_id": "local-123",
-  "filename": "IMG_4521.jpg",
-  "quality": {
-    "status": "sharp",
-    "score": 185.4,
-    "blur_type": null,
-    "confidence": 0.85
-  },
-  "imported_at": "2026-03-26T10:00:00Z"
-}
-```
+Analysis uploads are separate from training feedback. A label alone sends
+nothing; an explicit **Submit this example** action sends the selected
+prepared JPEG through the user's Supabase session. The packaged app still
+uses production Supabase for feedback. Local SQL/Storage tests do not prove
+its production migration, bucket, or policies are ready. See
+BatchMyPhotos/desktop/docs/blur-detection.md for retention and deletion.
 
 ---
 
-## Contract 2: Web/Mobile Backend (Full Features)
+## Contract 2: Web/Mobile Backend (retired)
 
-The Web/Mobile Backend uses ai-api's **face and bib** features and manages events, participants, and photo galleries.
+Retired 2026-10-16: the backend uses AWS Rekognition (`AI_PROVIDER=rekognition`, the backend's default); ai-api serves blur only, to the desktop app. The face and bib routes this contract described (`/faces/*`, `/bibs/*`) no longer exist.
 
 ### Shared client account and event rules
 
-These routes belong to Spring Boot under `/api/v1`; clients never send account data to ai-api.
+These routes belong to Spring Boot under `/api/v1` and were never ai-api routes; they stay listed here after the face/bib retirement. Clients never send account data to ai-api.
+
+- Photographer metadata sharing: `GET`/`PUT /me/photographer/metadata-settings` exchange `{metadataPublicByDefault:boolean}`. The default is private. It is copied to a newly created photographer event or to first upload coverage of a shared event; changing it never changes existing event choices.
+- `GET`/`PUT /me/photographer/events/{eventId}/metadata-visibility` exchange `{metadataPublic:boolean}` for the caller's coverage. A legacy owned event without coverage reads as private; its owner may create that relationship by PUT. Uncovered foreign events return 404. Upload counter upserts preserve an explicit choice.
+- `GET /me/photographer/photos/{photoId}/metadata` lets the owning photographer read retained photos; `GET /public/photos/{photoId}/metadata` requires a LIVE, untrashed photo, readable event, approved unsuspended photographer, and that photographer's current event-sharing choice. Both return the typed `photoId`, `status`, nullable `originalFilename`, nullable `fileSizeBytes`, and nullable `fields` response with `private, no-store`; policy denials are indistinguishable 404s. Status is `pending`, `ready`, `empty`, `failed`, or `unavailable`; internal processing reads as pending and a missing legacy row as unavailable. `fields` is an object only for ready/empty, with nullable `cameraMake`, `cameraModel`, `lens`, `aperture` (positive finite number), `exposureTime`, `iso` (positive integer), `author`, `copyright`, `takenAtLocal`, `takenAtOffset`, `flash`, `exposureMode`, and `whiteBalance`.
+- Gallery `PhotoDto` adds `metadataAccess: "none" | "public" | "owner"` as a UI routing hint; the metadata endpoints repeat authorization and gallery lists never embed field values. Metadata is read from Spring Boot's database, never fetched from storage on GET or passed to ai-api; raw EXIF, GPS and device serials are not exposed. The visibility setting controls only this API/popup: original downloads deliberately retain their embedded metadata.
+- After committed LIVE publication, metadata extraction reuses the watermark worker's original array on the bounded `metadataProcessing` pool (`AsyncConfig`). Oversized arrays, saturation and stopped-executor submissions leave unclaimed rows for fenced recovery; recovery uses that pool only while watermark work is idle and may read the original again. Pool capacity and the enforced byte ceiling live in `AsyncConfig` and `PhotoMetadataService`; metadata completion does not gate LIVE.
 
 - Google sign-in needs a verified Google ID token, never a QuickPitik password. Registration shares the same normalized, unique email namespace and returns `EMAIL_TAKEN` for an existing Google account.
 - `PUT /me/password` requires the current password even when Google is linked. To set an initial password or recover one, use the existing `/auth/forgot-password` → `/auth/verify-reset-otp` → `/auth/reset-password` flow. The continuation token is issued only after email OTP verification; reset revokes every refresh token.
-- `PUT /me/email` retains the Google-linked exemption from current-password verification (product decision, 2026-09-09). Confirmation goes to the new inbox. This accepts the risk that a stolen authenticated Google-linked session can move the sign-in email and then use password recovery.
+- `PUT /me/email` retains the Google-linked exemption from current-password verification (product decision, 2026-09-09); since 2026-10 only from a session minted after the account's last credential change (credential version, V88). Confirmation goes to the new inbox. This accepts the risk that a stolen authenticated Google-linked session can move the sign-in email and then use password recovery.
 - Mobile race-day labels use `deriveEventDisplayState`. Gallery sockets and photographer syncing use `deriveEventState`, preserving the existing post-race upload window. Discovery uses `extractCity` until events provide structured region data; `GET /regions` remains the canonical region catalog for photographer settings.
 - Handle changes are validated server-side against `reserved_handles`; V62 adds the account routes introduced in the client guard. Before release, query `SELECT p.user_id, p.handle FROM photographer_settings p JOIN reserved_handles r ON r.handle = lower(p.handle)` and arrange replacement handles with affected owners through the existing settings flow. The migration warns about collisions and preserves ownership.
 - The profile's `#race-log` and `#saved-events` fragments both reach Saved events.
-
-> **Blur is desktop-only — the web/mobile backend does NOT call it.** Per root `CLAUDE.md` rule 6, web + mobile upload paths MUST NOT call any `/blur/*` endpoint (no `BLUR_REJECTED` gate, no `blur_score` writes), and the Spring Boot `AiApiClient` intentionally has no `blurDetect()` method. Photographers cull blurry shots in BatchMyPhotos (desktop) before upload, so uploaded photos are already culled. All blur usage lives in Contract 1 (Desktop) only.
-
-### Endpoints Used
-
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/v1/faces/enroll` | Register participant face for event (`event_id` **required** — 422 if omitted) |
-| `POST /api/v1/faces/enroll/batch` | Bulk-enroll multiple photos under **one** person (many selfies of one runner) — `event_id` **required** |
-| `POST /api/v1/faces/enroll/mega` | Bulk **photo indexing** — one person **per image**, every face stored, `ref` echoed (up to 500) |
-| `POST /api/v1/faces/search` | Find participants in uploaded photo (`event_id` **required** — 422 if omitted) |
-| `POST /api/v1/faces/search/batch` · `/search/mega` | Async batch / mega-batch face search (`event_id` **required** when `operation=search`) |
-| `POST /api/v1/faces/detect` | Count faces / return bounding boxes |
-| `POST /api/v1/faces/compare` | 1:1 face verification |
-| `GET /api/v1/faces/persons` | Paginated list (scoped by api_key_id + optional event_id) |
-| `GET /api/v1/faces/persons/{id}` | Get enrolled person info |
-| `DELETE /api/v1/faces/persons/{id}` | Remove person (GDPR) |
-| `POST /api/v1/bibs/recognize` | Read bib number from photo (`min_chars` override available) |
-| `POST /api/v1/bibs/recognize/batch` · `/recognize/mega` | Async batch / mega-batch |
-| `GET /api/v1/jobs/{job_id}` | Poll batch job status (supports `offset`/`limit`) |
-| `POST /api/v1/webhooks` · `GET` · `DELETE` | Manage webhook subscriptions |
-| `GET /api/v1/health/ready` | Health check |
-
-### Authentication
-
-```
-X-API-Key: sk_webmobile_prod_<your_key>
-```
-
-Required scopes (actual names used in code): `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write`. (No `blur:read` — blur is desktop-only, see note above.) A key with the `*` super-scope passes every check.
-
-### Flow 1: Event Setup — Enroll Participant Faces
-
-Before an event starts, the admin creates a public event gallery and uploads participant photos. Backend enrolls each face with `event_id`.
-
-> **Multi-face enrollment (photo indexing).** `enroll` stores **one embedding per detected face**, each keyed by a per-face-distinct `source_image_hash`. A single image containing N runners returns `faces_enrolled: N` and makes **all** of them findable — essential when a *photo* (not one participant) is enrolled as a single person. Faces below `FACE_MIN_ENROLLMENT_CONFIDENCE` are skipped; re-enrolling the same image is idempotent via the `(person_id, source_image_hash)` unique index. (Before 2026-06-02 the hash was computed over the whole image, so all but one face in a crowd shot collided and were dropped.)
-
-```
-Admin (Web)              Web/Mobile Backend              ai-api
-    │                           │                           │
-    │  "Upload participant      │                           │
-    │   photos for Marathon"    │                           │
-    │─────────────────────────►│                           │
-    │                           │                           │
-    │                           │  For each participant:    │
-    │                           │  POST /faces/enroll       │
-    │                           │  form: file,              │
-    │                           │    person_name,           │
-    │                           │    event_id=marathon-2026 │
-    │                           │─────────────────────────►│
-    │                           │                           │
-    │                           │  { person_id: "p-123",   │
-    │                           │    faces_enrolled: 1 }    │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │                           │  Backend stores mapping:  │
-    │                           │  participant.ai_person_id │
-    │                           │    = "p-123"              │
-    │                           │                           │
-    │  "Enrolled 500 participants"│                         │
-    │◄─────────────────────────│                           │
-```
-
-**Web/Mobile Backend logic:**
-```python
-async def enroll_participant(participant, event, photo_file):
-    """Enroll a participant's face in ai-api, linked to this event."""
-
-    response = await httpx.post(
-        f"{AI_API_URL}/api/v1/faces/enroll",
-        headers={"X-API-Key": AI_API_KEY},
-        files={"file": (photo_file.name, photo_file.bytes, "image/jpeg")},
-        data={
-            "person_name": participant.full_name,
-            "event_id": str(event.id),  # CRITICAL: always pass event_id
-        },
-    )
-    result = response.json()
-
-    if not result["success"]:
-        if result["error"]["code"] == "LOW_QUALITY":
-            participant.enrollment_status = "low_quality_photo"
-            db.save(participant)
-            return {"status": "failed", "reason": "Photo quality too low for enrollment"}
-        raise EnrollmentError(result["error"]["message"])
-
-    # Store ai-api person_id in our participant record
-    participant.ai_person_id = result["data"]["person_id"]
-    participant.enrollment_status = "enrolled"
-    db.save(participant)
-
-    return {"status": "enrolled", "person_id": result["data"]["person_id"]}
-```
-
-### Flow 2: Photo Upload — Auto-tag with Face + Bib
-
-When a photographer uploads a race photo, the backend runs face search AND bib recognition to automatically tag participants.
-
-```
-Photographer (Mobile)    Web/Mobile Backend              ai-api
-    │                           │                           │
-    │  "Upload race photo"      │                           │
-    │─────────────────────────►│                           │
-    │                           │                           │
-    │                           │  Step 1: Face search      │
-    │                           │  POST /faces/search       │
-    │                           │  ?event_id=marathon-2026  │
-    │                           │  ?threshold=0.6           │
-    │                           │  + file                   │
-    │                           │─────────────────────────►│
-    │                           │  { matches: [            │
-    │                           │    { person_id: "p-123", │
-    │                           │      person_name: "John",│
-    │                           │      similarity: 0.87 }  │
-    │                           │  ] }                      │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │                           │  Step 2: Bib recognition  │
-    │                           │  POST /bibs/recognize     │
-    │                           │  + file                   │
-    │                           │─────────────────────────►│
-    │                           │  { detections: [         │
-    │                           │    { bib_number: "1023", │
-    │                           │      confidence: 0.91 }  │
-    │                           │  ] }                      │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │                           │  Step 3: Backend merges   │
-    │                           │  face match + bib match   │
-    │                           │  into final tagging       │
-    │                           │                           │
-    │  "Tagged: John Doe (#1023)"│                          │
-    │◄─────────────────────────│                           │
-```
-
-**Event isolation (fail-closed):** `event_id` is **required** on every enroll and every search — `/faces/search` rejects a missing scope with `422`, `/search/batch`·`/search/mega` reject it when `operation=search`, and `/faces/enroll`·`/enroll/batch`·`/enroll/mega` reject it outright. The backend already passes `event_id` on every call; making it required just moves enforcement of root rule 5 to the ai-api boundary instead of trusting the caller.
-
-The two directions fail differently, and both matter. An unscoped **search** would silently match across every event for the API key — a leak. An unscoped **enroll** is worse in a quieter way: the embedding is stored with `event_id = NULL`, which no search can ever return (they all require a scope, and `NULL` matches none) and which `DELETE /faces/persons?event_id=` cannot erase — a permanent, invisible, un-GDPR-erasable orphan. Enroll was fail-open until 2026-08-14; `/enroll/mega` had always required it.
-
-When `person_id` is supplied to an enroll, the person is looked up scoped by `api_key_id` **and** `event_id`. An existence-only lookup would let one tenant attach faces to another tenant's person, or file an embedding under a different event than the caller declared.
-
-**Web/Mobile Backend logic:**
-```python
-async def process_uploaded_photo(photo_file, event):
-    """Full pipeline: face search → bib OCR → merge results.
-
-    (No blur gate — photos arrive already culled by the desktop app; blur is
-    desktop-only per root CLAUDE.md rule 6.)
-    """
-
-    image_bytes = await photo_file.read()
-
-    # Step 1: Face search (scoped to this event)
-    face_resp = await httpx.post(
-        f"{AI_API_URL}/api/v1/faces/search",
-        headers={"X-API-Key": AI_API_KEY},
-        params={
-            "event_id": str(event.id),
-            "threshold": event.face_match_threshold,  # e.g., 0.6
-            "top_k": 5,
-        },
-        files={"file": (photo_file.name, image_bytes, "image/jpeg")},
-    )
-    face_matches = face_resp.json()["data"]["matches"]
-
-    # Step 2: Bib recognition
-    bib_resp = await httpx.post(
-        f"{AI_API_URL}/api/v1/bibs/recognize",
-        headers={"X-API-Key": AI_API_KEY},
-        files={"file": (photo_file.name, image_bytes, "image/jpeg")},
-    )
-    bib_detections = bib_resp.json()["data"]["detections"]
-
-    # Step 3: Merge results in backend
-    tagged_participants = []
-
-    # From face matches: look up our participant by ai_person_id
-    for match in face_matches:
-        participant = db.query(Participant).filter_by(
-            ai_person_id=match["person_id"],
-            event_id=event.id,
-        ).first()
-        if participant:
-            tagged_participants.append({
-                "participant": participant,
-                "method": "face",
-                "confidence": match["similarity"],
-            })
-
-    # From bib matches: look up participant by bib number
-    for detection in bib_detections:
-        if detection["confidence"] < event.bib_confidence_threshold:  # e.g., 0.7
-            continue  # Backend filters low-confidence OCR
-
-        participant = db.query(Participant).filter_by(
-            bib_number=detection["bib_number"],
-            event_id=event.id,
-        ).first()
-        if participant:
-            tagged_participants.append({
-                "participant": participant,
-                "method": "bib",
-                "confidence": detection["confidence"],
-            })
-
-    # Deduplicate (same participant found by both face and bib)
-    unique = deduplicate_by_participant_id(tagged_participants)
-
-    # Store photo with tags
-    photo = Photo(
-        event_id=event.id,
-        file_url=upload_to_storage(image_bytes),
-        tags=unique,
-    )
-    db.save(photo)
-
-    return {"status": "processed", "tagged": [t["participant"].name for t in unique]}
-```
-
-### Flow 3: Batch Processing (Event Photo Dump)
-
-For bulk uploads (e.g., photographer dumps 200 photos after event), use batch endpoints with webhooks.
-
-```
-Photographer (Web)       Web/Mobile Backend              ai-api
-    │                           │                           │
-    │  "Upload 200 photos"      │                           │
-    │─────────────────────────►│                           │
-    │                           │                           │
-    │                           │  POST /faces/search/batch │
-    │                           │  + 100 files (batch 1)    │
-    │                           │  params: event_id         │
-    │                           │─────────────────────────►│
-    │                           │  { job_id: "face-job-1" } │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │                           │  POST /bibs/recognize/batch│
-    │                           │  + 100 files (batch 1)    │
-    │                           │─────────────────────────►│
-    │                           │  { job_id: "bib-job-1" }  │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "Processing… 0%"         │                           │
-    │◄─────────────────────────│                           │
-    │                           │                           │
-    │                           │  (webhook fires when done)│
-    │                           │◄─ POST /webhooks/callback │
-    │                           │   { job_id: "face-job-1", │
-    │                           │     result_count: 100 }   │
-    │                           │                           │
-    │                           │  GET /jobs/face-job-1     │
-    │                           │─────────────────────────►│
-    │                           │  { result: [...] }        │
-    │                           │◄─────────────────────────│
-    │                           │                           │
-    │  "Done! 180 tagged"       │                           │
-    │◄─────────────────────────│                           │
-```
-
-### Flow 3b: Bulk Photo Indexing — `person = photo` (mega + webhook-or-poll)
-
-The Spring backend's async indexing drain (Phase C) does not call the
-single-photo endpoints per file. It accumulates `PENDING` photos **per event**
-and submits each event-batch as **one** face-mega job and **one** bib-mega job,
-then ingests results via webhook (prod) or poll (dev/backstop).
-
-**`POST /api/v1/faces/enroll/mega`** — the photo-indexing primitive.
-
-| | |
-|---|---|
-| Request | multipart `files` (≤500); Form `event_id` (**required**); scope `faces:write` |
-| Semantics | each image enrolled as its **own** person; **every** detected face stored (per-face hash). Contrast `/faces/enroll/batch`, which lumps all images under one shared person. |
-| Filename = `ref` | set each file's filename to your own photo ID; it is echoed back per result so you can map without relying on order. |
-| Response | `202 { job_id }` — poll `GET /jobs/{job_id}`. |
-
-Per-image result (in `job.result`):
-```jsonc
-{ "index": 0, "ref": "<your photo id>", "person_id": "uuid-or-null",
-  "faces_detected": 3, "faces_enrolled": 3, "skipped": 0 }
-// person_id is null + faces_enrolled 0 when no enrollable face was found —
-// a benign "no runner in this shot" outcome (mark the photo indexed anyway).
-```
-
-**`POST /api/v1/bibs/recognize/mega`** also echoes `ref` per result when filenames are supplied. Map `result.ref` → your photo ID (fall back to `index` if absent).
-
-**Event isolation:** a mega job is always single-event — every person it creates is stamped with that one `event_id`. The same runner appearing in two events becomes two separate event-scoped persons; search stays scoped by `event_id`.
-
-**Webhook tenant scoping:** `job.completed` / `job.failed` now fan out **only** to subscriptions owned by the API key whose job fired (previously matched by event name alone, which leaked job IDs across tenants). The webhook body carries only `{ event, job_id, result_count|error }` — map `job_id` to your own job record (which holds the ordered photo IDs + `event_id`), then `GET /jobs/{job_id}` for the results. Best-effort delivery → make the receiver idempotent and keep a poll backstop.
-
-**Backpressure:** `internal`-tier keys get a higher active-job ceiling (`MAX_ACTIVE_JOBS_PER_KEY_INTERNAL`, default 50) than the public default (10), since one drain submits two jobs per event-batch.
-
-### Flow 4: Participant Removal (GDPR)
-
-When a participant requests data deletion:
-
-```python
-async def remove_participant(participant, event):
-    """Remove participant from both backend and ai-api."""
-
-    # 1. Delete face data from ai-api
-    if participant.ai_person_id:
-        await httpx.delete(
-            f"{AI_API_URL}/api/v1/faces/persons/{participant.ai_person_id}",
-            headers={"X-API-Key": AI_API_KEY},
-        )
-
-    # 2. Remove tags from photos in backend
-    db.query(PhotoTag).filter_by(participant_id=participant.id).delete()
-
-    # 3. Delete participant record in backend
-    db.delete(participant)
-    db.commit()
-```
 
 ---
 
 ## Error Handling Contract
 
-Both backends must handle these ai-api error scenarios. The `Error Code` column shows what appears in the `error.code` field of the standard envelope (or `detail` when the response is a raw FastAPI `HTTPException`).
+Callers must handle these ai-api error scenarios. The `Error Code` column shows what appears in the `error.code` field of the standard envelope (or `detail` when the response is a raw FastAPI `HTTPException`).
 
-| HTTP Status | Error Code | Response shape | Backend Action |
+| HTTP Status | Error Code | Response shape | Caller Action |
 |------------|-----------|---------------|----------------|
-| 200 (success: false) | `LOW_QUALITY` / `NO_FACES` / `NOT_FOUND` / `INVALID_INPUT` / `INVALID_WEBHOOK_URL` / `DELETE_FAILED` | Envelope | Flag, surface user-friendly message, or retry with better input |
+| 200 (success: false) | `NOT_FOUND` / `INVALID_WEBHOOK_URL` / `DELETE_FAILED` | Envelope | Flag, surface user-friendly message, or retry with better input |
 | 400 | `ImageValidationError` (class name) | Envelope | Reject upload with user-friendly message (file type, size, dimensions, corrupt) |
 | 400 | `EMPTY_BATCH` / `BATCH_TOO_LARGE` | Envelope | Recheck client-side batching logic |
 | 401 | `AuthenticationError` (class name) **or** raw `{"detail": "Missing API key"}` | Envelope *or* raw | Log alert — API key may be expired or revoked |
@@ -581,11 +137,11 @@ async def call_ai_api_with_retry(method, url, **kwargs):
 
 ## Health Check Contract
 
-Both backends should check ai-api health before starting to process requests.
+A caller can check ai-api health before starting to process requests.
 
 ```python
 async def check_ai_api_health():
-    """Call on backend startup and periodically (every 30s)."""
+    """Call on startup and periodically (every 30s)."""
     response = await httpx.get(
         f"{AI_API_URL}/api/v1/health/ready",
         timeout=5.0,
@@ -595,7 +151,7 @@ async def check_ai_api_health():
     if not health["models_loaded"]:
         logger.warning("ai-api models not loaded — ML features unavailable")
     if not health["database"]:
-        logger.error("ai-api database down — face search unavailable")
+        logger.error("ai-api database down — key lookups and batch jobs unavailable")
     if not health["redis"]:
         logger.warning("ai-api redis down — batch processing unavailable")
 
@@ -604,62 +160,24 @@ async def check_ai_api_health():
 
 ---
 
-## Configuration Each Backend Needs
+## Configuration Each Client Needs
 
-### Desktop Backend `.env`
+### BatchMyPhotos desktop configuration
 
-```bash
-# ai-api connection
-AI_API_URL=http://ai-api.internal:8000
-AI_API_KEY=sk_desktop_prod_xxxxxxxxxxxx
-
-# Blur settings (backend decides these, not ai-api)
-BLUR_AUTO_REJECT=false         # Desktop shows results, doesn't auto-reject
-BLUR_CLASSIFY_ON_IMPORT=true   # Run classification on every import
-```
-
-### Web/Mobile Backend `.env`
-
-```bash
-# ai-api connection
-AI_API_URL=http://ai-api.internal:8000
-AI_API_KEY=sk_webmobile_prod_xxxxxxxxxxxx
-
-# (No blur settings — blur is desktop-only per root CLAUDE.md rule 6)
-
-# Face search settings (per-event defaults, overridable in event settings)
-FACE_MATCH_THRESHOLD_DEFAULT=0.6      # Minimum similarity to show match
-FACE_TOP_K_DEFAULT=5                  # Max matches per face
-
-# Bib OCR settings
-BIB_CONFIDENCE_THRESHOLD_DEFAULT=0.7  # Minimum OCR confidence to trust
-```
+Source runs use the `BATCH_BLUR_*` development settings in
+`BatchMyPhotos/desktop/src/main/config.js`. The packaged beta accepts only a
+valid staging `blur-beta.json` resource for its origin and an OS-encrypted key
+entered after install. It does not classify on import or auto-reject photos.
 
 ---
 
 ## Summary: Who Calls What
 
 ```
-Desktop Backend:
-  ✅ blur/detect, blur/detect/stream, blur/detect/batch, blur/detect/mega
-  ✅ blur/classify, blur/classify/stream, blur/classify/batch, blur/classify/mega
-  ✅ jobs/{id}
-  ✅ health/ready
-  ❌ faces/*       (not used)
-  ❌ bibs/*        (not used)
-  ❌ webhooks      (optional — polling is fine for desktop)
+BatchMyPhotos Electron main:
+  ✅ blur/classify/stream (primary), blur/classify (fallback/recovery)
+  ❌ blur/detect, blur/*/batch, blur/*/mega, jobs/{id}, webhooks
 
 Web/Mobile Backend:
-  ❌ blur/*                (desktop-only — root CLAUDE.md rule 6)
-  ✅ faces/enroll          (with event_id!)
-  ✅ faces/enroll/batch
-  ✅ faces/search          (with event_id!)
-  ✅ faces/search/batch, faces/search/mega
-  ✅ faces/detect
-  ✅ faces/compare
-  ✅ faces/persons         (list), faces/persons/{id}, DELETE faces/persons/{id}
-  ✅ bibs/recognize, bibs/recognize/batch, bibs/recognize/mega
-  ✅ jobs/{id}             (with offset/limit pagination for large results)
-  ✅ webhooks              (recommended for batch workflows)
-  ✅ health/ready
+  (no ai-api calls — retired 2026-10-16: face/bib go through AWS Rekognition; blur is desktop-only, root rule 6)
 ```

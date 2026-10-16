@@ -3,6 +3,7 @@ package com.quickpitik.service.ai
 import com.quickpitik.config.RekognitionProperties
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -10,6 +11,7 @@ import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.never
 import org.mockito.Mockito.`when`
 import software.amazon.awssdk.services.rekognition.RekognitionClient
 import software.amazon.awssdk.services.rekognition.model.BoundingBox
@@ -26,6 +28,11 @@ import software.amazon.awssdk.services.rekognition.model.FaceRecord
 import software.amazon.awssdk.services.rekognition.model.IndexFacesRequest
 import software.amazon.awssdk.services.rekognition.model.IndexFacesResponse
 import software.amazon.awssdk.services.rekognition.model.ResourceNotFoundException
+import software.amazon.awssdk.services.rekognition.model.ListFacesRequest
+import software.amazon.awssdk.services.rekognition.model.ListFacesResponse
+import software.amazon.awssdk.services.rekognition.model.DeleteFacesRequest
+import software.amazon.awssdk.services.rekognition.model.DeleteFacesResponse
+import software.amazon.awssdk.services.rekognition.model.UnsuccessfulFaceDeletion
 import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageRequest
 import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageResponse
 import software.amazon.awssdk.services.rekognition.model.TextDetection
@@ -123,6 +130,35 @@ class RekognitionAiClientTest {
         assertTrue(result.matches.isEmpty())
     }
 
+    @Test fun `no face remains an empty public result with explicit internal outcome`() {
+        `when`(rek.searchFacesByImage(any(SearchFacesByImageRequest::class.java)))
+            .thenThrow(software.amazon.awssdk.services.rekognition.model.InvalidParameterException.builder().message("no face").build())
+        val result = client.facesSearch(bytes, "image/jpeg", "s.jpg", eventId, 0.8, 50)
+        assertTrue(result.matches.isEmpty())
+        val body = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().valueToTree<com.fasterxml.jackson.databind.JsonNode>(result)
+        assertEquals(true, body.path("noFaces").asBoolean())
+    }
+
+    @Test fun `missing collection is distinct from no face`() {
+        `when`(rek.searchFacesByImage(any(SearchFacesByImageRequest::class.java)))
+            .thenThrow(ResourceNotFoundException.builder().message("no collection").build())
+        val body = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().valueToTree<com.fasterxml.jackson.databind.JsonNode>(
+            client.facesSearch(bytes, "image/jpeg", "s.jpg", eventId, 0.8, 50))
+        assertTrue(body.has("noFaces"), "provider outcome must distinguish empty results")
+        assertEquals(false, body.path("noFaces").asBoolean())
+    }
+
+    @Test fun `saturated raw faces remain possibly truncated after external id deduplication`() {
+        `when`(rek.searchFacesByImage(any(SearchFacesByImageRequest::class.java))).thenReturn(
+            SearchFacesByImageResponse.builder().faceMatches(List(50) {
+                FaceMatch.builder().similarity(95f).face(Face.builder().externalImageId("$eventId.$photoId").build()).build()
+            }).build())
+        val result = client.facesSearch(bytes, "image/jpeg", "s.jpg", eventId, 0.8, 50)
+        assertEquals(1, result.matches.size)
+        val body = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().valueToTree<com.fasterxml.jackson.databind.JsonNode>(result)
+        assertTrue(body.path("possiblyTruncated").asBoolean())
+    }
+
     @Test
     fun `bib keeps numeric words at or above min chars and normalizes confidence`() {
         `when`(rek.detectText(any(DetectTextRequest::class.java))).thenReturn(
@@ -188,5 +224,61 @@ class RekognitionAiClientTest {
             writer.dispose()
         }
         return output.toByteArray()
+    }
+
+    @Test fun `rekognitionDeletesEveryFaceOfOnlyTheRequestedPhotoAcrossPages`() {
+        val faceA1 = "face-a-1"
+        val faceA2 = "face-a-2"
+        val faceFromOtherPhoto = "face-b-1"
+        val deleted = mutableSetOf<String>()
+        `when`(rek.listFaces(any(ListFacesRequest::class.java))).thenAnswer { invocation ->
+            val request = invocation.getArgument<ListFacesRequest>(0)
+            assertEquals("qp-event-$eventId", request.collectionId())
+            if (deleted.isNotEmpty()) ListFacesResponse.builder().faces(
+                Face.builder().faceId(faceFromOtherPhoto).externalImageId("$eventId.${UUID.randomUUID()}").build()).build()
+            else if (request.nextToken() == "page-2") ListFacesResponse.builder().faces(
+                Face.builder().faceId(faceA2).externalImageId("$eventId.$photoId").build()).build()
+            else ListFacesResponse.builder().nextToken("page-2").faces(
+                Face.builder().faceId(faceA1).externalImageId("$eventId.$photoId").build(),
+                Face.builder().faceId(faceFromOtherPhoto).externalImageId("$eventId.${UUID.randomUUID()}").build()).build()
+        }
+        `when`(rek.deleteFaces(any(DeleteFacesRequest::class.java))).thenAnswer { invocation ->
+            val request = invocation.getArgument<DeleteFacesRequest>(0)
+            deleted.addAll(request.faceIds())
+            DeleteFacesResponse.builder().deletedFaces(request.faceIds()).build()
+        }
+
+        // The compatibility entry must perform the same selective operation.
+        client.deleteFacesPerson("$eventId.$photoId")
+
+        val requestedDeletionIds = deleted.toSet()
+        assertEquals(setOf(faceA1, faceA2), requestedDeletionIds)
+        assertFalse(requestedDeletionIds.contains(faceFromOtherPhoto))
+        verify(rek, never()).deleteCollection(any(DeleteCollectionRequest::class.java))
+    }
+
+    @Test fun `partialDeleteIsNotSuccess`() {
+        `when`(rek.listFaces(any(ListFacesRequest::class.java))).thenReturn(
+            ListFacesResponse.builder().faces(Face.builder().faceId("face-a").externalImageId("$eventId.$photoId").build()).build())
+        `when`(rek.deleteFaces(any(DeleteFacesRequest::class.java))).thenReturn(
+            DeleteFacesResponse.builder().unsuccessfulFaceDeletions(
+                UnsuccessfulFaceDeletion.builder().faceId("face-a").build()).build())
+
+        val partialDeletionWasReportedComplete = runCatching { client.deleteFacesPerson("$eventId.$photoId") }.isSuccess
+
+        assertFalse(partialDeletionWasReportedComplete)
+        verify(rek, never()).deleteCollection(any(DeleteCollectionRequest::class.java))
+    }
+
+    @Test fun `remaining face after acknowledged deletion is not confirmed absent`() {
+        `when`(rek.listFaces(any(ListFacesRequest::class.java))).thenReturn(
+            ListFacesResponse.builder().faces(Face.builder().faceId("face-a").externalImageId("$eventId.$photoId").build()).build())
+        `when`(rek.deleteFaces(any(DeleteFacesRequest::class.java))).thenReturn(
+            DeleteFacesResponse.builder().deletedFaces("face-a").build())
+        assertFalse(runCatching { client.deleteFacesPerson("$eventId.$photoId") }.isSuccess)
+    }
+
+    @Test fun `malformed composite target cannot silently succeed`() {
+        assertFalse(runCatching { client.deleteFacesPerson("not-an-event.not-a-photo") }.isSuccess)
     }
 }

@@ -24,7 +24,7 @@ import kotlin.test.assertNull
 class EventServiceTest {
     private val eventRepository = Mockito.mock(EventRepository::class.java)
     private val settingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
-    private val mapper = EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties())
+    private val mapper = EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java))
     private val service = EventService(eventRepository, mapper, settingsRepository)
 
     @Test
@@ -65,6 +65,22 @@ class EventServiceTest {
         Mockito.`when`(eventRepository.findPublicBySlug("pending-run")).thenReturn(null)
 
         assertNull(service.findBySlug("pending-run"))
+    }
+
+    @Test
+    fun `public list detail and admin mapping expose the stored pair including legacy nulls`() {
+        val json = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().findAndRegisterModules()
+        for ((region, province) in listOf(null to null, "region-7" to "cebu")) {
+            val event = event(EventStatus.ACTIVE).apply { regionCode = region; provinceCode = province }
+            Mockito.`when`(eventRepository.findPublicBySlug(event.slug)).thenReturn(event)
+            for (dto in listOf(mapper.toListDto(event), service.findBySlug(event.slug), mapper.toAdminListDto(event))) {
+                val wire = json.valueToTree<com.fasterxml.jackson.databind.JsonNode>(dto)
+                kotlin.test.assertTrue(wire.has("regionCode"))
+                kotlin.test.assertTrue(wire.has("provinceCode"))
+                assertEquals(region, wire["regionCode"].takeUnless { it.isNull }?.asText())
+                assertEquals(province, wire["provinceCode"].takeUnless { it.isNull }?.asText())
+            }
+        }
     }
 
     private fun event(status: EventStatus) = Event(

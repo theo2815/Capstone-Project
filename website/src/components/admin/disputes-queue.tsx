@@ -80,13 +80,13 @@ interface PendingResolve {
 // can stand down via escDisabled while any modal is on top.
 
 export function DisputesQueue() {
-  const { resolve, deny, escalate } = useDisputeActions();
+  const { resolve, deny, escalate, isPending, pendingAction } = useDisputeActions();
   const query = useAdminDisputes();
   const effective = query.data ?? EMPTY_DISPUTES;
   const { showToast } = useToast();
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
-  const [submitting, setSubmitting] = useState(false);
+  const submitting = isPending(rowId);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [denyOpen, setDenyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
@@ -200,13 +200,11 @@ export function DisputesQueue() {
   async function handleContinueResolve(args: PendingResolve) {
     if (!openRow || submitting) return;
     if (args.resolution === "deny") {
-      setSubmitting(true);
       const ok = await resolve(openRow.id, {
         resolution: "deny",
         refundAmount: null,
         reason: args.note,
       });
-      setSubmitting(false);
       if (!ok) return;
       setResolveOpen(false);
       showToast({
@@ -220,13 +218,11 @@ export function DisputesQueue() {
 
   async function handleConfirmRefund() {
     if (!openRow || !pendingResolve || submitting) return;
-    setSubmitting(true);
     const confirmed = await resolve(openRow.id, {
       resolution: pendingResolve.resolution,
       refundAmount: pendingResolve.refundAmount,
       reason: pendingResolve.note,
     });
-    setSubmitting(false);
     if (!confirmed) return;
     setPendingResolve(null);
     setResolveOpen(false);
@@ -245,9 +241,7 @@ export function DisputesQueue() {
 
   async function handleDeny(reason: string) {
     if (!openRow || submitting) return;
-    setSubmitting(true);
     const ok = await deny(openRow.id, reason);
-    setSubmitting(false);
     if (!ok) return;
     setDenyOpen(false);
     showToast({ kind: "info", message: `Denied · ${openRow.id}` });
@@ -255,9 +249,7 @@ export function DisputesQueue() {
 
   async function handleEscalate(note: string | null) {
     if (!openRow || submitting) return;
-    setSubmitting(true);
     const ok = await escalate(openRow.id, note);
-    setSubmitting(false);
     if (!ok) return;
     setEscalateOpen(false);
     showToast({ kind: "info", message: `Escalated · ${openRow.id}` });
@@ -371,6 +363,7 @@ export function DisputesQueue() {
             />
           }
         >
+          {submitting && <p role="status">{pendingAction(rowId)}</p>}
           <DisputeDetailBody dispute={openRow} />
         </AdminDetailDrawer>
       )}
@@ -516,11 +509,10 @@ function DisputeDrawerActions({
   onDeny: () => void;
   onEscalate: () => void;
 }) {
+  // Every action needs an open dispute: the server escalates open ones only.
   const isOpen = dispute.status === "open";
-  const isDenied = dispute.status === "denied";
-  const escalateAllowed = isOpen || isDenied;
 
-  if (!isOpen && !escalateAllowed) {
+  if (!isOpen) {
     return (
       <p className="font-sans text-sm text-slate-soft">
         {dispute.refundStatus === "manual_review"
@@ -532,7 +524,7 @@ function DisputeDrawerActions({
 
   return (
     <>
-      {escalateAllowed && (
+      {isOpen && (
         <button
           type="button"
           onClick={onEscalate}

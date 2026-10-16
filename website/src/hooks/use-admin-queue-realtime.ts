@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 import { adminUserKeys } from "@/hooks/use-admin-users";
+import { removalKeys } from "@/hooks/use-photo-removal";
 
 // Adaptive polling fallback for the admin queues. Pairs with
 // useAdminNotificationsWs — when the push channel is up we run a slow
@@ -45,6 +46,7 @@ export function useAdminQueueRealtime(enabled: boolean): void {
       queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
       void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
+      void queryClient.invalidateQueries({ queryKey: removalKeys.admin([user.id, user.role, sessionVersion]) });
     };
 
     const id = setInterval(tick, intervalMs);

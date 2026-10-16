@@ -5,6 +5,7 @@ import jakarta.persistence.Embeddable
 import jakarta.persistence.EmbeddedId
 import jakarta.persistence.Entity
 import jakarta.persistence.Table
+import org.hibernate.annotations.DynamicUpdate
 import java.io.Serializable
 import java.math.BigDecimal
 import java.time.OffsetDateTime
@@ -21,6 +22,7 @@ data class EventPhotographerId(
 
 @Entity
 @Table(name = "event_photographer")
+@DynamicUpdate
 class EventPhotographer(
     @EmbeddedId
     val id: EventPhotographerId,
@@ -42,4 +44,7 @@ class EventPhotographer(
 
     @Column(name = "last_upload_at")
     var lastUploadAt: OffsetDateTime? = null,
+
+    @Column(name = "metadata_public", nullable = false)
+    var metadataPublic: Boolean = false,
 )

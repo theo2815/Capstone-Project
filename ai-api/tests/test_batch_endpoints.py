@@ -6,14 +6,8 @@ All tests use Celery eager mode so tasks run in-process.
 from __future__ import annotations
 
 import io
-import os
 import uuid
 
-# Must set env vars before any paddle import
-os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
-os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "False")
-
-import cv2
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -50,9 +44,6 @@ def setup_celery_and_models(app, client):
     # Copy models from app's registry to worker module globals
     registry = app.state.model_registry
     ml._blur_detector = registry.get("blur")
-    ml._face_embedder = registry.get("face")
-    ml._bib_detector = registry.get("bib_detector")
-    ml._bib_recognizer = registry.get("bib_ocr")
 
     # Initialize sync DB for task execution
     from src.db.sync_session import init_sync_db
@@ -64,9 +55,6 @@ def setup_celery_and_models(app, client):
     # Restore
     celery_app.conf.update(task_always_eager=False, task_eager_propagates=False)
     ml._blur_detector = None
-    ml._face_embedder = None
-    ml._bib_detector = None
-    ml._bib_recognizer = None
 
 
 def _make_jpeg(width: int = 256, height: int = 256) -> bytes:
@@ -75,21 +63,6 @@ def _make_jpeg(width: int = 256, height: int = 256) -> bytes:
     pil = Image.fromarray(arr)
     buf = io.BytesIO()
     pil.save(buf, format="JPEG")
-    return buf.getvalue()
-
-
-def _make_number_jpeg(text: str, width: int = 600, height: int = 400) -> bytes:
-    """Create a JPEG with numbers drawn on it."""
-    img = np.ones((height, width, 3), dtype=np.uint8) * 255
-    font_scale = min(height, width) / 80
-    thickness = max(2, int(font_scale * 2))
-    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
-    x = (width - text_size[0]) // 2
-    y = (height + text_size[1]) // 2
-    cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
-    pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    buf = io.BytesIO()
-    pil.save(buf, format="JPEG", quality=95)
     return buf.getvalue()
 
 
@@ -152,91 +125,28 @@ class TestBlurBatch:
         resp = client.post("/api/v1/blur/detect/batch")
         assert resp.status_code == 422
 
+    def test_batch_at_job_cap_is_refused_before_reading_files(self, app, client: TestClient):
+        """A key at its active-job cap gets 429 before its photos are read into memory."""
+        from unittest.mock import AsyncMock, patch
 
-# ---------- Bib Batch ----------
-
-
-class TestBibBatch:
-    def test_submit_returns_202(self, client: TestClient):
-        data = _make_number_jpeg("42")
-        resp = client.post(
-            "/api/v1/bibs/recognize/batch",
-            files=[("files", ("bib.jpg", data, "image/jpeg"))],
-        )
-        assert resp.status_code == 202
-        body = resp.json()
-        assert body["success"] is True
-        assert body["data"]["total_items"] == 1
-
-    def test_bib_batch_completed_with_results(self, client: TestClient):
-        data = _make_number_jpeg("1234")
-        resp = client.post(
-            "/api/v1/bibs/recognize/batch",
-            files=[("files", ("bib.jpg", data, "image/jpeg"))],
-        )
-        assert resp.status_code == 202
-        job_id = resp.json()["data"]["job_id"]
-
-        poll = client.get(f"/api/v1/jobs/{job_id}")
-        body = poll.json()
-        assert body["data"]["status"] == "completed"
-        results = body["data"]["result"]
-        assert len(results) == 1
-        assert results[0]["index"] == 0
-        assert "bibs" in results[0]
-
-    def test_multi_image_bib_batch(self, client: TestClient):
-        img1 = _make_number_jpeg("42")
-        img2 = _make_number_jpeg("99")
-        resp = client.post(
-            "/api/v1/bibs/recognize/batch",
-            files=[
-                ("files", ("bib1.jpg", img1, "image/jpeg")),
-                ("files", ("bib2.jpg", img2, "image/jpeg")),
-            ],
-        )
-        assert resp.status_code == 202
-        job_id = resp.json()["data"]["job_id"]
-
-        poll = client.get(f"/api/v1/jobs/{job_id}")
-        body = poll.json()
-        assert body["data"]["status"] == "completed"
-        assert body["data"]["total_items"] == 2
-        assert len(body["data"]["result"]) == 2
-
-
-# ---------- Face Batch ----------
-
-
-class TestFaceBatch:
-    def test_submit_returns_202(self, client: TestClient):
+        cap = app.state.settings.MAX_ACTIVE_JOBS_PER_KEY
         data = _make_jpeg()
-        resp = client.post(
-            "/api/v1/faces/search/batch",
-            # operation defaults to "search", which is now event-scoped (fail-closed).
-            params={"event_id": str(uuid.uuid4())},
-            files=[("files", ("face.jpg", data, "image/jpeg"))],
-        )
-        assert resp.status_code == 202
-        body = resp.json()
-        assert body["success"] is True
-        assert body["data"]["total_items"] == 1
+        repo = "src.db.repositories.job_repo.JobRepository"
+        with patch(f"{repo}.count_active_by_key", AsyncMock(return_value=cap)), \
+             patch(f"{repo}.lock_admission", AsyncMock()), \
+             patch("src.api.v1.blur.validate_batch_files",
+                   AsyncMock(return_value=[data, data])) as validate:
+            resp = client.post(
+                "/api/v1/blur/detect/batch",
+                files=[
+                    ("files", ("img1.jpg", data, "image/jpeg")),
+                    ("files", ("img2.jpg", data, "image/jpeg")),
+                ],
+            )
 
-    def test_face_detect_batch_completed(self, client: TestClient):
-        data = _make_jpeg()
-        resp = client.post(
-            "/api/v1/faces/search/batch?operation=detect",
-            files=[("files", ("face.jpg", data, "image/jpeg"))],
-        )
-        assert resp.status_code == 202
-        job_id = resp.json()["data"]["job_id"]
-
-        poll = client.get(f"/api/v1/jobs/{job_id}")
-        body = poll.json()
-        assert body["data"]["status"] == "completed"
-        results = body["data"]["result"]
-        assert len(results) == 1
-        assert "faces_detected" in results[0]
+        validate.assert_not_called()
+        assert resp.status_code == 429
+        assert resp.json()["error"]["code"] == "TOO_MANY_JOBS"
 
 
 # ---------- Job Endpoint ----------

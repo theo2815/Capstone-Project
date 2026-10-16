@@ -27,6 +27,7 @@ interface UseInfiniteListResult<T> {
   isLoading: boolean;
   isFetching: boolean;
   isFetchingNextPage: boolean;
+  isPaused: boolean;
   hasNextPage: boolean;
   fetchNextPage: () => void;
   refetch: () => void;
@@ -87,6 +88,7 @@ export function useInfiniteList<T extends { id: string }>({
     isLoading: query.isPending && (enabled ?? true),
     isFetching: query.isFetching,
     isFetchingNextPage: query.isFetchingNextPage,
+    isPaused: query.isPaused,
     hasNextPage: query.hasNextPage,
     fetchNextPage: () => void query.fetchNextPage(),
     refetch: () => void query.refetch(),

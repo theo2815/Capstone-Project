@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,6 +13,12 @@ class SyncWebhookRepository:
 
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def get(self, webhook_id: uuid.UUID) -> WebhookSubscription | None:
+        result = self.session.execute(
+            select(WebhookSubscription).where(WebhookSubscription.id == webhook_id)
+        )
+        return result.scalar_one_or_none()
 
     def list_by_event(
         self, event: str, api_key_id: str | None = None

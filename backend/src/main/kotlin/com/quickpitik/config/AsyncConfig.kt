@@ -34,12 +34,26 @@ class AsyncConfig {
     // the slow AI calls above can't sit between an upload and the photo going
     // LIVE for runners (2026-09-02 scale review).
     @Bean(name = ["watermarkProcessing"])
-    fun watermarkProcessingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
+    fun watermarkProcessingExecutor(): ThreadPoolTaskExecutor = ThreadPoolTaskExecutor().apply {
         // 2 until SubsampledDecode (P0-6) + the 2 GB limit (OPS-2) land, then back to 4
         corePoolSize = 2
         maxPoolSize = 2
         queueCapacity = 2000
         setThreadNamePrefix("watermark-")
+        setWaitForTasksToCompleteOnShutdown(true)
+        setAwaitTerminationSeconds(30)
+        initialize()
+    }
+
+    // Originals are reused after LIVE. Keep metadata off the watermark workers
+    // with at most three 25 MiB originals retained; saturation recovers from DB.
+    @Bean(name = ["metadataProcessing"])
+    fun metadataProcessingExecutor(): ThreadPoolTaskExecutor = ThreadPoolTaskExecutor().apply {
+        // ponytail: one worker/two queued originals; saturation uses fenced recovery.
+        corePoolSize = 1
+        maxPoolSize = 1
+        queueCapacity = 2
+        setThreadNamePrefix("metadata-")
         setWaitForTasksToCompleteOnShutdown(true)
         setAwaitTerminationSeconds(30)
         initialize()

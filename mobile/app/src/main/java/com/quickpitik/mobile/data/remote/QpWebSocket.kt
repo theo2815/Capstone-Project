@@ -158,26 +158,31 @@ class QpWebSocket(
 
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                synchronized(this@QpWebSocket) { attempts = 0 }
-                _state.value = WsState.Open
+                synchronized(this@QpWebSocket) {
+                    if (socket !== webSocket) return
+                    attempts = 0
+                    _state.value = WsState.Open
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                _frames.tryEmit(text)
+                synchronized(this@QpWebSocket) {
+                    if (socket === webSocket) _frames.tryEmit(text)
+                }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                scheduleReconnect(path)
+                scheduleReconnect(path, webSocket)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                scheduleReconnect(path)
+                scheduleReconnect(path, webSocket)
             }
         })
     }
 
-    private fun scheduleReconnect(path: String): Unit = synchronized(this) {
-        if (closedByCaller) return
+    private fun scheduleReconnect(path: String, failedSocket: WebSocket): Unit = synchronized(this) {
+        if (closedByCaller || socket !== failedSocket) return
         socket = null
         attempts += 1
         _state.value = WsState.Failed(attempts)

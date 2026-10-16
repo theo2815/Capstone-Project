@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { EventState, ListEvent } from "@/types/event";
 import {
   Dropdown,
@@ -10,14 +11,17 @@ import {
 import { EventTile } from "@/components/events/event-tile";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { usePublicEvents } from "@/hooks/use-public-events";
+import { usePublicEventsCatalog } from "@/hooks/use-public-events";
+import { useRegions } from "@/hooks/use-regions";
+import { getProvince, getRegion } from "@/lib/ph-regions";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 
 type DateKey = "any" | "upcoming" | "live" | "recent" | "archive";
 
 interface EventsBrowserProps {
-  events: ReadonlyArray<ListEvent>;
+  events?: ReadonlyArray<ListEvent>;
 }
 
 const DATE_OPTIONS: {
@@ -77,24 +81,45 @@ const SEGMENT_GROUPS: {
 ];
 
 export function EventsBrowser({ events: seed }: EventsBrowserProps) {
-  const events = usePublicEvents({}, seed) ?? seed;
+  const catalog = usePublicEventsCatalog(seed);
+  const { regions, isLoading: regionsLoading, error: regionsError, retry: retryRegions } = useRegions();
+  const events = useMemo(() => catalog.data ?? [], [catalog.data]);
   const [query, setQuery] = useUrlState<string>("q", "", { debounceMs: 300 });
-  const [city, setCity] = useUrlState<string>("city", "all");
+  const [city] = useUrlState<string>("city", "all");
+  const [province] = useUrlState<string>("province", "");
   const [date, setDate] = useUrlState<DateKey>("date", "any");
   const setUrlBatch = useUrlStateBatch();
+  const searchParams = useSearchParams();
+  const hasBothLocations = Boolean(searchParams.get("province")) && searchParams.has("city");
 
-  const cityOptions = useMemo(() => {
-    const unique = Array.from(new Set(events.map((e) => e.city)));
-    unique.sort();
-    return unique;
-  }, [events]);
+  useEffect(() => {
+    if (hasBothLocations) setUrlBatch({ city: null });
+  }, [hasBothLocations, setUrlBatch]);
+
+  const provinceOptions = useMemo(() => {
+    const options = new Map<string, { code: string; label: string; region: string }>();
+    for (const event of events) {
+      if (!event.regionCode || !event.provinceCode) continue;
+      const match = getProvince(regions, event.regionCode, event.provinceCode);
+      if (match) options.set(match.code, { code: match.code, label: match.name, region: getRegion(regions, event.regionCode)!.shortName });
+    }
+    const values = [...options.values()];
+    return values.map(option => ({ ...option, label: values.some(other => other.code !== option.code && other.label === option.label) ? `${option.label} · ${option.region}` : option.label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [events, regions]);
+  const selectedProvince = regions.flatMap(r => r.provinces).find(p => p.code === province);
+  const invalidProvince = Boolean(province && !regionsLoading && !regionsError && !selectedProvince);
+  const locationLabel = province
+    ? provinceOptions.find(p => p.code === province)?.label ?? selectedProvince?.name ?? `Unrecognized province: ${province}`
+    : city !== "all" ? `Legacy city: ${city}` : "All provinces";
 
   const trimmed = query.trim().toLowerCase();
-  const isFiltered = trimmed !== "" || city !== "all" || date !== "any";
+  const isFiltered = trimmed !== "" || Boolean(province) || city !== "all" || date !== "any";
 
   const filtered = useMemo(() => {
     return events.filter((e) => {
-      if (city !== "all" && e.city !== city) return false;
+      if (province) {
+        if (e.provinceCode !== province || !e.regionCode || !getProvince(regions, e.regionCode, province)) return false;
+      } else if (city !== "all" && e.city !== city) return false;
       if (date !== "any") {
         const want = DATE_OPTIONS.find((d) => d.value === date)?.matchState;
         if (want && e.state !== want) return false;
@@ -106,12 +131,12 @@ export function EventsBrowser({ events: seed }: EventsBrowserProps) {
       }
       return true;
     });
-  }, [events, city, date, trimmed]);
+  }, [events, province, regions, city, date, trimmed]);
 
   const liveCount = events.filter((e) => e.state === "live").length;
 
   const handleClearFilters = () => {
-    setUrlBatch({ city: null, date: null });
+    setUrlBatch({ province: null, city: null, date: null });
   };
 
   return (
@@ -120,23 +145,38 @@ export function EventsBrowser({ events: seed }: EventsBrowserProps) {
       <FilterStrip
         query={query}
         onQueryChange={setQuery}
-        city={city}
-        onCityChange={setCity}
+        province={province}
+        locationLabel={locationLabel}
+        legacyCity={city !== "all"}
+        onProvinceChange={(value) => setUrlBatch({ province: value || null, city: null })}
+        provincesDisabled={regionsLoading || Boolean(regionsError)}
         date={date}
         onDateChange={setDate}
-        cityOptions={cityOptions}
+        provinceOptions={provinceOptions}
         onClearFilters={handleClearFilters}
       />
-      <Results
+      {catalog.error && <LoadError message="Events could not be fully refreshed. Please try again." label="Retry events" retry={catalog.retry} pending={catalog.isFetching} />}
+      {regionsError && <LoadError message="Province options could not be loaded. Please try again." label="Retry provinces" retry={retryRegions} />}
+      {invalidProvince && <p role="alert" className="px-6 md:px-10 py-4 text-error break-words">Unrecognized province: {province}. Clear the filter or choose another province.</p>}
+      {(catalog.isPending || (province && regionsLoading)) && <p role="status" className="px-6 md:px-10 py-8">Loading events and provinces…</p>}
+      {/* Only a province filter needs the reference list; never hide the whole catalog behind it. */}
+      {catalog.data && (!province || (!regionsLoading && !regionsError)) && <Results
         events={filtered}
         totalCount={events.length}
         isFiltered={isFiltered}
-        city={city}
+        locationLabel={locationLabel}
         date={date}
-        filterKey={`${trimmed}|${city}|${date}`}
-      />
+        filterKey={`${trimmed}|${province}|${city}|${date}`}
+      />}
     </>
   );
+}
+
+function LoadError({ message, label, retry, pending = false }: { message: string; label: string; retry: () => Promise<unknown>; pending?: boolean }) {
+  return <div role="alert" className="px-6 md:px-10 py-6 flex flex-wrap items-center gap-4">
+    <p>{message}</p>
+    <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} disabled={pending} onClick={() => void retry()}>{label}</button>
+  </div>;
 }
 
 function Hero({ liveCount }: { liveCount: number }) {
@@ -279,26 +319,31 @@ function LiveTodayBlock({ liveCount }: { liveCount: number }) {
 function FilterStrip({
   query,
   onQueryChange,
-  city,
-  onCityChange,
+  province,
+  locationLabel,
+  legacyCity,
+  provincesDisabled,
+  onProvinceChange,
   date,
   onDateChange,
-  cityOptions,
+  provinceOptions,
   onClearFilters,
 }: {
   query: string;
   onQueryChange: (v: string) => void;
-  city: string;
-  onCityChange: (v: string) => void;
+  province: string;
+  locationLabel: string;
+  legacyCity: boolean;
+  provincesDisabled: boolean;
+  onProvinceChange: (v: string) => void;
   date: DateKey;
   onDateChange: (v: DateKey) => void;
-  cityOptions: string[];
+  provinceOptions: { code: string; label: string }[];
   onClearFilters: () => void;
 }) {
-  const cityLabel = city === "all" ? "All cities" : city;
   const dateLabel =
     DATE_OPTIONS.find((d) => d.value === date)?.label ?? "Any time";
-  const hasActiveFilter = city !== "all" || date !== "any";
+  const hasActiveFilter = Boolean(province) || legacyCity || date !== "any";
   const handleClearFilters = onClearFilters;
 
   return (
@@ -308,27 +353,30 @@ function FilterStrip({
           <div className="md:flex-1 min-w-0">
             <StripSearchInput value={query} onChange={onQueryChange} />
           </div>
-          <div className="flex items-center justify-end gap-5 md:gap-8 md:shrink-0">
+          <div className="flex min-w-0 max-w-full items-center justify-end flex-wrap gap-5 md:gap-8 md:shrink-0">
             <Dropdown
-              ariaLabel="Filter by city"
+              ariaLabel="Filter by province"
+              disabled={provincesDisabled}
+              className="min-w-0 max-w-full [&>button]:max-w-full [&>button>span]:max-w-full"
+              panelClassName="[&_[role=menuitem]>span:first-child]:whitespace-normal [&_[role=menuitem]>span:first-child]:break-words"
               align="right"
-              trigger={<DropdownTrigger>{cityLabel}</DropdownTrigger>}
+              trigger={<DropdownTrigger>{locationLabel}</DropdownTrigger>}
             >
               <DropdownItem
                 variant="mono"
-                active={city === "all"}
-                onClick={() => onCityChange("all")}
+                active={!province && !legacyCity}
+                onClick={() => onProvinceChange("")}
               >
-                All cities
+                All provinces
               </DropdownItem>
-              {cityOptions.map((c) => (
+              {provinceOptions.map((c) => (
                 <DropdownItem
-                  key={c}
+                  key={c.code}
                   variant="mono"
-                  active={c === city}
-                  onClick={() => onCityChange(c)}
+                  active={c.code === province}
+                  onClick={() => onProvinceChange(c.code)}
                 >
-                  {c}
+                  {c.label}
                 </DropdownItem>
               ))}
             </Dropdown>
@@ -418,14 +466,14 @@ function Results({
   events,
   totalCount,
   isFiltered,
-  city,
+  locationLabel,
   date,
   filterKey,
 }: {
   events: ReadonlyArray<ListEvent>;
   totalCount: number;
   isFiltered: boolean;
-  city: string;
+  locationLabel: string;
   date: DateKey;
   filterKey: string;
 }) {
@@ -459,7 +507,7 @@ function Results({
     <FlatResults
       events={events}
       totalCount={totalCount}
-      city={city}
+      locationLabel={locationLabel}
       date={date}
       filterKey={filterKey}
     />
@@ -482,9 +530,7 @@ function SegmentBlock({
   highlight?: boolean;
 }) {
   const bgClass = bg === "bone-deep" ? "bg-bone-deep" : "bg-bone";
-  // Client-slice so a large segment (a growing Archive especially) doesn't
-  // render every tile at once. The catalog itself is capped at the BE max
-  // upstream; reaching beyond that needs server-side lifecycle segmentation.
+  // Slice the complete catalog so large segments do not mount every tile at once.
   const [loadedCount, setLoadedCount] = useState(PAGE_SIZE.EVENT_GRID_INITIAL);
   const visibleItems = items.slice(0, loadedCount);
   return (
@@ -532,17 +578,16 @@ function SegmentBlock({
 function FlatResults({
   events,
   totalCount,
-  city,
+  locationLabel,
   date,
   filterKey,
 }: {
   events: ReadonlyArray<ListEvent>;
   totalCount: number;
-  city: string;
+  locationLabel: string;
   date: DateKey;
   filterKey: string;
 }) {
-  const cityLabel = city === "all" ? "All cities" : city;
   const dateLabel =
     DATE_OPTIONS.find((d) => d.value === date)?.label ?? "Any time";
   const noun = events.length === 1 ? "race" : "races";
@@ -564,7 +609,7 @@ function FlatResults({
             <span className="tnum">{totalCount}</span> {noun}
           </Kicker>
           <Kicker as="p" tone="soft" className="truncate">
-            {cityLabel} · {dateLabel}
+            {locationLabel} · {dateLabel}
           </Kicker>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
@@ -596,7 +641,7 @@ function EmptyState() {
           Nothing here yet.
         </p>
         <p className="font-sans text-base md:text-lg text-ink-soft mt-4">
-          Try clearing the search, or change the city or date above.
+          Try clearing the search, or change the province or date above.
         </p>
       </div>
     </section>

@@ -15,16 +15,19 @@ import com.quickpitik.dto.photographer.RegionPatchRequest
 import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
+import com.quickpitik.dto.photographer.MetadataSettingsDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.earnings.PayoutCycleService
 import com.quickpitik.service.auth.StepUpService
 import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.photographer.PayoutAccountService
 import com.quickpitik.service.photographer.PhotographerSettingsService
+import com.quickpitik.service.photographer.PhotoMetadataSettingsService
 import com.quickpitik.service.photographer.SocialLinkService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
+import jakarta.servlet.http.HttpServletResponse
 import jakarta.validation.Valid
 import org.springframework.http.MediaType
 import org.springframework.security.access.prepost.PreAuthorize
@@ -66,7 +69,27 @@ class MePhotographerSettingsController(
     private val rateLimiter: RateLimiter,
     private val couponService: CouponService,
     private val stepUpService: StepUpService,
+    private val photoMetadataSettingsService: PhotoMetadataSettingsService,
 ) {
+    @GetMapping("/metadata-settings")
+    fun getMetadataSettings(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        response: HttpServletResponse,
+    ): MetadataSettingsDto {
+        response.setHeader("Cache-Control", "private, no-store")
+        return photoMetadataSettingsService.getDefault(principal.userId)
+    }
+
+    @PutMapping("/metadata-settings")
+    fun putMetadataSettings(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @Valid @RequestBody body: MetadataSettingsDto,
+        response: HttpServletResponse,
+    ): MetadataSettingsDto {
+        response.setHeader("Cache-Control", "private, no-store")
+        return photoMetadataSettingsService.setDefault(principal.userId, body.metadataPublicByDefault)
+    }
+
     // ─── Brand / Handle / Region ──────────────────────────────────────────
     @GetMapping("/brand")
     fun getBrand(

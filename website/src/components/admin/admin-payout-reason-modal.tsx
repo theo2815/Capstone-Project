@@ -75,6 +75,7 @@ export function AdminPayoutReasonModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel={kind === "reject" ? "Rejecting…" : kind === "failed" ? "Marking failed…" : "Marking returned…"}
       onClose={close}
       onSubmit={handleSubmit}
       title={`${copy.title} · ${payoutId}`}

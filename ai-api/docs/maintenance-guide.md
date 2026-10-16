@@ -7,19 +7,17 @@
 
 ## 1. System Overview
 
-QuickPitik AI-API is a FastAPI-based computer vision service for marathon/running event photography. It provides three ML pipelines:
+QuickPitik AI-API is a FastAPI-based computer vision service for marathon/running event photography, called by the desktop app. It provides one ML pipeline (face search and bib OCR were removed on 2026-10-16; the backend uses AWS Rekognition for both):
 
 | Pipeline | Purpose | Models Used | Endpoint Prefix |
 |----------|---------|-------------|-----------------|
-| **Blur Detection** | Filter blurry photos | Laplacian/FFT detector + YOLOv8n-cls ONNX classifier | `/api/v1/blur/` |
-| **Face Search** | Match runners across photos | InsightFace (RetinaFace + ArcFace) + pgvector | `/api/v1/faces/` |
-| **Bib Number OCR** | Read bib numbers from photos | YOLOv8n detector + PaddleOCR 3.x (PP-OCRv5) | `/api/v1/bibs/` |
+| **Blur Detection** | Filter blurry photos | Laplacian/FFT detector + two-stage blur classifier (whole-frame rule, then person detector + per-person sharpness + logistic rule); four classes reported | `/api/v1/blur/` |
 
 ### Architecture
 
 ```
 Client -> FastAPI (uvicorn) -> ML Inference (sync, via asyncio.to_thread)
-                            -> PostgreSQL 16 + pgvector (embeddings, jobs, persons)
+                            -> PostgreSQL 16 + pgvector (jobs, webhooks, API keys)
                             -> Redis (rate limiting, API key cache)
                             -> Celery Worker (batch jobs, webhooks)
 ```
@@ -107,7 +105,7 @@ Prometheus metrics at `/metrics` (requires API key in production).
 |-----------|----------|--------|
 | `/health` returns non-200 for > 30s | Critical | Restart service |
 | `/health/ready` returns 503 | High | Check which component is down |
-| p99 latency > 10s on `/faces/search` | Medium | Check DB performance, model state |
+| p99 latency > 10s on `/blur/classify` | Medium | Check CPU load, model state |
 | Error rate > 5% on any endpoint | Medium | Check logs for root cause |
 | Redis memory > 80% of limit | Medium | Check for key leaks, adjust maxmemory |
 
@@ -133,11 +131,7 @@ celery -A src.workers.celery_app inspect reserved
 | Endpoint | Expected Latency | Notes |
 |----------|------------------|-------|
 | `POST /blur/detect` | 50-200ms | Laplacian + FFT, CPU only |
-| `POST /blur/classify` | 100-300ms | ONNX inference |
-| `POST /faces/detect` | 200-800ms | InsightFace detection |
-| `POST /faces/search` | 300-1500ms | Detection + embedding + DB search |
-| `POST /faces/enroll` | 300-1000ms | Detection + embedding + DB write |
-| `POST /bibs/recognize` | 500-2000ms | YOLO detection + PaddleOCR |
+| `POST /blur/classify` | 100-300ms | Whole-frame rule, then ONNX person detector + per-person sharpness + logistic rule |
 
 ### Scaling Levers
 
@@ -145,10 +139,8 @@ celery -A src.workers.celery_app inspect reserved
 |------------|----------|
 | **API throughput** | Increase `WORKERS` (uvicorn workers). Each worker holds all models in memory (~2GB). |
 | **Batch processing** | Scale Celery workers. Dedicate workers per queue with `WORKER_QUEUES`: `WORKER_QUEUES=blur celery -A src.workers.celery_app worker -Q blur -c 4`. Default-queue workers handle webhooks + maintenance and do not need ML models loaded. |
-| **Face search latency** | Add pgvector HNSW index on `face_embeddings.embedding`. Current: exact search. |
-| **Memory pressure** | Reduce `MAX_INFERENCE_DIMENSION` (default 1280). Lower = less memory per image, possibly lower accuracy — but see the calibration comment in `config.py` first: 1024 made 21% of bibs read a different number. |
+| **Memory pressure** | Reduce `MAX_INFERENCE_DIMENSION` (default 1280). Lower = less memory per image, possibly lower accuracy. The blur classifier decodes to its own `BLUR_CLASSIFY_DECODE_DIM`, calibrated to the desktop's 1280-px upload. |
 | **DB connections** | Async pool and sync pool sizes are configurable in `src/db/session.py` / `src/db/sync_session.py`. Increase if pool exhaustion is logged. |
-| **Large event (many persons)** | Partition by `event_id`. Face search already filters by `event_id` when provided. |
 | **Throughput on desktop** | Use `/blur/detect/stream` or `/blur/classify/stream` for synchronous NDJSON batches of up to 500 — no polling overhead. |
 | **Large uploads** | Use `/.../mega` (up to 500) — server chunks into `MAX_BATCH_SIZE` sub-tasks and merges via Celery chord. |
 
@@ -169,7 +161,7 @@ celery -A src.workers.celery_app inspect reserved
 
 | Check | How to Verify |
 |-------|---------------|
-| `DEBUG=false` in production | Check `.env`; app refuses to start if `DEBUG=true` AND `ENVIRONMENT=production` |
+| `DEBUG=false` in production | Check `.env`; app refuses to start if `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test` |
 | API docs disabled | `/docs` and `/redoc` return 404 when `DEBUG=false` |
 | API key required on all endpoints | Test without `X-API-Key` header; expect 401 |
 | Rate limiting active | Check Redis is up; test burst requests; expect 429 |
@@ -185,7 +177,6 @@ celery -A src.workers.celery_app inspect reserved
 | **Image bombs** | Pillow decompression bomb limit (tied to `MAX_IMAGE_DIMENSION`²), max file size, max dimension 12000px enforced on both the single-image and batch validators, downscale before inference | `MAX_FILE_SIZE`, `MAX_IMAGE_DIMENSION`, `MAX_INFERENCE_DIMENSION` |
 | **Batch flooding** | Max batch size, max active jobs per key, rate limiting (429) | `MAX_BATCH_SIZE=50`, `MEGA_BATCH_MAX_SIZE=500`, `MAX_ACTIVE_JOBS_PER_KEY=10` |
 | **Inference DoS** | Per-image inference timeout, 60s request timeout, Celery `task_time_limit=3600s` (soft 3300s) | `INFERENCE_TIMEOUT`, `TimeoutMiddleware` |
-| **Embedding spam** | Min enrollment confidence, per-person+hash deduplication in the face repo | `FACE_MIN_ENROLLMENT_CONFIDENCE=0.7` |
 | **Webhook SSRF** | IP-literal rejection at registration, DNS resolve + blocked-IP check at delivery (TOCTOU-safe — request uses resolved IP) | Built-in |
 | **API key brute force** | Rate limiting (token bucket), SHA-256 hashed storage, cache invalidation on revoke | Rate tiers: `free=60/min`, `pro=300/min`, `internal=1000/min` |
 | **Celery queue pressure** | `worker_max_tasks_per_child=500`, `worker_max_memory_per_child=2GB`, prefetch 4 (safe: paths only), `reap_stale_jobs` every 5 min | Celery config |
@@ -214,11 +205,8 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 
 | Model | Path | Format | Size | Required |
 |-------|------|--------|------|----------|
-| InsightFace buffalo_l | `models/models/buffalo_l/` (configured via `MODEL_DIR`) | ONNX (multiple) | ~280MB | Yes (required for face endpoints) |
-| Blur classifier | `models/blur_classifier/blur_classifier.onnx` | ONNX | ~5.5MB | No (optional) |
-| Blur class names | `models/blur_classifier/class_names.json` | JSON | <1KB | With classifier |
-| Bib detector (YOLO) | `models/bib_detection/yolov8n_bib.onnx` | ONNX | ~12MB | No (optional; full-image OCR fallback) |
-| PaddleOCR PP-OCRv5 | Auto-downloaded by PaddleOCR on first run | Multiple | ~150MB | Yes (required for bib endpoints) |
+| Blur person detector (stage 2) | `models/person_detector/yolov8n_seg_person.onnx` | ONNX | 13.8MB | No (optional; required in the blur profile) |
+| Blur rule (stage 2) | `models/blur_classifier/people_rule.json` | JSON | ~18KB | With the person detector |
 
 ### Updating a Model
 
@@ -230,17 +218,16 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 
 ### Retraining the Blur Classifier
 
-1. Train using YOLOv8 classification via `scripts/train_blur_classifier.py`
-2. Export to ONNX: `model.export(format='onnx')`
-3. Ensure `class_names.json` matches the training class order (alphabetical by default)
-4. The classifier validates class count against model output at load time -- mismatches disable the model
-5. Place both files in `models/blur_classifier/` and restart
+Run from `ai-api/`, in this order:
 
-### Retraining the Bib Detector
+1. `scripts/build_blur_folds.py` -- lays the labelled event photos out as five event folds
+2. `scripts/fit_blur_whole_frame_rule.py` -- learns the whole-frame thresholds; copy the printed values into `src/config.py`
+3. `scripts/export_person_detector.py` -- exports the person detector to `models/person_detector/yolov8n_seg_person.onnx` and records its hash (only when the detector itself is replaced)
+4. `scripts/measure_blur_people.py` -- measures the people in every sharp and missed-focus fold photo once and caches the numbers
+5. `scripts/fit_blur_people_rule.py` -- fits the rule and scores it on the folds it never saw
+6. `scripts/ship_blur_rule.py` -- installs the rule as `models/blur_classifier/people_rule.json` and records its hash in `models/manifest.json`; then restart
 
-1. Train YOLOv8n detection model on bib region annotations
-2. Export to ONNX: `model.export(format='onnx')`
-3. Place at `models/bib_detection/yolov8n_bib.onnx` and restart
+At load time the classifier checks both files against the hashes in the manifest -- a mismatch disables it (the blur profile refuses to start).
 
 ### Rollback
 
@@ -256,8 +243,8 @@ UPDATE api_keys SET active = false WHERE id = 'key-uuid';
 
 | Table | Purpose | Growth Pattern | Cleanup |
 |-------|---------|----------------|---------|
-| `persons` | Enrolled runner profiles | Grows with enrollments | Manual delete via API or GDPR erasure endpoint |
-| `face_embeddings` | 512-dim vectors (pgvector) | Grows with enrollments (multiple per person) | Cascade-deleted with person |
+| `persons` | Retired: runner profiles from the removed face routes | No longer grows (no served code writes it since 2026-10-16; only the dev `scripts/seed_db.py` adds a test row) | Manual SQL only (see GDPR / Data Erasure) |
+| `face_embeddings` | Retired: 512-dim vectors (pgvector) | No longer grows | Cascade-deleted with person |
 | `jobs` | Batch job tracking | Grows with batch requests | Auto-cleaned after `JOB_RETENTION_DAYS` (7) by Celery Beat |
 | `api_keys` | API key hashes + metadata | Slow growth | Manual management |
 | `webhook_subscriptions` | Webhook registrations | Slow growth | Manual delete via API |
@@ -270,7 +257,7 @@ Images are **NOT persistently stored on disk or in the database**. Two flows:
 1. Client uploads image via multipart/form-data
 2. Image is decoded to a numpy array in memory (+ EXIF rotation, downscale)
 3. ML inference runs on the array
-4. Only the results (embeddings, bib numbers, blur scores) are stored
+4. Nothing is stored; the blur result goes back in the response
 5. Raw bytes are discarded when the request returns
 
 **Batch / mega endpoints (async):**
@@ -278,12 +265,14 @@ Images are **NOT persistently stored on disk or in the database**. Two flows:
 2. The API atomically writes each image to the **blob store** at `{BLOB_STORE_PATH}/{job_id}/NNNNN.bin` (default `/tmp/quickpitik-blobs`, shared volume in Docker)
 3. The Celery task receives file paths, not base64 payloads
 4. Worker decodes from paths, runs inference, updates job progress
-5. `complete_job` / `fail_job` removes the job's blob directory
-6. `maintenance.cleanup_stale_blobs` (every 30 min) reaps directories older than 2 hours as a safety net
+5. `complete_job` / `fail_job` records the result but **keeps** the staged images, as a retry window
+6. `maintenance.cleanup_stale_blobs` (every 30 min) deletes a job's staged images once the job is `completed` or `failed` and finished at least `BLOB_RETENTION_SECONDS` ago (default 86400 = 24 h). A staged batch with no job row is deleted once its files are that old. Images of pending or processing jobs are kept.
 
 No image content is ever logged or stored beyond the blob staging directory.
 
-### Embedding Management
+### Embedding Management (retired face data)
+
+No served code reads or writes these tables since the face routes were removed on 2026-10-16 (only the dev `scripts/seed_db.py` still adds a test person); the queries below inspect what is left.
 
 ```sql
 -- Count embeddings per person
@@ -306,11 +295,11 @@ SELECT pg_size_pretty(pg_total_relation_size('face_embeddings'));
 
 ### GDPR / Data Erasure
 
-```
-DELETE /api/v1/faces/persons/{person_id}
-```
+The erasure endpoint was removed with the face routes on 2026-10-16. Face data stored before then can be erased only in the database:
 
-This cascade-deletes the person and all their embeddings. The endpoint requires `faces:delete` scope.
+```sql
+DELETE FROM persons WHERE id = '<person-uuid>';  -- face_embeddings rows go with it (ON DELETE CASCADE)
+```
 
 ---
 
@@ -487,20 +476,10 @@ curl -s -X POST -H "X-API-Key: $API_KEY" \
   -F "file=@test_image.jpg" \
   $BASE/blur/detect | python -m json.tool
 
-# 3. Face detection (smoke test)
-curl -s -X POST -H "X-API-Key: $API_KEY" \
-  -F "file=@test_image.jpg" \
-  $BASE/faces/detect | python -m json.tool
-
-# 4. Bib recognition (smoke test)
-curl -s -X POST -H "X-API-Key: $API_KEY" \
-  -F "file=@test_bib.jpg" \
-  $BASE/bibs/recognize | python -m json.tool
-
-# 5. Check security headers
+# 3. Check security headers
 curl -s -I -H "X-API-Key: $API_KEY" $BASE/health/ready | grep -i "x-content-type-options\|x-frame-options\|strict-transport"
 
-# 6. Check rate limiting
+# 4. Check rate limiting
 curl -s -I -H "X-API-Key: $API_KEY" $BASE/health | grep -i "x-ratelimit"
 ```
 
@@ -511,8 +490,6 @@ curl -s -I -H "X-API-Key: $API_KEY" $BASE/health | grep -i "x-ratelimit"
 | Health liveness | HTTP 200, `status: "alive"` |
 | Health readiness | HTTP 200, all three checks true |
 | Blur detect | HTTP 200, `success: true`, `is_blurry` field present |
-| Face detect | HTTP 200, `success: true`, `faces_detected >= 0` |
-| Bib recognize | HTTP 200, `success: true`, `bibs_detected >= 0` |
 | Security headers | `x-content-type-options: nosniff` present |
 | Rate limit headers | `X-RateLimit-Remaining` present |
 | Error on no API key | HTTP 401 when `X-API-Key` header omitted |
@@ -535,8 +512,6 @@ curl -s -I -H "X-API-Key: $API_KEY" $BASE/health | grep -i "x-ratelimit"
 |-------|-------|--------------|
 | `default` | `webhooks.deliver`, `maintenance.*`, `finalize_mega_batch` | No ML models needed |
 | `blur` | `blur.detect_batch`, `blur.classify_batch` | BlurDetector + BlurClassifier |
-| `face` | `faces.process_batch`, `faces.enroll_batch` | FaceEmbedder (InsightFace) |
-| `bib` | `bibs.recognize_batch` | BibDetector + BibRecognizer |
 
 ### Celery Beat Schedule
 
@@ -544,7 +519,7 @@ curl -s -I -H "X-API-Key: $API_KEY" $BASE/health | grep -i "x-ratelimit"
 |------|----------|---------|
 | `maintenance.reap_stale_jobs` | 5 minutes | Mark stuck pending/processing jobs as failed (age > 65 min) |
 | `maintenance.cleanup_old_jobs` | 24 hours | Delete completed/failed jobs older than `JOB_RETENTION_DAYS` (7) |
-| `maintenance.cleanup_stale_blobs` | 30 minutes | Remove blob staging dirs older than 2 hours |
+| `maintenance.cleanup_stale_blobs` | 30 minutes | Delete a finished job's staged images `BLOB_RETENTION_SECONDS` (24 h) after it ended; orphan batches after the same age |
 | `maintenance.finalize_mega_batch` | on demand | Chord callback that merges mega-batch sub-task results into the parent job |
 
 ### Rate Limit Tiers

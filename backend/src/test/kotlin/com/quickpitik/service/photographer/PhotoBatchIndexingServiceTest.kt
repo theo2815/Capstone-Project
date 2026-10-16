@@ -33,12 +33,24 @@ import kotlin.test.assertTrue
 // all-in-one-tx rollback semantics when a mega POST fails.
 class PhotoBatchIndexingServiceTest {
 
+    @Test fun `review refuses new batch submission`() {
+        val p = pendingPhoto("restricted").apply { removalState = com.quickpitik.entity.RemovalState.REVIEW }
+        stubBacklog(p)
+        Mockito.`when`(storage.getBytes("restricted")).thenReturn(jpeg1)
+        Mockito.`when`(aiClient.bibsRecognizeMega(anyArg())).thenReturn(JobCreateResult("bib-review"))
+        Mockito.`when`(aiClient.facesEnrollMega(anyArg(), anyArg())).thenReturn(JobCreateResult("face-review"))
+
+        assertFalse(service.drainEvent(eventId, cutoff))
+        Mockito.verifyNoInteractions(aiClient)
+    }
+
     private lateinit var photoRepo: PhotoRepository
     private lateinit var batchRepo: AiIndexBatchRepository
     private lateinit var jobRepo: AiIndexJobRepository
     private lateinit var storage: StorageService
     private lateinit var aiClient: AiApiClient
     private lateinit var service: PhotoBatchIndexingService
+    private lateinit var workFence: com.quickpitik.service.photos.PhotoWorkFence
 
     private val eventId = UUID.randomUUID()
     private val cutoff = OffsetDateTime.now()
@@ -60,13 +72,28 @@ class PhotoBatchIndexingServiceTest {
         jobRepo = Mockito.mock(AiIndexJobRepository::class.java)
         storage = Mockito.mock(StorageService::class.java)
         aiClient = Mockito.mock(AiApiClient::class.java)
-        service = PhotoBatchIndexingService(photoRepo, batchRepo, jobRepo, storage, aiClient, AiApiProperties())
+        workFence = Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java)
+        Mockito.`when`(workFence.claim(anyArg(), anyArg())).thenAnswer {
+            com.quickpitik.service.photos.PhotoWorkClaim(it.getArgument(0), 0, UUID.randomUUID(),
+                java.time.Instant.now().plusSeconds(60), it.getArgument(1))
+        }
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(true)
+        val manager = Mockito.mock(org.springframework.transaction.PlatformTransactionManager::class.java)
+        Mockito.`when`(manager.getTransaction(anyArg())).thenReturn(org.springframework.transaction.support.SimpleTransactionStatus())
+        service = PhotoBatchIndexingService(photoRepo, batchRepo, jobRepo, storage, aiClient, AiApiProperties(),
+            org.springframework.transaction.support.TransactionTemplate(manager), workFence,
+            com.quickpitik.service.photos.PhotoFaceErasureService(photoRepo, aiClient,
+                org.springframework.beans.factory.support.StaticListableBeanFactory().getBeanProvider(com.quickpitik.service.ai.RekognitionAiClient::class.java),
+                AiApiProperties(), workFence, com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(),
+                org.springframework.transaction.support.TransactionTemplate(manager), java.time.Clock.systemUTC()))
     }
 
     private fun pendingPhoto(key: String) =
         Photo(eventId = eventId, s3Key = key, pricePhp = BigDecimal.TEN) // PENDING, attempts 0 by default
 
     private fun stubBacklog(vararg photos: Photo) {
+        photos.forEach { Mockito.`when`(photoRepo.findById(it.id)).thenReturn(java.util.Optional.of(it)) }
+        Mockito.`when`(photoRepo.findAllById(anyArg())).thenReturn(photos.toList())
         Mockito.`when`(
             photoRepo.findIndexingBacklogForEvent(
                 eventId,
@@ -76,6 +103,21 @@ class PhotoBatchIndexingServiceTest {
                 PageRequest.of(0, 50),
             ),
         ).thenReturn(photos.toList())
+    }
+
+    @Test fun `unconfirmed prior cleanup prevents face mega creation`() {
+        val photo = pendingPhoto("k1")
+        photo.facePersons.add(com.quickpitik.entity.PhotoFacePersonEmbed(0, "old-person", com.quickpitik.entity.FaceProvider.AI_API))
+        stubBacklog(photo)
+        Mockito.`when`(storage.getBytes("k1")).thenReturn(jpeg1)
+        Mockito.`when`(aiClient.bibsRecognizeMega(anyArg())).thenReturn(JobCreateResult("bib-1"))
+        Mockito.`when`(aiClient.facesEnrollMega(anyArg(), anyArg())).thenReturn(JobCreateResult("face-1"))
+        val failure = AiApiException(HttpStatus.SERVICE_UNAVAILABLE, "AI_API_UNAVAILABLE", "cleanup unconfirmed")
+        Mockito.doThrow(failure).`when`(aiClient).deleteFacesPerson("old-person")
+        Mockito.`when`(aiClient.erasePhotoFaces(eventId, "old-person")).thenThrow(failure)
+        runCatching { service.drainEvent(eventId, cutoff) }
+        Mockito.verify(aiClient, Mockito.never()).facesEnrollMega(anyArg(), anyArg())
+        assertEquals(setOf("old-person"), photo.facePersons.map { it.aiPersonId }.toSet())
     }
 
     @Test
@@ -126,7 +168,7 @@ class PhotoBatchIndexingServiceTest {
     }
 
     @Test
-    fun `a mega POST failure leaves photos PENDING and creates no batch (rollback semantics)`() {
+    fun `a mega POST failure restores PENDING and retains unresolved batch evidence`() {
         val p1 = pendingPhoto("k1")
         stubBacklog(p1)
         Mockito.`when`(storage.getBytes("k1")).thenReturn(jpeg1)
@@ -136,9 +178,10 @@ class PhotoBatchIndexingServiceTest {
 
         assertThrows<AiApiException> { service.drainEvent(eventId, cutoff) }
 
-        assertEquals(IndexingStatus.PENDING, p1.indexingStatus) // not flipped
+        assertEquals(IndexingStatus.PENDING, p1.indexingStatus) // transport retry budget restored
         assertEquals(0, p1.indexingAttempts) // attempt not consumed
-        Mockito.verify(batchRepo, Mockito.never()).save(Mockito.any())
+        Mockito.verify(batchRepo).save(Mockito.any())
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
         Mockito.verify(jobRepo, Mockito.never()).save(Mockito.any())
     }
 

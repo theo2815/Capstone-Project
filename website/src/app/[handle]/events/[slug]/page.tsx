@@ -15,9 +15,9 @@ import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
-import { useInfiniteList } from "@/hooks/use-infinite-list";
-import { useUrlState } from "@/hooks/use-url-state";
+import { usePublicPhotographerEventPhotos } from "@/hooks/use-event-photos";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import { useUrlState } from "@/hooks/use-url-state";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { isReservedHandle } from "@/lib/reserved-handles";
@@ -26,10 +26,7 @@ import { formatLongDate } from "@/lib/format";
 import { savePhoto } from "@/lib/save-photo";
 import { fetchEventDetail } from "@/lib/api-events";
 import type { EventPhotosResult } from "@/lib/api-photos";
-import {
-  fetchPublicPhotographer,
-  fetchPublicPhotographerEventPhotos,
-} from "@/lib/api-photographer-public";
+import { fetchPublicPhotographer } from "@/lib/api-photographer-public";
 import type { EventState } from "@/lib/photographer-mock";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
 import { BRAND_COLOR_HEX } from "@/store/photographer-settings-store";
@@ -134,16 +131,7 @@ function Gallery({
   // Load-more progresses the whole gallery and the bib filter is a view over
   // what's loaded; runners searching a specific bib use /events/[slug] (server
   // bib search) instead.
-  const list = useInfiniteList<MockPhoto>({
-    queryKey: ["photographer", "public", profile.handle, event.slug, "photos"],
-    fetchPage: (offset, limit) =>
-      fetchPublicPhotographerEventPhotos(profile.handle, event.slug, {
-        offset,
-        limit,
-      }),
-    limit: PAGE_SIZE.PHOTO_INCREMENT,
-    staleTime: 60_000,
-  });
+  const list = usePublicPhotographerEventPhotos(profile.handle, event.slug);
   const photos = list.items;
 
   const [bibFilter, setBibFilter] = useUrlState<string>("bib", "", {
@@ -557,6 +545,7 @@ function PhotoPreviewMount({
     return (
       <PhotoPreviewCard
         mode="owned"
+        metadataAccess={photo.metadataAccess}
         photo={photo}
         eventName={event.name}
         eventDate={event.date}
@@ -609,6 +598,7 @@ function PhotoPreviewMount({
   return (
     <PhotoPreviewCard
       photo={photo}
+      metadataAccess={photo.metadataAccess}
       eventName={event.name}
       eventDate={event.date}
       index={index + 1}
@@ -707,7 +697,7 @@ function NotFoundBody({
         <div className="mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
           {handle && (reason === "event" || reason === "not-shot") && (
             <Link
-              href={`/${handle}`}
+              href={`/${encodeURIComponent(handle)}`}
               className="font-sans text-sm text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
             >
               ← View their portfolio

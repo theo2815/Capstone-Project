@@ -1,15 +1,18 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { webcrypto } from "node:crypto";
+import { clearAdminActionIntents } from "@/lib/admin-action-intents";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { ConfirmationOverlay } from "@/components/ui/confirmation-overlay";
 import { useConfirmationStore } from "@/store/confirmation-store";
 import { useToastStore } from "@/store/toast-store";
 import { useAuthStore } from "@/store/auth-store";
-import { admin, adminEvent } from "@/test/fixtures/admin";
+import { admin, adminEvent, eventRegions } from "@/test/fixtures/admin";
 import { adminEventKeys } from "@/hooks/use-admin-events";
 import AdminEventsPage from "./page";
+import { useAdminEventActions } from "@/hooks/use-admin-events";
 
 let client: QueryClient;
 let rows = [adminEvent];
@@ -21,13 +24,16 @@ function deferred() {
   return { promise, resolve, reject };
 }
 beforeEach(() => {
+  vi.stubGlobal("crypto", webcrypto); clearAdminActionIntents();
   useAuthStore.getState().setUser(admin); rows = [adminEvent];
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); client.setQueryData(key, rows);
-  vi.spyOn(api, "get").mockImplementation(async () => ({ items: rows }));
+  client.setQueryData(["regions"], eventRegions);
+  vi.spyOn(api, "get").mockImplementation(async (path) => path === "/regions" ? eventRegions : { items: rows });
 });
 afterEach(() => {
+  clearAdminActionIntents(); vi.unstubAllGlobals();
   cleanup(); client.clear(); useAuthStore.getState().logout();
-  useConfirmationStore.getState().close(false); useToastStore.getState().clear(); vi.restoreAllMocks();
+  useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", false); useToastStore.getState().clear(); vi.restoreAllMocks();
 });
 it("waits in delete confirmation, retains the event on failure, and allows retry", async () => {
   const user = userEvent.setup(); const request = deferred();
@@ -36,6 +42,7 @@ it("waits in delete confirmation, retains the event on failure, and allows retry
   const dialog = screen.getByRole("dialog", { name: "Delete event?" });
   const submit = within(dialog).getByRole("button", { name: "Delete event" });
   await user.click(submit); await user.click(submit);
+  expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
   expect(submit).toBeDisabled(); expect(remove).toHaveBeenCalledTimes(1);
   expect(client.getQueryData(key)).toEqual([adminEvent]); expect(useToastStore.getState().toasts).toEqual([]);
   await act(async () => { request.reject(new Error("Event is still in use.")); });
@@ -57,29 +64,118 @@ it.each(["create", "edit"])("retains %s form input and canonical rows after fail
     fireEvent.change(within(dialog).getByLabelText("Date"), { target: { value: adminEvent.date } });
     await user.clear(within(dialog).getByLabelText("Price per photo · PHP"));
     await user.type(within(dialog).getByLabelText("Price per photo · PHP"), "80");
+    await user.click(within(dialog).getByRole("button", { name: /^Region:/ }));
+    await user.click(screen.getByRole("menuitem", { name: eventRegions[0].name }));
+    await user.click(within(dialog).getByRole("button", { name: /^Province:/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Cebu" }));
   }
   const submitLabel = mode === "create" ? "Create event" : "Save changes";
   await user.click(within(dialog).getByRole("button", { name: submitLabel }));
+  expect(within(dialog).getByRole("button", { name: mode === "create" ? "Creating…" : "Saving…" })).toHaveAttribute("aria-busy", "true");
   expect(title).toBeDisabled(); expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
   await user.keyboard("{Escape}{Enter}"); expect(mutation).toHaveBeenCalledTimes(1);
   expect(client.getQueryData(key)).toEqual([adminEvent]);
   await act(async () => { request.reject(new Error("Try again")); });
   expect(title).toHaveValue("Draft title"); expect(title).toBeEnabled(); expect(dialog).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: mode === "create" ? /new event/i : "Edit" }));
+  expect(within(screen.getByRole("dialog")).getByLabelText("Title")).toHaveValue("Draft title");
+  expect(screen.getByRole("status")).toHaveTextContent(/unresolved|unchanged|original/i);
   const confirmed = { ...adminEvent, name: "Backend title", slug: "backend-title" };
   mutation.mockImplementationOnce(async () => { rows = [confirmed]; return confirmed; });
-  await user.click(within(dialog).getByRole("button", { name: submitLabel }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: submitLabel }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(client.getQueryData(key)).toEqual([confirmed]);
   expect(screen.getByRole("link", { name: /view/i })).toHaveAttribute("href", "/events/backend-title");
   if (mode === "edit") {
     const form = (mutation.mock.calls[0][1] as RequestInit).body as FormData;
     expect(form.get("title")).toBe("Draft title"); expect(form.has("pricePerPhoto")).toBe(false);
+    expect(form.get("expectedRevision")).toBe("4");
+    expect(form.has("regionCode")).toBe(false); expect(form.has("provinceCode")).toBe(false);
+  } else {
+    const form = mutation.mock.calls[0][1] as FormData;
+    expect(form.get("regionCode")).toBe("region-vii"); expect(form.get("provinceCode")).toBe("cebu");
   }
 });
 it("shows loading and a retryable query error instead of an empty catalog", async () => {
-  client.clear(); vi.mocked(api.get).mockRejectedValueOnce(new Error("Offline")); mount();
+  client.clear(); let failed = false;
+  vi.mocked(api.get).mockImplementation(async (path) => {
+    if (path === "/regions") return eventRegions;
+    if (!failed) { failed = true; throw new Error("Offline"); }
+    return { items: rows };
+  }); mount();
   expect(screen.getByRole("status")).toHaveTextContent("Loading events");
   await screen.findByRole("alert"); expect(screen.queryByText("No live events right now.")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("button", { name: "Edit" });
+});
+it("identifies a lost edit snapshot after a committed response is lost and the editor remounts", async () => {
+  const update = vi.spyOn(api, "fetch").mockImplementationOnce(async () => {
+    rows = [{ ...adminEvent, name: "Committed draft", reviewRevision: 5 }];
+    throw new Error("Response lost after commit");
+  });
+  mount(); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.clear(screen.getByLabelText("Title")); await user.type(screen.getByLabelText("Title"), "Committed draft");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
+  const reference = (update.mock.calls[0][1]?.headers as Record<string, string>)["Idempotency-Key"];
+  cleanup(); client.setQueryData(key, rows); mount();
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveTextContent(/original edit snapshot/i);
+  expect(dialog).toHaveTextContent(/reconcil/i); expect(dialog).toHaveTextContent(reference);
+  await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/reconcil/i));
+  expect(update).toHaveBeenCalledTimes(1);
+  expect(dialog).toBeInTheDocument();
+});
+
+it("retains changed geography and cover after a conflict refresh, then sends the original snapshot on retry", async () => {
+  const user = userEvent.setup();
+  rows = [{ ...adminEvent, regionCode: "region-vii", provinceCode: "cebu" }]; client.setQueryData(key, rows);
+  const update = vi.spyOn(api, "fetch").mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", field: "expectedRevision", message: "Event changed" }], 409));
+  const objectUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:cover");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  mount(); await user.click(screen.getByRole("button", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: /^Region:/ }));
+  await user.click(screen.getByRole("menuitem", { name: eventRegions[1].name }));
+  await user.click(within(dialog).getByRole("button", { name: /^Province:/ }));
+  await user.click(screen.getByRole("menuitem", { name: "Leyte" }));
+  await user.upload(within(dialog).getByLabelText("Upload cover"), new File(["cover"], "cover.jpg", { type: "image/jpeg" }));
+  rows = [{ ...rows[0], name: "Other admin", reviewRevision: 5 }];
+  await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeEnabled());
+  await waitFor(() => expect(client.getQueryData(key)).toEqual(rows));
+  expect(within(dialog).getByLabelText("Title")).toHaveValue("Cebu Race");
+  expect(within(dialog).getByRole("button", { name: "Province: Leyte" })).toBeInTheDocument();
+  expect(within(dialog).getByAltText("Cover preview")).toHaveAttribute("src", "blob:cover");
+  expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/event changed.*reopen the event/i);
+  const confirmed = { ...rows[0], regionCode: "region-viii", provinceCode: "leyte" };
+  update.mockResolvedValue(confirmed);
+  await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  for (const [, options] of update.mock.calls) {
+    const form = options?.body as FormData;
+    expect(form.get("regionCode")).toBe("region-viii"); expect(form.get("provinceCode")).toBe("leyte");
+    expect(form.get("cover")).toBeInstanceOf(File); expect(form.get("expectedRevision")).toBe("4");
+  }
+  // A refused stale edit is released, so the next save is a new request.
+  expect(update.mock.calls[0][1]?.headers).not.toEqual(update.mock.calls[1][1]?.headers);
+  expect(objectUrl).toHaveBeenCalledOnce();
+});
+it("keeps a delete confirmation open when another view owns the event", async () => {
+  const request = deferred(); vi.spyOn(api, "post").mockReturnValue(request.promise);
+  const remove = vi.spyOn(api, "delete");
+  let approve!: () => Promise<boolean>;
+  function OtherView() { const actions = useAdminEventActions(); approve = () => actions.approve(adminEvent.id, 4); return null; }
+  render(<QueryClientProvider client={client}><AdminEventsPage /><OtherView /><ConfirmationOverlay /></QueryClientProvider>);
+  await userEvent.click(screen.getByRole("button", { name: /delete/i }));
+  let command!: Promise<boolean>; act(() => { command = approve(); });
+  const dialog = screen.getByRole("dialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Delete event" }));
+  await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent(/another|pending/i));
+  expect(dialog).toBeInTheDocument(); expect(remove).not.toHaveBeenCalled();
+  await act(async () => { request.resolve(adminEvent); await command; });
 });

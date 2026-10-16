@@ -9,6 +9,9 @@ import {
 } from "@/lib/api-admin";
 import type { AdminPayoutCycle } from "@/lib/admin-payouts";
 import { useAuthStore } from "@/store/auth-store";
+import { useAdminMutation } from "./use-admin-mutation";
+import { claimAdminIntent, completeAdminIntent } from "@/lib/admin-action-intents";
+import { captureAuthSession } from "@/lib/auth-session";
 import { useToastStore } from "@/store/toast-store";
 
 export const EMPTY_PAYOUTS: AdminPayoutCycle[] = [];
@@ -32,7 +35,7 @@ export function useAdminPayouts(args: AdminPayoutListArgs = {}) {
 
 export function usePayoutActions() {
   const qc = useQueryClient();
-  return useMemo(() => {
+  const mutation = useAdminMutation();
     const settle = async (
       label: string,
       operation: () => Promise<AdminPayoutCycle | BulkPayoutResult>,
@@ -55,7 +58,9 @@ export function usePayoutActions() {
         if (isCurrent()) {
           console.error(`[admin/payouts] ${label} failed`, error);
           useToastStore.getState().showToast({
-            kind: "error", message: `Couldn't ${label} — please try again.`,
+            kind: "error", message: label === "Approve payouts" || label === "Hold payouts"
+              ? `Couldn't ${label}. ${error instanceof Error ? error.message : "Please try again."}`
+              : `Couldn't ${label} — please try again.`,
           });
         }
         return false;
@@ -75,7 +80,7 @@ export function usePayoutActions() {
       }
       // Bulk results contain only per-ID outcomes, not records. Refetch even on
       // partial success; never infer approval status (the first may stay pending).
-      await Promise.all([
+      await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["admin", "payouts"] }),
         qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
         qc.invalidateQueries({ queryKey: ["admin", "sales"] }),
@@ -96,20 +101,43 @@ export function usePayoutActions() {
       }
       return true;
     };
-    return {
-      approve: (id: string) => settle("approve payout", () => approvePayout(id)),
-      hold: (id: string, reason: string) => settle("hold payout", () => holdPayout(id, reason)),
-      markPaid: (id: string, reference: string) => settle("mark payout paid", () => markPayoutPaid(id, reference)),
-      reject: (id: string, reason: string) => settle("reject payout", () => rejectPayout(id, reason)),
-      markProcessing: (id: string) => settle("mark payout processing", () => markPayoutProcessing(id)),
-      markFailed: (id: string, reason: string) => settle("mark payout failed", () => markPayoutFailed(id, reason)),
-      markReturned: (id: string, reason: string) => settle("mark payout returned", () => markPayoutReturned(id, reason)),
-      bulkApprove: (ids: string[], onPartialFailure?: (failedIds: string[]) => void) =>
-        ids.length ? settle("Approve payouts", () => bulkApprovePayouts(ids), onPartialFailure) : Promise.resolve(true),
-      bulkHold: (ids: string[], reason: string, onPartialFailure?: (failedIds: string[]) => void) =>
-        ids.length ? settle("Hold payouts", () => bulkHoldPayouts(ids, reason), onPartialFailure) : Promise.resolve(true),
+    const run = async (ids: string[], action: string, label: string, operation: () => Promise<AdminPayoutCycle | BulkPayoutResult>, onPartialFailure?: (ids: string[]) => void) => {
+      const result = await mutation.run({ targets: ids.map((id) => ({ kind: "payout", id })), action, execute: () => settle(label, operation, onPartialFailure) });
+      return result.kind === "completed" && result.value;
     };
-  }, [qc]);
+    const bulk = async (ids: string[], action: "approve" | "hold", reason?: string) => {
+      const current = captureAuthSession();
+      const actor = useAuthStore.getState().user!.id;
+      const draft = { ids: [...new Set(ids)].sort(), action, reason: reason?.trim() };
+      // Different batches are separate intents; persist their digest, never the reason.
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(draft)));
+      const target = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      if (!current()) throw new Error("Session changed.");
+      const intent = await claimAdminIntent(actor, "payout.bulk", target, draft);
+      if (!current()) throw new Error("Session changed.");
+      try {
+        const result = action === "approve" ? await bulkApprovePayouts(draft.ids, intent.key) : await bulkHoldPayouts(draft.ids, draft.reason!, intent.key);
+        if (current()) completeAdminIntent(intent);
+        return result;
+      } catch (error) {
+        throw new Error(`The batch outcome is unconfirmed. Retry the same selection, action and reason to check it.${!intent.reloadSafe ? " Keep this page open; reload recovery is unavailable." : ""}`, { cause: error });
+      }
+    };
+    return {
+      isPending: (ids: string[]) => mutation.isPending(ids.map((id) => ({ kind: "payout", id }))),
+      pendingAction: (ids: string[]) => mutation.pendingAction(ids.map((id) => ({ kind: "payout", id }))),
+      approve: (id: string) => run([id], "Approving…", "approve payout", () => approvePayout(id)),
+      hold: (id: string, reason: string) => run([id], "Holding…", "hold payout", () => holdPayout(id, reason)),
+      markPaid: (id: string, reference: string) => run([id], "Marking paid…", "mark payout paid", () => markPayoutPaid(id, reference)),
+      reject: (id: string, reason: string) => run([id], "Rejecting…", "reject payout", () => rejectPayout(id, reason)),
+      markProcessing: (id: string) => run([id], "Processing…", "mark payout processing", () => markPayoutProcessing(id)),
+      markFailed: (id: string, reason: string) => run([id], "Marking failed…", "mark payout failed", () => markPayoutFailed(id, reason)),
+      markReturned: (id: string, reason: string) => run([id], "Marking returned…", "mark payout returned", () => markPayoutReturned(id, reason)),
+      bulkApprove: (ids: string[], onPartialFailure?: (failedIds: string[]) => void) =>
+        ids.length ? run(ids, "Approving…", "Approve payouts", () => bulk(ids, "approve"), onPartialFailure) : Promise.resolve(true),
+      bulkHold: (ids: string[], reason: string, onPartialFailure?: (failedIds: string[]) => void) =>
+        ids.length ? run(ids, "Holding…", "Hold payouts", () => bulk(ids, "hold", reason), onPartialFailure) : Promise.resolve(true),
+    };
 }
 
 export function usePendingPayoutsCount(): number {

@@ -3,6 +3,7 @@ package com.quickpitik.service.admin
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.RemovalDecision
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.websocket.PhotographerMessageCreatedEvent
@@ -11,6 +12,9 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
+import java.time.OffsetDateTime
+
+data class PhotoRemovalMessageLink(val requestId: UUID, val noticeKey: String, val createdAt: OffsetDateTime)
 
 /**
  * Single writer for the admin audit trail + photographer-inbox per Q-A2 / Q-A4.
@@ -31,6 +35,13 @@ class AdminDecisionLogService(
     private val photographerMessageRepository: PhotographerMessageRepository,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun logPhotoRemovalDecision(adminId: UUID, requestId: UUID, itemId: UUID, decision: RemovalDecision,
+        reason: String, commandId: UUID): UUID = adminDecisionLogRepository.save(AdminDecisionLog(
+        adminId = adminId, decision = "photo_removal_${decision.name.lowercase()}", reason = reason,
+        meta = mapOf("requestId" to requestId.toString(), "itemId" to itemId.toString(), "commandId" to commandId.toString()),
+    )).id
 
     @Transactional(propagation = Propagation.MANDATORY)
     fun logUserDecision(
@@ -119,10 +130,10 @@ class AdminDecisionLogService(
         body: String,
         sourceAdminId: UUID? = null,
         sourceDecisionId: UUID? = null,
-        /** Optional title — populated by ADMIN_MESSAGE (admin-supplied subject).
-         *  For every other kind the FE derives the label from MESSAGE_KIND_LABEL,
-         *  so callers leave this null. */
+        /** Optional title — used for admin subjects and removal notices.
+         *  Other kinds derive their label from MESSAGE_KIND_LABEL. */
         title: String? = null,
+        photoRemovalLink: PhotoRemovalMessageLink? = null,
     ): PhotographerMessage {
         val saved = photographerMessageRepository.save(
             PhotographerMessage(
@@ -132,6 +143,9 @@ class AdminDecisionLogService(
                 body = body,
                 sourceAdminId = sourceAdminId,
                 sourceDecisionId = sourceDecisionId,
+                photoRemovalRequestId = photoRemovalLink?.requestId,
+                noticeKey = photoRemovalLink?.noticeKey,
+                createdAt = photoRemovalLink?.createdAt ?: OffsetDateTime.now(),
             ),
         )
         // Publish for the WS broadcaster — fires only AFTER_COMMIT so a
@@ -151,6 +165,7 @@ class AdminDecisionLogService(
                         "sourceDecisionId" to saved.sourceDecisionId?.toString(),
                         "createdAt" to saved.createdAt.toString(),
                         "readAt" to saved.readAt?.toString(),
+                        "photoRemovalRequestId" to saved.photoRemovalRequestId?.toString(),
                     ),
                 ),
             ),

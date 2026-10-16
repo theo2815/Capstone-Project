@@ -342,9 +342,14 @@ function ReceiptRow({
   // (server-baked watermark) — feed it into PhotoPreviewItem.imageUrl so the
   // lightbox renders real images instead of the placeholder geometry. Deps
   // key off `order.photoIds` directly to keep the array reference stable.
+  const removedIds = useMemo(
+    () => new Set((detail?.photos ?? []).filter((p) => p.availability === "REMOVED").map((p) => p.id)),
+    [detail?.photos],
+  );
+  // Removed photos keep their receipt line but never open in the lightbox.
   const previewItems = useMemo<ReadonlyArray<PhotoPreviewItem>>(() => {
     if (detail?.photos && detail.photos.length > 0) {
-      return detail.photos.map((p, i) => ({
+      return detail.photos.filter((p) => p.availability !== "REMOVED").map((p, i) => ({
         id: p.id,
         bib: p.bib,
         time: p.time,
@@ -372,7 +377,7 @@ function ReceiptRow({
   const savablePhotos = useMemo(
     () =>
       (detail?.photos ?? [])
-        .filter((p) => p.downloadUrl)
+        .filter((p) => p.downloadUrl && p.availability !== "REMOVED")
         .map((p) => ({ url: p.downloadUrl as string })),
     [detail?.photos],
   );
@@ -409,7 +414,7 @@ function ReceiptRow({
 
   function handleDownloadOne(id: string) {
     const photo = detail?.photos.find((p) => p.id === id);
-    if (!photo?.downloadUrl) return;
+    if (!photo?.downloadUrl || photo.availability === "REMOVED") return;
     // The backend bakes Content-Disposition: attachment INTO the streamed
     // response, so normal browsers save instead of navigating. In-app webviews
     // ignore that header, so `savePhoto` routes them to the native share sheet
@@ -513,11 +518,16 @@ function ReceiptRow({
             <PhotoStrip
               photoIds={photoIds}
               thumbnails={detail?.photos.map((p) => p.thumbnailUrl ?? null)}
-              onSelect={(i) => setPreviewIndex(i)}
+              removedIds={removedIds}
+              onSelect={(i) => {
+                // First viewable photo at or after the tapped strip slot.
+                const index = previewItems.findIndex((p) => photoIds.indexOf(p.id) >= i);
+                setPreviewIndex(index >= 0 ? index : null);
+              }}
             />
           )}
           <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-3">
-            {photoCount > 0 && bundleUrl && (
+            {savablePhotos.length > 0 && bundleUrl && (
               <SavePhotosButton
                 variant="secondary"
                 photos={savablePhotos}
@@ -588,12 +598,14 @@ function ReceiptRow({
 function PhotoStrip({
   photoIds,
   thumbnails,
+  removedIds,
   onSelect,
 }: {
   photoIds: ReadonlyArray<string>;
   // Aligned with photoIds — `thumbnails[i]` is the URL for `photoIds[i]`,
   // `null` when missing (mock-mode falls back to ID-chip rendering).
   thumbnails?: ReadonlyArray<string | null>;
+  removedIds: ReadonlySet<string>;
   onSelect: (index: number) => void;
 }) {
   const max = 5;
@@ -604,12 +616,22 @@ function PhotoStrip({
     <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
       {visible.map((id, i) => {
         const thumb = thumbnails?.[i] ?? null;
+        if (removedIds.has(id)) {
+          return (
+            <div
+              key={id}
+              className="aspect-[4/3] bg-bone-deep border border-dashed border-line rounded-md flex items-center justify-center px-2 text-center"
+            >
+              <span className="font-sans text-sm text-slate">Photo removed</span>
+            </div>
+          );
+        }
         return (
           <button
             key={id}
             type="button"
             onClick={() => onSelect(i)}
-            aria-label={`Preview ${id.replace(/^mock-/, "")}`}
+            aria-label={`Preview photo ${i + 1} of ${photoIds.length}`}
             className="aspect-[4/3] bg-bone-deep border border-line rounded-md flex items-center justify-center overflow-hidden hover:border-ink hover:shadow-[var(--shadow-card)] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             {thumb ? (

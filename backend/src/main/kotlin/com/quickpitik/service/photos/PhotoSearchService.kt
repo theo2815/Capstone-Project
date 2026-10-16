@@ -5,6 +5,9 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.dto.photos.PhotoDto
+import com.quickpitik.dto.photos.FaceCandidate
+import com.quickpitik.dto.photos.FaceCandidateResult
+import com.quickpitik.dto.removal.SearchImage
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserSelfieRepository
@@ -38,36 +41,10 @@ class PhotoSearchService(
         requesterUserId: UUID? = null,
         allowFallbackOnError: Boolean = true,
     ): PaginatedResponse<PhotoDto> {
-        require(selfieBytes.isNotEmpty()) {
-            throw ValidationException(
-                code = ErrorCodes.SELFIE_REQUIRED,
-                message = "selfie file is required",
-                field = "selfie",
-            )
-        }
-        if (!aiApiProperties.enabled) {
-            // Feature-dev short-circuit. ai-api is intentionally off; surface
-            // the same 503 envelope a real outage would. Bib search keeps
-            // working because it's a DB query (just empty until AI is on
-            // during upload to populate photo_bibs).
-            throw AiApiException(
-                status = HttpStatus.SERVICE_UNAVAILABLE,
-                aiCode = null,
-                message = "ai-api is disabled — face search unavailable",
-            )
-        }
-        val threshold = aiApiProperties.faceMatchThresholdDefault
-        val matches = try {
-            meterRegistry.timer("qp.ai.call", "op", "search").recordCallable {
-                aiApiClient.facesSearch(
-                    file = selfieBytes,
-                    contentType = contentType,
-                    filename = filename,
-                    eventId = eventId,
-                    threshold = threshold,
-                    topK = 50,
-                )
-            }!!
+        validateSelfie(selfieBytes)
+        ensureEnabled()
+        val candidates = try {
+            findFaceCandidates(eventId, SearchImage(selfieBytes, contentType, filename))
         } catch (ex: Exception) {
             if (allowFallbackOnError && aiApiProperties.searchFallbackOnError && (ex !is AiApiException || ex.isRetryable)) {
                 log.warn(
@@ -77,37 +54,44 @@ class PhotoSearchService(
                 )
                 return photoService.listForEvent(eventId, null, pagination, requesterUserId)
             }
-            log.warn("ai-api faces/search failed for event {}: {}", eventId, ex.message)
-            // Rethrow AiApiException untouched so GlobalExceptionHandler can map
-            // its real status (a 4xx from ai-api is a bad selfie, not an outage).
-            // Anything else is a genuine failure to reach ai-api → 503.
-            if (ex is AiApiException) throw ex
-            throw AiApiException(
-                status = HttpStatus.SERVICE_UNAVAILABLE,
-                aiCode = null,
-                message = "Face search is temporarily unavailable",
-                cause = ex,
-            )
+            throw ex
         }
-
-        // Defense in depth: ai-api is told the threshold, but we don't rely on
-        // it having honoured it. A sub-threshold match here means someone else's
-        // photos would surface as "yours" — the one failure mode face search
-        // must never have.
-        val qualifying = matches.matches.filter { it.similarity >= threshold }
-        val dropped = matches.matches.size - qualifying.size
-        if (dropped > 0) {
-            log.warn(
-                "ai-api returned {} sub-threshold match(es) for event {} (threshold {}); dropped server-side",
-                dropped, eventId, threshold,
-            )
-        }
-
-        val matchedPersonIds = qualifying.map { it.person_id }.toSet()
+        val matchedPersonIds = candidates.matches.map { it.personId }.toSet()
         if (matchedPersonIds.isEmpty()) {
             return PaginatedResponse.empty(pagination)
         }
         return photoService.findByEventAndPersonIds(eventId, matchedPersonIds, pagination, requesterUserId)
+    }
+
+    fun findFaceCandidates(eventId: UUID, image: SearchImage): FaceCandidateResult {
+        validateSelfie(image.bytes)
+        ensureEnabled()
+        val threshold = aiApiProperties.faceMatchThresholdDefault
+        val result = try {
+            meterRegistry.timer("qp.ai.call", "op", "search").recordCallable {
+                aiApiClient.facesSearch(image.bytes, image.contentType, image.filename, eventId, threshold, CANDIDATE_LIMIT)
+            }!!
+        } catch (error: Exception) {
+            log.warn("ai-api faces/search failed for event {}: {}", eventId, error.message)
+            if (error is AiApiException) throw error
+            throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "Face search is temporarily unavailable", error)
+        }
+        // The backend applies its threshold even if a provider ignores it.
+        val matches = result.matches.filter { it.similarity >= threshold }.map { FaceCandidate(it.person_id, it.similarity) }
+        if (matches.size < result.matches.size) {
+            log.warn("ai-api returned {} sub-threshold match(es) for event {} (threshold {}); dropped server-side",
+                result.matches.size - matches.size, eventId, threshold)
+        }
+        return FaceCandidateResult(matches, CANDIDATE_LIMIT,
+            result.possiblyTruncated ?: (result.matches.size >= CANDIDATE_LIMIT), result.noFaces)
+    }
+
+    private fun validateSelfie(bytes: ByteArray) {
+        if (bytes.isEmpty()) throw ValidationException(ErrorCodes.SELFIE_REQUIRED, "selfie file is required", "selfie")
+    }
+
+    private fun ensureEnabled() {
+        if (!aiApiProperties.enabled) throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "ai-api is disabled — face search unavailable")
     }
 
     /** One stored selfie's bytes, as read back from storage. */
@@ -135,29 +119,13 @@ class PhotoSearchService(
                 field = "selfieId",
             )
         }
-        if (!aiApiProperties.enabled) {
-            throw AiApiException(
-                status = HttpStatus.SERVICE_UNAVAILABLE,
-                aiCode = null,
-                message = "ai-api is disabled — face search unavailable",
-            )
-        }
-        val threshold = aiApiProperties.faceMatchThresholdDefault
+        ensureEnabled()
         val personIds = LinkedHashSet<String>()
         var accepted = 0
         var lastRejection: AiApiException? = null
         for (sample in samples) {
             val matches = try {
-                meterRegistry.timer("qp.ai.call", "op", "search").recordCallable {
-                    aiApiClient.facesSearch(
-                        file = sample.bytes,
-                        contentType = sample.contentType,
-                        filename = sample.filename,
-                        eventId = eventId,
-                        threshold = threshold,
-                        topK = 50,
-                    )
-                }!!
+                findFaceCandidates(eventId, SearchImage(sample.bytes, sample.contentType, sample.filename))
             } catch (ex: AiApiException) {
                 if (ex.status.is4xxClientError) {
                     lastRejection = ex
@@ -174,7 +142,7 @@ class PhotoSearchService(
                 )
             }
             accepted++
-            matches.matches.filter { it.similarity >= threshold }.mapTo(personIds) { it.person_id }
+            matches.matches.mapTo(personIds) { it.personId }
         }
         if (accepted == 0 && lastRejection != null) throw lastRejection
         if (personIds.isEmpty()) return PaginatedResponse.empty(pagination)
@@ -257,6 +225,7 @@ class PhotoSearchService(
     }
 
     private companion object {
+        const val CANDIDATE_LIMIT = 50
         // Mirrors the selfie-library cap (SELFIE_MAX = 5 on both clients).
         const val MAX_LIBRARY_SELFIES = 5
     }

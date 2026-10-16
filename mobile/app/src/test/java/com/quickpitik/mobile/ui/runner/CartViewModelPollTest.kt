@@ -40,6 +40,7 @@ class CartViewModelPollTest {
     private val requests = CopyOnWriteArrayList<RecordedRequest>()
     private val polls = AtomicInteger()
     @Volatile private var script: List<Any> = emptyList() // a status string or an HTTP code per poll
+    @Volatile private var cart = "[]"
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -55,7 +56,7 @@ class CartViewModelPollTest {
                             else -> ok("""{"id":"o1","status":"$step"}""")
                         }
                     path == "/api/v1/me/cart" && request.method == "DELETE" -> ok("""{"cleared":0}""")
-                    path == "/api/v1/me/cart" -> ok("[]")
+                    path == "/api/v1/me/cart" -> ok(cart)
                     path == "/api/v1/me/orders/o1" || path.startsWith("/api/v1/orders/o1?") -> ok(DETAIL)
                     else -> MockResponse().setResponseCode(404)
                 }
@@ -86,14 +87,27 @@ class CartViewModelPollTest {
         throw AssertionError("poll never settled: ${vm.orderReturnState.value}")
     }
 
+    private fun runUntil(done: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!done() && System.currentTimeMillis() < deadline) {
+            main.scheduler.advanceUntilIdle()
+            Thread.sleep(5)
+        }
+        assertTrue("timed out", done())
+    }
+
     private fun poll(vm: CartViewModel, shareToken: String? = null) = settle(vm.also { it.pollOrderReturn("o1", shareToken) })
 
-    @Test fun `PAID clears the cart and hydrates the receipt exactly once`() {
+    @Test fun `PAID drops only the bought photos and hydrates the receipt exactly once`() {
+        cart = CART_TWO
+        val vm = signedIn()
+        runUntil { vm.cartItems.value.size == 2 }
         script = listOf("PENDING", "PAID")
-        val paid = poll(signedIn()) as OrderReturnState.Paid
+        val paid = poll(vm) as OrderReturnState.Paid
         assertEquals("o1", paid.order.id)
         assertEquals(listOf("/api/v1/me/orders/o1/status", "/api/v1/me/orders/o1/status"), statusPaths())
-        assertEquals(1, requests.count { it.method == "DELETE" && it.path == "/api/v1/me/cart" })
+        assertEquals(0, requests.count { it.method == "DELETE" })
+        assertEquals(listOf("p9"), vm.cartItems.value.map { it.photoId })
         assertEquals(1, requests.count { it.path == "/api/v1/me/orders/o1" })
     }
 
@@ -159,7 +173,21 @@ class CartViewModelPollTest {
         assertEquals(4, statusPaths().size)
     }
 
+    // Security audit 2026-10-14, MOB-2: a receipt link can be anyone's order.
+    @Test fun `a stranger's receipt link never touches the signed-in runner's server cart`() {
+        cart = CART_TWO
+        val vm = signedIn()
+        runUntil { vm.cartItems.value.size == 2 }
+        script = listOf("PAID")
+
+        assertTrue(poll(vm, shareToken = "tok") is OrderReturnState.Paid)
+
+        assertEquals(0, requests.count { it.method == "DELETE" })
+        assertEquals(listOf("p9"), vm.cartItems.value.map { it.photoId })
+    }
+
     private companion object {
         const val DETAIL = """{"id":"o1","eventId":"e1","photoIds":["p1"],"total":100.0,"paymentMethod":"GCASH","paidAt":null,"eventName":null,"eventSlug":null,"status":"PAID","photos":[]}"""
+        const val CART_TWO = """[{"photoId":"p1","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null},{"photoId":"p9","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null}]"""
     }
 }

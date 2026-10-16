@@ -63,6 +63,8 @@ dependencies {
 	// Java's ImageIO doesn't honor the tag — without this, every portrait
 	// upload renders sideways. Used by WatermarkService.processThumbnail.
 	implementation("com.drewnoakes:metadata-extractor:2.19.0")
+	// ImageIO discovers the reader; avatar processing still writes JPEG.
+	runtimeOnly("com.twelvemonkeys.imageio:imageio-webp:3.15.2")
 
 	// In-memory rate limiter (single-instance v1; Redis-backed swap is a future
 	// PR per docs/IMPLEMENTATION_PLAN.md scaling notes).
@@ -136,4 +138,6 @@ val integrationTest by tasks.registering(Test::class) {
 	testClassesDirs = sourceSets.test.get().output.classesDirs
 	classpath = sourceSets.test.get().runtimeClasspath
 	shouldRunAfter(tasks.test)
+	maxHeapSize = "2g"
+	forkEvery = 1
 }

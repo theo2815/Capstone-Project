@@ -12,12 +12,13 @@ import SettingsPage from "./page";
 import { DEFAULT_WATERMARK_PLACEMENT, usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { useUserMediaStore } from "@/store/user-media-store";
 import { putHandle, putWatermarkSettings, postPayoutAccount, patchPayoutAccount, postPayoutQr } from "@/lib/api-photographer-settings";
+import type { PHRegion } from "@/lib/ph-regions";
 
-const mocks = vi.hoisted(() => ({ toast: vi.fn(), confirm: vi.fn(), regions: [] }));
+const mocks = vi.hoisted(() => ({ toast: vi.fn(), confirm: vi.fn(), regions: [] as PHRegion[], loading: false, error: null as Error | null, retry: vi.fn() }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: mocks.toast }) }));
 vi.mock("@/hooks/use-confirmation", () => ({ useConfirmation: () => ({ confirm: mocks.confirm }) }));
 vi.mock("@/hooks/use-auth", () => ({ useAuth: () => ({ user: null }) }));
-vi.mock("@/hooks/use-regions", () => ({ useRegions: () => ({ regions: mocks.regions, isLoading: false }) }));
+vi.mock("@/hooks/use-regions", () => ({ useRegions: () => ({ regions: mocks.regions, isLoading: mocks.loading, error: mocks.error, retry: mocks.retry }) }));
 vi.mock("@/lib/photographer-verification-sync", () => ({ syncVerificationNow: vi.fn() }));
 vi.mock("@/lib/api-photographer-settings", async (importActual) => ({
   ...await importActual<typeof import("@/lib/api-photographer-settings")>(),
@@ -41,9 +42,11 @@ function deferred<T>() {
 }
 
 function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(["photographer", "settings", "metadata", photographer.id, photographer.role, useAuthStore.getState().sessionVersion], { metadataPublicByDefault: false });
   return rtlRender(ui, {
     wrapper: ({ children }) => (
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <QueryClientProvider client={client}>
         {children}
       </QueryClientProvider>
     ),
@@ -53,6 +56,7 @@ function render(ui: ReactElement) {
 beforeEach(() => {
   useAuthStore.getState().setUser(photographer);
   vi.clearAllMocks();
+  mocks.regions = []; mocks.loading = false; mocks.error = null;
   vi.spyOn(console, "error").mockImplementation(() => {}); // expected failed handle request
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
@@ -69,6 +73,45 @@ beforeEach(() => {
 
 const payout = { id: "account", method: "gcash" as const, accountName: "Test Recipient", accountNumber: "09171234567", isPrimary: true, qr: null };
 const qr = { dataUrl: "data:image/png;base64,AA==", uploadedAt: "2026-09-09T00:00:00Z" };
+
+it("prefills saved geography, clears province on region change, cancels and saves through Settings", async () => {
+  mocks.regions = [
+    { code: "r7", name: "Central Visayas", shortName: "VII", group: "visayas", provinces: [{ code: "cebu", name: "Cebu" }] },
+    { code: "r8", name: "Eastern Visayas", shortName: "VIII", group: "visayas", provinces: [{ code: "leyte", name: "Leyte" }] },
+  ];
+  usePhotographerSettingsStore.setState({ region: { regionCode: "r7", provinceCode: "cebu" } });
+  const put = vi.spyOn(api, "put").mockResolvedValue(undefined);
+  render(<SettingsPage />);
+  const slab = document.getElementById("region")!;
+  expect(within(slab).getByText("Central Visayas")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.click(within(slab).getByRole("button", { name: /region/i }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Eastern Visayas" }));
+  expect(usePhotographerSettingsStore.getState().region).toEqual({ regionCode: "r8", provinceCode: "" });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(usePhotographerSettingsStore.getState().region).toEqual({ regionCode: "r7", provinceCode: "cebu" });
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.click(within(slab).getByRole("button", { name: /region/i }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Eastern Visayas" }));
+  fireEvent.click(within(slab).getByRole("button", { name: /province/i }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Leyte" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(put).toHaveBeenCalledWith("/me/photographer/region", { regionCode: "r8", provinceCode: "leyte" }));
+});
+
+it("preserves saved geography during reference loading and offers retry without calling it stale", () => {
+  usePhotographerSettingsStore.setState({ region: { regionCode: "r7", provinceCode: "cebu" } });
+  mocks.loading = true;
+  const view = render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  expect(within(document.getElementById("region")!).getByRole("button", { name: /region/i })).toBeDisabled();
+  mocks.loading = false; mocks.error = new Error("Offline");
+  view.rerender(<SettingsPage />);
+  expect(screen.queryByText(/region is no longer available/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Retry regions/ }));
+  expect(mocks.retry).toHaveBeenCalledOnce();
+  expect(usePhotographerSettingsStore.getState().region).toEqual({ regionCode: "r7", provinceCode: "cebu" });
+});
 
 it("keeps every Edit entry disabled until initial settings hydrate", async () => {
   usePhotographerSettingsStore.setState({
@@ -138,6 +181,7 @@ it.each(["brand", "socials", "payouts"] as const)("keeps editing blocked and ret
   usePhotographerSettingsStore.setState({ hydratedSessionVersion: null });
   let recovered = false;
   const get = vi.spyOn(api, "get").mockImplementation((path) => {
+    if (path.endsWith("/metadata-settings")) return Promise.resolve({ metadataPublicByDefault: false });
     const key = path.endsWith("/brand") ? "brand" : path.endsWith("/socials") ? "socials" : "payouts";
     if (key === failedRead && !recovered) return Promise.reject(new Error("Offline"));
     return Promise.resolve(key === "brand" ? {
@@ -145,9 +189,13 @@ it.each(["brand", "socials", "payouts"] as const)("keeps editing blocked and ret
       regionCode: "", provinceCode: "", avatarUrl: null, coverUrl: "", watermarkUrl: "", watermarkSettings: null,
     } : []);
   });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AuthHydrator /><SettingsPage /></QueryClientProvider>);
 
-  expect(await screen.findByRole("alert", undefined, { timeout: 6_000 })).toHaveTextContent("Couldn't load settings");
+  // Advance the query's two retry delays without spending wall time on them.
+  await act(async () => { await vi.advanceTimersByTimeAsync(4_001); });
+  vi.useRealTimers();
+  expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load settings");
   screen.getAllByRole("button", { name: /Edit settings/ }).forEach((button) => expect(button).toBeDisabled());
   recovered = true;
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -157,7 +205,136 @@ it.each(["brand", "socials", "payouts"] as const)("keeps editing blocked and ret
     brandName: "Canonical", bio: "Existing biography",
     hydratedSessionVersion: useAuthStore.getState().sessionVersion,
   });
-  expect(get).toHaveBeenCalledTimes(6);
+  expect(get.mock.calls.some(([path]) => path.endsWith("/metadata-settings"))).toBe(true);
+});
+
+it("waits for the metadata default before allowing Edit and shows the saved value", async () => {
+  const metadata = deferred<{ metadataPublicByDefault: boolean }>();
+  vi.spyOn(api, "get").mockImplementation((path) => path.endsWith("/metadata-settings")
+    ? metadata.promise : Promise.resolve([]));
+  rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SettingsPage /></QueryClientProvider>);
+
+  const toggle = screen.getByRole("checkbox", { name: "Show metadata publicly for new events" });
+  expect(toggle).not.toBeChecked();
+  expect(toggle).toBeDisabled();
+  expect(screen.getByText("Applies to events you create or start covering next. Existing events keep their settings.")).toBeInTheDocument();
+  expect(screen.getByText("This controls the metadata popup. Original downloads keep their embedded metadata.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Edit settings/ })).toBeDisabled();
+  await act(async () => metadata.resolve({ metadataPublicByDefault: true }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).not.toBeDisabled());
+  expect(toggle).toBeChecked();
+  expect(toggle).toBeDisabled();
+});
+
+it("retries a failed metadata read before making the default editable", async () => {
+  let recovered = false;
+  vi.spyOn(api, "get").mockImplementation((path) => path.endsWith("/metadata-settings")
+    ? recovered ? Promise.resolve({ metadataPublicByDefault: true }) : Promise.reject(new Error("Offline"))
+    : Promise.resolve([]));
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  rtlRender(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SettingsPage /></QueryClientProvider>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(4_001); });
+  vi.useRealTimers();
+  expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load settings");
+  expect(screen.getByRole("button", { name: /Edit settings/ })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: "Show metadata publicly for new events" })).not.toBeChecked();
+  recovered = true;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).not.toBeDisabled());
+  expect(screen.getByRole("checkbox", { name: "Show metadata publicly for new events" })).toBeChecked();
+});
+
+it("cancels a draft and saves the default without touching event visibility", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const sessionKey = [photographer.id, photographer.role, useAuthStore.getState().sessionVersion];
+  const metadataKey = ["photographer", "settings", "metadata", ...sessionKey];
+  const visibilityKey = ["photographer", "events", "event-a", "metadata-visibility", ...sessionKey];
+  client.setQueryData(metadataKey, { metadataPublicByDefault: false });
+  client.setQueryData(visibilityKey, { metadataPublic: false });
+  let saved = false;
+  vi.spyOn(api, "get").mockImplementation((path) => Promise.resolve(path.endsWith("/metadata-settings")
+    ? { metadataPublicByDefault: saved } : []));
+  const put = vi.spyOn(api, "put").mockImplementation(async () => {
+    saved = true;
+    return { metadataPublicByDefault: true };
+  });
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  rtlRender(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>);
+  const toggle = screen.getByRole("checkbox", { name: "Show metadata publicly for new events" });
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.click(toggle);
+  expect(toggle).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(put).toHaveBeenCalledWith("/me/photographer/metadata-settings", { metadataPublicByDefault: true }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).toBeInTheDocument());
+  expect(toggle).toBeChecked();
+  expect(client.getQueryData(visibilityKey)).toEqual({ metadataPublic: false });
+  expect(invalidate.mock.calls.every(([options]) => !String(options?.queryKey?.join("/")).includes("events"))).toBe(true);
+});
+
+it("retains the metadata draft after a failed save and retries it", async () => {
+  const put = vi.spyOn(api, "put")
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockResolvedValueOnce({ metadataPublicByDefault: true });
+  render(<SettingsPage />);
+  const toggle = screen.getByRole("checkbox", { name: "Show metadata publicly for new events" });
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Save changes/ })).not.toBeDisabled());
+  expect(toggle).toBeChecked();
+  expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ kind: "error" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).toBeInTheDocument());
+  expect(put).toHaveBeenCalledTimes(2);
+  expect(toggle).toBeChecked();
+});
+
+it("does not save an untouched metadata default after a background refresh", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(["photographer", "settings", "metadata", photographer.id, photographer.role, useAuthStore.getState().sessionVersion], { metadataPublicByDefault: false });
+  let refreshed = false;
+  vi.spyOn(api, "get").mockImplementation((path) => Promise.resolve(path.endsWith("/metadata-settings")
+    ? { metadataPublicByDefault: refreshed } : []));
+  const put = vi.spyOn(api, "put").mockResolvedValue(undefined);
+  rtlRender(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  refreshed = true;
+  await act(async () => { await client.invalidateQueries({ queryKey: ["photographer", "settings", "metadata"] }); });
+  await waitFor(() => expect(client.getQueryData(["photographer", "settings", "metadata", photographer.id, photographer.role, useAuthStore.getState().sessionVersion])).toEqual({ metadataPublicByDefault: true }));
+  expect(screen.getByRole("checkbox", { name: "Show metadata publicly for new events" })).not.toBeChecked();
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Changed name" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(put).toHaveBeenCalledWith("/me/photographer/brand", expect.anything()));
+  expect(put.mock.calls.some(([path]) => path.endsWith("/metadata-settings"))).toBe(false);
+});
+
+it("ignores a metadata save that finishes after logout and same-account login", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const firstVersion = useAuthStore.getState().sessionVersion;
+  client.setQueryData(["photographer", "settings", "metadata", photographer.id, photographer.role, firstVersion], { metadataPublicByDefault: false });
+  vi.spyOn(api, "get").mockImplementation((path) => Promise.resolve(path.endsWith("/metadata-settings")
+    ? { metadataPublicByDefault: false } : []));
+  const pending = deferred<{ metadataPublicByDefault: boolean }>();
+  vi.spyOn(api, "put").mockReturnValue(pending.promise);
+  rtlRender(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Show metadata publicly for new events" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+  act(() => {
+    useAuthStore.getState().logout(); resetUserScopedStores();
+    useAuthStore.getState().setUser(photographer);
+  });
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Show metadata publicly for new events" })).not.toBeChecked());
+  await act(async () => pending.resolve({ metadataPublicByDefault: true }));
+  const currentKey = ["photographer", "settings", "metadata", photographer.id, photographer.role, useAuthStore.getState().sessionVersion];
+  expect(client.getQueryData(currentKey)).toEqual({ metadataPublicByDefault: false });
+  expect(mocks.toast).not.toHaveBeenCalled();
 });
 
 it("requires a QR before adding an account and invalidates it when its number changes", () => {
@@ -342,6 +519,7 @@ it("saves a changed number before its QR and only retries the failed upload", as
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   useAuthStore.getState().logout();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();

@@ -214,6 +214,17 @@ export function CartModal({
 
   useScrollLock(renderState === "open");
 
+  const triggerRef = useRef<Element | null>(null);
+  useEffect(() => {
+    if (isOpen) {
+      triggerRef.current = document.activeElement;
+      return;
+    }
+    const trigger = triggerRef.current;
+    triggerRef.current = null;
+    if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus({ preventScroll: true });
+  }, [isOpen]);
+
   useEffect(() => {
     if (renderState !== "open") {
       if (renderState === "hidden") setPreviewIndex(null);

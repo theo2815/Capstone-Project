@@ -23,6 +23,12 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.support.testTransactionTemplate
+import org.springframework.aop.framework.ProxyFactory
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
+import org.springframework.transaction.interceptor.TransactionInterceptor
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.quickpitik.websocket.AdminInboxEvent
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -34,6 +40,7 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -50,6 +57,8 @@ class PhotographerOwnedEventServiceTest {
     private lateinit var userRepository: UserRepository
     private lateinit var eventPublisher: ApplicationEventPublisher
     private lateinit var service: PhotographerOwnedEventService
+    private lateinit var covers: EventCoverService
+    private val transactions = testTransactionTemplate()
     private val saved = mutableListOf<Event>()
     private val published = mutableListOf<Any>()
 
@@ -68,14 +77,22 @@ class PhotographerOwnedEventServiceTest {
             Optional.of(User(id = photographerId, email = "p@test.local", passwordHash = "x", name = "Photog", role = Role.PHOTOGRAPHER)),
         )
         approved()
-        service = PhotographerOwnedEventService(
+        covers = Mockito.mock(EventCoverService::class.java)
+        val target = PhotographerOwnedEventService(
             eventRepository,
             coverageRepository,
             PhotographerAccessGuard(userRepository, settingsRepository),
-            Mockito.mock(EventCoverService::class.java),
+            covers,
             mapper,
             eventPublisher,
+            transactions,
         )
+        service = ProxyFactory(target).apply {
+            addAdvice(TransactionInterceptor().apply {
+                transactionManager = transactions.transactionManager
+                transactionAttributeSource = AnnotationTransactionAttributeSource()
+            })
+        }.proxy as PhotographerOwnedEventService
     }
 
     @Test
@@ -199,6 +216,31 @@ class PhotographerOwnedEventServiceTest {
         assertNotNull(event.createdBy)
     }
 
+    @Test
+    fun `owner cover replacement uploads outside the write and cleans up after commit`() {
+        val event = liveEvent().apply { coverS3Key = "old-cover" }
+        var committed = false
+        Mockito.`when`(covers.upload(event.id, byteArrayOf(1), "image/jpeg")).thenAnswer {
+            kotlin.test.assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            "new-cover"
+        }
+        Mockito.`when`(eventRepository.save(event)).thenAnswer {
+            assertTrue(TransactionSynchronizationManager.isActualTransactionActive())
+            TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                override fun afterCommit() { committed = true }
+            })
+            event
+        }
+        Mockito.doAnswer {
+            assertTrue(committed)
+            kotlin.test.assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            null
+        }.`when`(covers).delete("old-cover")
+        service.update(photographerId, event.id, UpdateMyEventRequest(), com.quickpitik.service.admin.AdminEventService.CoverUpload(byteArrayOf(1), "image/jpeg"))
+        assertEquals("new-cover", event.coverS3Key)
+        Mockito.verify(covers).delete("old-cover")
+    }
+
     private fun approved() {
         Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(
             Optional.of(PhotographerSettings(userId = photographerId, handle = "photog", watermarkS3Key = "w.png", verificationStatus = VerificationStatus.APPROVED)),
@@ -214,6 +256,37 @@ class PhotographerOwnedEventServiceTest {
         visibility = visibility,
     )
 
+    // Security audit 2026-10-14, photographer-events/owner-event-edit-skips-approved-gate.
+    @Test
+    fun `a photographer who lost approval cannot edit their live event`() {
+        val event = liveEvent()
+        Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(
+            Optional.of(PhotographerSettings(userId = photographerId, verificationStatus = VerificationStatus.INCOMPLETE)),
+        )
+
+        val ex = assertFailsWith<ApiException> {
+            service.update(photographerId, event.id, UpdateMyEventRequest(title = "Renamed after reset", date = "2026-12-01"), null)
+        }
+
+        assertEquals(ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED, ex.code)
+        assertNotEquals("Renamed after reset", event.name)
+    }
+
+    @Test
+    fun `a refused edit uploads no cover`() {
+        val event = liveEvent()
+        Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(
+            Optional.of(PhotographerSettings(userId = photographerId, verificationStatus = VerificationStatus.INCOMPLETE)),
+        )
+
+        assertFailsWith<ApiException> {
+            service.update(photographerId, event.id, UpdateMyEventRequest(title = "Renamed after reset"),
+                com.quickpitik.service.admin.AdminEventService.CoverUpload(byteArrayOf(1), "image/jpeg"))
+        }
+
+        Mockito.verifyNoInteractions(covers)
+    }
+
     private fun liveEvent(): Event {
         val event = Event(
             slug = "cebu-fun-run-abc123",
@@ -226,6 +299,7 @@ class PhotographerOwnedEventServiceTest {
             reviewStatus = EventReviewStatus.APPROVED,
         )
         Mockito.`when`(eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(event.id, photographerId)).thenReturn(event)
+        Mockito.`when`(eventRepository.findOwnedByIdForUpdate(event.id, photographerId)).thenReturn(event)
         Mockito.`when`(coverageRepository.findById(anyArg())).thenReturn(Optional.empty())
         return event
     }

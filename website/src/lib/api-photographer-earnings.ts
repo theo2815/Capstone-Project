@@ -3,6 +3,7 @@ import type {
   PhotographerEarnings,
   PhotographerPayout,
   PhotographerTransaction,
+  PhotographerLibraryPhoto,
 } from "@/lib/photographer-mock";
 import type {
   PayoutReport,
@@ -50,7 +51,9 @@ export interface PerEventEarning {
   eventDate: string;
   photoCount: number;
   salesCount: number;
+  purchaseCount: number;
   revenueKept: number;
+  deletedAt: string | null;
 }
 
 export interface PerEventEarningsArgs {
@@ -203,4 +206,69 @@ export async function fetchPhotographerTransactions(
     `/me/photographer/billing/transactions?${p.toString()}`,
     { signal },
   );
+}
+
+export interface PhotographerPurchasedPhoto {
+  photo: PhotographerLibraryPhoto;
+  purchaseCount: number;
+  lastPurchasedAt: string | null;
+}
+
+export interface PurchaseEvent {
+  id: string;
+  name: string;
+  date: string;
+  deletedAt: string | null;
+}
+
+export interface PurchaseTransaction {
+  id: string;
+  isRefund: boolean;
+  refundOf: string | null;
+  amountKept: number;
+  discountPhp: number;
+  paidAt: string;
+  recordedAt: string;
+}
+
+export interface PhotographerPurchase {
+  orderId: string;
+  photoId: string;
+  buyer: string;
+  purchasedAt: string | null;
+  orderCreatedAt: string;
+  paymentMethod: string;
+  pricePhp: number;
+  discountPhp: number;
+  paidPhp: number;
+  kind: string;
+  refundStatus: string;
+  refundPending: boolean;
+  refundedPhp: number | null;
+  refundedAt: string | null;
+  netKeptPhp: number | null;
+  transactions: PurchaseTransaction[];
+}
+
+export interface PhotographerPhotoPurchasesResponse extends PaginatedResponse<PhotographerPurchase> {
+  photo: PhotographerLibraryPhoto;
+  event: PurchaseEvent;
+  selectedPurchase: PhotographerPurchase | null;
+}
+
+export function fetchPhotographerPurchasedPhotos(
+  eventId: string,
+  args: { offset?: number; limit?: number; signal?: AbortSignal } = {},
+): Promise<PaginatedResponse<PhotographerPurchasedPhoto>> {
+  const p = new URLSearchParams({ offset: String(args.offset ?? 0), limit: String(args.limit ?? 60) });
+  return api.get(`/me/photographer/events/${encodeURIComponent(eventId)}/purchased-photos?${p}`, { signal: args.signal });
+}
+
+export function fetchPhotographerPhotoPurchases(
+  photoId: string,
+  args: { orderId?: string; offset?: number; limit?: number; signal?: AbortSignal } = {},
+): Promise<PhotographerPhotoPurchasesResponse> {
+  const p = new URLSearchParams({ offset: String(args.offset ?? 0), limit: String(args.limit ?? 25) });
+  if (args.orderId) p.set("orderId", args.orderId);
+  return api.get(`/me/photographer/photos/${encodeURIComponent(photoId)}/purchases?${p}`, { signal: args.signal });
 }

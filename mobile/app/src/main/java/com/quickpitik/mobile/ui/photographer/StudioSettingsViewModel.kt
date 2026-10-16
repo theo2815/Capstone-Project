@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.MAX_UPLOAD_BYTES
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.repository.PhotoMetadataRepository
 import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import kotlinx.coroutines.CancellationException
@@ -41,6 +42,15 @@ sealed interface ActionState {
     data class Failed(override val message: String) : ActionState
 }
 
+data class MetadataToggleState(
+    val eventId: String? = null,
+    val saved: Boolean? = null,
+    val draft: Boolean? = null,
+    val loading: Boolean = true,
+    val saving: Boolean = false,
+    val error: String? = null,
+)
+
 /**
  * The studio's own settings: brand, handle, region, socials, payout accounts
  * and the watermark — everything the Settings tab reads and writes, plus the
@@ -55,6 +65,61 @@ sealed interface ActionState {
  */
 class StudioSettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
+    private val metadataRepository = PhotoMetadataRepository(sessionManager)
+    @Volatile private var metadataRequest = 0
+    private val _metadataDefault = MutableStateFlow(MetadataToggleState())
+    val metadataDefault: StateFlow<MetadataToggleState> = _metadataDefault
+
+    private fun metadataContext(): Pair<SessionManager.AuthSession, String>? =
+        sessionManager.getAccessToken()?.let { token ->
+            sessionManager.authSnapshot(token)?.let { it to RetrofitClient.BASE_URL }
+        }
+
+    private fun current(context: Pair<SessionManager.AuthSession, String>) =
+        sessionManager.isCurrent(context.first) && context.second == RetrofitClient.BASE_URL
+
+    fun loadMetadataDefault() {
+        _metadataDefault.value = MetadataToggleState()
+        val context = metadataContext() ?: return
+        val request = ++metadataRequest
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val saved = metadataRepository.getMetadataSettings().metadataPublicByDefault
+                if (current(context) && request == metadataRequest) _metadataDefault.value = MetadataToggleState(saved = saved, draft = saved, loading = false)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (current(context) && request == metadataRequest) _metadataDefault.value = MetadataToggleState(loading = false, error = "Couldn't load metadata default.")
+            }
+        }
+    }
+
+    fun setMetadataDefaultDraft(value: Boolean) {
+        val state = _metadataDefault.value
+        if (!state.loading && !state.saving && state.saved != null) _metadataDefault.value = state.copy(draft = value, error = null)
+    }
+
+    fun cancelMetadataDefault() {
+        val state = _metadataDefault.value
+        if (!state.saving) _metadataDefault.value = state.copy(draft = state.saved, error = null)
+    }
+
+    fun saveMetadataDefault() {
+        val state = _metadataDefault.value
+        val value = state.draft ?: return
+        if (state.loading || state.saving || value == state.saved) return
+        val context = metadataContext() ?: return
+        val request = metadataRequest
+        _metadataDefault.value = state.copy(saving = true, error = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val saved = metadataRepository.setMetadataSettings(value).metadataPublicByDefault
+                if (current(context) && request == metadataRequest) _metadataDefault.value = MetadataToggleState(saved = saved, draft = saved, loading = false)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (current(context) && request == metadataRequest) _metadataDefault.value = _metadataDefault.value.copy(saving = false, error = "Couldn't save metadata default.")
+            }
+        }
+    }
 
     private val _isFetchingBrandSettings = MutableStateFlow(false)
     val isFetchingBrandSettings: StateFlow<Boolean> = _isFetchingBrandSettings
@@ -126,6 +191,8 @@ class StudioSettingsViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun fetchSettings() {
+        // Re-entry picks up web/device changes without replacing an unsaved edit.
+        if (_metadataDefault.value.let { it.draft == it.saved && !it.saving }) loadMetadataDefault()
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
             coroutineScope {

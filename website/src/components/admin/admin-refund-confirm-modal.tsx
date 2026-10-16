@@ -30,6 +30,7 @@ export function AdminRefundConfirmModal({
     <AdminConfirmModal
       open={open}
       submitting={submitting}
+      pendingLabel="Resolving…"
       onClose={onCancel}
       onConfirm={onConfirm}
       title="Confirm refund"

@@ -8,7 +8,7 @@ import { useSavedEventsStore } from "@/store/saved-events-store";
 import { clearTokens, getAccessToken, getRefreshToken } from "@/lib/auth";
 import { clearLegacyPhotographerSettings, resetUserScopedStores } from "@/lib/auth-reset";
 import { captureAuthSession } from "@/lib/auth-session";
-import { refreshAccessToken } from "@/lib/api";
+import { refreshAccessToken, setSessionEndHandler } from "@/lib/api";
 import { usePhotographerSettingsHydration } from "@/hooks/use-photographer-settings-hydration";
 import { API_BASE_URL } from "@/lib/constants";
 import { mergeCart } from "@/lib/api-cart";
@@ -86,6 +86,16 @@ export function AuthHydrator() {
       cancelled = true;
     };
   }, [setUser, setLoading, queryClient]);
+
+  // ApiClient drops a dead session's tokens mid-page; that owes the same wipe
+  // as the revoked-session branch above.
+  useEffect(() => {
+    setSessionEndHandler(() => {
+      resetUserScopedStores();
+      queryClient.clear();
+    });
+    return () => setSessionEndHandler(null);
+  }, [queryClient]);
 
   // Guest → authed merge per Q-003. Runs exactly once per signed-in user.
   // Failure leaves local state intact (do NOT clear) — retried on next mount.

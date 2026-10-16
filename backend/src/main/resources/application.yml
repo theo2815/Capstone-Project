@@ -74,8 +74,19 @@ jwt:
   secret: ${JWT_SECRET:dev-only-secret-DO-NOT-USE-IN-PRODUCTION-replace-with-32-byte-random}
   access-token-ttl: PT15M
   refresh-token-ttl: P7D
+  # A refresh token presented again within this window after it was rotated is
+  # given one more token, while the token it was rotated into is still live.
+  # Covers a lost rotation answer and two browser tabs refreshing at once.
+  refresh-rotation-grace: ${JWT_REFRESH_ROTATION_GRACE:PT10M}
 
 app:
+  admin-action:
+    lease: ${ADMIN_ACTION_LEASE:5m}
+  photo-removal:
+    photographer-response-window: PT72H
+    cleanup-interval: ${PHOTO_REMOVAL_CLEANUP_INTERVAL:PT1M}
+    cleanup-backoff: ${PHOTO_REMOVAL_CLEANUP_BACKOFF:PT5M}
+    in-request-cleanup-jobs: ${PHOTO_REMOVAL_IN_REQUEST_CLEANUP_JOBS:5}
   security:
     origin-secret: ${ORIGIN_SECRET:}
   # Externally-reachable URLs the BE needs to embed in artifacts whose request
@@ -114,6 +125,7 @@ app:
     # Q-A5 follow-up — flagging surface is enabled.
     flags-enabled: ${ADMIN_FLAGS_ENABLED:true}
   storage:
+    operation-timeout: ${STORAGE_OPERATION_TIMEOUT:PT2M}
     backend: ${STORAGE_BACKEND:LOCAL}
     bucket: ${STORAGE_BUCKET:quickpitik-dev}
     region: ${STORAGE_REGION:ap-southeast-1}
@@ -140,15 +152,17 @@ app:
       cleanup-batch-size: ${STORAGE_DIRECT_UPLOAD_CLEANUP_BATCH_SIZE:100}
       cleanup-recheck-window: ${STORAGE_DIRECT_UPLOAD_CLEANUP_RECHECK_WINDOW:P7D}
   ai:
-    # Which backend fulfils face + bib inference. `ai-api` (default) uses the
-    # self-hosted ai-api service configured under app.ai-api below.
-    # `rekognition` routes face + bib to AWS Rekognition. The AI master on/off
-    # switch stays app.ai-api.enabled; this only selects the provider.
-    provider: ${AI_PROVIDER:ai-api}
+    # Which backend fulfils face + bib inference. `rekognition` (default) routes
+    # face + bib to AWS Rekognition. `ai-api` targets the self-hosted ai-api
+    # service under app.ai-api below, which serves blur only since 2026-10-16,
+    # so its face/bib calls get 404s. The AI master on/off switch stays
+    # app.ai-api.enabled; this only selects the provider.
+    provider: ${AI_PROVIDER:rekognition}
     # AWS Rekognition config (used only when provider=rekognition). Credentials
     # come from the AWS default chain — AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
     # for local dev, or the instance/task role in production. Never put keys here.
     rekognition:
+      operation-timeout: ${REKOGNITION_OPERATION_TIMEOUT:PT2M}
       region: ${AWS_REGION:ap-southeast-1}
       # AWS credentials — leave empty to use the default chain (env vars /
       # ~/.aws/credentials / instance role). For a plain dev machine, set them
@@ -228,6 +242,9 @@ app:
     # public photo id alone can't regenerate the layer. Keep it stable: a
     # change re-seeds every future render (existing previews are unaffected).
     seed-secret: ${WATERMARK_SEED_SECRET:dev-only-watermark-seed-DO-NOT-USE-IN-PRODUCTION}
+  photo-metadata:
+    recovery-enabled: ${PHOTO_METADATA_RECOVERY_ENABLED:true}
+    recovery-interval-ms: ${PHOTO_METADATA_RECOVERY_INTERVAL_MS:60000}
   rate-limit:
     # ON by default (decided 2026-08-27; closes the NFR-S-11 posture question).
     # Set RATE_LIMIT_ENABLED=false for load tests. The per-IP keys use

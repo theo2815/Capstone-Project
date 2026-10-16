@@ -18,6 +18,8 @@ interface CartRepository {
     suspend fun addToCart(token: String?, photoDto: PhotoDto, eventId: String, eventSlug: String, eventName: String): Result<CartItemDto>
     suspend fun removeFromCart(token: String?, photoId: String): Result<Boolean>
     suspend fun clearCart(token: String?): Result<Boolean>
+    /** Drops [photoIds] from the cart on this phone only; the server cart is not called. */
+    fun dropLocal(photoIds: Collection<String>)
     suspend fun mergeCart(token: String): Result<List<CartItemDto>>
     
     // code == null/blank → the auto-applied photographer coupons for these

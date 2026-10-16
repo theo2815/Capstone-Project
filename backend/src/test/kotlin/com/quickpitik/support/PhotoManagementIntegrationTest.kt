@@ -46,19 +46,49 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var grants: DownloadGrantRepository
     @Autowired lateinit var reconciler: com.quickpitik.service.orders.PaymongoCheckoutReconciler
     @Autowired lateinit var tx: TransactionTemplate
+    @Autowired lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
+    @Autowired lateinit var photographerSettings: PhotographerSettingsRepository
+    @Autowired lateinit var accessGuard: com.quickpitik.service.photographer.PhotographerAccessGuard
     lateinit var event: Event
     lateinit var owner: User
     lateinit var photo: Photo
 
     @BeforeEach fun seed() {
         owner = users.save(User(email = "review-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Review", role = Role.PHOTOGRAPHER))
+        // Restore needs an approved photographer (security audit 2026-10-14, D6).
+        photographerSettings.saveAndFlush(PhotographerSettings(userId = owner.id, verificationStatus = VerificationStatus.APPROVED))
         event = events.save(Event(slug = "review-${UUID.randomUUID()}", name = "Review", date = LocalDate.now(), location = "Cebu", status = EventStatus.ACTIVE, photoCount = 1))
         photo = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/${UUID.randomUUID()}/original.jpg", watermarkS3Key = "review/${UUID.randomUUID()}/watermark.jpg", pricePhp = BigDecimal("125")))
         coverage.saveAndFlush(EventPhotographer(id = EventPhotographerId(event.id, owner.id), photoCount = 1, firstUploadAt = OffsetDateTime.now()))
     }
 
+    @Autowired lateinit var erasureJobs: PhotoErasureJobRepository
+    @Autowired lateinit var removalItems: PhotoRemovalItemRepository
+    @Autowired lateinit var metadata: PhotoMetadataRepository
+    @Autowired lateinit var faceErasure: com.quickpitik.service.photos.PhotoFaceErasureService
+    @Autowired lateinit var json: com.fasterxml.jackson.databind.ObjectMapper
+    @Autowired lateinit var clock: java.time.Clock
+
     private fun deletingWith(storage: StorageService, coverageRepo: EventPhotographerRepository = coverage) =
-        PhotographerPhotoService(photos, uploadIntents, coverageRepo, items, storage, events, grants, reconciler, tx)
+        PhotographerPhotoService(photos, coverageRepo, items, events, grants, reconciler,
+            com.quickpitik.service.photos.PhotoErasureService(photos, erasureJobs, uploadIntents, removalItems,
+                items, grants, coverage, events, metadata, storage, faceErasure,
+                com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(), tx, json, clock,
+                io.micrometer.core.instrument.simple.SimpleMeterRegistry()), accessGuard)
+
+    @Test fun `delete acknowledgement with retained derivative must not report physical erasure`() {
+        manager.trash(owner.id, event.id, listOf(photo.id))
+        val storage = Mockito.mock(StorageService::class.java)
+        // The original disappeared, but a successful DELETE response alone
+        // does not prove the derivative is absent.
+        Mockito.`when`(storage.exists(photo.watermarkS3Key!!)).thenReturn(true)
+
+        val result = deletingWith(storage).permanentDelete(owner.id, event.id, listOf(photo.id))
+
+        assertTrue(result.deleted.isEmpty(), "A retained derivative was reported as deleted")
+        assertEquals(listOf(photo.id), result.failed)
+        assertNotNull(photos.findById(photo.id).orElseThrow().deletionStartedAt)
+    }
 
     @Test fun `trash is excluded from real gallery queries while owner trash includes it`() {
         manager.trash(owner.id, event.id, listOf(photo.id))
@@ -136,8 +166,9 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
                 originalKey = photo.s3Key,
                 state = PhotoUploadIntentState.COMMITTED,
                 resultPhotoId = photo.id,
-                putExpiresAt = now.plusMinutes(15),
-                expiresAt = now.plusHours(24),
+                createdAt = now.minusDays(10),
+                putExpiresAt = now.minusDays(10).plusMinutes(15),
+                expiresAt = now.minusDays(9),
                 cleanupAfter = null,
                 cleanedAt = now.minusDays(8),
             ),
@@ -151,6 +182,41 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertNull(stored.resultPhotoId)
         assertNotNull(stored.cleanupAfter)
         assertNull(stored.cleanedAt)
+    }
+
+    @Test fun `an unexpired staging PUT keeps permanent deletion pending`() {
+        val now = OffsetDateTime.now()
+        uploadIntents.saveAndFlush(PhotoUploadIntent(
+            photographerId = owner.id, eventId = event.id, contentHash = "b".repeat(64),
+            contentType = "image/jpeg", sizeBytes = 1,
+            stagingKey = "staging/task10/${photo.id}/original", originalKey = photo.s3Key,
+            state = PhotoUploadIntentState.COMMITTED, resultPhotoId = photo.id,
+            putExpiresAt = now.plusMinutes(15), expiresAt = now.plusDays(1),
+        ))
+        manager.trash(owner.id, event.id, listOf(photo.id))
+
+        val result = deletingWith(Mockito.mock(StorageService::class.java))
+            .permanentDelete(owner.id, event.id, listOf(photo.id))
+
+        assertTrue(result.deleted.isEmpty(), "The staging capability can still produce another object")
+        assertEquals(listOf(photo.id), result.failed)
+        assertNotNull(photos.findById(photo.id).orElseThrow().deletionStartedAt)
+    }
+
+    @Test fun `the id-only photo lock returns existing ids in order and holds their rows`() {
+        val second = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/${UUID.randomUUID()}/original.jpg", pricePhp = BigDecimal("125")))
+        val ids = listOf(photo.id, second.id)
+        tx.execute {
+            // PostgreSQL orders UUIDs by their bytes (the text order), not by Java's signed compareTo.
+            assertEquals(ids.sortedBy { it.toString() }, photos.lockIdsForUpdate(ids.sortedByDescending { it.toString() } + UUID.randomUUID()))
+            val blocked = TransactionTemplate(tx.transactionManager!!).apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
+                .execute { jdbc.queryForList("SELECT id FROM photos WHERE id IN (?, ?) FOR UPDATE SKIP LOCKED", photo.id, second.id) }
+            assertEquals(emptyList<Map<String, Any>>(), blocked, "Another transaction could still lock the rows")
+            // A cart or order row that points at the photo takes this lock on insert; trash must not make it wait.
+            val shared = TransactionTemplate(tx.transactionManager!!).apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
+                .execute { jdbc.queryForList("SELECT id FROM photos WHERE id = ? FOR KEY SHARE NOWAIT", photo.id) }
+            assertEquals(1, shared!!.size)
+        }
     }
 
     @Test fun `trash counter update must preserve a concurrent upload increment`() {
@@ -186,7 +252,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
             snapshot
         }
         Mockito.`when`(wrappedPhotos.save(anyArg<Photo>())).thenAnswer { photos.save(it.getArgument<Photo>(0)) }
-        val indexer = PhotoIndexingService(wrappedPhotos, Mockito.mock(StorageService::class.java), Mockito.mock(FaceBibProvider::class.java), AiApiProperties(enabled = false), AiProperties(), Mockito.mock(ApplicationEventPublisher::class.java), tx, SimpleMeterRegistry())
+        val indexer = PhotoIndexingService(wrappedPhotos, Mockito.mock(StorageService::class.java), Mockito.mock(FaceBibProvider::class.java), AiApiProperties(enabled = false), AiProperties(), Mockito.mock(ApplicationEventPublisher::class.java), tx, SimpleMeterRegistry(), Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java), Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java))
         Mockito.`when`(wrappedPhotos.skipIndexing(photo.id)).thenAnswer { photos.skipIndexing(photo.id) }
         indexer.index(photo.id)
         assertNotNull(photos.findById(photo.id).orElseThrow().deletedAt, "Background full-entity save resurrected the trashed photo")
@@ -209,7 +275,11 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, manager.trash(UUID.randomUUID(), event.id, listOf(photo.id)))
         assertEquals(0, manager.trash(owner.id, UUID.randomUUID(), listOf(photo.id)))
         manager.trash(owner.id, event.id, listOf(photo.id))
-        assertEquals(0, manager.restore(UUID.randomUUID(), event.id, listOf(photo.id)))
+        // A real approved stranger: restore checks approval first (D6), and only
+        // signed-in photographers ever reach it.
+        val stranger = users.save(User(email = "stranger-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Stranger", role = Role.PHOTOGRAPHER))
+        photographerSettings.saveAndFlush(PhotographerSettings(userId = stranger.id, verificationStatus = VerificationStatus.APPROVED))
+        assertEquals(0, manager.restore(stranger.id, event.id, listOf(photo.id)))
         val storage = Mockito.mock(StorageService::class.java)
         assertTrue(deletingWith(storage).permanentDelete(UUID.randomUUID(), event.id, listOf(photo.id)).deleted.isEmpty())
         Mockito.verifyNoInteractions(storage)

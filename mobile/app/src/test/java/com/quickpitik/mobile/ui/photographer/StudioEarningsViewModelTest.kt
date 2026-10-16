@@ -14,6 +14,8 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -22,6 +24,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * The payout cycle: a refused request must show the backend's own reason
@@ -115,16 +119,120 @@ class StudioEarningsViewModelTest {
         assertEquals(null, vm.payoutActionState.value)
     }
 
-    @Test fun `one refused endpoint fails the whole tab with that endpoint's reason`() {
-        // The three loads are fired together; the ledger's refusal must reach
-        // the screen rather than an empty Success built from two thirds of it.
+    @Test fun `overview succeeds despite ledger failure`() {
         route("GET $LEDGER_PATH") {
             MockResponse().setBody(error("LEDGER_DOWN", "Ledger is unavailable."))
         }
-        val state = model().earningsUiState.awaitFirst { it is EarningsUiState.Error }
-        assertEquals("Ledger is unavailable.", (state as EarningsUiState.Error).message)
+        val vm = model()
+        vm.earningsUiState.awaitFirst { it is EarningsUiState.Success }
+        vm.transactionsState.awaitFirst { it.error != null }
+        assertEquals("Ledger is unavailable.", vm.transactionsState.value.error)
     }
 
+    @Test fun `logout discards an in-flight payout request result`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        route("POST $PAYOUTS/request") {
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            ok(PAYOUT)
+        }
+        val vm = model()
+        vm.submitPayoutRequest()
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            SessionManager.getInstance(application).clearSession()
+        } finally { release.countDown() }
+        Thread.sleep(250)
+        assertNull(vm.payoutActionState.value)
+        assertTrue(vm.earningsUiState.value is EarningsUiState.Loading)
+    }
+
+    @Test fun `role change discards an in-flight payout withdrawal result`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        route("POST $PAYOUTS/cy-1/withdraw") {
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            ok(PAYOUT)
+        }
+        val vm = model()
+        vm.withdrawPayoutRequest("cy-1")
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            SessionManager.getInstance(application).saveSession("new-token", "RUNNER", "New", "new@x.com")
+        } finally { release.countDown() }
+        Thread.sleep(250)
+        assertNull(vm.payoutActionState.value)
+        assertTrue(vm.earningsUiState.value is EarningsUiState.Loading)
+    }
+
+    @Test fun `loads transaction 51 and preserves rows on retry`() {
+        var failAppend = true
+        route("GET $LEDGER_PATH") { request ->
+            val offset = request.requestUrl?.queryParameter("offset")?.toInt() ?: 0
+            if (offset == 50 && failAppend) MockResponse().setResponseCode(503)
+            else ok(ledgerPage(offset, if (offset == 0) 50 else 25, 75))
+        }
+        val vm = model()
+        vm.transactionsState.awaitFirst { it.items.size == 50 }
+        vm.loadMoreTransactions()
+        vm.transactionsState.awaitFirst { it.appendError != null }
+        assertEquals(50, vm.transactionsState.value.items.size)
+        assertEquals(50, vm.transactionsState.value.nextOffset)
+        failAppend = false
+        vm.loadMoreTransactions()
+        vm.transactionsState.awaitFirst { it.items.size == 75 }
+        assertEquals(75L, vm.transactionsState.value.total)
+        assertFalse(vm.transactionsState.value.hasMore)
+    }
+
+    @Test fun `loads giveaway-only event earnings`() {
+        route("GET $EARNINGS/per-event") { ok("""{"items":[{"eventId":"giveaway","eventName":"Fun Run","eventDate":"2026-10-01","deletedAt":null,"photoCount":1,"salesCount":0,"purchaseCount":3,"revenueKept":0}],"total":1,"offset":0,"limit":10}""") }
+        val vm = model()
+        vm.eventEarningsState.awaitFirst { it.items.size == 1 }
+        assertEquals(3L, vm.eventEarningsState.value.items.single().purchaseCount)
+        assertEquals(0.0, vm.eventEarningsState.value.items.single().revenueKept, 0.0)
+    }
+
+    @Test fun `initial ledger failure needs retry instead of an offset-zero append`() {
+        var calls = 0
+        route("GET $LEDGER_PATH") {
+            calls++
+            if (calls == 1) MockResponse().setResponseCode(503)
+            else ok(ledgerPage(0, 1, 1))
+        }
+        val vm = model()
+        vm.transactionsState.awaitFirst { it.error != null }
+        assertFalse(vm.transactionsState.value.hasMore)
+        vm.loadMoreTransactions()
+        assertEquals(1, calls)
+        vm.retryTransactions()
+        vm.transactionsState.awaitFirst { it.items.size == 1 }
+        assertEquals("tx-0", vm.transactionsState.value.items.single().id)
+        assertNull(vm.transactionsState.value.error)
+    }
+
+    @Test fun `initial event earnings failure needs retry instead of an offset-zero append`() {
+        var calls = 0
+        route("GET $EARNINGS/per-event") {
+            calls++
+            if (calls == 1) MockResponse().setResponseCode(503)
+            else ok("""{"items":[{"eventId":"event-a","eventName":"Run","eventDate":"2026-10-01","deletedAt":null,"photoCount":1,"salesCount":0,"purchaseCount":1,"revenueKept":0}],"total":1,"offset":0,"limit":10}""")
+        }
+        val vm = model()
+        vm.eventEarningsState.awaitFirst { it.error != null }
+        assertFalse(vm.eventEarningsState.value.hasMore)
+        vm.loadMoreEventEarnings()
+        assertEquals(1, calls)
+        vm.retryEventEarnings()
+        vm.eventEarningsState.awaitFirst { it.items.size == 1 }
+        assertEquals("event-a", vm.eventEarningsState.value.items.single().eventId)
+        assertNull(vm.eventEarningsState.value.error)
+    }
+
+    private fun ledgerPage(offset: Int, count: Int, total: Int): String =
+        """{"items":[${(offset until offset + count).joinToString(",") { n -> """{"id":"tx-$n","paidAt":"2026-10-01T00:00:00Z","eventId":"event","eventName":"Run","eventSlug":"run","photoId":"photo-$n","orderId":"order-$n","buyer":"Aira S.","amountKept":1,"isRefund":false,"refundOf":null,"recordedAt":"2026-10-01T00:00:00Z","thumbnailUrl":null}""" }}],"total":$total,"offset":$offset,"limit":50,"monthTotals":{}}"""
     private companion object {
         const val PAYOUTS = "/api/v1/me/photographer/payouts"
         const val EARNINGS = "/api/v1/me/photographer/earnings"

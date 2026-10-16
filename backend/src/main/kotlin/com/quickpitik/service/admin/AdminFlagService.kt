@@ -148,10 +148,12 @@ class AdminFlagService(
         }
     }
 
-    private fun loadFlag(flagId: UUID): Flag =
-        flagRepository.findById(flagId).orElseThrow {
-            NotFoundException(code = ErrorCodes.FLAG_NOT_FOUND, message = "Flag not found")
-        }
+    private fun loadFlag(flagId: UUID): Flag {
+        // Read only the immutable target first, so the flag is hydrated after both locks.
+        flagRepository.findPhotoId(flagId)?.let { photoRepository.findAllByIdForUpdate(listOf(it)) }
+        return flagRepository.findByIdForUpdate(flagId)
+            ?: throw NotFoundException(code = ErrorCodes.FLAG_NOT_FOUND, message = "Flag not found")
+    }
 
     private fun parseStatus(raw: String): FlagStatus =
         runCatching { FlagStatus.fromWire(raw) }.getOrElse {

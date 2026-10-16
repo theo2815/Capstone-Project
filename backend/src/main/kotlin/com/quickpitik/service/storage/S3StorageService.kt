@@ -45,7 +45,7 @@ class S3StorageService(
 
     override fun put(key: String, bytes: ByteArray, contentType: String): StoredObject {
         val response = client.putObject(
-            PutObjectRequest.builder().bucket(props.bucket).key(key).contentType(contentType).build(),
+            putRequest(key, contentType),
             RequestBody.fromBytes(bytes),
         )
         return StoredObject(key, bytes.size.toLong(), contentType, response.eTag())
@@ -53,11 +53,20 @@ class S3StorageService(
 
     override fun put(key: String, stream: InputStream, contentLength: Long, contentType: String): StoredObject {
         val response = client.putObject(
-            PutObjectRequest.builder().bucket(props.bucket).key(key).contentType(contentType).build(),
+            putRequest(key, contentType),
             RequestBody.fromInputStream(stream, contentLength),
         )
         return StoredObject(key, contentLength, contentType, response.eTag())
     }
+
+    // A successful retry cannot prove an earlier timed-out write ended.
+    // Reads/deletes keep the client's normal retry policy.
+    private fun putRequest(key: String, contentType: String) = PutObjectRequest.builder()
+        .bucket(props.bucket).key(key).contentType(contentType)
+        .overrideConfiguration { request -> request.addPlugin { client ->
+            client.overrideConfiguration { it.retryStrategy { retry -> retry.maxAttempts(1) } }
+        } }
+        .build()
 
     override fun getBytes(key: String): ByteArray {
         val req = GetObjectRequest.builder().bucket(props.bucket).key(key).build()
@@ -173,6 +182,7 @@ class S3StorageService(
 
     private fun buildClient(): S3Client {
         val builder = S3Client.builder()
+            .overrideConfiguration { it.apiCallTimeout(props.operationTimeout) }
             .region(Region.of(props.region))
             .credentialsProvider(credentials())
             .serviceConfiguration(

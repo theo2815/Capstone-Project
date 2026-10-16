@@ -14,11 +14,13 @@ data class StorageProperties(
     val secretKey: String? = null,
     val pathStyleAccess: Boolean = false,
     val localRoot: String = ".storage",
+    val operationTimeout: Duration = Duration.ofMinutes(2),
     val publicBaseUrl: String? = null,
     val presignedTtl: PresignedTtl = PresignedTtl(),
     val directUpload: DirectUpload = DirectUpload(),
 ) {
     init {
+        require(operationTimeout > Duration.ZERO) { "operationTimeout must be positive" }
         require(directUpload.putTtl > Duration.ZERO) { "directUpload.putTtl must be positive" }
         require(directUpload.intentTtl > directUpload.putTtl) {
             "directUpload.intentTtl must be greater than putTtl"

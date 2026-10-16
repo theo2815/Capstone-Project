@@ -5,8 +5,7 @@ the dedicated blur image bakes in the audited ONNX file and ordered labels.
 Its Docker build verifies their hashes and warm inference. This presence-only
 command is for checking the local full-model directory before Compose deploys.
 
-Entries with "file": null (bib_ocr — PaddleOCR caches outside models/) have no
-artifact to check and are skipped.
+Entries with "file": null have no artifact to check and are skipped.
 
 Usage:
     python scripts/download_models.py            # exit 0 = all listed files present

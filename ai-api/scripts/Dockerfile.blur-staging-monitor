@@ -1,0 +1,4 @@
+FROM node:24-alpine
+WORKDIR /app
+COPY blur_staging_monitor.ts .
+CMD ["node", "blur_staging_monitor.ts"]

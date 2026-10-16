@@ -17,6 +17,7 @@ from starlette.responses import StreamingResponse
 from src.api.v1.batch_utils import (
     batch_accepted_response,
     create_batch_job,
+    reject_if_at_job_cap,
     store_blobs_and_get_paths,
     validate_batch_files,
 )
@@ -111,6 +112,16 @@ class BlurAuthRoute(APIRoute):
             key_meta = await verify_api_key(request, request.headers.get("X-API-Key"))
             check_scope("blur:read", key_meta)
             request.state.blur_key_meta = key_meta
+            admit = getattr(request.state, "blur_admit", None)
+            if admit is not None and not admit():
+                from src.utils.blur_metrics import rejected_requests
+
+                rejected_requests.labels("busy").inc()
+                return JSONResponse(status_code=503, headers={"Retry-After": "1"}, content={
+                    "success": False,
+                    "request_id": getattr(request.state, "request_id", ""),
+                    "error": {"code": "BLUR_BUSY", "message": "Blur service is busy"},
+                })
             operation = request.url.path.rsplit("/", 1)[-1]
             if operation not in ("detect", "classify"):
                 return await handler(request)
@@ -465,6 +476,10 @@ async def detect_blur_batch(
     check_scope("blur:read", key_meta)
     settings = request.app.state.settings
 
+    refused = await reject_if_at_job_cap(request, key_meta.get("key_id"))
+    if refused is not None:
+        return refused
+
     result = await validate_batch_files(
         request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE,
         settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
@@ -718,6 +733,9 @@ async def classify_blur_stream(
         first_seen = False
         phase = "stream"
         request_id = getattr(request.state, "request_id", "")
+        snapshot = getattr(classifier, "timing_snapshot", dict)
+        timing_before = snapshot()
+        decode_seconds = 0.0
         sem = (
             request.app.state.blur_decode_semaphore
             if settings.MODEL_PROFILE == "blur"
@@ -758,10 +776,12 @@ async def classify_blur_stream(
                     )
                     sub.append((i, name, data, err))
                 phase = "decode"
+                decode_started = time.perf_counter()
                 decoded = await asyncio.wait_for(
                     asyncio.gather(*[decode_one(d, e) for _, _, d, e in sub]),
                     timeout=max(0, deadline - time.monotonic()),
                 )
+                decode_seconds += time.perf_counter() - decode_started
                 valid = [i for i, ((_, _, _, err), image) in enumerate(zip(sub, decoded))
                          if err is None and image is not None]
                 results = [None] * len(sub)
@@ -842,9 +862,16 @@ async def classify_blur_stream(
             outcome = "completed" if complete and not unaccounted else "interrupted"
             stream_outcomes.labels("classify", outcome).inc()
             stream_duration.labels("classify").observe(time.perf_counter() - start)
+            per_photo = 1000 / max(total, 1)
+            stages = snapshot()
             logger.info("Stream blur classification finished", request_id=request_id,
                         outcome=outcome, successful=successful, errors=errors,
-                        unaccounted=unaccounted)
+                        unaccounted=unaccounted,
+                        ms_per_photo=round((time.perf_counter() - start) * per_photo, 1),
+                        decode_ms_per_photo=round(decode_seconds * per_photo, 1),
+                        **{f"{stage}_ms_per_photo": round(
+                            (seconds - timing_before.get(stage, 0.0)) * per_photo, 1)
+                           for stage, seconds in stages.items()})
 
         # Final summary line
         elapsed = (time.perf_counter() - start) * 1000
@@ -886,6 +913,10 @@ async def classify_blur_batch(
     check_scope("blur:read", key_meta)
     settings = request.app.state.settings
 
+    refused = await reject_if_at_job_cap(request, key_meta.get("key_id"))
+    if refused is not None:
+        return refused
+
     result = await validate_batch_files(
         request, files, settings.MAX_BATCH_SIZE, settings.MAX_FILE_SIZE,
         settings.BLUR_MAX_IMAGE_PIXELS if settings.MODEL_PROFILE == "blur" else 0,
@@ -922,6 +953,10 @@ async def detect_blur_mega(
     """
     check_scope("blur:read", key_meta)
     settings = request.app.state.settings
+
+    refused = await reject_if_at_job_cap(request, key_meta.get("key_id"))
+    if refused is not None:
+        return refused
 
     result = await validate_batch_files(
         request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE,
@@ -964,6 +999,10 @@ async def classify_blur_mega(
     """
     check_scope("blur:read", key_meta)
     settings = request.app.state.settings
+
+    refused = await reject_if_at_job_cap(request, key_meta.get("key_id"))
+    if refused is not None:
+        return refused
 
     result = await validate_batch_files(
         request, files, settings.MEGA_BATCH_MAX_SIZE, settings.MAX_FILE_SIZE,

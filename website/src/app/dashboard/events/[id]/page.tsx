@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { notFound, useParams } from "next/navigation";
-import { useCallback, useState, type ReactNode } from "react";
+import { notFound, useParams, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { EventState, ListEvent } from "@/types/event";
 import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
+import { PhotographerPurchasePreview, type PurchaseSelection } from "@/components/dashboard/photographer-purchase-preview";
 import { MyEventForm } from "@/components/dashboard/my-event-form";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
@@ -26,8 +27,11 @@ import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import {
   usePhotographerEventDetail,
+  usePhotographerEventMetadataVisibility,
   usePhotographerEventPhotos,
 } from "@/hooks/use-photographer-data";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import { usePhotographerPurchasedPhotos } from "@/hooks/use-photographer-purchases";
 import { useToast } from "@/hooks/use-toast";
 import {
   fetchPhotographerPhotoDownload,
@@ -36,8 +40,11 @@ import {
   restorePhotographerPhotos,
   trashPhotographerPhotos,
   updateMyEvent,
+  putEventMetadataVisibility,
+  type EventMetadataVisibilityDto,
   type PhotographerEventDetail,
 } from "@/lib/api-photographer";
+import { captureAuthSession } from "@/lib/auth-session";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { describePricing, isOwnedEventLive } from "@/lib/photographer-events";
@@ -48,7 +55,7 @@ import type {
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { isInAppBrowser } from "@/lib/in-app-browser";
 import { savePhoto, showInAppSaveHint } from "@/lib/save-photo";
-import { cn, copyToClipboard, triggerDownload } from "@/lib/utils";
+import { cn, copyToClipboard, formatPrice, triggerDownload } from "@/lib/utils";
 
 // Focused share page. Direction A composition: SiteHeader (no dashboard rail
 // — escaped via the conditional in app/dashboard/layout.tsx) → back chip →
@@ -77,9 +84,7 @@ export default function FocusedSharePage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
-  const { detail: liveDetail, isMissing } = usePhotographerEventDetail(
-    id ?? null,
-  );
+  const { detail: liveDetail, isMissing, error, isPaused, refetch } = usePhotographerEventDetail(id ?? null, { includeRemoved: true });
   // Owned-event controls (V46): edit modal + withdraw of a parked pricing
   // change. Hooks stay above the early returns.
   const [editOpen, setEditOpen] = useState(false);
@@ -92,6 +97,10 @@ export default function FocusedSharePage() {
   // doesn't exist for them.
   if (isMissing) {
     notFound();
+  }
+
+  if (error || (isPaused && liveDetail === null)) {
+    return <main className="bg-bone text-ink min-h-screen flex flex-col"><SiteHeader /><div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 py-12"><p role="alert" className="font-sans text-base">{isPaused ? "You're offline. Reconnect to load this event, or retry once connected." : "Couldn't load this event."}</p><button type="button" onClick={refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div></main>;
   }
 
   // Loading: detail is null until the BE responds. Photos load in parallel
@@ -118,6 +127,23 @@ export default function FocusedSharePage() {
     city: liveDetail.location.split(",").pop()?.trim() ?? "",
   };
   const photographer = liveDetail;
+
+  if (liveDetail.deletedAt) {
+    return <main className="bg-bone text-ink min-h-screen flex flex-col">
+      <SiteHeader />
+      <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
+        <BackChip />
+        <Hero event={event} />
+        <p className="mb-2 font-mono text-sm uppercase tracking-wide text-slate">Removed event</p>
+        <p className="mb-8 font-sans text-base text-slate">This event was removed. Your purchase history is still available.</p>
+        <Stats photographer={photographer} />
+        <section>
+          <div role="tablist" aria-label="Photo library" className="mb-6 border-b border-line pb-4"><TabPill active onClick={() => { }}>Purchased</TabPill></div>
+          <RemovedPurchasedGallery eventId={liveDetail.id} event={event} free={liveDetail.pricingMode === "free"} />
+        </section>
+      </div>
+    </main>;
+  }
 
   const refreshEvents = () =>
     queryClient.invalidateQueries({ queryKey: ["photographer", "events"] });
@@ -203,17 +229,107 @@ export default function FocusedSharePage() {
         <Hero event={event} />
         {ownedUi}
         {couponUi}
+        <EventMetadataVisibility event={liveDetail} />
         {uploadsOpen && (
           <>
             {liveDetail.photoCount > 0 && (
               <ShareHeroBand event={event} handle={liveDetail.handle ?? null} />
             )}
             <Stats photographer={photographer} />
-            <PhotoLibrary event={event} eventId={liveDetail.id} />
+            <PhotoLibrary event={event} eventId={liveDetail.id} free={liveDetail.pricingMode === "free"} />
           </>
         )}
       </div>
     </main>
+  );
+}
+
+function EventMetadataVisibility({ event }: { event: PhotographerEventDetail }) {
+  const session = usePrivateQuerySession("PHOTOGRAPHER");
+  const visibility = usePhotographerEventMetadataVisibility(event.id);
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+  const [draft, setDraft] = useState<boolean | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const serverValue = visibility.data?.metadataPublic;
+  const sessionOwner = session.key[0];
+  const sessionRole = session.key[1];
+  const sessionVersion = session.key[2];
+
+  useEffect(() => {
+    setDraft(null);
+    setDirty(false);
+    setSaving(false);
+  }, [event.id, sessionOwner, sessionRole, sessionVersion]);
+
+  useEffect(() => {
+    if (!dirty && visibility.isSuccess) setDraft(serverValue ?? null);
+  }, [event.id, sessionOwner, sessionRole, sessionVersion, dirty, visibility.isSuccess, serverValue]);
+
+  async function save() {
+    if (!session.enabled || !visibility.isSuccess || draft === null || draft === visibility.data.metadataPublic || saving) return;
+    const isCurrent = captureAuthSession();
+    setSaving(true);
+    try {
+      const saved = await putEventMetadataVisibility(event.id, { metadataPublic: draft });
+      if (!isCurrent()) return;
+      const visibilityKey = ["photographer", "events", event.id, "metadata-visibility", ...session.key];
+      await queryClient.cancelQueries({ queryKey: visibilityKey, exact: true });
+      if (!isCurrent()) return;
+      queryClient.setQueryData<EventMetadataVisibilityDto>(
+        visibilityKey, saved,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["events", event.slug, "photos"] });
+      if (event.handle) void queryClient.invalidateQueries({ queryKey: ["photographer", "public", event.handle, event.slug, "photos"] });
+      // M7's public photo metadata queries use this prefix; no M7 hook exists yet.
+      queryClient.removeQueries({ queryKey: ["photo", "metadata", "public"] });
+      setDraft(saved.metadataPublic);
+      setDirty(false);
+      showToast({ kind: "success", message: "Metadata visibility saved." });
+    } catch {
+      if (isCurrent()) showToast({ kind: "error", message: "Couldn't save metadata visibility." });
+    } finally {
+      if (isCurrent()) setSaving(false);
+    }
+  }
+
+  if (!session.enabled) return null;
+  return (
+    <section className="mb-10 md:mb-12 rounded-2xl border border-line bg-bone-deep/30 p-6 md:p-8">
+      <Kicker as="p" tone="soft">Photo metadata</Kicker>
+      {visibility.isError ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <p className="font-sans text-sm text-slate">Couldn&apos;t load metadata visibility.</p>
+          <button type="button" onClick={() => void visibility.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry metadata visibility</button>
+        </div>
+      ) : !visibility.isSuccess || draft === null ? (
+        <p className="mt-3 font-sans text-sm text-slate" role="status">Loading metadata visibility…</p>
+      ) : (
+        <>
+          <label className="mt-3 flex min-h-[44px] items-center gap-3 font-sans text-base font-semibold text-ink">
+            <input
+              type="checkbox"
+              checked={draft}
+              onChange={(change) => {
+                setDraft(change.target.checked);
+                setDirty(change.target.checked !== visibility.data.metadataPublic);
+              }}
+              disabled={saving}
+              aria-describedby="event-metadata-help event-metadata-boundary"
+              className="size-5 shrink-0 accent-fresh disabled:cursor-not-allowed"
+            />
+            Show metadata publicly for my photos
+          </label>
+          <p id="event-metadata-help" className="mt-3 font-sans text-sm text-slate">Only your photos in this event. You can always view your own metadata.</p>
+          <p id="event-metadata-boundary" className="mt-2 font-sans text-sm text-slate">This controls the metadata popup. Original downloads keep their embedded metadata.</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <button type="button" onClick={() => void save()} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_PRIMARY, BTN_SIZE.sm)}>Save metadata visibility</button>
+            <button type="button" onClick={() => { setDraft(visibility.data.metadataPublic); setDirty(false); }} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Cancel metadata change</button>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -670,7 +786,7 @@ function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
       </span>
       <span>
         <span className="text-ink">
-          ₱{photographer.revenueKept.toLocaleString()}
+          {formatPrice(photographer.revenueKept)}
         </span>{" "}
         kept
       </span>
@@ -686,22 +802,33 @@ function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
 function PhotoLibrary({
   event,
   eventId,
+  free,
 }: {
   event: ListEvent;
   eventId: string;
+  free: boolean;
 }) {
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
 
-  const [section, setSection] = useState<"active" | "deleted">("active");
+  const section = requestedTab === "deleted" || requestedTab === "purchased" ? requestedTab : "active";
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
-  const active = usePhotographerEventPhotos(eventId, { deleted: false });
+  useEffect(() => {
+    setSelecting(false);
+    setSelected(new Set());
+    setOpenIndex(null);
+  }, [section]);
+
+  const active = usePhotographerEventPhotos(eventId, { deleted: false, enabled: section === "active" });
   // Only fetch the trash when its tab is open — most visits never touch it.
   const trash = usePhotographerEventPhotos(eventId, {
     deleted: true,
@@ -715,9 +842,9 @@ function PhotoLibrary({
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["photographer", "events"] });
 
-  function switchSection(next: "active" | "deleted") {
+  function switchSection(next: "active" | "deleted" | "purchased") {
     if (next === section) return;
-    setSection(next);
+    router.replace(`${ROUTES.DASHBOARD_EVENTS}/${eventId}?tab=${next}`, { scroll: false });
     setSelecting(false);
     setSelected(new Set());
     setOpenIndex(null);
@@ -758,12 +885,13 @@ function PhotoLibrary({
       else exitSelect();
       const n = result.affected;
       const remaining = ids.length - n;
+      if (result.conflict && n === 0) return showToast({ kind: "error", message: result.conflict });
       showToast({
         kind: remaining > 0 ? "info" : "success",
         message: (kind === "trash"
             ? `${n} photo${n > 1 ? "s" : ""} moved to Deleted.`
             : `${n} photo${n > 1 ? "s" : ""} restored.`) +
-          (remaining > 0 ? ` ${remaining} unchanged. Refresh or retry the remaining photos.` : ""),
+          (remaining > 0 ? ` ${remaining} unchanged. ${result.conflict ?? "Refresh or retry the remaining photos."}` : ""),
       });
     } catch {
       showToast({ kind: "error", message: "Something went wrong. Try again." });
@@ -848,6 +976,8 @@ function PhotoLibrary({
     [photos.length],
   );
   const handleDownloadSingle = useCallback(async (photoId: string) => {
+    const photo = photos.find((item) => item.id === photoId);
+    if (!photo || photo.mediaAvailable === false || photo.deletionStartedAt || downloading) return;
     setDownloading(true);
     try {
       const result = await fetchPhotographerPhotoDownload(photoId);
@@ -863,7 +993,20 @@ function PhotoLibrary({
     } finally {
       setDownloading(false);
     }
-  }, [showToast]);
+  }, [photos, downloading, showToast]);
+
+  if (section === "purchased") {
+    return <section>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4 mb-6">
+        <div role="tablist" aria-label="Photo library" className="flex flex-wrap gap-2">
+          <TabPill active={false} onClick={() => switchSection("active")}>Active</TabPill>
+          <TabPill active={false} onClick={() => switchSection("deleted")}>Deleted</TabPill>
+          <TabPill active onClick={() => switchSection("purchased")}>Purchased</TabPill>
+        </div>
+      </div>
+      <PurchasedGallery eventId={eventId} event={event} free={free} />
+    </section>;
+  }
 
   const openPhoto = openIndex !== null ? photos[openIndex] : null;
   const previewItem: PhotoPreviewItem | null = openPhoto
@@ -874,7 +1017,7 @@ function PhotoLibrary({
         tone: openPhoto.tone,
         price: 0,
         span: openPhoto.span,
-        imageUrl: openPhoto.thumbnailUrl ?? null,
+        imageUrl: openPhoto.mediaAvailable === false || openPhoto.deletionStartedAt ? null : openPhoto.thumbnailUrl ?? null,
       }
     : null;
 
@@ -884,7 +1027,7 @@ function PhotoLibrary({
   return (
     <section>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4 mb-6">
-        <div role="tablist" aria-label="Photo library" className="flex gap-2">
+        <div role="tablist" aria-label="Photo library" className="flex flex-wrap gap-2">
           <TabPill
             active={section === "active"}
             onClick={() => switchSection("active")}
@@ -897,6 +1040,7 @@ function PhotoLibrary({
           >
             Deleted
           </TabPill>
+          <TabPill active={false} onClick={() => switchSection("purchased")}>Purchased</TabPill>
         </div>
         {!selecting && (
           <div className="flex items-center gap-2">
@@ -998,6 +1142,7 @@ function PhotoLibrary({
       {!selecting && previewItem && openIndex !== null && (
         <PhotoPreviewCard
           mode="owned"
+          metadataAccess={openPhoto && openPhoto.mediaAvailable !== false && !openPhoto.deletionStartedAt ? "owner" : undefined}
           photo={previewItem}
           eventName={event.name}
           eventDate={event.date}
@@ -1007,10 +1152,76 @@ function PhotoLibrary({
           onPrev={openIndex > 0 ? handlePrev : undefined}
           onNext={openIndex < photos.length - 1 ? handleNext : undefined}
           onDownload={() => handleDownloadSingle(previewItem.id)}
+          downloadDisabled={openPhoto?.mediaAvailable === false || !!openPhoto?.deletionStartedAt || downloading}
         />
       )}
     </section>
   );
+}
+
+function RemovedPurchasedGallery({ eventId, event, free }: { eventId: string; event: { name: string; date?: string }; free: boolean }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("tab") !== "purchased") {
+      router.replace(`${ROUTES.DASHBOARD_EVENTS}/${eventId}?tab=purchased`, { scroll: false });
+    }
+  }, [eventId, router, searchParams]);
+  return <PurchasedGallery eventId={eventId} event={event} free={free} />;
+}
+
+function PurchasedGallery({ eventId, event, free }: { eventId: string; event: { name: string; date?: string }; free: boolean }) {
+  const list = usePhotographerPurchasedPhotos(eventId, true);
+  // Tiles that failed to load. Signed URLs expire, so reconnecting refetches the
+  // list for fresh URLs once, then re-sets the still-broken tiles.
+  const failedImgs = useRef(new Set<HTMLImageElement>());
+  useEffect(() => {
+    const retryFailed = () => {
+      const imgs = [...failedImgs.current];
+      if (!imgs.length) return;
+      failedImgs.current.clear();
+      void list.refetch().then(() => imgs.forEach((img) => {
+        if (img.isConnected) img.setAttribute("src", img.getAttribute("src") ?? "");
+      }));
+    };
+    window.addEventListener("online", retryFailed);
+    return () => window.removeEventListener("online", retryFailed);
+  }, [list]);
+  const [selection, setSelection] = useState<PurchaseSelection | null>(null);
+  const photos = list.items.map((item) => item.photo);
+
+  return <>
+    <p className="font-mono uppercase tracking-[0.14em] text-sm text-slate-soft tnum mb-6">{photos.length === 0 && (list.isLoading || list.error || list.isPaused) ? "Purchased photos" : <><span className="text-ink">{list.total.toLocaleString()}</span> purchased photos</>}</p>
+    {free && <p className="mb-6 font-sans text-sm text-slate">Direct downloads from free events do not create purchase or buyer records.</p>}
+    {list.isPaused && photos.length === 0 ? (
+      <div role="alert"><p>You&apos;re offline. Reconnect to load purchased photos, or retry once connected.</p><button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div>
+    ) : list.isLoading ? (
+      <div role="status" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
+        {Array.from({ length: 8 }, (_, i) => <TileSkeleton key={i} aspectRatio="aspect-[3/4]" />)}
+      </div>
+    ) : list.error ? (
+      <div role="alert"><p>Couldn&apos;t load purchased photos.</p><button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div>
+    ) : photos.length === 0 ? (
+      <p className="font-sans text-base text-slate">No completed purchases yet.</p>
+    ) : (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
+        {list.items.map((item, i) => <PhotoTile key={item.photo.id} photo={item.photo} index={i} purchaseCount={item.purchaseCount} onImageState={(img, failed) => failed ? failedImgs.current.add(img) : failedImgs.current.delete(img)} selecting={false} selected={false} onOpen={() => setSelection({ photoId: item.photo.id })} onToggle={() => { }} />)}
+      </div>
+    )}
+    {list.appendError && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more purchased photos. Try again.</p>}
+    {list.isPaused && photos.length > 0 && <div role="alert" className="mt-4"><p>You&apos;re offline. Reconnect to continue loading purchased photos.</p><button type="button" disabled className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Waiting for connection</button></div>}
+    {!list.isPaused && list.total > 0 && <LoadMoreButton shown={photos.length} total={list.hasNextPage ? list.total : photos.length} increment={PAGE_SIZE.PHOTO_INCREMENT} onLoadMore={list.fetchNextPage} isLoading={list.isFetchingNextPage} terminalLabel={!list.hasNextPage && photos.length < list.total ? "All available purchased photos loaded" : undefined} />}
+    <PhotographerPurchasePreview
+      selection={selection}
+      event={{ id: eventId, name: event.name, date: event.date }}
+      photos={photos}
+      totalPhotos={list.hasNextPage ? list.total : photos.length}
+      // A failed or paused append waits for the page's own Load more, so this never loops.
+      onNeedMore={list.hasNextPage && !list.isFetchingNextPage && !list.appendError && !list.isPaused ? list.fetchNextPage : undefined}
+      onClose={() => setSelection(null)}
+      onSelectPhoto={(photoId) => setSelection({ photoId })}
+    />
+  </>;
 }
 
 function TabPill({
@@ -1029,9 +1240,9 @@ function TabPill({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
+        "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 min-h-[44px] transition-colors",
         active
-          ? "bg-ink text-bone border border-ink"
+          ? "bg-ink text-surface border border-ink"
           : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",
       )}
     >
@@ -1166,6 +1377,8 @@ function PhotoTile({
   selected,
   onOpen,
   onToggle,
+  purchaseCount,
+  onImageState,
 }: {
   photo: PhotographerLibraryPhoto;
   index: number;
@@ -1173,6 +1386,8 @@ function PhotoTile({
   selected: boolean;
   onOpen: () => void;
   onToggle: () => void;
+  purchaseCount?: number;
+  onImageState?: (img: HTMLImageElement, failed: boolean) => void;
 }) {
   const colorIdx = photo.tone % TONE_COLORS.length;
   const wide = photo.span === "wide";
@@ -1193,7 +1408,7 @@ function PhotoTile({
         aria-label={
           (selecting
             ? `${selected ? "Deselect" : "Select"} photo ${index + 1}`
-            : `Open photo ${index + 1}`) +
+            : `Open photo ${index + 1}${purchaseCount !== undefined ? `, ${purchaseCount} purchase${purchaseCount === 1 ? "" : "s"}` : ""}`) +
           (photo.status === "processing" ? ", Processing" : "")
         }
         className="block w-full h-full text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
@@ -1219,6 +1434,8 @@ function PhotoTile({
               className="absolute inset-0 w-full h-full object-cover"
               draggable={false}
               loading="lazy"
+              onError={(e) => onImageState?.(e.currentTarget, true)}
+              onLoad={(e) => onImageState?.(e.currentTarget, false)}
             />
           )}
           {selecting && (
@@ -1251,9 +1468,9 @@ function PhotoTile({
               Processing
             </span>
           )}
-          {photo.salesCount > 0 && (
-            <span className="absolute bottom-2 right-2 font-mono uppercase tracking-[0.14em] text-[8px] text-bone tnum bg-ink/40 px-1.5 py-0.5 rounded-full backdrop-blur-sm">
-              {photo.salesCount} sold
+          {(purchaseCount !== undefined || photo.salesCount > 0) && (
+            <span className="absolute bottom-2 right-2 font-mono uppercase tracking-[0.14em] text-[12px] text-surface tnum bg-ink/70 px-2 py-1 rounded-full backdrop-blur-sm">
+              {purchaseCount !== undefined ? `${purchaseCount} purchase${purchaseCount === 1 ? "" : "s"}` : `${photo.salesCount} sold`}
             </span>
           )}
         </div>

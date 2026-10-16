@@ -45,6 +45,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -91,6 +92,7 @@ import com.quickpitik.mobile.ui.photographer.PhotographerDashboardViewModel
 import com.quickpitik.mobile.ui.photographer.PhotographerEarningsScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerEventFormScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerEventShareScreen
+import com.quickpitik.mobile.ui.photographer.PhotographerPurchasesViewModel
 import com.quickpitik.mobile.ui.photographer.PhotographerEventsScreen
 import com.quickpitik.mobile.ui.photographer.PhotographerFloatingBottomNav
 import com.quickpitik.mobile.ui.photographer.PhotographerOverviewScreen
@@ -105,6 +107,8 @@ import com.quickpitik.mobile.ui.photographer.StudioTabScaffold
 import com.quickpitik.mobile.ui.photographer.StudioTheme
 import com.quickpitik.mobile.ui.photographer.TetherViewModel
 import com.quickpitik.mobile.ui.photographer.VerificationUiState
+import com.quickpitik.mobile.ui.theme.ErrorView
+import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.runner.AccountSettingsScreen
 import com.quickpitik.mobile.ui.runner.CartViewModel
 import com.quickpitik.mobile.ui.runner.EventsDiscoveryScreen
@@ -343,6 +347,7 @@ class MainActivity : ComponentActivity() {
                     val studioVm: PhotographerDashboardViewModel = viewModel(studioEntry)
                     viewModel<StudioSettingsViewModel>(studioEntry)
                     viewModel<StudioEarningsViewModel>(studioEntry)
+                    viewModel<PhotographerPurchasesViewModel>(studioEntry)
                     studioTetherViewModel(navController, studioEntry)
                     StudioInboxLifecycle(studioVm)
                 }
@@ -626,8 +631,9 @@ class MainActivity : ComponentActivity() {
                                         // way forcedLogout does: cart + the
                                         // in-memory runner-view flag, which
                                         // survives the prefs wipe. Still signed
-                                        // in means the link was refused (or the
-                                        // local wipe itself failed): go back.
+                                        // in means the link was refused, it
+                                        // changed another account, or the local
+                                        // wipe failed: go back.
                                         val signedIn = sessionManager.getAccessToken() != null
                                         if (!signedIn) {
                                             cartViewModel.clearCart()
@@ -724,7 +730,7 @@ class MainActivity : ComponentActivity() {
                                             viewModel = vm,
                                             tetherViewModel = tetherVm,
                                             onOpenShare = { event ->
-                                                navController.navigate("studio/share/${event.id}")
+                                                navController.navigate(shareRoute(event.id))
                                             },
                                             onSyncEvent = { ev ->
                                                 tetherVm.selectEvent(ev)
@@ -752,6 +758,8 @@ class MainActivity : ComponentActivity() {
                                         PhotographerEarningsScreen(
                                             viewModel = vm,
                                             earningsViewModel = studioEarningsViewModel(navController, entry),
+                                            purchaseViewModel = studioPurchasesViewModel(navController, entry),
+                                            onOpenEvent = { id -> navController.navigate(shareRoute(id, "purchased")) },
                                         )
                                     }
                                 }
@@ -776,26 +784,25 @@ class MainActivity : ComponentActivity() {
                                 // Fullscreen sub-surfaces — no tab chrome, no
                                 // bottom nav; back pops to the launching tab.
                                 composable(
-                                    route = "studio/share/{eventId}",
-                                    arguments = listOf(navArgument("eventId") { type = NavType.StringType }),
+                                    route = "studio/share/{eventId}?tab={tab}",
+                                    arguments = listOf(
+                                        navArgument("eventId") { type = NavType.StringType },
+                                        navArgument("tab") { type = NavType.StringType; defaultValue = "active" },
+                                    ),
                                 ) { entry ->
                                     val vm = studioViewModel(navController, entry)
+                                    val purchaseVm = studioPurchasesViewModel(navController, entry)
                                     val eventId = entry.arguments?.getString("eventId")
-                                    val eventsState by vm.eventsState.collectAsState()
-                                    val event = (eventsState as? EventsState.Success)
-                                        ?.events?.firstOrNull { it.id == eventId }
-                                    if (event == null) {
-                                        // List not loaded / unknown id — nothing
-                                        // to share; fall back to the tab.
-                                        LaunchedEffect(eventId) { navController.popBackStack() }
-                                    } else {
-                                        StudioTheme {
-                                            PhotographerEventShareScreen(
-                                                event = event,
-                                                viewModel = vm,
-                                                onBack = { navController.popBackStack() },
-                                            )
-                                        }
+                                    val tab = entry.arguments?.getString("tab") ?: "active"
+                                    StudioTheme {
+                                        StudioShareDestination(
+                                            eventId = eventId,
+                                            initialTab = tab,
+                                            dashboard = vm,
+                                            purchases = purchaseVm,
+                                            onBack = { navController.popBackStack() },
+                                            onOpenEvent = { id -> if (id != eventId) navController.navigate(shareRoute(id, "purchased")) },
+                                        )
                                     }
                                 }
                                 composable(
@@ -833,6 +840,7 @@ class MainActivity : ComponentActivity() {
                                         PhotographerPublicProfileScreen(
                                             handle = brandSettings?.handle,
                                             viewModel = publicVm,
+                                            ownerReview = true,
                                             onBack = { navController.popBackStack() },
                                             // "|| brandSettings == null": the fetch
                                             // starts in a LaunchedEffect AFTER the
@@ -1148,6 +1156,9 @@ internal fun guardRedirect(photographer: Boolean, runnerView: Boolean, route: St
     }
 }
 
+internal fun shareRoute(eventId: String, tab: String = "active"): String =
+    "studio/share/${Uri.encode(eventId)}" + if (tab == "purchased") "?tab=purchased" else ""
+
 /**
  * The receipt route for an order id plus optional guest RETURN token, or null
  * when the id is not route-safe (F6: the scheme-only deep-link filter is
@@ -1193,16 +1204,25 @@ internal fun deepLinkTarget(uri: Uri): DeepLinkTarget? {
     val path = uri.path?.lowercase().orEmpty()
     return when {
         host == "confirm-email-change" || path.startsWith("/confirm-email-change") ->
-            DeepLinkTarget.ConfirmEmail(uri.getQueryParameter("token").orEmpty())
+            emailToken(uri)?.let(DeepLinkTarget::ConfirmEmail)
         host == "verify-email" || path.startsWith("/verify-email") ->
-            DeepLinkTarget.VerifyEmail(uri.getQueryParameter("token").orEmpty())
+            emailToken(uri)?.let(DeepLinkTarget::VerifyEmail)
         host == "orders" && path.startsWith("/return") ->
             DeepLinkTarget.OrderReturn(uri.getQueryParameter("orderId"), uri.getQueryParameter("token"))
+                .takeIf { it.token.orEmpty().length <= MAX_LINK_TOKEN }
         host == "orders" -> DeepLinkTarget.Orders
         host == "cart" -> DeepLinkTarget.Cart
         else -> null
     }
 }
+
+// Real tokens are 43 characters (email) or about 105 (order return). A ~50 KB
+// one rode into the saved state and crashed the app on Home
+// (TransactionTooLargeException), so drop the link.
+private const val MAX_LINK_TOKEN = 256
+
+private fun emailToken(uri: Uri): String? =
+    uri.getQueryParameter("token").orEmpty().takeIf { it.length <= MAX_LINK_TOKEN }
 
 // The "studio" graph's back-stack entry — the owner of every studio ViewModel.
 // They all resolve off this one entry, so they share a lifetime: created lazily
@@ -1233,6 +1253,49 @@ private fun studioEarningsViewModel(
     navController: NavHostController,
     entry: NavBackStackEntry,
 ): StudioEarningsViewModel = viewModel(studioGraphEntry(navController, entry))
+
+@Composable
+private fun studioPurchasesViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): PhotographerPurchasesViewModel = viewModel(studioGraphEntry(navController, entry))
+
+@Composable
+internal fun StudioShareDestination(
+    eventId: String?,
+    initialTab: String,
+    dashboard: PhotographerDashboardViewModel,
+    purchases: PhotographerPurchasesViewModel,
+    onBack: () -> Unit,
+    onOpenEvent: (String) -> Unit,
+) {
+    val state by purchases.eventState.collectAsState()
+    LaunchedEffect(eventId) { eventId?.let(purchases::loadEvent) }
+    val event = state.event?.takeIf { it.id == eventId }
+    when {
+        event != null -> PhotographerEventShareScreen(
+            event = event,
+            viewModel = dashboard,
+            purchaseViewModel = purchases,
+            initialTab = initialTab,
+            onBack = onBack,
+            onOpenEvent = onOpenEvent,
+        )
+        state.eventId == eventId && state.error != null -> Column(
+            modifier = Modifier.fillMaxSize().background(com.quickpitik.mobile.ui.theme.Bone).padding(24.dp),
+        ) {
+            ErrorView(
+                title = if (state.errorStatus == 404) "Event unavailable" else "Couldn't load event",
+                message = state.error ?: "Couldn't load event.",
+                onRetry = { eventId?.let(purchases::loadEvent) },
+            )
+            com.quickpitik.mobile.ui.theme.GhostCta(text = "Back", onClick = onBack)
+        }
+        else -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Fresh)
+        }
+    }
+}
 
 // The tether VM's one cross-concern read is the dashboard's event list, for
 // the after-process-death resume (see its KDoc). It is handed over here,

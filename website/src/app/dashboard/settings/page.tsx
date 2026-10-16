@@ -22,7 +22,7 @@ import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
 import { CharCounter } from "@/components/ui/char-counter";
-import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
+import { RegionProvinceFields } from "@/components/ui/region-province-fields";
 import { FieldError } from "@/components/ui/field-error";
 import { Kicker } from "@/components/ui/kicker";
 import { Modal } from "@/components/ui/modal";
@@ -31,6 +31,7 @@ import { useConfirmation } from "@/hooks/use-confirmation";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import { uploadAvatar } from "@/lib/api-avatar";
+import { putMetadataSettings, type MetadataSettingsDto } from "@/lib/api-photographer";
 import {
   deletePayoutAccount,
   deleteSocial,
@@ -63,11 +64,7 @@ import {
   squareCropToDataUrl,
   validateImageFile,
 } from "@/lib/image-utils";
-import {
-  REGION_GROUP_LABEL,
-  getRegion,
-  type RegionGroup,
-} from "@/lib/ph-regions";
+import { getRegion } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
 import {
   photographerSettingsKeys,
@@ -112,11 +109,6 @@ const COLOR_ORDER: ReadonlyArray<BrandColor> = [
   "ink",
 ];
 
-const REGION_GROUP_ORDER: ReadonlyArray<RegionGroup> = [
-  "luzon",
-  "visayas",
-  "mindanao",
-];
 
 // Cover banner is 16:5 (= 3.2). Anything below this aspect ratio is portrait
 // or near-square — the middle horizontal strip is the only thing that ends up
@@ -171,6 +163,8 @@ interface EditModeContextValue {
   saveEdit: () => Promise<void>;
   cancelEdit: () => void;
   setPendingFile: (slot: PendingFileSlot, file: File | null) => void;
+  metadataPublicByDefault: boolean;
+  setMetadataPublicByDefault: (value: boolean) => void;
 }
 
 const EditModeContext = createContext<EditModeContextValue | null>(null);
@@ -241,6 +235,8 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
 function EditModeProvider({ children }: { children: ReactNode }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [metadataDraft, setMetadataDraft] = useState(false);
+  const metadataSnapshotRef = useRef<boolean | null>(null);
   const draftEpochRef = useRef<number | null>(null);
   const confirmedRef = useRef(false);
   const editSessionRef = useRef<(() => boolean) | null>(null);
@@ -252,10 +248,10 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   });
   const { showToast } = useToast();
   const queryClient = useQueryClient();
-  const { session, brand, socials, payouts } = usePhotographerSettingsQueries();
+  const { session, brand, socials, payouts, metadata } = usePhotographerSettingsQueries();
   const hydratedSessionVersion = usePhotographerSettingsStore((s) => s.hydratedSessionVersion);
-  const canEdit = session.enabled && hydratedSessionVersion === session.key[2];
-  const initialQueries = [brand, socials, payouts];
+  const canEdit = session.enabled && hydratedSessionVersion === session.key[2] && metadata.isSuccess && metadata.data != null;
+  const initialQueries = [brand, socials, payouts, metadata];
   const initialLoadFailed = !canEdit && initialQueries.some((query) => query.isError);
   const retryingInitialLoad = initialQueries.some((query) => query.isFetching);
 
@@ -286,15 +282,17 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     const auth = useAuthStore.getState();
     if (
       !auth.isAuthenticated || auth.user?.role !== "PHOTOGRAPHER" ||
-      state.hydratedSessionVersion !== auth.sessionVersion
+      state.hydratedSessionVersion !== auth.sessionVersion || !canEdit
     ) return;
+    setMetadataDraft(metadata.data.metadataPublicByDefault);
+    metadataSnapshotRef.current = metadata.data.metadataPublicByDefault;
     draftEpochRef.current = state.beginDraft();
     confirmedRef.current = false;
     editSessionRef.current = captureAuthSession();
     snapshotRef.current = takeSnapshot();
     pendingFilesRef.current = { avatar: null, cover: null, watermark: null };
     setEditing(true);
-  }, []);
+  }, [canEdit, metadata.data]);
 
   const cancelEdit = useCallback(() => {
     if (!editSessionRef.current?.()) return;
@@ -353,6 +351,20 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       onSuccess?: (result: unknown) => void;
     }
     const tasks: SaveTask[] = [];
+
+    if (metadataDraft !== metadataSnapshotRef.current) {
+      tasks.push({
+        label: "Metadata default",
+        run: () => putMetadataSettings({ metadataPublicByDefault: metadataDraft }),
+        onSuccess: (result) => {
+          metadataSnapshotRef.current = (result as MetadataSettingsDto).metadataPublicByDefault;
+          queryClient.setQueryData<MetadataSettingsDto>(
+            [...photographerSettingsKeys.metadata, ...session.key],
+            result as MetadataSettingsDto,
+          );
+        },
+      });
+    }
 
     const brandDirty =
       snap.brandName !== settings.brandName ||
@@ -748,7 +760,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     } finally {
       if (ownsDraft()) setSaving(false);
     }
-  }, [reconcileDraft, saving, showToast]);
+  }, [metadataDraft, queryClient, reconcileDraft, saving, session.key, showToast]);
 
   const value = useMemo<EditModeContextValue>(
     () => ({
@@ -759,8 +771,10 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       saveEdit,
       cancelEdit,
       setPendingFile,
+      metadataPublicByDefault: editing ? metadataDraft : metadata.data?.metadataPublicByDefault ?? false,
+      setMetadataPublicByDefault: setMetadataDraft,
     }),
-    [editing, saving, canEdit, beginEdit, saveEdit, cancelEdit, setPendingFile],
+    [editing, saving, canEdit, beginEdit, saveEdit, cancelEdit, setPendingFile, metadataDraft, metadata.data],
   );
 
   return (
@@ -1016,6 +1030,7 @@ export default function SettingsPage() {
       <SocialSlab />
       <PayoutSlab />
       <EventCouponsSlab />
+      <MetadataDefaultSlab />
       <ReadyToSubmitNudge />
       <EditModePill />
     </EditModeProvider>
@@ -1035,6 +1050,31 @@ function EventCouponsSlab() {
       >
         Manage event coupons
       </Link>
+    </Slab>
+  );
+}
+
+function MetadataDefaultSlab() {
+  const { editing, saving, metadataPublicByDefault, setMetadataPublicByDefault } = useEditMode();
+  return (
+    <Slab id="metadata" number="08" title="Photo metadata" caption="New events">
+      <label className="flex min-h-[44px] items-center gap-3 font-sans text-base font-semibold text-ink">
+        <input
+          type="checkbox"
+          checked={metadataPublicByDefault}
+          onChange={(event) => setMetadataPublicByDefault(event.target.checked)}
+          disabled={!editing || saving}
+          aria-describedby="metadata-default-help metadata-default-boundary"
+          className="size-5 shrink-0 accent-fresh disabled:cursor-not-allowed"
+        />
+        Show metadata publicly for new events
+      </label>
+      <p id="metadata-default-help" className="mt-3 max-w-md font-sans text-sm text-slate">
+        Applies to events you create or start covering next. Existing events keep their settings.
+      </p>
+      <p id="metadata-default-boundary" className="mt-2 max-w-md font-sans text-sm text-slate">
+        This controls the metadata popup. Original downloads keep their embedded metadata.
+      </p>
     </Slab>
   );
 }
@@ -2326,215 +2366,31 @@ function RegionSlab() {
   const { editing } = useEditMode();
   const region = usePhotographerSettingsStore((s) => s.region);
   const setRegion = usePhotographerSettingsStore((s) => s.setRegion);
-  const { regions, isLoading: regionsLoading } = useRegions();
-
+  const { regions, isLoading: regionsLoading, error, retry } = useRegions();
   const selectedRegion = region ? getRegion(regions, region.regionCode) : undefined;
-  const selectedProvince =
-    region && selectedRegion
-      ? selectedRegion.provinces.find((p) => p.code === region.provinceCode)
-      : undefined;
-
-  // A persisted region/province code can fail to resolve when the backend
-  // renames or removes one. Surface the gap so the user knows to re-pick
-  // instead of silently rendering "Pick a region" as if nothing was set.
-  //
-  // Gated on !regionsLoading since 2026-08-16: the list is fetched now, so
-  // during the first paint `regions` is empty and EVERY saved code would
-  // otherwise look stale and flash a bogus warning.
-  const staleRegion = !regionsLoading && !!region && !selectedRegion;
-  const staleProvince =
-    !regionsLoading &&
-    !!region &&
-    !!selectedRegion &&
-    !!region.provinceCode &&
-    !selectedProvince;
-
-  function handlePickRegion(regionCode: string) {
-    if (region?.regionCode === regionCode) return;
-    // Reset province when region changes — the user must re-pick.
-    const next = getRegion(regions, regionCode);
-    if (!next) return;
-    setRegion({ regionCode, provinceCode: "" });
-  }
-
-  function handlePickProvince(provinceCode: string) {
-    if (!region) return;
-    if (region.provinceCode === provinceCode) return;
-    setRegion({ regionCode: region.regionCode, provinceCode });
-  }
-
-  // Ready when a region is picked AND (the region has no provinces OR a
-  // province is picked). Stale codes count as unset since the photographer
-  // still needs to re-pick.
-  const ready =
-    !!region &&
-    !!selectedRegion &&
-    !staleRegion &&
-    (selectedRegion.provinces.length === 0
-      ? true
-      : !!selectedProvince && !staleProvince);
+  const selectedProvince = selectedRegion?.provinces.find((p) => p.code === region?.provinceCode);
+  const staleRegion = !regionsLoading && !error && !!region && !selectedRegion;
+  const staleProvince = !regionsLoading && !error && !!region?.provinceCode && !!selectedRegion && !selectedProvince;
+  const ready = !!selectedRegion && (selectedRegion.provinces.length === 0 || !!selectedProvince);
 
   return (
-    <Slab
-      id="region"
-      number="04"
-      title="Region"
-      caption="Where you cover events"
-    >
+    <Slab id="region" number="04" title="Region" caption="Where you cover events">
       <SlabStatusChip ready={ready} />
       <div className="space-y-7">
         <p className="font-sans text-sm text-slate max-w-md">
           Helps runners surface local photographers and lets organizers invite
           the right talent for their events.
         </p>
-
-        <div className="grid md:grid-cols-2 gap-5 md:gap-7">
-          <div className="flex flex-col gap-2">
-            <span className="font-sans text-sm text-slate">Region</span>
-            {editing ? (
-              <Dropdown
-                align="left"
-                ariaLabel="Pick a region"
-                className="w-full"
-                panelClassName="max-h-80 overflow-y-auto w-[min(28rem,calc(100vw-2rem))]"
-                trigger={
-                  <span
-                    aria-describedby={staleRegion ? "region-error" : undefined}
-                    aria-invalid={staleRegion ? true : undefined}
-                    className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left transition-colors hover:border-slate"
-                  >
-                    <span
-                      className={cn(
-                        "truncate text-lg",
-                        selectedRegion ? "text-ink" : "text-slate-soft",
-                      )}
-                    >
-                      {selectedRegion?.name ??
-                        (regionsLoading ? "Loading regions…" : "Pick a region")}
-                    </span>
-                    <span aria-hidden="true" className="text-slate shrink-0">
-                      ▾
-                    </span>
-                  </span>
-                }
-              >
-                {REGION_GROUP_ORDER.map((group) => (
-                  <div key={group} className="pt-2 first:pt-0">
-                    <Kicker as="p" tone="soft" className="px-4 py-2">
-                      {REGION_GROUP_LABEL[group]}
-                    </Kicker>
-                    {regions.filter((r) => r.group === group).map((r) => (
-                      <DropdownItem
-                        key={r.code}
-                        onClick={() => handlePickRegion(r.code)}
-                        active={region?.regionCode === r.code}
-                      >
-                        {r.name}
-                      </DropdownItem>
-                    ))}
-                  </div>
-                ))}
-              </Dropdown>
-            ) : (
-              <span className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left cursor-not-allowed">
-                <span
-                  className={cn(
-                    "truncate text-lg",
-                    selectedRegion ? "text-ink" : "text-slate-soft",
-                  )}
-                >
-                  {selectedRegion?.name ?? "Not set"}
-                </span>
-              </span>
-            )}
-            <FieldError
-              message={
-                staleRegion
-                  ? "That region is no longer available. Pick a new one."
-                  : null
-              }
-              id="region-error"
-              density="tight"
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <span className="font-sans text-sm text-slate">Province</span>
-            {editing && selectedRegion ? (
-              <Dropdown
-                align="left"
-                ariaLabel="Pick a province"
-                className="w-full"
-                panelClassName="max-h-80 overflow-y-auto w-[min(20rem,calc(100vw-2rem))]"
-                trigger={
-                  <span
-                    aria-describedby={
-                      staleProvince ? "province-error" : undefined
-                    }
-                    aria-invalid={staleProvince ? true : undefined}
-                    className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left transition-colors hover:border-slate"
-                  >
-                    <span
-                      className={cn(
-                        "truncate text-lg",
-                        selectedProvince ? "text-ink" : "text-slate-soft",
-                      )}
-                    >
-                      {selectedProvince?.name ??
-                        (selectedRegion.provinces.length === 0
-                          ? "No provinces in this region"
-                          : "Pick a province")}
-                    </span>
-                    <span aria-hidden="true" className="text-slate shrink-0">
-                      ▾
-                    </span>
-                  </span>
-                }
-              >
-                {selectedRegion.provinces.map((p) => (
-                  <DropdownItem
-                    key={p.code}
-                    onClick={() => handlePickProvince(p.code)}
-                    active={region?.provinceCode === p.code}
-                  >
-                    {p.name}
-                  </DropdownItem>
-                ))}
-              </Dropdown>
-            ) : (
-              <span className="flex items-center justify-between gap-2 w-full border-b border-line py-4 text-left cursor-not-allowed">
-                <span
-                  className={cn(
-                    "truncate text-lg",
-                    selectedProvince ? "text-ink" : "text-slate-soft",
-                  )}
-                >
-                  {selectedProvince?.name ??
-                    (editing
-                      ? "Pick a region first"
-                      : selectedRegion
-                        ? "Not set"
-                        : "Not set")}
-                </span>
-              </span>
-            )}
-            <FieldError
-              message={
-                staleProvince
-                  ? "That province is no longer available. Pick a new one."
-                  : null
-              }
-              id="province-error"
-              density="tight"
-            />
-          </div>
-        </div>
-
-        {region && selectedProvince && (
-          <Kicker as="p" tnum>
-            Selected · {selectedProvince.name} · {selectedRegion?.shortName}
-          </Kicker>
-        )}
+        {regionsLoading && <p role="status" className="font-sans text-sm text-slate">Loading regions...</p>}
+        {!!error && <div role="alert" className="space-y-2"><p className="font-sans text-sm text-error">Couldn&apos;t load regions. Saved values are kept.</p><button type="button" onClick={() => void retry()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry regions</button></div>}
+        <RegionProvinceFields
+          value={{ regionCode: region?.regionCode || null, provinceCode: region?.provinceCode || null }}
+          onChange={(value) => setRegion({ regionCode: value.regionCode ?? "", provinceCode: value.provinceCode ?? "" })}
+          regions={regions}
+          disabled={!editing || regionsLoading || !!error}
+          errors={{ region: staleRegion ? "That region is no longer available. Pick a new one." : null, province: staleProvince ? "That province is no longer available. Pick a new one." : null }}
+        />
+        {region && selectedProvince && <Kicker as="p" tnum>Selected · {selectedProvince.name} · {selectedRegion?.shortName}</Kicker>}
       </div>
     </Slab>
   );

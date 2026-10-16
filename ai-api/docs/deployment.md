@@ -36,7 +36,7 @@ Production reads two values that have no safe default. Put them in `.env` next t
 |---|---|
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | Datastore credentials. |
 | `ALLOWED_ORIGINS` | **Required — the stack refuses to start without it.** Set your real origins, e.g. `["https://quickpitik.com"]`. It used to default to `["*"]`. |
-| `WEBHOOK_SECRET_KEY` | Fernet key encrypting webhook secrets at rest. Empty = plaintext (the app only warns). Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Must be the **same value across the API and all four workers** — the API encrypts and the blur/face/bib workers decrypt, so a mismatch breaks every signature. |
+| `WEBHOOK_SECRET_KEY` | Fernet key encrypting webhook secrets at rest. Empty = plaintext (the app only warns). Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Must be the **same value across the API and both workers** — the API encrypts and the workers decrypt, so a mismatch breaks every signature. |
 
 Model weights are **mounted from the host**, not baked into the image — confirm `./models` is
 populated before starting (see "Model Loading Strategy" below):
@@ -53,13 +53,21 @@ Uses the production `Dockerfile` (multi-stage, optimized, no hot-reload). This i
 standalone stack — API, four per-queue Celery workers, db, redis, nginx and certbot. The API
 publishes on `127.0.0.1:8000` only; public traffic arrives through nginx on 80/443, so the
 proxy's rate limit and `client_max_body_size` cannot be bypassed.
+As shipped, `nginx.conf` serves plain HTTP only, so do not expose this host to the internet
+until its HTTPS server block is enabled with a real certificate and its port-80 `location /` proxy
+is replaced by the HTTPS redirect (Railway terminates TLS for you).
 
-The Dockerfile defaults to `MODEL_PROFILE=all` and installs the full application dependencies.
-For a smaller CPU blur image, supply the audited ONNX and ordered labels under
+The Dockerfile defaults to `MODEL_PROFILE=blur`. Build with `--build-arg MODEL_PROFILE=all` and run
+with `MODEL_PROFILE=all` to install from `pyproject.toml` instead of the lock and run blur with
+the looser `all` limits and an optional classifier. The face and bib routes were removed on
+2026-10-16, so no profile serves them.
+Because blur is the default, every image build (including `docker-compose.prod.yml` with
+`--build`) checks the blur artifacts at build time and fails if they are missing.
+For the CPU blur image, supply the audited ONNX and ordered labels under
 `models/blur_classifier/` in the trusted build workspace, then build with
 `docker build --build-arg MODEL_PROFILE=blur -t quickpitik-blur:2026-08-14-dynamic .` and run it
 with `MODEL_PROFILE=blur`. This profile installs the pinned
-`requirements-blur.lock` and loads only blur models; face and bib routes return 404.
+`requirements-blur.lock` and loads only blur models.
 For the initial dedicated Railway blur launch, `.railway/railway.ts` sets
 `BLUR_ASYNC_ENABLED=false`. The shared all-model service keeps the default
 `true`. The desktop calls `/api/v1/blur/classify/stream` and falls back to
@@ -127,8 +135,9 @@ The upload contract remains JPEG/PNG/WebP; clients convert HEIF before upload.
 The full `all` profile retains its 2 GiB shared body ceiling and existing
 per-file limits. Tune the blur values in `src/config.py` only after measuring
 real desktop payloads and container peak RSS under the target Railway quota.
-Regenerate the lock from `requirements-blur.in` with `pip-compile` in a clean Python 3.12
-Linux environment with `libpq-dev` installed. The two files are gitignored; the
+Regenerate the lock from `requirements-blur.in` with `pip-compile --generate-hashes` in a
+clean Python 3.12 Linux environment with `build-essential` and `libpq-dev` installed.
+The two files are gitignored; the
 build checks their manifest hashes, label order, ONNX shape, and warm inference,
 then embeds them in a read-only image directory. No model mount is needed at
 runtime. The built image is the immutable artifact containing both files. The
@@ -209,6 +218,8 @@ the Railway health check. Set `DATABASE_URL`, `REDIS_URL`,
 pgvector availability before routing traffic. Provision a restricted desktop key
 using the private `../docs/api-keys.md` workflow and a separate
 `metrics:read` operations key. Never use `scripts/seed_db.py` in production.
+Revoke a key: `python -m scripts.revoke_api_key <id>` from `ai-api/` with the
+target's `DATABASE_URL`/`REDIS_URL` (owner only).
 
 The initial service exposes single-image and stream blur only. No worker, beat,
 or blob volume is needed while `BLUR_ASYNC_ENABLED=false`. The optional async
@@ -223,11 +234,17 @@ GitHub Actions `ai-api-blur` runs deterministic regressions on pushes and PRs.
 The manual `release-check` job builds from a clean checkout after fetching
 private ONNX, labels, and an approved labelled holdout through the
 `blur-release` environment's `BLUR_MODEL_URL`, `BLUR_LABELS_URL`, and
-`BLUR_HOLDOUT_URL` secrets. The holdout ZIP must have the four class
-directories at its root (see `scripts/blur_gate.py --help`). Missing
-artifacts fail. Set the approved `BLUR_MIN_ACCURACY`, `BLUR_MAX_MISS_RATE`,
-and `BLUR_MAX_OVERCULL_RATE` in that environment's variables; missing or
-invalid limits fail before the release smoke creates database keys. It migrates disposable
+`BLUR_HOLDOUT_URL` secrets. The holdout ZIP holds one folder per event, each
+with class directories (`<event-id>/sharp/`, `<event-id>/motion_blurred/`, …;
+see `scripts/blur_gate.py --help`); the gate reports each event separately and
+passes on sharp-vs-blurry results. Missing artifacts fail. Set these approved
+limits in that environment's variables: `BLUR_MIN_ACCURACY`,
+`BLUR_MAX_MISS_RATE`, `BLUR_MAX_OVERCULL_RATE`, `BLUR_MAX_PHOTOMETRIC_FLIP_RATE`
+(the most decisions that brighter, darker or grayscale copies may change), and
+the holdout floor `BLUR_MIN_SHARP`, `BLUR_MIN_BLUR`, `BLUR_MIN_EVENTS`. The
+approved values are the owner decisions in the vault blur recovery plan
+(2026-09-29, D3 and D5). Missing or invalid limits fail before the
+release smoke creates database keys. It migrates disposable
 PostgreSQL/pgvector, starts Redis and the built image with async routes disabled,
 checks real inference, verifies batch/mega requests return `BLUR_ASYNC_DISABLED`,
 denies desktop access to `/metrics`, and runs the complete `blur_gate.py`
@@ -253,9 +270,8 @@ after measuring the chosen quota and a drain/redeploy test in Task 12.
 docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up --build -d
 ```
 Requires NVIDIA Container Toolkit installed on the host. The GPU overlay adds an `nvidia`
-device reservation and `USE_GPU=true` to `ai-api`, `celery-blur`, `celery-face` and
-`celery-bib`. `celery-default` stays on CPU — it runs webhook and maintenance tasks and loads
-no models. Layer it on `docker-compose.prod.yml`, never on `docker-compose.yml`.
+device reservation and `USE_GPU=true` to `ai-api` and `celery-blur`. `celery-default` stays on
+CPU — it runs webhook and maintenance tasks and loads no models. Layer it on `docker-compose.prod.yml`, never on `docker-compose.yml`.
 
 ---
 
@@ -289,7 +305,6 @@ Stage 2 (runtime):
 | Model | CPU Latency | GPU Latency | When to Use GPU |
 |---|---|---|---|
 | Blur detection | Measure on the chosen quota | Measure if GPU is selected | CPU for the initial blur profile |
-| Face, bib and OCR | Measure per workload | Measure per workload | Separate all-model profile |
 
 No generic speed multiplier or latency target is certified for Railway.
 
@@ -321,14 +336,13 @@ providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
 ### Celery workers
 - **Scale independently**: Add workers based on queue depth
-- **Each worker loads its own models**: set `WORKER_QUEUES=blur` (or `face`, `bib`) and start the worker with `-Q blur` to load only what that worker serves. Dev workers without `WORKER_QUEUES` load everything.
+- **Each worker loads its own models**: set `WORKER_QUEUES=blur` and start the worker with `-Q blur` to load the blur models; a `WORKER_QUEUES=default` worker loads none. Dev workers without `WORKER_QUEUES` act as `blur,default`.
 - **Prefetch = 4**: `worker_prefetch_multiplier=4` is safe because task messages carry file paths (blob store), not base64 image bytes.
 - **Time limits**: `task_soft_time_limit=3300s`, `task_time_limit=3600s`. `worker_max_tasks_per_child=500`, `worker_max_memory_per_child=2GB`.
 
 ### Database
 - PostgreSQL scales vertically first (bigger machine)
 - Add read replicas for search-heavy workloads
-- If face embeddings exceed ~10M, consider migrating vector search to dedicated Qdrant
 
 ### Redis
 - Single node is fine for startup scale
@@ -356,11 +370,10 @@ The readiness payload also carries a per-model breakdown:
 
 ```json
 {"models_loaded": true, "database": true, "redis": true,
- "models": {"blur": true, "face": true, "bib_ocr": true,
-            "blur_classifier": false, "bib_detector": false}}
+ "models": {"blur": true, "blur_classifier": true}}
 ```
 
-In the full profile, `models_loaded` covers `blur`, `face`, and `bib_ocr`; the
+In the `all` profile, `models_loaded` covers only `blur`; the
 classifier remains optional. In the blur profile, `blur` and `blur_classifier`
 are both required, so a missing or invalid classifier makes readiness 503.
 
@@ -379,7 +392,7 @@ When the server receives SIGTERM (e.g., during deployment) the FastAPI lifespan 
 
 1. Stop accepting new requests (uvicorn)
 2. Brief 2-second drain for in-flight requests
-3. `registry.unload_all()` — clears ONNX sessions, InsightFace models, PaddleOCR engine, Ultralytics YOLO models
+3. `registry.unload_all()` — releases the blur classifier's ONNX session
 4. Close Redis connection (`redis.aclose()`)
 5. Close the database connection pool
 6. Process exits
@@ -390,33 +403,19 @@ The 2-second drain is intentionally short — reverse proxies / load balancers a
 
 ## Model Loading Strategy
 
-**Full-profile weights are mounted; the dedicated blur image carries its audited pair.**
+**The image carries the blur pair; Compose also mounts `./models`.**
 `models/*` is gitignored (only `manifest.json` is tracked), so a clean Git checkout has no
-weights. `docker-compose.prod.yml` mounts the real `./models` directory read-only at
-`/app/models` for the full-profile API and workers. Miss that mount and the full-profile
-container starts with no weights at all.
+weights. The Dockerfile copies `models/` into the image, and `docker-compose.prod.yml` also
+mounts the real `./models` directory read-only at `/app/models` for the API and workers.
 
-1. **InsightFace models** (RetinaFace + ArcFace): downloaded automatically on first use into
-   `MODEL_DIR` — so with the mount in place they are already there, and with it missing every
-   container re-downloads ~300 MB on every deploy (or fails outright with no egress). Note the
-   doubled path: `FaceAnalysis(root=MODEL_DIR)` appends its own `models/`, so the bundle lives
-   at `models/models/buffalo_l/`.
-
-2. **PaddleOCR models**: downloaded automatically by PaddleOCR on first use, cached outside
-   `models/` (`~/.paddleocr` or `PADDLE_PDX_MODEL_SOURCE`). Nothing to mount.
-
-3. **YOLOv8 bib detector**: custom-trained ONNX at `models/bib_detection/yolov8n_bib.onnx`,
-   produced by `scripts/train_bib_detector.py` → `scripts/export_bib_detector.py`. **Optional**
-   — without it, bib recognition falls back to full-image OCR with more false positives.
-
-4. **Blur classifier**: custom-trained ONNX at `models/blur_classifier/blur_classifier.onnx`
-   plus `class_names.json`. Required by the dedicated blur image; optional in the full profile.
-
-For the full profile, the classifier and bib detector remain optional to the registry. Run
+The blur classifier needs the person detector at
+`models/person_detector/yolov8n_seg_person.onnx` and the rule at
+`models/blur_classifier/people_rule.json`. Nothing is downloaded. Required by the dedicated blur
+image (checked against the manifest at build time); optional in the `all` profile. Run
 `python scripts/download_models.py` before deploying: it checks every artifact named in
 `models/manifest.json` and exits non-zero listing whatever is absent.
 
-At server startup, the `ModelRegistry` loads selected models in parallel (via `asyncio.gather` + `asyncio.to_thread`). In the full profile, heavy libraries (`torch`, `insightface`, `ultralytics`) are pre-imported on the main thread to avoid Windows DLL loading races. The server accepts requests after startup; `/api/v1/health/readyz` returns 503 if required inference, PostgreSQL, or Redis is unavailable.
+At server startup, the `ModelRegistry` loads the two blur models in parallel (via `asyncio.gather` + `asyncio.to_thread`). The server accepts requests after startup; `/api/v1/health/readyz` returns 503 if required inference, PostgreSQL, or Redis is unavailable.
 
 ---
 
@@ -424,7 +423,7 @@ At server startup, the `ModelRegistry` loads selected models in parallel (via `a
 
 | Setting | Development | Staging | Production |
 |---|---|---|---|
-| `DEBUG` | `true` | `false` | `false` (startup aborts if `true` + `ENVIRONMENT=production`) |
+| `DEBUG` | `true` | `false` | `false` (startup aborts if `true` unless `ENVIRONMENT` is set to `development`, `local` or `test`) |
 | `ENVIRONMENT` | `development` | `staging` | `production` |
 | `LOG_LEVEL` | `DEBUG` | `INFO` | `INFO` |
 | `WORKERS` | 1–2 | 1 for blur | 1 for blur while metrics are enabled |

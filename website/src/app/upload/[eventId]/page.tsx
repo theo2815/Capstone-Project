@@ -45,7 +45,6 @@ import {
 } from "@/lib/event-catalog";
 import { formatLongDate } from "@/lib/format";
 import {
-  ACCEPTED_IMAGE_MIME,
   HEIC_GUIDANCE,
   HEIC_REJECTION,
   isHeicFile,
@@ -54,6 +53,10 @@ import {
 } from "@/lib/image-utils";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
+
+// Backend policy limits event photos to JPEG and PNG. Avatar, cover and
+// watermark uploads re-encode in the browser and keep ACCEPTED_IMAGE_MIME.
+const EVENT_PHOTO_MIME = ["image/jpeg", "image/png"];
 
 // Auto-upload mode. Photos are confirmed by the backend after transfer; there
 // is no separate "publish" step. The page never redirects after a batch
@@ -95,6 +98,7 @@ interface UploadEntry {
   retryState?: UploadRetryState;
   phase?: "preparing" | "uploading" | "confirming";
   receiptStatus?: "live" | "processing" | "hidden";
+  inTrash?: boolean;
   error?: string;
   /** True when the error happened during upload (network glitch — same file
    *  could succeed on a retry). False when the file was rejected by
@@ -572,7 +576,7 @@ function UploadForm({
   // exist for this photographer, so we never re-upload bytes that are already
   // stored. Each file is then routed:
   //   new             → "queued" (upload it)
-  //   same_event      → "skipped" (already live in this event — no upload)
+  //   same_event      → "skipped" (already stored in this event — no upload)
   //   different_event → non-retryable "error" (a photo can't live in two events)
   // The pre-flight is an optimization, not a gate: if it fails, every file
   // falls back to "queued" and the backend's unique index still dedupes.
@@ -638,17 +642,18 @@ function UploadForm({
           }
           const result = hash ? byHash.get(hash) : undefined;
           if (result?.status === "same_event") {
-            return { ...p, status: "skipped", progress: 0, error: undefined };
+            return { ...p, status: "skipped", progress: 0, error: undefined, inTrash: result.inTrash === true };
           }
           if (result?.status === "different_event") {
+            const trash = result.inTrash ? " (in your trash)" : "";
             return {
               ...p,
               status: "error",
               progress: 0,
               retryable: false,
               error: result.eventName
-                ? `Already uploaded to "${result.eventName}".`
-                : "Already uploaded to another event.",
+                ? `Already uploaded to "${result.eventName}"${trash}.`
+                : `Already uploaded to another event${trash}.`,
             };
           }
           return { ...p, status: "queued", contentHash: hash };
@@ -722,7 +727,7 @@ function UploadForm({
           setEntries((prev) =>
             prev.map((p) =>
               p.id === entry.id
-                ? { ...p, status: "done", progress: 100, receiptStatus: photo.status }
+                ? { ...p, status: "done", progress: 100, receiptStatus: photo.status, inTrash: photo.inTrash === true }
                 : p,
             ),
           );
@@ -947,7 +952,7 @@ function UploadForm({
           <input
             ref={inputRef}
             type="file"
-            accept={ACCEPTED_IMAGE_MIME.join(",")}
+            accept={EVENT_PHOTO_MIME.join(",")}
             multiple
             onChange={handleSelect}
             className="sr-only"
@@ -1292,12 +1297,12 @@ const QueueRow = memo(function QueueRow({
               {status === "queued" ? "Queued" : status === "checking" ? "Checking…" : status === "preparing" ? "Preparing…" : status === "confirming" ? "Confirming…" : "Waiting for connection…"}
             </p>
           ) : status === "done" ? (
-            <p className={cn("font-mono text-[10px] tracking-[0.15em] tnum uppercase", entry.receiptStatus === "hidden" ? "text-slate" : "text-fresh")}>
-              {entry.receiptStatus === "processing" ? "Uploaded — preparing preview" : entry.receiptStatus === "hidden" ? "Hidden" : "Live"}
+            <p className={cn("font-mono text-[10px] tracking-[0.15em] tnum uppercase", entry.inTrash || entry.receiptStatus === "hidden" ? "text-slate" : "text-fresh")}>
+              {entry.inTrash ? "In your trash" : entry.receiptStatus === "processing" ? "Uploaded — preparing preview" : entry.receiptStatus === "hidden" ? "Hidden" : "Live"}
             </p>
           ) : status === "skipped" ? (
             <p className="font-mono text-[10px] tracking-[0.15em] text-slate tnum uppercase">
-              Already uploaded
+              {entry.inTrash ? "In your trash" : "Already uploaded"}
             </p>
           ) : (
             <p className="font-mono text-[10px] tracking-[0.15em] text-error tnum uppercase truncate">
@@ -1338,8 +1343,8 @@ function validate(file: File): string | undefined {
   if (looksLikeHeic(file)) {
     return HEIC_REJECTION;
   }
-  if (!ACCEPTED_IMAGE_MIME.includes(file.type)) {
-    return "JPEG, PNG, or WebP only.";
+  if (!EVENT_PHOTO_MIME.includes(file.type)) {
+    return "JPEG or PNG only.";
   }
   if (file.size > MAX_UPLOAD_BYTES) {
     return "Larger than 8 MB.";

@@ -10,6 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -57,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -232,6 +236,7 @@ fun PhotographerSettingsScreen(
     val isSaving by settingsViewModel.isSavingSettings.collectAsState()
     val actionState by settingsViewModel.actionState.collectAsState()
     val settingsLoadError by settingsViewModel.settingsLoadError.collectAsState()
+    val metadataDefault by settingsViewModel.metadataDefault.collectAsState()
 
     // Hydration gate: with no cached brand payload and a failed fetch, the
     // form would render EMPTY but editable — and Save would overwrite real
@@ -550,6 +555,16 @@ fun PhotographerSettingsScreen(
             )
         }
         item("actions") {
+            MetadataToggleCard(
+                state = metadataDefault,
+                label = "Show metadata publicly for new events",
+                help = "Applies to events you create or start covering next. Existing events keep their settings.",
+                saveLabel = "Save metadata default",
+                onChange = settingsViewModel::setMetadataDefaultDraft,
+                onSave = settingsViewModel::saveMetadataDefault,
+                onCancel = settingsViewModel::cancelMetadataDefault,
+                onRetry = settingsViewModel::loadMetadataDefault,
+            )
             HairlineDivider()
             BottomActions(
                 isSaving = isSaving,
@@ -663,6 +678,46 @@ fun PhotographerSettingsScreen(
                 avatarUri = croppedUri.toString()
             }
         )
+    }
+}
+
+@Composable
+internal fun MetadataToggleCard(
+    state: MetadataToggleState,
+    label: String,
+    help: String,
+    saveLabel: String,
+    onChange: (Boolean) -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    QpCard(modifier = Modifier.fillMaxWidth()) {
+        Kicker("Photo metadata")
+        Spacer(Modifier.height(12.dp))
+        when {
+            state.loading -> Text("Loading metadata visibility…", style = Typography.bodyMedium, color = Slate)
+            state.saved == null -> {
+                Text(state.error ?: "Couldn't load metadata visibility.", style = Typography.bodyMedium, color = ErrorRed)
+                GhostCta("Retry metadata visibility", onRetry)
+            }
+            else -> {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = state.draft == true, enabled = !state.saving, role = Role.Checkbox, onValueChange = onChange)) {
+                    Checkbox(checked = state.draft == true, onCheckedChange = null)
+                    Text(label, style = Typography.bodyMedium, color = Ink, modifier = Modifier.weight(1f))
+                }
+                Text(help, style = Typography.bodyMedium, color = Slate)
+                Spacer(Modifier.height(8.dp))
+                Text("This controls the metadata popup. Original downloads keep their embedded metadata.", style = Typography.bodyMedium, color = Slate)
+                state.error?.let { Text(it, style = Typography.bodyMedium, color = ErrorRed) }
+                if (state.draft != state.saved || state.saving) {
+                    Spacer(Modifier.height(12.dp))
+                    GhostCta(saveLabel, onSave, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    GhostCta("Cancel metadata change", onCancel, enabled = !state.saving, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
     }
 }
 

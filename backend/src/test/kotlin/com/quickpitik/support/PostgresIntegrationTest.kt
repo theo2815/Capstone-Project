@@ -2,6 +2,7 @@ package com.quickpitik.support
 
 import org.junit.jupiter.api.Tag
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
@@ -29,11 +30,12 @@ import org.testcontainers.containers.PostgreSQLContainer
 @Tag("integration")
 @SpringBootTest
 @ActiveProfiles("test")
+@Import(MetadataRecoveryTestIsolation::class)
 abstract class PostgresIntegrationTest {
 
     companion object {
         @JvmStatic
-        private val postgres: PostgreSQLContainer<*> =
+        internal val postgres: PostgreSQLContainer<*> =
             PostgreSQLContainer("postgres:16-alpine").apply {
                 withDatabaseName("quickpitik_test")
                 withUsername("quickpitik")

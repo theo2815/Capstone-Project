@@ -26,7 +26,7 @@ On error:
 }
 ```
 
-**Authentication**: All endpoints except `GET /api/v1/health` require an `X-API-Key` header. When the server runs with `DEBUG=true`, a missing key is allowed and treated as an internal-tier key with full scopes. The production server refuses to start with `DEBUG=true` when `ENVIRONMENT=production`.
+**Authentication**: All endpoints except `GET /api/v1/health` require an `X-API-Key` header. When the server runs with `DEBUG=true`, a missing key is allowed and treated as an internal-tier key with full scopes. The server refuses to start with `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test`.
 
 **Request ID**: Clients may pass `X-Request-ID` (up to 128 alphanumerics or `-`). If absent, the server generates a UUID. The ID is echoed in the response body and `X-Request-ID` response header.
 
@@ -71,7 +71,7 @@ Returns `503` with `success: false` if any check fails.
 
 ## Blur Detection
 
-The blur pipeline has a classical CV detector (Laplacian variance + optional FFT) and a CNN classifier (YOLOv8n-cls, 4 classes). Each has single, streaming, batch, and mega-batch endpoints.
+The blur pipeline has a classical CV detector (Laplacian variance + optional FFT) and a two-stage classifier (a whole-frame rule, then a person detector with per-person sharpness and a logistic rule); four classes are reported. Each has single, streaming, batch, and mega-batch endpoints.
 
 ### POST /api/v1/blur/detect
 
@@ -158,14 +158,14 @@ Same as `/batch` but accepts up to `MEGA_BATCH_MAX_SIZE` (500) images. The serve
 
 ### POST /api/v1/blur/classify
 
-Classify an image into blur categories using a CNN model (YOLOv8n-cls). Returns 503 `MODEL_UNAVAILABLE` if the ONNX file is missing.
+Classify an image into blur categories using a two-stage classifier (a whole-frame rule, then a person detector with per-person sharpness and a logistic rule); four classes are reported. Returns 503 `MODEL_UNAVAILABLE` if the person detector or the rule file is missing.
 
 Two modes:
 
 - **Full classification** (default): predicted class + probability vector over `sharp`, `defocused_object_portrait`, `defocused_blurred`, `motion_blurred`.
 - **Targeted detection**: when `blur_type` is set, returns a binary Detected / Not Detected answer for that type. `detected` requires both a matching predicted class **and** `confidence >= BLUR_DETECTION_MIN_CONFIDENCE` (0.5) — identical on `/classify`, `/classify/stream` and `/classify/batch`.
 
-All classify paths downscale to `BLUR_CLASSIFY_DECODE_DIM` (640) before inference, so the single, streaming and Celery endpoints return the same class for the same image. `image_dimensions` reports the decoded size before that step.
+All classify paths decode to `BLUR_CLASSIFY_DECODE_DIM` (1280, the desktop upload size); stage 1 makes its own 640-px view, stage 2 measures people at 1280, so the single, streaming and Celery endpoints return the same class for the same image. `image_dimensions` reports the decoded size before that step.
 
 **Request:**
 - `file` (multipart)
@@ -216,238 +216,6 @@ Async batch classification via Celery. Up to `MAX_BATCH_SIZE` (50). Accepts `blu
 ### POST /api/v1/blur/classify/mega
 
 Same as `/batch` but up to 500 images via Celery chord.
-
----
-
-## Face Recognition
-
-Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pgvector cosine search. Face data is always scoped by `api_key_id`, and `event_id` is **required** on every enroll and search surface (root rule 5) — `detect` and `compare` are the exceptions, since neither touches stored data.
-
-### POST /api/v1/faces/detect
-
-Detect faces and return bounding boxes + 5-point landmarks.
-
-**Request:** `file`
-
-**Scope:** `faces:read`
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "faces_detected": 2,
-    "faces": [
-      {
-        "bbox": { "x1": 120.5, "y1": 80.3, "x2": 250.1, "y2": 280.7, "confidence": 0.98 },
-        "landmarks": [[145.2, 150.1], [210.3, 148.9], [180.5, 185.1], [160.8, 230.5], [200.2, 230.1]]
-      }
-    ],
-    "image_dimensions": [1920, 1080],
-    "processing_time_ms": 85.2
-  }
-}
-```
-
-### POST /api/v1/faces/enroll
-
-Register a person's face. Detects, embeds, and stores. Faces below `FACE_MIN_ENROLLMENT_CONFIDENCE` (default 0.7) are skipped. If all detected faces are below the threshold, returns `LOW_QUALITY`.
-
-**Request (multipart form):**
-- `file` (required): Image containing the person
-- `person_name` (required, 1–255 chars)
-- `person_id` (optional, UUID): Add embeddings to an existing person. Must belong to the caller's API key **and** to `event_id`.
-- `event_id` (**required**, 1–255 chars): Event to scope this enrollment to. Omitting it (or sending `""`) returns `422` — enrollment is fail-closed event isolation, like search. An embedding stored without an event is unreachable: every search path requires an `event_id`, and `DELETE /faces/persons?event_id=` cannot erase it.
-
-**Scope:** `faces:write`
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "person_id": "550e8400-...",
-    "person_name": "John Doe",
-    "event_id": "marathon-2026",
-    "faces_enrolled": 1,
-    "embeddings_stored": 1,
-    "processing_time_ms": 120.5
-  }
-}
-```
-
-**LOW_QUALITY response:**
-```json
-{
-  "success": false,
-  "error": {
-    "code": "LOW_QUALITY",
-    "message": "All 1 detected face(s) were below the minimum enrollment confidence of 0.7"
-  }
-}
-```
-
-### POST /api/v1/faces/enroll/batch
-
-Async bulk enroll — every image in the batch is attached to the same person (new or existing). Up to `MAX_BATCH_SIZE` (50).
-
-**Form fields:** same as `/enroll` plus `files` (multipart list). `event_id` is **required** here too (422 if omitted), and a supplied `person_id` must belong to the caller's API key and to that event.
-
-### POST /api/v1/faces/search
-
-Detect faces and search stored embeddings.
-
-**Request:**
-- `file` (required)
-- `threshold` (query, optional, default `0.4`): minimum cosine similarity
-- `top_k` (query, optional, default `10`, max `100`): max matches per detected face
-- `event_id` (query, **required**): restrict search to this event — enforced fail-closed since 2026-06-02, per root rule 5 and the §Face Recognition preamble above
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "faces_detected": 1,
-    "matches": [
-      {
-        "person_id": "550e8400-...",
-        "person_name": "John Doe",
-        "similarity": 0.87,
-        "bbox": { "x1": 120, "y1": 80, "x2": 250, "y2": 280, "confidence": 0.98 }
-      }
-    ],
-    "unmatched_faces": [],
-    "processing_time_ms": 150.3
-  }
-}
-```
-
-### POST /api/v1/faces/search/batch
-
-Async face batch. Up to `MAX_BATCH_SIZE` (50).
-
-**Query params:**
-- `operation` (`detect` or `search`, default `search`)
-- `event_id`, `threshold`, `top_k` (same as single `/search`)
-
-### POST /api/v1/faces/search/mega
-
-Same as `/search/batch` but up to 500 images via Celery chord.
-
-### POST /api/v1/faces/compare
-
-1:1 verification — are the two images the same person? Uses `FACE_SIMILARITY_THRESHOLD` (default 0.4).
-
-**Request:** `file1`, `file2`
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "is_match": true,
-    "similarity": 0.92,
-    "face1": { "bbox": { ... } },
-    "face2": { "bbox": { ... } },
-    "processing_time_ms": 200.1
-  }
-}
-```
-
-### GET /api/v1/faces/persons
-
-Paginated list of enrolled persons (tenant-isolated).
-
-**Query params:** `event_id` (optional), `offset` (default 0), `limit` (default 50, max 200)
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "persons": [
-      {
-        "person_id": "550e8400-...",
-        "person_name": "John Doe",
-        "event_id": "marathon-2026",
-        "embeddings_count": 3,
-        "created_at": "2026-04-20T10:00:00Z",
-        "updated_at": "2026-04-22T11:00:00Z"
-      }
-    ],
-    "total": 42,
-    "offset": 0,
-    "limit": 50
-  }
-}
-```
-
-### GET /api/v1/faces/persons/{person_id}
-
-Get metadata about one enrolled person (tenant-isolated). Returns `NOT_FOUND` if missing or owned by another key.
-
-### DELETE /api/v1/faces/persons/{person_id}
-
-Remove a person and all their stored embeddings (cascade delete). GDPR right-to-erasure.
-
-**Scope:** `faces:delete`
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": { "deleted": true, "person_id": "550e8400-..." }
-}
-```
-
----
-
-## Bib Number Recognition
-
-Custom YOLOv8n bib detector (ONNX) → PaddleOCR 3.x (PP-OCRv5). When the detector model is absent, the endpoint falls back to OCR on the full image and attaches a warning.
-
-### POST /api/v1/bibs/recognize
-
-**Request:**
-- `file` (required)
-- `min_chars` (query, optional, 1–10): override `BIB_MIN_CHARS` (default 2) — minimum digit count for a candidate to qualify
-
-**Scope:** `bibs:read`
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "bibs_detected": 2,
-    "detections": [
-      {
-        "bib_number": "1234",
-        "confidence": 0.95,
-        "bbox": { "x1": 300, "y1": 200, "x2": 450, "y2": 350, "confidence": 0.91 },
-        "all_candidates": [
-          { "text": "1234", "confidence": 0.95 },
-          { "text": "1284", "confidence": 0.72 }
-        ]
-      }
-    ],
-    "image_dimensions": [1920, 1080],
-    "processing_time_ms": 95.6,
-    "warnings": null
-  }
-}
-```
-
-If the detector is unavailable, `warnings` contains a note and the bounding box covers the whole image.
-
-### POST /api/v1/bibs/recognize/batch
-
-Async batch. Up to `MAX_BATCH_SIZE` (50).
-
-### POST /api/v1/bibs/recognize/mega
-
-Async mega-batch. Up to 500 images via Celery chord.
 
 ---
 
@@ -587,7 +355,7 @@ Prometheus text format. In `DEBUG=true` mode the endpoint is open. In production
 | 400 | `INVALID_INPUT` | Malformed form/query input |
 | 401 | *(FastAPI `HTTPException`)* | Missing or invalid API key |
 | 403 | *(FastAPI `HTTPException`)* | API key lacks the required scope |
-| 404 | `NOT_FOUND` | Person, job, or webhook not found / not owned by this key |
+| 404 | `NOT_FOUND` | Job or webhook not found / not owned by this key |
 | 422 | *(FastAPI validation)* | Pydantic validation error |
 | 429 | *(FastAPI `HTTPException`)* | Rate limit exceeded — honor `Retry-After` header |
 | 429 | `TOO_MANY_JOBS` | `MAX_ACTIVE_JOBS_PER_KEY` (10) already active |

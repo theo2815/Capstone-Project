@@ -2,7 +2,8 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.service.ai.FaceBibProvider
+import com.quickpitik.service.ai.AiApiClient
+import com.quickpitik.service.photos.PhotoFaceErasureService
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
@@ -19,22 +20,33 @@ import java.util.UUID
 // Left alone they bloat the pgvector index and leave biometric data with no
 // owner record. This is housekeeping, not a hot path — it runs slowly.
 //
-// Safety: an ai-api person is only an orphan if it is BOTH unreferenced AND
-// older than REAP_GRACE_MINUTES. The age gate is what makes deletion safe — a
+// Safety: require photo attribution, no unfinished enrollment, no live person
+// reference and age beyond REAP_GRACE_MINUTES. The age gate spares a
 // person an in-flight index() just enrolled is unreferenced only until its
 // facePersons row commits (sub-second), and its fresh created_at keeps it out
-// of the orphan set until well after that window closes.
+// of the orphan set; age never proves an outstanding writer has ended.
 @Component
 class PhotoOrphanReaper(
     private val photoRepository: PhotoRepository,
-    private val aiApiClient: FaceBibProvider,
+    private val aiApiClient: AiApiClient,
     private val aiApiProperties: AiApiProperties,
+    private val faceErasure: PhotoFaceErasureService,
+    private val removalProperties: com.quickpitik.config.PhotoRemovalProperties,
+    private val clock: java.time.Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Scheduled(fixedDelayString = "\${app.ai-api.reaper-interval-ms:1800000}")
     fun reap() {
         if (!aiApiProperties.enabled || !aiApiProperties.reaperEnabled) return
+        // Durable targets survive the last photo/event catalog reference.
+        photoRepository.faceWorkPending(PageRequest.of(0, REAP_MAX_EVENTS_PER_SWEEP)).forEach {
+            // Persist the backoff before I/O so crashes and persistent failures
+            // do not monopolize the bounded first page after restart.
+            photoRepository.deferFaceCleanup(it.eventId, it.photoId, OffsetDateTime.now(clock).plus(removalProperties.cleanupBackoff))
+            runCatching { faceErasure.erase(it.eventId, it.photoId) }
+                .onFailure { error -> log.warn("Face cleanup pending for photo {} ({})", it.photoId, error.javaClass.simpleName) }
+        }
         val events = photoRepository.findEventsWithFacePersons(
             PageRequest.of(0, REAP_MAX_EVENTS_PER_SWEEP),
         )
@@ -65,7 +77,15 @@ class PhotoOrphanReaper(
         val orphans = persons.filter { it.id !in referenced && it.createdAt.isBefore(cutoff) }
         var deleted = 0
         orphans.forEach { person ->
-            runCatching { aiApiClient.deleteFacesPerson(person.id) }
+            // Names are backend-generated photo UUIDs. An unattributed legacy
+            // person is an exception, never an arbitrary deletion target.
+            val photoId = runCatching { UUID.fromString(person.personName) }.getOrNull()
+            if (photoId == null) {
+                log.warn("Orphan face attribution unresolved for person {}", person.id)
+                return@forEach
+            }
+            if (photoRepository.hasUnfinishedWork(photoId, "INDEXING")) return@forEach
+            runCatching { aiApiClient.erasePhotoFaces(eventId, person.id) }
                 .onSuccess { deleted++ }
                 .onFailure { log.warn("Failed to delete orphan person {}: {}", person.id, it.message) }
         }

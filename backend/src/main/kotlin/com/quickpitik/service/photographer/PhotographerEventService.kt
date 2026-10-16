@@ -11,9 +11,10 @@ import com.quickpitik.dto.photographer.PhotographerEventSummaryDto
 import com.quickpitik.dto.photographer.PhotographerLibraryPhotoDto
 import com.quickpitik.dto.photographer.detailDto
 import com.quickpitik.dto.photographer.summaryDto
-import com.quickpitik.dto.photographer.toLibraryDto
 import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ApiException
+import org.springframework.http.HttpStatus
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -34,6 +35,7 @@ class PhotographerEventService(
     private val eventRepository: EventRepository,
     private val photoRepository: PhotoRepository,
     private val orderItemRepository: OrderItemRepository,
+    private val photoDtoMapper: PhotographerPhotoDtoMapper,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val eventDtoMapper: EventDtoMapper,
@@ -71,14 +73,16 @@ class PhotographerEventService(
         )
     }
 
-    fun getEventDetail(photographerId: UUID, eventId: UUID): PhotographerEventDetailDto {
-        val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
+    fun getEventDetail(photographerId: UUID, eventId: UUID, includeRemoved: Boolean = false): PhotographerEventDetailDto {
+        val event = eventRepository.findById(eventId).orElse(null)?.takeIf { includeRemoved || it.deletedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         val ep = loadOrEmpty(eventId, photographerId)
         // Hide events the photographer has never touched — anti-leak per Q-014.
         // An event they created (V46) is theirs before the first upload.
         val owned = event.createdBy != null && event.createdBy == photographerId
-        if (!owned && ep.photoCount == 0 && ep.firstUploadAt == null) {
+        val historicalRevenue = includeRemoved && ep.revenueKeptPhp.signum() > 0
+        if (!owned && ep.photoCount == 0 && ep.firstUploadAt == null && !historicalRevenue &&
+            !orderItemRepository.existsSettledPurchaseForEvent(photographerId, eventId)) {
             throw NotFoundException(
                 code = ErrorCodes.EVENT_NOT_FOUND,
                 message = "No coverage for this event",
@@ -125,30 +129,20 @@ class PhotographerEventService(
         }
         if (page.isEmpty) return PaginatedResponse.empty(pagination)
         val photoIds = page.content.map { it.id }
+        val availableIds = photoRepository.findDeliveryAvailableIds(photographerId, photoIds).toSet()
         val salesByPhoto: Map<UUID, Long> = if (photoIds.isEmpty()) {
             emptyMap()
         } else {
             orderItemRepository.countSalesByPhotoIds(photoIds).associate { it.photoId to it.salesCount }
         }
-        val resolver = ::resolveThumbnailUrl
         return PaginatedResponse(
             items = page.content.map {
-                it.toLibraryDto(salesByPhoto[it.id] ?: 0L, resolver)
+                photoDtoMapper.toLibraryDto(it, salesByPhoto[it.id] ?: 0L, it.id in availableIds)
             },
             total = page.totalElements,
             offset = pagination.offset,
             limit = pagination.limit,
         )
-    }
-
-    // Mirrors PhotoService.resolveThumbnailUrl — same watermarked-thumbnail-
-    // first preference order so runner-side and photographer-side galleries
-    // pull the same S3 object. Falls back to the original (uncomposited) key
-    // only if both thumbnail + watermark keys are unset (legacy rows).
-    private fun resolveThumbnailUrl(photo: com.quickpitik.entity.Photo): String? {
-        if (photo.deletionStartedAt != null) return null
-        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
-        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 
     fun getDownload(photographerId: UUID, photoId: UUID): PhotographerDownloadDto {
@@ -159,6 +153,9 @@ class PhotographerEventService(
             ?.takeIf { it.deletionStartedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         val ttl = storageProperties.presignedTtl.photographerDownload
+        if (!photoRepository.isDeliveryAvailable(photo.id)) {
+            throw ApiException(HttpStatus.GONE, ErrorCodes.PHOTO_NOT_FOUND, "Photo is unavailable")
+        }
         val url = storageService.presignedDownloadUrl(photo.s3Key, ttl, "quickpitik-${photo.id}.jpg")
         return PhotographerDownloadDto(
             url = url,

@@ -94,6 +94,7 @@ class ProfileService(
         // caller learns nothing about our password rules.
         PasswordValidator.validate(request.newPassword, "newPassword")
         user.passwordHash = passwordEncoder.encode(request.newPassword)
+        user.credentialVersion += 1  // credential version (V88): retires earlier sessions and email-change links
         userRepository.save(user)
         refreshTokenService.revokeAllForUserExcept(userId, request.refreshToken)
     }

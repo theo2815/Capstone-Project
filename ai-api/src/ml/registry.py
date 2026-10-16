@@ -20,21 +20,10 @@ class ModelRegistry:
         logger.info("Loading ML models...")
         self._profile = settings.MODEL_PROFILE
 
-        # Pre-import heavy libraries in the main thread to avoid Windows DLL
-        # race conditions when multiple threads try to load torch/shm.dll
-        # concurrently via asyncio.to_thread.
-        if self._profile == "all":
-            await asyncio.to_thread(self._preimport_libs)
-
         loaders = {
             "blur": self._load_blur,
             "blur_classifier": self._load_blur_classifier,
-            "face": self._load_face,
-            "bib_detector": self._load_bib_detector,
-            "bib_ocr": self._load_bib_ocr,
         }
-        if self._profile == "blur":
-            loaders = {name: loaders[name] for name in ("blur", "blur_classifier")}
 
         results = await asyncio.gather(
             *[asyncio.to_thread(loader, settings) for loader in loaders.values()],
@@ -65,11 +54,7 @@ class ModelRegistry:
 
         Blur classifier is required in the dedicated blur profile.
         """
-        required = (
-            {"blur", "blur_classifier"}
-            if self._profile == "blur"
-            else {"blur", "face", "bib_ocr"}
-        )
+        required = {"blur", "blur_classifier"} if self._profile == "blur" else {"blur"}
         return all(self.is_loaded(name) for name in required)
 
     def status(self) -> dict[str, bool]:
@@ -87,72 +72,23 @@ class ModelRegistry:
                 if hasattr(model, "session") and model.session is not None:
                     del model.session
                     model.session = None
-                # FaceEmbedder — InsightFace app with multiple ONNX sessions
-                if hasattr(model, "app") and hasattr(model.app, "models"):
-                    model.app.models.clear()
-                # BibRecognizer — PaddleOCR engine
-                if hasattr(model, "ocr"):
-                    del model.ocr
-                    model.ocr = None
-                # BibDetector — ONNX/YOLO model
-                if hasattr(model, "model") and model.model is not None:
-                    del model.model
-                    model.model = None
                 logger.info("Model resources released", model=name)
             except Exception as e:
                 logger.warning("Error releasing model resources", model=name, error=str(e))
         self._models.clear()
         logger.info("All models unloaded")
 
-    @staticmethod
-    def _preimport_libs() -> None:
-        """Pre-import libraries that load native DLLs so concurrent threads
-        don't race on DLL loading (Windows-specific issue with shm.dll)."""
-        try:
-            import torch  # noqa: F401
-        except ImportError:
-            pass
-        try:
-            import insightface  # noqa: F401
-        except ImportError:
-            pass
-        try:
-            from ultralytics import YOLO  # noqa: F401
-        except ImportError:
-            pass
-
     def _load_blur(self, settings: Any) -> Any:
         from src.ml.blur.detector import BlurDetector
 
         return BlurDetector(laplacian_threshold=settings.BLUR_THRESHOLD)
 
-    def _load_face(self, settings: Any) -> Any:
-        from src.ml.faces.embedder import FaceEmbedder
-
-        return FaceEmbedder(
-            model_dir=settings.MODEL_DIR,
-            use_gpu=settings.USE_GPU,
-            det_size=settings.FACE_DET_SIZE,
-        )
-
-    def _load_bib_detector(self, settings: Any) -> Any:
-        from src.ml.bibs.detector import BibDetector
-
-        return BibDetector(
-            model_path=f"{settings.MODEL_DIR}/bib_detection/yolov8n_bib.onnx",
-        )
-
-    def _load_bib_ocr(self, settings: Any) -> Any:
-        from src.ml.bibs.recognizer import BibRecognizer
-
-        return BibRecognizer(use_gpu=settings.USE_GPU, min_chars=settings.BIB_MIN_CHARS)
-
     def _load_blur_classifier(self, settings: Any) -> Any:
         from src.ml.blur.classifier import BlurClassifier
 
         return BlurClassifier(
-            model_path=f"{settings.MODEL_DIR}/blur_classifier/blur_classifier.onnx",
-            class_names_path=f"{settings.MODEL_DIR}/blur_classifier/class_names.json",
+            detector_path=f"{settings.MODEL_DIR}/person_detector/yolov8n_seg_person.onnx",
+            rule_path=f"{settings.MODEL_DIR}/blur_classifier/people_rule.json",
             use_gpu=settings.USE_GPU,
             min_detection_confidence=settings.BLUR_DETECTION_MIN_CONFIDENCE,
             manifest_path=(

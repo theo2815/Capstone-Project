@@ -43,9 +43,17 @@ class EmailChangeService(
     private val refreshTokenService: RefreshTokenService,
     private val loginAttemptService: LoginAttemptService,
 ) {
-    fun requestChange(userId: UUID, request: EmailChangeRequest) {
+    fun requestChange(userId: UUID, sessionCredentialVersion: Int, request: EmailChangeRequest) {
         val user = userRepository.findById(userId).orElseThrow {
             UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "User not found")
+        }
+        // A session minted before the last credential reset or change may not
+        // start an email change (security audit 2026-10-14): the earlier
+        // registrant's token after a Google takeover, or a token from before a
+        // password reset. 401 makes an honest client refresh and retry; a session
+        // whose refresh tokens were revoked cannot.
+        if (sessionCredentialVersion != user.credentialVersion) {
+            throw UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "Session is out of date. Sign in again.")
         }
         val isGoogleUser = user.googleSub != null
         if (request.currentPassword.isNullOrBlank()) {
@@ -98,6 +106,7 @@ class EmailChangeService(
                 // this one requires the user to go and open a DIFFERENT inbox,
                 // which is a slower errand than reading the mail they're already in.
                 expiresAt = OffsetDateTime.now().plusHours(1),
+                credentialVersion = user.credentialVersion,
             ),
         )
         emailService.sendEmailChangeConfirmation(newEmail, plaintext)
@@ -118,6 +127,13 @@ class EmailChangeService(
         val user = userRepository.findById(token.userId).orElseThrow {
             ValidationException(message = "User not found", code = ErrorCodes.NOT_FOUND)
         }
+        // The link only works while the credentials it was issued under are current.
+        if (token.credentialVersion != user.credentialVersion) {
+            throw ValidationException(
+                message = "Confirmation link expired or already used",
+                code = ErrorCodes.INVALID_EMAIL_CHANGE_TOKEN,
+            )
+        }
 
         // Re-check at redemption, not just at request time: the address was free
         // an hour ago, but someone may have registered it since. The DB UNIQUE on
@@ -131,6 +147,7 @@ class EmailChangeService(
         }
 
         user.email = token.newEmail
+        user.credentialVersion += 1  // the sign-in identity changed
         userRepository.save(user)
 
         token.usedAt = OffsetDateTime.now()

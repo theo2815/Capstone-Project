@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   EventFilterBar,
   EventFilterEmpty,
@@ -107,6 +107,10 @@ export default function DashboardEventsPage() {
   return (
     <>
       <div className="flex flex-wrap justify-end gap-2 pt-10 md:pt-20">
+        {/* Mobile has no bottom tab for removal requests; this and the inbox link reach them. */}
+        <Link href={ROUTES.DASHBOARD_PHOTO_REMOVAL_REQUESTS} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+          Removal requests
+        </Link>
         <button
           type="button"
           onClick={() => setCouponOpen(true)}

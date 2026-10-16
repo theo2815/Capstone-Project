@@ -34,6 +34,50 @@ import kotlin.test.assertTrue
 // and the real exception (with its real status) propagates instead.
 class PhotoSearchServiceTest {
 
+    @Test fun `raw candidates keep configured threshold scores and visible provider limit`() {
+        stubSearch(FaceMatch("low", similarity = 0.59), FaceMatch("edge", similarity = 0.6), FaceMatch("high", similarity = 0.94))
+        val result = candidates(service())
+        assertEquals(listOf("edge", "high"), result["matches"].map { it["personId"].asText() })
+        assertEquals(0.94, result["matches"][1]["similarity"].asDouble())
+        assertEquals(50, result["candidateLimit"].asInt())
+        assertEquals(false, result["possiblyTruncated"].asBoolean())
+        Mockito.verifyNoInteractions(photoService, userSelfieRepository, storageService)
+    }
+
+    @Test fun `raw candidates report saturation before threshold filtering`() {
+        stubSearch(*Array(50) { FaceMatch("p-$it", similarity = if (it == 0) 0.9 else 0.1) })
+        val result = candidates(service())
+        assertEquals(1, result["matches"].size())
+        assertTrue(result["possiblyTruncated"].asBoolean())
+    }
+
+    @Test fun `raw candidate errors cannot become a fallback gallery`() {
+        whenFacesSearch().thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "offline"))
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, assertFailsWith<AiApiException> { candidates(service(fallback = true)) }.status)
+        Mockito.verifyNoInteractions(photoService)
+    }
+
+    @Test fun `raw candidates reject disabled AI and empty evidence before provider I O`() {
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, assertFailsWith<AiApiException> { candidates(service(enabled = false)) }.status)
+        assertFailsWith<com.quickpitik.exception.ValidationException> { candidates(service(), byteArrayOf()) }
+        Mockito.verifyNoInteractions(aiApiClient)
+    }
+
+    @Test fun `raw candidates preserve provider no face and pre dedup saturation metadata`() {
+        val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+        whenFacesSearch().thenReturn(mapper.readValue("{\"matches\":[],\"noFaces\":true,\"possiblyTruncated\":true}", FacesSearchResult::class.java))
+        val result = candidates(service())
+        assertTrue(result["noFaces"].asBoolean())
+        assertTrue(result["possiblyTruncated"].asBoolean())
+        // Public hydration retains the existing empty result for this provider outcome.
+        assertTrue(service().searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination).items.isEmpty())
+    }
+
+    private fun candidates(service: PhotoSearchService, bytes: ByteArray = selfie): com.fasterxml.jackson.databind.JsonNode {
+        return com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().valueToTree(
+            service.findFaceCandidates(eventId, com.quickpitik.dto.removal.SearchImage(bytes, "image/jpeg", "s.jpg")))
+    }
+
     private lateinit var aiApiClient: AiApiClient
     private lateinit var photoService: PhotoService
     private lateinit var userSelfieRepository: UserSelfieRepository

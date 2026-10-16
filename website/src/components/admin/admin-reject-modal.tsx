@@ -59,6 +59,7 @@ export function AdminRejectModal({
     <AdminFormModal
       open={open}
       submitting={submitting}
+      pendingLabel="Sending back…"
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Send back for fixes"

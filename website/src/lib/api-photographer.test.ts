@@ -1,15 +1,45 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import { OfflineUploadError, permanentDeletePhotographerPhotos, restorePhotographerPhotos, trashPhotographerPhotos, uploadPhotographerPhoto } from "./api-photographer";
+import { fetchPhotographerEventDetail, getEventMetadataVisibility, getMetadataSettings, OfflineUploadError, permanentDeletePhotographerPhotos, putEventMetadataVisibility, putMetadataSettings, restorePhotographerPhotos, trashPhotographerPhotos, uploadPhotographerPhoto } from "./api-photographer";
 import { fetchPhotographerPayoutReports } from "./api-photographer-earnings";
 import { report } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 
-const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api: { get, post }, refreshAccessToken: vi.fn() }));
-beforeEach(() => { get.mockReset(); post.mockReset(); });
+const { get, post, put } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }));
+vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api: { get, post, put }, refreshAccessToken: vi.fn() }));
+beforeEach(() => { get.mockReset(); post.mockReset(); put.mockReset(); });
 afterEach(() => { vi.restoreAllMocks(); });
 const ids = (count: number) => Array.from({ length: count }, (_, i) => `photo-${i}`);
+
+it("opts the event page into removed event detail while keeping existing callers on the default", async () => {
+  const signal = new AbortController().signal;
+  get.mockResolvedValue({ id: "event/1" });
+  await fetchPhotographerEventDetail("event/1", signal);
+  await fetchPhotographerEventDetail("event/1", signal, true);
+  expect(get.mock.calls).toEqual([
+    ["/me/photographer/events/event%2F1", { signal }],
+    ["/me/photographer/events/event%2F1?includeRemoved=true", { signal }],
+  ]);
+});
+
+it("uses the typed account metadata routes and forwards GET cancellation", async () => {
+  const signal = new AbortController().signal;
+  get.mockResolvedValueOnce({ metadataPublicByDefault: false }).mockResolvedValueOnce({ metadataPublic: true });
+  put.mockResolvedValueOnce({ metadataPublicByDefault: true }).mockResolvedValueOnce({ metadataPublic: false });
+
+  expect(await getMetadataSettings(signal)).toEqual({ metadataPublicByDefault: false });
+  expect(await putMetadataSettings({ metadataPublicByDefault: true })).toEqual({ metadataPublicByDefault: true });
+  expect(await getEventMetadataVisibility("event/1", signal)).toEqual({ metadataPublic: true });
+  expect(await putEventMetadataVisibility("event/1", { metadataPublic: false })).toEqual({ metadataPublic: false });
+  expect(get.mock.calls).toEqual([
+    ["/me/photographer/metadata-settings", { signal }],
+    ["/me/photographer/events/event%2F1/metadata-visibility", { signal }],
+  ]);
+  expect(put.mock.calls).toEqual([
+    ["/me/photographer/metadata-settings", { metadataPublicByDefault: true }],
+    ["/me/photographer/events/event%2F1/metadata-visibility", { metadataPublic: false }],
+  ]);
+});
 
 it("unwraps the paginated photographer report response for report consumers", async () => {
   get.mockResolvedValue({ items: [report], total: 1, offset: 0, limit: 50 });
@@ -61,6 +91,8 @@ it("begins, sends raw bytes without credentials, then confirms the backend recei
   try {
     const result = await uploadPhotographerPhoto("event-1", file, undefined, { contentHash: "a".repeat(64) });
     expect(post.mock.calls.map(([path]) => path)).toEqual(["/me/photographer/events/event-1/photos/direct", "/me/photographer/events/event-1/photos/direct/commit"]);
+    expect(post.mock.calls[0][1]).toMatchObject({ originalFilename: "race.jpg" });
+    expect(post.mock.calls[1][1]).not.toHaveProperty("originalFilename");
     expect(sent.method).toBe("PUT");
     expect(sent.body).toBe(file);
     expect(sent.headers).toEqual({ "Content-Type": "image/jpeg" });
@@ -227,7 +259,46 @@ it("waits for Retry-After on verification contention and bounded 429s", async ()
   expect(post).toHaveBeenCalledTimes(3);
   expect(delays.filter((delay) => delay === 5000)).toHaveLength(3);
   post.mockReset().mockRejectedValue(new ApiError([{ code: "RATE_LIMITED", message: "Busy" }], 429, 5));
-  await expect(uploadPhotographerPhoto("event", file, undefined, { contentHash: "a".repeat(64), checkpoint })).rejects.toMatchObject({ status: 429 });
+  await expect(uploadPhotographerPhoto("event", file, undefined, {
+    contentHash: "a".repeat(64), checkpoint, retryState: { commitBusyUntil: Date.now() - 1 },
+  })).rejects.toMatchObject({ status: 429 });
+  expect(post).toHaveBeenCalledTimes(4);
+});
+
+it("waits out commit verification backpressure without spending the retry budget", async () => {
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  const delays: number[] = [];
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (ms) delays.push(ms);
+    return nativeTimer(callback, 0, ...args);
+  }) as typeof setTimeout);
+  const busy = new ApiError([{ code: "RATE_LIMITED", message: "Upload verification is busy. Try again shortly." }], 429, 1);
+  const receipt = { id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  for (let i = 0; i < 6; i++) post.mockRejectedValueOnce(busy);
+  post.mockResolvedValueOnce(receipt);
+  const retryState: { commitRetries?: number; commitBusyWaits?: number } = {};
+  expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+    contentHash: "a".repeat(64), retryState, checkpoint: { requestId: "request", photoId: "saved", key: "slot" },
+  })).toEqual(receipt);
+  expect(post).toHaveBeenCalledTimes(7);
+  expect(retryState.commitRetries ?? 0).toBe(0);
+  expect(retryState.commitBusyWaits).toBe(6);
+  expect(Math.max(...delays)).toBeLessThanOrEqual(15_000);
+});
+
+it("surfaces commit backpressure once the ten-minute busy window has passed", async () => {
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, _ms?: number, ...args: unknown[]) =>
+    nativeTimer(callback, 0, ...args)) as typeof setTimeout);
+  vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const busy = new ApiError([{ code: "UPLOAD_IN_PROGRESS", message: "Upload verification is already in progress." }], 409, 1);
+  post.mockRejectedValue(busy);
+  await expect(uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+    contentHash: "a".repeat(64), retryState: { commitBusyUntil: 999_999 },
+    checkpoint: { requestId: "request", photoId: "saved", key: "slot" },
+  })).rejects.toBe(busy);
   expect(post).toHaveBeenCalledTimes(4);
 });
 
@@ -643,4 +714,70 @@ it("parks multipart after a connection loss and resumes with the same retry budg
   online = true;
   expect(await uploadPhotographerPhoto("event", file, undefined, options)).toMatchObject({ id: "saved" });
   expect(sends).toBe(2);
+});
+
+it("gives a renewed grant its own fifteen-minute transfer cap", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  const caps: number[] = [];
+  const clock = 5_000_000;
+  vi.spyOn(Date, "now").mockReturnValue(clock);
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) => {
+    if (ms && ms >= 800_000) caps.push(ms);
+    return nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args);
+  }) as typeof setTimeout);
+  class OkXhr {
+    status = 200; upload = { onprogress: null }; onload?: () => void;
+    open() {} setRequestHeader() {}
+    send() { queueMicrotask(() => this.onload?.()); }
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", OkXhr);
+  const receipt = { id: "new", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  post.mockRejectedValueOnce(new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Missing" }], 422))
+    .mockResolvedValueOnce({ mode: "direct", photoId: "new", key: "new-key", uploadUrl: "https://uploads.example.test/new", expiresAt: new Date(clock + 900_000).toISOString() })
+    .mockResolvedValueOnce(receipt);
+  // The cap left behind by a grant that expired while the tab was offline.
+  const retryState = { transferDeadline: clock - 60_000 };
+  try {
+    expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+      contentHash: "a".repeat(64), retryState,
+      checkpoint: { requestId: "old-request", photoId: "old", key: "old-key", putExpiresAt: new Date(clock - 1).toISOString() },
+    })).toEqual(receipt);
+    expect(caps).toEqual([900_000]);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
+
+it("renews after any transfer failure once storage confirms the expired grant is empty", async () => {
+  vi.stubEnv("NEXT_PUBLIC_R2_UPLOAD_ORIGIN", "https://uploads.example.test");
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const nativeTimer = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: TimerHandler, ms?: number, ...args: unknown[]) =>
+    nativeTimer(callback, ms && ms < 5000 ? 0 : ms, ...args)) as typeof setTimeout);
+  let now = 7_000_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  let puts = 0;
+  class Xhr {
+    status = 200; upload = { onprogress: null }; onload?: () => void; onerror?: () => void;
+    open() {} setRequestHeader() {}
+    send() {
+      puts++;
+      if (puts === 1) { now += 16 * 60_000; queueMicrotask(() => this.onerror?.()); }
+      else queueMicrotask(() => this.onload?.());
+    }
+    abort() {}
+  }
+  vi.stubGlobal("XMLHttpRequest", Xhr);
+  const missing = new ApiError([{ code: "UPLOAD_OBJECT_MISSING", message: "Missing" }], 422);
+  const receipt = { id: "second", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  post.mockResolvedValueOnce({ mode: "direct", photoId: "first", key: "k1", uploadUrl: "https://uploads.example.test/1", expiresAt: new Date(now + 15 * 60_000).toISOString() })
+    .mockRejectedValueOnce(missing)
+    .mockResolvedValueOnce({ mode: "direct", photoId: "second", key: "k2", uploadUrl: "https://uploads.example.test/2", expiresAt: new Date(now + 31 * 60_000).toISOString() })
+    .mockResolvedValueOnce(receipt);
+  try {
+    expect(await uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, { contentHash: "a".repeat(64) })).toEqual(receipt);
+    expect(puts).toBe(2);
+    expect(post.mock.calls[2][1].requestId).not.toBe(post.mock.calls[0][1].requestId);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
 });

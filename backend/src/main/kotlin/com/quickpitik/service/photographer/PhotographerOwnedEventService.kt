@@ -25,6 +25,8 @@ import com.quickpitik.websocket.AdminInboxEvent
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.annotation.Propagation
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.OffsetDateTime
@@ -123,13 +125,14 @@ class PhotographerOwnedEventService(
     private val eventCoverService: EventCoverService,
     private val eventDtoMapper: EventDtoMapper,
     private val eventPublisher: ApplicationEventPublisher,
+    private val transactionTemplate: TransactionTemplate,
 ) {
     fun create(
         photographerId: UUID,
         req: CreateMyEventRequest,
         cover: AdminEventService.CoverUpload?,
     ): PhotographerEventDetailDto {
-        accessGuard.requireApproved(photographerId, "creating an event")
+        val settings = accessGuard.requireApproved(photographerId, "creating an event")
         val trio = PricingTrio.parse(req.pricingMode, req.pricePerPhoto, req.watermarkPolicy)
         val visibility = parseVisibility(req.visibility)
         val now = OffsetDateTime.now()
@@ -159,21 +162,54 @@ class PhotographerOwnedEventService(
         // Coverage row up front so the event shows in /me/photographer/events
         // before the first upload; the upload upsert bumps its counters later.
         val ep = eventPhotographerRepository.save(
-            EventPhotographer(id = EventPhotographerId(event.id, photographerId)),
+            EventPhotographer(
+                id = EventPhotographerId(event.id, photographerId),
+                metadataPublic = settings.metadataPublicByDefault,
+            ),
         )
         notifyAdmins("event_submitted", event, photographerId)
         return detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun update(
         photographerId: UUID,
         eventId: UUID,
         req: UpdateMyEventRequest,
         cover: AdminEventService.CoverUpload?,
     ): PhotographerEventDetailDto {
-        val event = eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(eventId, photographerId)
-            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        // Same gate as create, upload and coupons (security audit 2026-10-14): a
+        // photographer whose approval was reset, or who is suspended, cannot change
+        // a live event page. Checked before the cover upload so a refused edit
+        // stores nothing.
+        accessGuard.requireApproved(photographerId, "editing an event")
+        val coverKey = cover?.let {
+            val event = eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(eventId, photographerId)
+                ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+            req.date?.takeIf { it.isNotBlank() }?.let(EventInputs::parseDate)
+            req.visibility?.takeIf { it.isNotBlank() }?.let(::parseVisibility)
+            requestedTrio(event, req)
+            eventCoverService.upload(eventId, it.bytes, it.contentType)
+        }
+        val (result, obsoleteCover) = transactionTemplate.execute {
+            val event = eventRepository.findOwnedByIdForUpdate(eventId, photographerId)
+                ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+            val oldCover = event.coverS3Key
+            val dto = updateEvent(photographerId, event, req, coverKey)
+            dto to oldCover?.takeIf { it.isNotBlank() && it != event.coverS3Key }
+        } ?: error("Event update returned null")
+        obsoleteCover?.let(eventCoverService::delete)
+        return result
+    }
 
+    private fun updateEvent(
+        photographerId: UUID,
+        event: Event,
+        req: UpdateMyEventRequest,
+        coverKey: String?,
+    ): PhotographerEventDetailDto {
+        val before = listOf(event.name, event.date, event.location, event.organizerName, event.description,
+            event.visibility, event.coverS3Key, PricingTrio.of(event), event.reviewStatus, event.pendingChange)
         // Presentation + visibility apply straight away in every state.
         req.title?.takeIf { it.isNotBlank() }?.let { event.name = it.trim() }
         req.date?.takeIf { it.isNotBlank() }?.let { event.date = EventInputs.parseDate(it) }
@@ -181,11 +217,7 @@ class PhotographerOwnedEventService(
         req.organizerName?.takeIf { it.isNotBlank() }?.let { event.organizerName = it.trim() }
         req.description?.takeIf { it.isNotBlank() }?.let { event.description = it.trim() }
         req.visibility?.takeIf { it.isNotBlank() }?.let { event.visibility = parseVisibility(it) }
-        if (cover != null) {
-            val old = event.coverS3Key
-            event.coverS3Key = eventCoverService.upload(event.id, cover.bytes, cover.contentType)
-            if (!old.isNullOrBlank()) eventCoverService.delete(old)
-        }
+        if (coverKey != null) event.coverS3Key = coverKey
 
         if (req.withdrawPendingChange && event.reviewStatus == EventReviewStatus.CHANGE_PENDING) {
             event.pendingChange = null
@@ -206,14 +238,20 @@ class PhotographerOwnedEventService(
             // Live: the trio is frozen. A differing request is parked for the
             // admin; the event keeps selling on its current settings.
             EventReviewStatus.APPROVED, EventReviewStatus.CHANGE_PENDING -> {
-                if (requested != null && !requested.sameAs(PricingTrio.of(event))) {
+                if (requested != null && !requested.sameAs(PricingTrio.of(event)) &&
+                    (event.pendingChange == null || !requested.sameAs(PricingTrio.fromJson(event.pendingChange!!)))) {
                     event.pendingChange = requested.toJson()
                     event.reviewStatus = EventReviewStatus.CHANGE_PENDING
                     notifyAdmins("event_change_requested", event, photographerId)
                 }
             }
         }
-        eventRepository.save(event)
+        val after = listOf(event.name, event.date, event.location, event.organizerName, event.description,
+            event.visibility, event.coverS3Key, PricingTrio.of(event), event.reviewStatus, event.pendingChange)
+        if (before != after) {
+            event.reviewRevision++
+            eventRepository.save(event)
+        }
         val ep = eventPhotographerRepository.findById(EventPhotographerId(event.id, photographerId))
             .orElseGet { EventPhotographer(id = EventPhotographerId(event.id, photographerId)) }
         return detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId)

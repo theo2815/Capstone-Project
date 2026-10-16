@@ -2,18 +2,14 @@
 
 ## Overview
 
-QuickPitik is a REST API that accepts images over HTTP and returns AI analysis results. It supports three computer vision features:
-
-1. **Blur Detection** - Determines if an image is blurry
-2. **Face Recognition** - Detects, enrolls, and matches faces
-3. **Bib Number OCR** - Reads race bib numbers from photos
+QuickPitik's ai-api is a REST API that accepts images over HTTP and returns AI analysis results. It has one computer vision feature, **blur detection** (is an image blurry, and what kind of blur), used by the desktop app. Face recognition and bib OCR were removed on 2026-10-16; the backend uses AWS Rekognition for both.
 
 ## The 4-Layer Architecture
 
 Every request flows through up to 4 layers. Each layer has one responsibility and only talks to the layer directly below it.
 
 ```
-HTTP Request from client (mobile app, website, backend service)
+HTTP Request from client (the BatchMyPhotos desktop app)
     │
     ▼
 ┌──────────────────────────────────────────────────────────┐
@@ -26,9 +22,9 @@ HTTP Request from client (mobile app, website, backend service)
 ┌──────────────────────────────────────────────────────────┐
 │  Service Layer  (src/services/)                          │
 │  Business rules. Orchestrates ML models and DB.          │
-│  Today only BlurService exists — face and bib handlers   │
-│  call the ML + repo layers directly while the logic is   │
-│  still thin. Add a service when orchestration grows.     │
+│  Not present today — the blur handlers call the ML +     │
+│  repo layers directly while the logic is still thin.     │
+│  Add a service when orchestration grows.                 │
 └──────────────────────┬───────────────────────────────────┘
                        │
                        ▼
@@ -41,22 +37,22 @@ HTTP Request from client (mobile app, website, backend service)
                        ▼
 ┌──────────────────────────────────────────────────────────┐
 │  DB Layer  (src/db/)                                     │
-│  Stores and retrieves data. Persons + face embeddings,   │
-│  jobs, webhook subscriptions, API keys.                  │
+│  Stores and retrieves data: jobs, webhook                │
+│  subscriptions, API keys.                                │
 └──────────────────────────────────────────────────────────┘
 ```
 
 ### Why this separation matters
 
 - **Testability**: You can test the blur detector without starting a web server.
-- **Swappability**: You can replace PaddleOCR with Tesseract without touching any API code.
+- **Swappability**: You can replace the person detector without touching any API code.
 - **Readability**: A new developer knows exactly where to look for each concern.
 
 ## Key Architectural Decisions
 
 ### 1. Model Registry (singleton pattern)
 
-ML models are large (100MB-500MB each) and take seconds to load. Loading them on every request would be disastrous for performance. Instead:
+ML models take time to load (and the classifier checks its files against `models/manifest.json`). Loading them on every request would be disastrous for performance. Instead:
 
 - Models are loaded **once** at app startup via `src/ml/registry.py`
 - Stored in memory for the entire lifetime of the process
@@ -66,13 +62,8 @@ ML models are large (100MB-500MB each) and take seconds to load. Loading them on
 ```
 Server starts
     │
-    ├── Pre-import torch / insightface / ultralytics    (avoid Windows DLL race)
-    │
     ├── Load BlurDetector (Laplacian + FFT)             — registered as "blur", required
-    ├── Load BlurClassifier (YOLOv8n-cls ONNX)          — registered as "blur_classifier", optional
-    ├── Load FaceEmbedder (InsightFace buffalo_l)       — registered as "face", required
-    ├── Load BibDetector (YOLOv8n ONNX, Ultralytics)    — registered as "bib_detector", optional
-    ├── Load BibRecognizer (PaddleOCR PP-OCRv5)         — registered as "bib_ocr", required
+    ├── Load BlurClassifier (two-stage: whole-frame rule, then person detector + per-person sharpness + logistic rule; four classes reported) — registered as "blur_classifier", required in the `blur` profile (default), optional in `all`
     │
     ▼
 Server ready to accept requests (models stay in memory)
@@ -92,11 +83,11 @@ The API uses Python's async/await pattern:
 
 ### 3. C++ is optional
 
-Performance-critical code (batch cosine similarity, batch image preprocessing) can be accelerated with C++ via pybind11. But the app **always works without it**:
+Performance-critical code (blur metrics, image preprocessing) can be accelerated with C++ via pybind11; nothing in the served code imports it today. The app **always works without it**:
 
 ```python
 try:
-    from _quickpitik_cpp import batch_cosine_topk  # Fast C++ path
+    from _quickpitik_cpp import laplacian_variance  # Fast C++ path
     _HAS_CPP = True
 except ImportError:
     _HAS_CPP = False  # Falls back to NumPy
@@ -126,14 +117,18 @@ Returns 202: { "job_id": "...", "poll_url": "/jobs/..." }
     ▼
 Worker: parallel decode from paths → sub-batched inference
        → update_job_progress (throttled) → complete_job
-       → cleanup_batch removes blob dir → webhook dispatch
+       → webhook dispatch (staged images are kept as a retry window)
+    │
+    ▼
+Beat task cleanup_stale_blobs (every 30 min) deletes the staged
+images BLOB_RETENTION_SECONDS (default 24 h) after the job ends
     │
     ▼
 Client polls GET /api/v1/jobs/{id}?offset=..&limit=..
 OR receives a webhook (job.completed / job.failed)
 ```
 
-Three batch modes exist per pipeline (see `api-reference.md`):
+Three batch modes exist for blur detect and classify (see `api-reference.md`):
 
 - `.../batch` — `MAX_BATCH_SIZE` (50) — single Celery task
 - `.../mega`  — `MEGA_BATCH_MAX_SIZE` (500) — Celery chord, auto-chunked, merged by `finalize_mega_batch`
@@ -199,6 +194,6 @@ Here's what happens when a client calls `POST /api/v1/blur/detect`:
 └─────────────────────────────────────────────────────┘
 ```
 
-- **PostgreSQL + pgvector**: Stores face embeddings (512-dim vectors), persons, jobs, webhooks, API keys. pgvector enables fast vector similarity search.
+- **PostgreSQL + pgvector**: Stores jobs, webhooks, API keys. The retired `persons` / `face_embeddings` tables (and the pgvector extension their migrations need) remain.
 - **Redis**: Three roles - Celery task queue broker, rate limit counters, API key cache.
 - **Celery worker**: Separate process that picks up batch tasks from Redis and processes them.

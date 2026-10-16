@@ -8,6 +8,7 @@ import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
 import com.quickpitik.mobile.support.signInAs
+import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
@@ -22,6 +23,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 
 /**
  * The money rules of the cart: what the coupon preview does with an empty
@@ -38,6 +40,8 @@ class CartViewModelTest {
     private val seen = CopyOnWriteArrayList<Pair<String, String>>() // path to body
     @Volatile private var cart = CART
     @Volatile private var orders: MockResponse = ok(ORDERS)
+    @Volatile private var detail: MockResponse = ok(DETAIL)
+    @Volatile private var order: MockResponse = ok(ORDER)
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -49,10 +53,13 @@ class CartViewModelTest {
                 seen += path to body
                 return when {
                     path == "/api/v1/me/cart" && request.method == "GET" -> ok(cart)
+                    path == "/api/v1/me/cart" && request.method == "DELETE" -> ok("""{"cleared":2}""")
                     path.startsWith("/api/v1/me/cart/items/") -> ok("""{"removed":true}""")
                     path == "/api/v1/coupons/preview" -> preview(body)
-                    path == "/api/v1/orders" -> ok(ORDER)
+                    path == "/api/v1/orders" -> order
                     path == "/api/v1/me/orders" -> orders
+                    path == "/api/v1/me/orders/o1" -> detail
+                    path == "/api/v1/me/disputes/d1/withdraw" -> ok(DISPUTE)
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -149,7 +156,124 @@ class CartViewModelTest {
         assertEquals(2, previews().size)
     }
 
+    // Signs the runner out and a different runner in on the same phone, the way
+    // MainActivity's sign-out and the login screen do.
+    private fun switchAccount() = SessionManager.getInstance(application).run {
+        clearSession()
+        saveSession("t2", "RUNNER", "Maria", "maria@x.com")
+    }
+
+    // Security audit 2026-10-14, MOB-3.
+    @Test fun `a change of account drops the previous runner's orders, even offline`() {
+        val vm = newVm()
+        vm.fetchOrders()
+        assertEquals(setOf("p1", "p2", "p6"), vm.ownedPhotoIds.awaitFirst { it.isNotEmpty() })
+
+        switchAccount()
+        vm.ordersState.awaitFirst(1_000) { it !is OrdersState.Success }
+        assertEquals(emptySet<String>(), vm.ownedPhotoIds.awaitFirst(1_000) { it.isEmpty() })
+
+        // The next runner goes offline before opening Profile or Orders.
+        orders = MockResponse().setResponseCode(500)
+        vm.fetchOrders()
+        vm.ordersState.awaitFirst(1_000) { it is OrdersState.Error }
+    }
+
+    @Test fun `an orders answer that lands after the account changed is dropped`() {
+        orders = ok(ORDERS).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        val vm = newVm()
+        val inFlight = vm.fetchOrders()
+        // Switch only once the request is on the server, so it is the answer that lands late.
+        generateSequence { backend.server.takeRequest(5, TimeUnit.SECONDS)!! }.first { it.path!!.startsWith("/api/v1/me/orders") }
+
+        switchAccount()
+        runBlocking { inFlight.join() }
+
+        assertFalse(vm.ordersState.value is OrdersState.Success)
+    }
+
+    @Test fun `the runner's own Clear cart keeps their orders`() {
+        val vm = newVm()
+        vm.fetchOrders()
+        vm.ownedPhotoIds.awaitFirst { it.isNotEmpty() }
+
+        vm.clearCart()
+        vm.cartItems.awaitFirst { it.isEmpty() }
+
+        assertTrue(vm.ordersState.value is OrdersState.Success)
+    }
+
+    @Test fun `a token refresh keeps the orders`() {
+        val vm = newVm()
+        vm.fetchOrders()
+        vm.ownedPhotoIds.awaitFirst { it.isNotEmpty() }
+
+        SessionManager.getInstance(application).updateTokens("t-refreshed", "r-refreshed")
+
+        assertTrue(vm.ordersState.value is OrdersState.Success)
+        assertEquals(setOf("p1", "p2", "p6"), vm.ownedPhotoIds.awaitFirst { true })
+    }
+
+    // Blocks until a request for [path] is on the server, so the switch below
+    // happens while its answer is still on the way.
+    private fun awaitOnServer(path: String) {
+        generateSequence { backend.server.takeRequest(5, TimeUnit.SECONDS)!! }.first { it.path == path }
+    }
+
+    // The late answer lands about 300 ms after the switch; wait well past that.
+    private fun assertDetailNeverShown(vm: CartViewModel) = assertTrue(
+        runCatching { vm.orderDetailState.awaitFirst(1_000) { it is OrderDetailState.Success } }.isFailure,
+    )
+
+    // Security audit 2026-10-14, MOB-3 follow-up (MS-7 finding L1).
+    @Test fun `an order detail answer that lands after the account changed is dropped`() {
+        detail = ok(DETAIL).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        val vm = newVm()
+        vm.fetchOrderDetail("o1")
+        awaitOnServer("/api/v1/me/orders/o1")
+
+        switchAccount()
+
+        assertDetailNeverShown(vm)
+    }
+
+    @Test fun `an order detail refresh that lands after the account changed is dropped`() {
+        detail = ok(DETAIL).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        val vm = newVm()
+        vm.withdrawDispute("o1", "d1")
+        awaitOnServer("/api/v1/me/orders/o1")
+
+        switchAccount()
+
+        assertDetailNeverShown(vm)
+    }
+
+    // MS-7 finding L4: a checkout's answer carries the PayMongo link that
+    // CheckoutSheet opens by itself, so it must never reach the next account.
+    @Test fun `a checkout answer that lands after the account changed is dropped`() {
+        order = ok(ORDER).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        val vm = newVm()
+        vm.checkout(null, "GCASH")
+        awaitOnServer("/api/v1/orders")
+
+        switchAccount()
+
+        assertTrue(runCatching { vm.checkoutState.awaitFirst(1_000) { it is CheckoutState.Success } }.isFailure)
+    }
+
+    @Test fun `a change of account drops a finished checkout`() {
+        val vm = newVm()
+        vm.checkout(null, "GCASH")
+        vm.checkoutState.awaitFirst { it is CheckoutState.Success }
+
+        switchAccount()
+
+        vm.checkoutState.awaitFirst(1_000) { it is CheckoutState.Idle }
+    }
+
     private companion object {
+        const val DETAIL = """{"id":"o1","eventId":"e1","photoIds":["p1"],"total":100.0,"paymentMethod":"GCASH","paidAt":null,"eventName":null,"eventSlug":null,"status":"PAID","photos":[]}"""
+        const val DISPUTE = """{"id":"d1","photoId":"p1","reason":"OTHER","note":"","status":"WITHDRAWN","openedAt":"2026-09-11T00:00:00Z"}"""
         const val CART = """[{"photoId":"p1","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":"B-1","eventName":"Run","eventSlug":"run","tone":null,"time":null},{"photoId":"p2","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null}]"""
         const val ORDER = """{"id":"o1","status":"PENDING","items":[{"photoId":"p1","price":100.0}],"totalAmount":200.0,"paymentMethod":"GCASH","createdAt":"2026-09-11T00:00:00Z","redirectUrl":"https://pay.example/x"}"""
         const val ORDERS = """{"items":[

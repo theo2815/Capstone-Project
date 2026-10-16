@@ -3,6 +3,7 @@ package com.quickpitik.service.image
 import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.util.Base64
 import javax.imageio.ImageIO
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -34,6 +35,21 @@ class ImagePixelGuardTest {
     @Test
     fun `declared dimensions over budget are rejected without a full decode`() {
         assertTrue(ImagePixelGuard.exceedsPixelBudget(overBudgetPngHeader()))
+    }
+
+    @Test
+    fun `WebP header dimensions over budget are rejected before raster decode`() {
+        val bytes = Base64.getDecoder().decode(
+            "UklGRjIAAABXRUJQVlA4ICYAAACQAQCdASoQABAAAUAmJYgCdLoAA5gA/vPfZrQtCBz+N5vNasQAAA==",
+        )
+        assertFalse(ImagePixelGuard.exceedsPixelBudget(bytes))
+        // VP8 frame header: 10,000 x 8,001, without allocating that raster.
+        bytes[26] = 0x10
+        bytes[27] = 0x27
+        bytes[28] = 0x41
+        bytes[29] = 0x1f
+
+        assertTrue(ImagePixelGuard.exceedsPixelBudget(bytes))
     }
 
     @Test

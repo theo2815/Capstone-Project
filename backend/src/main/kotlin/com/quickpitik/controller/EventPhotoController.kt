@@ -17,8 +17,8 @@ import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
 import com.quickpitik.service.ratelimit.clientIp
-import com.quickpitik.service.storage.StorageService
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -45,8 +45,6 @@ class EventPhotoController(
     private val eventService: EventService,
     private val photoService: PhotoService,
     private val photoSearchService: PhotoSearchService,
-    // Streaming an already-authorized key only (downloadFree); never to feed logic.
-    private val storageService: StorageService,
     private val rateLimiter: RateLimiter,
 ) {
     @GetMapping("/{slug}/photos")
@@ -58,7 +56,9 @@ class EventPhotoController(
         @RequestParam(required = false) limit: Int?,
         @RequestParam(required = false) snapshotAt: OffsetDateTime?,
         request: HttpServletRequest,
+        response: HttpServletResponse,
     ): PaginatedResponse<PhotoDto> {
+        preventPersonalizedCaching(principal, response)
         // Throttle the *search* use of this endpoint only. Without a bib this
         // is the plain event grid that every visitor pages through, and a
         // 10/min cap would break ordinary browsing.
@@ -90,7 +90,7 @@ class EventPhotoController(
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_DOWNLOAD, clientIp(request))
         val download = photoService.freeDownload(eventId, photoId)
         val encoded = URLEncoder.encode(download.filename, StandardCharsets.UTF_8).replace("+", "%20")
-        val body = StreamingResponseBody { out -> storageService.open(download.s3Key).use { it.transferTo(out) } }
+        val body = StreamingResponseBody { out -> photoService.writeFreeDownload(eventId, photoId, download, out) }
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_TYPE, MediaType.IMAGE_JPEG_VALUE)
             .header(
@@ -112,7 +112,9 @@ class EventPhotoController(
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
         request: HttpServletRequest,
+        response: HttpServletResponse,
     ): PaginatedResponse<PhotoDto> {
+        preventPersonalizedCaching(principal, response)
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
         validateSelfieUpload(selfie)
         val selfieBytes = selfie.bytes
@@ -150,7 +152,9 @@ class EventPhotoController(
         @PathVariable slug: String,
         @RequestBody body: SearchByFaceJsonRequest,
         request: HttpServletRequest,
+        response: HttpServletResponse,
     ): PaginatedResponse<PhotoDto> {
+        preventPersonalizedCaching(principal, response)
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, searchKey(principal, request))
         if (principal == null) {
             throw UnauthorizedException(
@@ -224,6 +228,10 @@ class EventPhotoController(
     // the anonymous path unthrottled.
     private fun searchKey(principal: AuthPrincipal?, request: HttpServletRequest): String =
         principal?.userId?.toString() ?: clientIp(request)
+
+    private fun preventPersonalizedCaching(principal: AuthPrincipal?, response: HttpServletResponse) {
+        if (principal != null) response.setHeader(HttpHeaders.CACHE_CONTROL, "private, no-store")
+    }
 
     data class SearchByFaceJsonRequest(
         val selfieId: String? = null,

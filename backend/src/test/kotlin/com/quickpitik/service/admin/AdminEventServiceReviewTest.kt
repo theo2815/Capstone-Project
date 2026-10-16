@@ -67,7 +67,7 @@ class AdminEventServiceReviewTest {
         Mockito.`when`(eventRepository.save(anyArg())).thenAnswer { it.arguments[0] }
         Mockito.`when`(decisions.logEventDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(AdminDecisionLog(adminId = adminId, targetEventId = UUID.randomUUID(), decision = "x"))
-        Mockito.`when`(decisions.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer { inv ->
+        Mockito.`when`(decisions.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())).thenAnswer { inv ->
             pushed += inv.getArgument<PhotographerMessageKind>(1)
             null
         }
@@ -78,13 +78,15 @@ class AdminEventServiceReviewTest {
             eventRepository,
             photoRepository,
             decisions,
-            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties()),
+            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), photoRepository),
             covers,
             provider,
             aiProperties,
             Mockito.mock(PhotographerSettingsRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             transactions,
+            Mockito.mock(AdminActionCommandService::class.java),
+            com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
         )
         service = ProxyFactory(target).apply {
             addAdvice(TransactionInterceptor().apply {
@@ -126,6 +128,44 @@ class AdminEventServiceReviewTest {
         Mockito.verify(photoRepository).updatePriceByEventId(eqArg(event.id), anyArg())
         Mockito.verify(photoRepository).resetForRewatermark(event.id)
         assertEquals(listOf(PhotographerMessageKind.EVENT_CHANGE_APPROVED), pushed)
+    }
+
+    @Test
+    fun `approving a submission takes no photo locks`() {
+        val event = submitted()
+
+        service.approve(adminId, event.id)
+
+        Mockito.verify(photoRepository, Mockito.never()).lockIdsByEventIdForUpdate(anyArg())
+    }
+
+    @Test
+    fun `approving a pricing change locks its photos before the event row`() {
+        val event = live().apply {
+            reviewStatus = EventReviewStatus.CHANGE_PENDING
+            pendingChange = mapOf("pricingMode" to "paid", "pricePerPhoto" to "200.00", "watermarkPolicy" to "platform")
+        }
+
+        service.approve(adminId, event.id)
+
+        val order = Mockito.inOrder(photoRepository, eventRepository)
+        order.verify(photoRepository).lockIdsByEventIdForUpdate(event.id)
+        order.verify(eventRepository).findByIdForReview(event.id)
+    }
+
+    @Test
+    fun `a pricing change that appears after the unlocked read is refused, not applied without photo locks`() {
+        val event = live().apply {
+            reviewStatus = EventReviewStatus.CHANGE_PENDING
+            pendingChange = mapOf("pricingMode" to "paid", "pricePerPhoto" to "200.00", "watermarkPolicy" to "platform")
+        }
+        Mockito.`when`(eventRepository.findReviewStatus(event.id)).thenReturn(EventReviewStatus.PENDING)
+
+        assertFailsWith<ConflictException> { service.approve(adminId, event.id) }
+
+        assertEquals(EventReviewStatus.CHANGE_PENDING, event.reviewStatus)
+        Mockito.verify(photoRepository, Mockito.never()).updatePriceByEventId(anyArg(), anyArg())
+        Mockito.verifyNoInteractions(decisions)
     }
 
     @Test
@@ -392,6 +432,43 @@ class AdminEventServiceReviewTest {
         Mockito.verifyNoInteractions(provider)
     }
 
+    @Test
+    fun `an edit after deletion is not found and cannot reprice photos`() {
+        val event = live().apply { deletedAt = java.time.OffsetDateTime.now() }
+        assertFailsWith<NotFoundException> {
+            service.update(adminId, event.id, UpdateAdminEventRequest(pricePerPhoto = BigDecimal("200")))
+        }
+        Mockito.verifyNoInteractions(decisions)
+        Mockito.verify(photoRepository, Mockito.never()).updatePriceByEventId(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a repeated unchanged text edit has only one override and audit`() {
+        val event = live()
+        val request = UpdateAdminEventRequest(title = "New name")
+        service.update(adminId, event.id, request)
+        service.update(adminId, event.id, request)
+        assertEquals(1, event.adminOverrides.size)
+        Mockito.verify(decisions, Mockito.times(1)).logEventDecision(eqArg(adminId), eqArg(event.id), eqArg("event_updated"), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a deletion during cover upload is rechecked before applying any edit`() {
+        val event = live().apply { coverS3Key = "old-cover" }
+        Mockito.`when`(covers.upload(eqArg(event.id), anyArg(), anyArg())).thenAnswer {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
+            event.deletedAt = java.time.OffsetDateTime.now()
+            "new-cover"
+        }
+        assertFailsWith<NotFoundException> {
+            service.update(adminId, event.id, UpdateAdminEventRequest(title = "After delete"), cover())
+        }
+        assertEquals("Fun Run", event.name)
+        assertEquals("old-cover", event.coverS3Key)
+        Mockito.verifyNoInteractions(decisions)
+        Mockito.verify(covers, Mockito.never()).delete("old-cover")
+    }
+
     private fun assertWritesTransactional(onCommit: () -> Unit = {}) {
         Mockito.`when`(eventRepository.save(anyArg())).thenAnswer {
             assertTrue(TransactionSynchronizationManager.isActualTransactionActive())
@@ -404,6 +481,25 @@ class AdminEventServiceReviewTest {
             assertTrue(TransactionSynchronizationManager.isActualTransactionActive())
             AdminDecisionLog(adminId = adminId, targetEventId = it.getArgument(1), decision = it.getArgument(2))
         }
+    }
+
+    @Test
+    fun `invalid location pairs reject legacy and keyed writes before cover or claim`() {
+        val event = submitted()
+        for ((region, province) in listOf("region-7" to null, null to "cebu", "" to "",
+            "region-7" to "metro-manila", "r".repeat(21) to "cebu", "region-7" to "p".repeat(41))) {
+            for (key in listOf(null, com.quickpitik.common.IdempotencyKey(UUID.randomUUID().toString()))) {
+                val createError = assertFailsWith<ValidationException> {
+                    service.create(adminId, createRequest().copy(regionCode = region, provinceCode = province), cover(), key)
+                }
+                assertEquals("INVALID_REGION", createError.code)
+                val updateError = assertFailsWith<ValidationException> {
+                    service.update(adminId, event.id, UpdateAdminEventRequest(regionCode = region, provinceCode = province), cover(), key = key)
+                }
+                assertEquals("INVALID_REGION", updateError.code)
+            }
+        }
+        Mockito.verifyNoInteractions(covers, decisions)
     }
 
     private fun createRequest() = CreateAdminEventRequest(
@@ -427,6 +523,7 @@ class AdminEventServiceReviewTest {
             reviewStatus = review,
         )
         Mockito.`when`(eventRepository.findByIdForReview(event.id)).thenReturn(event)
+        Mockito.`when`(eventRepository.findReviewStatus(event.id)).thenAnswer { event.reviewStatus }
         Mockito.`when`(eventRepository.findById(event.id)).thenReturn(Optional.of(event))
         return event
     }

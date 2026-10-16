@@ -15,6 +15,24 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface QuickPitikApi {
+    @GET("api/v1/me/photographer/metadata-settings")
+    suspend fun getMetadataSettings(@Header("Authorization") token: String): ApiResponseEnvelope<MetadataSettingsDto>
+
+    @PUT("api/v1/me/photographer/metadata-settings")
+    suspend fun setMetadataSettings(@Header("Authorization") token: String, @Body request: MetadataSettingsDto): ApiResponseEnvelope<MetadataSettingsDto>
+
+    @GET("api/v1/me/photographer/events/{eventId}/metadata-visibility")
+    suspend fun getEventMetadataVisibility(@Header("Authorization") token: String, @Path("eventId") eventId: String): ApiResponseEnvelope<EventMetadataVisibilityDto>
+
+    @PUT("api/v1/me/photographer/events/{eventId}/metadata-visibility")
+    suspend fun setEventMetadataVisibility(@Header("Authorization") token: String, @Path("eventId") eventId: String, @Body request: EventMetadataVisibilityDto): ApiResponseEnvelope<EventMetadataVisibilityDto>
+
+    @GET("api/v1/me/photographer/photos/{photoId}/metadata")
+    suspend fun getOwnedPhotoMetadata(@Header("Authorization") token: String, @Path("photoId") photoId: String): ApiResponseEnvelope<PhotoMetadataDto>
+
+    @GET("api/v1/public/photos/{photoId}/metadata")
+    suspend fun getPublicPhotoMetadata(@Path("photoId") photoId: String): ApiResponseEnvelope<PhotoMetadataDto>
+
     @POST("api/v1/auth/login")
     suspend fun login(@Body request: LoginRequest): ApiResponseEnvelope<AuthResponse>
 
@@ -135,8 +153,26 @@ interface QuickPitikApi {
     @GET("api/v1/me/photographer/events/{eventId}")
     suspend fun getPhotographerEventDetail(
         @Header("Authorization") token: String,
-        @Path("eventId") eventId: String
+        @Path("eventId") eventId: String,
+        @Query("includeRemoved") includeRemoved: Boolean = false,
     ): ApiResponseEnvelope<PhotographerEventDetailDto>
+
+    @GET("api/v1/me/photographer/events/{eventId}/purchased-photos")
+    suspend fun getPhotographerPurchasedPhotos(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 50,
+    ): ApiResponseEnvelope<PaginatedResponse<PhotographerPurchasedPhotoDto>>
+
+    @GET("api/v1/me/photographer/photos/{photoId}/purchases")
+    suspend fun getPhotographerPhotoPurchases(
+        @Header("Authorization") token: String,
+        @Path("photoId") photoId: String,
+        @Query("orderId") orderId: String? = null,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 50,
+    ): ApiResponseEnvelope<PhotographerPhotoPurchasesResponse>
 
     // Event coupon (V47) — GET data is null when none; DELETE returns {removed:true}.
     @GET("api/v1/me/photographer/events/{eventId}/coupon")
@@ -349,6 +385,13 @@ interface QuickPitikApi {
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<EarningsOverviewDto>
 
+    @GET("api/v1/me/photographer/earnings/per-event")
+    suspend fun getPhotographerPerEventEarnings(
+        @Header("Authorization") token: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 10,
+    ): ApiResponseEnvelope<PaginatedResponse<PerEventEarningDto>>
+
     @GET("api/v1/me/photographer/payouts/balance")
     suspend fun getPayoutBalance(
         @Header("Authorization") token: String
@@ -390,7 +433,8 @@ interface QuickPitikApi {
         @Path("handle") handle: String,
         @Path("slug") slug: String,
         @Query("offset") offset: Int = 0,
-        @Query("limit") limit: Int = 100
+        @Query("limit") limit: Int = 100,
+        @Header("Authorization") token: String? = null
     ): ApiResponseEnvelope<PaginatedResponse<PhotoDto>>
 
     // "Whose photo is this?" reverse attribution (V42) — public, multipart, no

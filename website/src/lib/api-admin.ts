@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import type {
   PayoutAccount,
@@ -24,7 +24,6 @@ import type {
 } from "@/lib/photographer-mock";
 import type { DecisionLogEntry } from "@/lib/admin-user-registry";
 import type { PaginatedResponse } from "@/types/api";
-import { safeUUID } from "@/lib/utils";
 
 // Admin queues fetch a page and then categorize/merge/sort it CLIENT-SIDE
 // (status slabs, optimistic-store overrides, GMV sort), so true offset
@@ -210,29 +209,32 @@ export async function fetchAdminPhotographerSettings(
   );
 }
 
-export async function approveUser(userId: string): Promise<AdminUserRow> {
+export async function approveUser(userId: string, expectedRevision?: number): Promise<AdminUserRow> {
   return api.post<AdminUserRow>(
     `/admin/users/${encodeURIComponent(userId)}/approve`,
+    { expectedRevision },
   );
 }
 
 export async function rejectUser(
   userId: string,
   reason: string,
+  expectedRevision?: number,
 ): Promise<AdminUserRow> {
   return api.post<AdminUserRow>(
     `/admin/users/${encodeURIComponent(userId)}/reject`,
-    { reason },
+    { reason, expectedRevision },
   );
 }
 
 export async function resetUserVerification(
   userId: string,
   reason: string,
+  expectedRevision?: number,
 ): Promise<AdminUserRow> {
   return api.post<AdminUserRow>(
     `/admin/users/${encodeURIComponent(userId)}/reset-verification`,
-    { reason },
+    { reason, expectedRevision },
   );
 }
 
@@ -274,11 +276,38 @@ export interface AdminMessageResponse {
 export async function sendAdminMessage(
   userId: string,
   input: SendAdminMessageInput,
+  idempotencyKey: string,
 ): Promise<AdminMessageResponse> {
   return api.post<AdminMessageResponse>(
     `/admin/users/${encodeURIComponent(userId)}/message`,
     input,
+    { headers: { "Idempotency-Key": idempotencyKey } },
   );
+}
+
+export interface AdminCommand {
+  commandId: string;
+  state: "PENDING" | "UNKNOWN" | "SUCCEEDED" | "FAILED";
+  resourceId: string | null;
+  decisionId: string | null;
+  messageId: string | null;
+  completedAt: string | null;
+}
+
+/**
+ * What happened to one of this admin's keyed requests. Null means the server
+ * has no receipt for the key, so nothing ran. Only the route's own code counts:
+ * a server without the route answers a plain 404 that proves nothing.
+ */
+export async function fetchAdminCommand(key: string): Promise<AdminCommand | null> {
+  try {
+    const command = await api.get<AdminCommand>(`/admin/commands/${encodeURIComponent(key)}`);
+    if (typeof command?.state !== "string") throw new Error("Unreadable admin request lookup.");
+    return command;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.errors[0]?.code === "ADMIN_COMMAND_NOT_FOUND") return null;
+    throw error;
+  }
 }
 
 // ───────────────────────────────────────────── Disputes
@@ -530,31 +559,26 @@ export interface BulkPayoutResult {
   results: Array<{ id: string; ok: boolean; error?: string }>;
 }
 
-// BE requires Idempotency-Key (UUID v4) on POST /admin/payouts/bulk per
-// AdminPayoutsController.bulk — retry safety hinges on it. The header is
-// generated per call so each batch is a distinct logical decision.
-function idempotencyHeader(): { headers: HeadersInit } {
-  return { headers: { "Idempotency-Key": safeUUID() } };
-}
-
 export async function bulkApprovePayouts(
   payoutIds: string[],
+  idempotencyKey: string,
 ): Promise<BulkPayoutResult> {
   return api.post<BulkPayoutResult>(
     "/admin/payouts/bulk",
     { ids: payoutIds, action: "approve" },
-    idempotencyHeader(),
+    { headers: { "Idempotency-Key": idempotencyKey } },
   );
 }
 
 export async function bulkHoldPayouts(
   payoutIds: string[],
   reason: string,
+  idempotencyKey: string,
 ): Promise<BulkPayoutResult> {
   return api.post<BulkPayoutResult>(
     "/admin/payouts/bulk",
     { ids: payoutIds, action: "hold", reason },
-    idempotencyHeader(),
+    { headers: { "Idempotency-Key": idempotencyKey } },
   );
 }
 
@@ -618,6 +642,7 @@ export interface AdminEventListArgs {
 // AdminListEventDto — the catalog row plus the V46 ownership + review fields.
 // createdBy* are null for admin-created events.
 export interface AdminEventRow extends ListEvent {
+  reviewRevision: number;
   createdByHandle: string | null;
   createdByName: string | null;
   visibility: "public" | "unlisted";
@@ -647,20 +672,22 @@ export async function fetchAdminEvents(
 //   POST /admin/events/{id}/reject  — PENDING → rejected (+reason); CHANGE_PENDING → drop the request
 export async function approveAdminEvent(
   eventId: string,
+  expectedRevision?: number,
 ): Promise<AdminEventRow> {
   return api.post<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}/approve`,
-    {},
+    { expectedRevision },
   );
 }
 
 export async function rejectAdminEvent(
   eventId: string,
   reason: string,
+  expectedRevision?: number,
 ): Promise<AdminEventRow> {
   return api.post<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}/reject`,
-    { reason },
+    { reason, expectedRevision },
   );
 }
 
@@ -668,6 +695,8 @@ export interface CreateAdminEventArgs {
   title: string;
   date: string;
   location: string;
+  regionCode?: string;
+  provinceCode?: string;
   /** Per-photo price in PHP. Admin-set at create; the BE seeds new uploads
    *  to this value via PhotoUploadService. Defaults to 0 if omitted. */
   pricePerPhoto: number;
@@ -682,24 +711,30 @@ export interface CreateAdminEventArgs {
 
 export async function createAdminEvent(
   args: CreateAdminEventArgs,
+  idempotencyKey: string,
 ): Promise<AdminEventRow> {
   const form = new FormData();
   form.append("title", args.title);
   form.append("date", args.date);
   form.append("location", args.location);
+  if (args.regionCode !== undefined) form.append("regionCode", args.regionCode);
+  if (args.provinceCode !== undefined) form.append("provinceCode", args.provinceCode);
   form.append("pricePerPhoto", String(args.pricePerPhoto));
   if (args.organizerName !== undefined)
     form.append("organizerName", args.organizerName);
   if (args.description !== undefined)
     form.append("description", args.description);
   if (args.cover) form.append("cover", args.cover);
-  return api.post<AdminEventRow>("/admin/events", form);
+  return api.post<AdminEventRow>("/admin/events", form, { headers: { "Idempotency-Key": idempotencyKey } });
 }
 
 export interface UpdateAdminEventPatch {
+  expectedRevision?: number;
   title?: string;
   date?: string;
   location?: string;
+  regionCode?: string;
+  provinceCode?: string;
   /** New per-photo price in PHP. When this changes the BE re-prices every
    *  existing photo under the event (UPDATE photos SET price_php = ?).
    *  Signed-in carts follow along: `GET /me/cart` renders the live
@@ -721,11 +756,15 @@ export interface UpdateAdminEventPatch {
 export async function updateAdminEvent(
   eventId: string,
   patch: UpdateAdminEventPatch,
+  idempotencyKey: string,
 ): Promise<AdminEventRow> {
   const form = new FormData();
+  if (patch.expectedRevision !== undefined) form.append("expectedRevision", String(patch.expectedRevision));
   if (patch.title !== undefined) form.append("title", patch.title);
   if (patch.date !== undefined) form.append("date", patch.date);
   if (patch.location !== undefined) form.append("location", patch.location);
+  if (patch.regionCode !== undefined) form.append("regionCode", patch.regionCode);
+  if (patch.provinceCode !== undefined) form.append("provinceCode", patch.provinceCode);
   if (patch.pricePerPhoto !== undefined) {
     form.append("pricePerPhoto", String(patch.pricePerPhoto));
   }
@@ -737,7 +776,7 @@ export async function updateAdminEvent(
   if (patch.removeCover) form.append("removeCover", "true");
   return api.fetch<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}`,
-    { method: "PATCH", body: form },
+    { method: "PATCH", body: form, headers: { "Idempotency-Key": idempotencyKey } },
   );
 }
 

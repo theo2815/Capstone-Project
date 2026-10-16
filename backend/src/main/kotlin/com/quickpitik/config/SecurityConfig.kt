@@ -72,6 +72,10 @@ class SecurityConfig(
                     // credential, verified against Google's JWKS.
                     "/api/v1/auth/google",
                     "/api/v1/auth/refresh",
+                    // Desktop connect (V85): the one-time code in the body is the
+                    // credential. /auth/desktop/codes is deliberately NOT here —
+                    // its caller is the signed-in website.
+                    "/api/v1/auth/desktop/exchange",
                     "/api/v1/auth/logout",
                     "/api/v1/auth/forgot-password",
                     "/api/v1/auth/verify-reset-otp",
@@ -107,6 +111,8 @@ class SecurityConfig(
                 // can't carry the bearer token; in prod S3StorageService serves
                 // the same content from a different origin and this rule is a
                 // no-op (no handler registered).
+                // Case evidence is served only by the ADMIN case stream, even for a known key.
+                auth.requestMatchers(RegexRequestMatcher("^/storage/photo-removal(?:/.*|\\?.*)?$", null, true)).denyAll()
                 auth.requestMatchers(HttpMethod.GET, "/storage/**").permitAll()
                 // The four public event reads, listed by shape: a `/**` here also
                 // permitted the RUNNER-only `GET /events/{slug}/photo-alert`, which then

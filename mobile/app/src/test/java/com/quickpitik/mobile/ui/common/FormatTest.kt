@@ -43,6 +43,11 @@ class FormatTest {
         assertEquals("1,234,567", count(1234567))
     }
 
+    @Test fun `order references use the same short uppercase form on every phone`() {
+        assertEquals("A1B2C3D4", formatOrderRef("a1b2c3d4-5678"))
+        assertEquals("SHORT", formatOrderRef("short"))
+    }
+
     @Test fun `backend timestamps read on Manila's clock`() {
         // 20:00 UTC on Aug 31 is 04:00 on Sep 1 in Manila: a new day and a new month.
         val pattern = "MMM d, yyyy · h:mm a"

@@ -34,6 +34,10 @@ interface EventRepository : JpaRepository<Event, UUID> {
     // filter lives in the query, so a foreign event id simply misses → 404.
     fun findByIdAndCreatedByAndDeletedAtIsNull(id: UUID, createdBy: UUID): Event?
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT e FROM Event e WHERE e.id = :id AND e.createdBy = :createdBy AND e.deletedAt IS NULL")
+    fun findOwnedByIdForUpdate(@Param("id") id: UUID, @Param("createdBy") createdBy: UUID): Event?
+
     // Admin review queue (V46): submissions + pending pricing changes, oldest first.
     fun findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(statuses: Collection<EventReviewStatus>): List<Event>
 
@@ -44,6 +48,11 @@ interface EventRepository : JpaRepository<Event, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT e FROM Event e WHERE e.id = :id")
     fun findByIdForReview(@Param("id") id: UUID): Event?
+
+    // Unlocked scalar read: lets approve decide whether photo rows must be
+    // locked before the event row, without loading the entity it locks next.
+    @Query("SELECT e.reviewStatus FROM Event e WHERE e.id = :id")
+    fun findReviewStatus(@Param("id") id: UUID): EventReviewStatus?
 
     // Public /events list: admin-created events only. Photographer-owned events
     // (createdBy != null) surface on the owner's profile / a direct link, never

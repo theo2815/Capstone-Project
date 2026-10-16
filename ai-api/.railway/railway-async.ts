@@ -33,13 +33,25 @@ export default defineRailway(() => {
   });
 
   const worker = service("ai-api-blur-worker", {
-    start: "celery -A src.workers.celery_app worker -Q blur,default -c 1 --loglevel=info",
+    start: "celery -A src.workers.celery_app worker -Q blur -c 1 --loglevel=info",
     env: {
       DATABASE_URL: preserve(),
       REDIS_URL: preserve(),
       WEBHOOK_SECRET_KEY: preserve(),
       MODEL_PROFILE: "blur",
-      WORKER_QUEUES: "blur,default",
+      WORKER_QUEUES: "blur",
+      ...storage,
+    },
+  });
+
+  const defaultWorker = service("ai-api-blur-default-worker", {
+    start: "celery -A src.workers.celery_app worker -Q default -c 1 --loglevel=info",
+    env: {
+      DATABASE_URL: preserve(),
+      REDIS_URL: preserve(),
+      WEBHOOK_SECRET_KEY: preserve(),
+      MODEL_PROFILE: "blur",
+      WORKER_QUEUES: "default",
       ...storage,
     },
   });
@@ -54,5 +66,5 @@ export default defineRailway(() => {
     },
   });
 
-  return project("quickpitik-ai-api-blur", { resources: [api, worker, beat, inputs] });
+  return project("quickpitik-ai-api-blur", { resources: [api, worker, defaultWorker, beat, inputs] });
 });

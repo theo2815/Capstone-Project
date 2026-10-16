@@ -1,6 +1,9 @@
 # Add project specific ProGuard rules here.
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
+
+# metadata-extractor creates directory instances by reflection while reading image tags.
+-keepclassmembers class * extends com.drew.metadata.Directory { public <init>(); }
 #
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html

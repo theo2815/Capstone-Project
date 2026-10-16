@@ -14,7 +14,6 @@ import {
   BTN_DANGER,
   BTN_GHOST,
   BTN_PRIMARY,
-  BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
 
@@ -44,9 +43,9 @@ export function AdminDisputeActionAside({
   runnerHandle,
 }: AdminDisputeActionAsideProps) {
   const { showToast } = useToast();
-  const { resolve, deny, escalate } = useDisputeActions();
+  const { resolve, deny, escalate, isPending, pendingAction } = useDisputeActions();
 
-  const [submitting, setSubmitting] = useState(false);
+  const submitting = isPending(dispute.id);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [denyOpen, setDenyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
@@ -56,21 +55,18 @@ export function AdminDisputeActionAside({
     null,
   );
 
+  // Every action needs an open dispute: the server escalates open ones only.
   const isOpen = dispute.status === "open";
-  const isDenied = dispute.status === "denied";
-  const escalateAllowed = isOpen || isDenied;
 
   async function handleContinueResolve(args: PendingResolve) {
     if (submitting) return;
     if (args.resolution === "deny") {
       // Deny path inside Resolve modal — no stacked confirm.
-      setSubmitting(true);
       const ok = await resolve(dispute.id, {
         resolution: "deny",
         refundAmount: null,
         reason: args.note,
       });
-      setSubmitting(false);
       if (!ok) return;
       setResolveOpen(false);
       showToast({ kind: "info", message: `Closed without refund · ${dispute.id}` });
@@ -81,13 +77,11 @@ export function AdminDisputeActionAside({
 
   async function handleConfirmRefund() {
     if (!pendingResolve || submitting) return;
-    setSubmitting(true);
     const confirmed = await resolve(dispute.id, {
       resolution: pendingResolve.resolution,
       refundAmount: pendingResolve.refundAmount,
       reason: pendingResolve.note,
     });
-    setSubmitting(false);
     if (!confirmed) return;
     setPendingResolve(null);
     setResolveOpen(false);
@@ -107,9 +101,7 @@ export function AdminDisputeActionAside({
 
   async function handleDeny(reason: string) {
     if (submitting) return;
-    setSubmitting(true);
     const ok = await deny(dispute.id, reason);
-    setSubmitting(false);
     if (!ok) return;
     setDenyOpen(false);
     showToast({ kind: "info", message: `Denied · ${dispute.id}` });
@@ -117,9 +109,7 @@ export function AdminDisputeActionAside({
 
   async function handleEscalate(note: string | null) {
     if (submitting) return;
-    setSubmitting(true);
     const ok = await escalate(dispute.id, note);
-    setSubmitting(false);
     if (!ok) return;
     setEscalateOpen(false);
     showToast({ kind: "info", message: `Escalated · ${dispute.id}` });
@@ -133,6 +123,7 @@ export function AdminDisputeActionAside({
       <Kicker as="p" tone="soft">
         Admin actions
       </Kicker>
+      {submitting && <p role="status">{pendingAction(dispute.id)}</p>}
       <div className="mt-5 space-y-3">
         {isOpen && (
           <>
@@ -154,17 +145,17 @@ export function AdminDisputeActionAside({
             </button>
           </>
         )}
-        {escalateAllowed && (
+        {isOpen && (
           <button
             type="button"
             onClick={() => setEscalateOpen(true)}
             disabled={submitting}
-            className={isOpen ? tertiaryBtn : secondaryBtn}
+            className={tertiaryBtn}
           >
             Escalate…
           </button>
         )}
-        {!isOpen && !isDenied && (
+        {!isOpen && (
           <p className="font-sans text-sm text-slate-soft">
             {dispute.refundStatus === "manual_review"
               ? "Review the payment in PayMongo before another refund attempt."
@@ -219,6 +210,5 @@ export function AdminDisputeActionAside({
 }
 
 const primaryFreshBtn = `${BTN_PRIMARY} ${BTN_SIZE.sm} w-full`;
-const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm} w-full`;
 const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} w-full`;
 const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm} w-full`;

@@ -139,6 +139,10 @@ class CartRepositoryImpl : CartRepository {
         return Result.success(true)
     }
 
+    override fun dropLocal(photoIds: Collection<String>) {
+        _cartItems.value = _cartItems.value.filterNot { it.photoId in photoIds }
+    }
+
     override suspend fun mergeCart(token: String): Result<List<CartItemDto>> {
         val currentItems = _cartItems.value
         if (currentItems.isEmpty()) {

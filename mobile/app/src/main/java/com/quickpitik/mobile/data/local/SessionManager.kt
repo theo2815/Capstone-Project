@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 // THE role check — every "is this a photographer?" branch goes through here.
 // Three call sites used to disagree (equals("PHOTOGRAPHER") in MainActivity vs
@@ -75,6 +77,8 @@ class SessionManager private constructor(context: Context) {
         check(legacy.edit().clear().commit()) { "Could not clear legacy session storage" }
     }
     private var authGeneration = 0L
+    private val _authChanges = MutableStateFlow(0L)
+    val authChanges: StateFlow<Long> = _authChanges
     private val accessTokens = LinkedHashSet<String>()
     data class AuthSession(val owner: String, val generation: Long)
 
@@ -155,6 +159,7 @@ class SessionManager private constructor(context: Context) {
             remove(KEY_VIEW_MODE)
             apply()
         }
+        _authChanges.value = authGeneration
     }
 
     fun isRunnerView(): Boolean = prefs.getBoolean(KEY_VIEW_MODE, false)
@@ -224,6 +229,7 @@ class SessionManager private constructor(context: Context) {
         // Before the two calls below, which reach outside this class: if either
         // throws, the credentials must already be off the disk.
         prefs.edit().clear().apply()
+        _authChanges.value = authGeneration
         TetherWatchPrefs(appContext).clear()
         // A credential store reaching into service/ is the wrong shape, but a
         // signed-out phone must not keep ingesting to the old account and this

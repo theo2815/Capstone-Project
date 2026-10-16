@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ZoomableImage } from "@/components/photos/zoomable-image";
+import { PhotoMetadataDialog } from "@/components/photos/photo-metadata-dialog";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import type { PhotoMetadataAccess } from "@/types/photo-metadata";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { formatRaceDate } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
@@ -47,6 +50,7 @@ export interface PhotoPreviewItem {
 
 interface BasePhotoPreviewProps {
   photo: PhotoPreviewItem;
+  metadataAccess?: PhotoMetadataAccess;
   eventName: string;
   /** Event date as YYYY-MM-DD. Shown in the `lg` header row beside the counter;
    *  surfaces without it (cart, orders) simply render no date. */
@@ -56,6 +60,11 @@ interface BasePhotoPreviewProps {
   onClose: () => void;
   onPrev?: () => void;
   onNext?: () => void;
+  details?: ReactNode;
+  onRefreshImage?: () => void;
+  imageReloadKey?: number;
+  isRefreshingImage?: boolean;
+  imageRefreshError?: string | null;
 }
 
 interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
@@ -69,6 +78,7 @@ interface BrowsePhotoPreviewProps extends BasePhotoPreviewProps {
 interface OwnedPhotoPreviewProps extends BasePhotoPreviewProps {
   mode: "owned";
   onDownload: () => void;
+  downloadDisabled?: boolean;
   /** Replaces the "Yours to keep" kicker — e.g. "Free from @handle" when a
    *  free-event photo is opened by a visitor rather than its owner. */
   footnote?: string;
@@ -130,7 +140,26 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     onNext,
   } = props;
   const mode = props.mode ?? "browse";
+  const viewer = usePrivateQuerySession();
+  const access = props.metadataAccess;
+  const metadataContext = JSON.stringify([photo.id, access, ...viewer.key]);
+  const [openMetadataContext, setOpenMetadataContext] = useState<string | null>(null);
+  const [deniedMetadataContext, setDeniedMetadataContext] = useState<string | null>(null);
+  const metadataTrigger = useRef<HTMLButtonElement>(null);
+  const mobileClose = useRef<HTMLButtonElement>(null);
+  const desktopClose = useRef<HTMLButtonElement>(null);
+  const focusPreviewClose = useCallback(() => {
+    const desktop = window.matchMedia?.("(min-width: 1024px)").matches;
+    (desktop ? desktopClose.current : mobileClose.current)?.focus();
+  }, []);
+  const metadataOpen = openMetadataContext === metadataContext;
+  const showMetadata = (access === "public" || (access === "owner" && viewer.enabled && viewer.key[1] === "PHOTOGRAPHER")) && deniedMetadataContext !== metadataContext;
   useScrollLock(true);
+
+  useEffect(() => {
+    setOpenMetadataContext(null);
+    setDeniedMetadataContext(null);
+  }, [metadataContext]);
 
   // Mount through a portal so the modal escapes any ancestor that establishes
   // a containing block (e.g. an `animate-fade-up` ancestor with a non-`none`
@@ -140,17 +169,50 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     setMounted(true);
   }, []);
 
+  // Modal focus: start on the dialog itself (a keyed remount after Prev/Next
+  // must not land on Close), keep the page behind inert except the toast
+  // region preview actions report into, and hand focus back on close.
+  // Mount-only so metadata's later portal stays live.
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowLeft" && onPrev) onPrev();
-      else if (e.key === "ArrowRight" && onNext) onNext();
-    };
-    document.addEventListener("keydown", onKey);
+    if (!mounted) return;
+    const trigger = document.activeElement;
+    const background = Array.from(document.body.children).filter((el) => el !== dialogRef.current
+      && !el.hasAttribute("inert") && !el.matches('[role="region"][aria-label="Notifications"]'));
+    background.forEach((el) => el.setAttribute("inert", ""));
+    dialogRef.current?.focus();
     return () => {
-      document.removeEventListener("keydown", onKey);
+      background.forEach((el) => el.removeAttribute("inert"));
+      if (trigger instanceof HTMLElement) trigger.focus({ preventScroll: true });
     };
-  }, [onClose, onPrev, onNext]);
+  }, [mounted]);
+
+  useEffect(() => {
+    if (metadataOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // Capture phase + stop: one Escape closes only the preview, not a drawer or modal under it.
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === "ArrowLeft" && onPrev) onPrev();
+      else if (e.key === "ArrowRight" && onNext) onNext();
+      else if (e.key === "Tab") {
+        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled):not([tabindex="-1"]), a[href]') ?? [])
+          .filter((el) => el.checkVisibility?.() ?? true);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        const active = document.activeElement;
+        if (!dialogRef.current?.contains(active) || active === dialogRef.current || active === (e.shiftKey ? first : last)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first)?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [metadataOpen, onClose, onPrev, onNext]);
 
   // Owned-mode photos get the clean original from BE; everyone else sees the
   // watermarked thumbnail. Closes G-2.
@@ -158,6 +220,8 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
   const hasImage = Boolean(renderedSrc);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const [imageAttempt, setImageAttempt] = useState(0);
+  const priorImageReloadKey = useRef(props.imageReloadKey);
   // Natural width / height of the served image, known once it loads.
   const [aspect, setAspect] = useState<number | null>(null);
 
@@ -165,7 +229,11 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     setImageLoaded(false);
     setImageFailed(false);
     setAspect(null);
-  }, [photo.id, renderedSrc]);
+    if (priorImageReloadKey.current !== props.imageReloadKey) {
+      priorImageReloadKey.current = props.imageReloadKey;
+      setImageAttempt((attempt) => attempt + 1);
+    }
+  }, [photo.id, renderedSrc, props.imageReloadKey]);
 
   if (!mounted) return null;
 
@@ -203,15 +271,18 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
 
   const content = (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
+      tabIndex={-1}
       aria-label={
         photo.bib ? `Preview photo ${photo.bib}` : "Preview untagged photo"
       }
-      className="fixed inset-0 z-50 flex items-center justify-center md:p-8 lg:p-10"
+      className="fixed inset-0 z-50 flex items-center justify-center outline-none md:p-8 lg:p-10"
     >
       <button
         type="button"
+        tabIndex={-1}
         onClick={onClose}
         aria-label="Close preview"
         className="absolute inset-0 bg-ink/85 backdrop-blur-md cursor-default"
@@ -280,6 +351,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             // Pinch / double-click zoom over whatever was served: the
             // watermarked preview, or the clean original for an owner.
             <ZoomableImage
+              key={imageAttempt}
               src={renderedSrc ?? ""}
               alt={
                 photo.alt ??
@@ -299,6 +371,14 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             />
           )}
 
+          {props.details && (!hasImage || imageFailed) && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-surface">
+              <p>Preview unavailable</p>
+              {(hasImage || props.onRefreshImage) && <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} disabled={props.isRefreshingImage} onClick={props.onRefreshImage ?? (() => { setImageFailed(false); setImageAttempt((n) => n + 1); })}>{props.isRefreshingImage ? "Refreshing preview…" : "Refresh preview"}</button>}
+              {props.imageRefreshError && <p role="alert">{props.imageRefreshError}</p>}
+            </div>
+          )}
+
           {/* Below-lg chrome floats over the photo: counter top-left, close
               top-right, prev/next at the vertical centre for the thumb. */}
           <div className="lg:hidden absolute inset-x-3 top-3 flex items-center justify-between z-10 pointer-events-none">
@@ -310,6 +390,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               <span />
             )}
             <button
+              ref={mobileClose}
               type="button"
               onClick={onClose}
               aria-label="Close preview"
@@ -348,7 +429,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
         </div>
 
         {/* ── Rail ──────────────────────────────────────────────────── */}
-        <aside className="flex flex-col shrink-0 lg:w-[340px] bg-bone border-t lg:border-t-0 lg:border-l border-line">
+        <aside className={cn("flex flex-col shrink-0 lg:w-[340px] bg-bone border-t lg:border-t-0 lg:border-l border-line", props.details && "min-h-0 max-h-[50dvh] overflow-hidden lg:max-h-none")}>
           {/* lg header: date on the left, counter + close on the right. */}
           <div className="hidden lg:flex items-center justify-between gap-4 px-6 py-4 border-b border-line">
             {dateLabel ? (
@@ -361,6 +442,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             <div className="flex items-center gap-4">
               {counter}
               <button
+                ref={desktopClose}
                 type="button"
                 onClick={onClose}
                 aria-label="Close preview"
@@ -371,7 +453,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             </div>
           </div>
 
-          <div className="px-5 pt-4 pb-3 md:px-6 lg:pt-6 lg:pb-0 lg:flex-1 lg:min-h-0">
+          <div className={cn("px-5 pt-4 pb-3 md:px-6 lg:pt-6 lg:pb-0 lg:flex-1 lg:min-h-0", props.details && "shrink-0")}>
             {/* Below lg: event name with the price beside it, then the credit. */}
             <div className="lg:hidden">
               <div className="flex items-start justify-between gap-4">
@@ -410,8 +492,10 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
             </div>
           </div>
 
+          {props.details && <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 md:px-6">{props.details}</div>}
+
           {/* Actions — anchored to the rail bottom on lg. */}
-          <div className="px-5 pb-4 md:px-6 md:pb-5 lg:pb-6 lg:pt-5 lg:border-t lg:border-line">
+          <div className={cn("px-5 pb-4 md:px-6 md:pb-5 lg:pb-6 lg:pt-5 lg:border-t lg:border-line", props.details && "shrink-0")}>
             {mode === "browse" && (
               <div className="hidden lg:block mb-4">
                 <p className="font-mono font-semibold tnum text-[26px] leading-none text-ink">
@@ -433,6 +517,7 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
                 <button
                   type="button"
                   onClick={props.onDownload}
+                  disabled={props.downloadDisabled ?? false}
                   className={cn(BTN_PRIMARY, BTN_SIZE.sm, "w-full")}
                 >
                   Download photo
@@ -483,6 +568,17 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
               </>
             )}
 
+            {showMetadata && (
+              <button
+                ref={metadataTrigger}
+                type="button"
+                onClick={() => setOpenMetadataContext(metadataContext)}
+                className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-2.5 w-full")}
+              >
+                Show Metadata
+              </button>
+            )}
+
             {/* Gesture hints — invisible gestures don't ship. */}
             {hasImage && (
               <p className="mt-3 lg:mt-4 font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft text-center lg:text-left">
@@ -498,7 +594,20 @@ export function PhotoPreviewCard(props: PhotoPreviewCardProps) {
     </div>
   );
 
-  return createPortal(content, document.body);
+  return <>
+    {createPortal(content, document.body)}
+    {(access === "owner" || access === "public") && (
+      <PhotoMetadataDialog
+        photoId={photo.id}
+        access={access}
+        isOpen={metadataOpen}
+        onClose={() => setOpenMetadataContext(null)}
+        onDenied={() => setDeniedMetadataContext(metadataContext)}
+        triggerRef={metadataTrigger}
+        fallbackFocus={focusPreviewClose}
+      />
+    )}
+  </>;
 }
 
 // Photo credit line in the rail.
@@ -522,12 +631,12 @@ function PhotographerCredit({
     // tracking measures roughly double its intuitive width, so a long handle
     // overflows the 375px strip without it. See vault notes/ui-pitfalls
     // 2026-05-06 "mono-uppercase chip wrapped mid-word at 375px".
-    <Kicker as="p" tone="soft" className="min-w-0 truncate">
+    <Kicker as="p" tone="soft" className="min-w-0 truncate -my-[3px] py-[3px]">
       Photo by{" "}
       {handle ? (
         <Link
           href={`/${handle}`}
-          className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone rounded-sm"
+          className="py-[3px] text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone rounded-sm"
         >
           {name ?? `@${handle}`}
           <span aria-hidden="true" className="ml-1.5 no-underline">

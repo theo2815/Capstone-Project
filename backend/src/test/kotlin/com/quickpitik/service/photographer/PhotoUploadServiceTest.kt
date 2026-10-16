@@ -5,6 +5,8 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoMetadata
+import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotoUploadIntent
 import com.quickpitik.entity.PhotoUploadIntentState
@@ -59,6 +61,7 @@ import java.util.HexFormat
 import java.util.UUID
 import javax.imageio.ImageIO
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -67,6 +70,21 @@ import kotlin.test.assertTrue
 // re-upload returns the existing photo with no side effects (idempotent); a
 // different-event re-upload is rejected; a first-time upload stores the hash.
 class PhotoUploadServiceTest {
+
+    @Test fun `removed exact upload duplicate cannot return an available receipt`() {
+        stubValidationsPass()
+        val removed = existingPhoto(eventId).apply { removalState = com.quickpitik.entity.RemovalState.REMOVED }
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(removed)
+        assertFailsWith<ConflictException> { service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file()) }
+    }
+
+    @Test fun `removed exact preflight duplicate cannot report available same event photo`() {
+        val removed = existingPhoto(eventId).apply { removalState = com.quickpitik.entity.RemovalState.REMOVED }
+        Mockito.`when`(photoRepository.findByPhotographerIdAndContentHashIn(anyArg(), anyArg())).thenReturn(listOf(removed))
+        assertFailsWith<ConflictException> {
+            service(AiApiProperties(enabled = false)).checkExisting(photographerId, eventId, listOf(helloSha256))
+        }
+    }
 
     private lateinit var storageService: StorageService
     private lateinit var photoRepository: PhotoRepository
@@ -141,6 +159,7 @@ class PhotoUploadServiceTest {
         meterRegistry,
         entityManager,
         clock,
+        Mockito.mock(com.quickpitik.service.photos.PhotoErasureService::class.java),
     )
 
     private fun event(id: UUID = eventId, name: String = "Cebu Marathon 2026"): Event =
@@ -239,6 +258,7 @@ class PhotoUploadServiceTest {
         val intent = ArgumentCaptor.forClass(PhotoUploadIntent::class.java)
         Mockito.verify(photoUploadIntentRepository).saveAndFlush(capture(intent))
         assertEquals(requestId, intent.value.requestId)
+        assertEquals(null, intent.value.originalFilename)
         assertEquals("staging/photo-uploads/$photographerId/$eventId/${intent.value.photoId}/original", intent.value.stagingKey)
         assertEquals(intent.value.stagingKey, result.key)
         assertEquals(mapOf("Content-Type" to "image/jpeg"), result.uploadHeaders)
@@ -267,6 +287,43 @@ class PhotoUploadServiceTest {
         assertEquals(intent.photoId, result.photoId)
         assertEquals(intent.stagingKey, result.key)
         Mockito.verify(photoUploadIntentRepository, Mockito.never()).saveAndFlush(anyArg())
+    }
+
+    @Test
+    fun `a native begin without a request id reuses its open reservation for the same bytes`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+        val open = intent(helloBytes.size.toLong(), requestId = null)
+        Mockito.`when`(photoUploadIntentRepository.findReusablePending(
+            eqArg(photographerId), eqArg(eventId), eqArg(helloSha256), eqArg("image/jpeg"),
+            eqArg(helloBytes.size.toLong()), anyArg(), anyArg(),
+        )).thenReturn(open)
+
+        val result = service(AiApiProperties(enabled = false)).beginDirectUpload(
+            photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(),
+        )
+
+        assertEquals("direct", result.mode)
+        assertEquals(open.photoId, result.photoId)
+        assertEquals(open.stagingKey, result.key)
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).saveAndFlush(anyArg())
+    }
+
+    @Test
+    fun `a website begin with a request id never takes another reservation`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+
+        service(AiApiProperties(enabled = false)).beginDirectUpload(
+            photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(), UUID.randomUUID(), "website",
+        )
+
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).findReusablePending(
+            anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyLong(), anyArg(), anyArg(),
+        )
+        Mockito.verify(photoUploadIntentRepository).saveAndFlush(anyArg())
     }
 
     @Test
@@ -558,6 +615,33 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `cleanup rechecks back off by doubling within the recheck window`() {
+        val cleanedAt = CLEANUP_NOW.minusHours(4)
+        val current = intent(helloBytes.size.toLong()).apply {
+            state = PhotoUploadIntentState.EXPIRED
+            cleanupAfter = CLEANUP_NOW.minusMinutes(1)
+            this.cleanedAt = cleanedAt
+        }
+        Mockito.`when`(photoUploadIntentRepository.findCleanupCandidateIds(anyArg(), anyArg(), anyArg()))
+            .thenReturn(listOf(current.photoId))
+        Mockito.`when`(photoUploadIntentRepository.claimCleanup(anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.findById(current.photoId)).thenReturn(Optional.of(current))
+        Mockito.`when`(photoRepository.existsByS3Key(current.originalKey)).thenReturn(false)
+        Mockito.`when`(photoUploadIntentRepository.completeCleanup(anyArg(), anyArg(), anyArg(), nullableArg(), anyArg()))
+            .thenReturn(1)
+
+        service(AiApiProperties(enabled = false), clock = CLEANUP_CLOCK).cleanupDirectUploads()
+
+        Mockito.verify(photoUploadIntentRepository).completeCleanup(
+            eqArg(current.photoId),
+            eqArg(CLEANUP_NOW.plus(storageProperties.directUpload.cleanupDelay)),
+            eqArg(cleanedAt),
+            eqArg(CLEANUP_NOW.plusHours(4)),
+            eqArg(CLEANUP_NOW),
+        )
+    }
+
+    @Test
     fun `cleanup rechecks and removes an object that arrived after an earlier missing delete`() {
         val current = intent(helloBytes.size.toLong()).apply {
             state = PhotoUploadIntentState.EXPIRED
@@ -690,6 +774,67 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `a same event re-upload of a trashed photo reports it is in the trash`() {
+        stubValidationsPass()
+        val trashed = existingPhoto(eventId).apply { deletedAt = OffsetDateTime.now() }
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(trashed)
+
+        val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        assertEquals(trashed.id, dto.id)
+        assertTrue(dto.inTrash)
+        Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+    }
+
+    @Test
+    fun `preflight marks a trashed same event photo`() {
+        val trashed = existingPhoto(eventId).apply { deletedAt = OffsetDateTime.now() }
+        Mockito.`when`(photoRepository.findByPhotographerIdAndContentHashIn(anyArg(), anyArg())).thenReturn(listOf(trashed))
+
+        val result = service(AiApiProperties(enabled = false)).checkExisting(photographerId, eventId, listOf(helloSha256))
+
+        assertEquals("same_event", result.results.single().status)
+        assertTrue(result.results.single().inTrash)
+    }
+
+    @Test
+    fun `direct begin reports a purging duplicate without reserving or publishing again`() {
+        stubValidationsPass()
+        val purging = existingPhoto(eventId).apply {
+            deletedAt = OffsetDateTime.now().minusMinutes(1)
+            deletionStartedAt = OffsetDateTime.now()
+        }
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(purging)
+
+        val result = service(AiApiProperties(enabled = false)).beginDirectUpload(
+            photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(),
+        )
+
+        assertEquals("existing", result.mode)
+        assertEquals(purging.id, result.existing?.id)
+        assertTrue(result.existing!!.inTrash)
+        assertEquals("live", result.existing!!.status)
+        assertTrue(purging.deletedAt != null)
+        assertTrue(purging.deletionStartedAt != null)
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<PhotoUploadIntent>())
+        Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
+    }
+
+    @Test
+    fun `preflight preserves another events reservation while reporting its trash state`() {
+        val otherEventId = UUID.randomUUID()
+        val trashed = existingPhoto(otherEventId).apply { deletedAt = OffsetDateTime.now() }
+        Mockito.`when`(photoRepository.findByPhotographerIdAndContentHashIn(anyArg(), anyArg())).thenReturn(listOf(trashed))
+        Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(event(otherEventId, "Other race")))
+
+        val result = service(AiApiProperties(enabled = false)).checkExisting(photographerId, eventId, listOf(helloSha256))
+
+        assertEquals("different_event", result.results.single().status)
+        assertEquals("Other race", result.results.single().eventName)
+        assertTrue(result.results.single().inTrash)
+    }
+
+    @Test
     fun `same-event duplicate returns the existing photo and writes nothing`() {
         stubValidationsPass()
         val existing = existingPhoto(inEvent = eventId)
@@ -701,6 +846,7 @@ class PhotoUploadServiceTest {
 
         assertEquals(existing.id, dto.id)
         assertEquals("https://thumb", dto.thumbnailUrl)
+        assertFalse(dto.inTrash)
         // No new photo, no S3 write, no events fired — the re-upload is a no-op.
         Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
         Mockito.verify(storageService, Mockito.never())
@@ -778,7 +924,8 @@ class PhotoUploadServiceTest {
         val registry = SimpleMeterRegistry()
         val svc = service(AiApiProperties(enabled = false), registry)
 
-        val begin = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong())
+        val begin = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(),
+            originalFilename = "D:\\race/first.jpg")
         assertEquals("direct", begin.mode)
         assertTrue(begin.key!!.startsWith("staging/photo-uploads/$photographerId/$eventId/"))
         val intent = checkNotNull(saved)
@@ -795,6 +942,13 @@ class PhotoUploadServiceTest {
         Mockito.verify(entityManager).persist(capture(captor))
         assertEquals(helloSha256, captor.value.contentHash)
         assertEquals(intent.originalKey, captor.value.s3Key)
+        assertEquals("first.jpg", intent.originalFilename)
+        val metadata = ArgumentCaptor.forClass(PhotoMetadata::class.java)
+        Mockito.verify(entityManager).persist(capture(metadata))
+        assertEquals(captor.value.id, metadata.value.photoId)
+        assertEquals("first.jpg", metadata.value.originalFilename)
+        assertEquals(helloBytes.size.toLong(), metadata.value.originalSizeBytes)
+        assertEquals(PhotoMetadataState.PENDING, metadata.value.state)
         assertEquals("processing", dto.status)
         // The bytes never touched this server: no storage PUT in either step.
         Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
@@ -1089,6 +1243,34 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `multipart acceptance stores sanitized basename and actual byte size once`() {
+        stubValidationsPass()
+        val upload = file()
+        Mockito.`when`(upload.originalFilename).thenReturn("C:\\camera\\trip/ca\u0000fe\u0301.jpg")
+
+        service(AiApiProperties(enabled = false)).upload(photographerId, eventId, upload)
+
+        val metadata = ArgumentCaptor.forClass(PhotoMetadata::class.java)
+        Mockito.verify(entityManager).persist(capture(metadata))
+        assertEquals("café.jpg", metadata.value.originalFilename)
+        assertEquals(helloBytes.size.toLong(), metadata.value.originalSizeBytes)
+        assertEquals(PhotoMetadataState.PENDING, metadata.value.state)
+    }
+
+    @Test
+    fun `multipart acceptance limits a Unicode basename to 255 characters`() {
+        stubValidationsPass()
+        val upload = file()
+        Mockito.`when`(upload.originalFilename).thenReturn("/camera/" + "😀".repeat(300))
+
+        service(AiApiProperties(enabled = false)).upload(photographerId, eventId, upload)
+
+        val metadata = ArgumentCaptor.forClass(PhotoMetadata::class.java)
+        Mockito.verify(entityManager).persist(capture(metadata))
+        assertEquals("😀".repeat(255), metadata.value.originalFilename)
+    }
+
+    @Test
     fun `checkExisting reports new, same-event, and different-event per hash`() {
         val sameEventHash = "1111111111111111111111111111111111111111111111111111111111111111"
         val otherEventHash = "2222222222222222222222222222222222222222222222222222222222222222"
@@ -1115,6 +1297,7 @@ class PhotoUploadServiceTest {
         assertEquals("different_event", byHash[otherEventHash]?.status)
         assertEquals("Cebu Night Run", byHash[otherEventHash]?.eventName)
         assertEquals("new", byHash[newHash]?.status)
+        assertTrue(resp.results.all { !it.inTrash })
     }
 
     // ── Photographer-owned events (V46) ──────────────────────────────────
@@ -1155,7 +1338,7 @@ class PhotoUploadServiceTest {
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
 
         assertEquals("processing", dto.status)
-        Mockito.verify(entityManager).persist(anyArg<Photo>())
+        Mockito.verify(entityManager).persist(Mockito.argThat<Any> { it is Photo })
     }
 
     @Test
@@ -1211,7 +1394,7 @@ class PhotoUploadServiceTest {
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
 
         assertEquals("processing", dto.status)
-        Mockito.verify(entityManager).persist(anyArg<Photo>())
+        Mockito.verify(entityManager).persist(Mockito.argThat<Any> { it is Photo })
     }
 
     @Test
@@ -1295,6 +1478,26 @@ class PhotoUploadServiceTest {
         val dto = service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
         assertEquals(existing.id, dto.id)
         Mockito.verify(eventRepository, Mockito.never()).incrementPhotoCount(anyArg())
+    }
+
+    @Test
+    fun `a multipart upload that loses a cross event race removes its stored original`() {
+        stubValidationsPass()
+        val otherEvent = UUID.randomUUID()
+        Mockito.`when`(eventRepository.findById(otherEvent)).thenReturn(Optional.of(event(otherEvent, "Other Run")))
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg()))
+            .thenReturn(null, existingPhoto(otherEvent))
+        Mockito.doThrow(dataIntegrityViolation("uq_photos_photographer_content_hash"))
+            .`when`(entityManager).flush()
+
+        assertFailsWith<ConflictException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        }
+
+        val stored = ArgumentCaptor.forClass(Photo::class.java)
+        Mockito.verify(entityManager).persist(capture(stored))
+        Mockito.verify(storageService).put(eqArg(stored.value.s3Key), anyArg<ByteArray>(), anyArg<String>())
+        Mockito.verify(storageService).delete(stored.value.s3Key)
     }
 
     // A genuinely-unexpected constraint (e.g. a future FK) must surface as the

@@ -6,6 +6,7 @@ import { getAccessToken } from "@/lib/auth";
 import { buildWsUrl } from "@/lib/ws-url";
 import { useAuthStore } from "@/store/auth-store";
 import { inboxKeys, type InboxRole } from "@/hooks/use-inbox-messages";
+import { removalKeys } from "@/hooks/use-photo-removal";
 
 export function useInboxNotificationsWs(role: InboxRole, enabled: boolean): boolean {
   const qc = useQueryClient();
@@ -25,11 +26,16 @@ export function useInboxNotificationsWs(role: InboxRole, enabled: boolean): bool
       return !cancelled && current.isAuthenticated && current.user?.id === owner &&
         current.user.role === role && current.sessionVersion === session;
     };
-    const refresh = async () => {
+    const refresh = async (removalChanged = true) => {
       if (!isCurrent()) return;
       // Also cancel an initial read: an event may arrive before it resolves.
       await qc.cancelQueries({ queryKey, exact: true });
       if (isCurrent()) await qc.invalidateQueries({ queryKey, exact: true });
+      if (removalChanged && role === "PHOTOGRAPHER" && isCurrent()) {
+        const removalKey = removalKeys.photographer([owner, role, session]);
+        await qc.cancelQueries({ queryKey: removalKey });
+        if (isCurrent()) await qc.invalidateQueries({ queryKey: removalKey });
+      }
     };
     function connect() {
       if (!isCurrent()) return;
@@ -47,7 +53,9 @@ export function useInboxNotificationsWs(role: InboxRole, enabled: boolean): bool
         if (!isCurrent() || socket !== ws) return;
         try {
           const frame = JSON.parse(event.data);
-          if (frame.type === "message.created" && typeof frame.message?.id === "string") void refresh();
+          if (frame.type === "message.created" && typeof frame.message?.id === "string") {
+            void refresh(typeof frame.message.photoRemovalRequestId === "string");
+          }
         } catch { /* Ignore malformed frames. REST remains authoritative. */ }
       };
       ws.onclose = () => {

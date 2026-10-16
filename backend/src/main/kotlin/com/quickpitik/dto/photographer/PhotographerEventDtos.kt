@@ -75,6 +75,7 @@ data class PhotographerEventDetailDto(
     val description: String = "",
     val organizerName: String = "",
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
+    val deletedAt: OffsetDateTime? = null,
 )
 
 // POST /me/photographer/events — bound off the multipart form as a `@Valid
@@ -137,6 +138,7 @@ data class PhotographerLibraryPhotoDto(
     val tone: Int,
     val span: String,
     val thumbnailUrl: String?,
+    val mediaAvailable: Boolean,
     // Soft-delete timestamp (V52); non-null = in the photographer's trash.
     // Null on the active tab, set on the Deleted Photos tab.
     val deletedAt: OffsetDateTime? = null,
@@ -197,6 +199,9 @@ data class UploadedPhotoDto(
     val thumbnailUrl: String,
     val span: String,
     val aiDetectionStatus: String? = null,
+    // True when these bytes already belong to a photo in the photographer's trash
+    // (including one being permanently deleted). Nothing new was published.
+    val inTrash: Boolean = false,
 )
 
 // Pre-flight duplicate check (dedup Phase 2). The photographer's client hashes
@@ -225,6 +230,9 @@ data class PhotoExistsResult(
     val hash: String,
     val status: String,
     val eventName: String? = null,
+    // True when these bytes already belong to a photo in the photographer's trash
+    // (including one being permanently deleted). Nothing new was published.
+    val inTrash: Boolean = false,
 )
 
 data class PhotoExistsResponse(
@@ -307,10 +315,12 @@ fun detailDto(
         description = event.description,
         organizerName = event.organizerName,
         pricePerPhoto = event.pricePerPhoto,
+        deletedAt = event.deletedAt,
     )
 
 fun Photo.toLibraryDto(
     salesCount: Long,
+    mediaAvailable: Boolean,
     thumbnailUrlResolver: (Photo) -> String?,
 ): PhotographerLibraryPhotoDto =
     PhotographerLibraryPhotoDto(
@@ -326,6 +336,7 @@ fun Photo.toLibraryDto(
         tone = tone,
         span = span.wire,
         thumbnailUrl = thumbnailUrlResolver(this),
+        mediaAvailable = mediaAvailable,
         deletedAt = deletedAt,
         deletionStartedAt = deletionStartedAt,
     )
@@ -344,6 +355,7 @@ data class DirectUploadBeginRequest(
     val contentType: String,
     @field:Positive
     val sizeBytes: Long,
+    val originalFilename: String? = null,
     val requestId: UUID? = null,
     @field:Pattern(regexp = "^website$", message = "client must be website when supplied.")
     val client: String? = null,

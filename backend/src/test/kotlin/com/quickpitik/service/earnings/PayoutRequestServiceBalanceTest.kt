@@ -30,6 +30,7 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 // Phase 1 — the withdrawable balance is reservation- and clearing-aware:
@@ -51,6 +52,7 @@ class PayoutRequestServiceBalanceTest {
     private val photographerId = UUID.randomUUID()
 
     private fun <T> anyArg(): T = Mockito.any()
+    private fun <T> capture(c: ArgumentCaptor<T>): T = c.capture()
 
     @BeforeEach
     fun setUp() {
@@ -130,7 +132,7 @@ class PayoutRequestServiceBalanceTest {
         )
         assertEquals(false, service().getBalance(photographerId).primaryAccount?.hasQr)
         assertEquals(ErrorCodes.PAYOUT_QR_REQUIRED, assertFailsWith<ValidationException> { service().request(photographerId) }.code)
-        Mockito.verify(payoutCycleRepository, Mockito.never()).saveAndFlush(anyArg<PayoutCycle>())
+        Mockito.verify(payoutCycleRepository, Mockito.never()).insert(anyArg<PayoutCycle>())
     }
 
     @Test
@@ -189,14 +191,14 @@ class PayoutRequestServiceBalanceTest {
                 ),
             )
         Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
-        Mockito.`when`(payoutCycleRepository.countByPhotographerId(photographerId)).thenReturn(0L)
+        Mockito.`when`(payoutCycleRepository.nextCycleNumber()).thenReturn(100000L)
         Mockito.`when`(transactionRepository.countSalesWindow(anyArg(), anyArg(), anyArg())).thenReturn(3L)
-        Mockito.`when`(payoutCycleRepository.saveAndFlush(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
+        Mockito.`when`(payoutCycleRepository.insert(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
         val captor = ArgumentCaptor.forClass(PayoutCycle::class.java)
 
         service().request(photographerId)
 
-        Mockito.verify(payoutCycleRepository).saveAndFlush(captor.capture())
+        Mockito.verify(payoutCycleRepository).insert(capture<PayoutCycle>(captor))
         assertAmount("600", captor.value.amountPhp)
     }
 
@@ -229,9 +231,9 @@ class PayoutRequestServiceBalanceTest {
                 ),
             )
         Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
-        Mockito.`when`(payoutCycleRepository.countByPhotographerId(photographerId)).thenReturn(0L)
+        Mockito.`when`(payoutCycleRepository.nextCycleNumber()).thenReturn(100000L)
         Mockito.`when`(transactionRepository.countSalesWindow(anyArg(), anyArg(), anyArg())).thenReturn(3L)
-        Mockito.`when`(payoutCycleRepository.saveAndFlush(anyArg<PayoutCycle>()))
+        Mockito.`when`(payoutCycleRepository.insert(anyArg<PayoutCycle>()))
             .thenThrow(DataIntegrityViolationException("uq_payout_open_per_photographer"))
 
         val ex = assertFailsWith<ApiException> { service().request(photographerId) }
@@ -282,14 +284,39 @@ class PayoutRequestServiceBalanceTest {
                 ),
             )
         Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
-        Mockito.`when`(payoutCycleRepository.countByPhotographerId(photographerId)).thenReturn(0L)
+        Mockito.`when`(payoutCycleRepository.nextCycleNumber()).thenReturn(100000L)
         Mockito.`when`(transactionRepository.countSalesWindow(anyArg(), anyArg(), anyArg())).thenReturn(3L)
-        Mockito.`when`(payoutCycleRepository.saveAndFlush(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
+        Mockito.`when`(payoutCycleRepository.insert(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
 
         service().request(photographerId)
 
         val captor = ArgumentCaptor.forClass(PayoutStatusHistory::class.java)
         Mockito.verify(payoutStatusHistoryRepository).save(captor.capture())
         assertEquals(PayoutCycleStatus.PENDING.wire, captor.value.toStatus)
+    }
+
+    @Test
+    fun `a primary-key clash is not reported as an open request`() {
+        stubSums(cleared = "1000", lifetime = "1000", paid = "0", reserved = "0")
+        noOpenRequest()
+        Mockito.`when`(payoutAccountRepository.findByUserIdAndIsPrimaryTrue(photographerId))
+            .thenReturn(
+                PayoutAccount(
+                    userId = photographerId,
+                    method = PayoutMethod.GCASH,
+                    accountNumber = "09171234567",
+                    accountName = "Juan Dela Cruz",
+                    qrS3Key = "test/qr.png",
+                ),
+            )
+        Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(Optional.empty())
+        Mockito.`when`(payoutCycleRepository.nextCycleNumber()).thenReturn(100000L)
+        Mockito.`when`(transactionRepository.countSalesWindow(anyArg(), anyArg(), anyArg())).thenReturn(3L)
+        val clash = DataIntegrityViolationException("duplicate key",
+            org.hibernate.exception.ConstraintViolationException("dup", java.sql.SQLException("dup"), "payout_cycles_pkey"))
+        Mockito.`when`(payoutCycleRepository.insert(anyArg())).thenThrow(clash)
+
+        val thrown = assertFailsWith<DataIntegrityViolationException> { service().request(photographerId) }
+        assertSame(clash, thrown)
     }
 }

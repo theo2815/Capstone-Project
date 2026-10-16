@@ -10,6 +10,7 @@ import com.quickpitik.dto.photographer.UploadedPhotoDto
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoMetadata
 import com.quickpitik.entity.PhotoSpan
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotoUploadIntent
@@ -38,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
 import java.io.ByteArrayInputStream
+import java.text.Normalizer
 import java.time.Clock
 import java.time.Duration
 import java.time.LocalDate
@@ -65,6 +67,7 @@ class PhotoUploadService(
     private val meterRegistry: MeterRegistry,
     private val entityManager: EntityManager,
     private val clock: Clock,
+    private val erasure: com.quickpitik.service.photos.PhotoErasureService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency)
@@ -134,7 +137,8 @@ class PhotoUploadService(
 
         storageService.put(originalKey, bytes, contentType)
 
-        val dto = persistNew(photoId, eventId, photographerId, originalKey, contentHash, event)
+        val dto = persistNew(photoId, eventId, photographerId, originalKey, contentHash, event,
+            originalFilename = file.originalFilename, originalSizeBytes = bytes.size.toLong())
         timerSample.stop(meterRegistry.timer("qp.upload.duration"))
         return dto
     }
@@ -158,6 +162,7 @@ class PhotoUploadService(
         sizeBytes: Long,
         requestId: UUID? = null,
         client: String? = null,
+        originalFilename: String? = null,
     ): DirectUploadBeginResponse {
         if (client != null && client != WEBSITE_CLIENT) {
             throw ApiException(HttpStatus.BAD_REQUEST, ErrorCodes.VALIDATION_ERROR, "Unknown upload client.")
@@ -198,8 +203,15 @@ class PhotoUploadService(
             return DirectUploadBeginResponse(mode = "multipart")
         }
 
+        if (requestId == null) {
+            val now = OffsetDateTime.now(clock)
+            photoUploadIntentRepository.findReusablePending(
+                photographerId, eventId, hash, type, sizeBytes, now.plus(MIN_REUSABLE_PUT_LIFETIME), now,
+            )?.let { return presign(it) }
+        }
+
         val intent = try {
-            reserveIntent(photographerId, eventId, requestId, hash, type, sizeBytes)
+            reserveIntent(photographerId, eventId, requestId, hash, type, sizeBytes, originalFilename)
         } catch (error: DataIntegrityViolationException) {
             val existing = requestId?.let {
                 photoUploadIntentRepository.findByPhotographerIdAndRequestId(photographerId, it)
@@ -346,10 +358,14 @@ class PhotoUploadService(
 
         val cleanedAt = intent.cleanedAt ?: now
         val recheckUntil = cleanedAt.plus(storageProperties.directUpload.cleanupRecheckWindow)
+        // Recheck at doubling intervals (1 h, 2 h, 4 h … capped at the window):
+        // about ten passes per receipt over seven days instead of one per hour.
+        // The staging lifecycle rule remains the backstop for anything later.
+        val interval = maxOf(storageProperties.directUpload.cleanupDelay, Duration.between(cleanedAt, now))
         val nextCleanup = if (now >= recheckUntil) {
             null
         } else {
-            minOf(now.plus(storageProperties.directUpload.cleanupDelay), recheckUntil)
+            minOf(now.plus(interval), recheckUntil)
         }
         val completed = transactionTemplate.execute {
             photoUploadIntentRepository.completeCleanup(
@@ -386,6 +402,7 @@ class PhotoUploadService(
         contentHash: String,
         contentType: String,
         sizeBytes: Long,
+        originalFilename: String?,
     ): PhotoUploadIntent = checkNotNull(transactionTemplate.execute {
         photographerSettingsRepository.findByUserIdForUpdate(ownerId)
             ?: throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
@@ -407,6 +424,7 @@ class PhotoUploadService(
                 contentHash = contentHash,
                 contentType = contentType,
                 sizeBytes = sizeBytes,
+                originalFilename = sanitizeOriginalFilename(originalFilename),
                 stagingKey = stagingKeyFor(ownerId, eventId, photoId),
                 originalKey = originalKeyFor(eventId, photoId),
                 createdAt = now,
@@ -549,6 +567,8 @@ class PhotoUploadService(
                     refreshed.event,
                     intent,
                     token,
+                    intent.originalFilename,
+                    intent.sizeBytes,
                 )
             } catch (error: ConflictException) {
                 if (!rejectIntent(intent, token, error.code)) return resolveUnacquired(intent)
@@ -822,6 +842,8 @@ class PhotoUploadService(
         event: com.quickpitik.entity.Event,
         intent: PhotoUploadIntent? = null,
         leaseToken: UUID? = null,
+        originalFilename: String? = null,
+        originalSizeBytes: Long,
     ): UploadedPhotoDto {
         // PROCESSING until PhotoWatermarkService stores the watermark and flips
         // it LIVE. Runner/public queries filter status = LIVE, so the clean
@@ -875,6 +897,9 @@ class PhotoUploadService(
                 // existing original and increment counters twice when a commit response is lost.
                 entityManager.persist(photo)
                 entityManager.flush()
+                entityManager.persist(PhotoMetadata(photoId = photoId,
+                    originalFilename = sanitizeOriginalFilename(originalFilename),
+                    originalSizeBytes = originalSizeBytes))
 
                 // Atomic counter writes — concurrent uploads during a live marathon are
                 // the normal case, not an edge case. The prior read-modify-write pattern
@@ -904,6 +929,7 @@ class PhotoUploadService(
                 if (intent != null) {
                     val token = checkNotNull(leaseToken)
                     val settledAt = OffsetDateTime.now(clock)
+                    erasure.recordUploadIntent(photoId, intent)
                     if (photoUploadIntentRepository.complete(
                             intent.photoId,
                             token,
@@ -920,24 +946,30 @@ class PhotoUploadService(
                 .filterIsInstance<ConstraintViolationException>().firstOrNull()?.constraintName
             if (violated !in setOf(CONTENT_HASH_CONSTRAINT, "photos_pkey")) throw ex
             // Resolve only AFTER rollback: PostgreSQL rejects reads in an aborted transaction.
-            val existing = legacyCommittedPhoto(photoId, photographerId, eventId, originalKey, contentHash)
-                ?: duplicateOf(photographerId, eventId, contentHash)
-                ?: throw ex
+            val existing = try {
+                legacyCommittedPhoto(photoId, photographerId, eventId, originalKey, contentHash)
+                    ?: duplicateOf(photographerId, eventId, contentHash)
+                    ?: throw ex
+            } catch (conflict: ConflictException) {
+                // Multipart has no intent ledger: nothing else would ever remove this object.
+                if (intent == null) runCatching { storageService.delete(originalKey) }
+                throw conflict
+            }
             if (intent == null) {
                 if (originalKey != existing.s3Key) runCatching { storageService.delete(originalKey) }
             } else {
                 val token = checkNotNull(leaseToken)
                 val now = OffsetDateTime.now(clock)
-                val completed = transactionTemplate.execute {
-                    photoUploadIntentRepository.complete(
+                transactionTemplate.executeWithoutResult {
+                    erasure.recordUploadIntent(existing.id, intent)
+                    if (photoUploadIntentRepository.complete(
                         intent.photoId,
                         token,
                         existing.id,
                         cleanupAfter(intent, now),
                         now,
-                    )
-                } ?: 0
-                if (completed != 1) throw LeaseLostException()
+                    ) != 1) throw LeaseLostException()
+                }
             }
             if (intent != null) directOutcome("existing")
             return existingPhotoDto(existing)
@@ -975,6 +1007,7 @@ class PhotoUploadService(
         val existingByHash = photoRepository
             .findByPhotographerIdAndContentHashIn(photographerId, normalized)
             .associateBy { it.contentHash }
+        existingByHash.values.forEach(::requireNotRemoved)
 
         // Name the other events in one batch read rather than per-hit.
         val otherEventIds = existingByHash.values
@@ -990,11 +1023,14 @@ class PhotoUploadService(
             val photo = existingByHash[hash]
             when {
                 photo == null -> PhotoExistsResult(hash = hash, status = "new")
-                photo.eventId == eventId -> PhotoExistsResult(hash = hash, status = "same_event")
+                photo.eventId == eventId -> PhotoExistsResult(
+                    hash = hash, status = "same_event", inTrash = photo.deletedAt != null,
+                )
                 else -> PhotoExistsResult(
                     hash = hash,
                     status = "different_event",
                     eventName = otherEventNames[photo.eventId],
+                    inTrash = photo.deletedAt != null,
                 )
             }
         }
@@ -1006,6 +1042,7 @@ class PhotoUploadService(
     // end of upload(): same fields, a fresh presigned thumbnail, and the same
     // eventually-consistent aiDetectionStatus convention.
     private fun existingPhotoDto(photo: Photo): UploadedPhotoDto {
+        requireNotRemoved(photo)
         // A still-PROCESSING duplicate has no watermark object yet — fall back
         // to the original (owner-only response), same as the live return above.
         val thumbnailUrl = storageService.presignedGetUrl(
@@ -1023,7 +1060,24 @@ class PhotoUploadService(
             thumbnailUrl = thumbnailUrl,
             span = photo.span.wire,
             aiDetectionStatus = if (aiApiProperties.enabled) "pending" else "none",
+            inTrash = photo.deletedAt != null,
         )
+    }
+
+    private fun sanitizeOriginalFilename(raw: String?): String? {
+        val basename = raw?.substringAfterLast('/')?.substringAfterLast('\\') ?: return null
+        val normalized = Normalizer.normalize(basename, Normalizer.Form.NFC)
+            .replace(Regex("[\\p{Cc}\\p{Cf}\\p{Cs}]"), "")
+            .trim()
+        val codePoints = normalized.codePoints().limit(255).toArray()
+        return String(codePoints, 0, codePoints.size).takeIf { it.isNotBlank() }
+    }
+
+    private fun requireNotRemoved(photo: Photo) {
+        if (photo.removalState == com.quickpitik.entity.RemovalState.REMOVED) {
+            throw ConflictException(code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "This photo was removed. Contact support about its removal case.")
+        }
     }
 
     private companion object {
@@ -1035,6 +1089,7 @@ class PhotoUploadService(
         // month after the event date (before/during/after), then it closes.
         const val OWNER_UPLOAD_GRACE_MONTHS = 1L
         const val WEBSITE_CLIENT = "website"
+        val MIN_REUSABLE_PUT_LIFETIME: Duration = Duration.ofMinutes(5)
         val TERMINAL_VALIDATION_CODES = setOf(
             ErrorCodes.PAYLOAD_TOO_LARGE,
             ErrorCodes.UNSUPPORTED_MEDIA_TYPE,

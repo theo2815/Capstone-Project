@@ -39,12 +39,17 @@ back to a different member's directory.
 - **BatchMyPhotos:** `TBD — ask Dillan, then record it here`
 - **Monorepo:** `TBD — ask Dillan, then record it here`
 
+**Windows machine** (identity `dillan.dillam@gmail.com`)
+
+- **Second Brain (vault):** `C:\Users\Dillan\Documents\Capstone-Obsidian-Vault`
+- **Monorepo:** `C:\Users\Dillan\Capstone-Project\Capstone-Project`
+
 ## Tapales, Christian Kyle — Developer
 
 - **Git identity:** `tapaleskyle629@gmail.com` · `63660581+christian-tapales@users.noreply.github.com`
-- **Second Brain (vault):** `TBD — ask Christian, then record it here`
+- **Second Brain (vault):** `C:\Users\USER\Documents\School\4th Year 1st Semester\Capstone and Research 2\CAPSTONE PROJECT\Capstone-Obsidian-Vault`
 - **BatchMyPhotos:** `TBD — ask Christian, then record it here`
-- **Monorepo:** `TBD — ask Christian, then record it here`
+- **Monorepo:** `C:\Users\USER\Documents\School\4th Year 1st Semester\Capstone and Research 2\CAPSTONE PROJECT\Capstone-Project`
 
 ---
 

@@ -1,6 +1,9 @@
 package com.quickpitik.controller
 
 import com.quickpitik.dto.auth.AuthResponse
+import com.quickpitik.dto.auth.DesktopCodeRequest
+import com.quickpitik.dto.auth.DesktopCodeResponse
+import com.quickpitik.dto.auth.DesktopExchangeRequest
 import com.quickpitik.dto.auth.EmailVerificationConfirmRequest
 import com.quickpitik.dto.auth.ForgotPasswordRequest
 import com.quickpitik.dto.auth.GoogleLoginRequest
@@ -17,6 +20,7 @@ import com.quickpitik.dto.auth.VerifyResetOtpResponse
 import com.quickpitik.dto.profile.EmailChangeConfirmRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.auth.AuthService
+import com.quickpitik.service.auth.DesktopAuthService
 import com.quickpitik.service.auth.EmailVerificationService
 import com.quickpitik.service.auth.GoogleAuthService
 import com.quickpitik.service.auth.PasswordResetService
@@ -26,7 +30,9 @@ import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
 import com.quickpitik.service.ratelimit.clientIp
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import jakarta.validation.Valid
+import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
@@ -42,6 +48,7 @@ class AuthController(
     private val passwordResetService: PasswordResetService,
     private val emailChangeService: EmailChangeService,
     private val emailVerificationService: EmailVerificationService,
+    private val desktopAuthService: DesktopAuthService,
     private val rateLimiter: RateLimiter,
 ) {
     @PostMapping("/register")
@@ -89,11 +96,41 @@ class AuthController(
 
     // Refresh is intentionally NOT rate-limited per IP — a single user
     // behind a shared NAT (campus, café) can legitimately fire refreshes
-    // when access tokens expire. Abuse is bounded by refresh-token rotation
-    // (parent token revoked on every refresh) + revoke-on-reuse.
+    // when access tokens expire. Abuse is bounded by refresh-token rotation:
+    // the parent is revoked on every refresh, and a parent re-presented within
+    // jwt.refresh-rotation-grace (a lost answer, or a second browser tab) gets
+    // one more token while its first child is still live. There is no
+    // revoke-on-reuse of the whole family.
     @PostMapping("/refresh")
     fun refresh(@Valid @RequestBody req: RefreshRequest): AuthResponse =
         authService.refresh(req)
+
+    // Desktop connect (V85), step 1: the signed-in website asks for a one-time
+    // code bound to the BatchMyPhotos PKCE challenge. Photographers only; the
+    // code is returned once and never cached.
+    @PostMapping("/desktop/codes")
+    @PreAuthorize("hasRole('PHOTOGRAPHER')")
+    fun mintDesktopCode(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @Valid @RequestBody req: DesktopCodeRequest,
+        response: HttpServletResponse,
+    ): DesktopCodeResponse {
+        response.setHeader("Cache-Control", "no-store")
+        return desktopAuthService.mint(principal.userId, req.codeChallenge)
+    }
+
+    // Step 2: the desktop redeems the code with its verifier. Public — the code
+    // in the body is the credential — so it shares the login rate policy.
+    @PostMapping("/desktop/exchange")
+    fun exchangeDesktopCode(
+        @Valid @RequestBody req: DesktopExchangeRequest,
+        request: HttpServletRequest,
+        response: HttpServletResponse,
+    ): AuthResponse {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_AUTH_LOGIN, clientIp(request))
+        response.setHeader("Cache-Control", "no-store")
+        return desktopAuthService.exchange(req.code, req.codeVerifier)
+    }
 
     @PostMapping("/logout")
     fun logout(@RequestBody(required = false) req: LogoutRequest?): Map<String, Boolean> {

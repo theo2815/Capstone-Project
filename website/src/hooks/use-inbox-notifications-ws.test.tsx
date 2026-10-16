@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import { useInboxNotificationsWs } from "./use-inbox-notifications-ws";
 import { inboxKeys, useMyPhotographerMessages, useMyRunnerMessages } from "./use-inbox-messages";
+import { removalKeys } from "./use-photo-removal";
 
 vi.mock("@/lib/auth", () => ({ getAccessToken: () => "fixture-token" }));
 class Socket {
@@ -27,6 +28,17 @@ describe.each(["PHOTOGRAPHER", "RUNNER"] as const)("%s realtime inbox", (role) =
     vi.stubGlobal("WebSocket", vi.fn(function () { const socket = new Socket(); sockets.push(socket); return socket; }));
   });
   afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+  if (role === "PHOTOGRAPHER") it("refreshes scoped removal cases on reconnect and durable removal notices", async () => {
+    const key = removalKeys.photographer([user.id, role, useAuthStore.getState().sessionVersion]);
+    client.setQueryData(key, []);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    renderHook(() => useInboxNotificationsWs(role, true), { wrapper });
+    await act(async () => sockets[0].onopen());
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+    invalidate.mockClear();
+    await act(async () => sockets[0].onmessage({ data: JSON.stringify({ type: "message.created", message: { ...message, photoRemovalRequestId: "case" } }) }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+  });
   it("refreshes authoritative pages on connect and duplicate pushes, ignoring malformed frames", async () => {
     let rows: typeof message[] = [];
     const get = vi.spyOn(api, "getWithTotal").mockImplementation(async () => ({ data: rows, total: rows.length }));

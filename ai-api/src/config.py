@@ -6,6 +6,11 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
+# DEBUG turns the API-key check off (src/middleware/auth.py), so it is allowed only
+# when ENVIRONMENT was set on purpose to one of these. The "development" default does
+# not count: a deployment that forgets ENVIRONMENT must not run with the check off.
+DEV_ENVIRONMENTS = frozenset({"development", "local", "test"})
+
 
 class Settings(BaseSettings):
     # Application
@@ -54,6 +59,11 @@ class Settings(BaseSettings):
     BLUR_MAX_IMAGE_PIXELS: int = Field(default=24_000_000, gt=0)
     BLUR_MAX_ACTIVE_REQUESTS: int = Field(default=2, gt=0)
     BLUR_DECODE_CONCURRENCY: int = Field(default=2, gt=0)
+    # Stage-2 photos scored at the same time inside one stream sub-batch. 1 = one after
+    # another (today). 2 uses both native inference slots of this process for one
+    # request: set BLUR_MAX_ACTIVE_REQUESTS=1 beside it, or a second request is still
+    # admitted and either stream can then end part-way, marked incomplete.
+    BLUR_STAGE2_CONCURRENCY: int = Field(default=1, ge=1, le=2)
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik"
@@ -63,7 +73,7 @@ class Settings(BaseSettings):
 
     # ML Models
     MODEL_DIR: str = "./models"
-    MODEL_PROFILE: Literal["all", "blur"] = "all"
+    MODEL_PROFILE: Literal["all", "blur"] = "blur"
     USE_GPU: bool = False
     GPU_DEVICE: int = 0
 
@@ -74,27 +84,24 @@ class Settings(BaseSettings):
     # Re-evaluate labeled images before changing it; BLUR_THRESHOLD is scale-sensitive.
     BLUR_DETECT_DECODE_DIM: int = Field(default=640, gt=0)
     BLUR_DETECTION_MIN_CONFIDENCE: float = Field(default=0.5, ge=0, le=1)
-    # Resolution the blur CLASSIFIER decodes to before inference. Calibrated, not
-    # arbitrary: re-measured 2026-08-14 on 1057 labelled val images after
-    # _preprocess switched to INTER_AREA, so this is no longer just standing in
-    # for missing anti-aliasing — 640 is genuinely the better input scale.
-    # Holding preprocess constant and varying only this value:
-    #   640  -> 4/698 blurry called sharp
-    #   1280 -> 7/698 blurry called sharp
-    # (End-to-end served accuracy is 98.30% — `python scripts/blur_gate.py`.)
+    # Resolution the blur CLASSIFIER decodes to before inference: the full desktop
+    # upload (BLUR_AI_MAX_DIMENSION = 1280 in BatchMyPhotos). The two-stage
+    # classifier makes its own smaller views from it (640 gray for the whole-frame
+    # rule, a 640 padded square for the model), so nothing is thrown away here.
+    # The old 640 value was calibrated for the retired 224-px centre-crop model.
     # Shared by /blur/classify, /blur/classify/stream and the blur_classify_batch
     # worker — keep all three on one value or they will disagree on the same
-    # photo. Distinct from MAX_INFERENCE_DIMENSION (1280), which is sized for bib
-    # OCR and must stay there.
-    BLUR_CLASSIFY_DECODE_DIM: int = Field(default=640, gt=0)
-
-    # Face Recognition
-    FACE_SIMILARITY_THRESHOLD: float = Field(default=0.4, ge=0, le=1)
-    FACE_DET_SIZE: int = 640
-    FACE_MIN_ENROLLMENT_CONFIDENCE: float = Field(default=0.7, ge=0, le=1)
-
-    # Bib Recognition
-    BIB_MIN_CHARS: int = 2
+    # photo. Equal to MAX_INFERENCE_DIMENSION today, but a separate setting: that
+    # one is the generic colour-decode cap.
+    BLUR_CLASSIFY_DECODE_DIM: int = Field(default=1280, gt=0)
+    # Whole-frame rule, stage 1 of the blur classifier (src/ml/blur/whole_frame.py).
+    # Learned from the labelled event folds by scripts/fit_blur_whole_frame_rule.py:
+    # re-fit after the labelled photos change, never hand-tune.
+    #   fine detail <= SOFT_MAX_DETAIL and no sideways smear  -> whole-frame soft
+    #   direction ratio > MOTION_MIN_RATIO and fine detail <= MOTION_MAX_DETAIL -> motion
+    BLUR_SOFT_MAX_DETAIL: float = Field(default=34.1, gt=0)
+    BLUR_MOTION_MIN_RATIO: float = Field(default=2.63, gt=0)
+    BLUR_MOTION_MAX_DETAIL: float = Field(default=52.4, gt=0)
 
     # Inference
     INFERENCE_TIMEOUT: int = 120  # Per-image inference timeout in seconds
@@ -110,9 +117,10 @@ class Settings(BaseSettings):
     # these matter less — batching (dynamic axis) is what drives GPU throughput.
     ONNX_INTRA_OP_THREADS: int = 6
     ONNX_INTER_OP_THREADS: int = 4
-
-    # OCR
-    OCR_MAX_WORKERS: int = 8  # Thread pool size for PaddleOCR batch inference
+    # Whether ONNX Runtime's worker threads keep spinning between pieces of work. Spinning
+    # is fastest on dedicated cores; inside a CPU quota (a 2-vCPU container) it can burn
+    # the quota and slow everything else down. False is the setting to try on staging.
+    ONNX_ALLOW_SPINNING: bool = True
 
     # Auth
     API_KEY_HEADER: str = "X-API-Key"
@@ -130,6 +138,8 @@ class Settings(BaseSettings):
     WEBHOOK_TIMEOUT: int = 10
     WEBHOOK_MAX_RETRIES: int = 3
     WEBHOOK_SECRET_KEY: str = ""  # Fernet key for encrypting webhook secrets at rest
+    # Limits a whole webhook delivery, not one read.
+    WEBHOOK_DELIVERY_DEADLINE_SECONDS: float = Field(default=30, gt=0)
 
     # Celery
     CELERY_SECURITY_KEY: str = ""
@@ -176,31 +186,11 @@ class Settings(BaseSettings):
     BLOB_RETENTION_SECONDS: int = Field(default=86400, gt=0)
 
     # Image preprocessing — downscale large images before inference.
-    # 640 was too aggressive for marathon photos: a 2400x1600 frame got shrunk
-    # to 426x640, leaving the bib at ~40x27px which is below the YOLO bib
-    # detector's effective range. 1280 keeps inference fast while preserving
-    # enough bib pixels for OCR (~80x54px on a typical race shot).
-    #
-    # Shared by the FACE and BIB pipelines end to end — single endpoints AND
-    # Celery workers. The workers used to hardcode their own values (face 768,
-    # bib 1024) while the endpoints used this one, so the same photo produced
-    # different results depending on which path indexed it. Re-measured
-    # 2026-08-14 on the labelled val sets before unifying:
-    #   face (323 photos, 655 GT faces): 1280 detects 657 vs 768's 653, and
-    #     never fewer; 4 faces are found ONLY at 1280. Embedding drift between
-    #     the two dims for the same face is cosine 0.974 mean / 0.818 min —
-    #     comfortably above the backend's 0.6 match threshold, so the drift did
-    #     not flip matches, but it did mean two embedding populations per event.
-    #     Cost of 1280 over 768: +3% end-to-end (+11.7 ms/image); decode is
-    #     unchanged (the full-res JPEG decode dominates the resize) and
-    #     RetinaFace letterboxes to FACE_DET_SIZE either way.
-    #   bib (80 photos): identical YOLO detections (the bib ONNX is a fixed
-    #     640 export, so decode dim never reached it) but 17/80 images READ a
-    #     DIFFERENT bib string at 1024 vs 1280 — e.g. 8037/6037, 80913/80915.
-    #     A bib number is an exact-match key for participant lookup, so that
-    #     divergence mis-attributes photos. 1024 was also below the floor this
-    #     setting was raised to in the first place.
-    # Blur is deliberately NOT on this value: see BLUR_CLASSIFY_DECODE_DIM.
+    # Longest side validate_and_decode shrinks a colour image to (the default of
+    # downscale_for_inference). 1280 was measured for the face and bib pipelines,
+    # removed 2026-10-16 (the measurements are in git history). /blur/classify
+    # reads it only as a first cap; its real decode target is
+    # BLUR_CLASSIFY_DECODE_DIM, which the batch worker passes directly.
     MAX_INFERENCE_DIMENSION: int = Field(default=1280, gt=0)
 
     @model_validator(mode="after")
@@ -231,10 +221,24 @@ class Settings(BaseSettings):
                 raise ValueError("blur inference sub-batches must contain at most 50 images")
         return self
 
+    @model_validator(mode="after")
+    def refuse_debug_outside_dev(self):
+        if self.DEBUG and (
+            "ENVIRONMENT" not in self.model_fields_set
+            or self.ENVIRONMENT not in DEV_ENVIRONMENTS
+        ):
+            raise ValueError(
+                "DEBUG=true is only allowed when ENVIRONMENT is set to one of "
+                f"{', '.join(sorted(DEV_ENVIRONMENTS))}; set DEBUG=false otherwise"
+            )
+        return self
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
+        # A settings error at startup must not print env values (secrets) into logs.
+        "hide_input_in_errors": True,
     }
 
 

@@ -1,5 +1,7 @@
 package com.quickpitik.repository
 
+import jakarta.persistence.LockModeType
+import org.springframework.data.jpa.repository.Lock
 import com.quickpitik.entity.PayoutReport
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
@@ -9,6 +11,10 @@ import org.springframework.data.repository.query.Param
 import java.util.UUID
 
 interface PayoutReportRepository : JpaRepository<PayoutReport, UUID> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM PayoutReport r WHERE r.id = :id")
+    fun findByIdForUpdate(@Param("id") id: UUID): PayoutReport?
 
     // The OPEN-row gate behind REPORT_ALREADY_OPEN — service checks before the
     // insert so we can return a clean 409 without relying on the DB

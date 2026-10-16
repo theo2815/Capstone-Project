@@ -14,8 +14,8 @@ ai-api/
 ├── Dockerfile.dev              # Development image (with hot-reload).
 ├── docker-compose.yml          # 4 services: ai-api, celery-worker, db (pg+pgvector),
 │                               # redis. Default dev config.
-├── docker-compose.prod.yml     # Complete standalone PRODUCTION stack — api, 4 per-queue
-│                               # celery workers, db, redis, nginx, certbot. Not an
+├── docker-compose.prod.yml     # Complete standalone PRODUCTION stack — api, 2 per-queue
+│                               # celery workers (blur, default), db, redis, nginx, certbot. Not an
 │                               # overlay on docker-compose.yml (that one is dev-only).
 ├── docker-compose.gpu.yml      # GPU overlay (NVIDIA reservation + USE_GPU=true).
 │                               # Layer on docker-compose.prod.yml.
@@ -30,8 +30,6 @@ ai-api/
 ├── build_cpp.py                # Manual build script — auto-detects MSVC on Windows.
 │                               # Usage: `python build_cpp.py`
 ├── _quickpitik_cpp.*.pyd/.so     # Compiled C++ extension (gitignored; produced by build).
-├── yolov8n-cls.pt             # Pre-trained YOLOv8 weights used as the base for
-│                               # blur classifier training (gitignored).
 │
 ├── gen_api_key.py              # One-off script to generate a new API key.
 ├── insert_key.py               # One-off script to insert an API key into the DB.
@@ -58,9 +56,6 @@ ai-api/
 │   │       ├── router.py       # Combines all v1 routers into one.
 │   │       ├── health.py       # GET /health, GET /health/ready
 │   │       ├── blur.py         # Single/stream/batch/mega for detect + classify.
-│   │       ├── faces.py        # detect/enroll/search/compare, persons CRUD,
-│   │       │                   # search-batch, enroll-batch, search-mega.
-│   │       ├── bibs.py         # recognize + batch + mega.
 │   │       ├── jobs.py         # GET /jobs/{id} (with offset/limit pagination).
 │   │       ├── webhooks.py     # POST/GET/DELETE /webhooks.
 │   │       │                   # Basic SSRF check at registration time.
@@ -77,62 +72,40 @@ ai-api/
 │   │   ├── blur.py             # BlurType enum, BlurMetrics, BlurDetectionResponse,
 │   │   │                       # BlurClassProbabilities, BlurClassificationResponse,
 │   │   │                       # BlurTypeDetectionResponse.
-│   │   ├── faces.py            # BoundingBox, FaceDetection, FaceSearchResult,
-│   │   │                       # FaceDetect/Search/Enroll/Compare responses,
-│   │   │                       # PersonResponse, PersonListResponse.
-│   │   ├── bibs.py             # BibCandidate, BibDetection, BibRecognitionResponse.
 │   │   ├── jobs.py             # JobStatus enum, JobCreateResponse, JobStatusResponse.
 │   │   └── webhooks.py         # ALLOWED_EVENTS, WebhookCreateRequest,
 │   │                           # WebhookResponse, WebhookListResponse.
 │   │
 │   │
-│   ├── services/               # === LAYER 2: BUSINESS LOGIC ===
-│   │   │                       # Only blur currently has a dedicated service class.
-│   │   │                       # Face and bib logic lives inline in the API handlers
-│   │   │                       # because orchestration is still thin — introduce a
-│   │   │                       # service class when the rules grow.
-│   │   │
-│   │   └── blur_service.py     # BlurService — wraps BlurDetector + optional
-│   │                           # BlurClassifier. Used by tests; handlers also
-│   │                           # call the ML layer directly today.
+│   │   (No services/ package today — LAYER 2, business logic. The blur handlers
+│   │    call the ML layer directly because orchestration is still thin; add
+│   │    src/services/ when the rules grow.)
 │   │
 │   │
 │   ├── ml/                     # === LAYER 3: ML MODEL WRAPPERS ===
 │   │   │                       # Each file wraps one AI library. No HTTP or DB awareness.
 │   │   │
 │   │   ├── registry.py         # MODEL REGISTRY.
-│   │   │                       # Loads all models in parallel via asyncio.gather
-│   │   │                       # during FastAPI lifespan. Pre-imports torch,
-│   │   │                       # insightface, ultralytics in the main thread to
-│   │   │                       # avoid Windows DLL races. Releases GPU/ONNX resources
-│   │   │                       # on shutdown.
+│   │   │                       # Loads the blur detector and blur classifier in
+│   │   │                       # parallel via asyncio.gather during FastAPI lifespan.
+│   │   │                       # Releases GPU/ONNX resources on shutdown.
 │   │   │
 │   │   ├── blur/
 │   │   │   ├── detector.py     # BlurDetector (Laplacian variance + FFT high-
 │   │   │   │                   # frequency ratio, 640px-normalized). `detect_fast`
 │   │   │   │                   # skips FFT for the hot path. Uses one OpenCV/NumPy
 │   │   │   │                   # score contract across all classical callers.
-│   │   │   └── classifier.py   # BlurClassifier (YOLOv8n-cls, 4 classes via ONNX).
-│   │   │                       # Optional — loads only if
-│   │   │                       # models/blur_classifier/blur_classifier.onnx exists.
-│   │   │                       # Uses C++ `classify_preprocess` when available.
-│   │   │
-│   │   ├── faces/
-│   │   │   ├── embedder.py     # FaceEmbedder — wraps InsightFace `buffalo_l`
-│   │   │   │                   # (RetinaFace + ArcFace). Drops unused genderage +
-│   │   │   │                   # extra landmark sub-models at load (~40% less
-│   │   │   │                   # compute/memory).
-│   │   │   └── matcher.py      # cosine_similarity + find_matches (top-K).
-│   │   │                       # Uses C++ `batch_cosine_topk` when available.
-│   │   │
-│   │   └── bibs/
-│   │       ├── detector.py     # BibDetector — loads a custom YOLOv8n ONNX via
-│   │       │                   # Ultralytics. Refuses non-.onnx paths for safety.
-│   │       └── recognizer.py   # BibRecognizer — PaddleOCR 3.x (PP-OCRv5).
-│   │                           # `recognize_batch` parallelises `predict()` calls
-│   │                           # across an OCR_MAX_WORKERS thread pool. OCR digits
-│   │                           # are cleaned with a regex filter + substitution map
-│   │                           # (O→0, I→1, S→5, etc.).
+│   │   │   ├── whole_frame.py  # Stage 1: the whole-frame rule (no model).
+│   │   │   ├── person_detector.py  # Stage 2: letterbox + NMS around the ONNX
+│   │   │   │                   # person detector.
+│   │   │   ├── people.py       # Stage 2: per-person sharpness, the thirteen
+│   │   │   │                   # features, the logistic rule.
+│   │   │   └── classifier.py   # BlurClassifier: two-stage blur classifier (whole-frame
+│   │   │                       # rule, then person detector + per-person sharpness +
+│   │                           # logistic rule); four classes reported. Needs
+│   │                           # models/person_detector/yolov8n_seg_person.onnx
+│   │                           # and models/blur_classifier/people_rule.json
+│   │                           # (required in the blur profile, optional in all).
 │   │
 │   │
 │   ├── cpp/                    # === C++ EXTENSION SOURCE ===
@@ -140,14 +113,13 @@ ai-api/
 │   │   │                       # All functions release the GIL.
 │   │   │
 │   │   ├── bindings.cpp        # PYBIND11_MODULE — exposes all C++ functions.
-│   │   ├── face_ops.h/.cpp     # cosine_similarity, batch_cosine_topk (partial_sort,
-│   │   │                       # AVX2-friendly).
 │   │   ├── blur_ops.h/.cpp     # laplacian_variance (single-pass sum+sum_sq),
 │   │   │                       # fft_hf_ratio (radix-2 Cooley-Tukey 2D FFT),
 │   │   │                       # batch_blur_metrics.
 │   │   └── preprocess_ops.h/.cpp  # bgr_to_gray, resize_gray (bilinear),
 │   │                           # classify_preprocess (fused resize + normalize +
-│   │                           # transpose for YOLOv8-cls input).
+│   │                           # transpose; served inference no longer calls it:
+│   │                           # the blur classifier measures people at 1280 px).
 │   │
 │   │
 │   ├── db/                     # === LAYER 4: DATABASE ===
@@ -161,20 +133,17 @@ ai-api/
 │   │   │                       # Exposes init_sync_db, close_sync_db, get_sync_session.
 │   │   │
 │   │   ├── models.py           # DATABASE TABLES:
-│   │   │                       # - Person (id, name, api_key_id, event_id, metadata)
-│   │   │                       # - FaceEmbedding (person_id, Vector(512), image_hash,
-│   │   │                       #     quality_score)
+│   │   │                       # - Person, FaceEmbedding: retired face tables, kept
+│   │   │                       #     (no served code reads or writes them)
 │   │   │                       # - Job (job_type, status, progress, total/processed,
 │   │   │                       #     result JSONB, api_key_id, timestamps)
 │   │   │                       # - WebhookSubscription (url, events, secret, api_key_id)
 │   │   │                       # - APIKey (key_hash, scopes, rate_tier, active)
 │   │   │
 │   │   ├── repositories/
-│   │   │   ├── face_repo.py        # Async — persons CRUD, embeddings, batch search.
 │   │   │   ├── job_repo.py         # Async — create/update/complete/fail,
 │   │   │   │                       # count_active_by_key (backpressure).
 │   │   │   ├── webhook_repo.py     # Async — subscription CRUD.
-│   │   │   ├── sync_face_repo.py   # Sync equivalent used by Celery tasks.
 │   │   │   ├── sync_job_repo.py    # Sync — plus reap_stale_jobs, cleanup_old_jobs.
 │   │   │   └── sync_webhook_repo.py # Sync — list_by_event for worker dispatch.
 │   │   │
@@ -203,7 +172,7 @@ ai-api/
 │   │
 │   │
 │   ├── workers/                # === BACKGROUND TASK PROCESSING ===
-│   │   ├── celery_app.py       # Celery config. Queues: default, blur, face, bib.
+│   │   ├── celery_app.py       # Celery config. Queues: default, blur.
 │   │   │                       # Task time limits (soft 3300s, hard 3600s),
 │   │   │                       # worker_max_tasks_per_child=500,
 │   │   │                       # worker_max_memory_per_child=2GB,
@@ -221,9 +190,6 @@ ai-api/
 │   │   └── tasks/
 │   │       ├── blur_tasks.py       # blur.detect_batch, blur.classify_batch.
 │   │       │                       # Sub-batches of INFERENCE_SUB_BATCH_SIZE (50).
-│   │       ├── face_tasks.py       # faces.process_batch (detect|search) +
-│   │       │                       # faces.enroll_batch (two-phase: inference, then DB).
-│   │       ├── bib_tasks.py        # bibs.recognize_batch — batch YOLO → batch OCR.
 │   │       ├── webhook_tasks.py    # webhooks.deliver — SSRF DNS resolve + IP-literal
 │   │       │                       # request (TOCTOU-safe). HMAC signature, retry
 │   │       │                       # with exponential backoff.
@@ -241,9 +207,9 @@ ai-api/
 │       │                       # EXIF rotation, dimension limits. Both validators
 │       │                       # share MAX_IMAGE_DIMENSION so single and batch
 │       │                       # paths cannot drift; min 32 px is single-only.
-│       ├── blob_store.py       # store_batch, load_blob, cleanup_batch,
-│       │                       # cleanup_stale_blobs. Atomic write (tmp→rename),
-│       │                       # parallel writes for batch uploads.
+│       ├── blob_store.py       # store_batch, load_blob, cleanup_batch, list_batches.
+│       │                       # Atomic write (tmp→rename), parallel writes for batch
+│       │                       # uploads. Local disk, or the S3 bucket when set.
 │       ├── crypto.py           # Fernet-based encryption for webhook secrets
 │       │                       # (WEBHOOK_SECRET_KEY). Plaintext fallback if unset.
 │       ├── timeout.py          # run_with_timeout (reusable single-thread executor)
@@ -259,17 +225,13 @@ ai-api/
 │   ├── test_blur_detector.py   # BlurDetector unit tests.
 │   ├── test_blur_classifier.py # BlurClassifier unit tests.
 │   ├── test_blur_endpoint.py   # /blur/* API-level tests.
-│   ├── test_face_matcher.py    # Cosine similarity / find_matches tests.
-│   ├── test_face_endpoints.py  # /faces/* API-level tests.
-│   ├── test_bib_recognizer.py  # BibRecognizer unit tests.
-│   ├── test_bib_endpoint.py    # /bibs/* API-level tests.
+│   ├── test_deployment_config.py # Compose, Docker, CI and manifest checks.
 │   ├── test_cpp_extension.py   # Numerical parity: C++ ops vs NumPy fallback.
 │   ├── unit/                   # Additional unit-scope tests.
 │   ├── integration/            # Integration-scope tests.
 │   ├── e2e/                    # End-to-end tests against a running stack.
 │   └── fixtures/
-│       ├── images/
-│       └── embeddings/
+│       └── images/
 │
 │
 ├── benchmarks/
@@ -279,21 +241,16 @@ ai-api/
 ├── models/                     # === ML MODEL FILES (gitignored) ===
 │   ├── manifest.json           # Lists required models with sources/notes.
 │   ├── blur_classifier/
-│   │   ├── blur_classifier.onnx  # YOLOv8n-cls, 4 classes; see ai-system-overview.md for quality evidence.
-│   │   └── class_names.json
-│   ├── bib_detection/
-│   │   └── yolov8n_bib.onnx    # Custom-trained bib detector (Ultralytics).
-│   └── models/
-│       ├── buffalo_l/          # InsightFace RetinaFace + ArcFace ONNX bundle.
-│       └── buffalo_l.zip       # Source bundle.
+│   │   └── people_rule.json      # Stage-2 rule of the two-stage blur classifier (whole-frame rule, then person detector + per-person sharpness + logistic rule); four classes reported; see ai-system-overview.md for quality evidence.
+│   └── person_detector/
+│       └── yolov8n_seg_person.onnx  # COCO person detector for stage 2.
 │
 │
 ├── Training-Images/            # Training datasets (gitignored).
 │
 │
 ├── runs/                       # Ultralytics training output (gitignored).
-│   ├── classify/blur_cls/      # Blur classifier training artifacts.
-│   └── detect/                 # Bib detector training artifacts.
+│   └── classify/blur_cls/      # Blur classifier training artifacts.
 │
 │
 ├── scripts/
@@ -302,25 +259,19 @@ ai-api/
 │   ├── benchmark.py                # Performance benchmarks.
 │   ├── backup_db.sh                # pg_dump helper.
 │   │
-│   ├── prepare_blur_dataset.py     # Builds train/val splits for the blur classifier.
-│   ├── train_blur_classifier.py    # YOLOv8n-cls fine-tune script.
-│   ├── export_blur_classifier.py   # Exports best.pt → ONNX → models/blur_classifier/.
-│   │
-│   ├── train_bib_detector.py       # Trains the dedicated YOLOv8n bib detector.
-│   ├── export_bib_detector.py      # Exports bib detector to ONNX (requires --force
-│   │                               # to overwrite).
-│   ├── extract_bib_labels.py       # Extracts bib-only labels from combined dataset.
-│   │
-│   ├── auto_annotate_face_bib.py   # Legacy: auto-annotate with InsightFace + PaddleOCR.
-│   ├── train_face_bib_detector.py  # Legacy: combined face+bib YOLO (superseded —
-│   │                               # face detection now uses InsightFace directly
-│   │                               # because the combined model's bib mAP was weak).
-│   └── export_face_bib_detector.py
+│   ├── build_blur_folds.py         # Lays the labelled event photos out as five event folds.
+│   ├── fit_blur_whole_frame_rule.py  # Learns the whole-frame rule's thresholds (stage 1).
+│   ├── export_person_detector.py   # Exports the COCO person detector → ONNX →
+│   │                               # models/person_detector/.
+│   ├── measure_blur_people.py      # Measures the people in every sharp and missed-focus fold photo, once (cache).
+│   ├── fit_blur_people_rule.py     # Fits the stage-2 rule and scores it fold by fold.
+│   └── ship_blur_rule.py           # Installs the fitted rule → models/blur_classifier/
+│                                   # and records its hash in the manifest.
 │
 │
 └── docs/                       # === DOCUMENTATION (you are here) ===
     ├── README.md                   # Doc index.
-    ├── ai-system-overview.md       # Current state of all three pipelines.
+    ├── ai-system-overview.md       # Current state of the blur pipeline.
     ├── api-reference.md            # Every endpoint + request/response examples.
     ├── architecture.md             # 4-layer design + request / batch flow.
     ├── folder-structure.md         # This file.
@@ -330,6 +281,6 @@ ai-api/
     ├── deployment.md               # Docker, GPU, scaling, health checks.
     ├── security.md                 # Auth, rate limits, validation, privacy.
     ├── maintenance-guide.md        # Operator runbook.
-    ├── integration-architecture.md # Responsibility boundary across backends.
-    └── integration-contracts.md    # Per-backend call patterns with code examples.
+    ├── integration-architecture.md # Responsibility boundary: ai-api vs desktop vs backend.
+    └── integration-contracts.md    # The desktop → ai-api contract.
 ```

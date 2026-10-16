@@ -6,7 +6,7 @@ The live route reference — every endpoint, its auth, and **which clients consu
 
 ## Role in the project
 
-Spring Boot service. Public API for website and mobile. Owns users, events, participants, photos, marketplace. Proxies all `ai-api` calls — clients never call `ai-api` directly.
+Spring Boot service. Public API for website and mobile. Owns users, events, participants, photos, marketplace. Runs face/bib inference for the clients through AWS Rekognition — clients never call `ai-api` directly.
 
 See root `AGENTS.md` for monorepo-wide rules and `docs/project-vision.md` for product context.
 
@@ -69,9 +69,9 @@ Split a `service/<domain>` subpackage when it passes ~25 files (the 2026-05-05 "
 ## Module boundaries
 
 - **Website + mobile → this backend only.** Never bypass to `ai-api`.
-- **This backend → ai-api via server-to-server with API key** (added Phase C).
-- **Event isolation:** every `ai-api` face call MUST include `event_id` (Phase C).
-- **Confidence thresholds:** apply per-event here, not in `ai-api`.
+- **This backend → AWS Rekognition for face/bib** (`AI_PROVIDER=rekognition`, the default). The `ai-api` provider (`AiApiClient`) remains, but ai-api has had no face/bib routes since 2026-10-16.
+- **Event isolation:** every face call is scoped to one event (Rekognition: one collection per event).
+- **Confidence thresholds:** apply per-event here, not in the provider.
 
 ## Local development
 
@@ -93,6 +93,10 @@ docker compose up -d postgres
 App boots on `http://localhost:8080`. Frontend talks to `http://localhost:8080/api/v1`.
 
 ### Run tests
+
+**Stop — read `docs/testing-cloud-services.md` before `integrationTest` in the main checkout.** When
+`application-local.yml` exists, the suite also makes real AWS Rekognition calls with the local keys. The
+R2 tests need `R2_SMOKE_BUCKET` (the test bucket); that file's own bucket is the production one.
 
 ```powershell
 .\gradlew.bat test              # unit suite — no Docker, no Postgres
@@ -125,8 +129,13 @@ ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.durati
 `qp.upload.dedup{outcome}`, `qp.upload.direct{outcome}`, `qp.upload.cleanup{outcome}`,
 `qp.upload.direct.pending.{count,bytes,oldest.age}`,
 `qp.indexing.outcome{outcome,provider}`, `qp.ai.call{op}`, `qp.ratelimit.denied{policy}`,
-`qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28) —
+`qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28),
+`qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}` —
 plus Hikari/JVM/HTTP-server metrics for free.
+
+### Wipe a test event
+
+Run `backend/scripts/nuke-test-event-photos.sql` with your event IDs swapped in (for example `docker exec -i quickpitik-postgres psql -U quickpitik -d quickpitik < backend/scripts/nuke-test-event-photos.sql`). It deletes the dependent rows (orders, payments, downloads, disputes, transactions, photo_bibs, photo_face_persons) in dependency order. Then delete the photo files: `Remove-Item -Recurse -Force backend\.storage\events\<event-id>`.
 
 ### Stop Postgres
 
@@ -156,6 +165,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `SERVER_PORT` | `8080` | — |
 | `GOOGLE_CLIENT_ID` | *(blank)* | Google OAuth **Web application** client ID — the shared audience for `/auth/google`. Blank makes the endpoint answer 503; the website (`NEXT_PUBLIC_GOOGLE_CLIENT_ID`) and mobile (`QP_GOOGLE_SERVER_CLIENT_ID`) carry the same value and hide their buttons when unset. |
 | `AI_API_ENABLED` | `false` | Set `true` when ai-api is wired and you want face/bib indexing on upload + selfie quality gate + runner face-search. When `false`, every server-side ai-api call is skipped — photographer upload + selfie upload still work, face-search returns 503. See vault `backend/decisions.md` 2026-05-18 master-switch ADR. |
+| `AI_PROVIDER` | `rekognition` | Which face/bib provider runs: `rekognition` (AWS; needs AWS keys or a role) or `ai-api`. ai-api lost its face/bib routes on 2026-10-16, so `ai-api` now gets 404s. Tests pin `ai-api` in `application-test.yml` so they keep their mocked client. `INDEXING_MODE=batch` is ai-api-only, so startup refuses it with `rekognition`. |
 | `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Consecutive failed logins before an account locks (V29). Raise it if a demo needs more headroom — there is no separate on/off switch. |
 | `AUTH_LOCKOUT_DURATION` | `PT15M` | How long a lock holds. Auto-clears; a successful login also resets it. Unlike the rate-limit buckets this is **always on**, independent of `RATE_LIMIT_ENABLED`. |
 | `AUTH_LOCKOUT_WINDOW` | `PT15M` | NFR-S-14 (V34): failures only count toward a lock when within this window of the previous one; older streaks restart at 1. |
@@ -169,6 +179,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `WATERMARK_RECONCILE_INTERVAL_MS` | `60000` | Cadence of the watermark reconcile sweep (re-drives stuck `PROCESSING` photos) and of the V42 pHash backfill. |
 | `WATERMARK_VERIFY_MAX_DISTANCE` | `12` | Max Hamming distance (of 64 pHash bits) for `POST /public/photos/verify` to report a match; ≤ 6 reports `strong`, 7–12 `weak`. Compared against the marked, clean and centre-crop hashes (V43). |
 | `WATERMARK_SEED_SECRET` | dev-only placeholder | **MUST OVERRIDE.** Seeds each preview's stripe geometry via HMAC(secret, photoId). Keep stable: a change re-seeds every future render; existing previews are unaffected. |
+| `PHOTO_REMOVAL_IN_REQUEST_CLEANUP_JOBS` | `5` | Photo-removal erasures a decision or cleanup retry attempts before answering (0–100); the cleanup sweep finishes the rest. Keeps a large authorization inside the proxy timeout. |
 | `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |
 | `LOG_LEVEL_APP` | `INFO` | `com.quickpitik` log level (set `DEBUG` for local debugging). |
 | `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |

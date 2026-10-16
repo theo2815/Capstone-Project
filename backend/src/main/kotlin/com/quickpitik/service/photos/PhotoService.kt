@@ -19,9 +19,12 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.orders.CouponService
+import com.quickpitik.service.photographer.PhotoMetadataService
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.annotation.Propagation
+import java.io.OutputStream
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
@@ -38,6 +41,7 @@ class PhotoService(
     private val couponService: CouponService,
     private val eventRepository: EventRepository,
     private val publicProperties: PublicProperties,
+    private val photoMetadataService: PhotoMetadataService,
 ) {
     fun listForEvent(
         eventId: UUID,
@@ -104,6 +108,7 @@ class PhotoService(
         val free = eventRepository.findById(eventId).map { it.isFree }.orElse(false)
         val ownedIds = if (free) emptySet() else resolveOwnedIds(requesterUserId, photos)
         val photographers = resolvePhotographers(photos)
+        val metadataAccess = photoMetadataService.metadataAccess(eventId, photos, requesterUserId)
         // Live coupons for the page's photographers — one IN query, same
         // batch shape as attribution.
         val coupons = couponService.activeFor(eventId, photographers.keys)
@@ -122,6 +127,7 @@ class PhotoService(
                     },
                     downloadUrlResolver = { photo -> if (free) resolveDownloadUrl(photo) else null },
                     free = free,
+                    metadataAccess = metadataAccess.getValue(it.id),
                 )
             },
             total = total,
@@ -194,6 +200,12 @@ class PhotoService(
             throw photoNotFound()
         }
         return FreeDownload(s3Key = photo.s3Key, filename = PhotoFilenames.downloadFilenameOf(photo))
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun writeFreeDownload(eventId: UUID, photoId: UUID, download: FreeDownload, out: OutputStream) {
+        if (!photoRepository.isFreeDeliveryAvailable(eventId, photoId)) throw photoNotFound()
+        storageService.open(download.s3Key).use { it.transferTo(out) }
     }
 
     private fun photoNotFound() = NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")

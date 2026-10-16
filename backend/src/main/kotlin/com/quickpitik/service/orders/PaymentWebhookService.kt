@@ -40,6 +40,7 @@ class PaymentWebhookService(
     private val paymentRepository: PaymentRepository,
     private val downloadGrantRepository: DownloadGrantRepository,
     private val transactionMintingService: TransactionMintingService,
+    private val removalService: OrderPhotoRemovalService,
 ) {
     fun handle(provider: String, request: PaymentWebhookRequest): PaymentWebhookResponse {
         if (provider.isBlank()) {
@@ -88,9 +89,11 @@ class PaymentWebhookService(
         if (request.status.equals("SUCCEEDED", ignoreCase = true) && order.status != OrderStatus.PAID &&
             order.status != OrderStatus.FULFILLED
         ) {
+            removalService.lockSettlementPhotos(listOf(order.id))
             order.status = OrderStatus.PAID
             order.paidAt = now
             orderRepository.save(order)
+            removalService.onOrderSettled(order.id, now.toInstant())
             mintGrantsIfMissing(order.id, now)
             // Backstop for orders that flipped to PAID via webhook (rare for
             // v1 since OrderService already stamps PAID immediately, but keeps

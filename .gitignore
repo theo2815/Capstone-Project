@@ -92,6 +92,8 @@ dev-start.ps1
 
 .vercel
 .env*
+# cf CLI account cache
+.cloudflare/
 
 # Fujifilm Camera Control SDK (confidential; copied by hand, never committed)
 mobile/fuji-sdk/

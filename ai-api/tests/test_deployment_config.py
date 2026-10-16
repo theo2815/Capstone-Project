@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
+import re
 import shlex
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -27,8 +28,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import pytest
 import yaml
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import ValidationError
@@ -45,19 +48,19 @@ def test_release_workflow_forwards_approved_limits_into_smoke_container():
                    if "blur_release_smoke.py" in line)
     args = shlex.split(command)
     forwarded = {args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "-e"}
-    assert {"BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE"} <= forwarded
+    assert {"BLUR_MIN_ACCURACY", "BLUR_MAX_MISS_RATE", "BLUR_MAX_OVERCULL_RATE",
+            "BLUR_MIN_SHARP", "BLUR_MIN_BLUR", "BLUR_MIN_EVENTS",
+            "BLUR_MAX_PHOTOMETRIC_FLIP_RATE"} <= forwarded
 
 
 PROD_COMPOSE = PROJECT_ROOT / "docker-compose.prod.yml"
 GPU_COMPOSE = PROJECT_ROOT / "docker-compose.gpu.yml"
 
-# The API plus every Celery worker. All five load models and all five decrypt
+# The API plus every Celery worker. All three mount models and all three decrypt
 # webhook secrets, so anything below that says "all app services" means these.
 APP_SERVICES = (
     "ai-api",
     "celery-blur",
-    "celery-face",
-    "celery-bib",
     "celery-default",
 )
 
@@ -131,13 +134,17 @@ def test_blur_profile_defaults_to_one_process_and_two_cpu_threads():
 
 
 def test_timed_out_request_keeps_admission_until_native_work_exits():
+    from src.api.v1.blur import BlurAuthRoute
     from src.config import Settings
     from src.main import create_app
     from src.utils.timeout import run_with_timeout, start_timeout_executor
 
     start_timeout_executor()
+    # 0.2 s, not less: the first request spends ~30 ms in middleware before the route
+    # runs, and native work still queued at the deadline is cancelled by design, so a
+    # shorter deadline makes `entered` race and fail.
     settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False,
-                        BLUR_MAX_ACTIVE_REQUESTS=1, BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
+                        BLUR_MAX_ACTIVE_REQUESTS=1, BLUR_REQUEST_TIMEOUT_SECONDS=0.2)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
 
@@ -148,26 +155,34 @@ def test_timed_out_request_keeps_admission_until_native_work_exits():
         entered.set()
         release.wait(5)
 
-    @app.get("/api/v1/blur/slow-native")
+    blur = APIRouter(prefix="/api/v1/blur", route_class=BlurAuthRoute)
+
+    @blur.get("/slow-native")
     async def slow_native():
         await asyncio.to_thread(run_with_timeout, native, timeout_seconds=5)
         return {"ok": True}
 
-    @app.get("/api/v1/blur/probe")
+    @blur.get("/probe")
     async def probe():
         return {"ok": True}
+
+    app.include_router(blur)
+
+    async def valid_key(request, api_key):
+        return {"key_id": "k1", "scopes": ["blur:read"], "rate_tier": "pro"}
 
     @asynccontextmanager
     async def no_lifespan(_app):
         yield
 
     app.router.lifespan_context = no_lifespan
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with (patch("src.api.v1.blur.verify_api_key", valid_key),
+          TestClient(app, raise_server_exceptions=False) as client):
         try:
             started = time.monotonic()
             assert client.get("/api/v1/blur/slow-native").status_code == 504
             assert time.monotonic() - started < 0.5
-            assert entered.is_set()
+            assert entered.wait(1)
             blocked = client.get("/api/v1/blur/probe")
             assert blocked.status_code == 503
             assert blocked.json()["error"]["code"] == "BLUR_BUSY"
@@ -182,6 +197,80 @@ def test_timed_out_request_keeps_admission_until_native_work_exits():
             pytest.fail("admission slot was not released after native work exited")
 
 
+async def test_bad_key_request_does_not_take_a_blur_slot():
+    from src.api.v1.blur import BlurAuthRoute
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False, BLUR_MAX_ACTIVE_REQUESTS=1)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    probe = APIRouter(prefix="/api/v1/blur", route_class=BlurAuthRoute)
+
+    @probe.get("/probe")
+    async def probe_route():
+        return {"ok": True}
+
+    app.include_router(probe)
+    entered, gate = asyncio.Event(), asyncio.Event()
+
+    async def fake_verify(request, api_key):
+        if api_key == "bad":
+            entered.set()
+            await gate.wait()  # a slow bad-key lookup, as under a flood
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        return {"key_id": "k1", "scopes": ["blur:read"], "rate_tier": "pro"}
+
+    with patch("src.api.v1.blur.verify_api_key", fake_verify):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            bad = asyncio.create_task(
+                client.get("/api/v1/blur/probe", headers={"X-API-Key": "bad"})
+            )
+            await asyncio.wait_for(entered.wait(), 2)
+            good = await client.get("/api/v1/blur/probe", headers={"X-API-Key": "good"})
+            gate.set()
+            assert (await bad).status_code == 401
+    assert good.status_code == 200, good.text
+
+
+async def test_blur_slot_cannot_be_taken_after_the_request_ended():
+    # A cancelled route can still resume one step (anyio skips a task whose awaited
+    # result is ready), so its key check may reach admit after the middleware cleaned up.
+    from src.api.v1.blur import BlurAuthRoute
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False, BLUR_MAX_ACTIVE_REQUESTS=1)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    admits = []
+
+    @app.get("/api/v1/blur/capture")
+    async def capture(request: Request):
+        admits.append(request.state.blur_admit)
+        return {"ok": True}
+
+    probe = APIRouter(prefix="/api/v1/blur", route_class=BlurAuthRoute)
+
+    @probe.get("/probe")
+    async def probe_route():
+        return {"ok": True}
+
+    app.include_router(probe)
+
+    async def valid_key(request, api_key):
+        return {"key_id": "k1", "scopes": ["blur:read"], "rate_tier": "pro"}
+
+    with patch("src.api.v1.blur.verify_api_key", valid_key):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.get("/api/v1/blur/capture")).status_code == 200
+            assert admits[0]() is False
+            probed = await client.get("/api/v1/blur/probe")
+    assert probed.status_code == 200, probed.text
+
+
 async def test_slow_stream_upload_has_a_request_deadline():
     import httpx
 
@@ -189,7 +278,7 @@ async def test_slow_stream_upload_has_a_request_deadline():
     from src.main import create_app
 
     settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False, DEBUG=True,
-                        BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
+                        ENVIRONMENT="test", BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings
@@ -255,7 +344,7 @@ def test_blur_profile_stream_reports_incomplete_before_transport_deadline():
     from src.main import create_app
 
     settings = Settings(MODEL_PROFILE="blur", DEBUG=True, METRICS_ENABLED=False,
-                        BLUR_STREAM_TIMEOUT_SECONDS=0.02)
+                        ENVIRONMENT="test", BLUR_STREAM_TIMEOUT_SECONDS=0.02)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings
@@ -320,8 +409,11 @@ class TestProdComposeModels:
         ]
         assert "models/" in lines
         assert "!models/manifest.json" in lines
-        assert "!models/blur_classifier/blur_classifier.onnx" in lines
-        assert "!models/blur_classifier/class_names.json" in lines
+        assert "!models/blur_classifier/people_rule.json" in lines
+        assert "models/person_detector/*" in lines
+        assert "!models/person_detector/yolov8n_seg_person.onnx" in lines
+        assert "!models/blur_classifier/blur_classifier.onnx" not in lines
+        assert "!models/blur_classifier/class_names.json" not in lines
         # Training-Images/ alone is ~16 GB. Leaving it in the context meant every
         # build shipped it to the daemon before the first instruction ran.
         for heavy in ("Training-Images/", "runs/", "build/"):
@@ -398,34 +490,22 @@ class TestReadinessVisibility:
         return registry
 
     def test_status_reports_every_model_including_the_optional_ones(self):
-        registry = self._registry(
-            blur=True, face=True, bib_ocr=True, blur_classifier=False, bib_detector=False
-        )
-        assert registry.status() == {
-            "blur": True,
-            "face": True,
-            "bib_ocr": True,
-            "blur_classifier": False,
-            "bib_detector": False,
-        }
+        registry = self._registry(blur=True, blur_classifier=False)
+        assert registry.status() == {"blur": True, "blur_classifier": False}
 
     def test_the_gap_status_exists_to_expose(self):
         """Not a redundant assertion — this pins the exact hole. The verdict
-        stays green with both optional models missing, which is why the payload
-        needs the per-model detail alongside it. If someone later makes them
+        stays green with the optional classifier missing, which is why the payload
+        needs the per-model detail alongside it. If someone later makes it
         required, this failing is the intended signal to update the docs and the
         deployment guide, not to delete the test.
         """
-        registry = self._registry(
-            blur=True, face=True, bib_ocr=True, blur_classifier=False, bib_detector=False
-        )
+        registry = self._registry(blur=True, blur_classifier=False)
         assert registry.all_loaded() is True
         assert registry.status()["blur_classifier"] is False
 
     def test_a_missing_required_model_still_fails_the_verdict(self):
-        registry = self._registry(
-            blur=True, face=False, bib_ocr=True, blur_classifier=True, bib_detector=True
-        )
+        registry = self._registry(blur=False, blur_classifier=True)
         assert registry.all_loaded() is False
 
     def test_classifier_without_a_session_is_unavailable(self):
@@ -624,7 +704,7 @@ def test_stream_image_error_is_counted_separately_from_request_rejection():
     from src.config import Settings
     from src.main import create_app
 
-    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=True, DEBUG=True)
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=True, DEBUG=True, ENVIRONMENT="test")
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings
@@ -790,17 +870,13 @@ async def test_blur_profile_loads_only_blur_models(monkeypatch):
 
     registry = ModelRegistry()
     called = []
-    for name in ("blur", "blur_classifier", "face", "bib_detector", "bib_ocr"):
+    for name in ("blur", "blur_classifier"):
         monkeypatch.setattr(
             registry, f"_load_{name}",
             lambda _settings, n=name: called.append(n) or (
                 SimpleNamespace(session=object()) if n == "blur_classifier" else object()
             )
         )
-    monkeypatch.setattr(
-        registry, "_preimport_libs", lambda: pytest.fail("full ML libraries imported")
-    )
-
     await registry.load_all(SimpleNamespace(MODEL_PROFILE="blur"))
 
     assert set(called) == {"blur", "blur_classifier"}
@@ -835,7 +911,7 @@ def test_disabled_blur_async_rejects_before_multipart_or_job_creation(path):
     from src.main import create_app
 
     settings = Settings(MODEL_PROFILE="blur", BLUR_ASYNC_ENABLED=False,
-                        METRICS_ENABLED=False, DEBUG=True)
+                        METRICS_ENABLED=False, DEBUG=True, ENVIRONMENT="test")
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings
@@ -876,19 +952,23 @@ def test_blur_async_is_available_by_default():
     assert response.status_code == 400
 
 
-def test_blur_profile_does_not_import_face_or_bib_routes():
-    code = (
-        "import os, sys\n"
-        "os.environ['MODEL_PROFILE'] = 'blur'\n"
-        "from src.main import create_app\n"
-        "create_app()\n"
-        "assert 'src.api.v1.faces' not in sys.modules\n"
-        "assert 'src.api.v1.bibs' not in sys.modules\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True
-    )
-    assert result.returncode == 0, result.stderr
+@pytest.mark.parametrize("profile", ["all", "blur"])
+def test_no_face_or_bib_routes_in_any_profile(profile):
+    from fastapi import FastAPI
+
+    from src.api.v1.router import make_v1_router
+
+    # The OpenAPI paths, not router.routes: FastAPI 0.141 (the lock) wraps included
+    # routers in objects that have no .path.
+    app = FastAPI()
+    app.include_router(make_v1_router(profile))
+    paths = list(app.openapi()["paths"])
+    assert "/blur/detect" in paths, paths
+    assert not [p for p in paths if p.startswith(("/faces", "/bibs"))], paths
+    # The schema omits include_in_schema=False routes; a request still finds them.
+    client = TestClient(app)
+    for old in ("/faces/detect", "/faces/search", "/bibs/recognize"):
+        assert client.post(old).status_code == 404, old
 
 
 class TestDockerBuildContext:
@@ -897,7 +977,7 @@ class TestDockerBuildContext:
     def test_context_carries_only_the_audited_blur_pair(self):
         if not shutil.which("docker"):
             pytest.skip("docker unavailable — cannot inspect the build context")
-        if not (PROJECT_ROOT / "models/blur_classifier/blur_classifier.onnx").exists():
+        if not (PROJECT_ROOT / "models/blur_classifier/people_rule.json").exists():
             pytest.skip("audited local artifact absent — release build must provision it")
 
         tag = "quickpitik-context-probe:test"
@@ -918,7 +998,8 @@ class TestDockerBuildContext:
             listing = subprocess.run(
                 [
                     "docker", "run", "--rm", tag, "sh", "-c",
-                    "ls -A /ctx /ctx/models /ctx/models/blur_classifier",
+                    "ls -A /ctx /ctx/models /ctx/models/blur_classifier "
+                    "/ctx/models/person_detector",
                 ],
                 capture_output=True,
                 timeout=120,
@@ -928,8 +1009,8 @@ class TestDockerBuildContext:
             subprocess.run(["docker", "rmi", "-f", tag], capture_output=True, timeout=120)
 
         assert "manifest.json" in out, "models/manifest.json never reached the image"
-        assert "blur_classifier.onnx" in out, "audited ONNX absent from build context"
-        assert "class_names.json" in out, "audited labels absent from build context"
+        assert "people_rule.json" in out, "audited rule absent from build context"
+        assert "yolov8n_seg_person.onnx" in out, "person detector absent from build context"
         for weight in ("bib_detection", "buffalo_l"):
             assert weight not in out, (
                 f"{weight} is in the build context — weights are meant to be "
@@ -938,3 +1019,77 @@ class TestDockerBuildContext:
             )
         for heavy in ("Training-Images", ".venv", "runs"):
             assert heavy not in out, f"{heavy} is in the build context"
+
+
+def test_default_model_profile_is_blur(monkeypatch):
+    from src.config import Settings
+
+    monkeypatch.delenv("MODEL_PROFILE", raising=False)
+    assert Settings(_env_file=None).MODEL_PROFILE == "blur"
+
+
+def test_dockerfile_builds_blur_by_default():
+    dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert re.findall(r"^ARG MODEL_PROFILE=(\S+)\s*$", dockerfile, re.M) == ["blur", "blur"]
+
+
+def test_dev_compose_publishes_ports_on_loopback_only():
+    compose = yaml.safe_load((PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    ports = [p for svc in compose["services"].values() for p in svc.get("ports", [])]
+    assert len(ports) >= 3
+    assert all(
+        p.get("host_ip") == "127.0.0.1" if isinstance(p, dict) else str(p).startswith("127.0.0.1:")
+        for p in ports
+    ), ports
+
+
+def test_makefile_serves_the_api_on_loopback_only():
+    # DEBUG=true turns the key check off, so the host-run dev API must not be
+    # reachable from shared Wi-Fi (V-17 follow-up, owner decision D7, 2026-10-16).
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    assert re.findall(r"uvicorn .*--host (\S+)", makefile) == ["127.0.0.1", "127.0.0.1"]
+
+
+def test_no_face_or_bib_workers_or_model_loaders():
+    from src.ml.registry import ModelRegistry
+    from src.workers.celery_app import celery_app
+
+    assert not [m for m in celery_app.conf.include if m.endswith(("face_tasks", "bib_tasks"))]
+    assert not [r for r in celery_app.conf.task_routes if r.startswith(("faces.", "bibs."))]
+    for loader in ("_load_face", "_load_bib_detector", "_load_bib_ocr"):
+        assert not hasattr(ModelRegistry, loader), loader
+
+
+def test_install_and_manifest_have_no_face_or_bib():
+    root = Path(__file__).resolve().parents[1]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    for lib in ("insightface", "paddleocr", "paddlepaddle"):
+        assert lib not in pyproject, lib
+    manifest = json.loads((root / "models" / "manifest.json").read_text(encoding="utf-8"))
+    assert set(manifest["models"]) == {"blur_classifier", "person_detector"}
+    prod = (root / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    assert "celery-face" not in prod and "celery-bib" not in prod
+
+
+def test_async_railway_layout_keeps_default_queue_off_the_blur_worker():
+    layout_file = Path(__file__).resolve().parents[1] / ".railway" / "railway-async.ts"
+    layout = layout_file.read_text(encoding="utf-8")
+    starts = re.findall(r'start:\s*"([^"]+)"', layout)
+    workers = [s for s in starts if " worker " in s]
+    assert any("-Q blur " in s for s in workers) and any("-Q default " in s for s in workers)
+    assert not [s for s in workers if "blur,default" in s or "default,blur" in s]
+
+
+def test_supply_chain_is_pinned():
+    root = PROJECT_ROOT
+    lock = (root / "requirements-blur.lock").read_text(encoding="utf-8")
+    pins = re.findall(r"^([A-Za-z0-9_.\-\[\]]+==\S+)", lock, re.M)
+    assert pins and len(re.findall(r"--hash=sha256:", lock)) >= len(pins)
+    gitlab = (root / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    images = re.findall(r"^\s*(?:image|-\s*name):\s*(\S+)", gitlab, re.M)
+    images += re.findall(r"^\s*-\s*(docker:\S+)", gitlab, re.M)
+    assert images and all("@sha256:" in i for i in images), images
+    assert not re.search(r"docker login[^\n]*\s-p\s", gitlab)
+    workflow_file = root.parent / ".github" / "workflows" / "ai-api-blur.yml"
+    refs = re.findall(r"uses:\s*\S+@(\S+)", workflow_file.read_text(encoding="utf-8"))
+    assert refs and all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in refs), refs

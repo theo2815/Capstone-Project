@@ -1,7 +1,6 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
-import com.quickpitik.config.AiProperties
 import com.quickpitik.dto.ai.JobStatusResult
 import com.quickpitik.entity.AiIndexBatch
 import com.quickpitik.entity.AiIndexJob
@@ -31,12 +30,25 @@ import kotlin.test.assertTrue
 // terminates a lost (NOT_FOUND) job instead of polling it forever.
 class PhotoBatchIngestServiceTest {
 
+    @Test fun `bib callback before face submission cannot finalize the batch`() {
+        val bibJob = job(IndexJobKind.BIB, "early-bib")
+        expectLookup(bibJob)
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(bibJob))
+        Mockito.`when`(aiClient.jobStatus("early-bib", 0, 2)).thenReturn(
+            JobStatusResult(job_id = "early-bib", status = "completed", result = emptyList()))
+        service.ingest("early-bib")
+        assertEquals(BatchStatus.SUBMITTED, batch.status)
+        assertEquals(IndexingStatus.BATCHING, photo1.indexingStatus)
+    }
+
     private lateinit var photoRepo: PhotoRepository
     private lateinit var batchRepo: AiIndexBatchRepository
     private lateinit var jobRepo: AiIndexJobRepository
     private lateinit var aiClient: AiApiClient
     private lateinit var publisher: ApplicationEventPublisher
     private lateinit var service: PhotoBatchIngestService
+    private lateinit var workFence: com.quickpitik.service.photos.PhotoWorkFence
+    private fun <T> anyArg(): T = Mockito.any()
 
     private val eventId = UUID.randomUUID()
     private val pid1 = UUID.randomUUID()
@@ -52,7 +64,16 @@ class PhotoBatchIngestServiceTest {
         jobRepo = Mockito.mock(AiIndexJobRepository::class.java)
         aiClient = Mockito.mock(AiApiClient::class.java)
         publisher = Mockito.mock(ApplicationEventPublisher::class.java)
-        service = PhotoBatchIngestService(photoRepo, batchRepo, jobRepo, aiClient, AiApiProperties(), AiProperties(), publisher)
+        workFence = Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java)
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(true)
+        Mockito.`when`(workFence.forBatch(anyArg())).thenAnswer {
+            batch.photoIds.map { com.quickpitik.service.photos.PhotoWorkClaim(it, 0, UUID.randomUUID(),
+                java.time.Instant.now().plusSeconds(60), com.quickpitik.service.photos.PhotoWorkKind.INDEXING) }
+        }
+        val manager = Mockito.mock(org.springframework.transaction.PlatformTransactionManager::class.java)
+        Mockito.`when`(manager.getTransaction(anyArg())).thenReturn(org.springframework.transaction.support.SimpleTransactionStatus())
+        service = PhotoBatchIngestService(photoRepo, batchRepo, jobRepo, aiClient, AiApiProperties(), publisher,
+            org.springframework.transaction.support.TransactionTemplate(manager), workFence)
 
         batch = AiIndexBatch(eventId = eventId, photoIds = mutableListOf(pid1, pid2))
         photo1 = batchingPhoto(pid1)
@@ -71,6 +92,7 @@ class PhotoBatchIngestServiceTest {
     private fun expectLookup(faceJob: AiIndexJob) {
         Mockito.`when`(jobRepo.findByAiJobId(faceJob.aiJobId)).thenReturn(faceJob)
         Mockito.`when`(batchRepo.findByIdForUpdate(batch.id)).thenReturn(batch)
+        Mockito.`when`(batchRepo.findById(batch.id)).thenReturn(java.util.Optional.of(batch))
         Mockito.`when`(photoRepo.findAllById(batch.photoIds)).thenReturn(mutableListOf(photo1, photo2))
     }
 
@@ -107,6 +129,7 @@ class PhotoBatchIngestServiceTest {
         assertEquals(IndexJobStatus.COMPLETED, faceJob.status)
         assertEquals(setOf("person-1"), photo1.facePersons.map { it.aiPersonId }.toSet())
         assertEquals(setOf("person-2"), photo2.facePersons.map { it.aiPersonId }.toSet())
+        assertEquals(com.quickpitik.entity.FaceProvider.AI_API, photo1.facePersons.single().provider)
         assertEquals(IndexingStatus.BATCHING, photo1.indexingStatus) // not finalized yet
         Mockito.verify(publisher, Mockito.never()).publishEvent(Mockito.any(PhotoIndexedEvent::class.java))
     }
@@ -120,7 +143,8 @@ class PhotoBatchIngestServiceTest {
             JobStatusResult(
                 job_id = "face-job",
                 status = "completed",
-                result = listOf(mapOf("ref" to pid1.toString(), "person_id" to "person-1")),
+                result = listOf(mapOf("ref" to pid1.toString(), "person_id" to "person-1"),
+                    mapOf("ref" to pid2.toString(), "person_id" to "person-2")),
             ),
         )
         Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(faceJob, bibJob))
@@ -131,6 +155,137 @@ class PhotoBatchIngestServiceTest {
         assertEquals(IndexingStatus.INDEXED, photo2.indexingStatus)
         assertEquals(BatchStatus.FINALIZED, batch.status)
         Mockito.verify(publisher, Mockito.times(2)).publishEvent(Mockito.any(PhotoIndexedEvent::class.java))
+    }
+
+    @Test fun `incomplete completed face result cannot release unresolved claims`() {
+        val faceJob = job(IndexJobKind.FACE, "face-job")
+        val bibJob = job(IndexJobKind.BIB, "bib-job", IndexJobStatus.COMPLETED)
+        expectLookup(faceJob)
+        Mockito.`when`(aiClient.jobStatus("face-job", 0, 2)).thenReturn(
+            JobStatusResult(job_id = "face-job", status = "completed",
+                result = listOf(mapOf("ref" to pid1.toString(), "person_id" to "person-1"))))
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(faceJob, bibJob))
+
+        service.ingest("face-job")
+
+        org.junit.jupiter.api.Assertions.assertAll(
+            { assertEquals(IndexJobStatus.SUBMITTED, faceJob.status) },
+            { assertEquals(BatchStatus.SUBMITTED, batch.status) },
+            { Mockito.verify(workFence, Mockito.never()).finish(anyArg()) },
+            { Mockito.verify(publisher, Mockito.never()).publishEvent(Mockito.any(PhotoIndexedEvent::class.java)) },
+        )
+    }
+
+    @Test fun `late completed result is kept in ledger even after its photo disappears`() {
+        val faceJob = job(IndexJobKind.FACE, "face-job")
+        expectLookup(faceJob)
+        Mockito.`when`(photoRepo.findAllById(batch.photoIds)).thenReturn(emptyList())
+        Mockito.`when`(aiClient.jobStatus("face-job", 0, 2)).thenReturn(JobStatusResult("face-job", "completed",
+            result = listOf(mapOf("ref" to pid1.toString(), "person_id" to "late-1"),
+                mapOf("ref" to pid2.toString(), "person_id" to "late-2"))))
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(faceJob))
+        service.ingest("face-job")
+        Mockito.verify(workFence).recordPerson(anyArg(), eqArg("late-1"))
+        Mockito.verify(workFence).recordPerson(anyArg(), eqArg("late-2"))
+        // This part is prerequisite coverage already provided by TASK 3.
+    }
+
+    private fun <T> eqArg(value: T): T = Mockito.eq(value)
+
+    @Test fun `duplicated result attribution cannot release unresolved claims`() {
+        val faceJob = job(IndexJobKind.FACE, "face-job")
+        val bibJob = job(IndexJobKind.BIB, "bib-job", IndexJobStatus.COMPLETED)
+        expectLookup(faceJob)
+        Mockito.`when`(aiClient.jobStatus("face-job", 0, 2)).thenReturn(JobStatusResult("face-job", "completed",
+            result = listOf(mapOf("ref" to pid1.toString(), "person_id" to "person-1"),
+                mapOf("ref" to pid1.toString(), "person_id" to "person-2"))))
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(faceJob, bibJob))
+        service.ingest("face-job")
+        assertEquals(IndexJobStatus.SUBMITTED, faceJob.status)
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
+    }
+
+    @Test fun `blank or null error without person outcome cannot release unresolved claims`() {
+        val faceJob = job(IndexJobKind.FACE, "face-job")
+        val bibJob = job(IndexJobKind.BIB, "bib-job", IndexJobStatus.COMPLETED)
+        expectLookup(faceJob)
+        Mockito.`when`(aiClient.jobStatus("face-job", 0, 2)).thenReturn(JobStatusResult("face-job", "completed",
+            result = listOf(mapOf("ref" to pid1.toString(), "error" to " "),
+                mapOf("ref" to pid2.toString(), "error" to null))))
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(faceJob, bibJob))
+        service.ingest("face-job")
+        org.junit.jupiter.api.Assertions.assertAll(
+            { assertEquals(IndexJobStatus.SUBMITTED, faceJob.status) },
+            { assertEquals(BatchStatus.SUBMITTED, batch.status) },
+            { Mockito.verify(workFence, Mockito.never()).finish(anyArg()) },
+            { Mockito.verify(publisher, Mockito.never()).publishEvent(Mockito.any(PhotoIndexedEvent::class.java)) },
+        )
+    }
+
+    @Test fun `valid no face and per input error outcomes still finalize completed batch`() {
+        val faceJob = job(IndexJobKind.FACE, "face-job")
+        val bibJob = job(IndexJobKind.BIB, "bib-job", IndexJobStatus.COMPLETED)
+        expectLookup(faceJob)
+        Mockito.`when`(aiClient.jobStatus("face-job", 0, 2)).thenReturn(JobStatusResult("face-job", "completed",
+            result = listOf(mapOf("ref" to pid1.toString(), "person_id" to null),
+                mapOf("ref" to pid2.toString(), "error" to "Synthetic decode failure"))))
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(faceJob, bibJob))
+        service.ingest("face-job")
+        assertEquals(IndexJobStatus.COMPLETED, faceJob.status)
+        assertEquals(BatchStatus.FINALIZED, batch.status)
+        Mockito.verify(workFence, Mockito.times(2)).finish(anyArg())
+    }
+
+    @Test fun `malformed explicit ref cannot fall back to result position`() {
+        expectMalformedRefPending("not-a-photo-uuid")
+    }
+
+    @Test fun `nonstring explicit ref cannot fall back to result position`() {
+        expectMalformedRefPending(17)
+    }
+
+    private fun expectMalformedRefPending(ref: Any) {
+        expectMalformedResultPending(mapOf("ref" to ref, "person_id" to "person-1"), pid2)
+    }
+
+    @Test fun `fractional explicit index cannot attribute a result to another photo`() {
+        expectMalformedResultPending(mapOf("ref" to null, "index" to 1.5, "person_id" to "person-1"), pid1)
+    }
+
+    @Test fun `nonnumber explicit index cannot fall back to result position`() {
+        expectMalformedResultPending(mapOf("index" to "1", "person_id" to "person-1"), pid2)
+    }
+
+    private fun expectMalformedResultPending(result: Map<String, Any?>, otherPhoto: UUID) {
+        val faceJob = job(IndexJobKind.FACE, "face-job")
+        val bibJob = job(IndexJobKind.BIB, "bib-job", IndexJobStatus.COMPLETED)
+        expectLookup(faceJob)
+        Mockito.`when`(aiClient.jobStatus("face-job", 0, 2)).thenReturn(JobStatusResult("face-job", "completed",
+            result = listOf(result, mapOf("ref" to otherPhoto.toString(), "person_id" to null))))
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(faceJob, bibJob))
+        service.ingest("face-job")
+        org.junit.jupiter.api.Assertions.assertAll(
+            { assertEquals(IndexJobStatus.SUBMITTED, faceJob.status) },
+            { assertEquals(BatchStatus.SUBMITTED, batch.status) },
+            { Mockito.verify(workFence, Mockito.never()).recordPerson(anyArg(), anyArg()) },
+            { Mockito.verify(workFence, Mockito.never()).finish(anyArg()) },
+            { Mockito.verify(publisher, Mockito.never()).publishEvent(Mockito.any(PhotoIndexedEvent::class.java)) },
+        )
+    }
+
+    @Test fun `null and absent refs preserve valid index fallback`() {
+        val faceJob = job(IndexJobKind.FACE, "face-job")
+        val bibJob = job(IndexJobKind.BIB, "bib-job", IndexJobStatus.COMPLETED)
+        expectLookup(faceJob)
+        Mockito.`when`(aiClient.jobStatus("face-job", 0, 2)).thenReturn(JobStatusResult("face-job", "completed",
+            result = listOf(mapOf("ref" to null, "index" to 1, "person_id" to "person-2"),
+                mapOf("index" to 0, "person_id" to "person-1"))))
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(faceJob, bibJob))
+        service.ingest("face-job")
+        assertEquals(listOf("person-1"), photo1.facePersons.map { it.aiPersonId })
+        assertEquals(listOf("person-2"), photo2.facePersons.map { it.aiPersonId })
+        assertEquals(BatchStatus.FINALIZED, batch.status)
+        Mockito.verify(workFence, Mockito.times(2)).finish(anyArg())
     }
 
     @Test

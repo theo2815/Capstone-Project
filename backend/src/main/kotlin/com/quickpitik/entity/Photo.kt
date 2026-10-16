@@ -86,6 +86,26 @@ class Photo(
     @Column(name = "deletion_started_at", updatable = false)
     var deletionStartedAt: OffsetDateTime? = null,
 
+    @Enumerated(EnumType.STRING)
+    // The availability writer owns these columns; stale pipeline saves must
+    // never release a review or replace an irreversible removal.
+    @Column(name = "removal_state", nullable = false, length = 10, updatable = false)
+    var removalState: RemovalState = RemovalState.NONE,
+
+    @Column(name = "purged_at", updatable = false)
+    var purgedAt: OffsetDateTime? = null,
+
+    @Column(name = "work_generation", nullable = false, updatable = false)
+    var workGeneration: Long = 0,
+    @Column(name = "watermark_work_token", updatable = false)
+    var watermarkWorkToken: UUID? = null,
+    @Column(name = "watermark_work_expires_at", updatable = false)
+    var watermarkWorkExpiresAt: OffsetDateTime? = null,
+    @Column(name = "indexing_work_token", updatable = false)
+    var indexingWorkToken: UUID? = null,
+    @Column(name = "indexing_work_expires_at", updatable = false)
+    var indexingWorkExpiresAt: OffsetDateTime? = null,
+
     @Column(name = "price_php", nullable = false, precision = 12, scale = 2)
     var pricePhp: BigDecimal,
 
@@ -153,13 +173,13 @@ class Photo(
     )
     var facePersons: MutableSet<PhotoFacePersonEmbed> = mutableSetOf(),
 ) {
-    // "LIVE and not trashed" — the visible/sellable predicate that cart,
+    // LIVE, not trashed, and no removal restriction — the predicate that cart,
     // checkout, coupons and the free-download route each gated on separately.
     // Computed, no backing field, so Hibernate (field access here, as with
     // `span`) never sees it. PhotoRepository's JPQL/native copies of the same
     // predicate carry a `= Photo.isSellable` marker; change them together.
     val isSellable: Boolean
-        get() = status == PhotoStatus.LIVE && deletedAt == null
+        get() = status == PhotoStatus.LIVE && deletedAt == null && removalState == RemovalState.NONE
 
     var span: PhotoSpan
         get() = PhotoSpan.fromWire(spanWire)

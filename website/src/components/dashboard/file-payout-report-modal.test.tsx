@@ -16,6 +16,26 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const cycle = {
+  id: report.payoutCycleId, weekOf: "2026-09-07", requestedAt: "2026-09-09T00:00:00Z",
+  amount: 100, status: "paid", settledAt: "2026-09-10T00:00:00Z", method: "gcash", reference: "reference-1",
+} as const;
+
+it("closes only the reason list on Escape and keeps the form and its note", async () => {
+  const user = userEvent.setup(); const onClose = vi.fn();
+  render(<QueryClientProvider client={new QueryClient()}><FilePayoutReportModal cycle={cycle} onClose={onClose} /></QueryClientProvider>);
+  const note = within(screen.getByRole("dialog", { name: "File a report" })).getByRole("textbox");
+  await user.type(note, "Keep this note");
+  await user.click(screen.getByRole("button", { name: "Report reason" }));
+  expect(screen.getAllByRole("menuitem").length).toBeGreaterThan(0);
+  await user.keyboard("{Escape}");
+  expect(screen.queryAllByRole("menuitem")).toEqual([]);
+  expect(onClose).not.toHaveBeenCalled();
+  expect(note).toHaveValue("Keep this note");
+  await user.keyboard("{Escape}");
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
 it("keeps a failed report retryable and only adds the backend-issued report after confirmation", async () => {
   const user = userEvent.setup();
   useAuthStore.getState().setUser({ ...admin, id: report.photographerId, role: "PHOTOGRAPHER" });
@@ -26,10 +46,7 @@ it("keeps a failed report retryable and only adds the backend-issued report afte
   vi.spyOn(console, "error").mockImplementation(() => {});
   let reject!: (error: Error) => void;
   vi.spyOn(api, "post").mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
-  render(<QueryClientProvider client={client}><FilePayoutReportModal cycle={{
-    id: report.payoutCycleId, weekOf: "2026-09-07", requestedAt: "2026-09-09T00:00:00Z",
-    amount: 100, status: "paid", settledAt: "2026-09-10T00:00:00Z", method: "gcash", reference: "reference-1",
-  }} onClose={onClose} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><FilePayoutReportModal cycle={cycle} onClose={onClose} /></QueryClientProvider>);
   await user.click(screen.getByRole("button", { name: "Report reason" }));
   await user.click(screen.getByRole("menuitem", { name: "Payout not received" }));
   const dialog = screen.getByRole("dialog", { name: "File a report" });

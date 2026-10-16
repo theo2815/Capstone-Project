@@ -20,6 +20,8 @@ export const ROUTES = {
   // Same contract, different mail: the backend builds this one as
   // `${frontendOrigin}/verify-email?token=…` in the registration email.
   VERIFY_EMAIL: "/verify-email",
+  // BatchMyPhotos sign-in hand-off (docs/desktop-upload-integration-guide.md).
+  CONNECT_DESKTOP: "/connect/desktop",
   ONBOARDING: "/onboarding",
   EVENTS: "/events",
   VERIFY: "/verify",
@@ -34,6 +36,7 @@ export const ROUTES = {
   DASHBOARD_EARNINGS: "/dashboard/earnings",
   DASHBOARD_BILLING: "/dashboard/billing",
   DASHBOARD_SETTINGS: "/dashboard/settings",
+  DASHBOARD_PHOTO_REMOVAL_REQUESTS: "/dashboard/photo-removal-requests",
   ADMIN: "/admin",
   ADMIN_INBOX: "/admin/inbox",
   ADMIN_OVERVIEW: "/admin/overview",
@@ -46,6 +49,7 @@ export const ROUTES = {
   ADMIN_FLAGS: "/admin/flags",
   ADMIN_SALES: "/admin/sales",
   ADMIN_SECURITY: "/admin/security",
+  ADMIN_PHOTO_REMOVAL_REQUESTS: "/admin/photo-removal-requests",
 } as const;
 
 export const ROLES = {

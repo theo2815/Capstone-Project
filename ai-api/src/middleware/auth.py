@@ -88,19 +88,19 @@ async def verify_api_key(
         return key_meta
 
 
-async def invalidate_api_key_cache(redis, api_key: str) -> bool:
-    """Invalidate the Redis cache entry for a revoked API key.
-
-    Call this when deactivating an API key to close the 5-minute cache window.
-    Returns True if a cached entry was deleted, False otherwise.
-    """
+async def invalidate_api_key_hash(redis, key_hash: str) -> bool:
+    """Drop the cached entry for a key hash (closes the 5-minute window after revocation)."""
     if redis is None:
         return False
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
     deleted = await redis.delete(f"apikey:{key_hash}")
     if deleted:
         logger.info("API key cache invalidated", key_hash_prefix=key_hash[:8])
     return bool(deleted)
+
+
+async def invalidate_api_key_cache(redis, api_key: str) -> bool:
+    """Invalidate the Redis cache entry for a revoked raw API key."""
+    return await invalidate_api_key_hash(redis, hashlib.sha256(api_key.encode()).hexdigest())
 
 
 async def _enforce_rate_limit(request: Request, key_meta: dict) -> None:

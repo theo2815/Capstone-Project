@@ -314,7 +314,7 @@ flowchart LR
 - **Watermark Resistance:** Applies diagonal wordmark patterns, custom photographer logos, and seed-based geometry derived from `HMAC(seed, photoId)`.
 - **Copyright Verification:** Computes 64-bit DCT perceptual hashes. `POST /public/photos/verify` allows runners or admins to upload screenshots or crops and find the original photographer using Hamming distance comparison (≤ 12 bits).
 
-**Direct upload contract — mobile/backend:**
+**Direct upload contract — mobile/website/backend:**
 
 `POST /api/v1/me/photographer/events/{eventId}/photos/direct` returns `direct`,
 `existing`, or `multipart`. Direct mode first reserves a durable, owner/event-scoped
@@ -342,12 +342,26 @@ events and intent completion commit atomically. Photo-ID and photographer/hash
 constraint races resolve only after rollback. Concurrent same-event duplicates
 return the winner without extra counters/events; cross-event dedup remains a
 terminal conflict. Unissued or foreign staging keys are never read or deleted.
+Duplicate receipts and preflight results include `inTrash` when the existing
+photo is trashed or being purged; the hash remains reserved and re-uploading
+never restores, unhides or republishes it.
+
+The per-photographer reservation quota (`STORAGE_DIRECT_UPLOAD_MAX_PENDING_PER_USER`,
+bytes cap beside it) counts only reservations whose signed PUT is still open or
+that are being verified; an abandoned reservation stays committable for 24 hours
+but stops holding a slot when its PUT expires. A begin without `requestId` (the
+Android worker) reuses that photographer's open `PENDING` reservation for the same
+event and bytes when at least five minutes of PUT lifetime remain, so a retry
+after a failed PUT takes no new slot. Two concurrent begins without `requestId`
+for the same bytes may both reserve (no lock; the quota bounds it), and
+`qp.upload.direct{outcome=begun}` counts a reuse as another grant.
 
 `PhotoUploadCleanupTrigger` runs bounded fixed-delay sweeps without holding a
 database connection across storage I/O. It expires abandoned intents, claims due
 terminal receipts, removes staging and only deletes an original after checking
-that no `Photo.s3Key` references it. Successful deletes are rechecked for seven
-days to catch late PUT/copy completion; terminal receipts are retained. Permanent
+that no `Photo.s3Key` references it. Successful deletes are rechecked at doubling
+intervals (1 h, 2 h, 4 h …) for seven days to catch late PUT/copy completion;
+terminal receipts are retained. Permanent
 photo deletion nulls the result FK and reschedules that receipt in the same short
 transaction, so later commit retries remain terminal `PHOTO_NOT_FOUND` and cannot
 recreate the photo. Cleanup is idempotent and a failed object is retried without
@@ -359,17 +373,27 @@ and the gauges `qp.upload.direct.pending.count`, `qp.upload.direct.pending.bytes
 and `qp.upload.direct.pending.oldest.age`. Labels never contain file, hash, URL,
 or intent identifiers; cleanup logs contain only operation, intent ID and error class.
 
-**Proposed R2 deployment additions (not applied by application code):** before
-rollout, export the bucket's current CORS and lifecycle JSON. Preserve every
-existing rule, then add `PUT` to a rule whose exact origins are the approved web
-origins (`https://quickpitik.com` and `https://www.quickpitik.com` for production;
-use a separately approved exact origin in preview/nonproduction), whose allowed
-request header is `Content-Type`, and whose exposed response header is `ETag`.
-Keep existing `GET`/`HEAD` behavior and do not use wildcard origins or headers.
-Add one lifecycle rule scoped only to prefix `staging/photo-uploads/`, expiring
-objects after two days. Never apply expiry to `events/`, originals, or derivatives.
-Task 4 records this proposal only; deployment must apply and read back both rules
-in the controlled rollout after preserving the prior JSON.
+**R2 bucket rules (applied to production 2026-09-25, not by application code):**
+one CORS rule allows `PUT` from exactly `https://quickpitik.com` (`www` redirects
+to the apex, so it never originates an upload), allowed request header
+`Content-Type`, exposed header `ETag`. The production bucket had no CORS rule
+before; no `GET` rule is needed because nothing fetches R2 cross-origin. One
+lifecycle rule expires only prefix `staging/photo-uploads/` after two days, beside
+the default multipart-abort rule. Never apply expiry to `events/`, originals, or
+derivatives. Nonproduction buckets use their own exact origins, never wildcards.
+The website's exact R2 origin is `NEXT_PUBLIC_R2_UPLOAD_ORIGIN` (the storage
+endpoint origin); it feeds both the transport's URL check and production CSP
+`connect-src`.
+
+**Rollout switches and rollback:** `STORAGE_DIRECT_UPLOAD_ENABLED` issues direct
+grants to any client; `STORAGE_DIRECT_UPLOAD_WEBSITE_ENABLED` additionally lets
+`client=website` begins go direct. Both default to `false` and are `true` in
+production. Kill switch: set the website flag `false` and redeploy — new website
+begins return `multipart`, while already-issued intents still commit and are
+cleaned. Setting `STORAGE_DIRECT_UPLOAD_ENABLED=false` does the same for mobile.
+Never roll back to a backend without the intent ledger, never drop
+`photo_upload_intents`, and never switch a file to multipart because a commit
+was ambiguous.
 
 Android persists the slot before PUT and retries commit first after interruption;
 only `UPLOAD_OBJECT_MISSING` starts another transfer. Transient storage failures do
@@ -405,6 +429,83 @@ succeeds, so retry and Cancel retain the saved placement.
 
 ---
 
+**Photographer removed-event history:**
+`GET /api/v1/me/photographer/events/{eventId}` keeps removed events hidden by
+default. `?includeRemoved=true` returns a removed event's detail, including
+`deletedAt`, only to its owner or a photographer with existing coverage. An own
+settled purchase also proves legacy coverage when its counters are empty.
+The explicit history read also accepts positive retained revenue in the
+requesting photographer's coverage row when uploads and receipts are absent;
+Purchased then returns an honest empty page without reconstructing receipts.
+Other photographers and unknown events receive 404.
+Default live and archived event detail is unchanged. This opt-in does not reopen the
+event's photo list, public detail, uploads, or photo management actions.
+Metadata-visibility PUT also returns 404 for removed events without changing
+the saved choice. Active covered photographers may still update their own
+choice, and active legacy event owners may create one.
+
+**Photographer purchase history — additive seller reads:**
+`GET /api/v1/me/photographer/earnings/per-event` now includes covered events
+with completed order items even when retained revenue is zero, and adds
+`purchaseCount` and `deletedAt` to each event row. `purchaseCount` counts
+completed items, including zero-charge and refunded purchases; existing
+`salesCount` and `revenueKept` keep their ledger meanings. Rows remain ordered
+by retained revenue descending, then event ID, with server pagination.
+Empty out-of-range pages retain the eligible-event `total` and echo `offset`
+and `limit`; only zero history has `total=0`. Clients deduplicate overlapping
+event IDs in first-seen order, advance by returned `offset + limit`, stop on
+an empty page, and refresh from offset zero after changes.
+
+`GET /api/v1/me/photographer/events/{eventId}/purchased-photos` returns one
+row per purchased photo with `photo`, `purchaseCount` and `lastPurchasedAt` in
+the standard `items`/`total`/`offset`/`limit` envelope. It accepts `offset`
+and `limit`, defaults to 0/50 and caps the limit at 200. Rows order by latest
+completed purchase descending, then photo ID. The event read permits the
+seller's retained Removed history, but ownership and coverage remain required.
+
+`GET /api/v1/me/photographer/photos/{photoId}/purchases` pages completed
+order items for one owned photo, newest first with order ID as tie-breaker.
+Its `photo`, current retained `event`, `items`, `total`, `offset`, `limit` and
+`selectedPurchase` include an optional `orderId` selection even when that
+purchase is outside the requested page. An unknown or foreign photo/order
+returns 404. Each item exposes an abbreviated `buyer`, order/photo IDs,
+purchase and order-created times, payment method, historical item price and
+discount, paid amount, free/paid kind, refund status/pending/amount/time,
+net photographer keep and only that seller item's sale/refund transactions.
+The existing billing transaction rows additionally expose `orderId`,
+`isRefund`, `refundOf`, `recordedAt` and `thumbnailUrl`; `paidAt` still means
+purchase time. No full buyer identity, receipt email, guest capability,
+other-seller item or whole-order total is exposed. Anonymous free downloads
+create no order item and therefore have no purchase history.
+
+Website event detail, Purchased photos, receipt history, per-event earnings
+and Billing transactions expose Query's paused state separately from HTTP
+errors. Initial offline reads offer reconnect/retry; paused pagination keeps
+loaded rows and the selected receipt, disables duplicate append actions and
+resumes on reconnection. Purchased mounts only after private detail resolves.
+Closing the preview or ending its session prevents delayed private reads.
+Ledger recovery does not invoke or disable wallet/payout actions; Query's
+existing network and retry policies remain unchanged.
+
+The private `PhotographerLibraryPhotoDto` (ordinary owner library and both
+purchase responses) always emits non-null `mediaAvailable: boolean`. It is a
+fresh owner-scoped delivery-policy result: false for REMOVED, deletion-started
+or purged photos; hidden, trashed and REVIEW owner photos remain eligible.
+It does not prove the storage object exists. Each nonempty library, purchased
+gallery or distinct Billing-photo page uses one availability batch; empty
+pages skip it. Mapping never performs scalar availability queries. Actual
+download and storage-read boundaries retain their fresh scalar guards.
+False suppresses thumbnails, owner Download and metadata actions while receipts
+and persisted financial facts remain readable. Web uses `mediaAvailable?: boolean`;
+Android uses `Boolean? = null`, because absent Gson fields cannot rely on Kotlin
+non-null constructor defaults. Clients deny explicit false and deletion-started
+media; absent/null flags and missing or broken thumbnails alone do not deny
+owner downloads. The server remains authoritative and can reject later delivery.
+
+These reads use existing order, item, photo, dispute and transaction tables.
+No schema migration or new index was added for this feature; checkout, refund
+minting, payout and existing ledger totals are unchanged.
+
 **Photographer photo management — website/mobile integration:**
 `GET /api/v1/me/photographer/events/{id}/photos?deleted=true` lists trash using
 the same `items`, `offset`, `limit`, and `total` pagination envelope as the active
@@ -427,6 +528,36 @@ Unpaid pending or uncertain payments remain protected; expired unpaid order
 items can be released only after provider closure is verified and payment/order
 state is rechecked under locks. This also closes any intent behind an expired
 checkout page before storage cleanup begins.
+
+`PhotoErasureService.request(PhotoErasureCommand)` records one durable job per
+photo; `attempt(jobId)` returns `PENDING`, `RETRY_REQUIRED` or `COMPLETE`.
+Ordinary permanent deletion and authorized privacy removal share this executor.
+Privacy requests require the matching authorized removal item and decision actor.
+An ordinary job can acquire validated privacy authorization while retaining its
+initial audit snapshot and the same job ID; settlement then retains a tombstone.
+Bulk actions may share their original command ID across distinct photo jobs.
+
+[V76](../backend/src/main/resources/db/migration/V76__photo_erasure_jobs.sql)
+retains storage targets, authorization and progress independently of the live
+photo. Short photo-then-job locks surround storage/provider I/O; leases recover
+interrupted attempts, and bounded due sweeps retry failures. Originals,
+derivatives and staging must be absent, and the existing event-scoped face
+eraser must separately confirm AI cleanup. Unfinished producers remain pending
+regardless of lease expiry; late output attribution reopens cleanup and cannot
+republish the photo. Shared live blob references prevent completion.
+
+Staging cleanup honors PUT expiry and retained upload-receipt rechecks, including
+obligations moved during an attempt. Duplicate commits atomically append newly
+associated receipt targets and rechecks under photo-then-job-then-receipt locks;
+they invalidate an in-flight attempt or reopen a completed job. The initial
+manifest is retained, and late targets survive loss of the live photo reference.
+This bounded check does not prove every
+accepted but unreported browser PUT has ended; storage-provider qualification
+remains a release gate. `deleted` includes only confirmed completion. Privacy
+completion clears image keys and metadata/face/bib relationships while retaining
+the photo ID, seller and financial references, and exact-byte content hash that
+prevents the same photographer reuploading the purged bytes. Missing photo rows
+alone are never evidence of erasure; the surviving job manifest is required.
 
 The library's additive `deletionStartedAt` field marks irreversible cleanup.
 Once set, restore and original-download requests are refused, including after
@@ -529,6 +660,22 @@ Admins have access to governance surfaces protected by `@PreAuthorize("hasRole('
 - **Admin dispute amount contract:** Admin dispute list and action responses add `itemChargeAmount`, the disputed order item's historical `pricePhpAtPurchase - discountPhp` (null if the item is missing). `orderSnapshot.total` remains the whole order. Deploy this backend field before the website uses it to display full refunds and bound partial refunds. A successful resolve request may still return `open` or `escalated`; only a provider-confirmed `resolved` response means funds were refunded. These responses also include nullable `refundStatus`; only `manual_review` tells admins to reconcile the payment in PayMongo before another refund attempt.
 - **Audit Logging:** [AdminDecisionLogService.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/admin/AdminDecisionLogService.kt) tracks all admin actions (actor, action, target, metadata diff) for compliance and auditing.
 - **KPI Dashboards:** Real-time financial and operational metrics (gross volume, net platform revenue, pending verifications, active uploaders) served via [AdminKpisController.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/controller/AdminKpisController.kt).
+- **Runner photo removal persistence:** [V68](../backend/src/main/resources/db/migration/V68__photo_removal_cases.sql) adds `photo_removal_requests`, `photo_removal_items`, `photo_removal_reviews`, and `photo_removal_history`, owned by `service/removal`. `PhotoRemovalHistoryRecorder.record` requires an existing transaction (`Propagation.MANDATORY`); history is append-only, with immutable snapshots that preserve case context after live records are deleted. Separate private admin and photographer-owner projections keep requester contact, evidence, and support verification out of owner responses. [V69](../backend/src/main/resources/db/migration/V69__photo_removal_availability.sql) adds the separate photo removal state and purge timestamp. `PhotoAvailabilityService` requires an existing transaction, shares checkout's ordered photo locks, recalculates review restrictions from all verified/restricted-retention items, and preserves irreversible removal. Authorization requires the matching explicit REMOVE item and its recorded decision actor. REVIEW/REMOVED photos are excluded from public galleries, face/bib hydration, verification attribution, free downloads, public metadata, carts, new checkout, and public catalog counts; admin/owner counters retain their meaning and existing paid grants continue during REVIEW. Admin case routes support private intake/evidence, event-wide gallery/bib pagination (gallery reads share the per-user `order-read` policy; selfie matching keeps the `photo-search` inference policy), and selfie candidate discovery across all actual photo owners, including retained hidden/review/trash rows with explicit byte availability. Matching reuses public search's event-scoped inference and backend threshold but never its fallback gallery; unavailable, no-face and no-match outcomes remain distinct. Its `commandId`/`expectedVersion` command replays the original result, rejects stale/racing edits, and reports the provider limit and possible truncation. [V72](../backend/src/main/resources/db/migration/V72__photo_removal_matching.sql) stores only the latest photo IDs, sources and scores in a private cache bound to the committed case version and evidence generation; replacement/cancellation invalidates it. Discovery does not verify identity, select items or freeze owners, and evidence never enters the admin's selfie library. Storage/AI work runs outside database transactions; provider IDs and storage keys stay backend-only. The feature remains unreleased pending client workflow and live cleanup qualification (TASK16). Purchased-delivery enforcement is described below. This intermediate backend must not be deployed as the complete removal feature.
+- **Verified removal selections and owner notices:** `POST /api/v1/admin/photo-removal-requests/{id}/verify` accepts the existing command/version, explicit selection and admin verification fields. Verification locks fresh event-scoped photo rows, snapshots each photo's actual owner, requires current case evidence for SELFIE selections and notes for MANUAL selections, and freezes the selection. The case restriction, items, reviews, actor history and immutable original command result commit together. Each owner notice then commits through the existing inbox writer with its notice ID, stored time, configured response deadline and audit event in a separate transaction. Missing owners remain explicit admin exceptions; the event creator is never substituted. [V73](../backend/src/main/resources/db/migration/V73__photo_removal_notifications.sql) adds case links, unique logical notice keys, required outcome kinds and a persistent review retry time. Failed notices stay pending with configured backoff and a bounded due sweep; they have no response deadline until their inbox row is stored. Reading or removing an inbox message leaves its audit notice/deadline intact. Photographer message REST/WS fields gain nullable `photoRemovalRequestId`; the existing list envelope is unchanged. Original verification replay can show pending notices; current admin detail reports their stored/unavailable state. Related new cases can identify the prior case in the existing private intake note, retained in CREATED history. Requester contact, selfie, private reasons and other owners' item IDs remain outside photographer notices.
+
+- **Photographer removal responses and follow-up:** PHOTOGRAPHER-only `GET /api/v1/me/photographer/photo-removal-requests`, `GET /{id}` and `POST /{id}/responses` use the authenticated owner and private/no-store responses. The list accepts `eventId`, `status`, `needsAction`, `offset` and `limit`; action means this owner's unanswered, undecided VERIFIED items on an OPEN case. Foreign/unknown cases or items return 404. The separate owner DTO includes only own items/reviews, sanitized case reason, own responses and derived counts, decision enum/time and retention date. Private admin decision reasons remain null; requester contact, support notes and evidence stay admin-only. `photoState` observes PRESENT, TRASHED, DELETION_PENDING, PURGED_UNCONFIRMED or ROW_ABSENT_UNCONFIRMED; `cleanupState` reports the retained job outcome, or `UNCONFIRMED` for an absent photo without a retained job; it is null when no cleanup job applies. ALREADY_DELETED is a checked claim, never authorization or proof of erasure. Whole-selection validation precedes changes; undecided responses may be amended after the deadline, while terminal decisions/authorization return 409. [V74](../backend/src/main/resources/db/migration/V74__photo_removal_responses.sql) permits immutable RESPOND receipts; full-command/actor/case checks replay the original scoped result and reject collisions/stale versions. The bounded Clock-driven sweep locks cases, records overdue once for outstanding responses at 72 hours, reuses existing unavailable-owner/orphan actions and returns due restricted-retention items to admin follow-up, including resolved cases. Silence creates no decision or erasure. Existing after-commit admin invalidations contain only `photo_removal_changed`, request ID, nullable actor and time. Preview signing runs outside database transactions. Current cleanup projections distinguish pending/retry/unconfirmed proof from confirmed erasure, including jobs reopened by late resources.
+
+
+- **Admin decisions and resolution:** `POST /api/v1/admin/photo-removal-requests/{id}/decisions` accepts `{commandId, expectedVersion, decisions:[{itemId, decision, reason, retentionReviewAt?}], urgentReason?}` with one to 100 distinct items. Whole-batch validation, ordered photo locks, current owner checks, per-item admin log/history, availability and shared erasure intent commit atomically. AGREE permits immediate removal; otherwise a future/missing response deadline requires an urgent reason. Silence never grants consent. RETAIN releases only this case; MORE_EVIDENCE stays VERIFIED/restricted; RETAIN_RESTRICTED requires a future review date and enters due admin follow-up while explicitly remaining unerased. Shared erasure/storage work runs after commit. `POST /{id}/retry-cleanup` accepts `{commandId, expectedVersion, itemIds}` and retries existing unfinished jobs without new authorization. Both routes return the stored command detail; fetch current detail for cleanup progress. Overlapping cases consume the same confirmed job with system provenance, without another commercial side effect or other-runner disclosure. Resolution requires terminal decisions, current job proof and confirmed evidence absence; deletion acknowledgements alone are insufficient. The bounded sweep discovers completed/reopened jobs, and current detail/list projections never label reopened cleanup as confirmed erasure.
+- **Ownership re-verification:** If actual ownership changes before decision, the decision returns 409. Explicit `verify` on an OPEN case may re-review existing affected items only. It preserves original owner/photo snapshots and previous audit, moves current access to the new owner's review, resets affected responses and sends a fresh owner notice. Joining an existing owner review restarts that group's 72-hour window. Admin items expose nullable `reviewOwnerId` separately from historical `ownerIdSnapshot`. An old RESPOND replay whose full projection contains an item no longer in the current review returns 404, even if the former owner still has other items. For an explicitly reverified RETAINED_RESTRICTED item, the existing decision/restriction/audit remains active, while only that affected current-owner item may receive a fresh reply. Additive item `ownerReviewPending` and admin `phaseCounts.pendingOwnerReviews` (affected item count) expose this exception; owner unanswered counts and `needsAction` include it. One shared database predicate compares durable re-verification and admin-decision aggregate versions, so equal Clock timestamps remain ordered. This fresh review keeps the case OPEN until another explicit admin decision completes it; owner response, silence, deadline expiry and unrelated cleanup never complete it automatically. Other items continue erasure independently. A new explicit decision clears pending eligibility without changing old audit; new replies to ordinary decided/resolved items remain rejected. Existing successful receipts retain their historical result subject to current-owner privacy and terminal sanitization.
+- **Outcome notices and terminal replay:** Each current owner receives only its own safe item outcomes through the existing inbox. Delivery audit uses a logical review/decision-version key, survives inbox deletion, and retries independently with bounded work/backoff; a failed owner notice cannot roll back other decisions. [V80](../backend/src/main/resources/db/migration/V80__photo_removal_decisions.sql) permits DECIDE, RETRY_CLEANUP and SUPPORT_UPDATE receipts. Nonterminal successful receipts remain immutable. On RESOLVED/CANCELLED only, an exact one-way database sanitizer clears MATCH candidate items and sets `candidatesPurged:true`, and nulls known embedded photo URL fields. Terminal replay returns this stable sanitized result; identity/actor/hash/state and selected verification provenance remain unchanged. Arbitrary result mutation is still forbidden. Known external copies remain private support follow-up; existing downloads, screenshots and pre-issued URLs cannot be recalled. TASK16 must qualify backup/version retention and residual URL windows before release. TASK15 owns website outcome badges/deep links; existing notice title/body and Android String-kind fallback remain compatible.
+
+- **Purchased delivery after removal:** REMOVED suppresses future buyer/owner original, preview and thumbnail URLs, owner metadata reads, and shared seller purchase/ledger images. Existing paid access and owner review continue during REVIEW. Public free streaming requires current free-event/catalog eligibility, refuses REVIEW or REMOVED with the existing indistinguishable 404, and rechecks before opening storage even for an already-prepared response; storage streaming runs outside database transactions. Order response and detail `photos` add `availability` (`AVAILABLE`, `REMOVAL_REVIEW`, `REMOVED`) and nullable `unavailableReason` (`PHOTO_REMOVED` after removal); financial lines remain. Valid backend bundle capabilities still require current availability: all-removed selections return 410, mixed selections contain retained photos, and streaming checks current state immediately before each storage read. Removal after preflight aborts the stream without finalizing a successful partial ZIP. Receipts retain purchased counts and payment totals while explaining how many photos remain available.
+- **Buyer removal notices:** `OrderPhotoRemovalService.onRemovalAuthorized(photoId, requestId, occurredAt)` runs in the admin REMOVE authorization transaction, atomically with the item decision, delivery restriction, audit and shared erasure intent. Real, reconciled, free and stub settlements also invoke `onOrderSettled` within successful settlement, after `paidAt` and before grants/ledger writes. Sibling photos lock in UUID order before the first ledger counter write. Notices and financial settlement commit or roll back together; removal never deletes/reverses orders, items, payments, grants, sales or refunds. Signed-in buyers receive the existing `photo_removed` runner message once per order/photo, even after inbox read/soft deletion or overlapping case replay. Its REST/WS shape adds nullable `photoRemovalRequestId`; external notifications remain after commit.
+- **Guest follow-up contract:** Guest or deleted-account buyers receive a durable SYSTEM `NOTICE_STORED` history action containing the item/photo snapshot and `{kind: guest_buyer_removal, orderId}`. No contact or mutable task status is stored there. Admin detail alone adds `guestBuyerRemovalNotices` with `noticeId`, `orderId`, `photoId`, `occurredAt`, `status` and `recipientEmail` resolved from the retained order. `noticeId` is the immutable history row ID. `POST /api/v1/admin/photo-removal-requests/{id}/support-updates` accepts `{commandId, expectedVersion, note, noticeId?}` and returns the private history event. It validates the notice belongs to that case, derives its exact order/photo identities server-side and records `SUPPORT_UPDATED` to derive COMPLETED; unrelated updates leave PENDING. It sends no email. Existing V73 notice columns/kind suffice; no new migration/table is needed.
+- **Website removal adapters:** `website/src/types/photo-removal.ts`, `lib/api-photo-removal.ts`, and `hooks/use-photo-removal.ts` mirror the private admin and owner contracts through the existing authenticated backend client. Evidence reads use its abortable binary response path; command results remain backend-confirmed, and conflicts require refetch and review of the current version. Removal query keys include role, owner and session, with existing notification and polling bridges refreshing affected caches. `FindPhotosControls` shares the existing public search presentation while keeping personal-library behavior in its public adapter. TASK12 adds these foundations. TASK13 adds the admin pages under `/admin/photo-removal-requests` for intake, private selfie evidence, event-wide candidate discovery across every photographer and one explicit verification; they call only the backend, never auto-select candidates and never use the admin's personal selfie library. TASK14 adds per-item admin decisions with recorded reasons and urgent overrides, per-owner response and deadline display (notice stored, not read, since the API exposes no read state), cleanup retry, support/guest-notice updates and the paginated history; erasure is shown only when the server reports cleanup COMPLETE. Buyer order pages render REMOVED purchased photos as a placeholder without download or save, keeping receipts and refund access. TASK15 adds the photographer dashboard pages under `/dashboard/photo-removal-requests`: each photographer sees only their own affected photos and can agree, object with a reason or report already deleted, with the server deadline and outcome (erased only once the server marks the photo REMOVED with cleanup COMPLETE). Inbox notices of kind `photo_removal_request`/`photo_removal_outcome` link to that page from `photoRemovalRequestId`, never from message text, and a refused restore shows the backend's removal-case reason. Release acceptance remains TASK16.
+- **Deciding while RESOLVING:** an admin may still decide a RETAINED_RESTRICTED item while the case is RESOLVING (another photo's cleanup is retrying), never other items and never after a cancel request (`PhotoRemovalService.decide()`). Operations and release steps: [photo-removal-workflow.md](photo-removal-workflow.md).
+- **Removal delivery limits:** The guards prevent fresh platform delivery; storage URLs already issued can remain usable for their configured lifetime in `StorageProperties.presignedTtl`, and previously transferred bytes cannot be recalled. Clients are implemented; live cleanup and storage/backup qualification (see the workflow doc) must finish before release. The intermediate backend remains unreleased.
 
 ---
 
@@ -556,17 +703,49 @@ flowchart TD
         T2["PhotoWatermarkTrigger (Every 60s)"]
         T3["PhotoIndexingTrigger (Every 60s)"]
         T4["PhotoBatchIndexingScheduler (Every 30s)"]
-        T5["PhotoOrphanReaper (Every 30m)"]
+        T5["PhotoOrphanReaper"]
         T6["Bucket4j Eviction Sweep (Every 1h)"]
+        T7["PhotoUploadCleanupTrigger (Default 1m)"]
     end
 
     T1 -->|Polls PayMongo API| SettleMissedWebhooks["Settles missed payments & expires stale checkouts"]
     T2 -->|Scans DB Photo table| RecoverProcessingPhotos["Re-drives photos stuck in PROCESSING status"]
     T3 -->|Scans Photo table| RetryAiIndexing["Retries failed face/bib AI indexing"]
     T4 -->|Batches pending photos| BatchAiDrain["Drains photos into batch AI jobs"]
-    T5 -->|Inspects Object Storage| CleanOrphanFiles["Deletes unreferenced raw storage uploads"]
+    T5 -->|ai-api persons| ReapPersons["Deletes unreferenced ai-api face persons"]
     T6 -->|Scans in-memory buckets| EvictStaleBuckets["Frees idle client rate-limit buckets"]
+    T7 -->|intent ledger| CleanStaging["Expires abandoned direct uploads; deletes staging and unreferenced originals"]
 ```
+
+[`PhotoOrphanReaper`](../backend/src/main/kotlin/com/quickpitik/service/photographer/PhotoOrphanReaper.kt) removes ai-api face persons no live photo references, including leftovers from reindexing or batch rollback. It requires both `app.ai-api.enabled` and `app.ai-api.reaper-enabled`; its configurable fixed delay is `app.ai-api.reaper-interval-ms` (default 30 minutes in [`AiApiProperties`](../backend/src/main/kotlin/com/quickpitik/config/AiApiProperties.kt)). A separate 30-minute age gate protects newly enrolled persons while their photo references commit. [`PhotoUploadCleanupTrigger`](../backend/src/main/kotlin/com/quickpitik/service/photographer/PhotoUploadCleanupTrigger.kt) delegates ledger cleanup to [`PhotoUploadService.cleanupDirectUploads`](../backend/src/main/kotlin/com/quickpitik/service/photographer/PhotoUploadService.kt); `STORAGE_DIRECT_UPLOAD_CLEANUP_INTERVAL` defaults to one minute in [`application.yml`](../backend/src/main/resources/application.yml). Original deletion checks all photo references, regardless of lifecycle state.
+
+### Legacy original inventory (read-only)
+
+Run in Bash in a fresh local directory with a read-only database account (`READ_ONLY_DATABASE_URL`) and bucket-list credentials. Set `STORAGE_BUCKET` to the target backend's configured bucket and `R2_ENDPOINT` to its configured `STORAGE_ENDPOINT`. The protected set includes every photo's original reference (including hidden, processing, trashed and purging photos) and every `PENDING`/`VERIFYING` intent's `original_key`, without expiry filters; see the [`V65` schema](../backend/src/main/resources/db/migration/V65__photo_upload_intents.sql) and [`intent states`](../backend/src/main/kotlin/com/quickpitik/entity/PhotoUploadIntent.kt).
+
+```bash
+set -euo pipefail
+export LC_ALL=C
+
+# 1. Protect photo references and all non-terminal intent originals.
+psql "$READ_ONLY_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -c "
+SELECT s3_key FROM photos WHERE s3_key LIKE 'events/%/original.jpg'
+UNION
+SELECT original_key FROM photo_upload_intents
+WHERE state IN ('PENDING', 'VERIFYING') AND original_key LIKE 'events/%/original.jpg'
+" | sort -u > referenced.txt
+
+# 2. Keep automatic CLI pagination; filter empty/None text output.
+aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$STORAGE_BUCKET" --prefix events/ \
+  --query "Contents[?ends_with(Key, '/original.jpg')].Key" --output text \
+  | tr '\t' '\n' | awk '/^events\/.*\/original[.]jpg$/' | sort -u > stored.txt
+
+# 3. Count candidates only; these commands delete nothing.
+comm -13 referenced.txt stored.txt > unreferenced.txt
+wc -l < unreferenced.txt
+```
+
+Record only the candidate count. This comparison is an observation while uploads may continue, not an atomic inventory or permission to delete. Production execution belongs to the separately authorized post-release inventory; any destructive cleanup needs a separate owner decision and fresh reference checks.
 
 ---
 
@@ -584,7 +763,7 @@ flowchart TD
 | `STORAGE_BACKEND` | `LOCAL` | Set to `S3` | File storage provider (`LOCAL` or `S3`) |
 | `STORAGE_BUCKET` | `quickpitik-dev` | Production S3 Bucket | Target S3 bucket name |
 | `AI_API_ENABLED` | `false` | Set to `true` | Master switch for face & bib AI processing |
-| `AI_PROVIDER` | `ai-api` | `ai-api` or `rekognition` | Vision provider implementation selection |
+| `AI_PROVIDER` | `rekognition` | `rekognition` or `ai-api` | Vision provider implementation selection |
 | `PAYMONGO_SECRET_KEY` | *(dev placeholder)* | Production PayMongo Key | PayMongo HTTP Basic API key (`sk_live_...`) |
 | `PAYMONGO_WEBHOOK_SECRET` | *(dev placeholder)* | Production Signing Secret | PayMongo webhook HMAC verification key |
 | `RESEND_API_KEY` | *(dev placeholder)* | Production Resend Key | Resend transactional email API key |

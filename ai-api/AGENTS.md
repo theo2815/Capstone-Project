@@ -2,13 +2,11 @@
 
 ## Project Overview
 
-This is a modular AI API built with FastAPI (Python 3.11+) for computer vision tasks: **Blur Detection**, **Face Recognition**, and **Bib Number Recognition**. Optional C++ acceleration via pybind11 — dev-only: **no deployment image compiles the extension** (`.dockerignore` drops `*.pyd`; the Python fallbacks are the production path).
+This is a FastAPI (Python 3.11+) service for **blur detection**, called directly by the BatchMyPhotos desktop app. Optional C++ acceleration via pybind11 — dev-only: **no deployment image compiles the extension** (`.dockerignore` drops `*.pyd`; the Python fallbacks are the production path).
 
-All three ML pipelines are trained, integrated, and wired into the API:
+Face search and bib recognition were removed on 2026-10-16: the Spring Boot backend uses AWS Rekognition (`AI_PROVIDER=rekognition`) for both. The `persons` and `face_embeddings` tables (and their migrations) still exist in the database; no served code reads them.
 
-- **Blur classifier** — YOLOv8n-cls ONNX at `models/blur_classifier/blur_classifier.onnx`; quality evidence and limitations are in `docs/ai-system-overview.md`
-- **Face pipeline** — InsightFace `buffalo_l` (RetinaFace + ArcFace, 512-dim embeddings) at `models/models/buffalo_l/`
-- **Bib detector** — custom YOLOv8n at `models/bib_detection/yolov8n_bib.onnx` + PaddleOCR PP-OCRv5 for OCR
+- **Blur classifier** — two-stage (whole-frame rule, then person detector + per-person sharpness + logistic rule), four classes reported; person detector at `models/person_detector/yolov8n_seg_person.onnx`, rule at `models/blur_classifier/people_rule.json`; quality evidence and limitations are in `docs/ai-system-overview.md`
 
 See `docs/ai-system-overview.md` for the full picture.
 
@@ -17,7 +15,7 @@ See `docs/ai-system-overview.md` for the full picture.
 | Document | Purpose |
 |----------|---------|
 | `AGENTS.md` | This file — entry point for AI agents and new team members |
-| `docs/ai-system-overview.md` | Current state of blur, face, and bib pipelines — models, accuracy, artifacts, endpoints |
+| `docs/ai-system-overview.md` | Current state of the blur pipeline — models, accuracy, artifacts, endpoints |
 | `docs/api-reference.md` | Every endpoint with request/response examples |
 | `docs/architecture.md` | 4-layer separation, model registry, batch job flow |
 | `docs/folder-structure.md` | What lives where |
@@ -28,7 +26,7 @@ See `docs/ai-system-overview.md` for the full picture.
 
 ```
 src/api/       → HTTP controllers (thin)
-src/services/  → Business logic (only blur_service today)
+src/services/  → Business logic (none today; create it when a handler's logic grows)
 src/ml/        → ML model wrappers (no HTTP, no DB awareness)
 src/db/        → Database models, repositories, session management
 ```
@@ -37,7 +35,7 @@ src/db/        → Database models, repositories, session management
 - `ml/` modules must never import from `api/`, `services/`, or `db/`.
 - `schemas/` (Pydantic models) are shared across layers for request/response types.
 
-Today only `blur_service.py` exists. Face and bib endpoints call their ML wrappers and repositories directly from the API handler — a service class can be introduced later if the logic grows.
+Today there is no `src/services/` package: the blur endpoints call their ML wrappers (from the registry) and repositories directly from the API handler — a service class can be introduced later if the logic grows.
 
 ## Key Patterns
 
@@ -49,12 +47,9 @@ All ML models are loaded **once** at startup via `src/ml/registry.py` and stored
 registry = request.app.state.model_registry
 detector = registry.get("blur")           # BlurDetector
 classifier = registry.get("blur_classifier")  # BlurClassifier, required in blur profile
-embedder = registry.get("face")           # FaceEmbedder (InsightFace)
-bib_detector = registry.get("bib_detector")   # BibDetector (YOLO), optional
-bib_ocr = registry.get("bib_ocr")         # BibRecognizer (PaddleOCR)
 ```
 
-`blur` is required in every profile; `blur_classifier` is required and verified in the `blur` profile, while face and bib models are excluded. In the `all` profile, `face` and `bib_ocr` are required, while `blur_classifier` and `bib_detector` remain optional.
+`blur` is required in every profile; `blur_classifier` is required and verified in the `blur` profile (the default) and optional in the `all` profile. Both profiles load only these two models.
 
 ### API Response Envelope
 
@@ -82,11 +77,11 @@ except ImportError:
     _HAS_CPP = False
 ```
 
-Then branch on `_HAS_CPP` only where a function has the same output contract. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `cosine_similarity`, `batch_cosine_topk`, `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports `TopKResult` and `BlurMetrics` result structs. The live consumer is `batch_cosine_topk` in the face matcher. The classifier preprocess and classical blur metric functions remain exported but are not used by served inference: classifier preprocessing needs area averaging, and the C++ blur score differs from OpenCV at image borders.
+Then branch on `_HAS_CPP` only where a function has the same output contract. Pure Python/NumPy fallback must always exist. Functions currently exposed by `_quickpitik_cpp` (see `src/cpp/bindings.cpp`): `laplacian_variance`, `fft_hf_ratio`, `batch_blur_metrics`, `bgr_to_gray`, `resize_gray`, `classify_preprocess`. The module also exports the `BlurMetrics` result struct. Nothing in `src/` imports the extension today; these functions remain exported but are not used by served inference: the blur classifier no longer calls `classify_preprocess` (it measures people at the 1280-px upload), and the C++ blur score differs from OpenCV at image borders.
 
 ### Database Access
 
-Use async SQLAlchemy sessions via `src/db/session.get_session_ctx()`. Repositories handle CRUD. Face embedding search uses pgvector cosine distance (`<=>` operator), always scoped by `api_key_id` (and optionally `event_id`).
+Use async SQLAlchemy sessions via `src/db/session.get_session_ctx()`. Repositories (jobs, webhooks) handle CRUD.
 
 Celery workers cannot use asyncpg — they use the sync engine in `src/db/sync_session.py` and the `sync_*_repo.py` repositories.
 
@@ -99,9 +94,9 @@ Every endpoint except `GET /health` and the minimal public `GET /health/readyz` 
 3. Enforces the token-bucket rate limit for the key's tier (free=60/min, pro=300/min, internal=1000/min)
 4. Stores rate info on `request.state.rate_info` so `RateLimitHeadersMiddleware` can set `X-RateLimit-*` response headers
 
-In `DEBUG=true` mode a missing key is allowed and granted full scope (`["*"]`). Production startup refuses to run with `DEBUG=true` when `ENVIRONMENT=production`.
+In `DEBUG=true` mode a missing key is allowed and granted full scope (`["*"]`). Startup refuses `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test`.
 
-Scopes used by the current code: `blur:read`, `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write`.
+Scopes used by the current code: `blur:read`, `jobs:read`, `webhooks:read`, `webhooks:write`.
 
 ### Batch Job Flow (blob-store, not base64)
 
@@ -112,7 +107,8 @@ Image bytes are never put on the Celery message queue. The pattern is:
 3. `store_blobs_and_get_paths` atomically writes each image to `{BLOB_STORE_PATH}/{job_id}/NNNNN.bin` (default `/tmp/quickpitik-blobs`).
 4. Celery task receives `(job_id, image_paths, ...)` — small payload.
 5. Worker decodes from paths in parallel, runs inference in sub-batches of `INFERENCE_SUB_BATCH_SIZE` (50).
-6. `complete_job` / `fail_job` updates the DB, deletes the blob directory, and fires any webhook subscriptions for `job.completed` / `job.failed`.
+6. `complete_job` / `fail_job` updates the DB and fires any webhook subscriptions for `job.completed` / `job.failed`. It does **not** delete the staged images: they are kept as a retry window.
+7. The beat task `cleanup_stale_blobs` (every 30 min, `src/workers/tasks/maintenance_tasks.py`) deletes a job's staged images once the job is `completed` or `failed` and finished at least `BLOB_RETENTION_SECONDS` ago (default 86400 = 24 h). A staged batch with no job row is deleted once its files are that old. Inputs of pending or processing jobs are never deleted.
 
 For client-side pagination of large result sets, `GET /jobs/{id}` supports `offset` and `limit` query params.
 
@@ -181,9 +177,9 @@ make lint
 ## Testing
 
 - Tests live in three places:
-  - `tests/` (top level) — the primary suite: `test_blur_detector.py`, `test_blur_classifier.py`, `test_blur_endpoint.py`, `test_face_matcher.py`, `test_face_endpoints.py`, `test_bib_recognizer.py`, `test_bib_endpoint.py`, `test_batch_endpoints.py`, `test_cpp_extension.py`.
+  - `tests/` (top level) — the primary suite, e.g. `test_blur_detector.py`, `test_blur_classifier.py`, `test_blur_endpoint.py`, `test_batch_endpoints.py`, `test_cpp_extension.py`, `test_deployment_config.py`.
   - `tests/unit/`, `tests/integration/`, `tests/e2e/` — additional unit / integration / end-to-end scoped tests.
-- Test fixtures (images, embeddings) go in `tests/fixtures/`.
+- Test fixtures (images) go in `tests/fixtures/`.
 - Shared fixtures are in `tests/conftest.py`.
 - Use `pytest-asyncio` for async tests. Config: `asyncio_mode = "auto"` in pyproject.toml.
 
@@ -191,7 +187,7 @@ make lint
 
 - **Web**: FastAPI, Uvicorn, Pydantic v2, python-multipart
 - **Image**: OpenCV (headless), NumPy, Pillow, pillow-heif
-- **ML**: InsightFace (RetinaFace + ArcFace), ONNX Runtime, PaddleOCR 3.x (PP-OCRv5), Ultralytics YOLOv8
+- **ML**: ONNX Runtime; Ultralytics only in the optional `train` extra (`pip install -e ".[train]"`) for the offline blur export/training scripts
 - **DB**: PostgreSQL 16 + pgvector, SQLAlchemy 2 (async + sync), Alembic, asyncpg, psycopg2
 - **Queue**: Celery 5 + Redis 7
 - **Auth**: API keys (SHA-256 hashed), PyJWT (with `cryptography`), bcrypt
@@ -217,7 +213,7 @@ Do not add new dependencies without justification. Prefer existing libraries ove
 Two systems coexist:
 
 1. **Laplacian/FFT detector** (`src/ml/blur/detector.py`): Always-available classical CV. Single, stream, and worker decode grayscale at `BLUR_DETECT_DECODE_DIM` and use the same OpenCV Laplacian score, normalized to a 640px reference. FFT is informational and runs only when requested. `detect_fast(gray)` skips FFT.
-2. **YOLOv8n-cls classifier** (`src/ml/blur/classifier.py`): 4-class CNN classifier (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the ONNX model at `models/blur_classifier/blur_classifier.onnx`. Required and verified in the `blur` profile; optional in `all`.
+2. **Two-stage blur classifier** (`src/ml/blur/classifier.py`): whole-frame rule (`src/ml/blur/whole_frame.py`; thresholds `BLUR_SOFT_MAX_DETAIL`, `BLUR_MOTION_MIN_RATIO`, `BLUR_MOTION_MAX_DETAIL`), then person detector + per-person sharpness + logistic rule (`src/ml/blur/person_detector.py`, `src/ml/blur/people.py`); four classes reported (sharp, defocused_object_portrait, defocused_blurred, motion_blurred). Supports GPU via `USE_GPU`. Targeted detection enforces a minimum confidence floor (`BLUR_DETECTION_MIN_CONFIDENCE`, default 0.5). Requires the person detector at `models/person_detector/yolov8n_seg_person.onnx` and the rule at `models/blur_classifier/people_rule.json`. Required and verified in the `blur` profile; optional in `all`.
 
 API endpoints:
 
@@ -225,44 +221,17 @@ API endpoints:
 - `POST /api/v1/blur/detect/stream` — NDJSON stream, up to 500 images, synchronous
 - `POST /api/v1/blur/detect/batch` — async Celery, up to `MAX_BATCH_SIZE` (50)
 - `POST /api/v1/blur/detect/mega` — async Celery chord, up to 500 images
-- `POST /api/v1/blur/classify` — single image, CNN (optional `blur_type` query param)
+- `POST /api/v1/blur/classify` — single image, two-stage classifier (optional `blur_type` query param)
 - `POST /api/v1/blur/classify/stream` — NDJSON stream, up to 500
 - `POST /api/v1/blur/classify/batch` — async Celery, up to 50
 - `POST /api/v1/blur/classify/mega` — async Celery chord, up to 500
-
-### Face Recognition
-
-Pipeline: InsightFace (RetinaFace detection + ArcFace embedding, 512-dim) → pgvector cosine similarity search. `FaceEmbedder` drops the unused `genderage` and extra landmark models at load to save ~40% compute/memory.
-
-- `POST /api/v1/faces/detect` — Detect faces, return bounding boxes + landmarks
-- `POST /api/v1/faces/enroll` — Detect, embed, and store (form fields: `person_name`, **required** `event_id`, optional `person_id`). Faces below `FACE_MIN_ENROLLMENT_CONFIDENCE` (default 0.7) are skipped; returns `LOW_QUALITY` if none pass.
-- `POST /api/v1/faces/search` — Detect and search against stored embeddings (query params: `threshold=0.4`, `top_k=10`, **required** `event_id`). Always filtered by `api_key_id`.
-- `POST /api/v1/faces/compare` — 1:1 verification of two uploaded images
-- `GET  /api/v1/faces/persons` — Paginated list of enrolled persons (`offset`, `limit`, `event_id`)
-- `GET  /api/v1/faces/persons/{id}` — Fetch one person (tenant-isolated)
-- `DELETE /api/v1/faces/persons/{id}` — GDPR erasure — cascades to embeddings
-- `POST /api/v1/faces/search/batch` — Async batch; `operation=detect|search` (`event_id` required when `operation=search`)
-- `POST /api/v1/faces/enroll/batch` — Async bulk enroll under one person (`event_id` required)
-- `POST /api/v1/faces/search/mega` — Async mega-batch (`event_id` required when `operation=search`)
-- `POST /api/v1/faces/enroll/mega` — Async mega enroll — one person per image, all faces, per-image `ref` echo (2026-06-02; feeds the Spring Boot batch drain)
-- `DELETE /api/v1/faces/persons?event_id=…` — Event-scoped bulk erasure (2026-06-02; backend event-delete cascade + orphan reaper)
-
-### Bib Number Recognition
-
-Pipeline: custom YOLOv8n detector (`models/bib_detection/yolov8n_bib.onnx`, loaded via Ultralytics) crops bib regions, then PaddleOCR PP-OCRv5 reads each crop. A character filter (`[A-Za-z0-9\-_]`) and OCR-substitution map (O→0, I→1, etc.) clean the result. Minimum digit count is `BIB_MIN_CHARS` (default 2) and can be overridden per request.
-
-If the detector is unavailable the endpoint falls back to running OCR on the full image and attaches a warning.
-
-- `POST /api/v1/bibs/recognize` — single image (query param: `min_chars`)
-- `POST /api/v1/bibs/recognize/batch` — async Celery, up to 50
-- `POST /api/v1/bibs/recognize/mega` — async Celery chord, up to 500
 
 ## Async Batch Processing
 
 Celery configuration lives in `src/workers/celery_app.py`. Highlights:
 
 - **Broker & backend**: Redis (same `REDIS_URL`)
-- **Queues**: `default`, `blur`, `face`, `bib` — tasks routed via `task_routes`
+- **Queues**: `default`, `blur` — tasks routed via `task_routes`
 - **Time limits**: soft `task_soft_time_limit=3300s`, hard `task_time_limit=3600s`
 - **Worker protection**: `worker_max_tasks_per_child=500`, `worker_max_memory_per_child=2GB`
 - **Prefetch**: `worker_prefetch_multiplier=4` (safe because task messages carry file paths, not image bytes)
@@ -273,35 +242,32 @@ Per-queue worker deployment (production):
 
 ```bash
 # Workers can load only what they need via WORKER_QUEUES
-WORKER_QUEUES=blur celery -A src.workers.celery_app worker -Q blur -c 4
-WORKER_QUEUES=face celery -A src.workers.celery_app worker -Q face -c 2
-WORKER_QUEUES=bib  celery -A src.workers.celery_app worker -Q bib  -c 2
+WORKER_QUEUES=blur    celery -A src.workers.celery_app worker -Q blur -c 4
+WORKER_QUEUES=default celery -A src.workers.celery_app worker -Q default -c 2
 ```
 
-When `WORKER_QUEUES` is unset (dev), the worker loads all models and serves every queue.
+A `default` worker (webhooks, maintenance) loads no models. When `WORKER_QUEUES` is unset (dev) it means `blur,default`, so the worker loads the blur models.
 
 Key worker files:
 
 - `src/workers/celery_app.py` — config, beat schedule, task routes
 - `src/workers/model_loader.py` — queue-aware model loading via `worker_process_init`
 - `src/workers/helpers.py` — decode helpers (path → grayscale / BGR), job progress/complete/fail, webhook dispatch
-- `src/workers/tasks/` — `blur_tasks`, `face_tasks` (search + enroll), `bib_tasks`, `webhook_tasks`, `maintenance_tasks`
+- `src/workers/tasks/` — `blur_tasks`, `webhook_tasks`, `maintenance_tasks`
 
 ## Model Retraining
 
 Training scripts live in `scripts/`:
 
-- Blur classifier: `prepare_blur_dataset.py` → `train_blur_classifier.py` → `export_blur_classifier.py`
-- Bib detector (dedicated): `train_bib_detector.py` → `export_bib_detector.py`
-- Combined face+bib detector (archived path): `auto_annotate_face_bib.py` → `train_face_bib_detector.py` → `export_face_bib_detector.py`
+- Blur classifier: `build_blur_folds.py` → `fit_blur_whole_frame_rule.py` → `export_person_detector.py` → `measure_blur_people.py` → `fit_blur_people_rule.py` → `ship_blur_rule.py`
 
-Training images live in `Training-Images/` (gitignored). Model artifacts live in `models/` (gitignored except `manifest.json`). See `docs/ai-system-overview.md` for the current state of each pipeline.
+`export_person_detector.py` needs the `train` extra (`pip install -e ".[train]"`). Training images live in `Training-Images/` (gitignored). Model artifacts live in `models/` (gitignored except `manifest.json`). See `docs/ai-system-overview.md` for the current state of the pipeline.
 
 ## Infrastructure Requirements
 
 | Service | Purpose | Required for |
 |---------|---------|-------------|
-| PostgreSQL 16 + pgvector | Jobs, webhook subscriptions, persons, face embeddings, API keys | All features |
+| PostgreSQL 16 + pgvector | Jobs, webhook subscriptions, API keys (the retired `persons` / `face_embeddings` tables still exist; pgvector is needed by their migrations) | All features |
 | Redis 7 | Celery broker/backend, rate limiting, API key cache | All features (authenticated requests return 503 while Redis is unavailable) |
 | Celery worker | Async task execution | Batch / mega endpoints and webhooks |
 | Blob store volume | `BLOB_STORE_PATH` (default `/tmp/quickpitik-blobs`) — shared between API and workers | Batch / mega endpoints |

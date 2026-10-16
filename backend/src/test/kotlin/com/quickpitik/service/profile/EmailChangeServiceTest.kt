@@ -65,7 +65,7 @@ class EmailChangeServiceTest {
         val user = stubUser()
         stubPasswordMatches(true)
 
-        service().requestChange(userId, request())
+        service().requestChange(userId, 0, request())
 
         assertEquals(currentEmail, user.email)
         Mockito.verify(userRepository, Mockito.never()).save(anyArg())
@@ -78,7 +78,7 @@ class EmailChangeServiceTest {
         stubUser()
         stubPasswordMatches(true)
 
-        service().requestChange(userId, request())
+        service().requestChange(userId, 0, request())
 
         Mockito.verify(emailService).sendEmailChangeConfirmation(eqArg(newEmail), anyArg())
     }
@@ -88,7 +88,7 @@ class EmailChangeServiceTest {
         stubUser()
         stubPasswordMatches(false)
 
-        assertThrows<UnauthorizedException> { service().requestChange(userId, request()) }
+        assertThrows<UnauthorizedException> { service().requestChange(userId, 0, request()) }
 
         Mockito.verify(emailService, Mockito.never()).sendEmailChangeConfirmation(anyArg(), anyArg())
         Mockito.verify(tokenRepository, Mockito.never()).save(anyArg())
@@ -98,10 +98,10 @@ class EmailChangeServiceTest {
     fun `the sixth wrong current password is rejected as account locked`() {
         val user = stubUser()
         repeat(5) {
-            assertThrows<UnauthorizedException> { service().requestChange(userId, request()) }
+            assertThrows<UnauthorizedException> { service().requestChange(userId, 0, request()) }
         }
 
-        val ex = assertThrows<ApiException> { service().requestChange(userId, request()) }
+        val ex = assertThrows<ApiException> { service().requestChange(userId, 0, request()) }
 
         assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
         assertEquals(HttpStatus.TOO_MANY_REQUESTS, ex.status)
@@ -115,7 +115,7 @@ class EmailChangeServiceTest {
         stubUser().lockedUntil = OffsetDateTime.now().plusMinutes(15)
         Mockito.`when`(passwordEncoder.matches("correct-horse", "hashed")).thenReturn(true)
 
-        val ex = assertThrows<ApiException> { service().requestChange(userId, request()) }
+        val ex = assertThrows<ApiException> { service().requestChange(userId, 0, request()) }
 
         assertEquals(ErrorCodes.ACCOUNT_LOCKED, ex.code)
         Mockito.verify(passwordEncoder).matches("correct-horse", "hashed")
@@ -127,7 +127,7 @@ class EmailChangeServiceTest {
         stubUser() // googleSub is null
 
         assertThrows<UnauthorizedException> {
-            service().requestChange(userId, EmailChangeRequest(newEmail = newEmail, currentPassword = null))
+            service().requestChange(userId, 0, EmailChangeRequest(newEmail = newEmail, currentPassword = null))
         }
 
         Mockito.verify(emailService, Mockito.never()).sendEmailChangeConfirmation(anyArg(), anyArg())
@@ -138,7 +138,7 @@ class EmailChangeServiceTest {
         val user = stubUser()
         user.googleSub = "google-sub-123"
 
-        service().requestChange(userId, EmailChangeRequest(newEmail = newEmail, currentPassword = null))
+        service().requestChange(userId, 0, EmailChangeRequest(newEmail = newEmail, currentPassword = null))
 
         Mockito.verify(emailService).sendEmailChangeConfirmation(eqArg(newEmail), anyArg())
     }
@@ -149,7 +149,7 @@ class EmailChangeServiceTest {
         stubPasswordMatches(true)
         Mockito.`when`(userRepository.existsByEmail(newEmail)).thenReturn(true)
 
-        assertThrows<ConflictException> { service().requestChange(userId, request()) }
+        assertThrows<ConflictException> { service().requestChange(userId, 0, request()) }
 
         Mockito.verify(emailService, Mockito.never()).sendEmailChangeConfirmation(anyArg(), anyArg())
     }
@@ -160,7 +160,7 @@ class EmailChangeServiceTest {
         stubPasswordMatches(true)
 
         assertThrows<ConflictException> {
-            service().requestChange(userId, request(newEmail = currentEmail))
+            service().requestChange(userId, 0, request(newEmail = currentEmail))
         }
     }
 
@@ -169,7 +169,7 @@ class EmailChangeServiceTest {
         stubUser()
         stubPasswordMatches(true)
 
-        service().requestChange(userId, request(newEmail = "  NEW-Address@Test.Local  "))
+        service().requestChange(userId, 0, request(newEmail = "  NEW-Address@Test.Local  "))
 
         Mockito.verify(emailService).sendEmailChangeConfirmation(eqArg(newEmail), anyArg())
     }
@@ -180,12 +180,44 @@ class EmailChangeServiceTest {
         stubUser()
         stubPasswordMatches(true)
 
-        service().requestChange(userId, request())
+        service().requestChange(userId, 0, request())
 
         Mockito.verify(tokenRepository).invalidateOutstanding(eqArg(userId), anyArg())
     }
 
+    @Test
+    fun `a stale session version is refused with 401 UNAUTHORIZED and sends no mail`() {
+        val user = stubUser()
+        user.credentialVersion = 1
+        stubPasswordMatches(true)
+
+        val ex = assertThrows<UnauthorizedException> { service().requestChange(userId, 0, request()) }
+
+        assertEquals(ErrorCodes.UNAUTHORIZED, ex.code)
+        Mockito.verifyNoInteractions(emailService)
+    }
+
     // ─── confirm ──────────────────────────────────────────────────────────
+
+    @Test
+    fun `a link issued under an older version is refused`() {
+        val user = stubUser()
+        val raw = stubUsableToken()
+        user.credentialVersion = 1
+
+        assertThrows<ValidationException> { service().confirmChange(raw) }
+        assertEquals(currentEmail, user.email)
+    }
+
+    @Test
+    fun `confirming an email change bumps the version`() {
+        val user = stubUser()
+        val raw = stubUsableToken()
+
+        service().confirmChange(raw)
+
+        assertEquals(1, user.credentialVersion)
+    }
 
     @Test
     fun `confirming swaps the email and forces a re-login`() {

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.repository.PhotoMetadataRepository
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
 import com.quickpitik.mobile.data.remote.QpWebSocket
@@ -83,6 +84,63 @@ sealed class SharePhotosState {
 
 class PhotographerDashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
+    private val metadataRepository = PhotoMetadataRepository(sessionManager)
+    @Volatile private var metadataRequest = 0
+    private val _eventMetadataVisibility = MutableStateFlow(MetadataToggleState())
+    val eventMetadataVisibility: StateFlow<MetadataToggleState> = _eventMetadataVisibility
+
+    private fun metadataContext(): Pair<SessionManager.AuthSession, String>? =
+        sessionManager.getAccessToken()?.let { token ->
+            sessionManager.authSnapshot(token)?.let { it to RetrofitClient.BASE_URL }
+        }
+
+    private fun current(context: Pair<SessionManager.AuthSession, String>, eventId: String) =
+        sessionManager.isCurrent(context.first) && context.second == RetrofitClient.BASE_URL &&
+        _eventMetadataVisibility.value.eventId == eventId
+
+    fun loadEventMetadataVisibility(eventId: String) {
+        _eventMetadataVisibility.value = MetadataToggleState(eventId = eventId)
+        val context = metadataContext() ?: return
+        val request = ++metadataRequest
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val saved = metadataRepository.getEventVisibility(eventId).metadataPublic
+                if (current(context, eventId) && request == metadataRequest) _eventMetadataVisibility.value = MetadataToggleState(eventId, saved, saved, loading = false)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (current(context, eventId) && request == metadataRequest) _eventMetadataVisibility.value = MetadataToggleState(eventId = eventId, loading = false, error = "Couldn't load metadata visibility.")
+            }
+        }
+    }
+
+    fun setEventMetadataVisibilityDraft(value: Boolean) {
+        val state = _eventMetadataVisibility.value
+        if (!state.loading && !state.saving && state.saved != null) _eventMetadataVisibility.value = state.copy(draft = value, error = null)
+    }
+
+    fun cancelEventMetadataVisibility() {
+        val state = _eventMetadataVisibility.value
+        if (!state.saving) _eventMetadataVisibility.value = state.copy(draft = state.saved, error = null)
+    }
+
+    fun saveEventMetadataVisibility() {
+        val state = _eventMetadataVisibility.value
+        val eventId = state.eventId ?: return
+        val value = state.draft ?: return
+        if (state.loading || state.saving || value == state.saved) return
+        val context = metadataContext() ?: return
+        val request = metadataRequest
+        _eventMetadataVisibility.value = state.copy(saving = true, error = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val saved = metadataRepository.setEventVisibility(eventId, value).metadataPublic
+                if (current(context, eventId) && request == metadataRequest) _eventMetadataVisibility.value = MetadataToggleState(eventId, saved, saved, loading = false)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (current(context, eventId) && request == metadataRequest) _eventMetadataVisibility.value = _eventMetadataVisibility.value.copy(saving = false, error = "Couldn't save metadata visibility.")
+            }
+        }
+    }
     private val _eventsState = MutableStateFlow<EventsState>(EventsState.Loading)
     val eventsState: StateFlow<EventsState> = _eventsState
 

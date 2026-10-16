@@ -2,11 +2,17 @@ package com.quickpitik.service.ai
 
 import com.quickpitik.config.RekognitionProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.exception.ApiException
+import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.storage.S3StorageService
+import com.quickpitik.service.storage.StorageService
+import com.quickpitik.service.storage.StoredObject
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.springframework.http.HttpStatus
 import org.yaml.snakeyaml.Yaml
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
@@ -32,6 +38,10 @@ import java.util.UUID
 // SearchFacesByImage (a real cross-image face match), DetectText — but NOT the
 // unchanged HTTP/auth/upload/event plumbing (that needs the full app + Postgres).
 //
+// The R2 test takes its bucket from R2_SMOKE_BUCKET (skips without it, refuses a
+// production bucket); endpoint and keys still come from application-local.yml.
+// See docs/testing-cloud-services.md.
+//
 // Tagged "integration" so the default `test` task skips it. Run it with:
 //   ./gradlew -p backend integrationTest --tests "*RekognitionR2E2eSmokeTest"
 @Tag("integration")
@@ -41,7 +51,7 @@ class RekognitionR2E2eSmokeTest {
     fun `R2 storage put get presign delete round-trips`() {
         val storage = storageServiceOrNull()
         assumeTrue(storage != null) {
-            "No R2 storage config in application-local.yml (need app.storage.backend=S3 + endpoint) — skipping"
+            "Set R2_SMOKE_BUCKET to the test bucket (and keep app.storage.backend=S3 + endpoint in application-local.yml) — skipping"
         }
         storage!!.use { s ->
             val key = "smoke-test/${UUID.randomUUID()}.txt"
@@ -65,6 +75,39 @@ class RekognitionR2E2eSmokeTest {
             assertTrue(cd.contains("attachment")) { "Content-Disposition missing or inline: '$cd'" }
             s.delete(key)
             println("✅ R2 OK — put + get + presigned GET + signed-disposition download (header: $cd) + delete round-tripped.")
+        }
+    }
+
+    @Test
+    fun `cover recovery on R2 uploads a missing object, keeps a matching one and refuses a different one`() {
+        val storage = storageServiceOrNull()
+        assumeTrue(storage != null) {
+            "Set R2_SMOKE_BUCKET to the test bucket (and keep app.storage.backend=S3 + endpoint in application-local.yml) — skipping"
+        }
+        storage!!.use { s ->
+            var puts = 0
+            val counting = object : StorageService by s {
+                override fun put(key: String, bytes: ByteArray, contentType: String): StoredObject {
+                    puts++
+                    return s.put(key, bytes, contentType)
+                }
+            }
+            val covers = EventCoverService(counting)
+            val key = "smoke-test/${UUID.randomUUID()}.jpg"
+            val cover = covers.prepare(png(0x000000), "image/png")
+            val other = covers.prepare(png(0xffffff), "image/png")
+            try {
+                assertTrue(s.metadata(key) == null) { "R2 metadata of a missing key should be null" }
+                assertTrue(covers.recover(key, cover, covers.digest(cover)) == key && puts == 1) { "a missing object was not uploaded once (puts=$puts)" }
+                assertTrue(covers.recover(key, cover, covers.digest(cover)) == key && puts == 1) { "a matching object was uploaded again (puts=$puts)" }
+                val refused = assertThrows(ApiException::class.java) { covers.recover(key, other, covers.digest(other)) }
+                assertTrue(refused.status == HttpStatus.CONFLICT && refused.code == "ADMIN_COMMAND_RECOVERY_REQUIRED") { "wrong refusal: ${refused.status} ${refused.code}" }
+                assertTrue(puts == 1 && s.getBytes(key).contentEquals(cover)) { "the refused recovery changed the stored object (puts=$puts)" }
+            } finally {
+                s.delete(key)
+            }
+            assertTrue(!s.exists(key)) { "R2 smoke object $key was not deleted" }
+            println("✅ R2 cover recovery OK — missing uploaded once, matching kept, different refused with 409, $key deleted.")
         }
     }
 
@@ -148,7 +191,16 @@ class RekognitionR2E2eSmokeTest {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
+    private fun png(color: Int): ByteArray {
+        val image = java.awt.image.BufferedImage(40, 30, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        for (x in 0 until 40) for (y in 0 until 30) image.setRGB(x, y, color)
+        return java.io.ByteArrayOutputStream().also { javax.imageio.ImageIO.write(image, "png", it) }.toByteArray()
+    }
+
     private fun storageServiceOrNull(): S3StorageService? {
+        // Never the bucket in application-local.yml: that file names production.
+        val bucket = System.getenv("R2_SMOKE_BUCKET")?.takeIf { it.isNotBlank() } ?: return null
+        require(!bucket.contains("prod", ignoreCase = true)) { "Production buckets are forbidden for this probe" }
         val s = nested(loadYaml(), "app", "storage") ?: return null
         if ((s["backend"] as? String)?.uppercase() != "S3") return null
         val endpoint = (s["endpoint"] as? String)?.takeIf { it.isNotBlank() } ?: return null
@@ -157,7 +209,7 @@ class RekognitionR2E2eSmokeTest {
         return S3StorageService(
             StorageProperties(
                 backend = StorageProperties.Backend.S3,
-                bucket = (s["bucket"] as? String) ?: "quickpitik-dev",
+                bucket = bucket,
                 region = (s["region"] as? String) ?: "auto",
                 endpoint = endpoint,
                 accessKey = accessKey,

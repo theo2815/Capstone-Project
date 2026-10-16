@@ -36,8 +36,10 @@ data class PerEventEarningDto(
     val eventId: String,
     val eventName: String,
     val eventDate: LocalDate?,
+    val deletedAt: OffsetDateTime?,
     val photoCount: Int,
     val salesCount: Int,
+    val purchaseCount: Long,
     val revenueKept: BigDecimal,
 )
 
@@ -182,21 +184,27 @@ data class PhotographerTransactionDto(
     val id: String,
     val paidAt: OffsetDateTime,
     val eventId: String,
-    // eventName + eventSlug snapshot the originating event so the billing
+    // eventName + eventSlug resolve the current retained event so the billing
     // ledger can render the title (and deep-link) without the FE keeping a
     // parallel events lookup. Null means the event was hard-deleted — FE
     // falls back to "Event archived".
     val eventName: String?,
     val eventSlug: String?,
     val photoId: String,
+    val orderId: String,
     val buyer: String,
     val amountKept: BigDecimal,
+    val isRefund: Boolean,
+    val refundOf: String?,
+    val recordedAt: OffsetDateTime,
+    val thumbnailUrl: String?,
 )
 
 fun Transaction.toDto(
     buyerDisplay: String,
     eventName: String?,
     eventSlug: String?,
+    thumbnailUrl: String?,
 ): PhotographerTransactionDto =
     PhotographerTransactionDto(
         id = id.toString(),
@@ -205,8 +213,13 @@ fun Transaction.toDto(
         eventName = eventName,
         eventSlug = eventSlug,
         photoId = photoId.toString(),
+        orderId = orderId.toString(),
         buyer = buyerDisplay,
         amountKept = amountKeptPhp,
+        isRefund = isRefund,
+        refundOf = refundOf?.toString(),
+        recordedAt = createdAt,
+        thumbnailUrl = thumbnailUrl,
     )
 
 data class TransactionsLedgerResponse(
@@ -230,7 +243,19 @@ fun privacyBuyerDisplay(name: String?): String {
     return "$first $lastInitial."
 }
 
-// Internal: builds the legacy week-based cycle id `PAY-{YYYY}W{NN}-{HANDLE}` —
+fun privacyGuestBuyerDisplay(email: String): String {
+    if (email.isBlank()) return ""
+    val local = email.substringBefore('@').trim()
+    if (local.isEmpty()) return ""
+    val parts = local.split(Regex("[._\\-]")).filter { it.isNotBlank() }
+    if (parts.isEmpty()) return local.replaceFirstChar { it.uppercase() }
+    if (parts.size == 1) return parts[0].replaceFirstChar { it.uppercase() }
+    val first = parts[0].replaceFirstChar { it.uppercase() }
+    val lastInitial = parts.last().firstOrNull()?.uppercase() ?: return first
+    return "$first $lastInitial."
+}
+
+// Legacy weekly id `PAY-{YYYY}W{NN}-{HANDLE}`: used only to find a photographer's rows made before buildWeeklyCycleId.
 // kept for the smoke-test seed helper (one cycle per week per photographer).
 // The live request-based flow uses buildSequencedCycleId instead so multiple
 // requests in the same ISO week don't collide on the unique PK.
@@ -243,13 +268,26 @@ fun buildCycleId(weekOf: LocalDate, handle: String?): String {
     return "PAY-${isoYear}W${"%02d".format(isoWeek)}-$handlePart"
 }
 
-// Photographer-initiated payouts can fire multiple times per ISO week, so the
-// week-based id collides on the PK. Sequence id is monotonic per photographer:
-// PAY-JUANDC-001, PAY-JUANDC-002, etc. Handle sanitised the same way; falls
-// back to a UUID prefix when handle is missing so the id is still stable.
-fun buildSequencedCycleId(handle: String?, photographerId: UUID, sequence: Long): String {
+// Weekly generator id: one per photographer per ISO week, built from the
+// photographer's id, so two photographers can never share it and a re-run of
+// the same week finds the same row. Replaces buildCycleId's handle-based id,
+// which gave every photographer without a handle the same `-UNKNOWN` id
+// (security audit 2026-10-14). buildCycleId stays only to find rows made
+// before this change.
+fun buildWeeklyCycleId(weekOf: LocalDate, photographerId: UUID): String {
+    val isoYear = weekOf.get(java.time.temporal.IsoFields.WEEK_BASED_YEAR)
+    val isoWeek = weekOf.get(java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR)
+    return "PAY-${isoYear}W${"%02d".format(isoWeek)}-${photographerId.toString().replace("-", "").uppercase()}"
+}
+
+// Photographer-initiated payout id: PAY-{HANDLE}-{number}. The handle is only
+// for people reading the id (admins search ids by it); uniqueness comes from
+// `number`, the database-wide payout_cycle_number_seq (V87), so handles that
+// clean up to the same letters can never share an id. Ids made before V87 end
+// in a per-photographer count (001, 002, …) and are left as they are.
+fun buildSequencedCycleId(handle: String?, photographerId: UUID, number: Long): String {
     val handlePart = handle?.uppercase()?.replace(Regex("[^A-Z0-9]"), "")
         ?.takeIf { it.isNotEmpty() }
         ?: photographerId.toString().take(8).uppercase()
-    return "PAY-$handlePart-${"%03d".format(sequence)}"
+    return "PAY-$handlePart-${"%03d".format(number)}"
 }

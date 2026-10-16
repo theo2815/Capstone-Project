@@ -12,6 +12,8 @@ import java.util.UUID
 
 interface PhotographerMessageRepository : JpaRepository<PhotographerMessage, UUID> {
 
+    fun findByNoticeKey(noticeKey: String): PhotographerMessage?
+
     fun findByPhotographerIdOrderByCreatedAtDescIdAsc(photographerId: UUID): List<PhotographerMessage>
 
     // List for /me/photographer/messages — filters soft-deleted rows. Paged:

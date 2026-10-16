@@ -24,6 +24,7 @@ import type { PaginatedResponse } from "@/types/api";
 //   POST   /api/v1/me/photographer/events/{id}/photos                (multipart fallback)
 
 export interface PhotographerEventDetail extends PhotographerEventSummary {
+  deletedAt: string | null;
   firstUploadAt: string | null;
   lastUploadAt: string | null;
   // V46 — prefill for the owner's edit form.
@@ -99,6 +100,7 @@ export interface UploadedPhoto {
   thumbnailUrl: string;
   span: "default" | "wide";
   aiDetectionStatus?: UploadedPhotoAiDetectionStatus;
+  inTrash?: boolean;
 }
 
 export interface PhotographerEventListArgs {
@@ -127,11 +129,36 @@ export async function fetchPhotographerEvents(
 export async function fetchPhotographerEventDetail(
   eventId: string,
   signal?: AbortSignal,
+  includeRemoved = false,
 ): Promise<PhotographerEventDetail | null> {
   return api.get<PhotographerEventDetail>(
-    `/me/photographer/events/${encodeURIComponent(eventId)}`,
+    `/me/photographer/events/${encodeURIComponent(eventId)}${includeRemoved ? "?includeRemoved=true" : ""}`,
     { signal },
   );
+}
+
+export interface MetadataSettingsDto {
+  metadataPublicByDefault: boolean;
+}
+
+export interface EventMetadataVisibilityDto {
+  metadataPublic: boolean;
+}
+
+export async function getMetadataSettings(signal?: AbortSignal): Promise<MetadataSettingsDto> {
+  return api.get<MetadataSettingsDto>("/me/photographer/metadata-settings", { signal });
+}
+
+export async function putMetadataSettings(settings: MetadataSettingsDto): Promise<MetadataSettingsDto> {
+  return api.put<MetadataSettingsDto>("/me/photographer/metadata-settings", settings);
+}
+
+export async function getEventMetadataVisibility(eventId: string, signal?: AbortSignal): Promise<EventMetadataVisibilityDto> {
+  return api.get<EventMetadataVisibilityDto>(`/me/photographer/events/${encodeURIComponent(eventId)}/metadata-visibility`, { signal });
+}
+
+export async function putEventMetadataVisibility(eventId: string, visibility: EventMetadataVisibilityDto): Promise<EventMetadataVisibilityDto> {
+  return api.put<EventMetadataVisibilityDto>(`/me/photographer/events/${encodeURIComponent(eventId)}/metadata-visibility`, visibility);
 }
 
 export interface PhotographerEventPhotosArgs {
@@ -183,19 +210,20 @@ export async function fetchPhotographerPhotoDownload(
 export async function trashPhotographerPhotos(
   eventId: string,
   photoIds: string[],
-): Promise<{ affected: number; failed: string[] }> {
+): Promise<{ affected: number; failed: string[]; conflict?: string }> {
   return movePhotographerPhotos(eventId, photoIds, "trash");
 }
 
 export async function restorePhotographerPhotos(
   eventId: string,
   photoIds: string[],
-): Promise<{ affected: number; failed: string[] }> {
+): Promise<{ affected: number; failed: string[]; conflict?: string }> {
   return movePhotographerPhotos(eventId, photoIds, "restore");
 }
 
 async function movePhotographerPhotos(eventId: string, photoIds: string[], action: "trash" | "restore") {
-  const result = { affected: 0, failed: [] as string[] };
+  // `conflict` keeps the server's 409 reason (e.g. a removal-case restriction) for the caller to show.
+  const result: { affected: number; failed: string[]; conflict?: string } = { affected: 0, failed: [] };
   const ids = [...new Set(photoIds)];
   // PhotoIdsRequest caps trash/restore at 500; the UI can select many pages.
   for (let offset = 0; offset < ids.length; offset += 500) {
@@ -206,7 +234,8 @@ async function movePhotographerPhotos(eventId: string, photoIds: string[], actio
         { photoIds: batch },
       );
       result.affected += res.affected;
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) result.conflict ??= error.message;
       result.failed.push(...batch);
     }
   }
@@ -283,7 +312,11 @@ export interface UploadRetryState {
   beginRetries?: number;
   transferRetries?: number;
   commitRetries?: number;
+  commitBusyUntil?: number;
+  commitBusyWaits?: number;
   transferDeadline?: number;
+  /** Grant (photoId) that transferDeadline belongs to; a renewed grant gets its own cap. */
+  transferGrant?: string;
 }
 
 export interface PhotographerUploadOptions {
@@ -329,6 +362,15 @@ function retryDelay(error: unknown, attempt: number): number {
   return Math.max(jittered, error instanceof ApiError ? (error.retryAfterSeconds ?? 0) * 1000 : 0);
 }
 
+// Commit is idempotent and the original is already staged: verification
+// backpressure is a wait, not a failure. Bounded per entry.
+const COMMIT_BUSY_WINDOW_MS = 10 * 60_000;
+
+function verificationBusy(error: unknown): boolean {
+  return error instanceof ApiError && error.errors.some((item) =>
+    item.code === "UPLOAD_IN_PROGRESS" || (item.code === "RATE_LIMITED" && error.status === 429));
+}
+
 function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException("Upload cancelled", "AbortError")); return; }
@@ -347,6 +389,16 @@ async function scheduleUploadRetry(
   phase: "beginRetries" | "transferRetries" | "commitRetries",
 ): Promise<void> {
   if (signal?.aborted || !isCurrent()) assertUploadActive(signal, isCurrent);
+  if (phase === "commitRetries" && verificationBusy(error)) {
+    const until = retryState.commitBusyUntil ??= Date.now() + COMMIT_BUSY_WINDOW_MS;
+    if (Date.now() < until) {
+      const waits = (retryState.commitBusyWaits ?? 0) + 1;
+      retryState.commitBusyWaits = waits;
+      assertUploadActive(signal, isCurrent);
+      await waitForRetry(Math.min(15_000, retryDelay(error, Math.min(waits - 1, 4))), signal);
+      return;
+    }
+  }
   const attempt = retryState[phase] ?? 0;
   if (attempt >= 3) throw error;
   retryState[phase] = attempt + 1;
@@ -508,7 +560,7 @@ export async function uploadPhotographerPhoto(
     try {
       begin = await retryUpload(() => api.post<DirectBeginResponse>(`${base}/direct`, {
         contentHash, contentType: file.type, sizeBytes: file.size,
-        requestId: checkpoint!.requestId, client: "website",
+        originalFilename: file.name, requestId: checkpoint!.requestId, client: "website",
       }, { signal }), signal, isCurrent, retryState, "beginRetries");
     } catch (error) {
       if (error instanceof ApiError && error.errors.some((item) => item.code === "UPLOAD_OBJECT_MISSING")) {
@@ -531,6 +583,10 @@ export async function uploadPhotographerPhoto(
     let recovered: UploadedPhoto | undefined;
     let confirmationUnknown = false;
     let renewAfterPut = false;
+    if (retryState.transferGrant !== begin.photoId) {
+      retryState.transferGrant = begin.photoId;
+      retryState.transferDeadline = undefined;
+    }
     const transferDeadline = retryState.transferDeadline ??= Date.now() + 15 * 60_000;
     try {
       await retryUpload(async () => {
@@ -555,8 +611,10 @@ export async function uploadPhotographerPhoto(
                 throw commitError;
               }
               if (begin.expiresAt && Date.parse(begin.expiresAt) <= Date.now()) {
-                if (storageDenied) { renewAfterPut = true; throw error; }
-                throw commitError;
+                // The grant expired and storage confirms nothing arrived: only a
+                // fresh reservation can finish this file, whatever failed the PUT.
+                renewAfterPut = true;
+                throw error;
               }
               options.onPhase?.("uploading");
             }
@@ -691,6 +749,7 @@ export interface PhotoExistsResult {
   hash: string;
   status: PhotoExistsStatus;
   eventName: string | null;
+  inTrash?: boolean;
 }
 
 interface PhotoExistsResponse {

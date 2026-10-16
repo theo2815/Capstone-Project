@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckoutModal } from "@/components/cart/checkout-modal";
+import { ApiError } from "@/lib/api";
 import { FloatingCart } from "@/components/cart/floating-cart";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
@@ -281,14 +282,14 @@ describe("CheckoutModal QRPH", () => {
     await user.keyboard("{Escape}");
     expect(onClose).not.toHaveBeenCalled();
 
-    act(() => useConfirmationStore.getState().close(false));
+    act(() => useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", false));
     await waitFor(() => expect(useConfirmationStore.getState().active).toBeNull());
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole("img", { name: /QR Ph payment code/ })).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
-    act(() => useConfirmationStore.getState().close(true));
+    act(() => useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", true));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     // Leaving keeps the payment so the cart pill can bring the runner back.
     expect(usePendingPaymentStore.getState().pending).not.toBeNull();
@@ -376,14 +377,14 @@ describe("CheckoutModal QRPH", () => {
     await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
     expect(useConfirmationStore.getState().active?.config.title).toBe("Cancel this payment?");
     // Keep waiting: nothing happens.
-    act(() => useConfirmationStore.getState().close(false));
+    act(() => useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", false));
     await waitFor(() => expect(useConfirmationStore.getState().active).toBeNull());
     expect(orderCalls()).toHaveLength(1);
     expect(screen.getByRole("img", { name: /QR Ph payment code/ })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Cancel payment" }));
     await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
-    act(() => useConfirmationStore.getState().close(true));
+    act(() => useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", true));
     await waitFor(() =>
       expect(http.post).toHaveBeenCalledWith(`/orders/${ORDER_ID}/cancel?token=return-token`),
     );
@@ -417,7 +418,7 @@ describe("CheckoutModal QRPH", () => {
 
     await user.click(screen.getByRole("button", { name: "Cancel payment" }));
     await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
-    act(() => useConfirmationStore.getState().close(true));
+    act(() => useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", true));
 
     expect(await screen.findByText("All yours.")).toBeInTheDocument();
     expect(screen.queryByText("Payment cancelled")).not.toBeInTheDocument();
@@ -434,7 +435,7 @@ describe("CheckoutModal QRPH", () => {
 
     await user.click(screen.getByRole("button", { name: "Cancel payment" }));
     await waitFor(() => expect(useConfirmationStore.getState().active).not.toBeNull());
-    act(() => useConfirmationStore.getState().close(true));
+    act(() => useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", true));
 
     await waitFor(() => expect(http.post).toHaveBeenCalledWith(`/me/orders/${ORDER_ID}/cancel`));
     expect(await screen.findByText("Payment cancelled")).toBeInTheDocument();
@@ -539,5 +540,23 @@ describe("CheckoutModal QRPH", () => {
         http.get.mock.calls.some(([p]) => String(p).endsWith("&verify=true")),
       ).toBe(true),
     );
+  });
+
+  it("explains a checkout that is already open under another key", async () => {
+    const message = "These photos are already in a checkout that is waiting for payment.";
+    http.post.mockImplementation(async (path: string) => {
+      if (path === "/coupons/preview") return EMPTY_QUOTE;
+      throw new ApiError([{ code: "CHECKOUT_IN_PROGRESS", message }], 409);
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await user.type(screen.getByLabelText("Email"), "runner@example.com");
+    await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
+    await user.click(screen.getByRole("button", { name: "Continue →" }));
+    await user.click(screen.getByRole("button", { name: /Generate QR to pay/ }));
+
+    expect(await screen.findByText("Checkout already open")).toBeInTheDocument();
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate QR to pay/ })).toBeInTheDocument();
   });
 });

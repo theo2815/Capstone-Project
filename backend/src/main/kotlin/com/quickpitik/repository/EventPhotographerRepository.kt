@@ -14,6 +14,19 @@ import java.util.UUID
 
 interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPhotographerId> {
 
+    @Query("""
+        SELECT ep.id.photographerId FROM EventPhotographer ep
+        JOIN Event e ON e.id = ep.id.eventId
+        JOIN User u ON u.id = ep.id.photographerId
+        JOIN PhotographerSettings s ON s.userId = ep.id.photographerId
+        WHERE ep.id.eventId = :eventId AND ep.id.photographerId IN :photographerIds
+          AND ep.metadataPublic = true AND e.deletedAt IS NULL
+          AND e.status <> com.quickpitik.entity.EventStatus.DRAFT
+          AND u.suspendedAt IS NULL
+          AND s.verificationStatus = com.quickpitik.entity.VerificationStatus.APPROVED
+    """)
+    fun findPublicMetadataPhotographerIds(eventId: UUID, photographerIds: Collection<UUID>): List<UUID>
+
     @Query(
         """
         SELECT ep FROM EventPhotographer ep
@@ -37,21 +50,44 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
     // which caps at its own MAX_PUBLIC_EVENTS (newest coverage first).
     fun findAllByIdPhotographerId(photographerId: UUID, pageable: Pageable): List<EventPhotographer>
 
-    // Per-event earnings list — filters out events with no revenue so the FE
-    // tile doesn't show ₱0 rows (matches the mock filter
-    // `PHOTOGRAPHER_EVENTS.filter(e => e.revenueKept > 0)`). Sorted by revenue
-    // DESC so highest-grossing events surface first.
+    // Positive-revenue legacy rows stay visible; settled own-photo purchases
+    // also retain giveaways and fully refunded sales. EXISTS avoids multiplying
+    // revenue through item joins.
     @Query(
         """
         SELECT ep FROM EventPhotographer ep
         WHERE ep.id.photographerId = :photographerId
-          AND ep.revenueKeptPhp > 0
+          AND (ep.revenueKeptPhp > 0 OR EXISTS (
+              SELECT oi.id.photoId FROM OrderItem oi, Photo p, Order o
+              WHERE oi.id.photoId = p.id
+                AND oi.id.orderId = o.id
+                AND p.photographerId = :photographerId
+                AND p.eventId = ep.id.eventId
+                AND o.eventId = ep.id.eventId
+                AND (o.paidAt IS NOT NULL OR o.status IN (
+                    com.quickpitik.entity.OrderStatus.PAID,
+                    com.quickpitik.entity.OrderStatus.FULFILLED,
+                    com.quickpitik.entity.OrderStatus.REFUNDED
+                ))
+          ))
         ORDER BY ep.revenueKeptPhp DESC, ep.id.eventId ASC
         """,
         countQuery = """
         SELECT COUNT(ep) FROM EventPhotographer ep
         WHERE ep.id.photographerId = :photographerId
-          AND ep.revenueKeptPhp > 0
+          AND (ep.revenueKeptPhp > 0 OR EXISTS (
+              SELECT oi.id.photoId FROM OrderItem oi, Photo p, Order o
+              WHERE oi.id.photoId = p.id
+                AND oi.id.orderId = o.id
+                AND p.photographerId = :photographerId
+                AND p.eventId = ep.id.eventId
+                AND o.eventId = ep.id.eventId
+                AND (o.paidAt IS NOT NULL OR o.status IN (
+                    com.quickpitik.entity.OrderStatus.PAID,
+                    com.quickpitik.entity.OrderStatus.FULFILLED,
+                    com.quickpitik.entity.OrderStatus.REFUNDED
+                ))
+          ))
         """,
     )
     fun pageEarningsForPhotographer(
@@ -91,8 +127,12 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
     @Modifying
     @Query(
         value = """
-        INSERT INTO event_photographer (event_id, photographer_id, photo_count, first_upload_at, last_upload_at)
-        VALUES (:eventId, :photographerId, 1, :now, :now)
+        INSERT INTO event_photographer (event_id, photographer_id, photo_count, first_upload_at, last_upload_at, metadata_public)
+        SELECT :eventId, :photographerId, 1, :now, :now,
+               CASE WHEN (SELECT created_by FROM events WHERE id = :eventId) = :photographerId
+                    THEN false
+                    ELSE COALESCE((SELECT metadata_public_by_default FROM photographer_settings WHERE user_id = :photographerId), false)
+               END
         ON CONFLICT (event_id, photographer_id) DO UPDATE SET
             photo_count     = event_photographer.photo_count + 1,
             first_upload_at = COALESCE(event_photographer.first_upload_at, EXCLUDED.first_upload_at),
@@ -104,6 +144,34 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         @Param("eventId") eventId: UUID,
         @Param("photographerId") photographerId: UUID,
         @Param("now") now: OffsetDateTime,
+    ): Int
+
+    @Modifying
+    @Query(
+        "UPDATE EventPhotographer ep SET ep.metadataPublic = :value " +
+            "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId " +
+            "AND EXISTS (SELECT e.id FROM Event e WHERE e.id = ep.id.eventId AND e.deletedAt IS NULL)",
+    )
+    fun updateMetadataVisibility(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("value") value: Boolean,
+    ): Int
+
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_photographer (event_id, photographer_id, metadata_public)
+        VALUES (:eventId, :photographerId, :value)
+        ON CONFLICT (event_id, photographer_id) DO UPDATE SET
+            metadata_public = EXCLUDED.metadata_public
+        """,
+        nativeQuery = true,
+    )
+    fun upsertMetadataVisibility(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("value") value: Boolean,
     ): Int
 
     @Modifying

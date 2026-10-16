@@ -8,9 +8,9 @@ import jakarta.validation.constraints.Size
  * `PUT /me/email` — step 1 of 2. Starts a change of the account's sign-in
  * email; nothing moves until the new address confirms.
  *
- * The current password is required because this is a credential change, not a
- * profile edit: whoever controls the sign-in address controls password reset,
- * so a hijacked session must not be able to walk the account away on its own.
+ * The current password is required, except for a Google-linked account (product
+ * decision 2026-09-09, `ai-api/docs/integration-contracts.md`); see
+ * `EmailChangeService.requestChange`.
  */
 data class EmailChangeRequest(
     @field:NotBlank(message = "newEmail is required")

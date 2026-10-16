@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,8 +6,8 @@ import { api } from "@/lib/api";
 import type { Dispute } from "@/lib/admin-disputes";
 import type { PayoutReport } from "@/lib/admin-payout-reports";
 import { useAuthStore } from "@/store/auth-store";
-import { adminDisputeKeys } from "@/hooks/use-admin-disputes";
-import { payoutReportKeys } from "@/hooks/use-payout-reports";
+import { adminDisputeKeys, useDisputeActions } from "@/hooks/use-admin-disputes";
+import { payoutReportKeys, usePayoutReportActions } from "@/hooks/use-payout-reports";
 import { adminPayoutKeys } from "@/hooks/use-admin-payouts";
 import { admin, dispute, report } from "@/test/fixtures/admin";
 import { useToastStore } from "@/store/toast-store";
@@ -23,6 +23,22 @@ const fixtures = vi.hoisted(() => ({
   search: "",
   router: { replace: vi.fn() },
 }));
+
+it.each(["dispute", "report"])("displays another view's pending %s action and releases after failure", async (family) => {
+  const user = userEvent.setup();
+  const wrapper = ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const actions = renderHook(() => ({ disputes: useDisputeActions(), reports: usePayoutReportActions() }), { wrapper });
+  render(family === "dispute" ? <AdminDisputeActionAside dispute={dispute} runnerHandle="runner" /> : <PayoutReportsSection />, { wrapper });
+  if (family === "report") await user.click(screen.getByRole("button", { name: /report-1/i }));
+  const fail = pendingRequest(family === "dispute" ? "post" : "fetch");
+  let pending!: Promise<unknown>;
+  act(() => { pending = family === "dispute" ? actions.result.current.disputes.deny(dispute.id, "Reason") : actions.result.current.reports.acknowledge(report.id, "Reply"); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Resolve…" })).toBeDisabled());
+  expect(screen.getByText(family === "dispute" ? "Denying…" : "Acknowledging…")).toBeInTheDocument();
+  await fail();
+  await pending;
+  await waitFor(() => expect(screen.getByRole("button", { name: "Resolve…" })).toBeEnabled());
+});
 vi.mock("next/navigation", () => ({
   useRouter: () => fixtures.router,
   usePathname: () => "/admin/inbox",
@@ -130,6 +146,7 @@ describe.each(["detail", "queue"])("dispute %s", (surface) => {
     const label = submit.textContent!;
     await user.click(submit);
     expect(submit).toBeDisabled();
+    expect(submit).toHaveTextContent(action === "refund" || action === "resolve-deny" ? "Resolving" : action === "deny" ? "Denying" : "Escalating");
     await user.click(submit);
     expect(api.post).toHaveBeenCalledTimes(1);
     expect(useToastStore.getState().toasts).toEqual([]);
@@ -139,7 +156,7 @@ describe.each(["detail", "queue"])("dispute %s", (surface) => {
 
     await fail();
     expect(dialog).toBeInTheDocument();
-    expect(submit).toBeEnabled();
+    await waitFor(() => expect(submit).toBeEnabled());
     expect(screen.getByRole("textbox")).toHaveValue(note);
     expect(useToastStore.getState().toasts.map((toast) => toast.kind)).toEqual(["error"]);
 
@@ -256,11 +273,12 @@ it.each(["acknowledge", "resolve"])("keeps payout report %s open on failure and 
 
   await user.click(submit);
   expect(submit).toBeDisabled();
+  expect(submit).toHaveTextContent(action === "acknowledge" ? "Acknowledging" : "Resolving");
   expect(invalidate).not.toHaveBeenCalled();
   expect(useToastStore.getState().toasts).toEqual([]);
   await fail();
   expect(dialog).toBeInTheDocument();
-  expect(submit).toBeEnabled();
+  await waitFor(() => expect(submit).toBeEnabled());
   expect(within(dialog).getByRole("textbox")).toHaveValue(note);
   expect(invalidate).not.toHaveBeenCalled();
   expect(useToastStore.getState().toasts.map((toast) => toast.kind)).toEqual(["error"]);
@@ -273,4 +291,18 @@ it.each(["acknowledge", "resolve"])("keeps payout report %s open on failure and 
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "payouts", "reports"] });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["photographer", "payouts", "reports"] });
   expect(useToastStore.getState().toasts.map((toast) => toast.kind)).toEqual(["error", "success"]);
+});
+
+it.each(["detail", "queue"])("offers no Escalate on a denied dispute in the %s view", async (surface) => {
+  const user = userEvent.setup();
+  const denied: Dispute = { ...dispute, status: "denied" };
+  fixtures.disputes = [denied];
+  client.setQueryData(adminDisputeKeys.list(admin.id), [denied]);
+  render(<QueryClientProvider client={client}>{surface === "detail"
+    ? <AdminDisputeActionAside dispute={denied} runnerHandle={denied.runnerHandle} />
+    : <DisputesQueue />}</QueryClientProvider>);
+  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  // The server escalates open disputes only.
+  expect(screen.queryByRole("button", { name: "Escalate…" })).not.toBeInTheDocument();
+  expect(screen.getByText("This dispute is closed. No further actions are available.")).toBeInTheDocument();
 });

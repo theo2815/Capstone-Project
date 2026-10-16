@@ -23,8 +23,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -33,8 +35,11 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,7 +50,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -60,12 +67,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
 import coil.size.Size
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import com.quickpitik.mobile.data.remote.CartItemDto
 import com.quickpitik.mobile.data.remote.OrderPhotoDetailDto
@@ -75,7 +85,6 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
 import com.quickpitik.mobile.ui.theme.Bone
-import com.quickpitik.mobile.ui.theme.SecureScreen
 import com.quickpitik.mobile.ui.theme.Fresh
 import com.quickpitik.mobile.ui.theme.GhostCta
 import com.quickpitik.mobile.ui.theme.Ink
@@ -121,6 +130,9 @@ data class PhotoPreviewData(
     val couponPrice: Double? = null,
     // LocalReview mode only — one line under the frame (filename · sync state).
     val caption: String? = null,
+    val metadataAccess: String? = null,
+    val localUploadRecordId: Long? = null,
+    val mediaAvailable: Boolean = true,
 )
 
 // PhotoPreview has four modes. Browse is the runner buy-flow (Add to cart /
@@ -132,6 +144,13 @@ data class PhotoPreviewData(
 // LocalReview: the photographer inspecting a frame still on the phone (the
 // Capture tab's sync strip) — imageUrl is a file:// URI, no server, no commerce.
 enum class PhotoPreviewMode { Browse, OwnerReview, Owned, LocalReview }
+
+internal fun metadataAccessFor(mode: PhotoPreviewMode, photo: PhotoPreviewData): String? =
+    when (mode) {
+        PhotoPreviewMode.OwnerReview -> if (photo.mediaAvailable) "owner" else null
+        PhotoPreviewMode.LocalReview -> null
+        else -> photo.metadataAccess?.takeIf { it == "owner" || it == "public" }
+    }
 
 fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewData(
     id = id,
@@ -145,6 +164,7 @@ fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewD
     couponCode = couponCode,
     couponPercentOff = couponPercentOff,
     couponPrice = couponPrice,
+    metadataAccess = metadataAccess,
 )
 
 fun CartItemDto.toPreviewData(): PhotoPreviewData = PhotoPreviewData(
@@ -169,9 +189,11 @@ fun PhotographerLibraryPhotoDto.toOwnerPreviewData(eventName: String?): PhotoPre
     PhotoPreviewData(
         id = id,
         price = 0.0,
-        imageUrl = RetrofitClient.resolveImageUrl(thumbnailUrl?.takeIf { it.isNotBlank() }),
+        imageUrl = if (mediaAvailable != false && deletionStartedAt == null)
+            RetrofitClient.resolveImageUrl(thumbnailUrl?.takeIf { it.isNotBlank() }) else null,
         eventName = eventName,
         salesCount = salesCount,
+        mediaAvailable = mediaAvailable != false && deletionStartedAt == null,
     )
 
 /**
@@ -258,6 +280,14 @@ fun PhotoPreview(
     // (ViewMode): the cart endpoints are RUNNER-role-gated server-side, so the
     // Add/Buy CTAs are hidden — price + byline stay.
     commerceEnabled: Boolean = true,
+    metadataViewModel: PhotoMetadataViewModel = viewModel(),
+    details: (@Composable (PhotoPreviewData) -> Unit)? = null,
+    canDownload: (PhotoPreviewData) -> Boolean = { true },
+    onRefreshImage: ((PhotoPreviewData) -> Unit)? = null,
+    imageReloadKey: Long = 0,
+    isRefreshingImage: Boolean = false,
+    // Size of the whole list when only part of it is loaded; the counter shows it.
+    totalCount: Int? = null,
 ) {
     if (photos.isEmpty()) {
         onClose()
@@ -265,33 +295,75 @@ fun PhotoPreview(
     }
     val safeIndex = currentIndex.coerceIn(0, photos.size - 1)
     val activePhoto = photos[safeIndex]
+    val metadataAccess = metadataAccessFor(mode, activePhoto)
+    val metadataState by metadataViewModel.state.collectAsState()
+    var metadataOpen by remember { mutableStateOf(false) }
+    var openedPhotoId by remember { mutableStateOf<String?>(null) }
+    var openedAccess by remember { mutableStateOf<String?>(null) }
+    val deniedAccess = remember { mutableStateMapOf<String, String>() }
+    fun closeMetadata() {
+        metadataOpen = false
+        openedPhotoId = null
+        openedAccess = null
+        metadataViewModel.clear()
+    }
+    LaunchedEffect(photos, mode) {
+        val current = photos.associate { it.id to metadataAccessFor(mode, it) }
+        deniedAccess.keys.toList().forEach { id ->
+            if (current[id] != deniedAccess[id]) deniedAccess.remove(id)
+        }
+    }
+    LaunchedEffect(activePhoto.id, metadataAccess, activePhoto.localUploadRecordId) {
+        closeMetadata()
+    }
+    LaunchedEffect(metadataState) {
+        if (metadataState == PhotoMetadataState.Denied && openedPhotoId != null && openedAccess != null) {
+            deniedAccess[openedPhotoId!!] = openedAccess!!
+        }
+        if (metadataOpen && metadataState == PhotoMetadataState.Closed) metadataOpen = false
+    }
+    DisposableEffect(metadataViewModel) { onDispose { metadataViewModel.clear() } }
     val photoInCart = isInCart(activePhoto)
-    val hasMultiple = photos.size > 1
+    val shownTotal = maxOf(totalCount ?: 0, photos.size)
+    val hasMultiple = shownTotal > 1
     val canPrev = safeIndex > 0
     val canNext = safeIndex < photos.size - 1
 
-    val pagerState = rememberPagerState(
-        initialPage = safeIndex,
-        pageCount = { photos.size },
-    )
+    // Not saveable: the caller owns restoring currentIndex, and a restored
+    // pager position could point into a list that is not loaded yet.
+    val pageCount by rememberUpdatedState(photos.size)
+    val pagerState = remember { PagerState(currentPage = safeIndex) { pageCount } }
 
-    // Pager → parent: settled-page emissions update the parent's currentIndex.
+    // Pager → parent: swiped-page emissions update the parent's currentIndex.
     // rememberUpdatedState lets the long-running collector see the latest
     // currentIndex/onIndexChange without restarting (which would skip events).
     val latestOnIndexChange by rememberUpdatedState(onIndexChange)
     val latestCurrentIndex by rememberUpdatedState(currentIndex)
+    // Pages passed while catching up to currentIndex are not the user's choice.
+    var parentScroll by remember { mutableStateOf(false) }
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.collect { page ->
-            if (page != latestCurrentIndex) latestOnIndexChange(page)
+            if (!parentScroll && page != latestCurrentIndex) latestOnIndexChange(page)
         }
     }
     // Parent → pager: chevron taps push currentIndex; animate the pager to
     // catch up. Guarded so swipe-driven changes don't re-animate.
     LaunchedEffect(currentIndex) {
-        if (currentIndex in photos.indices &&
-            pagerState.currentPage != currentIndex
-        ) {
-            pagerState.animateScrollToPage(currentIndex)
+        try {
+            if (currentIndex in photos.indices &&
+                pagerState.currentPage != currentIndex
+            ) {
+                parentScroll = true
+                pagerState.animateScrollToPage(currentIndex)
+            }
+        } finally {
+            // A newer currentIndex cancels this effect; its own effect owns the
+            // flag, and stale pages from this scroll must stay ignored until then.
+            if (isActive && parentScroll) {
+                parentScroll = false
+                // A user drag that interrupted the scroll owns the page it left.
+                if (pagerState.currentPage != latestCurrentIndex) latestOnIndexChange(pagerState.currentPage)
+            }
         }
     }
 
@@ -310,11 +382,10 @@ fun PhotoPreview(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = true,
             dismissOnClickOutside = true,
+            securePolicy = if (mode == PhotoPreviewMode.Browse) SecureFlagPolicy.SecureOn else SecureFlagPolicy.Inherit,
         ),
     ) {
-        // The Dialog is its own Window: Browse = unpurchased preview, so block
-        // screenshots of it here (the host screen's flag doesn't reach it).
-        if (mode == PhotoPreviewMode.Browse) SecureScreen()
+        // The Dialog owns a Window; Browse's unpurchased photo stays secure there.
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
@@ -335,7 +406,7 @@ fun PhotoPreview(
                     // caps at the max. Landscape / not yet loaded: full height,
                     // the stage takes what the strip leaves.
                     .then(
-                        if (fitPortrait) Modifier.heightIn(max = cardMaxHeight)
+                        if (fitPortrait && details == null) Modifier.heightIn(max = cardMaxHeight)
                         else Modifier.height(cardMaxHeight),
                     )
                     .clip(QpCardShape)
@@ -350,11 +421,12 @@ fun PhotoPreview(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f, fill = !fitPortrait)
+                        .weight(1f, fill = details != null || !fitPortrait)
                         .then(
-                            if (fitPortrait) Modifier.height(cardWidth / aspect!!) else Modifier,
+                            if (fitPortrait && details == null) Modifier.height(cardWidth / aspect!!) else Modifier,
                         )
-                        .background(Ink),
+                        .background(Ink)
+                        .clipToBounds(),
                 ) {
                     HorizontalPager(
                         state = pagerState,
@@ -362,12 +434,32 @@ fun PhotoPreview(
                     ) { page ->
                         val pagePhoto = photos[page]
                         Box(modifier = Modifier.fillMaxSize()) {
-                            if (pagePhoto.imageUrl != null) {
-                                ZoomableImage(
-                                    url = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl)!!,
-                                    onAspect = { aspects[page] = it },
-                                    modifier = Modifier.fillMaxSize(),
-                                )
+                            if (pagePhoto.imageUrl != null && pagePhoto.mediaAvailable) {
+                                val url = RetrofitClient.resolveImageUrl(pagePhoto.imageUrl)!!
+                                key(pagePhoto.id, url, if (pagePhoto.id == activePhoto.id) imageReloadKey else 0L) {
+                                    var imageFailed by remember { mutableStateOf(false) }
+                                    ZoomableImage(
+                                        url = url,
+                                        onAspect = { aspects[page] = it },
+                                        onError = { imageFailed = true },
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                    if (imageFailed) Column(
+                                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                    ) {
+                                        Text("Preview unavailable", style = Typography.bodyMedium, color = Color.White)
+                                        if (onRefreshImage != null) {
+                                            Spacer(Modifier.height(12.dp))
+                                            GhostCta(
+                                                text = if (isRefreshingImage) "Refreshing…" else "Refresh image",
+                                                enabled = !isRefreshingImage,
+                                                onClick = { onRefreshImage(pagePhoto) },
+                                                modifier = Modifier.background(Bone, PillShape),
+                                            )
+                                        }
+                                    }
+                                }
                             } else {
                                 Box(
                                     modifier = Modifier
@@ -403,7 +495,7 @@ fun PhotoPreview(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = "${safeIndex + 1} / ${photos.size}",
+                                text = "${safeIndex + 1} / $shownTotal",
                                 style = NumeralStyle.copy(fontSize = 13.sp),
                                 color = Ink,
                             )
@@ -417,25 +509,29 @@ fun PhotoPreview(
                             .align(Alignment.TopEnd)
                             .padding(12.dp),
                     )
-                    if (canPrev) {
-                        ChromeButton(
-                            icon = Icons.Default.KeyboardArrowLeft,
-                            contentDescription = "Previous",
-                            onClick = { onIndexChange(safeIndex - 1) },
-                            modifier = Modifier
-                                .align(Alignment.CenterStart)
-                                .padding(12.dp),
-                        )
-                    }
-                    if (canNext) {
-                        ChromeButton(
-                            icon = Icons.Default.KeyboardArrowRight,
-                            contentDescription = "Next",
-                            onClick = { onIndexChange(safeIndex + 1) },
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .padding(12.dp),
-                        )
+                    // Centred below the 12dp + 48dp top row, so a short stage can
+                    // never slide prev/next under close or the counter.
+                    Box(modifier = Modifier.matchParentSize().padding(top = 60.dp)) {
+                        if (canPrev) {
+                            ChromeButton(
+                                icon = Icons.Default.KeyboardArrowLeft,
+                                contentDescription = "Previous",
+                                onClick = { onIndexChange(safeIndex - 1) },
+                                modifier = Modifier
+                                    .align(Alignment.CenterStart)
+                                    .padding(horizontal = 12.dp),
+                            )
+                        }
+                        if (canNext) {
+                            ChromeButton(
+                                icon = Icons.Default.KeyboardArrowRight,
+                                contentDescription = "Next",
+                                onClick = { onIndexChange(safeIndex + 1) },
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(horizontal = 12.dp),
+                            )
+                        }
                     }
                 }
 
@@ -443,6 +539,7 @@ fun PhotoPreview(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .then(if (details != null) Modifier.heightIn(max = cardMaxHeight * 0.5f).verticalScroll(rememberScrollState()) else Modifier)
                         .padding(horizontal = 20.dp, vertical = 16.dp),
                 ) {
                     Row(
@@ -522,7 +619,7 @@ fun PhotoPreview(
                                 )
                             }
                         }
-                        PhotoPreviewMode.Owned -> {
+                        PhotoPreviewMode.Owned -> if (canDownload(activePhoto)) {
                             Spacer(modifier = Modifier.height(12.dp))
                             PrimaryCta(
                                 text = "Download photo ↓",
@@ -560,13 +657,36 @@ fun PhotoPreview(
                                     onClick = onClose,
                                     modifier = Modifier.weight(1f),
                                 )
-                                PrimaryCta(
+                                if (activePhoto.mediaAvailable && canDownload(activePhoto)) PrimaryCta(
                                     text = "Download ↓",
-                                    onClick = { onDownload(activePhoto) },
+                                    onClick = { if (activePhoto.mediaAvailable && canDownload(activePhoto)) onDownload(activePhoto) },
                                     modifier = Modifier.weight(1f),
                                 )
                             }
                         }
+                    }
+
+                    if (details != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { details(activePhoto) }
+                    }
+
+                    if ((metadataAccess != null && deniedAccess[activePhoto.id] != metadataAccess) ||
+                        (mode == PhotoPreviewMode.LocalReview && activePhoto.localUploadRecordId != null)) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        GhostCta(
+                            text = "Show Metadata",
+                            onClick = {
+                                metadataOpen = true
+                                openedPhotoId = activePhoto.id
+                                openedAccess = metadataAccess
+                                if (mode == PhotoPreviewMode.LocalReview) metadataViewModel.selectLocal(activePhoto.localUploadRecordId!!)
+                                else metadataViewModel.selectRemote(activePhoto.id, metadataAccess!!)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
 
                     // Gesture hint — invisible gestures don't ship.
@@ -583,7 +703,29 @@ fun PhotoPreview(
                 }
             }
         }
+        if (metadataOpen) {
+            PhotoMetadataSheet(
+                state = metadataState,
+                onClose = ::closeMetadata,
+                onRefresh = metadataViewModel::refresh,
+                secure = mode == PhotoPreviewMode.Browse,
+            )
+        }
     }
+}
+
+// The final pointer-up event has no pressed pointers. Compose reports an
+// unspecified centroid then; skip it before it can become a NaN translation.
+internal fun zoomOffsetAfterGesture(
+    offset: Offset,
+    centroid: Offset,
+    centre: Offset,
+    currentScale: Float,
+    nextScale: Float,
+    pan: Offset,
+): Offset? {
+    if (!centroid.isSpecified) return null
+    return (offset - (centroid - centre)) * (nextScale / currentScale) + (centroid - centre) + pan
 }
 
 // Pinch-to-zoom + double-tap-to-zoom over the preview. Pans while zoomed and
@@ -598,6 +740,7 @@ fun PhotoPreview(
 private fun ZoomableImage(
     url: String,
     onAspect: (Float) -> Unit,
+    onError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -641,8 +784,9 @@ private fun ZoomableImage(
                             val centroid = event.calculateCentroid()
                             val centre = Offset(size.width / 2f, size.height / 2f)
                             // Keep the pinch centroid fixed while scaling around the centre.
-                            val scaled = (offset - (centroid - centre)) * (s / scale.value) + (centroid - centre)
-                            offset = clamp(scaled + pan, s)
+                            val next = zoomOffsetAfterGesture(offset, centroid, centre, scale.value, s, pan)
+                                ?: continue
+                            offset = clamp(next, s)
                             scope.launch { scale.snapTo(s) }
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
@@ -663,6 +807,7 @@ private fun ZoomableImage(
                     onAspect(d.intrinsicWidth.toFloat() / d.intrinsicHeight)
                 }
             },
+            onError = { onError() },
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {

@@ -27,7 +27,7 @@ beforeEach(() => {
   rows = [message]; useToastStore.getState().clear(); useViewModeStore.getState().reset();
   vi.spyOn(api, "getWithTotal").mockImplementation(async () => ({ data: rows, total: rows.length }));
 });
-afterEach(() => { cleanup(); client.clear(); useConfirmationStore.getState().close(false); useAuthStore.getState().logout(); vi.restoreAllMocks(); push.mockClear(); });
+afterEach(() => { cleanup(); client.clear(); useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", false); useAuthStore.getState().logout(); vi.restoreAllMocks(); push.mockClear(); });
 function mount(role: "PHOTOGRAPHER" | "RUNNER") {
   useAuthStore.getState().setUser({ id: "owner", role, name: "Owner", email: "owner@example.test", createdAt: "2026-09-10T00:00:00Z" });
   return render(<QueryClientProvider client={client}><NotificationBell /><RunnerNotificationBell /><ConfirmationOverlay /></QueryClientProvider>);
@@ -116,4 +116,14 @@ it("runner receipt navigation waits for mark-read confirmation and remains retry
   await user.click(screen.getByRole("button", { name: /Account update/ }));
   await waitFor(() => expect(push).toHaveBeenCalledWith("/orders?expand=order%20%2F1"));
   expect(screen.queryByRole("dialog", { name: "Inbox" })).not.toBeInTheDocument();
+});
+it("runner photo_removed notice shows its label and keeps the receipt link", async () => {
+  rows = [{ ...message, id: "message-2", kind: "photo_removed", title: null, orderId: "order-9",
+    body: "A photo in this order was removed following a verified privacy request. Your purchase record remains available; contact support for help." }];
+  const user = userEvent.setup();
+  mount("RUNNER");
+  await user.click(await screen.findByRole("button", { name: /Inbox ·/ }));
+  const labels = screen.getAllByText("Photo removed"); // kind kicker + null-title fallback
+  expect(labels).toHaveLength(2); labels.forEach((label) => expect(label).toBeVisible());
+  expect(screen.getByRole("button", { name: "View receipt →" })).toBeEnabled();
 });

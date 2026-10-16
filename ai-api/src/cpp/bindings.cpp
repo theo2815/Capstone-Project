@@ -3,7 +3,6 @@
 #include <pybind11/stl.h>
 
 #include "blur_ops.h"
-#include "face_ops.h"
 #include "preprocess_ops.h"
 
 namespace py = pybind11;
@@ -11,25 +10,6 @@ namespace py = pybind11;
 PYBIND11_MODULE(_quickpitik_cpp, m) {
     m.doc() = "QuickPitik C++ acceleration module";
     m.attr("__version__") = "1.0.0";
-
-    // --- Face ops ---
-    py::class_<quickpitik::TopKResult>(m, "TopKResult")
-        .def_readonly("indices", &quickpitik::TopKResult::indices)
-        .def_readonly("scores", &quickpitik::TopKResult::scores)
-        .def("__repr__", [](const quickpitik::TopKResult& r) {
-            return "<TopKResult with " + std::to_string(r.indices.size()) +
-                   " results>";
-        });
-
-    m.def("cosine_similarity", &quickpitik::cosine_similarity,
-          py::arg("a"), py::arg("b"),
-          "Cosine similarity between two L2-normalized float32 vectors.");
-
-    m.def("batch_cosine_topk", &quickpitik::batch_cosine_topk,
-          py::arg("query"), py::arg("database"),
-          py::arg("threshold") = 0.4f, py::arg("top_k") = 10,
-          "Batch cosine similarity with threshold filtering and top-K "
-          "selection.");
 
     // --- Blur ops ---
     py::class_<quickpitik::BlurMetrics>(m, "BlurMetrics")

@@ -12,7 +12,7 @@ package com.quickpitik.websocket
 //   {
 //     "type": "verification_submitted" | "dispute_filed" | "payout_report_filed"
 //           | "event_submitted" | "event_change_requested",   // V46 event review queue
-//     "entityId": "<uuid|cycleId>",   // userId | disputeId | reportId | eventId
+//     "entityId": "<uuid>",            // userId | disputeId | reportId | eventId
 //     "actorId":  "<uuid>",            // photographerId | runnerId | photographerId
 //     "occurredAt": "<ISO-8601>"
 //   }
