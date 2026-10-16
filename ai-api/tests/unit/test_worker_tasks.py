@@ -4,6 +4,7 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 # Eagerly import the modules that task functions import *lazily* so that
 # ``unittest.mock.patch`` can resolve them as ``@patch`` decoration targets.
@@ -397,6 +398,167 @@ class TestFaceProcessBatch:
         mock_complete.assert_not_called()
 
 
+class TestEnrollMegaBatch:
+    """The bulk photo-indexing primitive: ONE person per image, all faces.
+
+    ``face_enroll_mega_batch`` enrolls each uploaded photo as its own ai
+    person (unlike ``face_enroll_batch`` which lumps all images under one
+    shared person), storing every detected face under it with a per-face
+    distinct hash. Runs the task body synchronously with ``.apply()`` and a
+    valid parent ID with ``mega_child=True`` so it returns the result list instead of
+    writing to the DB / firing webhooks. Mocks the embedder, blob loader, and
+    sync session because the suite has no test database.
+    """
+
+    def test_one_person_per_image_all_faces_with_ref(self, monkeypatch):
+        import contextlib
+        import types
+        import uuid as _uuid
+
+        # image 0: a 3-runner crowd; image 1: a single runner; image 2: no face.
+        face_sets = [
+            [{"bbox": {"confidence": 0.95}, "embedding": [0.01 * (i + 1)] * 512} for i in range(3)],
+            [{"bbox": {"confidence": 0.9}, "embedding": [0.5] * 512}],
+            [],
+        ]
+        calls = {"n": 0}
+
+        def _embed(image):
+            r = face_sets[calls["n"]]
+            calls["n"] += 1
+            return r
+
+        fake_embedder = types.SimpleNamespace(get_embeddings=_embed)
+
+        monkeypatch.setattr("src.workers.model_loader.get_face_embedder", lambda: fake_embedder)
+        # Distinct bytes per path => distinct per-image sha256 base hash.
+        monkeypatch.setattr("src.utils.blob_store.load_blob", lambda path: b"raw-" + path.encode())
+        monkeypatch.setattr("src.workers.helpers._decode_raw_bytes", lambda raw, max_dim=0: object())
+
+        created_persons: list[tuple] = []
+        stored: list[tuple] = []
+
+        class _Savepoint:
+            def commit(self):
+                pass
+
+            def rollback(self):
+                pass
+
+        class _FakeSession:
+            def begin_nested(self):
+                return _Savepoint()
+
+        @contextlib.contextmanager
+        def _fake_sync_session():
+            yield _FakeSession()
+
+        class _FakeRepo:
+            def __init__(self, session):
+                pass
+
+            def create_person(self, name, api_key_id=None, event_id=None):
+                pid = _uuid.uuid4()
+                created_persons.append((pid, name, event_id))
+                return types.SimpleNamespace(id=pid, name=name, event_id=event_id)
+
+            def bulk_store_embeddings(self, person_id, faces, min_conf=0.0):
+                hashes = [f["source_image_hash"] for f in faces]
+                stored.append((person_id, hashes))
+                return len(faces), 0
+
+        monkeypatch.setattr("src.db.sync_session.get_sync_session", _fake_sync_session)
+        monkeypatch.setattr("src.db.repositories.sync_face_repo.SyncFaceRepository", _FakeRepo)
+        monkeypatch.setattr("src.workers.helpers.touch_mega_job", lambda _: True)
+
+        from src.workers.tasks.face_tasks import face_enroll_mega_batch
+
+        event_id = str(_uuid.uuid4())
+        refs = ["photo-A", "photo-B", "photo-C"]
+        results = face_enroll_mega_batch.apply(
+            args=[str(_uuid.uuid4()), ["p0", "p1", "p2"]],
+            kwargs={"api_key_id": "key-1", "event_id": event_id,
+                    "refs": refs, "mega_child": True},
+        ).get()
+
+        assert len(results) == 3
+        # image 0 — crowd: one person, all 3 faces, ref echoed
+        assert results[0]["ref"] == "photo-A"
+        assert results[0]["person_id"] is not None
+        assert results[0]["faces_enrolled"] == 3
+        # image 1 — single runner
+        assert results[1]["ref"] == "photo-B"
+        assert results[1]["faces_enrolled"] == 1
+        # image 2 — no enrollable face: benign, no person created
+        assert results[2]["ref"] == "photo-C"
+        assert results[2]["person_id"] is None
+        assert results[2]["faces_enrolled"] == 0
+        # exactly TWO persons (images 0 + 1) — not one shared, not three
+        assert len(created_persons) == 2
+        # event isolation: every person stamped with the SAME event_id
+        assert all(ev == event_id for (_, _, ev) in created_persons)
+        # crowd photo stored three DISTINCT per-face hashes
+        crowd_hashes = stored[0][1]
+        assert len(crowd_hashes) == 3 and len(set(crowd_hashes)) == 3
+
+
+class TestVectorCastBinding:
+    """Vector casts in raw SQL must use CAST(:name AS vector), not :name::vector.
+
+    SQLAlchemy's text() bind-parameter regex refuses a name followed by ':',
+    so ":query::vector" backtracks and binds a parameter called "quer". The
+    real value is never substituted, Postgres receives a literal ':' and
+    raises `syntax error at or near ":"`.
+
+    This was fixed in the async FaceRepository on 2026-05-20 but the sync copy
+    kept the broken form until 2026-08-14 — which meant /faces/search/batch and
+    /faces/search/mega failed for every image containing exactly ONE face (the
+    len(embeddings) == 1 branch of batch_search_similar delegates to
+    search_similar). The worker swallows per-image exceptions into a result
+    row, so it degraded silently rather than failing the job.
+
+    DB-free: asserts on how the SQL text parses, not on query results.
+    """
+
+    def _binds(self, sql: str) -> set[str]:
+        from sqlalchemy import text
+
+        return set(text(sql)._bindparams.keys())
+
+    def test_colon_cast_loses_the_parameter(self):
+        # Documents WHY the rule exists — this is the shape that broke.
+        assert self._binds("SELECT :query::vector") == {"quer"}
+        assert self._binds("SELECT CAST(:query AS vector)") == {"query"}
+
+    @pytest.mark.parametrize(
+        "module",
+        [
+            "src.db.repositories.sync_face_repo",
+        ],
+    )
+    def test_repos_contain_no_colon_cast(self, module: str):
+        import ast
+        import importlib
+        import inspect
+        import re
+
+        source = inspect.getsource(importlib.import_module(module))
+
+        # Drop docstrings before scanning. The SQL we are policing lives in
+        # ordinary string literals, so the scan cannot simply skip strings —
+        # but docstrings are prose, and the ones explaining this very bug
+        # quote the broken form on purpose.
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                doc = ast.get_docstring(node, clean=False)
+                if doc:
+                    source = source.replace(doc, "")
+
+        offenders = re.findall(r":\w+::\w+", source)
+        assert not offenders, f"{module} uses ':name::type' casts: {offenders}"
+
+
 # =========================================================================
 # bib_recognize_batch
 # =========================================================================
@@ -729,3 +891,64 @@ def test_worker_starts_the_blur_classifier_with_the_two_stage_two_files(monkeypa
     kwargs = loader.get_blur_classifier().kwargs
     assert kwargs["detector_path"].endswith("person_detector/yolov8n_seg_person.onnx")
     assert kwargs["rule_path"].endswith("blur_classifier/people_rule.json")
+
+
+class TestWebhookTenantScoping:
+    """Job-completion webhooks must fan out only to the owning tenant.
+
+    ``dispatch_webhook_sync`` now threads the job's ``api_key_id`` into
+    ``list_by_event`` so a tenant's job.completed never dispatches to another
+    tenant's subscriptions (was: event-name-only lookup → cross-tenant leak).
+    """
+
+    def test_dispatch_scopes_lookup_by_api_key_id(self, monkeypatch):
+        import contextlib
+
+        captured: dict = {}
+
+        class _FakeWebhookRepo:
+            def __init__(self, session):
+                pass
+
+            def list_by_event(self, event, api_key_id=None):
+                captured["event"] = event
+                captured["api_key_id"] = api_key_id
+                return []  # no subscriptions => no delivery dispatched
+
+        @contextlib.contextmanager
+        def _fake_sync_session():
+            yield object()
+
+        # dispatch_webhook_sync binds these names at the helpers module top.
+        monkeypatch.setattr("src.workers.helpers.get_sync_session", _fake_sync_session)
+        monkeypatch.setattr("src.workers.helpers.SyncWebhookRepository", _FakeWebhookRepo)
+
+        from src.workers.helpers import dispatch_webhook_sync
+
+        count = dispatch_webhook_sync(
+            "job.completed", {"job_id": "j1", "result_count": 5}, api_key_id="key-A"
+        )
+        assert count == 0
+        assert captured["event"] == "job.completed"
+        assert captured["api_key_id"] == "key-A"
+
+
+class TestSourceImageHashColumn:
+    """The face_embeddings.source_image_hash column must fit the per-face key
+    "{sha256_hexdigest}:{face_index}" (66+ chars). A VARCHAR(64) — the original
+    width — raises StringDataRightTruncation on every enroll against a real
+    database. Guards migration i9d0e1f2g3h4 from being reverted or the model
+    reset to String(64). DB-free: inspects the ORM column definition only.
+    """
+
+    def test_column_fits_per_face_key(self):
+        import hashlib
+
+        from src.db.models import FaceEmbedding
+
+        col_len = FaceEmbedding.__table__.c.source_image_hash.type.length
+        sample = f"{hashlib.sha256(b'x').hexdigest()}:{999}"
+        assert col_len is not None and col_len >= len(sample), (
+            f"source_image_hash VARCHAR({col_len}) too narrow for the "
+            f"{len(sample)}-char per-face key"
+        )
