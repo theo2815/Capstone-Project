@@ -13,6 +13,9 @@ import { formatRaceDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const EVENT_PAGE = 20;
+// The backend can't read any other shape, and its reply then names no field.
+const RUNNER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RUNNER_ID_ERROR = "Runner account ID must be the 36-character account ID, like 1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed. Leave it empty if you don't have it.";
 export const REMOVAL_INPUT = "w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:border-fresh";
 
 // Support intake only: contact and reason live in component state and go
@@ -32,6 +35,8 @@ export function RemovalRequestIntake() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!ready || create.isPending) return;
+    const runnerId = draft.requesterUserId.trim();
+    if (runnerId && !RUNNER_ID.test(runnerId)) { setError(RUNNER_ID_ERROR); return; }
     const fingerprint = JSON.stringify(draft);
     if (attempt.current?.fingerprint !== fingerprint) attempt.current = { fingerprint, commandId: crypto.randomUUID() };
     setError(null);
@@ -47,15 +52,17 @@ export function RemovalRequestIntake() {
     }
   }
 
-  const rows = events.data ?? [];
+  const page = events.data ?? [];
+  // Pending and sent-back events never went live, so they hold no photos to remove.
+  const rows = page.filter((row) => row.reviewStatus === "approved" || row.reviewStatus === "change_pending");
   return (
     <form onSubmit={submit} className="mt-8 space-y-10 max-w-2xl">
       <fieldset className="min-w-0 space-y-4" disabled={create.isPending}>
         <legend className="font-display text-xl font-extrabold text-ink">1. Event</legend>
-        <p className="text-sm text-slate">One event per case. Public and unlisted events can both be chosen.</p>
+        <p className="text-sm text-slate">One event per case. Only approved events are listed; public and unlisted ones can both be chosen.</p>
         {events.isPending && <p role="status" className="text-sm text-slate">Loading events…</p>}
         {events.isError && <p role="alert" className="text-sm text-error">Couldn&apos;t load events. <button type="button" className={cn(BTN_GHOST, "underline")} onClick={() => void events.refetch()}>Try again</button></p>}
-        {events.isSuccess && rows.length === 0 && <p className="text-sm text-slate">No events on this page.</p>}
+        {events.isSuccess && rows.length === 0 && <p className="text-sm text-slate">No approved events on this page.</p>}
         <ul className="divide-y divide-line border-y border-line">
           {rows.map((row) => (
             <li key={row.id}>
@@ -72,7 +79,7 @@ export function RemovalRequestIntake() {
         </ul>
         <div className="flex gap-2">
           <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - EVENT_PAGE))}>← Previous</button>
-          <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={rows.length < EVENT_PAGE} onClick={() => setOffset(offset + EVENT_PAGE)}>Next →</button>
+          <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={page.length < EVENT_PAGE} onClick={() => setOffset(offset + EVENT_PAGE)}>Next →</button>
         </div>
       </fieldset>
 
@@ -81,7 +88,8 @@ export function RemovalRequestIntake() {
         <p className="text-sm text-slate">Admin-only. Photographers see a generic privacy reason, never these details.</p>
         <Field id="removal-support-reference" label="Support reference" value={draft.supportReference} onChange={set("supportReference")} max={1000} />
         <Field id="removal-requester-contact" label="Requester contact" value={draft.requesterContact} onChange={set("requesterContact")} max={1000} />
-        <Field id="removal-requester-user" label="Runner account ID (optional)" value={draft.requesterUserId} onChange={set("requesterUserId")} max={64} />
+        <Field id="removal-requester-user" label="Runner account ID (optional)" value={draft.requesterUserId} onChange={set("requesterUserId")} max={64}
+          hint="The runner's 36-character account ID, not their email or name." invalid={error === RUNNER_ID_ERROR} />
         <Field id="removal-reason" label="Reason" value={draft.reason} onChange={set("reason")} max={2000} multiline />
         <Field id="removal-admin-note" label="Admin note (optional)" value={draft.adminNote} onChange={set("adminNote")} max={2000} multiline />
       </fieldset>
@@ -94,15 +102,18 @@ export function RemovalRequestIntake() {
   );
 }
 
-function Field({ id, label, value, onChange, max, multiline = false }: {
-  id: string; label: string; value: string; onChange: (value: string) => void; max: number; multiline?: boolean;
+function Field({ id, label, value, onChange, max, multiline = false, hint, invalid }: {
+  id: string; label: string; value: string; onChange: (value: string) => void; max: number; multiline?: boolean; hint?: string; invalid?: boolean;
 }) {
+  const hintId = hint ? `${id}-hint` : undefined;
   return (
     <div className="space-y-2">
       <AdminFieldLabel htmlFor={id}>{label}</AdminFieldLabel>
       {multiline
         ? <textarea id={id} rows={3} maxLength={max} value={value} onChange={(e) => onChange(e.target.value)} className={REMOVAL_INPUT} />
-        : <input id={id} type="text" autoComplete="off" maxLength={max} value={value} onChange={(e) => onChange(e.target.value)} className={REMOVAL_INPUT} />}
+        : <input id={id} type="text" autoComplete="off" maxLength={max} value={value} onChange={(e) => onChange(e.target.value)} className={REMOVAL_INPUT}
+            aria-describedby={invalid ? `${hintId ?? ""} removal-intake-error`.trim() : hintId} aria-invalid={invalid || undefined} />}
+      {hint && <p id={hintId} className="text-sm text-slate">{hint}</p>}
     </div>
   );
 }

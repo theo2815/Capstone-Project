@@ -80,3 +80,29 @@ it("keeps input, blocks duplicates and reuses the command when a failed create i
   expect(calls).toHaveLength(2);
   expect(calls[1][0].commandId).toBe(calls[0][0].commandId);
 });
+
+it("lists only events that went live", async () => {
+  vi.mocked(adminApi.fetchAdminEvents).mockResolvedValue([
+    { ...adminEvent, id: "a", name: "Approved Run", reviewStatus: "approved" },
+    { ...adminEvent, id: "c", name: "Repricing Run", reviewStatus: "change_pending" },
+    { ...adminEvent, id: "p", name: "Pending Run", reviewStatus: "pending" },
+    { ...adminEvent, id: "r", name: "Sent Back Run", reviewStatus: "rejected" },
+  ]);
+  renderIntake();
+  expect(await screen.findByRole("radio", { name: /Approved Run/ })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /Repricing Run/ })).toBeInTheDocument();
+  expect(screen.queryByText("Pending Run")).not.toBeInTheDocument();
+  expect(screen.queryByText("Sent Back Run")).not.toBeInTheDocument();
+});
+
+it("explains a runner ID the backend could not read, without sending it", async () => {
+  const user = userEvent.setup();
+  renderIntake();
+  await fillIntake(user);
+  const runnerId = screen.getByLabelText("Runner account ID (optional)");
+  await user.type(runnerId, "runner@example.test");
+  await user.click(screen.getByRole("button", { name: "Create case" }));
+  expect(await screen.findByText(/must be the 36-character account ID/)).toBeInTheDocument();
+  expect(runnerId).toHaveAttribute("aria-invalid", "true");
+  expect(removalApi.createRemovalRequest).not.toHaveBeenCalled();
+});

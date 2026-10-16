@@ -171,35 +171,63 @@ function RequestRow({
   const owner = row.createdByHandle
     ? `@${row.createdByHandle}`
     : (row.createdByName ?? "Photographer");
+  const photographer =
+    [row.createdByName, row.createdByHandle && `@${row.createdByHandle}`]
+      .filter(Boolean)
+      .join(" · ") || "Unknown";
 
   return (
-    <li className="py-5 md:py-6 flex flex-col md:flex-row md:items-start gap-4 md:gap-8">
+    // Side by side only from lg: at md the admin sidebar leaves too little room.
+    <li className="py-5 md:py-6 flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-8">
       <div className="flex-1 min-w-0">
+        <div className="mb-4 w-full sm:w-56 aspect-[16/9] rounded-xl overflow-hidden border border-line bg-bone-deep">
+          {row.bannerUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={row.bannerUrl}
+              alt={`Cover photo for ${row.name}`}
+              loading="lazy"
+              decoding="async"
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <p className="h-full flex items-center justify-center font-sans text-sm text-slate">
+              No cover photo
+            </p>
+          )}
+        </div>
         <Kicker as="p" tone="soft" tnum>
           {isChange ? "Pricing change · live event" : "New event"} · {owner}
         </Kicker>
-        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 truncate">
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 break-words">
           {row.name}
         </p>
         <p className="font-sans text-sm text-ink-soft mt-1 tnum">
-          {formatLongDate(row.date, true)} · {row.location} ·{" "}
-          {row.visibility === "unlisted" ? "Unlisted" : "Public"}
+          {formatLongDate(row.date, true)} · {row.location}
         </p>
-        {isChange && row.pendingChange ? (
+        {isChange && row.pendingChange && (
           <p className="font-sans text-sm text-ink mt-3 tnum">
             <span className="text-slate">Now</span> {current}
             <span className="text-slate-soft mx-2">→</span>
             <span className="text-slate">Requested</span>{" "}
             {describePricing(row.pendingChange)}
           </p>
-        ) : (
-          <p className="font-sans text-sm text-ink mt-3 tnum">{current}</p>
         )}
-        {row.description && !isChange && (
-          <p className="font-sans text-sm text-slate mt-2 line-clamp-2 max-w-prose">
-            {row.description}
-          </p>
-        )}
+        <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-8">
+          <Detail label="Photographer" value={photographer} />
+          <Detail label="Organizer" value={row.organizerName || "Not given"} />
+          <Detail
+            label="Visibility"
+            value={row.visibility === "unlisted" ? "Unlisted · link only" : "Public · listed on Events"}
+          />
+          {!isChange && <Detail label="Pricing" value={current} />}
+          <div className="sm:col-span-2">
+            <dt className={DETAIL_LABEL}>Race day notes</dt>
+            <dd className="mt-1 font-sans text-sm text-ink whitespace-pre-line break-words max-w-prose">
+              {row.description || "None given"}
+            </dd>
+          </div>
+        </dl>
       </div>
       <div className="flex gap-2 shrink-0">
         <button
@@ -221,5 +249,17 @@ function RequestRow({
         </button>
       </div>
     </li>
+  );
+}
+
+const DETAIL_LABEL =
+  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className={DETAIL_LABEL}>{label}</dt>
+      <dd className="mt-1 font-sans text-sm text-ink tnum break-words">{value}</dd>
+    </div>
   );
 }
