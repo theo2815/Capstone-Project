@@ -21,7 +21,7 @@ def _answers(*ips):
 def _deliver(url, *ips):
     """Run one delivery with a fake resolver and a fake network; return the requests sent."""
     seen = []
-    real_client = httpx.Client
+    real_client = httpx.AsyncClient
 
     def handler(request):
         seen.append(request)
@@ -31,7 +31,7 @@ def _deliver(url, *ips):
         return real_client(transport=httpx.MockTransport(handler), **kwargs)
 
     with patch.object(webhook_tasks.socket, "getaddrinfo", return_value=_answers(*ips)), \
-            patch.object(webhook_tasks.httpx, "Client", client):
+            patch.object(webhook_tasks.httpx, "AsyncClient", client):
         webhook_tasks.deliver_webhook.run(url, "job.completed", {"job_id": "j1"})
     return seen
 
@@ -97,3 +97,49 @@ def test_registration_check(url, ok):
     from src.api.v1.webhooks import _validate_webhook_url_basic
 
     assert (_validate_webhook_url_basic(url) is None) is ok
+
+
+def test_slow_receiver_is_cut_off_at_the_deadline(monkeypatch):
+    import threading
+    import time
+
+    from src.config import get_settings
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    stop = threading.Event()
+
+    def trickle():  # answers one byte every 0.2 s, forever
+        conn, _ = server.accept()
+        conn.recv(65536)
+        while not stop.wait(0.2):
+            try:
+                conn.sendall(b"H")
+            except OSError:
+                break
+        conn.close()
+        server.close()
+
+    threading.Thread(target=trickle, daemon=True).start()
+    monkeypatch.setattr(webhook_tasks, "_validate_webhook_url",
+                        lambda url: ("127.0.0.1", "127.0.0.1"))
+    monkeypatch.setattr(get_settings(), "WEBHOOK_DELIVERY_DEADLINE_SECONDS", 1.0, raising=False)
+    outcome = {}
+
+    def deliver():
+        started = time.monotonic()
+        try:
+            webhook_tasks.deliver_webhook.run(
+                f"http://127.0.0.1:{port}/x", "job.completed", {}, timeout=0.5)
+        except Exception as error:  # the timeout (or Celery's retry wrapper around it)
+            outcome["error"] = error
+        outcome["elapsed"] = time.monotonic() - started
+
+    worker = threading.Thread(target=deliver, daemon=True)
+    worker.start()
+    worker.join(5)
+    stop.set()
+    assert not worker.is_alive(), "delivery still running after 5 s"
+    assert outcome["elapsed"] < 3

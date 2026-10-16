@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import hashlib
 import ipaddress
@@ -9,6 +10,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from src.config import get_settings
 from src.workers.celery_app import celery_app
 from src.utils.logging import get_logger
 
@@ -97,15 +99,25 @@ def deliver_webhook(
         ).hexdigest()
         headers["X-QuickPitik-Signature"] = f"sha256={signature}"
 
+    async def post() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=timeout, verify=True) as client:
+            return await client.post(target_url, content=body, headers=headers,
+                                     extensions={"sni_hostname": hostname})
+
+    # timeout limits each read; the deadline limits the whole delivery, so a receiver
+    # answering one byte at a time cannot hold the worker.
+    deadline = get_settings().WEBHOOK_DELIVERY_DEADLINE_SECONDS
     try:
-        with httpx.Client(timeout=timeout, verify=True) as client:
-            response = client.post(target_url, content=body, headers=headers,
-                                   extensions={"sni_hostname": hostname})
-            response.raise_for_status()
-            # structlog's first parameter is named "event": log the webhook's under another key.
-            logger.info(
-                "Webhook delivered", url=url, webhook_event=event, status=response.status_code
-            )
+        response = asyncio.run(asyncio.wait_for(post(), deadline))
+        response.raise_for_status()
+        # structlog's first parameter is named "event": log the webhook's under another key.
+        logger.info(
+            "Webhook delivered", url=url, webhook_event=event, status=response.status_code
+        )
+    except TimeoutError as e:
+        logger.error("Webhook delivery deadline exceeded", url=url, webhook_event=event,
+                     deadline=deadline)
+        raise httpx.TimeoutException("Webhook delivery deadline exceeded") from e
     except httpx.HTTPError as e:
         logger.error("Webhook delivery failed", url=url, webhook_event=event, error=str(e))
         raise

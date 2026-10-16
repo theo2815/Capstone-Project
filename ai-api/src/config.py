@@ -138,6 +138,8 @@ class Settings(BaseSettings):
     WEBHOOK_TIMEOUT: int = 10
     WEBHOOK_MAX_RETRIES: int = 3
     WEBHOOK_SECRET_KEY: str = ""  # Fernet key for encrypting webhook secrets at rest
+    # Limits a whole webhook delivery, not one read.
+    WEBHOOK_DELIVERY_DEADLINE_SECONDS: float = Field(default=30, gt=0)
 
     # Celery
     CELERY_SECURITY_KEY: str = ""

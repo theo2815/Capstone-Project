@@ -1058,3 +1058,12 @@ def test_install_and_manifest_have_no_face_or_bib():
     assert set(manifest["models"]) == {"blur_classifier", "person_detector"}
     prod = (root / "docker-compose.prod.yml").read_text(encoding="utf-8")
     assert "celery-face" not in prod and "celery-bib" not in prod
+
+
+def test_async_railway_layout_keeps_default_queue_off_the_blur_worker():
+    layout_file = Path(__file__).resolve().parents[1] / ".railway" / "railway-async.ts"
+    layout = layout_file.read_text(encoding="utf-8")
+    starts = re.findall(r'start:\s*"([^"]+)"', layout)
+    workers = [s for s in starts if " worker " in s]
+    assert any("-Q blur " in s for s in workers) and any("-Q default " in s for s in workers)
+    assert not [s for s in workers if "blur,default" in s or "default,blur" in s]
