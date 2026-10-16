@@ -954,9 +954,16 @@ def test_blur_async_is_available_by_default():
 
 @pytest.mark.parametrize("profile", ["all", "blur"])
 def test_no_face_or_bib_routes_in_any_profile(profile):
+    from fastapi import FastAPI
+
     from src.api.v1.router import make_v1_router
 
-    paths = [route.path for route in make_v1_router(profile).routes]
+    # The OpenAPI paths, not router.routes: FastAPI 0.141 (the lock) wraps included
+    # routers in objects that have no .path.
+    app = FastAPI()
+    app.include_router(make_v1_router(profile))
+    paths = list(app.openapi()["paths"])
+    assert "/blur/detect" in paths, paths
     assert not [p for p in paths if p.startswith(("/faces", "/bibs"))], paths
 
 
