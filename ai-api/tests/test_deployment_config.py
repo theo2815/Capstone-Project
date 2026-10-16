@@ -1047,3 +1047,10 @@ def test_dev_compose_publishes_ports_on_loopback_only():
         p.get("host_ip") == "127.0.0.1" if isinstance(p, dict) else str(p).startswith("127.0.0.1:")
         for p in ports
     ), ports
+
+
+def test_makefile_serves_the_api_on_loopback_only():
+    # DEBUG=true turns the key check off, so the host-run dev API must not be
+    # reachable from shared Wi-Fi (V-17 follow-up, owner decision D7, 2026-10-16).
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    assert re.findall(r"uvicorn .*--host (\S+)", makefile) == ["127.0.0.1", "127.0.0.1"]

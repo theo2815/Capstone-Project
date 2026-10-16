@@ -70,8 +70,10 @@ This inserts a development API key into the `api_keys` table. Check `scripts/see
 make dev
 
 # Or manually:
-uvicorn src.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
+uvicorn src.main:create_app --factory --host 127.0.0.1 --port 8000 --reload
 ```
+
+The API then answers only this computer; to test from a phone or a second device, run uvicorn by hand with `--host 0.0.0.0` for that session, on a trusted network.
 
 ### 9. Verify it works
 Open your browser to: http://localhost:8000/docs
