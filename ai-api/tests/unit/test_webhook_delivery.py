@@ -70,6 +70,23 @@ def test_ipv6_answer_is_used_correctly():
     assert request.url.host == PUBLIC_V6
 
 
+def test_ipv6_literal_url_keeps_its_port_and_host():
+    [request] = _deliver(f"https://[{PUBLIC_V6}]:8443/x", PUBLIC_V6)
+    assert (request.url.host, request.url.port) == (PUBLIC_V6, 8443)
+    assert request.headers["host"] == f"[{PUBLIC_V6}]:8443"
+
+
+def test_nat64_answer_is_checked_by_the_ipv4_inside_it():
+    # 64:ff9b::/96 wraps an IPv4 address in its last 32 bits (10.0.0.1, then 93.184.216.34).
+    assert _deliver("http://a.test/x", "64:ff9b::a00:1") == []
+    assert len(_deliver("http://a.test/x", "64:ff9b::5db8:d822")) == 1
+
+
+def test_port_zero_is_not_dropped():
+    [request] = _deliver("https://hooks.example.com:0/x", PUBLIC_V4)
+    assert request.url.port == 0
+
+
 @pytest.mark.parametrize("url,ok", [
     ("http://a@hooks.example.com/x", False),
     ("http://100.64.0.1/x", False),

@@ -14,6 +14,16 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# NAT64 addresses count as global, but they wrap an IPv4 address in their last 32 bits.
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _is_public(answer: str) -> bool:
+    ip = ipaddress.ip_address(answer)
+    if ip in _NAT64:
+        ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip.is_global
+
 
 def _validate_webhook_url(url: str) -> tuple[str, str]:
     """Resolve once; return (ip, hostname) only if EVERY answer is a public address.
@@ -34,7 +44,7 @@ def _validate_webhook_url(url: str) -> tuple[str, str]:
     if not answers:
         raise ValueError(f"Cannot resolve webhook hostname '{hostname}'")
     for answer in answers:
-        if not ipaddress.ip_address(answer).is_global:
+        if not _is_public(answer):
             raise ValueError(f"Webhook URL resolves to a non-public address ({answer})")
     return answers[0], hostname
 
@@ -75,7 +85,7 @@ def deliver_webhook(
     body = json.dumps({"event": event, **payload})
     parsed = urlparse(url)
     host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
-    netloc = f"{host}:{parsed.port}" if parsed.port else host
+    netloc = f"{host}:{parsed.port}" if parsed.port is not None else host
     target_url = urlunparse(
         (parsed.scheme, netloc, parsed.path or "/", parsed.params, parsed.query, "")
     )
