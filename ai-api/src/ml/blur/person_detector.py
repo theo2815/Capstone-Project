@@ -32,6 +32,10 @@ MASK_WEIGHTS = 32
 PAD_VALUE = 114  # Ultralytics' letterbox gray
 NMS_IOU = 0.7  # Ultralytics' default overlap at which two boxes are one person
 MASK_THRESHOLD = 0.5
+# Most people kept per photo, largest boxes first: each kept person costs a full-photo
+# mask, so a crowd or a crafted photo must not decide the memory. The labelled photos have
+# at most 13 people (2026-10-16), and stage 2 reads only big people and the subject.
+MAX_PEOPLE = 64
 
 
 @dataclass(frozen=True)
@@ -180,8 +184,14 @@ class PersonDetector:
         boxes, scores, weights = people_from_output(output, self.min_conf)
         if len(boxes) == 0:
             return []
-        masks = masks_from_output(protos, weights, boxes, scale, pad, image.shape)
         image_boxes = boxes_to_image(boxes, scale, pad, image.shape)
+        if len(boxes) > MAX_PEOPLE:
+            area = (image_boxes[:, 2] - image_boxes[:, 0]) * (image_boxes[:, 3] - image_boxes[:, 1])
+            keep = np.sort(np.argsort(-area, kind="stable")[:MAX_PEOPLE])  # keep detector order
+            boxes, scores, weights, image_boxes = (
+                boxes[keep], scores[keep], weights[keep], image_boxes[keep]
+            )
+        masks = masks_from_output(protos, weights, boxes, scale, pad, image.shape)
         return [
             Detection(box=tuple(float(v) for v in b), conf=float(s), mask=m)
             for b, s, m in zip(image_boxes, scores, masks, strict=True)
