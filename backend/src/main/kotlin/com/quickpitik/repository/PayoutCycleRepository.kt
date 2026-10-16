@@ -11,7 +11,7 @@ import org.springframework.data.repository.query.Param
 import java.math.BigDecimal
 import java.util.UUID
 
-interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
+interface PayoutCycleRepository : JpaRepository<PayoutCycle, String>, PayoutCycleInsert {
 
     @Query("SELECT c.photographerId FROM PayoutCycle c WHERE c.id = :id")
     fun findPhotographerIdById(@Param("id") id: String): UUID?
@@ -75,9 +75,12 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String> {
 
     fun countByStatusWire(statusWire: String): Long
 
+    // Database-wide payout number for new cycle ids (V87). Unique across
+    // photographers by construction, unlike a per-photographer count.
+    @Query(value = "SELECT nextval('payout_cycle_number_seq')", nativeQuery = true)
+    fun nextCycleNumber(): Long
+
     // Photographer-initiated payout request flow:
-    //   - countByPhotographerId drives the next sequence number when building
-    //     a new cycle id (PAY-{HANDLE}-{seq:003}).
     //   - findFirstByPhotographerIdAndStatusWireIn finds an open cycle so we
     //     can enforce "one open request at a time."
     //   - sumPaidByPhotographer subtracts from lifetime kept to compute the

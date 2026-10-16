@@ -53,6 +53,7 @@ import kotlin.test.assertTrue
 ])
 class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var users: UserRepository
+    @Autowired private lateinit var photographerSettings: com.quickpitik.repository.PhotographerSettingsRepository
     @Autowired private lateinit var events: EventRepository
     @Autowired private lateinit var coverage: EventPhotographerRepository
     @Autowired private lateinit var photos: PhotoRepository
@@ -474,7 +475,11 @@ class PhotographerPurchaseHistoryIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
-    private fun seller() = users.save(User(email = "history-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Seller", role = Role.PHOTOGRAPHER))
+    private fun seller() = users.save(User(email = "history-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Seller", role = Role.PHOTOGRAPHER)).also {
+        // Owner event edits and photo restore need an approved photographer (security audit 2026-10-14, D6).
+        photographerSettings.saveAndFlush(com.quickpitik.entity.PhotographerSettings(
+            userId = it.id, verificationStatus = com.quickpitik.entity.VerificationStatus.APPROVED))
+    }
 
     private fun event(status: EventStatus, owner: UUID, deletedAt: OffsetDateTime? = null) = events.save(
         Event(slug = "history-${UUID.randomUUID()}", name = "History", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = status, createdBy = owner, deletedAt = deletedAt),

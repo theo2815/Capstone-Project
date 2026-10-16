@@ -40,6 +40,7 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -254,6 +255,37 @@ class PhotographerOwnedEventServiceTest {
         pricePerPhoto = BigDecimal("150"),
         visibility = visibility,
     )
+
+    // Security audit 2026-10-14, photographer-events/owner-event-edit-skips-approved-gate.
+    @Test
+    fun `a photographer who lost approval cannot edit their live event`() {
+        val event = liveEvent()
+        Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(
+            Optional.of(PhotographerSettings(userId = photographerId, verificationStatus = VerificationStatus.INCOMPLETE)),
+        )
+
+        val ex = assertFailsWith<ApiException> {
+            service.update(photographerId, event.id, UpdateMyEventRequest(title = "Renamed after reset", date = "2026-12-01"), null)
+        }
+
+        assertEquals(ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED, ex.code)
+        assertNotEquals("Renamed after reset", event.name)
+    }
+
+    @Test
+    fun `a refused edit uploads no cover`() {
+        val event = liveEvent()
+        Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(
+            Optional.of(PhotographerSettings(userId = photographerId, verificationStatus = VerificationStatus.INCOMPLETE)),
+        )
+
+        assertFailsWith<ApiException> {
+            service.update(photographerId, event.id, UpdateMyEventRequest(title = "Renamed after reset"),
+                com.quickpitik.service.admin.AdminEventService.CoverUpload(byteArrayOf(1), "image/jpeg"))
+        }
+
+        Mockito.verifyNoInteractions(covers)
+    }
 
     private fun liveEvent(): Event {
         val event = Event(

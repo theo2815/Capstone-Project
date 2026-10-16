@@ -127,6 +127,14 @@ class MainActivityRoutingTest {
         assertNull(deepLinkTarget(Uri.parse("https://quickpitik.com/verify-email?token=$huge")))
     }
 
+    @Test fun `an order-return link whose token is too long is ignored`() {
+        // A real return token is about 105 characters; any web page can send a huge one.
+        val max = "a".repeat(256)
+        assertEquals(DeepLinkTarget.OrderReturn("o1", max), deepLinkTarget(Uri.parse("quickpitik://orders/return?orderId=o1&token=$max")))
+        val huge = "a".repeat(257)
+        assertNull(deepLinkTarget(Uri.parse("quickpitik://orders/return?orderId=o1&token=$huge")))
+    }
+
     @OptIn(ExperimentalTestApi::class)
     @Test fun `an email link's exit keeps a live studio when signed in, clears to login when signed out, and ignores a second tap`() {
         runComposeUiTest {

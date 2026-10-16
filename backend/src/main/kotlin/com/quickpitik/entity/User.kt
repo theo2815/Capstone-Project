@@ -56,6 +56,10 @@ class User(
     @Column(name = "email_verified_at")
     var emailVerifiedAt: OffsetDateTime? = null,
 
+    // Raised on every credential reset or change; see V88.
+    @Column(name = "credential_version", nullable = false)
+    var credentialVersion: Int = 0,
+
     @Column(name = "suspended_at")
     var suspendedAt: OffsetDateTime? = null,
 

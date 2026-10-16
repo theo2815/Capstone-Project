@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
 import org.springframework.security.crypto.password.PasswordEncoder
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
@@ -178,6 +179,7 @@ class PasswordResetServiceTest {
         service().confirmReset(raw, "marathon-cebu-2027")
 
         assertEquals("new-hash", user.passwordHash)
+        assertEquals(1, user.credentialVersion)
         Mockito.verify(refreshTokenService).revokeAllForUser(userId)
     }
 
@@ -220,6 +222,7 @@ class PasswordResetServiceTest {
         emailService,
         refreshTokenService,
         resetOtpAttemptService,
+        Clock.systemUTC(),
     )
 
     private fun stubUser(): User {

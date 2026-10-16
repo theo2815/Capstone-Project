@@ -127,7 +127,7 @@ class BoundariesTest {
             object : DescribedPredicate<JavaMethodCall>("a write call on PayoutCycleRepository") {
                 override fun test(call: JavaMethodCall): Boolean =
                     call.targetOwner.isAssignableTo(PayoutCycleRepository::class.java) &&
-                        (call.target.name.startsWith("save") || call.target.name.startsWith("delete")) &&
+                        (call.target.name.startsWith("save") || call.target.name.startsWith("delete") || call.target.name == "insert") &&
                         !(call.originOwner.simpleName == "AdminPayoutService" &&
                             call.origin.name.substringBefore('$') in DIRECT_CYCLE_SAVES)
             }

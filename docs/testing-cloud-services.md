@@ -17,7 +17,7 @@ How to test the parts of QuickPitik that run on, or call, outside services (AWS 
 | Backend | your machine, `localhost:8080` | Railway project `quickpitik-backend`, environment `staging`, service `staging-backend` | same project, environment `production` |
 | Deploys from | — | **every push to `dev-main` that changes `backend/**`** | pushes to `main` |
 | Database | Docker Postgres, or a throwaway test container | its own Railway Postgres | its own Railway Postgres |
-| Photo bucket | **`quickpitik-prod` in `application-local.yml`** — a locally run backend stores photos there; tests use `quickpitik-dev` (section 1) | `quickpitik-dev` | `quickpitik-prod` |
+| Photo bucket | `quickpitik-dev` (the `application-local.yml` template since 2026-10-16) — a locally run backend stores photos there. **Older copies say `quickpitik-prod`: check yours before any upload.** Tests use `quickpitik-dev` (section 1) | `quickpitik-dev` | `quickpitik-prod` |
 | Face / bib | off by default (`AI_API_ENABLED=false`); the smoke tests in section 1 call Rekognition directly with the local keys | **off** (`AI_API_ENABLED=false`) | Rekognition |
 | Payments | PayMongo test key | PayMongo test key | PayMongo live |
 | Email | Resend sandbox sender | Resend sandbox sender (delivers to the account owner only) | `noreply@quickpitik.com` |
@@ -31,7 +31,7 @@ Last read from the live settings on 2026-10-09. The live settings win over this 
 
 ### Which bucket the tests use
 
-`application-local.yml` has `app.storage.bucket: quickpitik-prod`, so the tests never read the bucket from it. Both R2 tests take the bucket from the `R2_SMOKE_BUCKET` variable: without it they skip, and a name containing "prod" is refused. Do not edit the config file to run tests.
+`application-local.yml` may name any bucket (older copies say `quickpitik-prod`), so the tests never read the bucket from it. Both R2 tests take the bucket from the `R2_SMOKE_BUCKET` variable: without it they skip, and a name containing "prod" is refused. Do not edit the config file to run tests.
 
 The test bucket is `quickpitik-dev`. It is also the staging bucket: the smoke tests write only under `smoke-test/` and delete what they create. Never delete anything else in it.
 

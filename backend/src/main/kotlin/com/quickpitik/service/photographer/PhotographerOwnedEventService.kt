@@ -178,6 +178,11 @@ class PhotographerOwnedEventService(
         req: UpdateMyEventRequest,
         cover: AdminEventService.CoverUpload?,
     ): PhotographerEventDetailDto {
+        // Same gate as create, upload and coupons (security audit 2026-10-14): a
+        // photographer whose approval was reset, or who is suspended, cannot change
+        // a live event page. Checked before the cover upload so a refused edit
+        // stores nothing.
+        accessGuard.requireApproved(photographerId, "editing an event")
         val coverKey = cover?.let {
             val event = eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(eventId, photographerId)
                 ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")

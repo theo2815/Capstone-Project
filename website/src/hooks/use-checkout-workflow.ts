@@ -17,6 +17,59 @@ const STATUS_POLL_MS = 2500;
 const VERIFY_EVERY_MS = 20_000;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// The checkout's Idempotency-Key lives for this tab, so a reload after a lost or
+// failed response resends the key that created the order. The backend no longer
+// hands a guest an order started under another key (CHECKOUT_IN_PROGRESS,
+// security audit 2026-10-14), so a fresh key on reload would block the retry.
+// One key per fingerprint, so an attempt with a different cart, email or coupon
+// never overwrites the key that can still resume an earlier attempt's order.
+const CHECKOUT_KEY_STORAGE = "qp.checkout-idempotency";
+// Used when sessionStorage is blocked, so a retry on this page still resends its key.
+let memoryKeys: Record<string, string> = {};
+
+function checkoutFingerprint(photoIds: string[], email: string, method: string, coupon: string | null): string {
+  return [[...photoIds].sort().join(","), email.trim().toLowerCase(), method, (coupon ?? "").trim().toUpperCase()].join("|");
+}
+
+function readKeys(): Record<string, string> {
+  try {
+    const raw = sessionStorage.getItem(CHECKOUT_KEY_STORAGE);
+    return raw ? ((JSON.parse(raw) as Record<string, string> | null) ?? {}) : {};
+  } catch {
+    return memoryKeys;
+  }
+}
+
+function writeKeys(keys: Record<string, string>): void {
+  memoryKeys = keys;
+  try {
+    sessionStorage.setItem(CHECKOUT_KEY_STORAGE, JSON.stringify(keys));
+  } catch {
+    // Storage blocked: memoryKeys keeps them for this page.
+  }
+}
+
+function storedKeyFor(fingerprint: string): string | null {
+  const key = readKeys()[fingerprint];
+  return typeof key === "string" ? key : null;
+}
+
+function mintKeyFor(fingerprint: string): string {
+  const key = safeUUID();
+  writeKeys({ ...readKeys(), [fingerprint]: key });
+  return key;
+}
+
+function forgetKeyFor(fingerprint: string): void {
+  const keys = { ...readKeys() };
+  delete keys[fingerprint];
+  writeKeys(keys);
+}
+
+function clearStoredKeys(): void {
+  writeKeys({});
+}
+
 export type Step = "identify" | "payment" | "processing" | "qr" | "success";
 
 // Why the runner is back on the pay step. Rendered as one notice above the
@@ -26,6 +79,7 @@ export type Outcome =
   | { kind: "failed" }
   | { kind: "cancelled" }
   | { kind: "already_purchased" }
+  | { kind: "in_progress"; message: string }
   | { kind: "error"; message: string };
 
 export interface QrPayment {
@@ -87,8 +141,6 @@ export function useCheckoutWorkflow(isOpen: boolean) {
   const markPaid = usePendingPaymentStore((s) => s.markPaid);
   const clearPending = usePendingPaymentStore((s) => s.clear);
   const paidClaimedAt = pending?.paidClaimedAt ?? null;
-  // Q-008 RESOLVED: one client-generated UUID per checkout attempt.
-  const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   // Photographer coupon (V45). `coupon` is the server's priced preview for
   // the current cart — the only source of the discount the modal shows.
   const [coupon, setCoupon] = useState<CouponPreview | null>(null);
@@ -106,7 +158,6 @@ export function useCheckoutWorkflow(isOpen: boolean) {
     setCancelling(false);
     setCheckUnreachable(false);
     setReceipt(null);
-    setIdempotencyKey(safeUUID());
     // A coupon was previewed against a specific cart; re-entry may follow a
     // cart edit, so it has to be re-applied.
     setCoupon(null);
@@ -156,9 +207,6 @@ export function useCheckoutWorkflow(isOpen: boolean) {
       });
       setCoupon(preview);
       setCouponError(null);
-      // Same reasoning as a payment-method change: a different discount is
-      // a different intent and must not dedupe against a prior attempt.
-      if (idempotencyKey) setIdempotencyKey(safeUUID());
     } catch (err) {
       setCouponError(
         err instanceof ApiError ? err.message : "Couldn't check that code. Try again.",
@@ -172,7 +220,6 @@ export function useCheckoutWorkflow(isOpen: boolean) {
     setCoupon(null);
     setCouponInput("");
     setCouponError(null);
-    if (idempotencyKey) setIdempotencyKey(safeUUID());
   };
 
   // Auto-apply (2026-09-05): on the pay step the server prices the cart with
@@ -217,10 +264,12 @@ export function useCheckoutWorkflow(isOpen: boolean) {
 
   const handlePay = async () => {
     const isCurrentSession = captureAuthSession();
-    if (!idempotencyKey) {
-      setOutcome({ kind: "error", message: "Checkout is still loading. Try again." });
-      return;
-    }
+    // Chosen from the request itself: a different cart, email or typed coupon
+    // is a different intent and must not dedupe against a prior attempt.
+    const fingerprint = checkoutFingerprint(
+      items.map((i) => i.photoId), recipientEmail ?? "", "qrph", coupon?.code ?? null,
+    );
+    const idempotencyKey = storedKeyFor(fingerprint) ?? mintKeyFor(fingerprint);
     setOutcome(null);
     setStep("processing");
 
@@ -250,6 +299,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
           itemCount,
           paidAt: null,
         });
+        clearStoredKeys();
         clearCart();
         clearPending();
         queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
@@ -294,6 +344,18 @@ export function useCheckoutWorkflow(isOpen: boolean) {
         setStep("payment");
         return;
       }
+      // A refused key (another key's pending checkout, or a key already used
+      // for a different checkout) is retired; any other failure keeps it so a
+      // retry resumes the order it may have created.
+      if (err instanceof ApiError && err.errors.some((e) => e.code === "CHECKOUT_IN_PROGRESS")) {
+        forgetKeyFor(fingerprint);
+        setOutcome({ kind: "in_progress", message: err.message });
+        setStep("payment");
+        return;
+      }
+      if (err instanceof ApiError && err.errors.some((e) => e.code === "CONFLICT")) {
+        forgetKeyFor(fingerprint);
+      }
       setOutcome({
         kind: "error",
         message:
@@ -319,6 +381,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
         itemCount: live?.itemCount ?? itemCount,
         paidAt: status.paidAt,
       });
+      clearStoredKeys();
       clearCart();
       clearPending();
       queryClient.invalidateQueries({ queryKey: ["me", "orders"] });
@@ -328,13 +391,13 @@ export function useCheckoutWorkflow(isOpen: boolean) {
   );
 
   // The QR is finished without a payment (expired, declined, or cancelled):
-  // drop the record, mint a fresh key so the next attempt is a new order, and
+  // drop the record, retire the stored keys so the next attempt is a new order, and
   // tell the runner why they're back on the pay step.
   const resetToPayment = useCallback(
     (why: Outcome) => {
       clearPending();
       setQrPayment(null);
-      setIdempotencyKey(safeUUID());
+      clearStoredKeys();
       setOutcome(why);
       setStep("payment");
     },

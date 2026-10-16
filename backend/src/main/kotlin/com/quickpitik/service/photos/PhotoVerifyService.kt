@@ -9,12 +9,15 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.image.ExifOrientation
-import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.image.PerceptualHash
+import com.quickpitik.service.image.SubsampledDecode
+import com.quickpitik.service.photographer.WatermarkService
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import java.awt.image.BufferedImage
+import java.io.IOException
 import java.util.UUID
 
 // "Is this a QuickPitik photo, and whose?" — fingerprints the uploaded image
@@ -34,14 +37,14 @@ class PhotoVerifyService(
     // Not @Transactional: decode + hash is CPU work that must not pin a
     // connection; the three PK reads afterwards are independent.
     fun verify(bytes: ByteArray): PhotoVerifyResultDto {
-        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
+        if (ImagePixelGuard.exceedsPixelBudget(bytes, maxEdge = MAX_VERIFY_EDGE)) {
             throw ValidationException(
                 code = ErrorCodes.VALIDATION_ERROR,
                 message = "Image is too large to fingerprint",
                 field = "file",
             )
         }
-        val decoded = ImageDecode.readOrNull(bytes)
+        val decoded = decodeForHash(bytes)
             ?: throw ApiException(
                 status = HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                 code = ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
@@ -71,5 +74,24 @@ class PhotoVerifyService(
             eventName = event?.name,
             eventDate = event?.date,
         )
+    }
+
+    // Decode no larger than the frame the stored fingerprints were taken from
+    // (WatermarkService hashes a ≤1280-px frame), so a small file that declares a
+    // huge image cannot make this public route allocate a full-size raster
+    // (security audit 2026-10-14). Subsampling keeps the long edge below 2×1280;
+    // inputs up to 2559 px decode exactly as before. PerceptualHash shrinks to
+    // 256 px itself, so nothing finer is needed.
+    internal fun decodeForHash(bytes: ByteArray): BufferedImage? = try {
+        SubsampledDecode.readForLongEdge(bytes, WatermarkService.MAX_LONG_EDGE)
+    } catch (_: IOException) {
+        null
+    }
+
+    companion object {
+        // Longest edge this public route decodes (security review 2026-10-15):
+        // the pixel cap allows an 80,000,000 x 1 image whose row buffers are huge.
+        // Above any camera original (the largest are under 12,000 px).
+        const val MAX_VERIFY_EDGE = 20_000
     }
 }

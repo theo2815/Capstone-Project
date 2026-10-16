@@ -33,6 +33,8 @@ class JwtTokenProvider(private val props: JwtProperties) {
             // gate, bounded by the 15-min access-token TTL. Closing that window
             // entirely would need a per-request DB read, which isn't worth it.
             .claim("suspended", user.suspendedAt != null)
+            // credential version (V88): lets a sensitive route refuse a session minted before the last credential change
+            .claim("cv", user.credentialVersion)
             .issuedAt(Date.from(now))
             .expiration(Date.from(expiry))
             .signWith(key)
