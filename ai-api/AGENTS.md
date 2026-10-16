@@ -99,7 +99,7 @@ Every endpoint except `GET /health` and the minimal public `GET /health/readyz` 
 3. Enforces the token-bucket rate limit for the key's tier (free=60/min, pro=300/min, internal=1000/min)
 4. Stores rate info on `request.state.rate_info` so `RateLimitHeadersMiddleware` can set `X-RateLimit-*` response headers
 
-In `DEBUG=true` mode a missing key is allowed and granted full scope (`["*"]`). Production startup refuses to run with `DEBUG=true` when `ENVIRONMENT=production`.
+In `DEBUG=true` mode a missing key is allowed and granted full scope (`["*"]`). Startup refuses `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test`.
 
 Scopes used by the current code: `blur:read`, `faces:read`, `faces:write`, `faces:delete`, `bibs:read`, `jobs:read`, `webhooks:read`, `webhooks:write`.
 

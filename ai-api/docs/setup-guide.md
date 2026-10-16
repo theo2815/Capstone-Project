@@ -78,7 +78,7 @@ Open your browser to: http://localhost:8000/docs
 
 This shows the Swagger UI with all endpoints. You can test them interactively.
 
-> **Note:** Swagger UI and `/redoc` are only available when `DEBUG=true`. If `DEBUG=false`, both return 404. The server also refuses to start with `DEBUG=true` when `ENVIRONMENT=production`.
+> **Note:** Swagger UI and `/redoc` are only available when `DEBUG=true`. If `DEBUG=false`, both return 404. The server also refuses to start with `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test`.
 
 Or via curl:
 ```bash
@@ -148,7 +148,7 @@ All configuration is done via environment variables. See `.env.example` for the 
 | Variable | Default | Description |
 |---|---|---|
 | `DEBUG` | `false` | Enable debug mode (opens Swagger, relaxes auth in dev) |
-| `ENVIRONMENT` | `development` | Set to `production` in prod. Startup rejects `DEBUG=true` + `production`. |
+| `ENVIRONMENT` | `development` | Set to `production` in prod. Startup rejects `DEBUG=true` unless this is set to `development`, `local` or `test`. |
 | `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/quickpitik` | PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `MODEL_DIR` | `./models` | Root directory the registry looks in for model files |

@@ -6,6 +6,11 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
+# DEBUG turns the API-key check off (src/middleware/auth.py), so it is allowed only
+# when ENVIRONMENT was set on purpose to one of these. The "development" default does
+# not count: a deployment that forgets ENVIRONMENT must not run with the check off.
+DEV_ENVIRONMENTS = frozenset({"development", "local", "test"})
+
 
 class Settings(BaseSettings):
     # Application
@@ -243,6 +248,18 @@ class Settings(BaseSettings):
                 raise ValueError("blur simultaneous decode pixels exceed the 48 MP budget")
             if self.INFERENCE_SUB_BATCH_SIZE > 50:
                 raise ValueError("blur inference sub-batches must contain at most 50 images")
+        return self
+
+    @model_validator(mode="after")
+    def refuse_debug_outside_dev(self):
+        if self.DEBUG and (
+            "ENVIRONMENT" not in self.model_fields_set
+            or self.ENVIRONMENT not in DEV_ENVIRONMENTS
+        ):
+            raise ValueError(
+                "DEBUG=true is only allowed when ENVIRONMENT is set to one of "
+                f"{', '.join(sorted(DEV_ENVIRONMENTS))}; set DEBUG=false otherwise"
+            )
         return self
 
     model_config = {

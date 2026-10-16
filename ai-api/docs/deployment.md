@@ -434,7 +434,7 @@ At server startup, the `ModelRegistry` loads selected models in parallel (via `a
 
 | Setting | Development | Staging | Production |
 |---|---|---|---|
-| `DEBUG` | `true` | `false` | `false` (startup aborts if `true` + `ENVIRONMENT=production`) |
+| `DEBUG` | `true` | `false` | `false` (startup aborts if `true` unless `ENVIRONMENT` is set to `development`, `local` or `test`) |
 | `ENVIRONMENT` | `development` | `staging` | `production` |
 | `LOG_LEVEL` | `DEBUG` | `INFO` | `INFO` |
 | `WORKERS` | 1–2 | 1 for blur | 1 for blur while metrics are enabled |

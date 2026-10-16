@@ -26,7 +26,7 @@ On error:
 }
 ```
 
-**Authentication**: All endpoints except `GET /api/v1/health` require an `X-API-Key` header. When the server runs with `DEBUG=true`, a missing key is allowed and treated as an internal-tier key with full scopes. The production server refuses to start with `DEBUG=true` when `ENVIRONMENT=production`.
+**Authentication**: All endpoints except `GET /api/v1/health` require an `X-API-Key` header. When the server runs with `DEBUG=true`, a missing key is allowed and treated as an internal-tier key with full scopes. The server refuses to start with `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test`.
 
 **Request ID**: Clients may pass `X-Request-ID` (up to 128 alphanumerics or `-`). If absent, the server generates a UUID. The ID is echoed in the response body and `X-Request-ID` response header.
 

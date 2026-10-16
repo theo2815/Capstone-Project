@@ -195,7 +195,7 @@ async def test_slow_stream_upload_has_a_request_deadline():
     from src.main import create_app
 
     settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False, DEBUG=True,
-                        BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
+                        ENVIRONMENT="test", BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings
@@ -261,7 +261,7 @@ def test_blur_profile_stream_reports_incomplete_before_transport_deadline():
     from src.main import create_app
 
     settings = Settings(MODEL_PROFILE="blur", DEBUG=True, METRICS_ENABLED=False,
-                        BLUR_STREAM_TIMEOUT_SECONDS=0.02)
+                        ENVIRONMENT="test", BLUR_STREAM_TIMEOUT_SECONDS=0.02)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings
@@ -633,7 +633,7 @@ def test_stream_image_error_is_counted_separately_from_request_rejection():
     from src.config import Settings
     from src.main import create_app
 
-    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=True, DEBUG=True)
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=True, DEBUG=True, ENVIRONMENT="test")
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings
@@ -844,7 +844,7 @@ def test_disabled_blur_async_rejects_before_multipart_or_job_creation(path):
     from src.main import create_app
 
     settings = Settings(MODEL_PROFILE="blur", BLUR_ASYNC_ENABLED=False,
-                        METRICS_ENABLED=False, DEBUG=True)
+                        METRICS_ENABLED=False, DEBUG=True, ENVIRONMENT="test")
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings

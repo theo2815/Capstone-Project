@@ -18,6 +18,7 @@ jobs:
       MODEL_PROFILE: blur
       MODEL_DIR: ./missing-ci-models
       DEBUG: 'true'
+      ENVIRONMENT: test
     defaults:
       run:
         working-directory: ai-api

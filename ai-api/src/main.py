@@ -30,13 +30,6 @@ async def lifespan(app: FastAPI):
 
     start_timeout_executor()
 
-    # Prevent DEBUG mode in production
-    if settings.DEBUG and settings.ENVIRONMENT == "production":
-        raise RuntimeError(
-            "FATAL: DEBUG=true is not allowed when ENVIRONMENT=production. "
-            "Set DEBUG=false in your .env or environment variables."
-        )
-
     # Initialize logging
     setup_logging(settings.LOG_LEVEL)
 

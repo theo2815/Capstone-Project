@@ -251,7 +251,7 @@ assert hmac.compare_digest(expected, received)
 - [x] Webhook HMAC signatures + SSRF protection (DNS resolve + blocked-network check, TOCTOU-safe). Blocked ranges: `10/8`, `172.16/12`, `192.168/16`, `127/8`, `169.254/16`, `0.0.0.0/8`, `::1/128`, `fc00::/7`, `fe80::/10`.
 - [x] Fernet encryption at rest for webhook secrets (when `WEBHOOK_SECRET_KEY` is set)
 - [x] Structured logging (no sensitive data in logs)
-- [x] Production DEBUG guard (server refuses to start with `DEBUG=true` + `ENVIRONMENT=production`)
+- [x] Production DEBUG guard (server refuses to start with `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test`)
 - [x] Metrics endpoint authenticated in production
 - [ ] HTTPS enforcement (handled at load balancer / reverse proxy)
 - [ ] JWT authentication for client-direct access (infrastructure ready; no endpoint wired yet)

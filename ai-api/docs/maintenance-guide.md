@@ -169,7 +169,7 @@ celery -A src.workers.celery_app inspect reserved
 
 | Check | How to Verify |
 |-------|---------------|
-| `DEBUG=false` in production | Check `.env`; app refuses to start if `DEBUG=true` AND `ENVIRONMENT=production` |
+| `DEBUG=false` in production | Check `.env`; app refuses to start if `DEBUG=true` unless `ENVIRONMENT` is set to `development`, `local` or `test` |
 | API docs disabled | `/docs` and `/redoc` return 404 when `DEBUG=false` |
 | API key required on all endpoints | Test without `X-API-Key` header; expect 401 |
 | Rate limiting active | Check Redis is up; test burst requests; expect 429 |
