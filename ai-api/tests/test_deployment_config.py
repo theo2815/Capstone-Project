@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import re
 import shlex
 import shutil
@@ -55,13 +56,11 @@ def test_release_workflow_forwards_approved_limits_into_smoke_container():
 PROD_COMPOSE = PROJECT_ROOT / "docker-compose.prod.yml"
 GPU_COMPOSE = PROJECT_ROOT / "docker-compose.gpu.yml"
 
-# The API plus every Celery worker. All five load models and all five decrypt
+# The API plus every Celery worker. All three mount models and all three decrypt
 # webhook secrets, so anything below that says "all app services" means these.
 APP_SERVICES = (
     "ai-api",
     "celery-blur",
-    "celery-face",
-    "celery-bib",
     "celery-default",
 )
 
@@ -1048,3 +1047,14 @@ def test_no_face_or_bib_workers_or_model_loaders():
     assert not [r for r in celery_app.conf.task_routes if r.startswith(("faces.", "bibs."))]
     for loader in ("_load_face", "_load_bib_detector", "_load_bib_ocr"):
         assert not hasattr(ModelRegistry, loader), loader
+
+
+def test_install_and_manifest_have_no_face_or_bib():
+    root = Path(__file__).resolve().parents[1]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    for lib in ("insightface", "paddleocr", "paddlepaddle"):
+        assert lib not in pyproject, lib
+    manifest = json.loads((root / "models" / "manifest.json").read_text(encoding="utf-8"))
+    assert set(manifest["models"]) == {"blur_classifier", "person_detector"}
+    prod = (root / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    assert "celery-face" not in prod and "celery-bib" not in prod

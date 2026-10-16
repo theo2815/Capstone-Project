@@ -80,40 +80,6 @@ def bench_fft_hf_ratio():
         print(f"  Speedup: {t_py / t_cpp:.1f}x")
 
 
-def bench_cosine_topk():
-    """Benchmark batch cosine top-K for various database sizes."""
-    for N in [100, 1000, 10000, 100000]:
-        print(f"\n=== Batch Cosine Top-K (N={N:,}, D=512, K=10) ===")
-        query = np.random.randn(512).astype(np.float32)
-        query /= np.linalg.norm(query)
-        database = np.random.randn(N, 512).astype(np.float32)
-        database /= np.linalg.norm(database, axis=1, keepdims=True)
-
-        threshold = 0.0
-        top_k = 10
-        reps = max(10, 1000 // max(1, N // 1000))
-
-        def py_topk():
-            sims = database @ query
-            mask = sims >= threshold
-            valid = np.where(mask)[0]
-            if len(valid) == 0:
-                return []
-            scores = sims[valid]
-            order = np.argsort(scores)[::-1][:top_k]
-            return [(int(valid[i]), float(scores[i])) for i in order]
-
-        t_py = bench("Python (NumPy matmul + argsort)", py_topk, reps)
-
-        if HAS_CPP:
-            t_cpp = bench(
-                "C++ (batch_cosine_topk)",
-                lambda: cpp.batch_cosine_topk(query, database, threshold, top_k),
-                reps,
-            )
-            print(f"  Speedup: {t_py / t_cpp:.1f}x")
-
-
 def bench_batch_blur():
     """Benchmark batch blur metrics."""
     print("\n=== Batch Blur Metrics (100 images, 128x128) ===")
@@ -175,7 +141,6 @@ if __name__ == "__main__":
 
     bench_laplacian()
     bench_fft_hf_ratio()
-    bench_cosine_topk()
     bench_batch_blur()
     bench_preprocess()
 

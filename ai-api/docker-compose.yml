@@ -36,14 +36,12 @@ services:
 
   # SCALE-1: In production, split into per-queue workers:
   #   celery -A src.workers.celery_app worker -Q blur --concurrency=4
-  #   celery -A src.workers.celery_app worker -Q face --concurrency=2
-  #   celery -A src.workers.celery_app worker -Q bib  --concurrency=2
   # For development, a single worker consuming all queues is fine:
   celery-worker:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q default,blur,face,bib
+    command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q default,blur
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/quickpitik
       - REDIS_URL=redis://:quickpitik_redis_pass@redis:6379/0
