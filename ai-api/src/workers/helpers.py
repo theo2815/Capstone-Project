@@ -241,19 +241,18 @@ def dispatch_webhook_sync(event: str, payload: dict, api_key_id: str | None = No
         repo = SyncWebhookRepository(session)
         webhooks = repo.list_by_event(event, api_key_id)
 
-    from src.utils.crypto import decrypt_secret
-
     for wh in webhooks:
         from src.workers.tasks.webhook_tasks import deliver_webhook
 
+        # The worker loads and decrypts the secret, so it never sits in plain text in Redis.
         deliver_webhook.delay(
             url=wh.url,
             event=event,
             payload=payload,
-            secret=decrypt_secret(wh.secret) if wh.secret else None,
+            webhook_id=str(wh.id),
         )
         count += 1
 
     if count > 0:
-        logger.info("Webhooks dispatched from worker", event=event, count=count)
+        logger.info("Webhooks dispatched from worker", webhook_event=event, count=count)
     return count

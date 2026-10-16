@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import hmac
 import ipaddress
 import socket
+import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -18,7 +23,7 @@ def _answers(*ips):
             for ip in ips]
 
 
-def _deliver(url, *ips):
+def _deliver(url, *ips, **task_kwargs):
     """Run one delivery with a fake resolver and a fake network; return the requests sent."""
     seen = []
     real_client = httpx.AsyncClient
@@ -32,7 +37,7 @@ def _deliver(url, *ips):
 
     with patch.object(webhook_tasks.socket, "getaddrinfo", return_value=_answers(*ips)), \
             patch.object(webhook_tasks.httpx, "AsyncClient", client):
-        webhook_tasks.deliver_webhook.run(url, "job.completed", {"job_id": "j1"})
+        webhook_tasks.deliver_webhook.run(url, "job.completed", {"job_id": "j1"}, **task_kwargs)
     return seen
 
 
@@ -146,3 +151,68 @@ def test_slow_receiver_is_cut_off_at_the_deadline(monkeypatch):
     assert outcome["elapsed"] < 3
     # the deadline, not the 0.5 s per-read timeout, ended it
     assert "deadline" in str(outcome.get("error"))
+
+
+@pytest.fixture
+def fernet(monkeypatch):
+    """A real WEBHOOK_SECRET_KEY, so stored secrets are ciphertext as in production."""
+    from cryptography.fernet import Fernet
+
+    from src.config import get_settings
+    from src.utils import crypto
+
+    monkeypatch.setattr(get_settings(), "WEBHOOK_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(crypto, "_fernet", None)
+    return crypto
+
+
+def _signature(request, secret):
+    return "sha256=" + hmac.new(secret, request.content, hashlib.sha256).hexdigest()
+
+
+def test_dispatch_queues_webhook_id_not_secret(fernet):
+    from src.workers import helpers
+
+    webhook = SimpleNamespace(id=uuid.uuid4(), url="https://hooks.example.com/x",
+                              secret=fernet.encrypt_secret("s3cret"))
+
+    class Repo:
+        def __init__(self, session):
+            pass
+
+        def list_by_event(self, event, api_key_id=None):
+            return [webhook]
+
+    with patch.object(helpers, "get_sync_session", contextlib.nullcontext), \
+            patch.object(helpers, "SyncWebhookRepository", Repo), \
+            patch.object(webhook_tasks.deliver_webhook, "delay") as delay:
+        assert helpers.dispatch_webhook_sync("job.completed", {"job_id": "j1"},
+                                             api_key_id="k1") == 1
+    kwargs = delay.call_args.kwargs
+    assert kwargs.get("secret") is None
+    assert "s3cret" not in repr(kwargs)
+    assert kwargs["webhook_id"] == str(webhook.id)
+
+
+def test_worker_signs_with_secret_loaded_by_id(fernet, monkeypatch):
+    webhook_id = str(uuid.uuid4())
+    loaded = []
+
+    class Repo:
+        def __init__(self, session):
+            pass
+
+        def get(self, wid):
+            loaded.append(wid)
+            return SimpleNamespace(secret=fernet.encrypt_secret("s3cret"))
+
+    monkeypatch.setattr(webhook_tasks, "get_sync_session", contextlib.nullcontext, raising=False)
+    monkeypatch.setattr(webhook_tasks, "SyncWebhookRepository", Repo, raising=False)
+    [request] = _deliver("https://hooks.example.com/x", PUBLIC_V4, webhook_id=webhook_id)
+    assert loaded == [uuid.UUID(webhook_id)]
+    assert request.headers["X-QuickPitik-Signature"] == _signature(request, b"s3cret")
+
+
+def test_message_queued_before_the_change_still_signs():
+    [request] = _deliver("https://hooks.example.com/x", PUBLIC_V4, secret="s3cret")
+    assert request.headers["X-QuickPitik-Signature"] == _signature(request, b"s3cret")

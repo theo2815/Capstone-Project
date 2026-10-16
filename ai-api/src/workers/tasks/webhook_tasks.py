@@ -6,11 +6,15 @@ import hashlib
 import ipaddress
 import json
 import socket
+import uuid
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from src.config import get_settings
+from src.db.repositories.sync_webhook_repo import SyncWebhookRepository
+from src.db.sync_session import get_sync_session
+from src.utils.crypto import decrypt_secret
 from src.workers.celery_app import celery_app
 from src.utils.logging import get_logger
 
@@ -66,6 +70,7 @@ def deliver_webhook(
     payload: dict,
     secret: str | None = None,
     timeout: int = 10,
+    webhook_id: str | None = None,
 ):
     """Deliver a webhook callback to a registered URL.
 
@@ -73,8 +78,9 @@ def deliver_webhook(
         url: The webhook URL to POST to.
         event: The event type (e.g., 'job.completed').
         payload: The JSON payload to send.
-        secret: Optional HMAC secret for signature verification.
+        secret: Plain HMAC secret; only messages queued before webhook_id existed carry it.
         timeout: Request timeout in seconds.
+        webhook_id: Subscription whose stored secret signs the request.
     """
     # SSRF protection: resolve DNS once and validate before making request.
     # The HTTP request uses the pre-resolved IP to prevent DNS rebinding attacks.
@@ -83,6 +89,14 @@ def deliver_webhook(
     except ValueError as e:
         logger.error("Webhook blocked by SSRF protection", url=url, error=str(e))
         return
+
+    if webhook_id and not secret:
+        with get_sync_session() as session:
+            webhook = SyncWebhookRepository(session).get(uuid.UUID(webhook_id))
+        if webhook is None:
+            logger.warning("Webhook deleted before delivery", webhook_id=webhook_id)
+            return
+        secret = decrypt_secret(webhook.secret) if webhook.secret else None
 
     body = json.dumps({"event": event, **payload})
     parsed = urlparse(url)
