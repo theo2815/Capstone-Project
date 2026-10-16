@@ -11,6 +11,7 @@ class AuthPrincipal(
     val email: String,
     val role: Role,
     val suspended: Boolean = false,
+    val credentialVersion: Int = 0,
 ) : UserDetails {
     override fun getAuthorities(): Collection<GrantedAuthority> =
         listOf(SimpleGrantedAuthority("ROLE_${role.name}"))

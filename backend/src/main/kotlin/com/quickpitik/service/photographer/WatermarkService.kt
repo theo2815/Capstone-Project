@@ -519,7 +519,7 @@ class WatermarkService(
     }
 
     companion object {
-        private const val MAX_LONG_EDGE = 1280
+        const val MAX_LONG_EDGE = 1280
         private const val WORDMARK_RESOURCE = "/brand/quickpitik-wordmark.png"
         private const val FONT_RESOURCE = "/fonts/Archivo-SemiBold.ttf"
         private val INK = Color(0x11, 0x11, 0x11)

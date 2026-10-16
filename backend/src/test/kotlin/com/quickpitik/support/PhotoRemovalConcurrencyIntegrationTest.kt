@@ -35,6 +35,7 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var photos: PhotoRepository
     @Autowired lateinit var events: EventRepository
     @Autowired lateinit var users: UserRepository
+    @Autowired lateinit var photographerSettings: PhotographerSettingsRepository
     @Autowired lateinit var requests: PhotoRemovalRequestRepository
     @Autowired lateinit var items: PhotoRemovalItemRepository
     @Autowired lateinit var availability: PhotoAvailabilityService
@@ -60,6 +61,8 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
     @BeforeEach fun fixture() {
         owner = users.saveAndFlush(User(email = "composition-${UUID.randomUUID()}@test.local",
             passwordHash = "unused", name = "Photographer", role = Role.PHOTOGRAPHER))
+        // Photo restore needs an approved photographer (security audit 2026-10-14, D6).
+        photographerSettings.saveAndFlush(PhotographerSettings(userId = owner.id, verificationStatus = VerificationStatus.APPROVED))
         event = events.saveAndFlush(Event(slug = "composition-${UUID.randomUUID()}", name = "Cebu run",
             date = LocalDate.of(2026, 10, 6), location = "Cebu", status = EventStatus.ACTIVE))
         photo = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id,

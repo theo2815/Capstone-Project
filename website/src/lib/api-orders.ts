@@ -12,6 +12,7 @@ import type { Order, OrderPhotoDetail, OrderStatus } from "@/types/order";
 //   POST /api/v1/me/orders/{id}/refund       { photoIds, reason, note } → unknown
 //
 // Idempotency-Key arrives as an HTTP header per RFC 9110 §9.2.2.
+// `POST /orders` 409 `CHECKOUT_IN_PROGRESS` (guests): photos are in another key's pending checkout; keep the key across reloads (see use-checkout-workflow).
 
 export interface OrderDetail extends OrderSummary {
   photos: OrderPhotoDetail[];

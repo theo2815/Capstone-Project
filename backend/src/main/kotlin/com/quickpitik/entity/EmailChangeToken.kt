@@ -35,6 +35,9 @@ class EmailChangeToken(
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
+
+    @Column(name = "credential_version", nullable = false)
+    val credentialVersion: Int = 0,
 ) {
     fun isUsable(now: OffsetDateTime = OffsetDateTime.now()): Boolean =
         usedAt == null && expiresAt.isAfter(now)

@@ -450,7 +450,7 @@ class AdminPayoutServiceTransitionTest {
         Mockito.`when`(transactionRepository.aggregateByPhotographerInWindow(anyArg(), anyArg()))
             .thenReturn(listOf(arrayOf(photographerId, BigDecimal("500"), 3L)))
         val existing = cycle(PayoutCycleStatus.SCHEDULED)
-        Mockito.`when`(payoutCycleRepository.lockById(anyArg())).thenReturn(existing)
+        Mockito.`when`(payoutCycleRepository.lockByIdAndPhotographerId(anyArg(), anyArg())).thenReturn(existing)
 
         val result = service().generateForWeek(weekOf)
 

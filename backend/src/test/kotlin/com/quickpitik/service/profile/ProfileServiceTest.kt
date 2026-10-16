@@ -135,6 +135,7 @@ class ProfileServiceTest {
         )
 
         assertEquals("new-hash", user.passwordHash)
+        assertEquals(1, user.credentialVersion)
         Mockito.verify(userRepository).save(user)
         Mockito.verify(refreshTokenService).revokeAllForUserExcept(userId, "token-123")
     }

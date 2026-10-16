@@ -17,6 +17,7 @@ import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
+import org.hibernate.exception.ConstraintViolationException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -39,8 +40,7 @@ import java.util.UUID
  *   - One open request at a time (pending / approved / processing / held).
  *   - Configured minimum available balance (cleared earnings minus paid and reserved).
  *   - Primary payout account must have a QR and be past its change cooldown.
- *   - Cycle IDs are sequence-based per photographer to avoid the week-based
- *     collision when a photographer requests twice in the same ISO week.
+ *   - Cycle ids end in a database-wide number (V87) and are inserted, never merged.
  *
  * Withdraw is allowed only when the cycle is on hold — the held state is
  * specifically the signal for the photographer to act (e.g. update payout
@@ -152,8 +152,8 @@ class PayoutRequestService(
 
         val settings = photographerSettingsRepository.findById(photographerId).orElse(null)
         val handle = settings?.handle
-        val sequence = payoutCycleRepository.countByPhotographerId(photographerId) + 1
-        val cycleId = buildSequencedCycleId(handle, photographerId, sequence)
+        val number = payoutCycleRepository.nextCycleNumber()
+        val cycleId = buildSequencedCycleId(handle, photographerId, number)
 
         // weekOf stays populated with the request date's ISO Monday so the
         // FE's existing "cycle of {date}" copy still reads sensibly.
@@ -190,11 +190,14 @@ class PayoutRequestService(
         cycle.accountSnapshotQrKey = primary.qrS3Key
 
         val saved = try {
-            payoutCycleRepository.saveAndFlush(cycle)
+            payoutCycleRepository.insert(cycle)
         } catch (ex: DataIntegrityViolationException) {
-            // Lost the race: the partial unique index uq_payout_open_per_photographer
-            // rejected a second concurrent open cycle. Same outcome as the findFirst
-            // pre-check above, so surface the same clean 409 (not a raw 500).
+            // Only the one-open-cycle index means "you already have a request".
+            // A primary-key clash would mean the id was not unique: never report
+            // it as an open request (security audit 2026-10-14).
+            val violated = generateSequence<Throwable>(ex) { it.cause }
+                .filterIsInstance<ConstraintViolationException>().firstOrNull()?.constraintName
+            if (violated == CYCLE_PRIMARY_KEY) throw ex
             throw ApiException(
                 status = HttpStatus.CONFLICT,
                 code = ErrorCodes.PAYOUT_REQUEST_OPEN,
@@ -287,5 +290,6 @@ class PayoutRequestService(
         // the next request() 409s on the index instead of the clean pre-check.
         val OPEN_STATUS_WIRES = listOf("scheduled", "pending", "approved", "processing", "held")
         val EPOCH: OffsetDateTime = OffsetDateTime.parse("1970-01-01T00:00:00Z")
+        private const val CYCLE_PRIMARY_KEY = "payout_cycles_pkey"
     }
 }

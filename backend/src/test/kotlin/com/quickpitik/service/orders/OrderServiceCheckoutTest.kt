@@ -32,6 +32,7 @@ import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
+import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerCoupon
@@ -1118,6 +1119,64 @@ class OrderServiceCheckoutTest {
         assertFalse(response.returnToken.isNullOrBlank())
         Mockito.verify(webhookService, Mockito.never()).settleFree(anyArg())
         Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    // Security audit 2026-10-14, orders/guest-checkout-resumed-by-unverified-email.
+    @Test
+    fun `a guest request under a new key is never handed another key's pending order`() {
+        val plantedKey = UUID.randomUUID().toString()
+        val planted = Order(
+            userId = null, eventId = eventId, recipientEmail = email,
+            paymentMethodWire = PaymentMethod.GCASH.wire, status = OrderStatus.PENDING,
+            totalPhp = photo.pricePhp, idempotencyKey = plantedKey,
+        )
+        Mockito.`when`(orderRepository.findOverlappingForGuest(eqArg(email), anyArg(), anyArg()))
+            .thenReturn(listOf(planted))
+        Mockito.`when`(orderRepository.findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, plantedKey))
+            .thenReturn(listOf(planted))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenReturn(listOf(
+            OrderItem(id = OrderItemId(planted.id, photo.id), pricePhpAtPurchase = photo.pricePhp, discountPhp = BigDecimal.ZERO),
+        ))
+        val plantedPayment = Payment(orderId = planted.id, provider = "paymongo", amountPhp = planted.totalPhp,
+            status = PaymentStatus.PENDING).apply { providerRef = "cs_planted" }
+        Mockito.`when`(paymentRepository.findByOrderId(planted.id)).thenReturn(listOf(plantedPayment))
+        Mockito.`when`(paymongoClient.retrieveCheckoutSession("cs_planted")).thenReturn(
+            PaymongoCheckoutSessionResponse(PaymongoCheckoutSessionResponseEnvelope(
+                id = "cs_planted",
+                attributes = PaymongoCheckoutSessionResponseAttributes(checkoutUrl = "https://pay.test/planted"),
+            )),
+        )
+
+        val ex = assertFailsWith<ConflictException> { service.create(null, request(), key) }
+        assertEquals(ErrorCodes.CHECKOUT_IN_PROGRESS, ex.code)
+        // An unlinked pending order never expires, so the way out is signing in.
+        val message = ex.message.orEmpty()
+        assertTrue("sign in" in message && "expire" !in message, message)
+        Mockito.verify(paymongoClient, Mockito.never()).retrieveCheckoutSession(anyArg())
+    }
+
+    @Test
+    fun `a signed-in buyer's retry under a new key resumes their own pending order`() {
+        val userId = UUID.randomUUID()
+        val firstKey = UUID.randomUUID().toString()
+        val own = Order(userId = userId, eventId = eventId, recipientEmail = email,
+            paymentMethodWire = PaymentMethod.GCASH.wire, status = OrderStatus.PENDING,
+            totalPhp = photo.pricePhp, idempotencyKey = firstKey)
+        Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(
+            User(id = userId, email = email, passwordHash = "unused", name = "Runner", role = Role.RUNNER),
+        ))
+        Mockito.`when`(orderRepository.findByUserIdAndIdempotencyKey(userId, key)).thenReturn(emptyList())
+        Mockito.`when`(orderRepository.findOverlappingForUser(eqArg(userId), anyArg(), anyArg())).thenReturn(listOf(own))
+        Mockito.`when`(orderRepository.findByUserIdAndIdempotencyKey(userId, firstKey)).thenReturn(listOf(own))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenReturn(listOf(
+            OrderItem(id = OrderItemId(own.id, photo.id), pricePhpAtPurchase = photo.pricePhp, discountPhp = BigDecimal.ZERO),
+        ))
+        savedPayments += Payment(orderId = own.id, provider = "paymongo", amountPhp = own.totalPhp)
+        stubProvider()
+
+        val response = service.create(userId, request(), key)
+
+        assertEquals(own.id, response.id)
     }
 
     private fun stubProvider() {

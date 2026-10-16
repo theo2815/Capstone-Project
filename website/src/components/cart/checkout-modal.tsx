@@ -412,6 +412,12 @@ const OUTCOME_COPY: Record<Outcome["kind"], { tone: NoticeTone; kicker: string; 
     title: "Couldn't create a QR code",
     body: "",
   },
+  in_progress: {
+    tone: "error",
+    kicker: "Nothing was charged",
+    title: "Checkout already open",
+    body: "",
+  },
   already_purchased: {
     tone: "neutral",
     kicker: "Already yours",
@@ -563,7 +569,7 @@ function PaymentStep({
           role={OUTCOME_COPY[outcome.kind].tone === "error" ? "alert" : "status"}
         >
           <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
-            {outcome.kind === "error" ? outcome.message : OUTCOME_COPY[outcome.kind].body}
+            {outcome.kind === "error" || outcome.kind === "in_progress" ? outcome.message : OUTCOME_COPY[outcome.kind].body}
           </p>
         </PaymentNotice>
       )}
@@ -805,7 +811,7 @@ function PaymentStep({
           <>Complete order →</>
         ) : (
           <>
-            {outcome && outcome.kind !== "error" ? "Generate a new QR" : "Generate QR to pay"}{" "}
+            {outcome && outcome.kind !== "error" && outcome.kind !== "in_progress" ? "Generate a new QR" : "Generate QR to pay"}{" "}
             <span className="tnum">{formatPrice(total)}</span> →
           </>
         )}
