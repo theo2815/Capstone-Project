@@ -239,7 +239,7 @@ photographer wants to clean up the set (see Journey 2).
 | **Web/Mobile Backend** | Spring Boot (Kotlin) | AWS EC2 |
 | **Desktop Backend** | (own backend, own database) | TBD |
 | **AI Services (ai-api)** | FastAPI + Celery (Python) — already built | AWS EC2 |
-| **Database** | PostgreSQL + pgvector | AWS RDS |
+| **Database** | PostgreSQL | AWS RDS |
 | **Object Storage** | AWS S3 | AWS (CloudFront CDN planned if cost allows) |
 | **Cache / Queue** | Redis | AWS EC2 (Docker) |
 
@@ -311,7 +311,7 @@ See `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contr
 
 ┌─────────────────────────────────────────────────────┐
 │  AWS RDS                                             │
-│  └── PostgreSQL 16 + pgvector                        │
+│  └── PostgreSQL 16                                   │
 └─────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────┐

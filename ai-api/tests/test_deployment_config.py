@@ -965,6 +965,10 @@ def test_no_face_or_bib_routes_in_any_profile(profile):
     paths = list(app.openapi()["paths"])
     assert "/blur/detect" in paths, paths
     assert not [p for p in paths if p.startswith(("/faces", "/bibs"))], paths
+    # The schema omits include_in_schema=False routes; a request still finds them.
+    client = TestClient(app)
+    for old in ("/faces/detect", "/faces/search", "/bibs/recognize"):
+        assert client.post(old).status_code == 404, old
 
 
 class TestDockerBuildContext:

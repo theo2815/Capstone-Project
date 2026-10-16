@@ -133,6 +133,10 @@ ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.durati
 `qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}` —
 plus Hikari/JVM/HTTP-server metrics for free.
 
+### Wipe a test event
+
+Run `backend/scripts/nuke-test-event-photos.sql` with your event IDs swapped in (for example `docker exec -i quickpitik-postgres psql -U quickpitik -d quickpitik < backend/scripts/nuke-test-event-photos.sql`). It deletes the dependent rows (orders, payments, downloads, disputes, transactions, photo_bibs, photo_face_persons) in dependency order. Then delete the photo files: `Remove-Item -Recurse -Force backend\.storage\events\<event-id>`.
+
 ### Stop Postgres
 
 ```powershell
@@ -161,7 +165,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `SERVER_PORT` | `8080` | — |
 | `GOOGLE_CLIENT_ID` | *(blank)* | Google OAuth **Web application** client ID — the shared audience for `/auth/google`. Blank makes the endpoint answer 503; the website (`NEXT_PUBLIC_GOOGLE_CLIENT_ID`) and mobile (`QP_GOOGLE_SERVER_CLIENT_ID`) carry the same value and hide their buttons when unset. |
 | `AI_API_ENABLED` | `false` | Set `true` when ai-api is wired and you want face/bib indexing on upload + selfie quality gate + runner face-search. When `false`, every server-side ai-api call is skipped — photographer upload + selfie upload still work, face-search returns 503. See vault `backend/decisions.md` 2026-05-18 master-switch ADR. |
-| `AI_PROVIDER` | `rekognition` | Which face/bib provider runs: `rekognition` (AWS; needs AWS keys or a role) or `ai-api`. ai-api lost its face/bib routes on 2026-10-16, so `ai-api` now gets 404s. Tests pin `ai-api` in `application-test.yml` so they keep their mocked client. |
+| `AI_PROVIDER` | `rekognition` | Which face/bib provider runs: `rekognition` (AWS; needs AWS keys or a role) or `ai-api`. ai-api lost its face/bib routes on 2026-10-16, so `ai-api` now gets 404s. Tests pin `ai-api` in `application-test.yml` so they keep their mocked client. `INDEXING_MODE=batch` is ai-api-only, so startup refuses it with `rekognition`. |
 | `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Consecutive failed logins before an account locks (V29). Raise it if a demo needs more headroom — there is no separate on/off switch. |
 | `AUTH_LOCKOUT_DURATION` | `PT15M` | How long a lock holds. Auto-clears; a successful login also resets it. Unlike the rate-limit buckets this is **always on**, independent of `RATE_LIMIT_ENABLED`. |
 | `AUTH_LOCKOUT_WINDOW` | `PT15M` | NFR-S-14 (V34): failures only count toward a lock when within this window of the previous one; older streaks restart at 1. |

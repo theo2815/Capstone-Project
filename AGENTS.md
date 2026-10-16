@@ -42,7 +42,7 @@ Each module rulebook is an `AGENTS.md` (canonical) with a `CLAUDE.md` beside it 
 
 1. **Mobile and website NEVER call `ai-api` directly.** They call the Spring Boot backend, which does face/bib through AWS Rekognition (`AI_PROVIDER=rekognition`, the default — see the boundary rule). ai-api has no face/bib routes since 2026-10-16.
 2. **Desktop is the one exception** — it calls `ai-api` directly with its own restricted API key (scopes: `blur:read`, `jobs:read`).
-3. **Each backend owns its own domain data.** `ai-api` is stateless about events/users — it stores only API keys, blur jobs and webhook subscriptions (its old face tables get no new rows).
+3. **Each backend owns its own domain data.** `ai-api` is stateless about events/users — it stores only API keys, blur jobs and webhook subscriptions (its old face tables remain, but no served code writes them).
 4. **Confidence thresholds are a backend concern.** `ai-api` returns raw scores; each backend applies its own per-event threshold.
 5. **Event isolation must always be enforced.** Every face enroll or search MUST be scoped to one event (Rekognition: one collection per event) — this prevents cross-event leakage.
 6. **Blur detection is desktop-only.** Web + mobile upload paths MUST NOT call any blur endpoint (no `/blur/detect`, no `BLUR_REJECTED` gate, no `blurScore` writes). The backend's `AiApiClient` intentionally has no `blurDetect()` — do not re-add it. Rationale: vault `backend/decisions.md` (2026-05-18), `website/decisions.md` (2026-05-06).
