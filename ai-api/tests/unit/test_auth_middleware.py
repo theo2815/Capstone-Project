@@ -361,6 +361,18 @@ def test_debug_allowed_when_environment_is_set_to_a_dev_value(monkeypatch, value
     assert Settings(_env_file=None, DEBUG=True).DEBUG is True
 
 
+def test_debug_refusal_does_not_print_secret_settings(monkeypatch):
+    from pydantic import ValidationError
+
+    from src.config import Settings
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("WEBHOOK_SECRET_KEY", "secret-tail-must-not-be-logged")
+    with pytest.raises(ValidationError) as error:
+        Settings(_env_file=None, DEBUG=True)
+    assert "logged" not in str(error.value)  # pydantic keeps the input's tail
+
+
 def test_debug_off_needs_no_environment(monkeypatch):
     from src.config import Settings
 
