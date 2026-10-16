@@ -26,7 +26,7 @@ Checks Redis cache for "apikey:a1b2c3d4..."
 
 **Key properties:**
 - Keys are **never stored in plain text**. Only SHA-256 hashes are in the database.
-- Each key has **scopes** that control access (e.g., `blur:read`, `faces:write`, `bibs:read`)
+- Each key has **scopes** that control access (e.g., `blur:read`, `jobs:read`)
 - Each key has a **rate tier** (free, pro, internal)
 - Keys can be **deactivated** without deletion (set `active=false`)
 
@@ -124,14 +124,6 @@ A `/stream` rejection is reported as a per-image NDJSON error line, not an HTTP 
 
 **Dedicated blur memory budget.** With one worker, at most two requests are admitted, each with 128 MiB of body bytes; streams retain only one 50-image sub-batch and at most two images decode at once. A 2 vCPU/2 GiB local container processed two concurrent 200-image JPEG streams (121,535,400 image bytes per request) with 1,004,142,592 bytes cgroup peak and zero OOM events. This is a local Task 3 measurement, not Railway capacity certification.
 
-### Face Enrollment Quality Gate
-
-Face enrollment enforces a minimum detection confidence (`FACE_MIN_ENROLLMENT_CONFIDENCE`, default 0.7). Faces detected with confidence below this threshold are skipped to prevent low-quality embeddings from degrading search accuracy. If all detected faces are below the threshold, enrollment returns `LOW_QUALITY` error.
-
-### Bib Number Validation
-
-Bib text is cleaned using a strict character filter (`[A-Za-z0-9\-_]`) that preserves only alphanumeric characters, hyphens, and underscores. Leading and trailing `-` or `_` are stripped. A minimum character count (`BIB_MIN_CHARS`, default 2) ensures noise is rejected.
-
 ### What happens on failure
 
 ```json
@@ -156,17 +148,15 @@ Status codes:
 
 | Data | Stored? | Where | Notes |
 |---|---|---|---|
-| Original images | **NO** | Never stored | Images are processed in memory and discarded |
-| Face embeddings | Yes | PostgreSQL (pgvector) | 512 floats per face. Cannot be reversed back to an image. |
-| Image content hash | Yes | PostgreSQL | SHA-256 hash for deduplication. Cannot recreate the image. |
+| Original images | **Batch/mega only, for a while** | Blob store (`BLOB_STORE_PATH`, or the S3 bucket when configured) | Single and stream requests are processed in memory and discarded. Batch/mega uploads are staged until the job ends and then kept `BLOB_RETENTION_SECONDS` (default 24 h) as a retry window; the beat task `cleanup_stale_blobs` deletes them after that. |
+| Face embeddings | No longer written | PostgreSQL (`persons`, `face_embeddings`) | Face endpoints were removed 2026-10-16. Rows written before then stay until deleted in the database. |
 | EXIF metadata | **NO** | Stripped on upload | GPS, device info, timestamps are removed |
 | API request logs | Yes | Structured logs | Contains request_id, endpoint, timing. No image data. |
 
 ### GDPR Compliance
 
-- **Right to erasure**: `DELETE /api/v1/faces/persons/{id}` removes the person record and ALL associated embeddings. Cascading delete ensures nothing remains.
-- **Data minimization**: Only embeddings (not images) are stored. Embeddings cannot be reversed to reconstruct a face.
-- **Audit trail**: Deletion events are logged with timestamps and request IDs.
+- **Right to erasure**: the face erasure endpoints were removed with the face routes on 2026-10-16. Face data stored before then can only be deleted in the database (the tables stay; dropping them is a separate owner decision).
+- **Data minimization**: the service stores no face data today; batch images are deleted after the retry window above.
 
 ---
 
@@ -243,8 +233,7 @@ assert hmac.compare_digest(expected, received)
 - [x] Per-key concurrent batch job cap (`MAX_ACTIVE_JOBS_PER_KEY`)
 - [x] Input validation on single, batch/mega, and stream paths; stream accepts octet-stream parts but checks actual image headers and limits
 - [x] EXIF rotation applied, EXIF metadata discarded (privacy)
-- [x] No persistent image storage (only embeddings, hashes, and short-lived Celery blob staging)
-- [x] GDPR right-to-erasure endpoint
+- [x] No persistent image storage (only batch staging, deleted `BLOB_RETENTION_SECONDS` after the job ends)
 - [x] CORS configuration
 - [x] Request ID tracing
 - [x] Security response headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy; HSTS in production)

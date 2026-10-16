@@ -31,7 +31,7 @@ build/
 *.egg-info
 
 # Training checkpoints left at the repo root (yolov8n-cls.pt). The image loads
-# .onnx exports only — BibDetector refuses non-.onnx paths outright.
+# .onnx exports only.
 *.pt
 
 tests/
