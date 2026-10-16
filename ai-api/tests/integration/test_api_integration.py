@@ -132,18 +132,6 @@ class TestModelUnavailable503:
         assert body["success"] is False
         assert body["error"]["code"] == "MODEL_UNAVAILABLE"
 
-    def test_face_detect_503(self, client, app):
-        """Face detect returns 503 when model unavailable."""
-        app.state.model_registry.get.return_value = None
-        resp = self._post_with_image(client, "/api/v1/faces/detect")
-        assert resp.status_code == 503
-
-    def test_bib_recognize_503(self, client, app):
-        """Bib recognize returns 503 when OCR model unavailable."""
-        app.state.model_registry.get.return_value = None
-        resp = self._post_with_image(client, "/api/v1/bibs/recognize")
-        assert resp.status_code == 503
-
 
 class TestScopeEnforcement:
     """SEC-1: Scope enforcement must block unauthorized access."""

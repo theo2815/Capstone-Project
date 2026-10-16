@@ -20,7 +20,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -970,19 +969,12 @@ def test_blur_async_is_available_by_default():
     assert response.status_code == 400
 
 
-def test_blur_profile_does_not_import_face_or_bib_routes():
-    code = (
-        "import os, sys\n"
-        "os.environ['MODEL_PROFILE'] = 'blur'\n"
-        "from src.main import create_app\n"
-        "create_app()\n"
-        "assert 'src.api.v1.faces' not in sys.modules\n"
-        "assert 'src.api.v1.bibs' not in sys.modules\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True
-    )
-    assert result.returncode == 0, result.stderr
+@pytest.mark.parametrize("profile", ["all", "blur"])
+def test_no_face_or_bib_routes_in_any_profile(profile):
+    from src.api.v1.router import make_v1_router
+
+    paths = [route.path for route in make_v1_router(profile).routes]
+    assert not [p for p in paths if p.startswith(("/faces", "/bibs"))], paths
 
 
 class TestDockerBuildContext:
