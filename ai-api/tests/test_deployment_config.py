@@ -169,7 +169,7 @@ def test_timed_out_request_keeps_admission_until_native_work_exits():
     app.include_router(blur)
 
     async def valid_key(request, api_key):
-        return {"key_id": "k1", "scopes": ["blur:read"], "rate_tier": "pro"}
+        return {"key_id": api_key or "k1", "scopes": ["blur:read"], "rate_tier": "pro"}
 
     @asynccontextmanager
     async def no_lifespan(_app):
@@ -183,7 +183,7 @@ def test_timed_out_request_keeps_admission_until_native_work_exits():
             assert client.get("/api/v1/blur/slow-native").status_code == 504
             assert time.monotonic() - started < 0.5
             assert entered.wait(1)
-            blocked = client.get("/api/v1/blur/probe")
+            blocked = client.get("/api/v1/blur/probe", headers={"X-API-Key": "other"})
             assert blocked.status_code == 503
             assert blocked.json()["error"]["code"] == "BLUR_BUSY"
         finally:
@@ -266,7 +266,7 @@ async def test_blur_slot_cannot_be_taken_after_the_request_ended():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             assert (await client.get("/api/v1/blur/capture")).status_code == 200
-            assert admits[0]() is False
+            assert admits[0]("k1") == "busy"
             probed = await client.get("/api/v1/blur/probe")
     assert probed.status_code == 200, probed.text
 

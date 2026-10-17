@@ -113,7 +113,18 @@ class BlurAuthRoute(APIRoute):
             check_scope("blur:read", key_meta)
             request.state.blur_key_meta = key_meta
             admit = getattr(request.state, "blur_admit", None)
-            if admit is not None and not admit():
+            refusal = admit(key_meta["key_id"]) if admit is not None else None
+            if refusal == "key":
+                from src.utils.blur_metrics import rejected_requests
+
+                rejected_requests.labels("key_busy").inc()
+                return JSONResponse(status_code=429, headers={"Retry-After": "1"}, content={
+                    "success": False,
+                    "request_id": getattr(request.state, "request_id", ""),
+                    "error": {"code": "BLUR_KEY_BUSY",
+                              "message": "This API key already has a blur request running"},
+                })
+            if refusal:
                 from src.utils.blur_metrics import rejected_requests
 
                 rejected_requests.labels("busy").inc()
