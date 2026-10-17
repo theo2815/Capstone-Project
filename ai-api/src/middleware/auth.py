@@ -23,6 +23,8 @@ async def verify_api_key(
     In development mode (DEBUG=true), a missing key is allowed.
     Cached key metadata expires after 300 seconds; revocation should also
     invalidate the cache entry via ``invalidate_api_key_cache``.
+    A key the database does not know is remembered as refused for 60 seconds,
+    so a key created within 60 s of being tried while invalid is refused for up to 60 s.
     """
     settings = request.app.state.settings
     cached = getattr(request.state, "blur_key_meta", None)
@@ -44,6 +46,7 @@ async def verify_api_key(
         raise redis_unavailable()
     try:
         cached = await redis.get(f"apikey:{key_hash}")
+        refused = not cached and await redis.get(f"apikey:miss:{key_hash}")
     except RedisError as exc:
         logger.warning("API key cache unavailable", error_type=type(exc).__name__)
         raise redis_unavailable() from exc
@@ -53,6 +56,8 @@ async def verify_api_key(
         key_meta = json.loads(cached)
         await _enforce_rate_limit(request, key_meta)
         return key_meta
+    if refused:
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
     # Fallback: check database
     from sqlalchemy import select
@@ -67,6 +72,11 @@ async def verify_api_key(
         db_key = result.scalar_one_or_none()
 
         if db_key is None:
+            try:
+                await redis.set(f"apikey:miss:{key_hash}", "1", ex=60)
+            except RedisError as exc:
+                logger.warning("API key cache unavailable", error_type=type(exc).__name__)
+                raise redis_unavailable() from exc
             raise HTTPException(status_code=401, detail="Invalid API key")
 
         key_meta = {

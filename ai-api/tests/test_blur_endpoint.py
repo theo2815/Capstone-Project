@@ -29,6 +29,16 @@ def client(app):
         yield c
 
 
+@pytest.fixture(autouse=True)
+def _wait_for_blur_slots():
+    """A timed-out test can leave native work running; its key slot frees only when that ends."""
+    from src.utils.blur_metrics import active_requests
+
+    deadline = time.monotonic() + 5
+    while active_requests._value.get() and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
 def _make_jpeg_bytes(width: int = 256, height: int = 256, sharp: bool = True) -> bytes:
     """Create a JPEG image in memory."""
     if sharp:
@@ -1201,13 +1211,87 @@ async def test_blur_streams_share_decode_capacity_and_admission():
     image = _make_jpeg_bytes(width=32, height=32)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        with patch("src.api.v1.blur._decode_bgr_for_classify", side_effect=decode):
+        with (
+            patch("src.api.v1.blur._decode_bgr_for_classify", side_effect=decode),
+            patch("src.api.v1.blur.verify_api_key", side_effect=_fake_verify),  # one request per key
+        ):
             responses = await asyncio.gather(*[
-                client.post("/api/v1/blur/classify/stream", files=_files([image] * 4))
-                for _ in range(3)
+                client.post("/api/v1/blur/classify/stream", files=_files([image] * 4),
+                            headers={"X-API-Key": f"key-{n}"})
+                for n in range(3)
             ])
     assert sorted(r.status_code for r in responses) == [200, 200, 503]
     assert peak == 2
     assert all(len(r.text.splitlines()) == 5 for r in responses if r.status_code == 200)
     assert next(r for r in responses if r.status_code == 503).json()["error"]["code"] == "BLUR_BUSY"
     assert next(r for r in responses if r.status_code == 503).headers["Retry-After"] == "1"
+
+
+def _key_busy_app():
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(DEBUG=True, ENVIRONMENT="test", MODEL_PROFILE="blur", METRICS_ENABLED=False)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+
+    class Classifier:
+        min_detection_confidence = 0.5
+
+        def classify_batch(self, images):
+            return [{"predicted_class": "sharp", "confidence": 1.0,
+                     "probabilities": {"sharp": 1.0}} for _ in images]
+
+    class Registry:
+        def get(self, name):
+            return Classifier() if name == "blur_classifier" else None
+
+    app.state.model_registry = Registry()
+    return app
+
+
+async def _fake_verify(request, api_key):
+    return {"key_id": api_key, "scopes": ["*"], "rate_tier": "internal"}
+
+
+async def _post_streams(app, keys):
+    import httpx
+
+    def slow_decode(data, max_dim):
+        time.sleep(0.2)
+        return np.zeros((32, 32, 3), dtype=np.uint8)
+
+    image = _make_jpeg_bytes(width=32, height=32)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with (
+            patch("src.api.v1.blur.verify_api_key", side_effect=_fake_verify),
+            patch("src.api.v1.blur._decode_bgr_for_classify", side_effect=slow_decode),
+        ):
+            return await asyncio.gather(*[
+                client.post("/api/v1/blur/classify/stream", files=_files([image]),
+                            headers={"X-API-Key": key})
+                for key in keys
+            ])
+
+
+async def test_same_key_second_blur_request_is_refused_without_taking_a_slot():
+    responses = await _post_streams(_key_busy_app(), ["a", "a", "b"])
+    assert [r.status_code for r in responses] == [200, 429, 200]
+    assert responses[1].headers["Retry-After"] == "1"
+    assert responses[1].json()["error"] == {
+        "code": "BLUR_KEY_BUSY", "message": "This API key already has a blur request running"}
+
+
+async def test_key_is_admitted_again_after_its_request_finishes_or_fails():
+    import httpx
+
+    app = _key_busy_app()
+    assert [r.status_code for r in await _post_streams(app, ["a"])] == [200]
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch("src.api.v1.blur.verify_api_key", side_effect=_fake_verify):
+            failed = await client.post("/api/v1/blur/classify/stream", headers={"X-API-Key": "a"})
+    assert failed.status_code == 422
+    assert [r.status_code for r in await _post_streams(app, ["a"])] == [200]

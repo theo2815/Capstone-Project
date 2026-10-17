@@ -253,6 +253,8 @@ def create_app() -> FastAPI:
     _max_body = settings.MAX_REQUEST_BODY
     _blur_body = settings.BLUR_MAX_REQUEST_BODY
     _blur_admission = BoundedSemaphore(settings.BLUR_MAX_ACTIVE_REQUESTS)
+    # ponytail: per-process like the semaphore; Redis-backed if the service ever runs several replicas.
+    _blur_active_keys: set[str] = set()
     app.state.blur_decode_semaphore = asyncio.Semaphore(settings.BLUR_DECODE_CONCURRENCY)
     _blur_async_paths = {
         f"/api/v1/blur/{mode}/{size}"
@@ -295,23 +297,30 @@ def create_app() -> FastAPI:
             closed = False
             token = request_work.set(None)
 
-            def admit_blur() -> bool:
-                """Take a blur slot. BlurAuthRoute calls this only after the key check."""
+            def admit_blur(key_id: str) -> str | None:
+                """Take a blur slot; return the refusal ("key" or "busy"), None if admitted.
+
+                BlurAuthRoute calls this only after the key check. One request per key.
+                """
                 nonlocal tracker
+                if key_id in _blur_active_keys:
+                    return "key"
                 # A cancelled route can still get here after cleanup; nothing would release it.
                 if closed or not _blur_admission.acquire(blocking=False):
-                    return False
+                    return "busy"
+                _blur_active_keys.add(key_id)
                 from src.utils.blur_metrics import active_requests
 
                 active_requests.inc()
 
                 def release_blur():
+                    _blur_active_keys.discard(key_id)
                     _blur_admission.release()
                     active_requests.dec()
 
                 tracker = RequestWork(release_blur)
                 request_work.set(tracker)  # seen by the route's tracked native work
-                return True
+                return None
 
             if blur_request:
                 scope.setdefault("state", {})["blur_admit"] = admit_blur
