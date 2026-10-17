@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from collections import deque
 from contextlib import asynccontextmanager
-from threading import BoundedSemaphore
+from threading import Lock
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -19,6 +21,55 @@ from src.utils.exceptions import QuickPitikError
 from src.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+
+class FairBlurSlots:
+    """Blur slots handed out first come, first served.
+
+    Release can run on a worker thread: native work may outlive a timed-out request.
+    """
+
+    def __init__(self, slots: int, max_waiting: int):
+        self._free = slots
+        self._max_waiting = max_waiting
+        self._line: deque[asyncio.Future[None]] = deque()
+        self._lock = Lock()
+
+    async def acquire(self, wait_seconds: float) -> bool:
+        with self._lock:
+            if self._free and not self._line:
+                self._free -= 1
+                return True
+            if not wait_seconds or len(self._line) >= self._max_waiting:
+                return False
+            turn = asyncio.get_running_loop().create_future()
+            self._line.append(turn)
+        try:
+            await asyncio.wait_for(turn, wait_seconds)
+            return True
+        except BaseException as exc:  # the wait ran out, or the request went away
+            with self._lock:
+                handed_over = turn not in self._line
+                if not handed_over:
+                    self._line.remove(turn)
+            if handed_over:
+                self.release()  # the slot arrived as we gave up: pass it on
+            if isinstance(exc, TimeoutError):
+                return False
+            raise
+
+    def release(self) -> None:
+        with self._lock:
+            if not self._line:
+                self._free += 1
+                return
+            turn = self._line.popleft()
+        turn.get_loop().call_soon_threadsafe(_give_turn, turn)
+
+
+def _give_turn(turn: asyncio.Future[None]) -> None:
+    if not turn.done():
+        turn.set_result(None)
 
 
 @asynccontextmanager
@@ -165,6 +216,11 @@ def create_app() -> FastAPI:
                 watched, timeout=settings.BLUR_REQUEST_TIMEOUT_SECONDS,
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            waited = scope.get("state", {}).get("blur_waited")
+            if not done and waited:  # time in the blur line does not count
+                done, _ = await asyncio.wait(
+                    watched, timeout=waited, return_when=asyncio.FIRST_COMPLETED,
+                )
             if header_waiter:
                 header_waiter.cancel()
             if header_waiter in done:
@@ -252,8 +308,8 @@ def create_app() -> FastAPI:
 
     _max_body = settings.MAX_REQUEST_BODY
     _blur_body = settings.BLUR_MAX_REQUEST_BODY
-    _blur_admission = BoundedSemaphore(settings.BLUR_MAX_ACTIVE_REQUESTS)
-    # ponytail: per-process like the semaphore; Redis-backed if the service ever runs several replicas.
+    _blur_slots = FairBlurSlots(settings.BLUR_MAX_ACTIVE_REQUESTS, settings.BLUR_QUEUE_MAX_WAITING)
+    # ponytail: per-process like the slots; Redis-backed if the service ever runs several replicas.
     _blur_active_keys: set[str] = set()
     app.state.blur_decode_semaphore = asyncio.Semaphore(settings.BLUR_DECODE_CONCURRENCY)
     _blur_async_paths = {
@@ -297,25 +353,38 @@ def create_app() -> FastAPI:
             closed = False
             token = request_work.set(None)
 
-            def admit_blur(key_id: str) -> str | None:
-                """Take a blur slot; return the refusal ("key" or "busy"), None if admitted.
+            async def admit_blur(key_id: str) -> str | None:
+                """Take a blur slot, waiting in line while all are taken.
 
-                BlurAuthRoute calls this only after the key check. One request per key.
+                Returns the refusal ("key" or "busy"), None if admitted. BlurAuthRoute calls
+                this only after the key check, before the upload is read. One request per
+                key, waiting or running.
                 """
                 nonlocal tracker
                 if key_id in _blur_active_keys:
                     return "key"
                 # A cancelled route can still get here after cleanup; nothing would release it.
-                if closed or not _blur_admission.acquire(blocking=False):
+                if closed:
                     return "busy"
                 _blur_active_keys.add(key_id)
+                started = time.monotonic()
+                try:
+                    admitted = await _blur_slots.acquire(settings.BLUR_QUEUE_WAIT_SECONDS)
+                except BaseException:
+                    _blur_active_keys.discard(key_id)
+                    raise
+                if not admitted:
+                    _blur_active_keys.discard(key_id)
+                    return "busy"
+                # BlurTimeoutMiddleware adds this back to the request deadline.
+                scope["state"]["blur_waited"] = time.monotonic() - started
                 from src.utils.blur_metrics import active_requests
 
                 active_requests.inc()
 
                 def release_blur():
                     _blur_active_keys.discard(key_id)
-                    _blur_admission.release()
+                    _blur_slots.release()
                     active_requests.dec()
 
                 tracker = RequestWork(release_blur)

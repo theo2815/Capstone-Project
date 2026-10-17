@@ -299,8 +299,10 @@ Client rules that matter:
   code — it shows up as a short body. The summary line is the completion signal.
 - **A per-image `{"index":…,"filename":…,"error":…}` line is normal** for an
   undecodable file; keep reading, the rest of the batch is unaffected.
-- Respect server `BLUR_BUSY` responses and `Retry-After` before starting another
-  stream. The server admission limit is configured in `ai-api/src/config.py`.
+- When every blur slot is taken, the server holds the request in a first-come line
+  before reading its upload, so `BLUR_BUSY` means "waited and still busy" (or the
+  line was full). Respect it and `Retry-After` before starting another stream. The
+  admission limit and the line's wait and length are configured in `ai-api/src/config.py`.
 - A busy rejection can close the connection while a large multipart body is still
   uploading, so the client may see a network error instead of the `503` response.
   Treat either outcome as a failed stream; wait before retrying unaccounted images.

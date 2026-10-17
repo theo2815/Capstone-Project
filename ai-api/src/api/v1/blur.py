@@ -113,7 +113,7 @@ class BlurAuthRoute(APIRoute):
             check_scope("blur:read", key_meta)
             request.state.blur_key_meta = key_meta
             admit = getattr(request.state, "blur_admit", None)
-            refusal = admit(key_meta["key_id"]) if admit is not None else None
+            refusal = await admit(key_meta["key_id"]) if admit is not None else None
             if refusal == "key":
                 from src.utils.blur_metrics import rejected_requests
 

@@ -1177,7 +1177,7 @@ async def test_blur_streams_share_decode_capacity_and_admission():
     from src.main import create_app
 
     settings = Settings(DEBUG=True, ENVIRONMENT="test", MODEL_PROFILE="blur", METRICS_ENABLED=False,
-                        BLUR_DECODE_CONCURRENCY=2)
+                        BLUR_DECODE_CONCURRENCY=2, BLUR_QUEUE_WAIT_SECONDS=0)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings
@@ -1295,3 +1295,203 @@ async def test_key_is_admitted_again_after_its_request_finishes_or_fails():
             failed = await client.post("/api/v1/blur/classify/stream", headers={"X-API-Key": "a"})
     assert failed.status_code == 422
     assert [r.status_code for r in await _post_streams(app, ["a"])] == [200]
+
+
+def _line_app(**overrides):
+    """One blur slot; /hold keeps its slot until the test sets that key's gate."""
+    from collections import defaultdict
+
+    from fastapi import APIRouter
+
+    from src.api.v1.blur import BlurAuthRoute
+    from src.config import Settings
+    from src.main import create_app
+
+    settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False,
+                        BLUR_MAX_ACTIVE_REQUESTS=1, **overrides)
+    with patch("src.main.get_settings", return_value=settings):
+        app = create_app()
+    app.state.settings = settings
+    order, gates, delays = [], defaultdict(asyncio.Event), defaultdict(float)
+    route = APIRouter(prefix="/api/v1/blur", route_class=BlurAuthRoute)
+
+    @route.get("/hold")
+    async def hold(request: Request):
+        key = request.headers["X-API-Key"]
+        order.append(key)
+        await gates[key].wait()
+        await asyncio.sleep(delays[key])
+        return {"key": key}
+
+    app.include_router(route)
+    return app, order, gates, delays
+
+
+async def _until(check, seconds=2.0):
+    deadline = time.monotonic() + seconds
+    while not check():
+        assert time.monotonic() < deadline, "timed out"
+        await asyncio.sleep(0.01)
+
+
+async def _hold(client, key):
+    return await client.get("/api/v1/blur/hold", headers={"X-API-Key": key})
+
+
+@pytest.fixture
+async def line_client():
+    import httpx
+
+    clients = []
+
+    async def make(app):
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+        clients.append(client)
+        return client
+
+    with patch("src.api.v1.blur.verify_api_key", side_effect=_fake_verify):
+        yield make
+    for client in clients:
+        await client.aclose()
+
+
+async def test_busy_blur_request_waits_in_line_and_runs_when_the_slot_frees(line_client):
+    app, order, gates, _ = _line_app()
+    client = await line_client(app)
+    first = asyncio.create_task(_hold(client, "a"))
+    await _until(lambda: order == ["a"])
+    second = asyncio.create_task(_hold(client, "b"))
+    await asyncio.sleep(0.1)
+    assert not second.done()  # waiting, not refused
+    gates["a"].set()
+    gates["b"].set()
+    assert (await first).status_code == 200
+    assert (await second).status_code == 200
+    assert order == ["a", "b"]
+
+
+async def test_blur_waiters_are_served_in_arrival_order(line_client):
+    app, order, gates, _ = _line_app()
+    client = await line_client(app)
+    tasks = [asyncio.create_task(_hold(client, "a"))]
+    await _until(lambda: order == ["a"])
+    for key in ("b", "c", "d"):
+        tasks.append(asyncio.create_task(_hold(client, key)))
+        await asyncio.sleep(0.05)
+    for key in ("d", "c", "b", "a"):
+        gates[key].set()
+    assert [(await t).status_code for t in tasks] == [200, 200, 200, 200]
+    assert order == ["a", "b", "c", "d"]
+
+
+async def test_blur_wait_that_runs_out_answers_busy(line_client):
+    app, order, gates, _ = _line_app(BLUR_QUEUE_WAIT_SECONDS=0.2)
+    client = await line_client(app)
+    first = asyncio.create_task(_hold(client, "a"))
+    await _until(lambda: order == ["a"])
+    started = time.monotonic()
+    busy = await _hold(client, "b")
+    assert time.monotonic() - started >= 0.2
+    assert busy.status_code == 503
+    assert busy.headers["Retry-After"] == "1"
+    assert busy.json()["error"]["code"] == "BLUR_BUSY"
+    gates["a"].set()
+    assert (await first).status_code == 200
+    assert order == ["a"]
+
+
+async def test_full_blur_line_answers_busy_at_once(line_client):
+    app, order, gates, _ = _line_app(BLUR_QUEUE_MAX_WAITING=1)
+    client = await line_client(app)
+    first = asyncio.create_task(_hold(client, "a"))
+    await _until(lambda: order == ["a"])
+    waiting = asyncio.create_task(_hold(client, "b"))
+    await asyncio.sleep(0.05)
+    started = time.monotonic()
+    refused = await _hold(client, "c")
+    assert time.monotonic() - started < 1
+    assert refused.status_code == 503
+    assert refused.json()["error"]["code"] == "BLUR_BUSY"
+    assert not waiting.done()
+    gates["a"].set()
+    gates["b"].set()
+    assert [(await first).status_code, (await waiting).status_code] == [200, 200]
+
+
+async def test_cancelled_blur_waiter_leaves_the_line():
+    from src.main import FairBlurSlots
+
+    slots = FairBlurSlots(1, max_waiting=1)
+    assert await slots.acquire(5)
+    gone = asyncio.create_task(slots.acquire(5))
+    await asyncio.sleep(0.01)
+    gone.cancel()
+    await asyncio.gather(gone, return_exceptions=True)
+    late = asyncio.create_task(slots.acquire(5))
+    await asyncio.sleep(0.01)
+    assert not late.done()  # the cancelled waiter's place was free
+    slots.release()
+    assert await asyncio.wait_for(late, 1)  # and the slot went to the next waiter
+
+
+async def test_blur_slot_handed_to_a_waiter_that_just_left_is_passed_on():
+    from src.main import FairBlurSlots
+
+    slots = FairBlurSlots(1, max_waiting=1)
+    assert await slots.acquire(5)
+    gone = asyncio.create_task(slots.acquire(5))
+    await asyncio.sleep(0.01)
+    slots.release()  # hands the slot over...
+    gone.cancel()  # ...as the waiter leaves
+    await asyncio.gather(gone, return_exceptions=True)
+    assert await slots.acquire(0)  # the slot was not lost
+
+
+async def test_blur_waiter_whose_client_left_passes_its_turn_on(line_client):
+    # The server cannot see a disconnect before it reads the upload (it is not reading
+    # that connection), so a gone client keeps its place; at its turn the read fails at once.
+    app, order, gates, _ = _line_app()
+    client = await line_client(app)
+    first = asyncio.create_task(_hold(client, "a"))
+    await _until(lambda: order == ["a"])
+
+    async def gone():
+        return {"type": "http.disconnect"}
+
+    async def ignore(message):
+        pass
+
+    path = "/api/v1/blur/classify/stream"
+    left = asyncio.create_task(app({
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+        "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",
+        "root_path": "", "client": ("test", 1), "server": ("test", 80),
+        "headers": [(b"x-api-key", b"b"), (b"content-length", b"100"),
+                    (b"content-type", b"multipart/form-data; boundary=x")],
+    }, gone, ignore))
+    await asyncio.sleep(0.05)
+    late = asyncio.create_task(_hold(client, "c"))
+    await asyncio.sleep(0.05)
+    gates["c"].set()
+    started = time.monotonic()
+    gates["a"].set()
+    assert (await first).status_code == 200
+    assert (await late).status_code == 200
+    assert time.monotonic() - started < 1
+    await left
+    assert order == ["a", "c"]
+
+
+async def test_time_in_the_blur_line_does_not_count_toward_the_request_deadline(line_client):
+    app, order, gates, delays = _line_app(BLUR_REQUEST_TIMEOUT_SECONDS=0.5)
+    client = await line_client(app)
+    first = asyncio.create_task(_hold(client, "a"))
+    await _until(lambda: order == ["a"])
+    delays["b"] = 0.3
+    gates["b"].set()
+    second = asyncio.create_task(_hold(client, "b"))
+    await asyncio.sleep(0.4)
+    gates["a"].set()
+    assert (await first).status_code == 200
+    # b waited 0.4 s, then ran 0.3 s: over 0.5 s in all, but within its own deadline.
+    assert (await second).status_code == 200

@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     BLUR_MAX_REQUEST_BODY: int = Field(default=128 * 1024 * 1024, gt=0)
     BLUR_MAX_IMAGE_PIXELS: int = Field(default=24_000_000, gt=0)
     BLUR_MAX_ACTIVE_REQUESTS: int = Field(default=2, gt=0)
+    # When every slot is taken, a request waits in a first-come line (before its upload is
+    # read) for up to this long, then gets 503 BLUR_BUSY. 0 = refuse at once. Keep it under
+    # the desktop's 30 s single-photo timeout. Line time does not count toward
+    # BLUR_REQUEST_TIMEOUT_SECONDS.
+    BLUR_QUEUE_WAIT_SECONDS: float = Field(default=20, ge=0)
+    BLUR_QUEUE_MAX_WAITING: int = Field(default=20, ge=0)
     BLUR_DECODE_CONCURRENCY: int = Field(default=2, gt=0)
     # Stage-2 photos scored at the same time inside one stream sub-batch. 1 = one after
     # another (today). 2 uses both native inference slots of this process for one
