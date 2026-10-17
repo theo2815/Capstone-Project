@@ -22,6 +22,7 @@ import com.quickpitik.mobile.data.remote.toResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import retrofit2.HttpException
 import java.util.UUID
 
 class CartRepositoryImpl : CartRepository {
@@ -215,7 +216,19 @@ class CartRepositoryImpl : CartRepository {
         // Nothing clears the cart here: the website clears it on PAID
         // confirmation in /orders/return, and pre-clearing would strand the
         // local cart empty if the user cancels PayMongo and bounces back.
-        return apiCall("Checkout failed") { api.createOrder(formattedToken, idempotencyKey, request) }
+        return apiCall("Checkout failed") {
+            try {
+                api.createOrder(formattedToken, idempotencyKey, request)
+            } catch (e: HttpException) {
+                // A refused key (its checkout expired, or another checkout holds
+                // these photos) can never succeed again: retire it, as the
+                // website does on CONFLICT / CHECKOUT_IN_PROGRESS, so the next
+                // try is a new checkout. Any other failure (PAYMENT_FAILED is a
+                // 409 too) keeps it so a retry resumes the order it may have made.
+                if (e.code() == 409 && refusesKey(e)) idempotency = null
+                throw e
+            }
+        }
             // Order minted — the key has served its purpose; the next
             // checkout is a new order.
             .onSuccess { idempotency = null }
@@ -275,6 +288,12 @@ class CartRepositoryImpl : CartRepository {
         }
     }
 
+    override suspend fun cancelOrder(token: String, orderId: String): Result<OrderStatusDto> =
+        apiCall("Couldn't cancel the payment") { api.cancelOrder("Bearer $token", orderId) }
+
+    override suspend fun cancelGuestOrder(orderId: String, shareToken: String): Result<OrderStatusDto> =
+        apiCall("Couldn't cancel the payment") { api.cancelGuestOrder(orderId, shareToken) }
+
 
     override suspend fun submitRefund(
         token: String,
@@ -294,4 +313,14 @@ class CartRepositoryImpl : CartRepository {
 
     override suspend fun withdrawDispute(token: String, disputeId: String): Result<RunnerDisputeDto> =
         apiCall("Failed to cancel refund request") { api.withdrawDispute("Bearer $token", disputeId) }
+}
+
+private val KEY_REFUSED = Regex(""""code"\s*:\s*"(CONFLICT|CHECKOUT_IN_PROGRESS)"""")
+
+// Reads the error envelope's codes without consuming the body, so
+// RetrofitClient.parseError can still show the backend's message.
+private fun refusesKey(e: HttpException): Boolean {
+    val source = e.response()?.errorBody()?.source() ?: return false
+    source.request(Long.MAX_VALUE)
+    return KEY_REFUSED.containsMatchIn(source.buffer.clone().readUtf8())
 }

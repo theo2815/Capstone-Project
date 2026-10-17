@@ -85,6 +85,39 @@ object PhotoDownloader {
         Result.Saved(uri, filename)
     }
 
+    // The QR Ph code (bytes already in hand) into Pictures/QuickPitik, so the
+    // runner can open it from their bank or e-wallet app's Scan QR screen —
+    // the phone can't scan its own screen. Same two-step write as saveToGallery.
+    suspend fun saveImageToGallery(
+        context: Context,
+        bytes: ByteArray,
+        filename: String,
+    ): Result = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/QuickPitik")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: return@withContext Result.Failed("Couldn't open a slot in your gallery.")
+        try {
+            resolver.openOutputStream(uri).use { out ->
+                if (out == null) {
+                    resolver.delete(uri, null, null)
+                    return@withContext Result.Failed("Couldn't save the QR code to your gallery.")
+                }
+                out.write(bytes)
+            }
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
+            return@withContext Result.Failed("Couldn't save the QR code to your gallery.")
+        }
+        resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+        Result.Saved(uri, filename)
+    }
+
     // Standard filename: bib slug stays human-readable and includes the first 8
     // chars of the photo UUID so multiple photos of the same bib never collide.
     // Untagged photos also use the first 8 chars of the photo UUID.

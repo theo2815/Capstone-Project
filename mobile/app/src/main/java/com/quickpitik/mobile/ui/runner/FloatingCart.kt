@@ -27,6 +27,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,7 +39,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -282,11 +286,40 @@ fun FloatingCart(
         CheckoutSheet(
             cartViewModel = cartViewModel,
             onDismiss = { cartViewModel.closeCheckoutSheet() },
-            onCheckoutSuccess = { order ->
-                cartViewModel.closeCheckoutSheet()
-                onAfterCheckoutSuccess(order)
-            },
         )
+    }
+
+    // Settled — a paid QR, a ₱0/100%-coupon giveaway or an already-paid replay
+    // — goes to the receipt so the downloads show. Here, not in the sheet: the
+    // QR keeps being checked after the runner leaves checkout, as on the website.
+    // Keyed on status: a PENDING order must never be misread as settled.
+    val checkoutState by cartViewModel.checkoutState.collectAsState()
+    LaunchedEffect(checkoutState) {
+        val order = (checkoutState as? CheckoutState.Success)?.order ?: return@LaunchedEffect
+        if (isSettledOrderStatus(order.status)) {
+            cartViewModel.closeCheckoutSheet()
+            onAfterCheckoutSuccess(order)
+            cartViewModel.resetCheckoutState()
+        }
+    }
+
+    // Back from the bank or e-wallet app (or the PayMongo simulator): ask
+    // PayMongo once right away, like the website's visibilitychange handler.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        var wasAway = false
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> wasAway = true
+                Lifecycle.Event.ON_RESUME -> if (wasAway) {
+                    wasAway = false
+                    cartViewModel.verifyQrNow()
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // Cart-mutation outcome snackbar — hosted HERE (the one overlay mounted on

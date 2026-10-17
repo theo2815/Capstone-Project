@@ -41,7 +41,11 @@ class CartViewModelTest {
     @Volatile private var cart = CART
     @Volatile private var orders: MockResponse = ok(ORDERS)
     @Volatile private var detail: MockResponse = ok(DETAIL)
-    @Volatile private var order: MockResponse = ok(ORDER)
+    @Volatile private var order: MockResponse = ok(qrOrder())
+    @Volatile private var status: MockResponse = ok(statusJson("PENDING"))
+    @Volatile private var cancel: MockResponse = ok(statusJson("EXPIRED"))
+    @Volatile private var verified: MockResponse? = null // answer for ?verify=true, when it differs
+    private val fullPaths = CopyOnWriteArrayList<String>() // with the query string
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -51,6 +55,7 @@ class CartViewModelTest {
                 val path = request.path.orEmpty().substringBefore('?')
                 val body = request.body.readUtf8()
                 seen += path to body
+                fullPaths += request.path.orEmpty()
                 return when {
                     path == "/api/v1/me/cart" && request.method == "GET" -> ok(cart)
                     path == "/api/v1/me/cart" && request.method == "DELETE" -> ok("""{"cleared":2}""")
@@ -59,6 +64,9 @@ class CartViewModelTest {
                     path == "/api/v1/orders" -> order
                     path == "/api/v1/me/orders" -> orders
                     path == "/api/v1/me/orders/o1" -> detail
+                    path == "/api/v1/me/orders/o1/status" || path == "/api/v1/orders/o1/status" ->
+                        verified?.takeIf { request.path.orEmpty().contains("verify=true") } ?: status
+                    path == "/api/v1/me/orders/o1/cancel" || path == "/api/v1/orders/o1/cancel" -> cancel
                     path == "/api/v1/me/disputes/d1/withdraw" -> ok(DISPUTE)
                     else -> MockResponse().setResponseCode(404)
                 }
@@ -115,18 +123,131 @@ class CartViewModelTest {
     @Test fun `checkout sends only a typed override and falls back to the session email`() {
         val vm = newVm()
         vm.previewAndWait("SAVE10")
-        vm.checkout(null, "GCASH")
-        vm.checkoutState.awaitFirst { it is CheckoutState.Success }
+        vm.checkout(null)
+        vm.checkoutState.awaitFirst { it is CheckoutState.AwaitingQr }
         val typed = orderBodies().single()
         assertTrue(typed, typed.contains(""""couponCode":"SAVE10"""") && typed.contains(""""recipientEmail":"juan@x.com""""))
 
         vm.resetCheckoutState()
         vm.previewAndWait(null)
-        vm.checkout("other@x.com", "MAYA")
-        vm.checkoutState.awaitFirst { it is CheckoutState.Success }
+        vm.checkout("other@x.com")
+        vm.checkoutState.awaitFirst { it is CheckoutState.AwaitingQr }
         val auto = orderBodies().last()
         assertFalse(auto, auto.contains("couponCode"))
-        assertTrue(auto, auto.contains(""""recipientEmail":"other@x.com"""") && auto.contains(""""paymentMethod":"MAYA""""))
+        assertTrue(auto, auto.contains(""""recipientEmail":"other@x.com"""") && auto.contains(""""paymentMethod":"qrph""""))
+    }
+
+    // ---- QR Ph step: the website's use-checkout-workflow.ts ----
+
+    private fun awaitingQr(vm: CartViewModel): QrCheckout =
+        (vm.checkoutState.awaitFirst { it is CheckoutState.AwaitingQr } as CheckoutState.AwaitingQr).payment
+
+    private fun statusCalls() = fullPaths.filter { it.contains("/o1/status") }
+
+    @Test fun `a pending order shows its QR and the amount the whole checkout charges`() {
+        val vm = newVm()
+        vm.checkout(null)
+        val qr = awaitingQr(vm)
+        assertEquals("data:image/png;base64,iVBORw0KGgo=", qr.qr.imageUrl)
+        assertEquals(250.0, qr.order.checkoutTotalAmount!!, 0.0)
+        assertEquals("juan@x.com", qr.email)
+        assertEquals(listOf("p1", "p2"), qr.photoIds)
+
+        // Closing the sheet keeps the live QR, so the cart can bring the runner back to it.
+        vm.closeCheckoutSheet()
+        assertTrue(vm.checkoutState.value is CheckoutState.AwaitingQr)
+    }
+
+    @Test fun `a pending order without a QR is an error, not a QR step`() {
+        order = ok("""{"id":"o1","status":"PENDING","items":[],"totalAmount":200.0,"paymentMethod":"qrph","createdAt":"2026-09-11T00:00:00Z"}""")
+        val vm = newVm()
+        vm.checkout(null)
+        val error = vm.checkoutState.awaitFirst { it is CheckoutState.Error } as CheckoutState.Error
+        assertEquals("The payment provider didn't return a QR code.", error.message)
+    }
+
+    @Test fun `I've paid asks PayMongo, and a paid order goes to the receipt with the cart cleared`() {
+        verified = ok(statusJson("PAID"))
+        val vm = newVm()
+        vm.checkout(null)
+        awaitingQr(vm)
+
+        vm.claimQrPaid()
+        val success = vm.checkoutState.awaitFirst { it is CheckoutState.Success } as CheckoutState.Success
+        assertEquals("PAID", success.order.status)
+        assertTrue(statusCalls().toString(), statusCalls().any { it.contains("verify=true") })
+        assertTrue(vm.cartItems.awaitFirst { it.isEmpty() }.isEmpty())
+    }
+
+    @Test fun `the QR is checked on its own, without asking PayMongo until the runner says they've paid`() {
+        status = ok(statusJson("FULFILLED"))
+        val vm = newVm()
+        vm.checkout(null)
+        vm.checkoutState.awaitFirst { it is CheckoutState.Success }
+        assertFalse(statusCalls().single(), statusCalls().single().contains("verify"))
+    }
+
+    @Test fun `an expired order ends the QR as expired, or as declined when it expired early`() {
+        status = ok(statusJson("EXPIRED"))
+        order = ok(qrOrder(expiresAt = "2000-01-01T00:00:00Z"))
+        val ranOut = newVm()
+        ranOut.checkout(null)
+        awaitingQr(ranOut)
+        ranOut.claimQrPaid()
+        assertEquals(CheckoutState.Ended(QrOutcome.EXPIRED), ranOut.checkoutState.awaitFirst { it is CheckoutState.Ended })
+
+        order = ok(qrOrder())
+        val declined = newVm()
+        declined.checkout(null)
+        awaitingQr(declined)
+        declined.claimQrPaid()
+        assertEquals(CheckoutState.Ended(QrOutcome.FAILED), declined.checkoutState.awaitFirst { it is CheckoutState.Ended })
+        // The cart stays, so the runner can generate a new code.
+        assertEquals(2, declined.cartItems.value.size)
+    }
+
+    @Test fun `cancelling ends the QR, unless the payment won the race`() {
+        val vm = newVm()
+        vm.checkout(null)
+        awaitingQr(vm)
+        vm.cancelQr()
+        assertEquals(CheckoutState.Ended(QrOutcome.CANCELLED), vm.checkoutState.awaitFirst { it is CheckoutState.Ended })
+        // The notice is for this visit only.
+        vm.closeCheckoutSheet()
+        assertEquals(CheckoutState.Idle, vm.checkoutState.value)
+
+        cancel = ok(statusJson("PAID"))
+        vm.checkout(null)
+        awaitingQr(vm)
+        vm.cancelQr()
+        vm.checkoutState.awaitFirst { it is CheckoutState.Success }
+    }
+
+    @Test fun `a failed cancel keeps the QR live and says so`() {
+        cancel = MockResponse().setResponseCode(500)
+        val vm = newVm()
+        vm.checkout(null)
+        awaitingQr(vm)
+        vm.cancelQr()
+        val qr = (vm.checkoutState.awaitFirst { (it as? CheckoutState.AwaitingQr)?.payment?.checkError != null } as CheckoutState.AwaitingQr).payment
+        assertFalse(qr.cancelling)
+        assertEquals("We couldn't cancel right now. Your QR code is still live — try again.", qr.checkError)
+    }
+
+    @Test fun `a guest checks and cancels with the QR's return token, and a 404 stops the checking`() {
+        order = ok(qrOrder(returnToken = "rt1"))
+        status = MockResponse().setResponseCode(404)
+        val vm = newVm()
+        vm.checkout(null)
+        awaitingQr(vm)
+
+        vm.claimQrPaid()
+        vm.checkoutState.awaitFirst { (it as? CheckoutState.AwaitingQr)?.payment?.unreachable == true }
+        assertTrue(statusCalls().toString(), statusCalls().isNotEmpty() && statusCalls().all { it.startsWith("/api/v1/orders/o1/status?token=rt1") })
+
+        vm.cancelQr()
+        vm.checkoutState.awaitFirst { it is CheckoutState.Ended }
+        assertTrue(fullPaths.any { it.startsWith("/api/v1/orders/o1/cancel?token=rt1") })
     }
 
     @Test fun `owned photo ids come from PAID and FULFILLED orders only, and are empty when orders fail`() {
@@ -248,23 +369,23 @@ class CartViewModelTest {
         assertDetailNeverShown(vm)
     }
 
-    // MS-7 finding L4: a checkout's answer carries the PayMongo link that
-    // CheckoutSheet opens by itself, so it must never reach the next account.
+    // MS-7 finding L4: a checkout's answer is the previous account's order and
+    // QR, so it must never reach the next account.
     @Test fun `a checkout answer that lands after the account changed is dropped`() {
-        order = ok(ORDER).setHeadersDelay(300, TimeUnit.MILLISECONDS)
+        order = ok(qrOrder()).setHeadersDelay(300, TimeUnit.MILLISECONDS)
         val vm = newVm()
-        vm.checkout(null, "GCASH")
+        vm.checkout(null)
         awaitOnServer("/api/v1/orders")
 
         switchAccount()
 
-        assertTrue(runCatching { vm.checkoutState.awaitFirst(1_000) { it is CheckoutState.Success } }.isFailure)
+        assertTrue(runCatching { vm.checkoutState.awaitFirst(1_000) { it is CheckoutState.AwaitingQr } }.isFailure)
     }
 
     @Test fun `a change of account drops a finished checkout`() {
         val vm = newVm()
-        vm.checkout(null, "GCASH")
-        vm.checkoutState.awaitFirst { it is CheckoutState.Success }
+        vm.checkout(null)
+        vm.checkoutState.awaitFirst { it is CheckoutState.AwaitingQr }
 
         switchAccount()
 
@@ -275,7 +396,12 @@ class CartViewModelTest {
         const val DETAIL = """{"id":"o1","eventId":"e1","photoIds":["p1"],"total":100.0,"paymentMethod":"GCASH","paidAt":null,"eventName":null,"eventSlug":null,"status":"PAID","photos":[]}"""
         const val DISPUTE = """{"id":"d1","photoId":"p1","reason":"OTHER","note":"","status":"WITHDRAWN","openedAt":"2026-09-11T00:00:00Z"}"""
         const val CART = """[{"photoId":"p1","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":"B-1","eventName":"Run","eventSlug":"run","tone":null,"time":null},{"photoId":"p2","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null}]"""
-        const val ORDER = """{"id":"o1","status":"PENDING","items":[{"photoId":"p1","price":100.0}],"totalAmount":200.0,"paymentMethod":"GCASH","createdAt":"2026-09-11T00:00:00Z","redirectUrl":"https://pay.example/x"}"""
+        fun qrOrder(expiresAt: String = "2099-01-01T00:00:00Z", returnToken: String? = null): String {
+            val token = returnToken?.let { "\"$it\"" } ?: "null"
+            return """{"id":"o1","status":"PENDING","items":[{"photoId":"p1","price":100.0}],"totalAmount":200.0,"checkoutTotalAmount":250.0,"paymentMethod":"qrph","createdAt":"2026-09-11T00:00:00Z",""" +
+                """"qrPh":{"imageUrl":"data:image/png;base64,iVBORw0KGgo=","expiresAt":"$expiresAt","returnToken":$token,"testUrl":null}}"""
+        }
+        fun statusJson(value: String) = """{"id":"o1","status":"$value","paidAt":null}"""
         const val ORDERS = """{"items":[
             {"id":"o1","eventId":"e1","photoIds":["p1"],"total":100.0,"paymentMethod":"GCASH","paidAt":null,"eventName":null,"eventSlug":null,"eventDate":null,"eventState":null,"status":"PAID"},
             {"id":"o2","eventId":"e1","photoIds":["p2"],"total":100.0,"paymentMethod":"GCASH","paidAt":null,"eventName":null,"eventSlug":null,"eventDate":null,"eventState":null,"status":"FULFILLED"},

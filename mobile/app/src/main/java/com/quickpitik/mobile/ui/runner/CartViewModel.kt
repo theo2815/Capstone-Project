@@ -11,8 +11,10 @@ import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.OrderListItemDto
 import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.data.remote.PhotoDto
+import com.quickpitik.mobile.data.remote.QrPhPaymentDto
 import com.quickpitik.mobile.data.repository.CartRepository
 import com.quickpitik.mobile.data.repository.CartRepositoryImpl
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,13 +26,39 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import java.time.OffsetDateTime
 
 sealed class CheckoutState {
     object Idle : CheckoutState()
     object Loading : CheckoutState()
     data class Success(val order: OrderResponse) : CheckoutState()
     data class Error(val message: String) : CheckoutState()
+    // The QR Ph code is on screen, waiting for the runner to pay.
+    data class AwaitingQr(val payment: QrCheckout) : CheckoutState()
+    // Back on the pay step because the QR closed without a payment.
+    data class Ended(val outcome: QrOutcome) : CheckoutState()
 }
+
+/**
+ * A live QR Ph payment — the mobile mirror of the website's QR step
+ * (`use-checkout-workflow.ts`). [order] is what POST /orders answered and [qr]
+ * its QR; [photoIds] is the cart that was checked out, dropped from this
+ * phone's cart once the payment lands.
+ */
+data class QrCheckout(
+    val order: OrderResponse,
+    val qr: QrPhPaymentDto,
+    val email: String,
+    val photoIds: List<String>,
+    val paidClaimedAt: Long? = null, // when "I've paid" was first tapped
+    val lastManualCheckAt: Long = 0L, // starts the cooldown on "Check again"
+    val checking: Boolean = false, // a check the runner asked for is running
+    val cancelling: Boolean = false,
+    val checkError: String? = null,
+    val unreachable: Boolean = false, // 404: the guest pass ran out or the order is gone
+)
+
+enum class QrOutcome { EXPIRED, FAILED, CANCELLED }
 
 sealed class OrdersState {
     object Loading : OrdersState()
@@ -127,21 +155,6 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _orderReturnState = MutableStateFlow<OrderReturnState>(OrderReturnState.Idle)
     val orderReturnState: StateFlow<OrderReturnState> = _orderReturnState
-
-    // Flips true the moment the CheckoutSheet hands the PayMongo URL off to
-    // the OS browser. Used to detect "user came back without finishing
-    // checkout" (Activity ON_RESUME while still true ⇒ no deep link arrived
-    // ⇒ they bailed) and route them to /orders so the pending order is
-    // visible instead of stranding them on the redirecting overlay.
-    private val _paymongoLaunched = MutableStateFlow(false)
-    val paymongoLaunched: StateFlow<Boolean> = _paymongoLaunched
-
-    fun markPaymongoLaunched() { _paymongoLaunched.value = true }
-    fun clearPaymongoLaunched() { _paymongoLaunched.value = false }
-
-    fun setCheckoutError(message: String) {
-        _checkoutState.value = CheckoutState.Error(message)
-    }
 
     init {
         // Orders belong to the signed-in account, but this ViewModel lives as
@@ -241,27 +254,187 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         _couponError.value = null
     }
 
-    fun checkout(recipientEmail: String?, paymentMethod: String) {
+    // QR Ph is the only payment method, as on the website (owner decision
+    // 2026-10-17). A settled answer (₱0 order, paid replay) goes straight to
+    // the receipt; a pending one shows its QR.
+    fun checkout(recipientEmail: String?) {
         val token = sessionManager.getAccessToken()
         val email = recipientEmail ?: sessionManager.getUserEmail() ?: ""
         // Send only a typed override; auto photographer coupons are applied
         // server-side without a code. couponPreview.code is the typed code that
         // produced the current preview (null for auto-only).
         val couponCode = _couponPreview.value?.code
+        val photoIds = cartItems.value.map { it.photoId }
 
         viewModelScope.launch {
             val generation = sessionManager.authChanges.value
             _checkoutState.value = CheckoutState.Loading
-            val result = repository.checkout(token, email, paymentMethod, couponCode)
-            // The answer carries the previous account's payment link, which
-            // CheckoutSheet opens by itself: drop it if the account changed.
+            val result = repository.checkout(token, email, PAYMENT_METHOD_QRPH, couponCode)
+            // The answer is the previous account's order: drop it if the account changed.
             if (generation != sessionManager.authChanges.value) return@launch
             result.onSuccess { order ->
-                _checkoutState.value = CheckoutState.Success(order)
+                val qr = order.qrPh
+                // Settled at once: every checked-out photo leaves the cart, as
+                // the website clears its cart (the receipt only knows one event's).
+                if (isSettledOrderStatus(order.status)) repository.dropLocal(photoIds)
+                _checkoutState.value = when {
+                    isSettledOrderStatus(order.status) -> CheckoutState.Success(order)
+                    qr != null -> CheckoutState.AwaitingQr(QrCheckout(order, qr, email, photoIds))
+                    else -> CheckoutState.Error("The payment provider didn't return a QR code.")
+                }
+                if (qr != null && !isSettledOrderStatus(order.status)) {
+                    qrWatchJob?.cancel()
+                    qrWatchJob = viewModelScope.launch { watchQr() }
+                }
             }.onFailure { exception ->
                 _checkoutState.value = CheckoutState.Error(exception.localizedMessage ?: "Payment checkout failed.")
+                // An "already purchased" refusal: refresh the owned photos so the
+                // sheet flags them and locks the pay button (website invalidates
+                // its orders query on ALREADY_PURCHASED).
+                fetchOrders()
             }
         }
+    }
+
+    // ---- QR Ph payment step: the website's use-checkout-workflow.ts ----
+
+    private var qrCheckInFlight = false
+    private var lastVerifyAt = 0L
+    private var qrWatchJob: Job? = null
+
+    private fun liveQr(): QrCheckout? = (_checkoutState.value as? CheckoutState.AwaitingQr)?.payment
+
+    // Changes the QR only while that same QR is still on screen, so a late
+    // answer for a QR that was paid, cancelled or replaced is dropped.
+    private fun updateQr(orderId: String, change: (QrCheckout) -> QrCheckout) {
+        val live = liveQr() ?: return
+        if (live.order.id == orderId) _checkoutState.value = CheckoutState.AwaitingQr(change(live))
+    }
+
+    /**
+     * Watches the QR until it is paid, ended or replaced — also while the sheet
+     * is closed, as the website does, so a payment made after "Leave" still
+     * lands on the receipt: a cheap status read every 2.5 s, a PayMongo check
+     * every 20 s once the runner says they've paid, and one at the QR's expiry
+     * so the order expires right away. Started by [checkout].
+     */
+    private suspend fun watchQr() {
+        var expiryChecked = false
+        while (true) {
+            val live = liveQr() ?: return
+            if (live.unreachable) return
+            if (!live.cancelling) {
+                val now = System.currentTimeMillis()
+                val expiresAt = parseInstantMillis(live.qr.expiresAt)
+                val expiryDue = !expiryChecked && expiresAt != null && now >= expiresAt + QR_EXPIRY_GRACE_MS
+                if (expiryDue) expiryChecked = true
+                val claimDue = live.paidClaimedAt != null && now - lastVerifyAt >= QR_VERIFY_EVERY_MS
+                checkQr(live, verify = expiryDue || claimDue, manual = false)
+            }
+            delay(QR_STATUS_POLL_MS)
+        }
+    }
+
+    // "I've paid" and "Check again": note the claim and ask PayMongo now.
+    fun claimQrPaid() {
+        val live = liveQr() ?: return
+        val now = System.currentTimeMillis()
+        updateQr(live.order.id) { it.copy(paidClaimedAt = it.paidClaimedAt ?: now, lastManualCheckAt = now) }
+        viewModelScope.launch { liveQr()?.let { checkQr(it, verify = true, manual = true) } }
+    }
+
+    // Back from the bank or e-wallet app: ask PayMongo once, so a payment made
+    // meanwhile shows at once instead of on the next server sweep.
+    fun verifyQrNow() {
+        val live = liveQr() ?: return
+        if (live.unreachable || live.cancelling) return
+        viewModelScope.launch { checkQr(live, verify = true, manual = false) }
+    }
+
+    // The sheet asks "Cancel this payment?" first. A payment that landed a
+    // moment ago still wins and goes to the receipt.
+    fun cancelQr() {
+        val live = liveQr() ?: return
+        val id = live.order.id
+        updateQr(id) { it.copy(cancelling = true, checkError = null) }
+        viewModelScope.launch {
+            val generation = sessionManager.authChanges.value
+            val shareToken = live.qr.returnToken
+            val token = sessionManager.getAccessToken()
+            val result = when {
+                !shareToken.isNullOrBlank() -> repository.cancelGuestOrder(id, shareToken)
+                token != null -> repository.cancelOrder(token, id)
+                else -> Result.failure(Exception("Please log in again."))
+            }
+            if (generation != sessionManager.authChanges.value) return@launch
+            result.onSuccess { status ->
+                if (isSettledOrderStatus(status.status)) settleQr(id, status.status) else endQr(id, QrOutcome.CANCELLED)
+            }.onFailure {
+                updateQr(id) {
+                    it.copy(cancelling = false, checkError = "We couldn't cancel right now. Your QR code is still live — try again.")
+                }
+            }
+        }
+    }
+
+    private suspend fun checkQr(live: QrCheckout, verify: Boolean, manual: Boolean) {
+        if (qrCheckInFlight) return
+        qrCheckInFlight = true
+        val id = live.order.id
+        val generation = sessionManager.authChanges.value
+        if (verify) lastVerifyAt = System.currentTimeMillis()
+        if (manual) updateQr(id) { it.copy(checking = true) }
+        val result = try {
+            val shareToken = live.qr.returnToken
+            val token = sessionManager.getAccessToken()
+            when {
+                !shareToken.isNullOrBlank() -> repository.getGuestOrderStatus(id, shareToken, verify)
+                token != null -> repository.getOrderStatus(token, id, verify)
+                else -> Result.failure(Exception("Please log in again."))
+            }
+        } finally {
+            qrCheckInFlight = false
+        }
+        // The status calls fold a cancellation into the Result; the sheet closing is not a failed check.
+        result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        if (generation != sessionManager.authChanges.value) return
+        if (manual) updateQr(id) { it.copy(checking = false) }
+        result.onSuccess { status ->
+            when {
+                isSettledOrderStatus(status.status) -> settleQr(id, status.status)
+                status.status.equals("EXPIRED", ignoreCase = true) -> endQr(
+                    id,
+                    qrEndOutcome(parseInstantMillis(live.qr.expiresAt), System.currentTimeMillis()),
+                )
+                else -> updateQr(id) { it.copy(checkError = null) }
+            }
+        }.onFailure { e ->
+            val code = (e as? HttpException)?.code()
+            updateQr(id) {
+                when {
+                    code == 404 -> it.copy(unreachable = true)
+                    code == 429 && manual -> it.copy(
+                        checkError = "Too many checks — try again in a moment. We're still checking automatically.",
+                    )
+                    else -> it.copy(checkError = "We couldn't check yet. Your QR is still safe to use.")
+                }
+            }
+        }
+    }
+
+    // Paid: the receipt route takes over (CheckoutSheet routes a settled Success there).
+    private fun settleQr(orderId: String, status: String) {
+        val live = liveQr()?.takeIf { it.order.id == orderId } ?: return
+        repository.dropLocal(live.photoIds)
+        _checkoutState.value = CheckoutState.Success(
+            live.order.copy(status = status, returnToken = live.qr.returnToken),
+        )
+    }
+
+    // Closed without a payment: back to the pay step. The cart is kept, so the
+    // runner can generate a new code.
+    private fun endQr(orderId: String, outcome: QrOutcome) {
+        if (liveQr()?.order?.id == orderId) _checkoutState.value = CheckoutState.Ended(outcome)
     }
 
     fun resetCheckoutState() {
@@ -277,6 +450,15 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     fun closeCheckoutSheet() {
         _checkoutSheetOpen.value = false
         resetCoupon()
+        // The last attempt's notice is for this visit only, as on the website;
+        // a live QR stays so the runner can come back to it from the cart.
+        // A QR that can no longer be checked is done too (the website drops it on the 404).
+        val state = _checkoutState.value
+        if (state is CheckoutState.Ended || state is CheckoutState.Error ||
+            (state is CheckoutState.AwaitingQr && state.payment.unreachable)
+        ) {
+            _checkoutState.value = CheckoutState.Idle
+        }
     }
     fun triggerExpressCheckout() { _expressCheckoutPending.value = true }
     fun clearExpressCheckout() { _expressCheckoutPending.value = false }
@@ -517,6 +699,7 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun dropAccountState() {
         pollJob?.cancel()
+        qrWatchJob?.cancel()
         _ordersState.value = OrdersState.Loading
         _orderDetailState.value = OrderDetailState.Idle
         _orderReturnState.value = OrderReturnState.Idle
@@ -526,8 +709,25 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val POLL_INTERVAL_MS = 2_000L
         const val POLL_MAX_ATTEMPTS = 30 // 60s
+        const val PAYMENT_METHOD_QRPH = "qrph"
+        // Same timings as the website's QR step.
+        const val QR_STATUS_POLL_MS = 2_500L
+        const val QR_VERIFY_EVERY_MS = 20_000L
+        const val QR_EXPIRY_GRACE_MS = 2_000L
     }
 }
+
+/**
+ * Why an EXPIRED QR closed, as the website's `classifyExpired` decides it: the
+ * order expiring well before the QR's own expiry means the bank or e-wallet
+ * declined the payment; at or after it, the code simply ran out.
+ */
+internal fun qrEndOutcome(expiresAtMillis: Long?, now: Long): QrOutcome =
+    if (expiresAtMillis != null && now < expiresAtMillis - 5_000) QrOutcome.FAILED else QrOutcome.EXPIRED
+
+/** An ISO-8601 timestamp from the backend as epoch milliseconds; null if unreadable. */
+internal fun parseInstantMillis(iso: String): Long? =
+    runCatching { OffsetDateTime.parse(iso).toInstant().toEpochMilli() }.getOrNull()
 
 private val SETTLED_ORDER_STATUSES = setOf("PAID", "FULFILLED")
 
