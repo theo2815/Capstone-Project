@@ -184,6 +184,31 @@ class TestVerifyApiKey:
         assert "Invalid API key" in exc_info.value.detail
 
     @pytest.mark.asyncio
+    async def test_refused_key_is_remembered_for_a_minute(self, fake_request):
+        """A wrong key hits the database once; repeats within 60 s are refused from Redis."""
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session = AsyncMock()
+        mock_session.execute.return_value = mock_result
+        mock_get_session_ctx = MagicMock(return_value=_make_session_ctx(mock_session))
+
+        store = {}
+        redis = AsyncMock()
+        redis.get.side_effect = lambda k: store.get(k)
+        redis.set.side_effect = lambda k, v, ex=None: store.update({k: v})
+        fake_request.app.state.redis = redis
+
+        with _patch_db_imports(mock_get_session_ctx):
+            for _ in range(2):
+                with pytest.raises(HTTPException) as exc_info:
+                    await verify_api_key(fake_request, api_key="bogus-key")
+                assert exc_info.value.status_code == 401
+                assert "Invalid API key" in exc_info.value.detail
+
+        assert mock_session.execute.await_count == 1
+        redis.set.assert_awaited_once_with(f"apikey:miss:{_hash_key('bogus-key')}", "1", ex=60)
+
+    @pytest.mark.asyncio
     async def test_redis_cache_hit_returns_cached_meta(self):
         """When Redis has a cached entry for the key hash, it returns that
         directly without touching the database."""
