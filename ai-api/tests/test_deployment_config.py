@@ -78,6 +78,7 @@ APP_SERVICES = (
     {"BLUR_INFERENCE_TIMEOUT_SECONDS": 0},
     {"BLUR_STREAM_TIMEOUT_SECONDS": 0},
     {"BLUR_REQUEST_TIMEOUT_SECONDS": 0},
+    {"BLUR_REQUEST_TIMEOUT_SECONDS": 20, "BLUR_QUEUE_WAIT_SECONDS": 20},
 ])
 def test_invalid_upload_budget_fails_at_config_load(override):
     from src.config import Settings
@@ -91,7 +92,7 @@ def test_blur_request_timeout_uses_profile_deadline():
     from src.main import create_app
 
     settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False,
-                        BLUR_REQUEST_TIMEOUT_SECONDS=0.01)
+                        BLUR_REQUEST_TIMEOUT_SECONDS=0.01, BLUR_QUEUE_WAIT_SECONDS=0)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
 
@@ -144,7 +145,8 @@ def test_timed_out_request_keeps_admission_until_native_work_exits():
     # runs, and native work still queued at the deadline is cancelled by design, so a
     # shorter deadline makes `entered` race and fail.
     settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False,
-                        BLUR_MAX_ACTIVE_REQUESTS=1, BLUR_REQUEST_TIMEOUT_SECONDS=0.2)
+                        BLUR_MAX_ACTIVE_REQUESTS=1, BLUR_REQUEST_TIMEOUT_SECONDS=0.2,
+                        BLUR_QUEUE_WAIT_SECONDS=0)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
 
@@ -266,7 +268,7 @@ async def test_blur_slot_cannot_be_taken_after_the_request_ended():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             assert (await client.get("/api/v1/blur/capture")).status_code == 200
-            assert admits[0]("k1") == "busy"
+            assert await admits[0]("k1") == "busy"
             probed = await client.get("/api/v1/blur/probe")
     assert probed.status_code == 200, probed.text
 
@@ -278,7 +280,8 @@ async def test_slow_stream_upload_has_a_request_deadline():
     from src.main import create_app
 
     settings = Settings(MODEL_PROFILE="blur", METRICS_ENABLED=False, DEBUG=True,
-                        ENVIRONMENT="test", BLUR_REQUEST_TIMEOUT_SECONDS=0.02)
+                        ENVIRONMENT="test", BLUR_REQUEST_TIMEOUT_SECONDS=0.02,
+                        BLUR_QUEUE_WAIT_SECONDS=0)
     with patch("src.main.get_settings", return_value=settings):
         app = create_app()
     app.state.settings = settings

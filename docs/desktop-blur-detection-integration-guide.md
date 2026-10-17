@@ -299,8 +299,10 @@ Client rules that matter:
   code — it shows up as a short body. The summary line is the completion signal.
 - **A per-image `{"index":…,"filename":…,"error":…}` line is normal** for an
   undecodable file; keep reading, the rest of the batch is unaffected.
-- Respect server `BLUR_BUSY` responses and `Retry-After` before starting another
-  stream. The server admission limit is configured in `ai-api/src/config.py`.
+- When every blur slot is taken, the server holds the request in a first-come line
+  before reading its upload, so `BLUR_BUSY` means "waited and still busy" (or the
+  line was full). Respect it and `Retry-After` before starting another stream. The
+  admission limit and the line's wait and length are configured in `ai-api/src/config.py`.
 - A busy rejection can close the connection while a large multipart body is still
   uploading, so the client may see a network error instead of the `503` response.
   Treat either outcome as a failed stream; wait before retrying unaccounted images.
@@ -338,7 +340,8 @@ the terminal summary, and reports progress per accounted image. A stream with
 a missing summary, malformed or duplicate rows, or contradictory counts fails
 visibly; its partial rows do not count as a successful run. After a valid
 summary, omitted rows use the single `/blur/classify` endpoint. A 404/405 stream route
-also uses the single endpoint. Retryable stream failures get one bounded retry;
+also uses the single endpoint. A busy answer is retried for up to 5 minutes
+(table below); other retryable failures get one bounded retry;
 individual image errors become **unanalysed**, never sharp. There is no desktop
 Celery job, poll loop, or `/blur/detect` pre-check.
 
@@ -368,7 +371,8 @@ procedure.
 | Condition | Desktop behavior |
 |-----------|------------------|
 | `401` / `403` | Fail analysis; replace or correct the tester's key. |
-| `429` / retryable `503` | Honor a bounded `Retry-After`, then retry once; otherwise fail visibly. |
+| `503 BLUR_BUSY` / `429 BLUR_KEY_BUSY` | Show "Waiting for the blur service…" and retry the same request after `Retry-After` (at least 1 s), doubling up to 3 s plus 0–50% jitter, for up to 5 minutes; then fail visibly. Cancel stops the wait. |
+| Other `429` / retryable `503` | Honor a bounded `Retry-After`, then retry once; otherwise fail visibly. |
 | Request `413` | Fail analysis; the desktop's prepared-JPEG byte budget should keep requests below the configured server limit. |
 | Per-image validation error | Mark that group unanalysed and continue. |
 | Timeout, disconnect, invalid or unfinished stream | Fail analysis visibly; no optimistic partial result. |

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
-from threading import BoundedSemaphore
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -19,6 +19,39 @@ from src.utils.exceptions import QuickPitikError
 from src.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+
+class FairBlurSlots:
+    """Blur slots handed out first come, first served, with a capped line.
+
+    asyncio's semaphore keeps arrival order, lets no newcomer jump the line and passes
+    a turn on when its waiter gives up (Python 3.11.1+). release() is thread-safe:
+    native work can end on a worker thread after its request timed out.
+    """
+
+    _loop: asyncio.AbstractEventLoop
+
+    def __init__(self, slots: int, max_waiting: int):
+        self._slots = asyncio.BoundedSemaphore(slots)
+        self._max_waiting = max_waiting
+        self._waiting = 0
+
+    async def acquire(self, wait_seconds: float) -> bool:
+        self._loop = asyncio.get_running_loop()
+        if not self._slots.locked():
+            return await self._slots.acquire()
+        if not wait_seconds or self._waiting >= self._max_waiting:
+            return False
+        self._waiting += 1
+        try:
+            return await asyncio.wait_for(self._slots.acquire(), wait_seconds)
+        except TimeoutError:
+            return False
+        finally:
+            self._waiting -= 1
+
+    def release(self) -> None:
+        self._loop.call_soon_threadsafe(self._slots.release)
 
 
 @asynccontextmanager
@@ -165,6 +198,11 @@ def create_app() -> FastAPI:
                 watched, timeout=settings.BLUR_REQUEST_TIMEOUT_SECONDS,
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            waited = scope.get("state", {}).get("blur_waited")
+            if not done and waited:  # time in the blur line does not count
+                done, _ = await asyncio.wait(
+                    watched, timeout=waited, return_when=asyncio.FIRST_COMPLETED,
+                )
             if header_waiter:
                 header_waiter.cancel()
             if header_waiter in done:
@@ -252,8 +290,8 @@ def create_app() -> FastAPI:
 
     _max_body = settings.MAX_REQUEST_BODY
     _blur_body = settings.BLUR_MAX_REQUEST_BODY
-    _blur_admission = BoundedSemaphore(settings.BLUR_MAX_ACTIVE_REQUESTS)
-    # ponytail: per-process like the semaphore; Redis-backed if the service ever runs several replicas.
+    _blur_slots = FairBlurSlots(settings.BLUR_MAX_ACTIVE_REQUESTS, settings.BLUR_QUEUE_MAX_WAITING)
+    # ponytail: per-process like the slots; Redis-backed if the service ever runs several replicas.
     _blur_active_keys: set[str] = set()
     app.state.blur_decode_semaphore = asyncio.Semaphore(settings.BLUR_DECODE_CONCURRENCY)
     _blur_async_paths = {
@@ -297,25 +335,41 @@ def create_app() -> FastAPI:
             closed = False
             token = request_work.set(None)
 
-            def admit_blur(key_id: str) -> str | None:
-                """Take a blur slot; return the refusal ("key" or "busy"), None if admitted.
+            async def admit_blur(key_id: str) -> str | None:
+                """Take a blur slot, waiting in line while all are taken.
 
-                BlurAuthRoute calls this only after the key check. One request per key.
+                Returns the refusal ("key" or "busy"), None if admitted. BlurAuthRoute calls
+                this only after the key check, before the upload is read. One request per
+                key, waiting or running.
                 """
                 nonlocal tracker
                 if key_id in _blur_active_keys:
                     return "key"
                 # A cancelled route can still get here after cleanup; nothing would release it.
-                if closed or not _blur_admission.acquire(blocking=False):
+                if closed:
                     return "busy"
                 _blur_active_keys.add(key_id)
+                started = time.monotonic()
+                try:
+                    admitted = await _blur_slots.acquire(settings.BLUR_QUEUE_WAIT_SECONDS)
+                except BaseException:
+                    _blur_active_keys.discard(key_id)
+                    raise
+                if admitted and closed:  # the request ended while it waited
+                    _blur_slots.release()
+                    admitted = False
+                if not admitted:
+                    _blur_active_keys.discard(key_id)
+                    return "busy"
+                # BlurTimeoutMiddleware adds this back to the request deadline.
+                scope["state"]["blur_waited"] = time.monotonic() - started
                 from src.utils.blur_metrics import active_requests
 
                 active_requests.inc()
 
                 def release_blur():
                     _blur_active_keys.discard(key_id)
-                    _blur_admission.release()
+                    _blur_slots.release()
                     active_requests.dec()
 
                 tracker = RequestWork(release_blur)

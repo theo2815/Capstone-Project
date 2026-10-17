@@ -199,8 +199,11 @@ The blur profile defaults to one API process and 2/1 ONNX intra/inter threads.
 `WORKERS=1` is required while metrics are enabled; adding workers needs
 Prometheus multiprocess aggregation first. `src/config.py` owns
 the request, stream, and per-inference deadlines. Blur request admission is
-bounded before multipart parsing; native inference has two process-wide slots
-and **zero queue wait**. Exhaustion returns 503 `BLUR_BUSY` with `Retry-After: 1`.
+bounded before multipart parsing: when every slot is taken, a request waits in a
+first-come line (`BLUR_QUEUE_WAIT_SECONDS`, `BLUR_QUEUE_MAX_WAITING`; line time does
+not count toward the request deadline) and gets 503 `BLUR_BUSY` with
+`Retry-After: 1` only if the wait runs out or the line is full. Native inference
+has two process-wide slots and **zero queue wait**.
 The separate per-key rate limit uses 429. A timed-out native call may still run:
 its slot stays occupied, and readiness is 503 until it exits. A stream deadline
 ends with `complete: false`; clients must retry unaccounted indices. Railway's

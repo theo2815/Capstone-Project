@@ -103,8 +103,9 @@ Callers must handle these ai-api error scenarios. The `Error Code` column shows 
 | 404 | `NOT_FOUND` | Envelope | Fall through to "not found" in the caller |
 | 429 | Raw `{"detail": "Rate limit exceeded. Retry after N seconds."}` | Raw (with `Retry-After` header) | Queue request for retry after `Retry-After` seconds |
 | 429 | `TOO_MANY_JOBS` | Envelope | Wait for earlier batch jobs to finish before submitting more |
-| 429 | `BLUR_KEY_BUSY` | Envelope (with `Retry-After: 1`) | This API key already has a blur request running; send one at a time and retry |
+| 429 | `BLUR_KEY_BUSY` | Envelope (with `Retry-After: 1`) | This API key already has a blur request waiting or running; send one at a time and retry |
 | 503 | `MODEL_UNAVAILABLE` | Envelope | Show "AI processing temporarily unavailable", queue for retry |
+| 503 | `BLUR_BUSY` | Envelope (with `Retry-After: 1`) | Every blur slot stayed taken while the request waited in the server's first-come line (or the line was full); wait `Retry-After`, then retry |
 | 504 | `REQUEST_TIMEOUT` | Envelope | Retry with a smaller image or split the request |
 | 5xx | Any | Any | Retry with exponential backoff (max 3 retries) |
 
