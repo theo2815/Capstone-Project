@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import deque
 from contextlib import asynccontextmanager
-from threading import Lock
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -24,52 +22,36 @@ logger = get_logger(__name__)
 
 
 class FairBlurSlots:
-    """Blur slots handed out first come, first served.
+    """Blur slots handed out first come, first served, with a capped line.
 
-    Release can run on a worker thread: native work may outlive a timed-out request.
+    asyncio's semaphore keeps arrival order, lets no newcomer jump the line and passes
+    a turn on when its waiter gives up (Python 3.11.1+). release() is thread-safe:
+    native work can end on a worker thread after its request timed out.
     """
 
+    _loop: asyncio.AbstractEventLoop
+
     def __init__(self, slots: int, max_waiting: int):
-        self._free = slots
+        self._slots = asyncio.BoundedSemaphore(slots)
         self._max_waiting = max_waiting
-        self._line: deque[asyncio.Future[None]] = deque()
-        self._lock = Lock()
+        self._waiting = 0
 
     async def acquire(self, wait_seconds: float) -> bool:
-        with self._lock:
-            if self._free and not self._line:
-                self._free -= 1
-                return True
-            if not wait_seconds or len(self._line) >= self._max_waiting:
-                return False
-            turn = asyncio.get_running_loop().create_future()
-            self._line.append(turn)
+        self._loop = asyncio.get_running_loop()
+        if not self._slots.locked():
+            return await self._slots.acquire()
+        if not wait_seconds or self._waiting >= self._max_waiting:
+            return False
+        self._waiting += 1
         try:
-            await asyncio.wait_for(turn, wait_seconds)
-            return True
-        except BaseException as exc:  # the wait ran out, or the request went away
-            with self._lock:
-                handed_over = turn not in self._line
-                if not handed_over:
-                    self._line.remove(turn)
-            if handed_over:
-                self.release()  # the slot arrived as we gave up: pass it on
-            if isinstance(exc, TimeoutError):
-                return False
-            raise
+            return await asyncio.wait_for(self._slots.acquire(), wait_seconds)
+        except TimeoutError:
+            return False
+        finally:
+            self._waiting -= 1
 
     def release(self) -> None:
-        with self._lock:
-            if not self._line:
-                self._free += 1
-                return
-            turn = self._line.popleft()
-        turn.get_loop().call_soon_threadsafe(_give_turn, turn)
-
-
-def _give_turn(turn: asyncio.Future[None]) -> None:
-    if not turn.done():
-        turn.set_result(None)
+        self._loop.call_soon_threadsafe(self._slots.release)
 
 
 @asynccontextmanager
