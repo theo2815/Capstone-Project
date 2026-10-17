@@ -340,7 +340,8 @@ the terminal summary, and reports progress per accounted image. A stream with
 a missing summary, malformed or duplicate rows, or contradictory counts fails
 visibly; its partial rows do not count as a successful run. After a valid
 summary, omitted rows use the single `/blur/classify` endpoint. A 404/405 stream route
-also uses the single endpoint. Retryable stream failures get one bounded retry;
+also uses the single endpoint. A busy answer is retried for up to 5 minutes
+(table below); other retryable failures get one bounded retry;
 individual image errors become **unanalysed**, never sharp. There is no desktop
 Celery job, poll loop, or `/blur/detect` pre-check.
 
@@ -370,7 +371,8 @@ procedure.
 | Condition | Desktop behavior |
 |-----------|------------------|
 | `401` / `403` | Fail analysis; replace or correct the tester's key. |
-| `429` / retryable `503` | Honor a bounded `Retry-After`, then retry once; otherwise fail visibly. |
+| `503 BLUR_BUSY` / `429 BLUR_KEY_BUSY` | Show "Waiting for the blur service…" and retry the same request after `Retry-After` (at least 1 s), doubling up to 3 s plus 0–50% jitter, for up to 5 minutes; then fail visibly. Cancel stops the wait. |
+| Other `429` / retryable `503` | Honor a bounded `Retry-After`, then retry once; otherwise fail visibly. |
 | Request `413` | Fail analysis; the desktop's prepared-JPEG byte budget should keep requests below the configured server limit. |
 | Per-image validation error | Mark that group unanalysed and continue. |
 | Timeout, disconnect, invalid or unfinished stream | Fail analysis visibly; no optimistic partial result. |
