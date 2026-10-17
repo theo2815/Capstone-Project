@@ -1391,7 +1391,7 @@ async def test_blur_wait_that_runs_out_answers_busy(line_client):
     await _until(lambda: order == ["a"])
     started = time.monotonic()
     busy = await _hold(client, "b")
-    assert time.monotonic() - started >= 0.2
+    assert time.monotonic() - started >= 0.18  # Windows clock ticks ~16 ms
     assert busy.status_code == 503
     assert busy.headers["Retry-After"] == "1"
     assert busy.json()["error"]["code"] == "BLUR_BUSY"
@@ -1482,16 +1482,38 @@ async def test_blur_waiter_whose_client_left_passes_its_turn_on(line_client):
     assert order == ["a", "c"]
 
 
-async def test_time_in_the_blur_line_does_not_count_toward_the_request_deadline(line_client):
-    app, order, gates, delays = _line_app(BLUR_REQUEST_TIMEOUT_SECONDS=0.5)
+async def test_blur_slot_won_after_the_request_ended_is_given_back(line_client):
+    app, order, gates, _ = _line_app(BLUR_QUEUE_WAIT_SECONDS=0.5)
+    waits = []
+
+    @app.get("/api/v1/blur/capture")
+    async def capture(request: Request):
+        waits.append(asyncio.create_task(request.state.blur_admit("k1")))
+        await asyncio.sleep(0.05)  # now waiting in line
+        return {"ok": True}  # the request ends while its admit still waits
+
     client = await line_client(app)
     first = asyncio.create_task(_hold(client, "a"))
     await _until(lambda: order == ["a"])
-    delays["b"] = 0.3
-    gates["b"].set()
-    second = asyncio.create_task(_hold(client, "b"))
-    await asyncio.sleep(0.4)
+    assert (await client.get("/api/v1/blur/capture")).status_code == 200
     gates["a"].set()
     assert (await first).status_code == 200
-    # b waited 0.4 s, then ran 0.3 s: over 0.5 s in all, but within its own deadline.
+    assert await waits[0] == "busy"
+    gates["c"].set()
+    assert (await _hold(client, "c")).status_code == 200  # the slot was not lost
+
+
+async def test_time_in_the_blur_line_does_not_count_toward_the_request_deadline(line_client):
+    app, order, gates, delays = _line_app(BLUR_REQUEST_TIMEOUT_SECONDS=1.0,
+                                          BLUR_QUEUE_WAIT_SECONDS=0.9)
+    client = await line_client(app)
+    first = asyncio.create_task(_hold(client, "a"))
+    await _until(lambda: order == ["a"])
+    delays["b"] = 0.6
+    gates["b"].set()
+    second = asyncio.create_task(_hold(client, "b"))
+    await asyncio.sleep(0.6)
+    gates["a"].set()
+    assert (await first).status_code == 200
+    # b waited 0.6 s, then ran 0.6 s: over 1 s in all, but within its own deadline.
     assert (await second).status_code == 200

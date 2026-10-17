@@ -216,6 +216,8 @@ class Settings(BaseSettings):
             raise ValueError("MAX_REQUEST_BODY must exceed MAX_FILE_SIZE")
         if self.BLUR_MAX_REQUEST_BODY <= self.MAX_FILE_SIZE:
             raise ValueError("BLUR_MAX_REQUEST_BODY must exceed MAX_FILE_SIZE")
+        if self.BLUR_QUEUE_WAIT_SECONDS >= self.BLUR_REQUEST_TIMEOUT_SECONDS:
+            raise ValueError("BLUR_QUEUE_WAIT_SECONDS must be below BLUR_REQUEST_TIMEOUT_SECONDS")
         if self.BLUR_MAX_IMAGE_PIXELS > self.MAX_IMAGE_DIMENSION**2:
             raise ValueError("BLUR_MAX_IMAGE_PIXELS must fit MAX_IMAGE_DIMENSION")
         if self.MODEL_PROFILE == "blur":

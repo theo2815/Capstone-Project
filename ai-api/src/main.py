@@ -373,6 +373,9 @@ def create_app() -> FastAPI:
                 except BaseException:
                     _blur_active_keys.discard(key_id)
                     raise
+                if admitted and closed:  # the request ended while it waited
+                    _blur_slots.release()
+                    admitted = False
                 if not admitted:
                     _blur_active_keys.discard(key_id)
                     return "busy"
