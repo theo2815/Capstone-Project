@@ -94,6 +94,30 @@ class PhotoFaceErasureTest {
         verify(ai, never()).erasePhotoFaces(event, unrelated)
     }
 
+    @Test fun `ended Rekognition writer is settled and its photo name erased`() {
+        val output = work(finished = false)
+        `when`(output.provider).thenReturn("rekognition")
+        `when`(output.personIds).thenReturn("[]")
+        `when`(photos.faceWorkForPhoto(event, photoId)).thenReturn(listOf(output))
+        `when`(fence.finishEndedRekognitionWrite(anyArg())).thenReturn(true)
+        `when`(rek.erasePhotoFaces(event, "$event.$photoId")).thenReturn(FaceErasureResult.DELETED)
+        `when`(photos.confirmFaceWorkErased(eqArg(output.token), eqArg("[]"), anyArg())).thenReturn(1)
+
+        assertEquals(FaceErasureResult.DELETED, service.erase(event, photoId))
+        verify(fence).finishEndedRekognitionWrite(anyArg())
+        verify(rek).erasePhotoFaces(event, "$event.$photoId")
+    }
+
+    @Test fun `Rekognition writer inside its call deadline stays unresolved`() {
+        val output = work(finished = false)
+        `when`(output.provider).thenReturn("rekognition")
+        `when`(output.personIds).thenReturn("[]")
+        `when`(photos.faceWorkForPhoto(event, photoId)).thenReturn(listOf(output))
+        assertFailsWith<AiApiException> { service.erase(event, photoId) }
+        verify(rek, never()).erasePhotoFaces(anyArg(), anyArg())
+        verify(photos, never()).confirmFaceWorkErased(anyArg(), anyArg(), anyArg())
+    }
+
     @Test fun `unattributed legacy person stays visible for retry`() {
         photo.facePersons.add(PhotoFacePersonEmbed(0, person))
         `when`(ai.listPersonsForEvent(event)).thenReturn(listOf(AiPersonRef(person, OffsetDateTime.now(), "someone-else")))

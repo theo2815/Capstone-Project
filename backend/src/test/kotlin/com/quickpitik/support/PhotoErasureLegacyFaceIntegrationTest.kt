@@ -137,4 +137,23 @@ class PhotoErasureLegacyFaceIntegrationTest : PostgresIntegrationTest() {
         Mockito.verify(sdk, Mockito.atLeastOnce()).listFaces(Mockito.argThat<ListFacesRequest> { it.collectionId() == "qp-event-${event.id}" })
         Mockito.verifyNoInteractions(ai)
     }
+
+    @Test fun `photo whose Rekognition indexing call ended without an answer completes erasure`() {
+        // A throttled or dropped IndexFaces leaves its record open (PhotoIndexingService skips finish).
+        val token = UUID.randomUUID()
+        val expired = OffsetDateTime.now().minusMinutes(10)
+        tx.executeWithoutResult {
+            photos.recordWork(token, photo.id, event.id, 0, "INDEXING", "rekognition", expired, null, photo.id.toString(), null, "[]")
+            assertEquals(1, photos.claimWork(photo.id, "INDEXING", token, expired))
+        }
+        faces.add("late-face") // the dropped call may still have written a face
+
+        val job = eraser.request(privacy())
+        assertEquals(PhotoErasureOutcome.COMPLETE, eraser.attempt(job))
+
+        assertTrue(faces.isEmpty())
+        assertNotNull(photos.findById(photo.id).orElseThrow().purgedAt)
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM photo_work_outputs WHERE token = ? " +
+            "AND finished_at IS NOT NULL AND faces_erased_at IS NOT NULL", Int::class.java, token))
+    }
 }

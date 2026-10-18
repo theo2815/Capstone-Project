@@ -168,6 +168,20 @@ class PhotoIndexingServiceTest {
         assertEquals(listOf("new-person"), p.facePersons.map { it.aiPersonId })
     }
 
+    @Test
+    fun `a claim that stopped being current submits no face write and is finished`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(false)
+
+        service.index(p.id)
+
+        Mockito.verify(aiClient, Mockito.never()).facesEnroll(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(workFence).finish(anyArg())
+    }
+
     private fun stubEnrollReturns(p: Photo, personId: String) {
         Mockito.`when`(
             aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId),

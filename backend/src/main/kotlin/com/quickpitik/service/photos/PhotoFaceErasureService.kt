@@ -88,6 +88,7 @@ class PhotoFaceErasureService(
                         ended = true
                     }
                 }
+                if (provider == FaceProvider.REKOGNITION) ended = fence.finishEndedRekognitionWrite(claim)
                 if (!ended) unresolved = true
             }
             // A lost response can produce more than one person for this name.
