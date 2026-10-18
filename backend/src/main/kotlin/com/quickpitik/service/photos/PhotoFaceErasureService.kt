@@ -50,8 +50,9 @@ class PhotoFaceErasureService(
         work.forEach { output ->
             if (output.personName != photoId.toString()) unavailable("Face attribution missing")
             val provider = provider(output.provider)
-            if (provider == FaceProvider.UNKNOWN) unavailable("Recorded face provider unresolved")
             val ids = strings(output.personIds).toMutableList()
+            // Legacy ids resolve by their shape in eraseTargets; an unknown row without ids proves nothing.
+            if (provider == FaceProvider.UNKNOWN && ids.isEmpty()) unavailable("Recorded face provider unresolved")
             targets.addAll(strings(output.priorPersonIds).map { provider(output.priorProvider) to it })
             val claim = claim(output)
             if (output.finishedAt == null) {

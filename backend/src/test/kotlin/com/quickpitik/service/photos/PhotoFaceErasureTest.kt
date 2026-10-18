@@ -313,6 +313,35 @@ class PhotoFaceErasureTest {
         verify(fence).finish(anyArg())
     }
 
+    @Test fun `legacy unknown Rekognition record from the erasure request is attributed and erased`() {
+        val rekId = "$event.$photoId"
+        photo.indexedProvider = "rekognition"
+        photo.facePersons.add(PhotoFacePersonEmbed(0, rekId)) // provider defaults to UNKNOWN, as V75 left it
+        val snapshot = work(finished = true) // the row PhotoErasureService.request() writes
+        `when`(snapshot.provider).thenReturn("unknown")
+        `when`(snapshot.personIds).thenReturn("[\"$rekId\"]")
+        `when`(photos.faceWorkForPhoto(event, photoId)).thenReturn(listOf(snapshot))
+        val token = snapshot.token
+        `when`(photos.attributeFaceWorkProvider(token, event, photoId, false, "[\"$rekId\"]", "rekognition")).thenReturn(1)
+        `when`(rek.erasePhotoFaces(event, rekId)).thenReturn(FaceErasureResult.DELETED)
+        `when`(photos.confirmFaceWorkErased(eqArg(token), eqArg("[\"$rekId\"]"), anyArg())).thenReturn(1)
+
+        assertEquals(FaceErasureResult.DELETED, service.erase(event, photoId))
+        assertEquals(FaceProvider.REKOGNITION, photo.facePersons.single().provider)
+        verify(photos).attributeFaceWorkProvider(token, event, photoId, false, "[\"$rekId\"]", "rekognition")
+        verify(rek).erasePhotoFaces(event, rekId)
+        verifyNoInteractions(ai)
+    }
+
+    @Test fun `legacy unknown record with a foreign id is never deleted by guess`() {
+        val snapshot = work(finished = true)
+        `when`(snapshot.provider).thenReturn("unknown")
+        `when`(snapshot.personIds).thenReturn("[\"${UUID.randomUUID()}.$photoId\"]")
+        `when`(photos.faceWorkForPhoto(event, photoId)).thenReturn(listOf(snapshot))
+        assertFailsWith<AiApiException> { service.erase(event, photoId) }
+        verifyNoInteractions(rek, ai)
+    }
+
     private fun expectTerminalOutcome(result: Map<String, Any?>): PhotoFaceWork {
         val output = work(finished = false)
         `when`(output.personIds).thenReturn("[]")
