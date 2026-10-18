@@ -41,17 +41,21 @@ class PhotoFaceErasureService(
             photo.indexedProvider == null && work.isEmpty() && !photos.hasUnfinishedWork(photoId, "INDEXING")
         if (neverIndexed) return@guarded FaceErasureResult.ALREADY_ABSENT
         if (!props.enabled) unavailable("Face cleanup disabled")
-        if (work.isEmpty() && photo?.facePersons?.isEmpty() == true) unavailable("Legacy face attribution unresolved")
+        val legacyNoFaces = work.isEmpty() && photo?.facePersons?.isEmpty() == true
+        // Every Rekognition face of a photo carries ExternalImageId "<event>.<photo>", so listing it proves absence.
+        if (legacyNoFaces && photo?.indexedProvider != "rekognition") unavailable("Legacy face attribution unresolved")
 
         val targets = mutableListOf<Pair<FaceProvider, String>>()
+        if (legacyNoFaces) targets.add(FaceProvider.REKOGNITION to "$eventId.$photoId")
         photo?.facePersons?.forEach { targets.add(it.provider to it.aiPersonId) }
         val expectedIds = mutableMapOf<UUID, String>()
         var unresolved = false
         work.forEach { output ->
             if (output.personName != photoId.toString()) unavailable("Face attribution missing")
             val provider = provider(output.provider)
-            if (provider == FaceProvider.UNKNOWN) unavailable("Recorded face provider unresolved")
             val ids = strings(output.personIds).toMutableList()
+            // Legacy ids resolve by their shape in eraseTargets; an unknown row without ids proves nothing.
+            if (provider == FaceProvider.UNKNOWN && ids.isEmpty()) unavailable("Recorded face provider unresolved")
             targets.addAll(strings(output.priorPersonIds).map { provider(output.priorProvider) to it })
             val claim = claim(output)
             if (output.finishedAt == null) {
@@ -84,6 +88,7 @@ class PhotoFaceErasureService(
                         ended = true
                     }
                 }
+                if (provider == FaceProvider.REKOGNITION) ended = fence.finishEndedRekognitionWrite(claim)
                 if (!ended) unresolved = true
             }
             // A lost response can produce more than one person for this name.

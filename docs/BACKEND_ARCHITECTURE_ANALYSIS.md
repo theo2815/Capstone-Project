@@ -543,7 +543,12 @@ photo. Short photo-then-job locks surround storage/provider I/O; leases recover
 interrupted attempts, and bounded due sweeps retry failures. Originals,
 derivatives and staging must be absent, and the existing event-scoped face
 eraser must separately confirm AI cleanup. Unfinished producers remain pending
-regardless of lease expiry; late output attribution reopens cleanup and cannot
+regardless of lease expiry, with one exception: a Rekognition indexing write
+starts only while its claim is current, makes at most four SDK calls, and the
+SDK ends each within `operationTimeout`, so the face eraser finishes such a
+record once four times that long has passed after its expiry
+(`PhotoWorkFence.finishEndedRekognitionWrite`) and then deletes any face it
+left. Late output attribution reopens cleanup and cannot
 republish the photo. Shared live blob references prevent completion.
 
 Staging cleanup honors PUT expiry and retained upload-receipt rechecks, including
