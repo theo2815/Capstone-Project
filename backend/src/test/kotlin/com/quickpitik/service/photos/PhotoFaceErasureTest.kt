@@ -94,6 +94,30 @@ class PhotoFaceErasureTest {
         verify(ai, never()).erasePhotoFaces(event, unrelated)
     }
 
+    @Test fun `ended Rekognition writer is settled and its photo name erased`() {
+        val output = work(finished = false)
+        `when`(output.provider).thenReturn("rekognition")
+        `when`(output.personIds).thenReturn("[]")
+        `when`(photos.faceWorkForPhoto(event, photoId)).thenReturn(listOf(output))
+        `when`(fence.finishEndedRekognitionWrite(anyArg())).thenReturn(true)
+        `when`(rek.erasePhotoFaces(event, "$event.$photoId")).thenReturn(FaceErasureResult.DELETED)
+        `when`(photos.confirmFaceWorkErased(eqArg(output.token), eqArg("[]"), anyArg())).thenReturn(1)
+
+        assertEquals(FaceErasureResult.DELETED, service.erase(event, photoId))
+        verify(fence).finishEndedRekognitionWrite(anyArg())
+        verify(rek).erasePhotoFaces(event, "$event.$photoId")
+    }
+
+    @Test fun `Rekognition writer inside its call deadline stays unresolved`() {
+        val output = work(finished = false)
+        `when`(output.provider).thenReturn("rekognition")
+        `when`(output.personIds).thenReturn("[]")
+        `when`(photos.faceWorkForPhoto(event, photoId)).thenReturn(listOf(output))
+        assertFailsWith<AiApiException> { service.erase(event, photoId) }
+        verify(rek, never()).erasePhotoFaces(anyArg(), anyArg())
+        verify(photos, never()).confirmFaceWorkErased(anyArg(), anyArg(), anyArg())
+    }
+
     @Test fun `unattributed legacy person stays visible for retry`() {
         photo.facePersons.add(PhotoFacePersonEmbed(0, person))
         `when`(ai.listPersonsForEvent(event)).thenReturn(listOf(AiPersonRef(person, OffsetDateTime.now(), "someone-else")))
@@ -311,6 +335,51 @@ class PhotoFaceErasureTest {
         expectTerminalOutcome(mapOf("ref" to null, "index" to null, "person_id" to null))
         assertEquals(FaceErasureResult.ALREADY_ABSENT, service.erase(event, photoId))
         verify(fence).finish(anyArg())
+    }
+
+    @Test fun `legacy unknown Rekognition record from the erasure request is attributed and erased`() {
+        val rekId = "$event.$photoId"
+        photo.indexedProvider = "rekognition"
+        photo.facePersons.add(PhotoFacePersonEmbed(0, rekId)) // provider defaults to UNKNOWN, as V75 left it
+        val snapshot = work(finished = true) // the row PhotoErasureService.request() writes
+        `when`(snapshot.provider).thenReturn("unknown")
+        `when`(snapshot.personIds).thenReturn("[\"$rekId\"]")
+        `when`(photos.faceWorkForPhoto(event, photoId)).thenReturn(listOf(snapshot))
+        val token = snapshot.token
+        `when`(photos.attributeFaceWorkProvider(token, event, photoId, false, "[\"$rekId\"]", "rekognition")).thenReturn(1)
+        `when`(rek.erasePhotoFaces(event, rekId)).thenReturn(FaceErasureResult.DELETED)
+        `when`(photos.confirmFaceWorkErased(eqArg(token), eqArg("[\"$rekId\"]"), anyArg())).thenReturn(1)
+
+        assertEquals(FaceErasureResult.DELETED, service.erase(event, photoId))
+        assertEquals(FaceProvider.REKOGNITION, photo.facePersons.single().provider)
+        verify(photos).attributeFaceWorkProvider(token, event, photoId, false, "[\"$rekId\"]", "rekognition")
+        verify(rek).erasePhotoFaces(event, rekId)
+        verifyNoInteractions(ai)
+    }
+
+    @Test fun `legacy unknown record with a foreign id is never deleted by guess`() {
+        val snapshot = work(finished = true)
+        `when`(snapshot.provider).thenReturn("unknown")
+        `when`(snapshot.personIds).thenReturn("[\"${UUID.randomUUID()}.$photoId\"]")
+        `when`(photos.faceWorkForPhoto(event, photoId)).thenReturn(listOf(snapshot))
+        assertFailsWith<AiApiException> { service.erase(event, photoId) }
+        verifyNoInteractions(rek, ai)
+    }
+
+    @Test fun `legacy Rekognition photo without face records is checked by its exact photo name`() {
+        photo.indexedProvider = "rekognition"
+        photo.indexingAttempts = 1
+        `when`(rek.erasePhotoFaces(event, "$event.$photoId")).thenReturn(FaceErasureResult.ALREADY_ABSENT)
+        assertEquals(FaceErasureResult.ALREADY_ABSENT, service.erase(event, photoId))
+        verify(rek).erasePhotoFaces(event, "$event.$photoId")
+        verifyNoInteractions(ai)
+    }
+
+    @Test fun `legacy ai-api photo without face records still cannot prove absence`() {
+        photo.indexedProvider = "ai_api"
+        photo.indexingAttempts = 1
+        assertFailsWith<AiApiException> { service.erase(event, photoId) }
+        verifyNoInteractions(rek)
     }
 
     private fun expectTerminalOutcome(result: Map<String, Any?>): PhotoFaceWork {

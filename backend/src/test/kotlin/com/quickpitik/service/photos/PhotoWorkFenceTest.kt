@@ -94,4 +94,15 @@ class PhotoWorkFenceTest {
         verify(photos).finishWorkOutput(token, OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
         verify(photos).finishWork(photo.id, token)
     }
+
+    @Test fun `Rekognition write settles only four call deadlines after its claim expired`() {
+        val early = PhotoWorkClaim(photo.id, 0, UUID.randomUUID(), now.minusSeconds(43), PhotoWorkKind.INDEXING)
+        assertFalse(fence().finishEndedRekognitionWrite(early))
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
+
+        val ended = PhotoWorkClaim(photo.id, 0, UUID.randomUUID(), now.minusSeconds(44), PhotoWorkKind.INDEXING)
+        assertTrue(fence().finishEndedRekognitionWrite(ended))
+        verify(photos).finishWorkOutput(ended.token, OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
+        verify(photos).finishWork(photo.id, ended.token)
+    }
 }

@@ -592,8 +592,20 @@ interface QuickPitikApi {
         @Query("verify") verify: Boolean? = null
     ): ApiResponseEnvelope<OrderStatusDto>
 
+    // Cancel a live QR. The backend asks PayMongo one last time, so a payment
+    // that just landed still wins; the answer is the order's status afterwards.
+    @POST("api/v1/me/orders/{id}/cancel")
+    suspend fun cancelOrder(
+        @Header("Authorization") token: String,
+        @Path("id") orderId: String
+    ): ApiResponseEnvelope<OrderStatusDto>
 
-
+    // Guest cancel — the same RETURN token as the guest status poll.
+    @POST("api/v1/orders/{id}/cancel")
+    suspend fun cancelGuestOrder(
+        @Path("id") orderId: String,
+        @Query("token") shareToken: String
+    ): ApiResponseEnvelope<OrderStatusDto>
 
     @POST("api/v1/me/orders/{id}/refund")
     suspend fun submitRefund(

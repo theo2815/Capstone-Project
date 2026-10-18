@@ -117,7 +117,7 @@ Govern **how** any agent writes code here, and must be satisfied **before the fi
 3. **Scopes are least-privilege.** Desktop gets `blur:read` + `jobs:read` only; Spring Boot gets the full scope set. (Exact values: `docs/api-keys.md`.)
 4. **Async batch = blob-store, not base64.** Image bytes never go on the Celery queue; workers read from `BLOB_STORE_PATH`.
 5. **Webhooks are HMAC-signed.** Consumers must verify `X-QuickPitik-Signature`.
-6. **Photos are private by default.** Runners only see their own matched photos; public galleries are opt-in per event.
+6. **Gallery visibility follows the event; originals stay private.** Admin-created events are public and listed on `/events`. A photographer picks Public or Private for their own events (Private is stored as `unlisted`: reachable only by link, hidden from their profile); photographer events are never listed on `/events`. Galleries show watermarked previews; originals are served only through short-lived download links (`entity/EventVisibility.kt`).
 7. **Scaling path is known, not premature.** Start with managed face search (Rekognition) + direct object storage; add a CDN only when metrics demand it.
 
 ---

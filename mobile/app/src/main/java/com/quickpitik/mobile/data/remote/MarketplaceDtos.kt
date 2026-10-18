@@ -69,6 +69,21 @@ data class OrderResponse(
     // is already FULFILLED, redirectUrl is null, and this guest RETURN token loads
     // the receipt without a redirect. Null for signed-in runners and pending orders.
     val returnToken: String? = null,
+    // What the whole checkout charges (every event's order, after coupons) —
+    // the "Amount due" on the QR step. totalAmount is only this order's share.
+    val checkoutTotalAmount: Double? = null,
+    // The QR Ph payment for a PENDING order (V48). Null when settled.
+    val qrPh: QrPhPaymentDto? = null,
+)
+
+// POST /orders → qrPh. imageUrl is PayMongo's QR as a PNG data URI. returnToken
+// is the guest's status/cancel pass (null when signed in). testUrl is PayMongo's
+// payment simulator, sent only when the backend runs on a test key.
+data class QrPhPaymentDto(
+    val imageUrl: String,
+    val expiresAt: String,
+    val returnToken: String? = null,
+    val testUrl: String? = null,
 )
 
 data class OrderResponseItem(

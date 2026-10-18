@@ -90,6 +90,26 @@ class CartRepositoryImplTest {
         assertNotEquals(tail[1], tail[2]) // a minted order retires it
     }
 
+    @Test fun `a key the backend refuses with 409 is retired, so the next try is a new checkout`() = runBlocking {
+        repo.fetchCart("t").getOrThrow()
+        order = MockResponse().setResponseCode(409).setBody(
+            """{"success":false,"errors":[{"code":"CONFLICT","message":"This checkout expired. Start again with a new Idempotency-Key."}]}""",
+        )
+        assertTrue(checkout().isFailure)
+        assertTrue(checkout().isFailure)
+        val keys = orderKeys()
+        assertNotEquals(keys[0], keys[1])
+
+        // PAYMENT_FAILED is a 409 too, but a retry may resume the order: the key stays.
+        order = MockResponse().setResponseCode(409).setBody(
+            """{"success":false,"errors":[{"code":"PAYMENT_FAILED","message":"Payment gateway unavailable."}]}""",
+        )
+        assertEquals("Payment gateway unavailable.", checkout().exceptionOrNull()?.message)
+        assertTrue(checkout().isFailure)
+        val kept = orderKeys().takeLast(2)
+        assertEquals(kept[0], kept[1])
+    }
+
     @Test fun `an empty cart never reaches the network and a 429 reads as the backend's copy`() = runBlocking {
         assertEquals("Cart is empty", checkout().exceptionOrNull()?.message)
         assertTrue(requests.none { it.path == "/api/v1/orders" })

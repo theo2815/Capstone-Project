@@ -66,6 +66,15 @@ class PhotoWorkFence(
         photos.finishWork(claim.photoId, claim.token)
     }
 
+    // A face write starts only while its claim is current (PhotoIndexingService). facesEnroll then makes at most
+    // four Rekognition calls (CreateCollection, IndexFaces, and both again on ResourceNotFound), each ended by
+    // apiCallTimeout within operationTimeout: four of them after expiry, the writer has ended.
+    fun finishEndedRekognitionWrite(claim: PhotoWorkClaim): Boolean {
+        if (clock.instant().isBefore(claim.expiresAt.plus(rekognition.operationTimeout.multipliedBy(4)))) return false
+        finish(claim)
+        return true
+    }
+
     fun recordPerson(claim: PhotoWorkClaim, personId: String) {
         photos.findAllByIdForUpdate(listOf(claim.photoId))
         photos.recordWorkPersons(claim.token, json.writeValueAsString(listOf(personId)))

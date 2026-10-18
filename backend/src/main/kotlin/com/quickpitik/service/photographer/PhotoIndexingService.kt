@@ -123,6 +123,8 @@ class PhotoIndexingService(
         var facesOk = false
         var facesTransport = false
         var facesUnresolved = false
+        // A face write may start only while the claim is current, so its call deadline bounds when it ended.
+        if (!workFence.isCurrent(claim)) return InferenceOutcome(error = "Indexing claim ended before enrollment", facesTransport = true, bibsTransport = true)
         try {
             val enroll = meterRegistry.timer("qp.ai.call", "op", "enroll").recordCallable {
                 aiApiClient.facesEnroll(

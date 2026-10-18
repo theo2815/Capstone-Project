@@ -47,6 +47,11 @@ interface CartRepository {
     suspend fun getOrderStatus(token: String, orderId: String, verify: Boolean): Result<OrderStatusDto>
     suspend fun getGuestOrderStatus(orderId: String, shareToken: String, verify: Boolean): Result<OrderStatusDto>
 
+    // Cancel a live QR Ph payment; the answer is the order's status afterwards
+    // (PAID/FULFILLED if the payment won the race).
+    suspend fun cancelOrder(token: String, orderId: String): Result<OrderStatusDto>
+    suspend fun cancelGuestOrder(orderId: String, shareToken: String): Result<OrderStatusDto>
+
     suspend fun submitRefund(
         token: String,
         orderId: String,
