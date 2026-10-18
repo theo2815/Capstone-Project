@@ -129,4 +129,12 @@ class PhotoErasureLegacyFaceIntegrationTest : PostgresIntegrationTest() {
         })
         Mockito.verifyNoInteractions(ai)
     }
+
+    @Test fun `photo indexed before V75 with no face record completes after a Rekognition listing`() {
+        val job = eraser.request(privacy())
+        assertEquals(PhotoErasureOutcome.COMPLETE, eraser.attempt(job))
+        assertNotNull(photos.findById(photo.id).orElseThrow().purgedAt)
+        Mockito.verify(sdk, Mockito.atLeastOnce()).listFaces(Mockito.argThat<ListFacesRequest> { it.collectionId() == "qp-event-${event.id}" })
+        Mockito.verifyNoInteractions(ai)
+    }
 }

@@ -342,6 +342,22 @@ class PhotoFaceErasureTest {
         verifyNoInteractions(rek, ai)
     }
 
+    @Test fun `legacy Rekognition photo without face records is checked by its exact photo name`() {
+        photo.indexedProvider = "rekognition"
+        photo.indexingAttempts = 1
+        `when`(rek.erasePhotoFaces(event, "$event.$photoId")).thenReturn(FaceErasureResult.ALREADY_ABSENT)
+        assertEquals(FaceErasureResult.ALREADY_ABSENT, service.erase(event, photoId))
+        verify(rek).erasePhotoFaces(event, "$event.$photoId")
+        verifyNoInteractions(ai)
+    }
+
+    @Test fun `legacy ai-api photo without face records still cannot prove absence`() {
+        photo.indexedProvider = "ai_api"
+        photo.indexingAttempts = 1
+        assertFailsWith<AiApiException> { service.erase(event, photoId) }
+        verifyNoInteractions(rek)
+    }
+
     private fun expectTerminalOutcome(result: Map<String, Any?>): PhotoFaceWork {
         val output = work(finished = false)
         `when`(output.personIds).thenReturn("[]")
