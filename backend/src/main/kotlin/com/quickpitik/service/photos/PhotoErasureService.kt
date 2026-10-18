@@ -11,6 +11,7 @@ import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.*
 import com.quickpitik.service.storage.StorageService
 import io.micrometer.core.instrument.MeterRegistry
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
@@ -39,6 +40,8 @@ class PhotoErasureService(
     private val clock: Clock,
     private val metrics: MeterRegistry,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     fun request(command: PhotoErasureCommand): UUID {
         if (command.reason.isBlank() || command.reason.length > 2000) invalid()
         if (command.purpose == PhotoErasurePurpose.PRIVACY_REMOVAL &&
@@ -164,7 +167,10 @@ class PhotoErasureService(
         try {
             faceOutcome = if (claim.manifest.neverIndexed && photos.faceWorkForPhoto(claim.eventId, claim.photoId).isEmpty()) "ALREADY_ABSENT"
             else faces.erase(claim.eventId, claim.photoId).name
-        } catch (_: Exception) { failure = "FACE_CLEANUP_REQUIRED" }
+        } catch (ex: Exception) {
+            failure = "FACE_CLEANUP_REQUIRED"
+            log.warn("Face cleanup not confirmed for erasure job {} photo {}: {}", jobId, claim.photoId, ex.message)
+        }
         var pending = photos.hasUnfinishedWork(claim.photoId, "ANY") ||
             photos.findById(claim.photoId).orElse(null)?.let { it.indexingWorkToken != null || it.watermarkWorkToken != null } == true
         val unresolvedUpload = receipts.any { saved ->

@@ -93,10 +93,37 @@ class PhotoErasureServiceTest {
         Mockito.verifyNoInteractions(storage)
     }
 
-    private fun job() = PhotoErasureJob(photoId = UUID.randomUUID(), eventId = UUID.randomUUID(),
+    @Test fun `a refused face cleanup is logged with its reason`() {
+        val photos = mock<com.quickpitik.repository.PhotoRepository>()
+        val faces = mock<PhotoFaceErasureService>()
+        val eraser = PhotoErasureService(photos, jobs, mock(), mock(), mock(), mock(), mock(), mock(), mock(),
+            storage, faces, com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
+            TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC(),
+            io.micrometer.core.instrument.simple.SimpleMeterRegistry())
+        val job = job(neverIndexed = false)
+        Mockito.`when`(jobs.findById(job.id)).thenReturn(Optional.of(job))
+        Mockito.`when`(jobs.lock(job.id)).thenReturn(job)
+        Mockito.`when`(jobs.saveAndFlush(job)).thenReturn(job) // attempt() uses the saved job as its lease claim
+        Mockito.`when`(faces.erase(job.eventId, job.photoId)).thenThrow(com.quickpitik.service.ai.AiApiException(
+            org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "AI_API_UNAVAILABLE", "Recorded face provider unresolved"))
+        val logger = org.slf4j.LoggerFactory.getLogger(PhotoErasureService::class.java) as ch.qos.logback.classic.Logger
+        val appender = ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            assertEquals(PhotoErasureOutcome.RETRY_REQUIRED, eraser.attempt(job.id))
+            val warn = appender.list.single { it.level == ch.qos.logback.classic.Level.WARN }
+            kotlin.test.assertTrue(warn.formattedMessage.contains(job.id.toString()))
+            kotlin.test.assertTrue(warn.formattedMessage.contains("Recorded face provider unresolved"))
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
+    private fun job(neverIndexed: Boolean = true) = PhotoErasureJob(photoId = UUID.randomUUID(), eventId = UUID.randomUUID(),
         ownerId = UUID.randomUUID(), purpose = PhotoErasurePurpose.PHOTOGRAPHER_DELETE,
         authorizedActorType = RemovalActorType.PHOTOGRAPHER, authorizedActorId = UUID.randomUUID(),
         reason = "Photographer permanent deletion", requestId = null, itemId = null, commandId = UUID.randomUUID(),
-        manifest = ErasureManifest(listOf("original"), emptyList(), true), generation = 0,
+        manifest = ErasureManifest(listOf("original"), emptyList(), neverIndexed), generation = 0,
         nextAttemptAt = Instant.now(), createdAt = Instant.now())
 }
