@@ -53,14 +53,13 @@ class EventPhotosReadyNotifier(
         // One call answers both "ready?" and "how many?" — total is the full
         // match count (PaginatedResponse.of computes it independently of limit).
         val page = try {
-            photoSearchService.searchByFace(
+            photoSearchService.searchByFaceForAlert(
                 eventId = prepared.eventId,
                 selfieBytes = bytes,
                 contentType = contentTypeForKey(prepared.selfieKey),
                 filename = prepared.selfieKey.substringAfterLast('/'),
                 pagination = PaginationParams.of(0, 1),
                 requesterUserId = prepared.userId,
-                allowFallbackOnError = false,
             )
         } catch (ex: Exception) {
             log.warn(

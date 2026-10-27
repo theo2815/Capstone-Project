@@ -16,10 +16,12 @@ import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.service.storage.contentTypeForKey
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 @Service
 class PhotoSearchService(
@@ -40,11 +42,43 @@ class PhotoSearchService(
         pagination: PaginationParams,
         requesterUserId: UUID? = null,
         allowFallbackOnError: Boolean = true,
+    ): PaginatedResponse<PhotoDto> = timedSearch(MODE_ONESHOT) { trace ->
+        faceSearch(eventId, selfieBytes, contentType, filename, pagination, requesterUserId, allowFallbackOnError, trace)
+    }
+
+    /**
+     * The photos-ready email's check (EventPhotosReadyNotifier): the same
+     * one-shot search, timed as mode=alert so background sweeps never skew
+     * the runners' numbers, and never answered with the demo fallback grid.
+     */
+    fun searchByFaceForAlert(
+        eventId: UUID,
+        selfieBytes: ByteArray,
+        contentType: String,
+        filename: String,
+        pagination: PaginationParams,
+        requesterUserId: UUID?,
+    ): PaginatedResponse<PhotoDto> = timedSearch(MODE_ALERT) { trace ->
+        faceSearch(eventId, selfieBytes, contentType, filename, pagination, requesterUserId, allowFallbackOnError = false, trace)
+    }
+
+    private fun faceSearch(
+        eventId: UUID,
+        selfieBytes: ByteArray,
+        contentType: String,
+        filename: String,
+        pagination: PaginationParams,
+        requesterUserId: UUID?,
+        allowFallbackOnError: Boolean,
+        trace: SearchTrace,
     ): PaginatedResponse<PhotoDto> {
+        trace.selfies = 1
         validateSelfie(selfieBytes)
         ensureEnabled()
         val candidates = try {
-            findFaceCandidates(eventId, SearchImage(selfieBytes, contentType, filename))
+            timed(null, { trace.aiNanos += it }) {
+                findFaceCandidates(eventId, SearchImage(selfieBytes, contentType, filename))
+            }
         } catch (ex: Exception) {
             if (allowFallbackOnError && aiApiProperties.searchFallbackOnError && (ex !is AiApiException || ex.isRetryable)) {
                 log.warn(
@@ -60,7 +94,9 @@ class PhotoSearchService(
         if (matchedPersonIds.isEmpty()) {
             return PaginatedResponse.empty(pagination)
         }
-        return photoService.findByEventAndPersonIds(eventId, matchedPersonIds, pagination, requesterUserId)
+        return timedQuery(trace) {
+            photoService.findByEventAndPersonIds(eventId, matchedPersonIds, pagination, requesterUserId)
+        }
     }
 
     fun findFaceCandidates(eventId: UUID, image: SearchImage): FaceCandidateResult {
@@ -111,7 +147,16 @@ class PhotoSearchService(
         samples: List<SelfieSample>,
         pagination: PaginationParams,
         requesterUserId: UUID? = null,
+    ): PaginatedResponse<PhotoDto> = searchByFaces(eventId, samples, pagination, requesterUserId, SearchTrace())
+
+    private fun searchByFaces(
+        eventId: UUID,
+        samples: List<SelfieSample>,
+        pagination: PaginationParams,
+        requesterUserId: UUID?,
+        trace: SearchTrace,
     ): PaginatedResponse<PhotoDto> {
+        trace.selfies = samples.size
         require(samples.isNotEmpty()) {
             throw ValidationException(
                 code = ErrorCodes.SELFIE_REQUIRED,
@@ -125,7 +170,9 @@ class PhotoSearchService(
         var lastRejection: AiApiException? = null
         for (sample in samples) {
             val matches = try {
-                findFaceCandidates(eventId, SearchImage(sample.bytes, sample.contentType, sample.filename))
+                timed(null, { trace.aiNanos += it }) {
+                    findFaceCandidates(eventId, SearchImage(sample.bytes, sample.contentType, sample.filename))
+                }
             } catch (ex: AiApiException) {
                 if (ex.status.is4xxClientError) {
                     lastRejection = ex
@@ -146,7 +193,7 @@ class PhotoSearchService(
         }
         if (accepted == 0 && lastRejection != null) throw lastRejection
         if (personIds.isEmpty()) return PaginatedResponse.empty(pagination)
-        return photoService.findByEventAndPersonIds(eventId, personIds, pagination, requesterUserId)
+        return timedQuery(trace) { photoService.findByEventAndPersonIds(eventId, personIds, pagination, requesterUserId) }
     }
 
     /**
@@ -164,6 +211,17 @@ class PhotoSearchService(
         selfieId: UUID?,
         allSelfies: Boolean,
         pagination: PaginationParams,
+    ): PaginatedResponse<PhotoDto> = timedSearch(if (allSelfies) MODE_LIBRARY else MODE_STORED) { trace ->
+        storedSelfieSearch(userId, eventId, selfieId, allSelfies, pagination, trace)
+    }
+
+    private fun storedSelfieSearch(
+        userId: UUID,
+        eventId: UUID,
+        selfieId: UUID?,
+        allSelfies: Boolean,
+        pagination: PaginationParams,
+        trace: SearchTrace,
     ): PaginatedResponse<PhotoDto> {
         // allSelfies (2026-09-02): match against the whole library, not one
         // pick. Every selfie the runner saved is a different angle of the same
@@ -176,7 +234,7 @@ class PhotoSearchService(
             // Skip rows whose object is gone (storage backend changed, deleted
             // out-of-band) rather than failing the whole search on one of them.
             val samples = library.take(MAX_LIBRARY_SELFIES).mapNotNull { s ->
-                runCatching { storageService.getBytes(s.s3Key) }.getOrNull()?.let { bytes ->
+                runCatching { timedFetch(trace) { storageService.getBytes(s.s3Key) } }.getOrNull()?.let { bytes ->
                     SelfieSample(
                         bytes = bytes,
                         contentType = contentTypeForKey(s.s3Key),
@@ -190,12 +248,7 @@ class PhotoSearchService(
                     message = "Selfie file is no longer available",
                 )
             }
-            return searchByFaces(
-                eventId = eventId,
-                samples = samples,
-                pagination = pagination,
-                requesterUserId = userId,
-            )
+            return searchByFaces(eventId, samples, pagination, userId, trace)
         }
         val id = selfieId ?: throw ValidationException(
             code = ErrorCodes.SELFIE_REQUIRED,
@@ -208,23 +261,78 @@ class PhotoSearchService(
         // missing from S3 (deleted out-of-band, key never written, etc.).
         // Without this wrap the runner gets a generic 500 INTERNAL_ERROR
         // instead of a meaningful 404 they can react to.
-        val bytes = runCatching { storageService.getBytes(selfie.s3Key) }.getOrElse {
+        val bytes = runCatching { timedFetch(trace) { storageService.getBytes(selfie.s3Key) } }.getOrElse {
             throw NotFoundException(
                 code = ErrorCodes.SELFIE_NOT_FOUND,
                 message = "Selfie file is no longer available",
             )
         }
-        return searchByFace(
+        return faceSearch(
             eventId = eventId,
             selfieBytes = bytes,
             contentType = contentTypeForKey(selfie.s3Key),
             filename = selfie.s3Key.substringAfterLast('/'),
             pagination = pagination,
             requesterUserId = userId,
+            allowFallbackOnError = true,
+            trace = trace,
         )
     }
 
+    // Search-path timers (FS-1, 2026-10-27). qp.search.request{mode} times the
+    // whole search, failures included; qp.search.selfie.fetch each storage
+    // read; qp.search.photo.query the photo lookup. Provider time is already
+    // qp.ai.call{op=search}. The INFO line carries the same split per search,
+    // so percentiles can be read from the logs without an admin login.
+
+    /** What one face search spent its time on, for its summary line. */
+    private class SearchTrace {
+        var selfies = 0
+        var fetchNanos = 0L
+        var aiNanos = 0L
+        var queryNanos = 0L
+    }
+
+    private fun timedSearch(
+        mode: String,
+        search: (SearchTrace) -> PaginatedResponse<PhotoDto>,
+    ): PaginatedResponse<PhotoDto> {
+        val trace = SearchTrace()
+        var results = "error"
+        return timed(meterRegistry.timer("qp.search.request", "mode", mode), { totalNanos ->
+            log.info(
+                "face search mode={} selfies={} total_ms={} r2_ms={} aws_ms={} query_ms={} results={}",
+                mode, trace.selfies, totalNanos.ms(), trace.fetchNanos.ms(), trace.aiNanos.ms(),
+                trace.queryNanos.ms(), results,
+            )
+        }) { search(trace).also { results = it.total.toString() } }
+    }
+
+    private fun <T> timedFetch(trace: SearchTrace, fetch: () -> T): T =
+        timed(meterRegistry.timer("qp.search.selfie.fetch"), { trace.fetchNanos += it }, fetch)
+
+    private fun <T> timedQuery(trace: SearchTrace, query: () -> T): T =
+        timed(meterRegistry.timer("qp.search.photo.query"), { trace.queryNanos += it }, query)
+
+    /** Runs [block], then records its time (success or failure) on [timer] and hands it to [add]. */
+    private inline fun <T> timed(timer: Timer?, add: (Long) -> Unit, block: () -> T): T {
+        val start = System.nanoTime()
+        try {
+            return block()
+        } finally {
+            val nanos = System.nanoTime() - start
+            timer?.record(nanos, TimeUnit.NANOSECONDS)
+            add(nanos)
+        }
+    }
+
+    private fun Long.ms(): Long = TimeUnit.NANOSECONDS.toMillis(this)
+
     private companion object {
+        const val MODE_ONESHOT = "oneshot"
+        const val MODE_STORED = "stored"
+        const val MODE_LIBRARY = "library"
+        const val MODE_ALERT = "alert"
         const val CANDIDATE_LIMIT = 50
         // Mirrors the selfie-library cap (SELFIE_MAX = 5 on both clients).
         const val MAX_LIBRARY_SELFIES = 5
