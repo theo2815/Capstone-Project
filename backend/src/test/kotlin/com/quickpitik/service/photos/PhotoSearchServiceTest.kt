@@ -1,5 +1,9 @@
 package com.quickpitik.service.photos
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
@@ -17,6 +21,7 @@ import com.quickpitik.service.ai.AiApiException
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -82,6 +87,7 @@ class PhotoSearchServiceTest {
     private lateinit var photoService: PhotoService
     private lateinit var userSelfieRepository: UserSelfieRepository
     private lateinit var storageService: StorageService
+    private lateinit var registry: SimpleMeterRegistry
 
     private val eventId: UUID = UUID.randomUUID()
     private val userId: UUID = UUID.randomUUID()
@@ -94,6 +100,7 @@ class PhotoSearchServiceTest {
         photoService = Mockito.mock(PhotoService::class.java)
         userSelfieRepository = Mockito.mock(UserSelfieRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
+        registry = SimpleMeterRegistry()
     }
 
     // ─── E2: threshold is re-checked server-side ──────────────────────────
@@ -346,7 +353,106 @@ class PhotoSearchServiceTest {
         )
     }
 
+    // ─── FS-1: search-path timers (2026-10-27) ────────────────────────────
+
+    @Test
+    fun `a one-shot search is timed as oneshot, with its photo query`() {
+        stubSearch(FaceMatch(person_id = "p-a", similarity = 0.9))
+        stubPhotoLookup()
+
+        service().searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination)
+
+        assertEquals(1, requests("oneshot"))
+        assertEquals(1, registry.timer("qp.search.photo.query").count())
+        assertEquals(0, registry.timer("qp.search.selfie.fetch").count())
+    }
+
+    @Test
+    fun `a failed search is still timed`() {
+        assertFailsWith<AiApiException> {
+            service(enabled = false).searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination)
+        }
+        assertEquals(1, requests("oneshot"))
+    }
+
+    @Test
+    fun `a stored-selfie search is timed once as stored, with its one storage read`() {
+        val row = selfieRow("s.jpg")
+        Mockito.`when`(userSelfieRepository.findByIdAndUserId(row.id, userId)).thenReturn(row)
+        Mockito.`when`(storageService.getBytes(row.s3Key)).thenReturn(selfie)
+        stubSearch(FaceMatch(person_id = "p-a", similarity = 0.9))
+        stubPhotoLookup()
+
+        service().searchWithStoredSelfie(userId, eventId, row.id, allSelfies = false, pagination = pagination)
+
+        assertEquals(1, requests("stored"))
+        assertEquals(0, requests("oneshot")) // the inner one-shot search is not counted twice
+        assertEquals(1, registry.timer("qp.search.selfie.fetch").count())
+        assertEquals(1, registry.timer("qp.search.photo.query").count())
+    }
+
+    @Test
+    fun `a library search times every storage read, a failed one included, and still skips it`() {
+        val rows = (1..3).map { selfieRow("s$it.jpg") }
+        Mockito.`when`(userSelfieRepository.findByUserIdOrderByUploadedAtDesc(userId)).thenReturn(rows)
+        Mockito.`when`(storageService.getBytes(rows[0].s3Key)).thenThrow(IllegalStateException("object missing"))
+        Mockito.`when`(storageService.getBytes(rows[1].s3Key)).thenReturn(selfie)
+        Mockito.`when`(storageService.getBytes(rows[2].s3Key)).thenReturn(selfie)
+        stubSearch(FaceMatch(person_id = "p-a", similarity = 0.9))
+        stubPhotoLookup()
+
+        service().searchWithStoredSelfie(userId, eventId, null, allSelfies = true, pagination = pagination)
+
+        assertEquals(1, requests("library"))
+        assertEquals(3, registry.timer("qp.search.selfie.fetch").count())
+        Mockito.verify(aiApiClient, Mockito.times(2)).facesSearch(
+            anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyDouble(), Mockito.anyInt(),
+        )
+        assertEquals(1, registry.timer("qp.search.photo.query").count())
+    }
+
+    @Test
+    fun `the photos-ready email search is timed as alert, never as a runner search, and never falls back`() {
+        whenFacesSearch().thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "offline"))
+
+        assertFailsWith<AiApiException> {
+            service(fallback = true).searchByFaceForAlert(eventId, selfie, "image/jpeg", "s.jpg", pagination, userId)
+        }
+
+        assertEquals(1, requests("alert"))
+        assertEquals(0, requests("oneshot"))
+        Mockito.verify(photoService, Mockito.never()).listForEvent(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `each search writes one summary line with its timings and no user or selfie id`() {
+        val row = selfieRow("s.jpg")
+        Mockito.`when`(userSelfieRepository.findByIdAndUserId(row.id, userId)).thenReturn(row)
+        Mockito.`when`(storageService.getBytes(row.s3Key)).thenReturn(selfie)
+        stubSearch(FaceMatch(person_id = "p-a", similarity = 0.9))
+        stubPhotoLookup()
+        val logger = LoggerFactory.getLogger(PhotoSearchService::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            service().searchWithStoredSelfie(userId, eventId, row.id, allSelfies = false, pagination = pagination)
+
+            val lines = appender.list.filter { it.level == Level.INFO && it.formattedMessage.startsWith("face search ") }
+            assertEquals(1, lines.size)
+            val line = lines.single().formattedMessage
+            for (field in listOf("mode=stored", "selfies=1", "total_ms=", "r2_ms=", "aws_ms=", "query_ms=", "results=1")) {
+                assertTrue(line.contains(field), "missing $field in: $line")
+            }
+            assertTrue(!line.contains(userId.toString()) && !line.contains(row.s3Key), line)
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
+
+    private fun requests(mode: String) = registry.timer("qp.search.request", "mode", mode).count()
 
     private fun service(enabled: Boolean = true, fallback: Boolean = false): PhotoSearchService =
         PhotoSearchService(
@@ -355,7 +461,7 @@ class PhotoSearchServiceTest {
             photoService,
             userSelfieRepository,
             storageService,
-            SimpleMeterRegistry(),
+            registry,
         )
 
     /**

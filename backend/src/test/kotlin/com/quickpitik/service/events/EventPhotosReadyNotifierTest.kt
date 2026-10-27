@@ -119,8 +119,9 @@ class EventPhotosReadyNotifierTest {
         Mockito.verify(alertRepository, Mockito.never()).claimNotification(anyArg(), anyArg(), anyArg())
         Mockito.verify(emailService, Mockito.never())
             .sendEventPhotosReadyEmail(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
-        Mockito.verify(photoSearchService).searchByFace(
-            anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), eqArg(false),
+        // The alert method never answers with the demo fallback grid (PhotoSearchServiceTest).
+        Mockito.verify(photoSearchService).searchByFaceForAlert(
+            anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(),
         )
     }
 
@@ -179,8 +180,8 @@ class EventPhotosReadyNotifierTest {
             byteArrayOf(1, 2, 3)
         }
         Mockito.`when`(
-            photoSearchService.searchByFace(
-                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(),
+            photoSearchService.searchByFaceForAlert(
+                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(),
             ),
         ).thenAnswer {
             openAtSearch = tx.open
@@ -310,8 +311,8 @@ class EventPhotosReadyNotifierTest {
         Mockito.`when`(userSelfieRepository.findByIdAndUserId(selfieId, userId)).thenReturn(selfie)
         Mockito.`when`(storageService.getBytes(anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(
-            photoSearchService.searchByFace(
-                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(),
+            photoSearchService.searchByFaceForAlert(
+                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(),
             ),
         ).thenReturn(PaginatedResponse(emptyList<PhotoDto>(), matchTotal, 0, 1))
         Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(user))
