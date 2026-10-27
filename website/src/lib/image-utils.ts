@@ -138,6 +138,34 @@ export async function fitToDataUrl(
   return safeToDataUrl(canvas, "image/jpeg", quality);
 }
 
+// Runner selfies leave the phone at camera size, but face matching only needs
+// the face: send a ≤1280 px upright JPEG instead. Any decode or encode failure
+// returns the original file so the backend validates it exactly as before.
+const SELFIE_MAX_EDGE = 1280;
+
+export async function shrinkSelfie(file: File): Promise<File> {
+  try {
+    const img = await loadImage(file);
+    if (file.type === "image/jpeg" && img.width <= SELFIE_MAX_EDGE && img.height <= SELFIE_MAX_EDGE) {
+      return file;
+    }
+    const { width, height } = scaleToFit(img.width, img.height, SELFIE_MAX_EDGE);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    // <img> decodes upright (EXIF orientation applied), so the pixels are too.
+    ctx.drawImage(img, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.85),
+    );
+    return blob ? new File([blob], "selfie.jpg", { type: "image/jpeg" }) : file;
+  } catch {
+    return file;
+  }
+}
+
 // Same as fitToDataUrl but exports PNG so alpha transparency survives. Used
 // for photographer watermark uploads where the watermark needs to overlay
 // photos cleanly. Larger output than JPEG; scale watermark inputs accordingly.
@@ -264,7 +292,7 @@ function safeToDataUrl(
   }
 }
 
-function scaleToFit(w: number, h: number, maxLongEdge: number) {
+export function scaleToFit(w: number, h: number, maxLongEdge: number) {
   if (w <= maxLongEdge && h <= maxLongEdge) return { width: w, height: h };
   const ratio = w >= h ? maxLongEdge / w : maxLongEdge / h;
   return { width: Math.round(w * ratio), height: Math.round(h * ratio) };

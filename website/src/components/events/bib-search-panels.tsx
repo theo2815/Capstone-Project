@@ -20,6 +20,7 @@ import { FieldError } from "@/components/ui/field-error";
 import { buildLoginRedirect } from "@/lib/redirect";
 import {
   ACCEPTED_IMAGE_MIME,
+  shrinkSelfie,
   validateImageFile,
 } from "@/lib/image-utils";
 import type { SelfieRef } from "@/store/user-media-store";
@@ -155,13 +156,16 @@ export function SelfieSearchPanel({
     setNotice(null);
     setIsSearching(true);
     try {
+      // Shrink once; the save and the fallback search send the same file.
+      const upload = await shrinkSelfie(file);
+      if (!isCurrent()) return;
       let result: EventPhotosResult | null = null;
       if (canSave && saveToLibrary) {
         // Save first, then match with the whole library (which now includes
         // it). A refused save (no face, limit) is a notice, not a failure —
         // the one-shot file search below still runs.
         try {
-          await uploadSelfie(file);
+          await uploadSelfie(upload);
           if (!isCurrent()) return;
           void queryClient.invalidateQueries({ queryKey: ["me", "selfies"] });
           setNotice("Saved to your selfie library.");
@@ -173,7 +177,7 @@ export function SelfieSearchPanel({
         }
       }
       if (!isCurrent()) return;
-      if (!result) result = await searchEventByFace(eventSlug, { selfieFile: file });
+      if (!result) result = await searchEventByFace(eventSlug, { selfieFile: upload });
       if (!isCurrent()) return;
       onSearchSuccess(result);
     } catch (err) {
