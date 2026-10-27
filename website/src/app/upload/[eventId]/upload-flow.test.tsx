@@ -12,8 +12,10 @@ vi.mock("@/components/dashboard/verification-banner", () => ({ VerificationBanne
 vi.mock("@/hooks/use-can-upload", () => ({ useCanUpload: () => ({ kind: "ok" }) }));
 vi.mock("@/lib/photographer-verification-sync", () => ({ usePhotographerVerificationSync: () => undefined }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+// Dated today: an owner may upload for one month after the event date, so a
+// fixed date closed the window (and failed every test here) after 2026-10-24.
 vi.mock("@/hooks/use-public-events", () => ({ usePublicEvents: () => [{
-  id: "event-1", slug: "race", name: "Race", date: "2026-09-24", location: "Cebu",
+  id: "event-1", slug: "race", name: "Race", date: new Date().toISOString().slice(0, 10), location: "Cebu",
   photoCount: 0, participantCount: 0, status: "ACTIVE", state: "live", city: "Cebu",
 }] }));
 vi.mock("@/hooks/use-photographer-data", () => ({ usePhotographerEventDetail: () => ({ detail: { ownedByMe: true }, isMissing: false }) }));
