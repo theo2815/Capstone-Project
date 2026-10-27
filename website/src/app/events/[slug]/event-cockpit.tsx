@@ -101,16 +101,18 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     if (!isFaceMode) setFaceSearchResult(null);
   }, [isFaceMode]);
 
+  // Face search is one-shot local state: every match arrives in one response
+  // (up to 200). Show them a page at a time like the bib gallery, so the first
+  // paint loads one page of images, not all of them (FS-7).
+  const [faceShown, setFaceShown] = useState<number>(PAGE_SIZE.PHOTO_INITIAL);
+  const faceMatches = faceSearchResult?.items ?? [];
   const visiblePhotos = isFaceMode
-    ? faceSearchResult?.items ?? []
+    ? faceMatches.slice(0, faceShown)
     : bibPhotos.photos;
-  // Face search is one-shot local state (Step 2 turns it into a real infinite
-  // query); render all its matches at once and read `total` from what's loaded
-  // so Load-more shows the terminal kicker instead of a dead button.
-  const visibleTotal = isFaceMode
-    ? faceSearchResult?.items.length ?? 0
-    : bibPhotos.total;
-  const onLoadMore = isFaceMode ? () => {} : bibPhotos.fetchNextPage;
+  const visibleTotal = isFaceMode ? faceMatches.length : bibPhotos.total;
+  const onLoadMore = isFaceMode
+    ? () => setFaceShown((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
+    : bibPhotos.fetchNextPage;
   const isLoadingMore = isFaceMode ? false : bibPhotos.isFetchingNextPage;
 
   const submitBib = (raw: string) => {
@@ -141,6 +143,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const handleFaceSearchSuccess = useCallback(
     (result: EventPhotosResult) => {
       setFaceSearchResult(result);
+      setFaceShown(PAGE_SIZE.PHOTO_INITIAL);
       setUrlBatch({ face: "1", browse: "1", bib: null, mine: null });
     },
     [setUrlBatch],
@@ -211,6 +214,8 @@ export function EventCockpit({ event, initialPhotos }: Props) {
       <BrowseMode
         event={event}
         photos={visiblePhotos}
+        // Buy all keeps every face match, not just the page on screen.
+        buyAllPhotos={isFaceMode ? faceMatches : undefined}
         total={visibleTotal}
         onLoadMore={onLoadMore}
         isLoadingMore={isLoadingMore}
@@ -623,6 +628,7 @@ function AboutStrip({ event }: { event: EventDetail }) {
 function BrowseMode({
   event,
   photos,
+  buyAllPhotos,
   total,
   onLoadMore,
   isLoadingMore,
@@ -641,6 +647,7 @@ function BrowseMode({
 }: {
   event: EventDetail;
   photos: MockPhoto[];
+  buyAllPhotos?: MockPhoto[];
   total: number;
   onLoadMore: () => void;
   isLoadingMore: boolean;
@@ -682,9 +689,10 @@ function BrowseMode({
     }
   }, [visible.length, previewIndex]);
 
-  const totalPrice = visible.reduce((sum, p) => sum + p.price, 0);
+  const buyAll = buyAllPhotos ?? visible;
+  const totalPrice = buyAll.reduce((sum, p) => sum + p.price, 0);
   const showBuyAll =
-    isAnyFilter && visible.length > 0 && event.pricingMode !== "free";
+    isAnyFilter && buyAll.length > 0 && event.pricingMode !== "free";
   const previewPhoto =
     previewIndex !== null ? visible[previewIndex] ?? null : null;
 
@@ -929,7 +937,7 @@ function BrowseMode({
         )}
       </div>
 
-      {showBuyAll && <BuyAllBar event={event} photos={visible} total={totalPrice} />}
+      {showBuyAll && <BuyAllBar event={event} photos={buyAll} total={totalPrice} />}
 
       {searchOpen && (
         <FindPhotosModal
