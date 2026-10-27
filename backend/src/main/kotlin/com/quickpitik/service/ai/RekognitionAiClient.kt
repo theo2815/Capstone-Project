@@ -13,6 +13,7 @@ import com.quickpitik.dto.ai.FaceErasureResult
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.image.ExifOrientation
 import com.quickpitik.service.image.SubsampledDecode
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Primary
@@ -58,6 +59,7 @@ import kotlin.math.roundToInt
 class RekognitionAiClient(
     private val rekognition: RekognitionClient,
     private val props: RekognitionProperties,
+    private val meterRegistry: MeterRegistry,
 ) : FaceBibProvider {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -65,6 +67,10 @@ class RekognitionAiClient(
     // hot enroll path. Correctness never depends on it: indexFaces re-creates on
     // ResourceNotFound, so a stale/missing entry self-heals.
     private val knownCollections = ConcurrentHashMap.newKeySet<String>()
+
+    // Byte-identical to what imageOf() builds: an already-shrunk image is under
+    // INLINE_SAFE_BYTES, so the second toInlineBytes passes it through untouched.
+    override fun prepareInlineImage(file: ByteArray): ByteArray = toInlineBytes(file)
 
     override fun facesDetect(file: ByteArray, contentType: String, filename: String): FacesDetectResult =
         guarded("detectFaces") {
@@ -322,12 +328,21 @@ class RekognitionAiClient(
             log.warn("Rekognition {} rejected request: {}", op, ex.awsErrorDetails()?.errorMessage() ?: ex.message)
             throw AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, null, "AWS Rekognition $op rejected the request", ex)
         } catch (ex: RekognitionException) {
-            log.warn("Rekognition {} failed: {}", op, ex.awsErrorDetails()?.errorMessage() ?: ex.message)
+            // The code (ThrottlingException, ProvisionedThroughputExceededException, …)
+            // is what tells a throttled burst from a random AWS fault.
+            val code = ex.awsErrorDetails()?.errorCode() ?: ex.javaClass.simpleName
+            countError(op, code)
+            log.warn("Rekognition {} failed ({}): {}", op, code, ex.awsErrorDetails()?.errorMessage() ?: ex.message)
             throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "AWS Rekognition $op failed", ex)
         } catch (ex: Exception) {
-            log.warn("Rekognition {} error: {}", op, ex.message)
+            val code = ex.javaClass.simpleName
+            countError(op, code)
+            log.warn("Rekognition {} error ({}): {}", op, code, ex.message)
             throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "AWS Rekognition $op error", ex)
         }
+
+    private fun countError(op: String, code: String) =
+        meterRegistry.counter("qp.ai.error", "op", op, "code", code).increment()
 
     private companion object {
         // Leaves margin under Rekognition's 5 MB inline cap before we downscale.

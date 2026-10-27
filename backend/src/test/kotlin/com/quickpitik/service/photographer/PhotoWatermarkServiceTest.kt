@@ -41,6 +41,41 @@ import kotlin.test.assertTrue
 // failures leave the budget intact for the reconcile sweep.
 class PhotoWatermarkServiceTest {
 
+    // FS-2 (R5-1): the two silent returns now say why the photo waits for the sweep.
+    @Test fun `a refused work claim is logged, not silent`() {
+        stubHappyPath()
+        // doReturn: re-stubbing with when() would run setUp's answer on null matchers.
+        Mockito.doReturn(null).`when`(workFence).claim(anyArg(), anyArg())
+
+        val warnings = warnings { service().process(photoId) }
+
+        assertTrue(warnings.any { it.contains(photoId.toString()) && it.contains("claim") }, warnings.toString())
+        Mockito.verify(storageService, Mockito.never()).put(anyArg(), anyArg(), anyArg())
+    }
+
+    @Test fun `a claim that ended before the preview upload is logged, not silent`() {
+        stubHappyPath()
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(false)
+
+        val warnings = warnings { service().process(photoId) }
+
+        assertTrue(warnings.any { it.contains(photoId.toString()) && it.contains("claim") }, warnings.toString())
+        Mockito.verify(storageService, Mockito.never()).put(anyArg(), anyArg(), anyArg())
+    }
+
+    private fun warnings(block: () -> Unit): List<String> {
+        val logger = org.slf4j.LoggerFactory.getLogger(PhotoWatermarkService::class.java) as ch.qos.logback.classic.Logger
+        val appender = ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+        return appender.list.filter { it.level == ch.qos.logback.classic.Level.WARN }.map { it.formattedMessage }
+    }
+
     @Test fun `review refuses a new watermark write`() {
         stubHappyPath()
         Mockito.`when`(photoRepository.findById(photoId)).thenReturn(Optional.of(photo().apply {

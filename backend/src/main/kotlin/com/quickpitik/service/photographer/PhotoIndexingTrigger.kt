@@ -4,6 +4,7 @@ import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.IndexingMode
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.repository.PhotoRepository
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Async
@@ -24,6 +25,7 @@ class PhotoIndexingTrigger(
     private val indexingService: PhotoIndexingService,
     private val photoRepository: PhotoRepository,
     private val aiApiProperties: AiApiProperties,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -57,6 +59,8 @@ class PhotoIndexingTrigger(
             pageable = PageRequest.of(0, RECONCILE_BATCH_SIZE),
         )
         if (backlog.isEmpty()) return
+        // Each one is a photo the hot path missed: runners wait for the sweep.
+        meterRegistry.counter("qp.indexing.reconciled").increment(backlog.size.toDouble())
         log.info("Reconciling {} stuck photo(s) for indexing", backlog.size)
         backlog.forEach { photo ->
             try {

@@ -77,7 +77,7 @@ class PhotoWorkSdkRetryTest {
             .endpointOverride(URI("http://127.0.0.1:${server.address.port}"))
             .overrideConfiguration { it.apiCallTimeout(Duration.ofSeconds(3)).apiCallAttemptTimeout(Duration.ofMillis(100)) }
             .build().use { sdk ->
-                val client = RekognitionAiClient(sdk, RekognitionProperties())
+                val client = RekognitionAiClient(sdk, RekognitionProperties(), io.micrometer.core.instrument.simple.SimpleMeterRegistry())
                 val outcome = runCatching { client.facesEnroll(byteArrayOf(1), "image/jpeg", "photo.jpg", "photo", null, UUID.randomUUID()) }
                 assertAll({ assertIs<AiApiException>(outcome.exceptionOrNull()) }, { assertEquals(1, requests.get()) })
                 assertEquals(0, client.facesDetect(byteArrayOf(1), "image/jpeg", "photo.jpg").faces.size)

@@ -1,6 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.repository.PhotoRepository
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.PageRequest
@@ -23,6 +24,7 @@ class PhotoWatermarkTrigger(
     private val watermarkService: PhotoWatermarkService,
     private val photoRepository: PhotoRepository,
     @Value("\${app.watermark.max-attempts:5}") private val maxAttempts: Int,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -48,6 +50,8 @@ class PhotoWatermarkTrigger(
             pageable = PageRequest.of(0, RECONCILE_BATCH_SIZE),
         )
         if (backlog.isEmpty()) return
+        // Each one is a photo the hot path missed: runners wait for the sweep.
+        meterRegistry.counter("qp.watermark.reconciled").increment(backlog.size.toDouble())
         log.info("Reconciling {} stuck photo(s) for watermarking", backlog.size)
         backlog.forEach { photo ->
             try {
