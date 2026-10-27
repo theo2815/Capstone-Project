@@ -116,7 +116,10 @@ class PhotoWatermarkService(
             portraitY = settings.watermarkPosPortraitY,
         )
 
-        val claim = workFence.claim(photoId, PhotoWorkKind.WATERMARK) ?: return
+        val claim = workFence.claim(photoId, PhotoWorkKind.WATERMARK) ?: run {
+            log.warn("Watermark {}: work claim not granted (another worker holds it); left for the sweep", photoId)
+            return
+        }
         var unresolvedWrite = false
         try {
             val original: ByteArray
@@ -159,7 +162,10 @@ class PhotoWatermarkService(
 
             val watermarkKey = "events/${photo.eventId}/photos/${photo.id}/watermark.jpg"
             try {
-                if (!workFence.isCurrent(claim)) return
+                if (!workFence.isCurrent(claim)) {
+                    log.warn("Watermark {}: work claim ended before the preview upload; nothing written, left for the sweep", photoId)
+                    return
+                }
                 unresolvedWrite = true
                 storageService.put(watermarkKey, marked.jpeg, "image/jpeg")
                 unresolvedWrite = false

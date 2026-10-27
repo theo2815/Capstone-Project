@@ -1,15 +1,23 @@
 package com.quickpitik.service.ai
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.quickpitik.config.RekognitionProperties
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.never
 import org.mockito.Mockito.`when`
@@ -37,6 +45,9 @@ import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageReque
 import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageResponse
 import software.amazon.awssdk.services.rekognition.model.TextDetection
 import software.amazon.awssdk.services.rekognition.model.TextTypes
+import software.amazon.awssdk.services.rekognition.model.ThrottlingException
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails
+import org.slf4j.LoggerFactory
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -54,11 +65,72 @@ class RekognitionAiClientTest {
     private val eventId: UUID = UUID.randomUUID()
     private val photoId: UUID = UUID.randomUUID()
     private val bytes = ByteArray(1024) { 1 }
+    private lateinit var registry: SimpleMeterRegistry
 
     @BeforeEach
     fun setup() {
         rek = mock(RekognitionClient::class.java)
-        client = RekognitionAiClient(rek, props)
+        registry = SimpleMeterRegistry()
+        client = RekognitionAiClient(rek, props, registry)
+    }
+
+    // FS-2 (R3): the indexer prepares the inline image once and hands the same
+    // array to enroll and bib. That is only safe if AWS receives exactly the
+    // bytes each call would have built from the original itself.
+    @Test
+    fun `an image prepared once is sent byte for byte as each call would have built it`() {
+        `when`(rek.indexFaces(any(IndexFacesRequest::class.java))).thenReturn(
+            IndexFacesResponse.builder().faceRecords(FaceRecord.builder().face(Face.builder().faceId("f1").build()).build()).build(),
+        )
+        `when`(rek.detectText(any(DetectTextRequest::class.java))).thenReturn(DetectTextResponse.builder().build())
+        val original = noisyJpeg(2400, 1800)
+        assertTrue(original.size > 4_500_000, "fixture must exceed the inline-safe byte limit")
+
+        val prepared = client.prepareInlineImage(original)
+        assertTrue(prepared.size <= 4_500_000, "prepared image must pass straight through on its second wrap")
+        client.facesEnroll(original, "image/jpeg", "$photoId.jpg", photoId.toString(), null, eventId)
+        client.facesEnroll(prepared, "image/jpeg", "$photoId.jpg", photoId.toString(), null, eventId)
+        client.bibsRecognize(original, "image/jpeg", "$photoId.jpg")
+        client.bibsRecognize(prepared, "image/jpeg", "$photoId.jpg")
+
+        val enrolls = ArgumentCaptor.forClass(IndexFacesRequest::class.java)
+        verify(rek, times(2)).indexFaces(enrolls.capture())
+        val texts = ArgumentCaptor.forClass(DetectTextRequest::class.java)
+        verify(rek, times(2)).detectText(texts.capture())
+        assertArrayEquals(enrolls.allValues[0].image().bytes().asByteArray(), enrolls.allValues[1].image().bytes().asByteArray())
+        assertArrayEquals(texts.allValues[0].image().bytes().asByteArray(), texts.allValues[1].image().bytes().asByteArray())
+    }
+
+    @Test
+    fun `a small image is prepared as the very same array`() {
+        assertSame(bytes, client.prepareInlineImage(bytes))
+    }
+
+    // FS-2 (R5-1): a throttled or failed AWS call must say which, so late
+    // photos can be traced to their cause.
+    @Test
+    fun `a failed AWS call is counted and logged with its error code`() {
+        `when`(rek.detectText(any(DetectTextRequest::class.java))).thenThrow(
+            ThrottlingException.builder()
+                .awsErrorDetails(AwsErrorDetails.builder().errorCode("ThrottlingException").errorMessage("Rate exceeded").build())
+                .statusCode(400).build(),
+        )
+        `when`(rek.detectFaces(any(DetectFacesRequest::class.java))).thenThrow(IllegalStateException("socket closed"))
+        val logger = LoggerFactory.getLogger(RekognitionAiClient::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            assertThrows<AiApiException> { client.bibsRecognize(bytes, "image/jpeg", "b.jpg") }
+            assertThrows<AiApiException> { client.facesDetect(bytes, "image/jpeg", "f.jpg") }
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+        assertEquals(1.0, registry.counter("qp.ai.error", "op", "detectText", "code", "ThrottlingException").count())
+        assertEquals(1.0, registry.counter("qp.ai.error", "op", "detectFaces", "code", "IllegalStateException").count())
+        val warnings = appender.list.filter { it.level == Level.WARN }.map { it.formattedMessage }
+        assertTrue(warnings.any { it.contains("detectText") && it.contains("ThrottlingException") }, warnings.toString())
+        assertTrue(warnings.any { it.contains("detectFaces") && it.contains("IllegalStateException") }, warnings.toString())
     }
 
     @Test

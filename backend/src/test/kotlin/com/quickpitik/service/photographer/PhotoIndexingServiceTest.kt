@@ -1,5 +1,9 @@
 package com.quickpitik.service.photographer
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.AiProperties
 import com.quickpitik.config.AiProvider
@@ -18,6 +22,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.transaction.PlatformTransactionManager
@@ -126,6 +131,8 @@ class PhotoIndexingServiceTest {
                 java.time.Instant.now().plusSeconds(60), it.getArgument(1))
         }
         Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(true)
+        // A mock skips the interface's pass-through default; restore it.
+        Mockito.`when`(aiClient.prepareInlineImage(anyArg())).thenAnswer { it.getArgument<ByteArray>(0) }
         faceErasure = com.quickpitik.service.photos.PhotoFaceErasureService(photoRepo, aiClient,
             org.springframework.beans.factory.support.StaticListableBeanFactory().getBeanProvider(com.quickpitik.service.ai.RekognitionAiClient::class.java),
             props(), workFence, com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), template(), java.time.Clock.systemUTC())
@@ -180,6 +187,77 @@ class PhotoIndexingServiceTest {
 
         Mockito.verify(aiClient, Mockito.never()).facesEnroll(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
         Mockito.verify(workFence).finish(anyArg())
+    }
+
+    // ─── FS-2: one prepared image; silent returns now speak ──────────────
+
+    @Test
+    fun `the image is prepared once and both AWS calls get that prepared copy`() {
+        val p = photo()
+        expectPhoto(p)
+        val prepared = byteArrayOf(9, 9, 9)
+        Mockito.`when`(aiClient.prepareInlineImage(jpegBytes)).thenReturn(prepared)
+        Mockito.`when`(aiClient.facesEnroll(prepared, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId))
+            .thenReturn(FacesEnrollResult(person_id = "person-1"))
+        Mockito.`when`(aiClient.bibsRecognize(prepared, "image/jpeg", "${p.id}.jpg"))
+            .thenReturn(BibsRecognizeResult(listOf(BibDetection("1234", 0.92))))
+
+        service.index(p.id)
+
+        Mockito.verify(aiClient, Mockito.times(1)).prepareInlineImage(anyArg())
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        assertEquals(listOf("person-1"), p.facePersons.map { it.aiPersonId })
+    }
+
+    @Test
+    fun `a failed preparation falls back to the original bytes`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(aiClient.prepareInlineImage(jpegBytes)).thenThrow(IllegalStateException("decoder blew up"))
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+
+        service.index(p.id)
+
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        Mockito.verify(workFence).finish(anyArg())
+    }
+
+    @Test
+    fun `a refused work claim is logged, not silent`() {
+        val p = photo()
+        expectPhoto(p)
+        // doReturn: re-stubbing with when() would run setUp's answer on null matchers.
+        Mockito.doReturn(null).`when`(workFence).claim(anyArg(), anyArg())
+
+        val warnings = warnings { service.index(p.id) }
+
+        assertTrue(warnings.any { it.contains(p.id.toString()) && it.contains("claim") }, warnings.toString())
+        Mockito.verifyNoInteractions(storage)
+    }
+
+    @Test
+    fun `a claim that ended before enrollment is logged, not silent`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(false)
+
+        val warnings = warnings { service.index(p.id) }
+
+        assertTrue(warnings.any { it.contains(p.id.toString()) && it.contains("claim") }, warnings.toString())
+    }
+
+    private fun warnings(block: () -> Unit): List<String> {
+        val logger = LoggerFactory.getLogger(PhotoIndexingService::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+        return appender.list.filter { it.level == Level.WARN }.map { it.formattedMessage }
     }
 
     private fun stubEnrollReturns(p: Photo, personId: String) {
