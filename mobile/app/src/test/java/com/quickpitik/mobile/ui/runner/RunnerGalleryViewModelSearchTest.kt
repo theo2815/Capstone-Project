@@ -62,6 +62,7 @@ class RunnerGalleryViewModelSearchTest {
     @Volatile private var alertToggle: MockResponse = ok("""{"registered":true,"selfieId":"s1"}""")
     @Volatile private var failNextPage = false
     @Volatile private var holdNextPage: CountDownLatch? = null
+    @Volatile private var holdSelfies: CountDownLatch? = null
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -80,7 +81,10 @@ class RunnerGalleryViewModelSearchTest {
                     path.endsWith("/photos") -> page(r)
                     path.endsWith("/photo-alert") && r.method == "GET" -> ok("""{"registered":false,"selfieId":null}""")
                     path.endsWith("/photo-alert") -> alertToggle
-                    path == "/api/v1/me/selfies" && r.method == "GET" -> ok(selfies)
+                    path == "/api/v1/me/selfies" && r.method == "GET" -> {
+                        holdSelfies?.let { latch -> holdSelfies = null; latch.await(5, TimeUnit.SECONDS) }
+                        ok(selfies)
+                    }
                     path == "/api/v1/me/selfies" -> selfieUpload
                     else -> MockResponse().setResponseCode(404) // event detail is best-effort
                 }
@@ -90,6 +94,7 @@ class RunnerGalleryViewModelSearchTest {
 
     @After fun tearDown() {
         holdNextPage?.countDown()
+        holdSelfies?.countDown()
         SessionManager.getInstance(application).clearSession()
     }
 
@@ -328,6 +333,40 @@ class RunnerGalleryViewModelSearchTest {
         awaitUntil { shrinks.get() == 3 && selfieUploads() == 3 }
         assertTrue(lastUpload().body.contains("SHRUNK-16"))
         assertTrue(lastUpload().body.contains("Content-Type: image/jpeg"))
+    }
+
+    @Test fun `a face search stays pending until the screen shows it, and leaving the event drops it`() {
+        val vm = RunnerGalleryViewModel(application)
+        vm.selectEvent(event("ev"))
+        vm.awaitPhotos("p1", "p2")
+        assertFalse(vm.faceSearchPending.value) // browsing is not a face search
+
+        vm.searchWithAllSelfies()
+        assertTrue(vm.faceSearchPending.value)
+        vm.awaitPhotos("f1", "f2")
+        assertTrue(vm.faceSearchPending.value) // a screen rebuilt after a rotation still sees it
+        vm.consumeFaceSearch()
+        assertFalse(vm.faceSearchPending.value)
+
+        vm.searchBySelfieId("NO_FACES")
+        vm.awaitError()
+        assertTrue(vm.faceSearchPending.value) // the error waits for the panel too
+        vm.consumeFaceSearch()
+
+        val held = CountDownLatch(1).also { holdSelfies = it }
+        vm.searchByStoredSelfie() // empty cache: re-fetch the library first
+        assertTrue(vm.faceSearchPending.value)
+        // No stale result may sit beside the flag, or the screen would show it as the match.
+        assertEquals(PhotosSearchState.Loading, vm.searchState.value)
+        held.countDown()
+        vm.selectEvent(event("ev2")) // another event's first page is not a face result
+        assertFalse(vm.faceSearchPending.value)
+        vm.awaitPhotos("p1", "p2")
+
+        vm.searchBySelfieUri(picked("a.jpg", 16))
+        assertTrue(vm.faceSearchPending.value)
+        vm.clearSelectedEvent()
+        assertFalse(vm.faceSearchPending.value)
     }
 
     @Test fun `a refused photo-alert switch snaps back with the reason, or asks for a selfie when it vanished`() {

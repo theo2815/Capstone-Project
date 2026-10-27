@@ -89,6 +89,16 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
     private val _isFiltered = MutableStateFlow(false)
     val isFiltered: StateFlow<Boolean> = _isFiltered
 
+    // A face search the runner started that the screen hasn't shown yet. Held
+    // here, not in the screen, so a rotation mid-search still lands its result.
+    private val _faceSearchPending = MutableStateFlow(false)
+    val faceSearchPending: StateFlow<Boolean> = _faceSearchPending
+
+    /** The screen has shown the face search's result: the wall, or the panel's error. */
+    fun consumeFaceSearch() {
+        _faceSearchPending.value = false
+    }
+
     private val _photoAlert = MutableStateFlow<PhotoAlertUiState>(PhotoAlertUiState.Loading)
     val photoAlert: StateFlow<PhotoAlertUiState> = _photoAlert
 
@@ -292,6 +302,7 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
     fun selectEvent(event: EventDto) {
         _activeEvent.value = event
         _isFiltered.value = false
+        _faceSearchPending.value = false
         // Editorial detail is best-effort and non-blocking — the cockpit
         // renders from the list DTO while this fills the AboutStrip in.
         _eventDetail.value = null
@@ -326,6 +337,7 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
         _activeEvent.value = null
         _searchState.value = PhotosSearchState.Idle
         _isFiltered.value = false
+        _faceSearchPending.value = false
         _eventDetail.value = null
         // As in selectEvent: the lifecycle effect closes the socket when the
         // active event id changes. Here we only drop the derived state.
@@ -511,6 +523,7 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
     // path uses. The save and the fallback search both send that one file.
     fun searchBySelfieUri(uri: Uri) {
         _activeEvent.value ?: return
+        _faceSearchPending.value = true
         isFaceSearchMode = true
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
@@ -626,6 +639,7 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
 
     private fun searchWithStoredSelfies(request: SearchByFaceJsonRequest) {
         val event = _activeEvent.value ?: return
+        _faceSearchPending.value = true
         _isFiltered.value = true
         isFaceSearchMode = true
         searchJob?.cancel()
@@ -660,6 +674,7 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
     }
 
     fun searchByStoredSelfie() {
+        _faceSearchPending.value = true
         // A library exists: match with all of it (2026-09-02), not just the
         // primary — each saved selfie is another angle of the same runner.
         if (_selfies.value.isNotEmpty()) {
@@ -676,6 +691,9 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
             return
         }
         searchJob = viewModelScope.launch {
+            // The re-fetch is part of the search: never leave an old result
+            // beside the pending flag for the screen to mistake for the match.
+            _searchState.value = PhotosSearchState.Loading
             val primary = try {
                 val response = RetrofitClient.apiService.getSelfies("Bearer $token")
                 if (response.success && response.data != null) _selfies.value = response.data
