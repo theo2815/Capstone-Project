@@ -23,6 +23,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
@@ -45,6 +46,8 @@ class CartViewModelTest {
     @Volatile private var status: MockResponse = ok(statusJson("PENDING"))
     @Volatile private var cancel: MockResponse = ok(statusJson("EXPIRED"))
     @Volatile private var verified: MockResponse? = null // answer for ?verify=true, when it differs
+    @Volatile private var holdNextStatus: CountDownLatch? = null // keeps one status read in flight
+    private val QR_POLL_MS = 2_500L // CartViewModel.QR_STATUS_POLL_MS (private there)
     private val fullPaths = CopyOnWriteArrayList<String>() // with the query string
 
     @Before fun setUp() {
@@ -64,8 +67,10 @@ class CartViewModelTest {
                     path == "/api/v1/orders" -> order
                     path == "/api/v1/me/orders" -> orders
                     path == "/api/v1/me/orders/o1" -> detail
-                    path == "/api/v1/me/orders/o1/status" || path == "/api/v1/orders/o1/status" ->
+                    path == "/api/v1/me/orders/o1/status" || path == "/api/v1/orders/o1/status" -> {
+                        holdNextStatus?.let { latch -> holdNextStatus = null; latch.await(5, TimeUnit.SECONDS) }
                         verified?.takeIf { request.path.orEmpty().contains("verify=true") } ?: status
+                    }
                     path == "/api/v1/me/orders/o1/cancel" || path == "/api/v1/orders/o1/cancel" -> cancel
                     path == "/api/v1/me/disputes/d1/withdraw" -> ok(DISPUTE)
                     else -> MockResponse().setResponseCode(404)
@@ -74,7 +79,10 @@ class CartViewModelTest {
         }
     }
 
-    @After fun tearDown() = SessionManager.getInstance(application).clearSession()
+    @After fun tearDown() {
+        holdNextStatus?.countDown()
+        SessionManager.getInstance(application).clearSession()
+    }
 
     // Prices 12.50 off per photo in the request; "BAD" is refused the way the backend would.
     private fun preview(body: String): MockResponse {
@@ -144,6 +152,15 @@ class CartViewModelTest {
 
     private fun statusCalls() = fullPaths.filter { it.contains("/o1/status") }
 
+    private fun awaitAdvancingPolls(vm: CartViewModel): CheckoutState {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (vm.checkoutState.value !is CheckoutState.Success && System.currentTimeMillis() < deadline) {
+            main.scheduler.advanceTimeBy(QR_POLL_MS)
+            Thread.sleep(20)
+        }
+        return vm.checkoutState.value
+    }
+
     @Test fun `a pending order shows its QR and the amount the whole checkout charges`() {
         val vm = newVm()
         vm.checkout(null)
@@ -168,12 +185,19 @@ class CartViewModelTest {
 
     @Test fun `I've paid asks PayMongo, and a paid order goes to the receipt with the cart cleared`() {
         verified = ok(statusJson("PAID"))
+        val held = CountDownLatch(1).also { holdNextStatus = it }
         val vm = newVm()
         vm.checkout(null)
         awaitingQr(vm)
+        while (statusCalls().isEmpty()) Thread.sleep(5)
 
+        // The tap lands while the watcher's first plain read is still out. Like the
+        // website, the app drops that overlapping check and the next 2.5 s poll asks
+        // PayMongo instead. Test time only moves when advanced, so move it a poll at
+        // a time (this used to be a race the test lost when the machine was busy).
         vm.claimQrPaid()
-        val success = vm.checkoutState.awaitFirst { it is CheckoutState.Success } as CheckoutState.Success
+        held.countDown()
+        val success = awaitAdvancingPolls(vm) as CheckoutState.Success
         assertEquals("PAID", success.order.status)
         assertTrue(statusCalls().toString(), statusCalls().any { it.contains("verify=true") })
         assertTrue(vm.cartItems.awaitFirst { it.isEmpty() }.isEmpty())
