@@ -30,6 +30,7 @@ import java.time.LocalDate
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The event cockpit's search wall: bib search and paging over a frozen
@@ -135,6 +136,7 @@ class RunnerGalleryViewModelSearchTest {
     private fun pages() = seen.filter { it.path.endsWith("/photos") }
     private fun faceSearches() = seen.filter { it.path.endsWith("/photos/search-by-face") }
     private fun selfieUploads() = seen.count { it.method == "POST" && it.path == "/api/v1/me/selfies" }
+    private fun lastUpload() = seen.last { it.method == "POST" && it.path == "/api/v1/me/selfies" }
     private fun ids(state: PhotosSearchState) = (state as PhotosSearchState.Success).photos.map { it.id }
 
     private fun RunnerGalleryViewModel.awaitPhotos(vararg ids: String) = searchState.awaitFirst {
@@ -280,6 +282,7 @@ class RunnerGalleryViewModelSearchTest {
         vm.searchBySelfieUri(picked("a.jpg", 16))
         vm.awaitPhotos("f1", "f2")
         assertEquals("Saved to your selfie library.", vm.selfieSaveNotice.value)
+        assertTrue(lastUpload().body.contains(" ".repeat(16))) // undecodable: sent exactly as picked
         assertTrue(faceSearches().single().body.contains(""""allSelfies":true"""))
 
         selfieUpload = MockResponse().setResponseCode(422)
@@ -298,6 +301,33 @@ class RunnerGalleryViewModelSearchTest {
         assertNull(vm.selfieSaveNotice.value)
         assertEquals(uploads, selfieUploads())
         assertTrue(faceSearches().last().type!!.startsWith("multipart/"))
+    }
+
+    @Test fun `a fresh selfie is shrunk once per pick, and the shrunk bytes are what every selfie upload sends`() {
+        val shrinks = AtomicInteger()
+        val vm = RunnerGalleryViewModel(application) { shrinks.incrementAndGet(); "SHRUNK-${it.size}".toByteArray() }
+        vm.selectEvent(event("ev"))
+        vm.awaitPhotos("p1", "p2")
+
+        vm.searchBySelfieUri(picked("a.jpg", 16))
+        vm.awaitPhotos("f1", "f2")
+        assertTrue(lastUpload().body.contains("SHRUNK-16"))
+
+        selfieUpload = MockResponse().setResponseCode(422)
+            .setBody("""{"success":false,"errors":[{"code":"SELFIE_REJECTED","message":"No face found"}]}""")
+        vm.searchBySelfieUri(picked("b.jpg", 16))
+        awaitUntil { faceSearches().size == 2 }
+        vm.awaitPhotos("f1", "f2")
+        assertTrue(lastUpload().body.contains("SHRUNK-16"))
+        assertTrue(faceSearches().last().body.contains("SHRUNK-16")) // the fallback reuses it
+        assertEquals(2, shrinks.get())
+
+        // "Add a selfie" on the photo-alert card, as a JPEG whatever was picked.
+        selfieUpload = ok(selfie("s9", primary = false))
+        vm.addSelfieToLibrary(picked("c.png", 16))
+        awaitUntil { shrinks.get() == 3 && selfieUploads() == 3 }
+        assertTrue(lastUpload().body.contains("SHRUNK-16"))
+        assertTrue(lastUpload().body.contains("Content-Type: image/jpeg"))
     }
 
     @Test fun `a refused photo-alert switch snaps back with the reason, or asks for a selfie when it vanished`() {

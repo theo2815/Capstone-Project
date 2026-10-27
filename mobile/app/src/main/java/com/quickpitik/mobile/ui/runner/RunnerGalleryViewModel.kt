@@ -18,6 +18,7 @@ import com.quickpitik.mobile.data.remote.SearchByFaceJsonRequest
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.data.remote.WsFrameEnvelope
 import com.quickpitik.mobile.data.remote.WsState
+import com.quickpitik.mobile.data.shrinkSelfie
 import com.quickpitik.mobile.ui.common.EventState
 import com.quickpitik.mobile.ui.common.deriveEventState
 import kotlinx.coroutines.CancellationException
@@ -72,7 +73,10 @@ sealed class PhotoAlertUiState {
     ) : PhotoAlertUiState()
 }
 
-class RunnerGalleryViewModel(application: Application) : AndroidViewModel(application) {
+class RunnerGalleryViewModel @JvmOverloads constructor(
+    application: Application,
+    private val shrink: (ByteArray) -> ByteArray = ::shrinkSelfie,
+) : AndroidViewModel(application) {
     private val _eventsState = MutableStateFlow<RunnerEventsState>(RunnerEventsState.Loading)
     val eventsState: StateFlow<RunnerEventsState> = _eventsState
 
@@ -502,8 +506,9 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     }
 
     // Real selfie capture/upload path: read the bytes the camera (or gallery
-    // picker) handed us via the content URI, spool them to a cache file, then
-    // run the same multipart face-search the stored-selfie path uses.
+    // picker) handed us via the content URI, shrink them once, spool them to a
+    // cache file, then run the same multipart face-search the stored-selfie
+    // path uses. The save and the fallback search both send that one file.
     fun searchBySelfieUri(uri: Uri) {
         _activeEvent.value ?: return
         isFaceSearchMode = true
@@ -522,7 +527,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     val copied = resolver.openInputStream(uri)?.use { input ->
                         val bytes = input.readAtMost(MAX_UPLOAD_BYTES + 1)
                         if (bytes.size > MAX_UPLOAD_BYTES) 0L else {
-                            target.outputStream().use { it.write(bytes) }
+                            target.outputStream().use { it.write(shrink(bytes)) }
                             bytes.size.toLong()
                         }
                     } ?: 0L
@@ -587,15 +592,17 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
             _photoAlert.value = PhotoAlertUiState.NeedsSelfie(uploading = true)
             val resolver = getApplication<Application>().contentResolver
             val result = runCatching {
-                val bytes = withContext(Dispatchers.IO) {
+                val picked = withContext(Dispatchers.IO) {
                     resolver.openInputStream(uri)?.use { it.readAtMost(MAX_UPLOAD_BYTES + 1) }
                 } ?: error("Couldn't read that photo.")
-                if (bytes.size > MAX_UPLOAD_BYTES) error("Selfies must be 8 MB or smaller.")
+                if (picked.size > MAX_UPLOAD_BYTES) error("Selfies must be 8 MB or smaller.")
+                val bytes = withContext(Dispatchers.IO) { shrink(picked) }
                 profileRepository.uploadSelfie(
                     token = token,
                     fileBytes = bytes,
                     filename = "selfie_${System.currentTimeMillis()}.jpg",
-                    contentType = resolver.getType(uri) ?: "image/jpeg",
+                    // Only bytes the phone couldn't decode keep their picked type.
+                    contentType = if (bytes === picked) resolver.getType(uri) ?: "image/jpeg" else "image/jpeg",
                 ).getOrThrow()
             }
             result.onSuccess { loadGalleryMetadata(photoAlertSlug) }
