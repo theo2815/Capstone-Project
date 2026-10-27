@@ -130,8 +130,11 @@ ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.durati
 `qp.upload.direct.pending.{count,bytes,oldest.age}`,
 `qp.indexing.outcome{outcome,provider}`, `qp.ai.call{op}`, `qp.ratelimit.denied{policy}`,
 `qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28),
-`qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}` —
-plus Hikari/JVM/HTTP-server metrics for free.
+`qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}`,
+face search (2026-10-27): `qp.search.request{mode=oneshot|stored|library|alert}`, `qp.search.selfie.fetch`,
+`qp.search.photo.query`, `qp.ai.error{op,code}`, `qp.indexing.reconciled`, `qp.watermark.reconciled` —
+plus Hikari/JVM/HTTP-server metrics for free. Each face search also logs one INFO line
+(`face search mode=… total_ms=… r2_ms=… aws_ms=… query_ms=… results=…`); metrics reset on every deploy.
 
 ### Wipe a test event
 
