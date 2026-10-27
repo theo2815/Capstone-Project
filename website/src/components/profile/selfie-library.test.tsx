@@ -2,11 +2,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearTokens, setTokens } from "@/lib/auth";
+import { shrinkSelfie } from "@/lib/image-utils";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
 import { SelfieLibrary } from "./selfie-library";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("@/lib/image-utils", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/image-utils")>()), shrinkSelfie: vi.fn() }));
 vi.mock("@/hooks/use-selfies", () => ({
   useSelfiesList: () => ({ selfies: [], isLoading: false, error: null }),
 }));
@@ -22,6 +24,7 @@ const rejected = () => new Response(JSON.stringify({ success: false, errors: [{ 
 
 let client: QueryClient;
 beforeEach(() => {
+  vi.mocked(shrinkSelfie).mockReset().mockImplementation(async (picked) => picked);
   useAuthStore.getState().startSession(runner);
   setTokens("access-a", "refresh-a");
   useToastStore.getState().clear();
@@ -49,7 +52,7 @@ it.each([
   vi.stubGlobal("fetch", fetch);
   const invalidate = vi.spyOn(client, "invalidateQueries");
   mountAndPick();
-  expect(fetch).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   expect((fetch.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer access-a" });
 
   act(() => {
@@ -69,6 +72,7 @@ it("does not continue a batch after fresh same-account authentication", async ()
   const fetch = vi.fn().mockReturnValueOnce(first).mockResolvedValue(ok());
   vi.stubGlobal("fetch", fetch);
   mountAndPick();
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
 
   act(() => { useAuthStore.getState().startSession(runner); setTokens("access-new", "refresh-new"); });
   await act(async () => { finish(ok()); await first; await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -87,4 +91,17 @@ it.each(["resolved", "rejected"])("continues a current-session batch after the f
   expect(((fetch.mock.calls[1][1] as RequestInit).body as FormData).get("file")).toMatchObject({ name: "second.png" });
   expect(useToastStore.getState().toasts[0].message).toContain(outcome === "resolved" ? "Added 2 selfies" : "Selfie added");
   if (outcome === "rejected") expect(screen.getByRole("alert")).toHaveTextContent("first.png: No face found.");
+});
+
+it("uploads each picked file shrunk", async () => {
+  const shrunk = files.map((f) => new File(["small"], `small-${f.name}`, { type: "image/jpeg" }));
+  vi.mocked(shrinkSelfie).mockImplementation(async (picked) => shrunk[files.indexOf(picked)]);
+  const fetch = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValueOnce(ok());
+  vi.stubGlobal("fetch", fetch);
+  mountAndPick();
+
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(shrinkSelfie).toHaveBeenCalledTimes(2);
+  expect(((fetch.mock.calls[0][1] as RequestInit).body as FormData).get("file")).toBe(shrunk[0]);
+  expect(((fetch.mock.calls[1][1] as RequestInit).body as FormData).get("file")).toBe(shrunk[1]);
 });

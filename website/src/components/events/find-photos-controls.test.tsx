@@ -10,6 +10,8 @@ import { FindPhotosModal } from "./find-photos-modal";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/events/race" }));
 vi.mock("@/hooks/use-selfies", () => ({ useSelfiesList: () => ({ selfies: [], isLoading: false, error: null }) }));
+// jsdom never decodes an <img>; pass the picked file through unchanged.
+vi.mock("@/lib/image-utils", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/image-utils")>()), shrinkSelfie: async (picked: File) => picked }));
 const runner = { id: "runner", role: "RUNNER" as const, name: "Runner", email: "a@example.test", createdAt: "2026-10-08" };
 const file = new File(["private selfie"], "selfie.png", { type: "image/png" });
 const found = { items: [], total: 0, offset: 0, limit: 200 };

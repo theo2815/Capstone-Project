@@ -3,10 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearTokens, setTokens } from "@/lib/auth";
 import type { EventPhotosResult } from "@/lib/api-photos";
+import { shrinkSelfie } from "@/lib/image-utils";
 import { useAuthStore } from "@/store/auth-store";
 import { SelfieSearchPanel } from "./bib-search-panels";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/events/race" }));
+vi.mock("@/lib/image-utils", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/image-utils")>()), shrinkSelfie: vi.fn() }));
 const library = vi.hoisted(() => ({ selfies: [] as { id: string; dataUrl: string; uploadedAt: string; isPrimary: boolean; qualityScore: number; qualityTestStatus: string }[] }));
 vi.mock("@/hooks/use-selfies", () => ({
   useSelfiesList: () => ({ selfies: library.selfies, isLoading: false, error: null }),
@@ -23,6 +25,7 @@ const found = () => new Response(JSON.stringify({ success: true, data: searchRes
 let client: QueryClient;
 beforeEach(() => {
   library.selfies = [];
+  vi.mocked(shrinkSelfie).mockReset().mockImplementation(async (picked) => picked);
   useAuthStore.getState().startSession(runner);
   setTokens("access-a", "refresh-a");
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -47,7 +50,7 @@ it.each(["resolved", "rejected"])("does not search under replacement credentials
   const onSearchSuccess = vi.fn();
   const invalidate = vi.spyOn(client, "invalidateQueries");
   mountAndPick(onSearchSuccess);
-  expect(fetch).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
 
   act(() => { useAuthStore.getState().startSession({ ...runner, id: "runner-b" }); setTokens("access-b", "refresh-b"); });
   await act(async () => { finish(outcome === "resolved" ? ok() : rejected()); await first; await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -75,6 +78,44 @@ it("falls back to file search after a current-session save rejection", async () 
   await waitFor(() => expect(onSearchSuccess).toHaveBeenCalledWith(searchResult));
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(screen.getByText(/Not saved to your library/)).toBeInTheDocument();
+});
+
+const shrunk = new File(["small"], "selfie.jpg", { type: "image/jpeg" });
+const sentFile = (fetch: ReturnType<typeof vi.fn>, call: number, field: string) =>
+  ((fetch.mock.calls[call][1] as RequestInit).body as FormData).get(field);
+
+it("saves the shrunk selfie, not the picked file", async () => {
+  vi.mocked(shrinkSelfie).mockResolvedValue(shrunk);
+  const fetch = vi.fn().mockResolvedValueOnce(ok()).mockResolvedValueOnce(found());
+  vi.stubGlobal("fetch", fetch);
+  const onSearchSuccess = vi.fn();
+  mountAndPick(onSearchSuccess);
+  await waitFor(() => expect(onSearchSuccess).toHaveBeenCalledWith(searchResult));
+  expect(shrinkSelfie).toHaveBeenCalledExactlyOnceWith(file);
+  expect(sentFile(fetch, 0, "file")).toBe(shrunk);
+});
+
+it("searches with the same shrunk selfie after a refused save, shrinking once", async () => {
+  vi.mocked(shrinkSelfie).mockResolvedValue(shrunk);
+  const fetch = vi.fn().mockResolvedValueOnce(rejected()).mockResolvedValueOnce(found());
+  vi.stubGlobal("fetch", fetch);
+  const onSearchSuccess = vi.fn();
+  mountAndPick(onSearchSuccess);
+  await waitFor(() => expect(onSearchSuccess).toHaveBeenCalledWith(searchResult));
+  expect(shrinkSelfie).toHaveBeenCalledTimes(1);
+  expect(sentFile(fetch, 0, "file")).toBe(shrunk);
+  expect(sentFile(fetch, 1, "selfie")).toBe(shrunk);
+});
+
+it("sends nothing when authentication changes while the selfie shrinks", async () => {
+  let finish!: (out: File) => void;
+  vi.mocked(shrinkSelfie).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  const fetch = vi.fn().mockResolvedValue(found());
+  vi.stubGlobal("fetch", fetch);
+  mountAndPick(vi.fn());
+  act(() => { useAuthStore.getState().startSession({ ...runner, id: "runner-b" }); setTokens("access-b", "refresh-b"); });
+  await act(async () => { finish(shrunk); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(fetch).not.toHaveBeenCalled();
 });
 
 it.each(["all", "selected"])("rejects a late saved-%s search after same-account login", async (selection) => {
