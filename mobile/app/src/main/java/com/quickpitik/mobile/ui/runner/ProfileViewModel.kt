@@ -10,6 +10,7 @@ import com.quickpitik.mobile.data.readAtMost
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.data.repository.ProfileRepository
 import com.quickpitik.mobile.data.repository.ProfileRepositoryImpl
+import com.quickpitik.mobile.data.shrinkSelfie
 import com.quickpitik.mobile.ui.auth.validateEmail
 import com.quickpitik.mobile.ui.auth.validateNewPassword
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +20,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class ProfileViewModel(application: Application) : AndroidViewModel(application) {
+class ProfileViewModel @JvmOverloads constructor(
+    application: Application,
+    private val shrink: (ByteArray) -> ByteArray = ::shrinkSelfie,
+) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
     private val repository: ProfileRepository = ProfileRepositoryImpl()
 
@@ -111,10 +115,12 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                         return@launch
                     }
                     
-                    val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
+                    val upload = withContext(Dispatchers.IO) { shrink(bytes) }
+                    // Only bytes the phone couldn't decode keep their picked type.
+                    val mimeType = if (upload === bytes) contentResolver.getType(uri) ?: "image/jpeg" else "image/jpeg"
                     val filename = "selfie_${System.currentTimeMillis()}.jpg"
                     
-                    repository.uploadSelfie(token, bytes, filename, mimeType)
+                    repository.uploadSelfie(token, upload, filename, mimeType)
                         .onSuccess {
                             fetchSelfies()
                         }

@@ -59,6 +59,9 @@ class ProfileViewModelTest {
                     "PUT /api/v1/me/profile" -> ok(user(name = "Juan Dela Cruz"))
                     "POST /api/v1/me/avatar" -> ok(user(avatar = "\"/avatars/a.jpg\""))
                     "DELETE /api/v1/me/avatar" -> ok(user())
+                    "POST /api/v1/me/selfies" ->
+                        ok("""{"id":"s1","dataUrl":"","uploadedAt":"","isPrimary":true,"qualityScore":0,"qualityTestStatus":"untested"}""")
+                    "GET /api/v1/me/selfies" -> ok("[]")
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -151,5 +154,15 @@ class ProfileViewModelTest {
         vm.removeAvatar()
         vm.avatarUrl.awaitFirst { it == null }
         assertNull(session.getAvatarUrl())
+    }
+
+    @Test fun `a selfie added on the profile leaves the phone shrunk, as a JPEG`() {
+        val vm = ProfileViewModel(application) { "SHRUNK-${it.size}".toByteArray() }
+        vm.uploadSelfie(picked("selfie.png", 16))
+        val deadline = System.currentTimeMillis() + 5_000
+        while (bodies("GET /api/v1/me/selfies").isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(5)
+        val body = bodies("POST /api/v1/me/selfies").single()
+        assertTrue(body.contains("SHRUNK-16"))
+        assertTrue(body.contains("Content-Type: image/jpeg"))
     }
 }
