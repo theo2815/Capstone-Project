@@ -152,6 +152,9 @@ internal fun metadataAccessFor(mode: PhotoPreviewMode, photo: PhotoPreviewData):
         else -> photo.metadataAccess?.takeIf { it == "owner" || it == "public" }
     }
 
+// Grid tiles load the small tile when the backend has one; the preview otherwise.
+internal fun PhotoDto.gridTileUrl(): String? = gridUrl ?: imageUrl
+
 fun PhotoDto.toPreviewData(eventName: String?): PhotoPreviewData = PhotoPreviewData(
     id = id,
     price = price,
