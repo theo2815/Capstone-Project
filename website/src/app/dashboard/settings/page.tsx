@@ -599,6 +599,24 @@ function EditModeProvider({ children }: { children: ReactNode }) {
             // QR through the existing path below — no duplicate account.
             snap.payouts = [...snap.payouts, { ...serverRow, qr: null }];
             confirmedRef.current = true;
+            // The server makes only the very first account primary, so a new
+            // account the user marked primary comes back false. Promote it now,
+            // before the QR upload: if this PATCH fails, the retry sees the
+            // account in the snapshot and takes the existing-row primary path.
+            if (p.isPrimary && !serverRow.isPrimary) {
+              await patchPrimaryPayout(serverRow.id);
+              if (!ownsDraft()) return;
+              usePhotographerSettingsStore.setState((prev) => ({
+                payouts: prev.payouts.map((row) => ({
+                  ...row,
+                  isPrimary: row.id === serverRow.id,
+                })),
+              }));
+              snap.payouts = snap.payouts.map((row) => ({
+                ...row,
+                isPrimary: row.id === serverRow.id,
+              }));
+            }
             if (p.qr) {
               const file = dataUrlToFile(p.qr.dataUrl, `qr-${serverRow.id}.png`);
               await postPayoutQr(serverRow.id, file);
@@ -652,9 +670,8 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // Primary change — fire once if the chosen-primary id flipped, AND the
-    // new primary is an existing server-side row (a newly-added payout
-    // becomes primary via the POST response, not a separate PATCH).
+    // Primary change for an existing server-side row. A newly-added payout is
+    // promoted inside its own create task above, right after the POST.
     if (
       newPrimary &&
       newPrimary.id !== oldPrimary?.id &&

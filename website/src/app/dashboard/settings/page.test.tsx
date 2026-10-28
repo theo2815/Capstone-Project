@@ -11,7 +11,7 @@ import { fitToDataUrl, inspectImageDimensions } from "@/lib/image-utils";
 import SettingsPage from "./page";
 import { DEFAULT_WATERMARK_PLACEMENT, usePhotographerSettingsStore } from "@/store/photographer-settings-store";
 import { useUserMediaStore } from "@/store/user-media-store";
-import { putHandle, putWatermarkSettings, postPayoutAccount, patchPayoutAccount, postPayoutQr } from "@/lib/api-photographer-settings";
+import { putHandle, putWatermarkSettings, postPayoutAccount, patchPayoutAccount, postPayoutQr, patchPrimaryPayout } from "@/lib/api-photographer-settings";
 import type { PHRegion } from "@/lib/ph-regions";
 
 const mocks = vi.hoisted(() => ({ toast: vi.fn(), confirm: vi.fn(), regions: [] as PHRegion[], loading: false, error: null as Error | null, retry: vi.fn() }));
@@ -26,7 +26,7 @@ vi.mock("@/lib/api-photographer-settings", async (importActual) => ({
   postCover: vi.fn(),
   putHandle: vi.fn(),
   putWatermarkSettings: vi.fn(),
-  postPayoutAccount: vi.fn(), patchPayoutAccount: vi.fn(), postPayoutQr: vi.fn(),
+  postPayoutAccount: vi.fn(), patchPayoutAccount: vi.fn(), postPayoutQr: vi.fn(), patchPrimaryPayout: vi.fn(),
 }));
 vi.mock("@/lib/image-utils", async (importActual) => ({
   ...await importActual<typeof import("@/lib/image-utils")>(),
@@ -496,6 +496,26 @@ it("keeps a failed required QR upload retryable without duplicating the account"
   await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).toBeInTheDocument());
   expect(postPayoutAccount).toHaveBeenCalledTimes(1);
   expect(postPayoutQr).toHaveBeenCalledTimes(2);
+});
+
+it("makes a new payout account primary when the user picked it before saving", async () => {
+  usePhotographerSettingsStore.setState({ payouts: [{ ...payout, qr }] });
+  // The server only makes the very first account primary, so the new row comes back false.
+  const created = { ...payout, id: "created", accountNumber: "09179999999", isPrimary: false };
+  vi.mocked(postPayoutAccount).mockResolvedValue(created);
+  vi.mocked(patchPrimaryPayout).mockResolvedValue([]);
+  vi.mocked(postPayoutQr).mockResolvedValue({ ...created, qr });
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  act(() => usePhotographerSettingsStore.setState({
+    payouts: [{ ...payout, isPrimary: false, qr }, { ...created, id: "local", isPrimary: true, qr }],
+  }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).toBeInTheDocument());
+  expect(patchPrimaryPayout).toHaveBeenCalledTimes(1);
+  expect(patchPrimaryPayout).toHaveBeenCalledWith("created");
+  expect(usePhotographerSettingsStore.getState().payouts.map((p) => [p.id, p.isPrimary]))
+    .toEqual([["account", false], ["created", true]]);
 });
 
 it("saves a changed number before its QR and only retries the failed upload", async () => {
