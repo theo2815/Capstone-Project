@@ -41,6 +41,10 @@ import com.quickpitik.entity.User
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.common.PaginationParams
+import com.quickpitik.entity.AdminDecisionLog
+import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.DisputeRepository
@@ -121,6 +125,8 @@ class OrderServiceCheckoutTest {
     private lateinit var storageService: StorageService
     private val platform = PlatformProperties(orderCapabilitySecret = "x".repeat(32))
     private var lastProviderRequest: PaymongoCheckoutSessionRequest? = null
+    private val disputeRepository = Mockito.mock(DisputeRepository::class.java)
+    private val decisionLogRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
     private val savedOrders = mutableListOf<Order>()
     private val savedItems = mutableListOf<OrderItem>()
     private val savedPayments = mutableListOf<Payment>()
@@ -176,6 +182,34 @@ class OrderServiceCheckoutTest {
         service = newService()
     }
 
+    @Test
+    fun `the runner's dispute note skips the manual review hand-off row`() {
+        val userId = UUID.randomUUID()
+        val order = Order(
+            userId = userId,
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = PaymentMethod.GCASH.wire,
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("125.00"),
+        )
+        val dispute = Dispute(orderId = order.id, photoId = photo.id, runnerId = userId, reasonWire = "other")
+        Mockito.`when`(orderRepository.findByUserIdOrderByPaidAtDescCreatedAtDesc(anyArg(), anyArg()))
+            .thenReturn(org.springframework.data.domain.PageImpl(listOf(order)))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenReturn(emptyList())
+        Mockito.`when`(disputeRepository.findByOrderIdIn(anyArg())).thenReturn(listOf(dispute))
+        Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(anyArg())).thenReturn(
+            listOf(
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_SENT_TO_MANUAL_REVIEW),
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = "escalated", reason = "X"),
+            ),
+        )
+
+        val note = service.listForUser(userId, PaginationParams(0, 20)).items.single().disputes.single().resolutionNote
+
+        assertEquals("X", note)
+    }
+
     private fun newService(
         paymongo: PaymongoProperties = PaymongoProperties(),
         platform: PlatformProperties = this.platform,
@@ -192,8 +226,8 @@ class OrderServiceCheckoutTest {
             StorageProperties(),
             paymongoClient,
             paymongo,
-            Mockito.mock(DisputeRepository::class.java),
-            Mockito.mock(AdminDecisionLogRepository::class.java),
+            disputeRepository,
+            decisionLogRepository,
             platform,
             OrderAccessTokenService(platform),
             testTransactionTemplate(),

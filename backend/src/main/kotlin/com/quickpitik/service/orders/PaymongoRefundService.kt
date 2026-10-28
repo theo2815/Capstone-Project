@@ -6,6 +6,7 @@ import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundRequestAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequestEnvelope
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.DownloadGrantId
@@ -258,6 +259,20 @@ class PaymongoRefundService(
                 dispute.refundStatus = MANUAL_REVIEW
                 dispute.status = DisputeStatus.ESCALATED
                 disputeRepository.save(dispute)
+                // Reason stays null: no money has moved yet, and the admin's dispute history shows a reason as a note.
+                // The meta key is not "resolution" (the admin history reads that as a final outcome).
+                dispute.refundRequestedBy?.let { adminId ->
+                    adminDecisionLogService.logDisputeDecision(
+                        adminId = adminId,
+                        targetDisputeId = dispute.id,
+                        decision = REFUND_SENT_TO_MANUAL_REVIEW,
+                        reason = null,
+                        meta = mapOf(
+                            "requestedResolution" to dispute.resolution?.wire,
+                            "refundAmount" to dispute.refundAmountPhp?.toPlainString(),
+                        ),
+                    )
+                }
             }
         }
     }

@@ -39,7 +39,7 @@ import { deriveEventState } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
-import { ApiError, formatRetryWait } from "@/lib/api";
+import { ApiError, searchRateLimitMessage } from "@/lib/api";
 import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 
@@ -220,6 +220,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
         onLoadMore={onLoadMore}
         isLoadingMore={isLoadingMore}
         isLoadingPhotos={isFaceMode ? false : bibPhotos.isLoading}
+        bibSearchError={searchRateLimitMessage(bibPhotos.error)}
         bibFilter={bibFilter}
         isFaceMode={isFaceMode}
         canShowMyPhotos={isAuthenticated && !!primarySelfieId}
@@ -633,6 +634,7 @@ function BrowseMode({
   onLoadMore,
   isLoadingMore,
   isLoadingPhotos,
+  bibSearchError,
   bibFilter,
   isFaceMode,
   canShowMyPhotos,
@@ -652,6 +654,7 @@ function BrowseMode({
   onLoadMore: () => void;
   isLoadingMore: boolean;
   isLoadingPhotos: boolean;
+  bibSearchError: string | null;
   bibFilter: string;
   isFaceMode: boolean;
   canShowMyPhotos: boolean;
@@ -728,6 +731,8 @@ function BrowseMode({
               visible.length === 0 ? (
                 isLoadingPhotos ? (
                   "Searching…"
+                ) : bibSearchError ? (
+                  "Search paused."
                 ) : (
                   "No matches yet."
                 )
@@ -897,6 +902,12 @@ function BrowseMode({
                 ))}
               </div>
             </div>
+          </div>
+        ) : isBibFilter && visible.length === 0 && bibSearchError ? (
+          <div className="max-w-7xl mx-auto px-6 md:px-10 py-10">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error">
+              {bibSearchError}
+            </p>
           </div>
         ) : isBibFilter && visible.length === 0 ? (
           <BibEmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
@@ -1158,11 +1169,8 @@ function myPhotosErrorMessage(err: unknown): string {
     if (code === "LOW_CONFIDENCE") {
       return "We couldn't find you in this event yet. Try again as more photos land.";
     }
-    // Face + bib search share a 30-per-15-min bucket; the header says exactly
-    // how long the wait is, so say it instead of the generic "slow down".
-    if (err.status === 429 && err.retryAfterSeconds != null) {
-      return `Too many searches. Try again in about ${formatRetryWait(err.retryAfterSeconds)}.`;
-    }
+    const wait = searchRateLimitMessage(err);
+    if (wait) return wait;
     return err.message || "Couldn't load your photos right now.";
   }
   return "Couldn't load your photos right now. Try again.";

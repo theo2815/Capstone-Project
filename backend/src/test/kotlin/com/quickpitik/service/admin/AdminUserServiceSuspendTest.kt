@@ -184,4 +184,28 @@ class AdminUserServiceSuspendTest {
         Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
         Mockito.verifyNoInteractions(refreshTokenService)
     }
+
+    @Test
+    fun `detail names the admin behind each decision and leaves a missing admin unnamed`() {
+        val photographer = user(Role.PHOTOGRAPHER)
+        val gone = UUID.randomUUID()
+        val named = User(id = adminId, email = "boss@test.local", passwordHash = "x", name = "Boss", role = Role.ADMIN)
+        val noName = User(id = UUID.randomUUID(), email = "quiet@test.local", passwordHash = "x", name = " ", role = Role.ADMIN)
+        Mockito.`when`(userRepository.findById(targetId)).thenReturn(Optional.of(photographer))
+        Mockito.`when`(photographerSettingsRepository.findById(targetId))
+            .thenReturn(Optional.of(PhotographerSettings(userId = targetId, verificationStatus = VerificationStatus.APPROVED)))
+        Mockito.`when`(regionsService.all()).thenReturn(emptyList())
+        Mockito.`when`(adminDecisionLogRepository.findForUserCapped(anyArg(), anyArg())).thenReturn(listOf(
+            AdminDecisionLog(adminId = adminId, targetUserId = targetId, decision = "approved"),
+            AdminDecisionLog(adminId = noName.id, targetUserId = targetId, decision = "rejected"),
+            AdminDecisionLog(adminId = gone, targetUserId = targetId, decision = "suspended"),
+        ))
+        Mockito.`when`(userRepository.findAllById(setOf(adminId, noName.id, gone))).thenReturn(listOf(named, noName))
+
+        val log = service().detail(targetId).decisionLog
+
+        assertEquals(listOf(adminId, noName.id, gone), log.map { it.adminId })
+        assertEquals(listOf("Boss", "quiet@test.local", null), log.map { it.adminName })
+        Mockito.verify(userRepository, Mockito.times(1)).findAllById(anyArg<Iterable<UUID>>())
+    }
 }

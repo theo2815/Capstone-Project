@@ -114,7 +114,10 @@ class AdminUserService(
         // the unbounded log used to bloat the response into the
         // multi-kilobyte range. Deeper history can move to its own
         // GET /admin/users/{id}/decisions?offset&limit if the FE asks.
-        val log = adminDecisionLogRepository.findForUserCapped(userId, PageRequest.of(0, DECISION_LOG_DETAIL_CAP))
+        val entries = adminDecisionLogRepository.findForUserCapped(userId, PageRequest.of(0, DECISION_LOG_DETAIL_CAP))
+        val adminNames = userRepository.findAllById(entries.map { it.adminId }.toSet())
+            .associate { it.id to it.name.ifBlank { it.email } }
+        val log = entries
             .map {
                 DecisionLogEntryDto(
                     userId = it.targetUserId ?: userId,
@@ -122,6 +125,8 @@ class AdminUserService(
                     reason = it.reason,
                     decidedAt = it.decidedAt,
                     meta = it.meta,
+                    adminId = it.adminId,
+                    adminName = adminNames[it.adminId],
                 )
             }
         val row = hydrateRow(user, settings)

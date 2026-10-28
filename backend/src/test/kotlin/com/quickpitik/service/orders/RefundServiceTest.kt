@@ -7,7 +7,9 @@ import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.PaymentMethod
+import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ApiException
@@ -70,6 +72,34 @@ class RefundServiceTest {
         assertEquals(BigDecimal("125.00"), dispute.refundAmountPhp)
         Mockito.verify(disputes).findByIdForUpdate(dispute.id)
         Mockito.verify(disputes, Mockito.never()).save(dispute)
+    }
+
+    @Test
+    fun `a withdrawn dispute keeps the last real note, not the manual review hand-off`() {
+        val runnerId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        val disputes = Mockito.mock(DisputeRepository::class.java)
+        Mockito.`when`(disputes.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        val log = Mockito.mock(AdminDecisionLogRepository::class.java)
+        Mockito.`when`(log.findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(dispute.id))).thenReturn(
+            listOf(
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_SENT_TO_MANUAL_REVIEW),
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = "escalated", reason = "X"),
+            ),
+        )
+        val service = RefundService(
+            Mockito.mock(OrderRepository::class.java),
+            Mockito.mock(OrderItemRepository::class.java),
+            disputes,
+            log,
+            Mockito.mock(ApplicationEventPublisher::class.java),
+            PlatformProperties(),
+            Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(UserRepository::class.java),
+            Clock.systemUTC(),
+        )
+
+        assertEquals("X", service.withdraw(runnerId, dispute.id).resolutionNote)
     }
 
     @Test

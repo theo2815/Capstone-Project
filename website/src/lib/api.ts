@@ -370,6 +370,12 @@ export function formatRetryWait(seconds: number): string {
   return `${Math.ceil(seconds / 60)} minutes`;
 }
 
+// Face and bib search share one 30-per-15-min bucket, so both say the same thing.
+export function searchRateLimitMessage(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.status !== 429 || err.retryAfterSeconds == null) return null;
+  return `Too many searches. Try again in about ${formatRetryWait(err.retryAfterSeconds)}.`;
+}
+
 export class ApiError extends Error {
   errors: { code: string; message: string; field?: string }[];
   status?: number;

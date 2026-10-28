@@ -37,6 +37,9 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
         pageable: Pageable,
     ): List<AdminDecisionLog>
 
+    // Overview "recent decisions": newest first, same tiebreak as findForUserCapped.
+    fun findAllByOrderByDecidedAtDescIdAsc(pageable: Pageable): List<AdminDecisionLog>
+
     // Counts logical decisions in the window — collapses bulk groups (same
     // group_id) down to one logical decision per Q-A4. Native SQL because
     // JPQL has no clean COALESCE/cast for the group_id-or-id case.

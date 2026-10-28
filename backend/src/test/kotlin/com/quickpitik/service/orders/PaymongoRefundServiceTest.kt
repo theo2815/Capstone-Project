@@ -144,6 +144,77 @@ class PaymongoRefundServiceTest {
         assertEquals(DisputeStatus.ESCALATED, h.dispute.status)
     }
 
+    private fun refusedRefundHarness(): CouponHarness {
+        val h = couponHarness()
+        Mockito.`when`(h.client.createRefund(anyArg(), anyArg())).thenAnswer {
+            throw HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders(),
+                """{"errors":[{"code":"parameter_invalid","detail":"Refunds are not allowed for payments with source type qrph"}]}"""
+                    .toByteArray(StandardCharsets.UTF_8), StandardCharsets.UTF_8,
+            )
+        }
+        return h
+    }
+
+    @Test
+    fun `a refused refund records one hand-off row with no reason and no final resolution`() {
+        val h = refusedRefundHarness()
+
+        assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, "checked")
+        }
+
+        Mockito.verify(h.decisions, Mockito.times(1)).logDisputeDecision(
+            h.adminId,
+            h.dispute.id,
+            "refund_sent_to_manual_review",
+            null,
+            mapOf("requestedResolution" to "refund_full", "refundAmount" to "127.50"),
+            null,
+        )
+    }
+
+    @Test
+    fun `a worker that lost the race to manual review writes no second row`() {
+        val h = couponHarness()
+        // Another worker already moved the dispute to manual review while the 400 was in flight.
+        Mockito.`when`(h.client.createRefund(anyArg(), anyArg())).thenAnswer {
+            h.dispute.refundStatus = "manual_review"
+            throw HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders(),
+                """{"errors":[{"code":"parameter_invalid","detail":"Refunds are not allowed for payments with source type qrph"}]}"""
+                    .toByteArray(StandardCharsets.UTF_8), StandardCharsets.UTF_8,
+            )
+        }
+
+        assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        Mockito.verifyNoInteractions(h.decisions)
+    }
+
+    @Test
+    fun `a refused refund with no requesting admin still goes to manual review without a row`() {
+        val h = refusedRefundHarness()
+        // prepare sets refundRequestedBy; simulate a legacy row by clearing it before the failure path runs
+        Mockito.doAnswer {
+            h.dispute.refundRequestedBy = null
+            throw HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders(),
+                """{"errors":[{"code":"parameter_invalid","detail":"Refunds are not allowed for payments with source type qrph"}]}"""
+                    .toByteArray(StandardCharsets.UTF_8), StandardCharsets.UTF_8,
+            )
+        }.`when`(h.client).createRefund(anyArg(), anyArg())
+
+        assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals("manual_review", h.dispute.refundStatus)
+        Mockito.verifyNoInteractions(h.decisions)
+    }
+
     @Test
     fun `a delayed failed response cannot overwrite a completed retry`() {
         val h = couponHarness()
@@ -210,6 +281,7 @@ class PaymongoRefundServiceTest {
         val client: PaymongoClient,
         val minting: TransactionMintingService,
         val disputes: DisputeRepository,
+        val decisions: AdminDecisionLogService,
         val sentRequestRef: () -> PaymongoRefundRequest?,
     ) {
         val sentRequest: PaymongoRefundRequest? get() = sentRequestRef()
@@ -287,7 +359,7 @@ class PaymongoRefundServiceTest {
             Mockito.mock(RunnerMessagesService::class.java),
             testTransactionTemplate(),
         )
-        return CouponHarness(service, adminId, dispute, order, photographerId, client, minting, disputes) { sentRequest }
+        return CouponHarness(service, adminId, dispute, order, photographerId, client, minting, disputes, decisions) { sentRequest }
     }
     @Test
     fun `successful full refund uses PayMongo then revokes the grant`() {
