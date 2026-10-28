@@ -52,6 +52,9 @@ data class DecisionLogEntryDto(
     val reason: String?,
     val decidedAt: OffsetDateTime,
     val meta: Map<String, Any?>?,
+    val adminId: UUID? = null,
+    @field:Schema(description = "Admin display name, else e-mail; null when the admin account no longer exists")
+    val adminName: String? = null,
 )
 
 // Mirrors api-admin.ts AdminUserDetail = AdminUserRow + decisionLog[].

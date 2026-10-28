@@ -26,7 +26,7 @@ beforeEach(() => {
   useAuthStore.getState().setUser(admin); useToastStore.getState().clear(); navigation.search = ""; navigation.replace.mockClear();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); rows = [adminUser]; client.setQueryData(key, rows);
-  vi.spyOn(api, "get").mockImplementation(async (path) => path.endsWith("/settings") ? adminUserSettings : path === "/regions" ? [] : path.startsWith("/admin/users?") ? { items: rows, total: rows.length } : { ...rows[0], decisionLog: [] });
+  vi.spyOn(api, "get").mockImplementation(async (path) => path.endsWith("/settings") ? adminUserSettings : path === "/regions" || path.startsWith("/admin/decisions") ? [] : path.startsWith("/admin/users?") ? { items: rows, total: rows.length } : { ...rows[0], decisionLog: [] });
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); clearAdminActionIntents(); vi.unstubAllGlobals(); vi.restoreAllMocks(); Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView"); });
 it("keeps a delayed message open and its draft intact through repeat input and failure", async () => {
@@ -113,8 +113,10 @@ it.each([false, true])("awaits approval/unsuspension and locks the action cluste
 });
 it("preserves a deep-linked verification through loading, failure, and retry", async () => {
   navigation.search = `row=${adminUser.userId}`; client.setQueryData(key, []);
-  const request = deferred<unknown>(); vi.mocked(api.get).mockReturnValueOnce(request.promise); mount(true);
-  expect(navigation.replace).not.toHaveBeenCalled(); expect(screen.getByRole("status")).toHaveTextContent("Loading verification");
+  const request = deferred<unknown>(); // Hold only this row's detail request; the page also fetches recent decisions.
+  const base = vi.mocked(api.get).getMockImplementation()!; let held = true;
+  vi.mocked(api.get).mockImplementation((path, options) => held && path === `/admin/users/${adminUser.userId}` ? (held = false, request.promise as never) : base(path, options)); mount(true);
+  expect(navigation.replace).not.toHaveBeenCalled(); expect(screen.getByText(/Loading verification/)).toBeInTheDocument();
   await act(async () => request.reject(new Error("Unavailable")));
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load verification"); expect(navigation.replace).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Try again" })).toHaveAttribute("type", "button");
