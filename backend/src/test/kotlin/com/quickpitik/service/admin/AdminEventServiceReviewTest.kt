@@ -542,6 +542,17 @@ class AdminEventServiceReviewTest {
     }
 
     @Test
+    fun `listing a draft event is refused until it is approved`() {
+        val event = live().apply { status = EventStatus.DRAFT }
+
+        val ex = assertFailsWith<ValidationException> { service.setListing(adminId, event.id, listed = true) }
+
+        assertEquals("This event is still waiting for review. Approve it before showing it on /events.", ex.message)
+        assertFalse(event.listedOnEvents)
+        Mockito.verifyNoInteractions(decisions)
+    }
+
+    @Test
     fun `unlisting always works even on a private event`() {
         val event = live().apply { visibility = EventVisibility.UNLISTED; listedOnEvents = true }
 
