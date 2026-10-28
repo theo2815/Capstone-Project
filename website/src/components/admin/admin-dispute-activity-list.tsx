@@ -65,6 +65,7 @@ const DECISION_LABEL: Record<DisputeDecision, string> = {
   resolved: "Resolved",
   denied: "Denied",
   escalated: "Escalated",
+  refund_sent_to_manual_review: "Sent to manual review",
 };
 
 function decisionTone(decision: DisputeDecision): string {
@@ -74,6 +75,7 @@ function decisionTone(decision: DisputeDecision): string {
     case "denied":
       return "text-ink";
     case "escalated":
+    case "refund_sent_to_manual_review":
       return "text-slate";
   }
 }

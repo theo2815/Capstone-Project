@@ -258,6 +258,20 @@ class PaymongoRefundService(
                 dispute.refundStatus = MANUAL_REVIEW
                 dispute.status = DisputeStatus.ESCALATED
                 disputeRepository.save(dispute)
+                // Reason stays null (runners see the newest row's reason) and the meta key is not
+                // "resolution" (the admin history reads that as a final outcome); no money has moved.
+                dispute.refundRequestedBy?.let { adminId ->
+                    adminDecisionLogService.logDisputeDecision(
+                        adminId = adminId,
+                        targetDisputeId = dispute.id,
+                        decision = "refund_sent_to_manual_review",
+                        reason = null,
+                        meta = mapOf(
+                            "requestedResolution" to dispute.resolution?.wire,
+                            "refundAmount" to dispute.refundAmountPhp?.toPlainString(),
+                        ),
+                    )
+                }
             }
         }
     }
