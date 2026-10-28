@@ -106,6 +106,7 @@ class EventDtoMapper(
         reviewRevision = event.reviewRevision,
         regionCode = event.regionCode,
         provinceCode = event.provinceCode,
+        listedOnEvents = event.listedOnEvents,
     )
 
     fun resolveBannerUrl(event: Event): String? =

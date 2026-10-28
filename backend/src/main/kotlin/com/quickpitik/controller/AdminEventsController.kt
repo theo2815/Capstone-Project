@@ -10,6 +10,7 @@ import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.AdminReindexResponseDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.RejectEventRequest
+import com.quickpitik.dto.admin.SetEventListingRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
@@ -76,6 +77,14 @@ class AdminEventsController(
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: RejectEventRequest,
     ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason, body.expectedRevision)
+
+    // "Show on /events" switch for a photographer-owned Public event (V89).
+    @PatchMapping("/{eventId}/listing")
+    fun setListing(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @RequestBody body: SetEventListingRequest,
+    ): AdminListEventDto = adminEventService.setListing(principal.userId, eventId, body.listed)
 
     // multipart/form-data — the text parts bind onto the request DTO and the
     // optional `cover` part carries the image bytes (jpeg/png/webp).

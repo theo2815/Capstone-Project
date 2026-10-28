@@ -49,6 +49,13 @@ data class AdminListEventDto(
     val regionCode: String? = null,
     @field:Schema(description = "Canonical province code from /regions; null for unclassified legacy events", nullable = true)
     val provinceCode: String? = null,
+    @field:Schema(description = "Admin's \"Show on /events\" switch for a photographer-owned Public event (V89)")
+    val listedOnEvents: Boolean = false,
+)
+
+// PATCH /admin/events/{id}/listing — show or hide a photographer event on /events.
+data class SetEventListingRequest(
+    val listed: Boolean,
 )
 
 data class ApproveEventRequest(
