@@ -93,7 +93,19 @@ class PhotoWatermarkServiceTest {
             .thenThrow(RuntimeException("response lost after upload"))
         service().process(photoId)
         Mockito.verify(workFence, Mockito.never()).finish(anyArg())
-        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+    }
+
+    @Test fun `a failed grid tile PUT after the preview PUT also retains its claim and publishes nothing`() {
+        stubHappyPath()
+        Mockito.doAnswer { inv ->
+            if (inv.getArgument<String>(0).endsWith("/grid.jpg")) throw RuntimeException("response lost after upload")
+            null
+        }.`when`(storageService).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+        service().process(photoId)
+        Mockito.verify(storageService).put("events/$eventId/photos/$photoId/watermark.jpg", byteArrayOf(3), "image/jpeg")
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
     }
 
     private lateinit var storageService: StorageService
@@ -217,7 +229,7 @@ class PhotoWatermarkServiceTest {
             lastCredit = inv.getArgument(2)
             lastPlatformMark = inv.getArgument(3)
             lastPlacement = inv.getArgument(4)
-            MarkedPreview(jpeg = byteArrayOf(3), phash = 42L, phashClean = 43L, phashCentre = 44L)
+            MarkedPreview(jpeg = byteArrayOf(3), gridJpeg = byteArrayOf(5), phash = 42L, phashClean = 43L, phashCentre = 44L)
         }
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://thumb")
     }
@@ -232,14 +244,15 @@ class PhotoWatermarkServiceTest {
         service().process(photoId)
 
         Mockito.verify(storageService).delete("events/$eventId/photos/$photoId/watermark.jpg")
-        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+        Mockito.verify(storageService).delete("events/$eventId/photos/$photoId/grid.jpg")
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
         Mockito.verifyNoInteractions(eventPublisher)
     }
 
     @Test
     fun `a platform event composites both marks`() {
         stubHappyPath()
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
 
         service().process(photoId)
 
@@ -251,27 +264,27 @@ class PhotoWatermarkServiceTest {
     fun `a free event with policy OWN keeps the logo and drops the platform mark`() {
         stubHappyPath()
         stubEvent(WatermarkPolicy.OWN)
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
 
         service().process(photoId)
 
         assertEquals(false, lastPlatformMark)
         assertTrue(lastLogo!!.contentEquals(byteArrayOf(2)))
-        Mockito.verify(photoRepository).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+        Mockito.verify(photoRepository).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
     }
 
     @Test
     fun `a free event with policy NONE publishes an unmarked preview even without a logo pointer`() {
         stubHappyPath(logoKey = null)
         stubEvent(WatermarkPolicy.NONE)
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
 
         service().process(photoId)
 
         assertEquals(false, lastPlatformMark)
         assertNull(lastLogo)
         Mockito.verify(storageService).put("events/$eventId/photos/$photoId/watermark.jpg", byteArrayOf(3), "image/jpeg")
-        Mockito.verify(photoRepository).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+        Mockito.verify(photoRepository).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
     }
 
     @Test
@@ -281,20 +294,22 @@ class PhotoWatermarkServiceTest {
         service().process(photoId)
 
         assertFalse(lastPlatformMark != null, "processThumbnail must not run without the logo on a PLATFORM event")
-        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
     }
 
     @Test
     fun `success stores the watermark, flips LIVE with its phash, and publishes photo-published`() {
         stubHappyPath()
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
 
         service().process(photoId)
 
         val watermarkKey = "events/$eventId/photos/$photoId/watermark.jpg"
+        val gridKey = "events/$eventId/photos/$photoId/grid.jpg"
         Mockito.verify(storageService).put(watermarkKey, byteArrayOf(3), "image/jpeg")
-        Mockito.verify(photoRepository).publishWatermarked(photoId, watermarkKey, 42L, 43L, 44L)
+        Mockito.verify(storageService).put(gridKey, byteArrayOf(5), "image/jpeg")
+        Mockito.verify(photoRepository).publishWatermarked(photoId, watermarkKey, gridKey, 42L, 43L, 44L)
         Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoPublishedEvent>())
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
     }
@@ -302,7 +317,7 @@ class PhotoWatermarkServiceTest {
     @Test
     fun `metadata uses the same original after publication commits and storage failure stays isolated`() {
         stubHappyPath()
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
         var committed = false
         var published = false
         var extracted = false
@@ -327,7 +342,7 @@ class PhotoWatermarkServiceTest {
     @Test
     fun `blocked metadata releases both watermark workers after publication`() {
         stubHappyPath()
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
         val metadata = Mockito.mock(com.quickpitik.repository.PhotoMetadataRepository::class.java)
         val extractor = Mockito.mock(com.quickpitik.service.image.PhotoMetadataExtractor::class.java)
         Mockito.`when`(metadata.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
@@ -358,7 +373,7 @@ class PhotoWatermarkServiceTest {
     @Test
     fun `parser exception after committed publication leaves watermark successful`() {
         stubHappyPath()
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
         val metadata = Mockito.mock(com.quickpitik.repository.PhotoMetadataRepository::class.java)
         val extractor = Mockito.mock(com.quickpitik.service.image.PhotoMetadataExtractor::class.java)
         Mockito.`when`(metadata.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
@@ -396,7 +411,7 @@ class PhotoWatermarkServiceTest {
     @Test
     fun `failed publication commit never starts metadata extraction`() {
         stubHappyPath()
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
         Mockito.doThrow(IllegalStateException("commit failed")).`when`(transactionManager).commit(anyArg())
 
         kotlin.test.assertFailsWith<IllegalStateException> { service().process(photoId) }
@@ -409,7 +424,7 @@ class PhotoWatermarkServiceTest {
     @Test
     fun `credit prefers the brand name and falls back to the account name`() {
         stubHappyPath(brandName = "Reyes Race Photos")
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
         service().process(photoId)
         assertEquals(WatermarkCredit("Reyes Race Photos", "anareyes", photoId), lastCredit)
 
@@ -434,7 +449,7 @@ class PhotoWatermarkServiceTest {
             watermarkPosPortraitY = 0.875
         }
         Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(Optional.of(custom))
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(1)
 
         service().process(photoId)
 
@@ -455,7 +470,7 @@ class PhotoWatermarkServiceTest {
     fun `a lost flip race publishes no websocket frame`() {
         stubHappyPath()
         // Another worker (sweep vs hot path) flipped it first — 0 rows updated.
-        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(0)
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())).thenReturn(0)
 
         service().process(photoId)
 
@@ -499,7 +514,7 @@ class PhotoWatermarkServiceTest {
         Mockito.verify(photoRepository).incrementProcessingAttempts(photoId)
         Mockito.verify(storageService, Mockito.never())
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
-        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
         Mockito.verifyNoInteractions(metadataService)
     }
@@ -516,7 +531,7 @@ class PhotoWatermarkServiceTest {
         service().process(photoId)
 
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
-        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
+        Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg())
         Mockito.verifyNoInteractions(metadataService)
     }

@@ -849,7 +849,7 @@ class PhotoUploadService(
         // it LIVE. Runner/public queries filter status = LIVE, so the clean
         // original can never be served to a non-owner while the watermark is
         // pending; the photographer's own library (no status filter) falls back
-        // to the original via thumbnailS3Key ?: s3Key.
+        // to the original via watermarkS3Key ?: thumbnailS3Key ?: s3Key.
         val photo = Photo(
             id = photoId,
             eventId = eventId,
@@ -1046,7 +1046,7 @@ class PhotoUploadService(
         // A still-PROCESSING duplicate has no watermark object yet — fall back
         // to the original (owner-only response), same as the live return above.
         val thumbnailUrl = storageService.presignedGetUrl(
-            photo.thumbnailS3Key ?: photo.s3Key,
+            photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key,
             storageProperties.presignedTtl.thumbnail,
         )
         return UploadedPhotoDto(

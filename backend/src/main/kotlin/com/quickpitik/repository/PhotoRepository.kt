@@ -343,7 +343,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // re-runs no-ops.
     @Modifying
     @Query(
-        "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :key, p.phash = :phash, " +
+        "UPDATE Photo p SET p.watermarkS3Key = :key, p.thumbnailS3Key = :gridKey, p.phash = :phash, " +
             "p.phashClean = :phashClean, p.phashCentre = :phashCentre, p.publishedAt = CURRENT_TIMESTAMP, " +
             "p.status = com.quickpitik.entity.PhotoStatus.LIVE " +
             "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.PROCESSING AND p.deletedAt IS NULL " +
@@ -352,6 +352,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     fun publishWatermarked(
         @Param("id") id: UUID,
         @Param("key") key: String,
+        @Param("gridKey") gridKey: String,
         @Param("phash") phash: Long,
         @Param("phashClean") phashClean: Long,
         @Param("phashCentre") phashCentre: Long,

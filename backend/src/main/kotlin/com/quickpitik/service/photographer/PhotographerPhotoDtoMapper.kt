@@ -17,7 +17,7 @@ class PhotographerPhotoDtoMapper(
 
     fun thumbnailUrl(photo: Photo, mediaAvailable: Boolean): String? {
         if (!mediaAvailable) return null
-        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
+        val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 }

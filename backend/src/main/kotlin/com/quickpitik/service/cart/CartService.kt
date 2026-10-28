@@ -184,7 +184,7 @@ class CartService(
     )
 
     private fun thumbnailUrlOf(photo: Photo): String {
-        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key
+        val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 
