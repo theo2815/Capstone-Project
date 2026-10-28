@@ -144,7 +144,7 @@ export default function AdminOverviewPage() {
         number="03"
         title="Decision history"
       >
-        <AdminDecisionsTimeline recent />
+        <AdminDecisionsTimeline recent limit={20} />
       </Slab>
     </>
   );

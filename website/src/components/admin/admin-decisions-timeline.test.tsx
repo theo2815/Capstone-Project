@@ -74,3 +74,10 @@ it("shows who made each decision on a photographer's page", async () => {
   expect(screen.getByText(/by Dana Admin/)).toBeTruthy();
   expect(screen.getByText(/by unknown admin/)).toBeTruthy();
 });
+
+it("passes a custom limit to the request", async () => {
+  const get = vi.spyOn(api, "get").mockResolvedValue([row({})]);
+  renderTimeline({ recent: true, limit: 20 });
+  expect(await screen.findByText("Approved")).toBeTruthy();
+  expect(get).toHaveBeenCalledWith("/admin/decisions?limit=20", expect.anything());
+});

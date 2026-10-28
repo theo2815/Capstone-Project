@@ -1,7 +1,7 @@
 "use client";
 
-import { useAdminUserDetail } from "@/hooks/use-admin-users";
 import Link from "next/link";
+import { useAdminUserDetail } from "@/hooks/use-admin-users";
 import { useAdminDecisions } from "@/hooks/use-admin-decisions";
 import type { RecentAdminDecision } from "@/lib/api-admin";
 import type { DecisionLogEntry } from "@/lib/admin-user-registry";
