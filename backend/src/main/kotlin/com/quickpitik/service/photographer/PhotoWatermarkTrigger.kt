@@ -63,7 +63,9 @@ class PhotoWatermarkTrigger(
     }
 
     private companion object {
-        const val RECONCILE_GRACE_SECONDS = 120L
+        // 30, not 120 (FS-3): same reason and safety as PhotoIndexingTrigger; process()
+        // returns unless the row is still PROCESSING, and the backlog skips token-held rows.
+        const val RECONCILE_GRACE_SECONDS = 30L
         // 25 capped recovery at 25 photos/min — a 1,000-frame backlog took 40
         // minutes to surface. 200/min covers a burst; the pool bounds the rest.
         const val RECONCILE_BATCH_SIZE = 200

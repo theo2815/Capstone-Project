@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertTrue
 
@@ -52,6 +53,20 @@ class PhotoIndexingTriggerTest {
     }
 
     private fun photo() = Photo(eventId = UUID.randomUUID(), s3Key = "k", pricePhp = BigDecimal.TEN)
+
+    // FS-3: photos the hot path dropped are picked up 30 s after upload, not 120 s.
+    @Test
+    fun `reconcile picks up photos uploaded more than 30 seconds ago`() {
+        var cutoff: OffsetDateTime? = null
+        Mockito.`when`(photoRepo.findIndexingBacklog(anyArg(), Mockito.anyInt(), anyArg(), anyArg()))
+            .thenAnswer { cutoff = it.getArgument(2); emptyList<Photo>() }
+        val before = OffsetDateTime.now()
+
+        trigger(AiApiProperties(enabled = true)).reconcile()
+
+        val after = OffsetDateTime.now()
+        assertTrue(!cutoff!!.isBefore(before.minusSeconds(30)) && !cutoff!!.isAfter(after.minusSeconds(30)), "cutoff $cutoff")
+    }
 
     @Test
     fun `reconcile in BATCH mode does nothing`() {
