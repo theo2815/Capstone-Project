@@ -518,6 +518,30 @@ it("makes a new payout account primary when the user picked it before saving", a
     .toEqual([["account", false], ["created", true]]);
 });
 
+it("retries only the primary change when it fails right after the account is created", async () => {
+  usePhotographerSettingsStore.setState({ payouts: [{ ...payout, qr }] });
+  const created = { ...payout, id: "created", accountNumber: "09179999999", isPrimary: false };
+  vi.mocked(postPayoutAccount).mockResolvedValue(created);
+  vi.mocked(postPayoutQr).mockResolvedValue({ ...created, qr });
+  vi.mocked(patchPrimaryPayout).mockRejectedValueOnce(new Error("Network down")).mockResolvedValue([]);
+  render(<SettingsPage />);
+  fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  act(() => usePhotographerSettingsStore.setState({
+    payouts: [{ ...payout, isPrimary: false, qr }, { ...created, id: "local", isPrimary: true, qr }],
+  }));
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(patchPrimaryPayout).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ kind: "error" })));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Save changes/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Edit settings/ })).toBeInTheDocument());
+  expect(postPayoutAccount).toHaveBeenCalledTimes(1);
+  expect(patchPrimaryPayout).toHaveBeenCalledTimes(2);
+  expect(patchPrimaryPayout).toHaveBeenLastCalledWith("created");
+  expect(usePhotographerSettingsStore.getState().payouts.map((p) => [p.id, p.isPrimary]))
+    .toEqual([["account", false], ["created", true]]);
+});
+
 it("saves a changed number before its QR and only retries the failed upload", async () => {
   usePhotographerSettingsStore.setState({ payouts: [{ ...payout, qr }] });
   const next = { ...payout, accountNumber: "09170000002", qr: null };

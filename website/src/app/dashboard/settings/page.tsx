@@ -588,7 +588,9 @@ function EditModeProvider({ children }: { children: ReactNode }) {
                   ? {
                       ...row,
                       id: serverRow.id,
-                      isPrimary: serverRow.isPrimary,
+                      // Keep the user's primary choice in the store until the
+                      // PATCH below lands (the snapshot keeps the server value).
+                      isPrimary: row.isPrimary || serverRow.isPrimary,
                     }
                   : row,
               ),
@@ -601,21 +603,14 @@ function EditModeProvider({ children }: { children: ReactNode }) {
             confirmedRef.current = true;
             // The server makes only the very first account primary, so a new
             // account the user marked primary comes back false. Promote it now,
-            // before the QR upload: if this PATCH fails, the retry sees the
-            // account in the snapshot and takes the existing-row primary path.
+            // before the QR upload. If the PATCH fails, the store still shows
+            // the new row as primary while the snapshot says it is not, so the
+            // next Save queues the existing-row primary PATCH (no second create).
             if (p.isPrimary && !serverRow.isPrimary) {
               await patchPrimaryPayout(serverRow.id);
               if (!ownsDraft()) return;
-              usePhotographerSettingsStore.setState((prev) => ({
-                payouts: prev.payouts.map((row) => ({
-                  ...row,
-                  isPrimary: row.id === serverRow.id,
-                })),
-              }));
-              snap.payouts = snap.payouts.map((row) => ({
-                ...row,
-                isPrimary: row.id === serverRow.id,
-              }));
+              // Mutate in place: parallel tasks hold references to these rows.
+              for (const row of snap.payouts) row.isPrimary = row.id === serverRow.id;
             }
             if (p.qr) {
               const file = dataUrlToFile(p.qr.dataUrl, `qr-${serverRow.id}.png`);
