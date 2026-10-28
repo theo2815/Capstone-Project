@@ -358,7 +358,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("phashCentre") phashCentre: Long,
     ): Int
 
-    // Grid-tile backfill (FS-10): LIVE photos published before the 400 px tile,
+    // Grid-tile backfill (FS-10): LIVE photos published before the 800 px tile,
     // whose thumbnail key is still the preview's. Walked by id after a cursor.
     @Query(
         """

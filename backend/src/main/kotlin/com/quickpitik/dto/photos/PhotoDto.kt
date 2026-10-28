@@ -34,7 +34,7 @@ data class PhotoDto(
     val span: String,
     val price: BigDecimal,
     val imageUrl: String?,
-    // A 400 px tile of the same marked preview, for gallery grids only (FS-9).
+    // An 800 px tile of the same marked preview, for gallery grids only (FS-9).
     // Null for photos published before it existed: clients use `gridUrl ?: imageUrl`.
     val gridUrl: String? = null,
     val cleanUrl: String? = null,

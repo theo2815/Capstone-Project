@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 
-// Gives photos published before the 400 px grid tile (FS-9) their grid.jpg,
+// Gives photos published before the 800 px grid tile (FS-9) their grid.jpg,
 // cut from the already-marked preview. Off unless app.thumbnails.backfill-enabled.
 // One pass per app start, walking forward by id: a photo that fails is logged
 // and skipped, so it cannot stall the pass; a restart retries it.

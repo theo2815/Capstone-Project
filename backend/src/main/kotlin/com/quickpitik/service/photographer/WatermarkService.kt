@@ -534,7 +534,8 @@ class WatermarkService(
 
     companion object {
         const val MAX_LONG_EDGE = 1280
-        const val GRID_LONG_EDGE = 400
+        // 800, not 400: gallery tiles are tall boxes, so a landscape 400 px tile was blown up ~2× on phones.
+        const val GRID_LONG_EDGE = 800
         private const val WORDMARK_RESOURCE = "/brand/quickpitik-wordmark.png"
         private const val FONT_RESOURCE = "/fonts/Archivo-SemiBold.ttf"
         private val INK = Color(0x11, 0x11, 0x11)
