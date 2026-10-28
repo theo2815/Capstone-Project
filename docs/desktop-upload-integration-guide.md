@@ -19,6 +19,8 @@ Code: `backend/src/main/kotlin/com/quickpitik/service/auth/DesktopAuthService.kt
 
 Public events from `GET /api/v1/events?limit=200` whose date is within race day and the next 3 days (Asia/Manila), plus the photographer's own and covered events from `GET /api/v1/me/photographer/events?limit=200`. Each item of that list carries `ownedByMe`: an owned event (`true`) takes uploads until one calendar month after its date, with no lower bound; a covered event (`false`) gets the same race-day-plus-3 window as a public one. Same rules as `website/src/lib/event-catalog.ts`.
 
+Do not send `includeListed=true` on that public list. It adds other photographers' events an admin chose to show on `/events` (2026-10-28), and those don't take this photographer's uploads. Only the website `/events` page and mobile runner discovery send it.
+
 That list is not filtered by status or date, and only ACTIVE or COMPLETED events take uploads, so an owned event still waiting for review, or an archived one, can pass the date check and still be refused. The backend gate in `PhotoUploadService.gate` has the final say on every upload: it answers `422 EVENT_NOT_UPLOADABLE` with a message the app shows to the photographer.
 
 ## 3. Upload protocol (unchanged, per photo)
