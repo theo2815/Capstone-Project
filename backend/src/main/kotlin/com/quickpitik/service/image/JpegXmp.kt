@@ -46,6 +46,23 @@ object JpegXmp {
         return jpeg.copyOfRange(0, cut) + segment + jpeg.copyOfRange(cut, jpeg.size)
     }
 
+    // The packet inject() wrote, or null: walks the header segments up to the
+    // image data (SOS). Lets a derivative carry its source's credit unchanged.
+    fun packetOf(jpeg: ByteArray): String? {
+        val preamble = XMP_PREAMBLE.toByteArray(Charsets.ISO_8859_1)
+        var i = 2
+        while (i + 4 <= jpeg.size && jpeg[i] == MARKER && jpeg[i + 1] != 0xDA.toByte()) {
+            val end = i + 2 + (((jpeg[i + 2].toInt() and 0xFF) shl 8) or (jpeg[i + 3].toInt() and 0xFF))
+            if (end > jpeg.size) return null
+            val start = i + 4
+            if (jpeg[i + 1] == 0xE1.toByte() && end - start >= preamble.size &&
+                jpeg.copyOfRange(start, start + preamble.size).contentEquals(preamble)
+            ) return String(jpeg, start + preamble.size, end - start - preamble.size, Charsets.UTF_8)
+            i = end
+        }
+        return null
+    }
+
     private fun esc(s: String): String =
         s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 

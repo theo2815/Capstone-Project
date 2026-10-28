@@ -52,6 +52,31 @@ class WatermarkServiceTest {
         assertEquals(photoId.toString(), props["quickpitik:photoId"], "photoId missing in $props")
     }
 
+    // FS-10 backfill: a tile cut from a stored preview matches a freshly rendered one.
+    @Test
+    fun `grid tile from a stored preview is 400 px and keeps the preview's credit`() {
+        val preview = service.processThumbnail(photoJpeg(3000, 2000), logoPng(), credit, platformMark = true).jpeg
+
+        val tile = service.gridFromPreview(preview)
+
+        val grid = ImageIO.read(ByteArrayInputStream(tile))
+        assertEquals(400, grid.width)
+        assertEquals(266, grid.height)
+        val props = ImageMetadataReader.readMetadata(ByteArrayInputStream(tile))
+            .getFirstDirectoryOfType(XmpDirectory::class.java)?.xmpProperties ?: emptyMap()
+        assertEquals(photoId.toString(), props["quickpitik:photoId"], "photoId missing in $props")
+        assertEquals("Ana Reyes Studio", props["dc:creator[1]"], "dc:creator missing in $props")
+    }
+
+    @Test
+    fun `a preview without a credit packet still gets a tile`() {
+        val tile = service.gridFromPreview(photoJpeg(800, 1200))
+
+        val grid = ImageIO.read(ByteArrayInputStream(tile))
+        assertEquals(266, grid.width)
+        assertEquals(400, grid.height)
+    }
+
     @Test
     fun `orientation 6 preview is portrait and rotates the landmark clockwise`() {
         val marked = service.processThumbnail(orientation6Jpeg(), null, credit, platformMark = false)
