@@ -15,17 +15,19 @@ afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); v
 const renderTimeline = (props = {}) =>
   render(<QueryClientProvider client={client}><AdminDecisionsTimeline {...props} /></QueryClientProvider>);
 
+const paged = (items: object[]) => ({ items, total: items.length, offset: 0, limit: 20 });
+
 const row = (over: object) => ({
   id: crypto.randomUUID(), targetName: null, decision: "approved", reason: null, decidedAt: "2026-10-27T09:30:00Z",
   targetType: "user", targetId: "11111111-2222-3333-4444-555555555555", adminId: "a1", adminName: "Dana Admin", ...over,
 });
 
 it("lists recent decisions with a readable label, the admin and the time", async () => {
-  const get = vi.spyOn(api, "get").mockResolvedValue([
+  const get = vi.spyOn(api, "get").mockResolvedValue(paged([
     row({ decision: "suspended", reason: "Chargebacks", targetName: "Pat Photo" }),
     row({ decision: "PAYOUT_MARKED_PAID", targetType: "payout", targetId: "PAY-1" }),
     row({ decision: "photo_removal_approved", targetType: "removal", adminId: "gone", adminName: null }),
-  ]);
+  ]));
   renderTimeline({ recent: true });
 
   expect(await screen.findByText("Suspended")).toBeTruthy();
@@ -42,13 +44,13 @@ it("lists recent decisions with a readable label, the admin and the time", async
 });
 
 it("keeps the short id label for a user row with no name", async () => {
-  vi.spyOn(api, "get").mockResolvedValue([row({})]);
+  vi.spyOn(api, "get").mockResolvedValue(paged([row({})]));
   renderTimeline({ recent: true });
   expect(await screen.findByText("User 11111111")).toBeTruthy();
 });
 
 it("shows the empty copy when nothing has been decided", async () => {
-  vi.spyOn(api, "get").mockResolvedValue([]);
+  vi.spyOn(api, "get").mockResolvedValue(paged([]));
   renderTimeline({ recent: true });
   expect(await screen.findByText("No decisions on file yet.")).toBeTruthy();
 });
@@ -76,7 +78,7 @@ it("shows who made each decision on a photographer's page", async () => {
 });
 
 it("passes a custom limit to the request", async () => {
-  const get = vi.spyOn(api, "get").mockResolvedValue([row({})]);
+  const get = vi.spyOn(api, "get").mockResolvedValue(paged([row({})]));
   renderTimeline({ recent: true, limit: 20 });
   expect(await screen.findByText("Approved")).toBeTruthy();
   expect(get).toHaveBeenCalledWith("/admin/decisions?limit=20", expect.anything());

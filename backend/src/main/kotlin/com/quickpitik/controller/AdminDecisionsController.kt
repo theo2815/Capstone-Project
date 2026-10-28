@@ -1,5 +1,6 @@
 package com.quickpitik.controller
 
+import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.dto.admin.AdminDecisionDto
 import com.quickpitik.service.admin.AdminDecisionsService
 import org.springframework.security.access.prepost.PreAuthorize
@@ -16,6 +17,6 @@ class AdminDecisionsController(
 ) {
 
     @GetMapping
-    fun recent(@RequestParam(required = false) limit: Int?): List<AdminDecisionDto> =
+    fun recent(@RequestParam(required = false) limit: Int?): PaginatedResponse<AdminDecisionDto> =
         adminDecisionsService.recent(limit)
 }

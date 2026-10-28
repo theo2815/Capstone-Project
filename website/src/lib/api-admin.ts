@@ -114,7 +114,8 @@ export async function fetchRecentAdminDecisions(
   limit: number,
   signal?: AbortSignal,
 ): Promise<RecentAdminDecision[]> {
-  return api.get<RecentAdminDecision[]>(`/admin/decisions?limit=${limit}`, { signal });
+  const page = await api.get<PaginatedResponse<RecentAdminDecision>>(`/admin/decisions?limit=${limit}`, { signal });
+  return page.items;
 }
 
 export async function fetchAdminKpiTrend(

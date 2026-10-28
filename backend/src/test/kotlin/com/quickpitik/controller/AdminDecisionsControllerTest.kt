@@ -1,5 +1,6 @@
 package com.quickpitik.controller
 
+import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.dto.admin.AdminDecisionDto
 import com.quickpitik.service.admin.AdminDecisionsService
 import org.junit.jupiter.api.AfterEach
@@ -47,9 +48,10 @@ class AdminDecisionsControllerTest {
     @Test
     fun `an admin gets the recent decisions with the asked limit`() {
         val row = AdminDecisionDto(UUID.randomUUID(), "approved", null, OffsetDateTime.now(), "user", "u1", "Pat", UUID.randomUUID(), "Boss")
-        Mockito.`when`(service.recent(5)).thenReturn(listOf(row))
+        val page = PaginatedResponse(listOf(row), 1L, 0, 5)
+        Mockito.`when`(service.recent(5)).thenReturn(page)
         signIn("ADMIN")
 
-        assertEquals(listOf(row), secured.recent(5))
+        assertEquals(page, secured.recent(5))
     }
 }

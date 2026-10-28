@@ -1,6 +1,8 @@
 package com.quickpitik.service.admin
 
+import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.dto.admin.AdminDecisionDto
+import com.quickpitik.dto.admin.toDto
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.UserRepository
@@ -15,18 +17,19 @@ class AdminDecisionsService(
 ) {
 
     @Transactional(readOnly = true)
-    fun recent(limit: Int?): List<AdminDecisionDto> {
-        val rows = adminDecisionLogRepository.findAllByOrderByDecidedAtDescIdAsc(
-            PageRequest.of(0, (limit ?: DEFAULT_LIMIT).coerceIn(1, MAX_LIMIT)),
-        )
-        if (rows.isEmpty()) return emptyList()
+    fun recent(limit: Int?): PaginatedResponse<AdminDecisionDto> {
+        val size = (limit ?: DEFAULT_LIMIT).coerceIn(1, MAX_LIMIT)
+        val rows = adminDecisionLogRepository.findAllByOrderByDecidedAtDescIdAsc(PageRequest.of(0, size))
+        val total = adminDecisionLogRepository.count()
+        if (rows.isEmpty()) return PaginatedResponse(emptyList(), total, 0, size)
         // One lookup covers the admins and the user targets.
         val names = userRepository.findAllById(rows.flatMap { listOfNotNull(it.adminId, it.targetUserId) }.toSet())
             .associate { it.id to it.name.ifBlank { it.email } }
-        return rows.map {
+        val items = rows.map {
             val (type, id) = target(it)
-            AdminDecisionDto(it.id, it.decision, it.reason, it.decidedAt, type, id, it.targetUserId?.let(names::get), it.adminId, names[it.adminId])
+            it.toDto(type, id, it.targetUserId?.let(names::get), names[it.adminId])
         }
+        return PaginatedResponse(items, total, 0, size)
     }
 
     // Photo-removal rows have no target column; the writer keeps the case id in meta.requestId.

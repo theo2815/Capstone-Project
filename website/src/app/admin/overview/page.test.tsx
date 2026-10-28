@@ -13,7 +13,7 @@ afterEach(() => { cleanup(); useAuthStore.getState().logout(); vi.restoreAllMock
 
 it("asks for the 20 most recent decisions", async () => {
   useAuthStore.getState().setUser(admin);
-  const get = vi.spyOn(api, "get").mockResolvedValue([]);
+  const get = vi.spyOn(api, "get").mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
   await waitFor(() => expect(get).toHaveBeenCalledWith("/admin/decisions?limit=20", expect.anything()));

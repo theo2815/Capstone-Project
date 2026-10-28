@@ -1,5 +1,6 @@
 package com.quickpitik.dto.admin
 
+import com.quickpitik.entity.AdminDecisionLog
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -19,3 +20,6 @@ data class AdminDecisionDto(
     @field:Schema(description = "Admin display name, else e-mail; null when the admin account no longer exists")
     val adminName: String?,
 )
+
+fun AdminDecisionLog.toDto(targetType: String?, targetId: String?, targetName: String?, adminName: String?) =
+    AdminDecisionDto(id, decision, reason, decidedAt, targetType, targetId, targetName, adminId, adminName)

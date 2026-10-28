@@ -48,7 +48,7 @@ class AdminDecisionsServiceTest {
             User(id = userId, email = "pat@test.local", passwordHash = "x", name = "Pat Photo", role = Role.PHOTOGRAPHER),
         ))
 
-        val out = service.recent(20)
+        val out = service.recent(20).items
 
         assertEquals(listOf("suspended", "PAYOUT_MARKED_PAID", "refund_resolved", "event_hidden"), out.map { it.decision })
         assertEquals(listOf("Boss", null, "Boss", "Boss"), out.map { it.adminName })
@@ -72,7 +72,7 @@ class AdminDecisionsServiceTest {
             User(id = blank, email = "quiet@test.local", passwordHash = "x", name = " ", role = Role.PHOTOGRAPHER),
         ))
 
-        assertEquals(listOf("quiet@test.local", null), service.recent(20).map { it.targetName })
+        assertEquals(listOf("quiet@test.local", null), service.recent(20).items.map { it.targetName })
         Mockito.verify(users, Mockito.times(1)).findAllById(anyArg<Iterable<UUID>>())
     }
 
@@ -82,7 +82,7 @@ class AdminDecisionsServiceTest {
             meta = mapOf("requestId" to requestId.toString(), "itemId" to UUID.randomUUID().toString()))))
         Mockito.`when`(users.findAllById(setOf(adminId))).thenReturn(emptyList())
 
-        val row = service.recent(20).single()
+        val row = service.recent(20).items.single()
 
         assertEquals("removal", row.targetType)
         assertEquals(requestId.toString(), row.targetId)
@@ -93,7 +93,7 @@ class AdminDecisionsServiceTest {
         stub(listOf(AdminDecisionLog(adminId = adminId, decision = "mystery")))
         Mockito.`when`(users.findAllById(setOf(adminId))).thenReturn(emptyList())
 
-        val row = service.recent(20).single()
+        val row = service.recent(20).items.single()
 
         assertNull(row.targetType)
         assertNull(row.targetId)
@@ -102,10 +102,14 @@ class AdminDecisionsServiceTest {
     @Test
     fun `recent defaults to 20 and clamps the limit between 1 and 100`() {
         stub(emptyList())
+        Mockito.`when`(log.count()).thenReturn(42L)
         for ((asked, used) in listOf<Pair<Int?, Int>>(null to 20, 0 to 1, -5 to 1, 7 to 7, 100 to 100, 5000 to 100)) {
-            service.recent(asked)
+            val page = service.recent(asked)
             assertEquals(used, pageSeen!!.pageSize, "limit $asked")
             assertEquals(0, pageSeen!!.pageNumber)
+            assertEquals(used, page.limit, "limit $asked")
+            assertEquals(0, page.offset)
+            assertEquals(42L, page.total)
         }
     }
 
@@ -113,7 +117,7 @@ class AdminDecisionsServiceTest {
     fun `recent skips the admin lookup when there are no decisions`() {
         stub(emptyList())
 
-        assertEquals(emptyList<com.quickpitik.dto.admin.AdminDecisionDto>(), service.recent(20))
+        assertEquals(emptyList<com.quickpitik.dto.admin.AdminDecisionDto>(), service.recent(20).items)
         Mockito.verifyNoInteractions(users)
     }
 }
