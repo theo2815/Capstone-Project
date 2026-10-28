@@ -104,6 +104,8 @@ export interface RecentAdminDecision {
   decidedAt: string;
   targetType: "user" | "payout" | "dispute" | "event" | "removal" | null;
   targetId: string | null;
+  /** Name (else e-mail) of a user target; null for other targets or a deleted user. */
+  targetName: string | null;
   adminId: string;
   adminName: string | null;
 }

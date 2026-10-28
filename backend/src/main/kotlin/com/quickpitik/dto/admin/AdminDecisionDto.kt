@@ -13,6 +13,8 @@ data class AdminDecisionDto(
     @field:Schema(description = "user | payout | dispute | event | removal; null when the row points at nothing")
     val targetType: String?,
     val targetId: String?,
+    @field:Schema(description = "Display name (else e-mail) of a user target; null for other targets or a deleted user")
+    val targetName: String?,
     val adminId: UUID,
     @field:Schema(description = "Admin display name, else e-mail; null when the admin account no longer exists")
     val adminName: String?,

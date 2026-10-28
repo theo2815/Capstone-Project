@@ -113,6 +113,7 @@ function decisionLabel(code: string): string {
 const TARGET_NAME = { user: "User", payout: "Payout", dispute: "Dispute", event: "Event", removal: "Photo removal" } as const;
 
 function targetTitle(d: RecentAdminDecision): string {
+  if (d.targetName) return d.targetName;
   if (!d.targetType) return "Admin action";
   // UUIDs are long; their first 8 characters are enough to tell rows apart.
   const id = d.targetId && d.targetId.length > 20 ? d.targetId.slice(0, 8) : (d.targetId ?? "");

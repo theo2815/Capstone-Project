@@ -46,7 +46,7 @@ class AdminDecisionsControllerTest {
 
     @Test
     fun `an admin gets the recent decisions with the asked limit`() {
-        val row = AdminDecisionDto(UUID.randomUUID(), "approved", null, OffsetDateTime.now(), "user", "u1", UUID.randomUUID(), "Boss")
+        val row = AdminDecisionDto(UUID.randomUUID(), "approved", null, OffsetDateTime.now(), "user", "u1", "Pat", UUID.randomUUID(), "Boss")
         Mockito.`when`(service.recent(5)).thenReturn(listOf(row))
         signIn("ADMIN")
 

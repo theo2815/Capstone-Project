@@ -43,19 +43,36 @@ class AdminDecisionsServiceTest {
             AdminDecisionLog(adminId = adminId, targetDisputeId = requestId, decision = "refund_resolved"),
             AdminDecisionLog(adminId = adminId, targetEventId = requestId, decision = "event_hidden"),
         ))
-        Mockito.`when`(users.findAllById(setOf(adminId, goneId))).thenReturn(
-            listOf(User(id = adminId, email = "boss@test.local", passwordHash = "x", name = "Boss", role = Role.ADMIN)),
-        )
+        Mockito.`when`(users.findAllById(setOf(adminId, goneId, userId))).thenReturn(listOf(
+            User(id = adminId, email = "boss@test.local", passwordHash = "x", name = "Boss", role = Role.ADMIN),
+            User(id = userId, email = "pat@test.local", passwordHash = "x", name = "Pat Photo", role = Role.PHOTOGRAPHER),
+        ))
 
         val out = service.recent(20)
 
         assertEquals(listOf("suspended", "PAYOUT_MARKED_PAID", "refund_resolved", "event_hidden"), out.map { it.decision })
         assertEquals(listOf("Boss", null, "Boss", "Boss"), out.map { it.adminName })
+        assertEquals(listOf("Pat Photo", null, null, null), out.map { it.targetName })
         assertEquals(goneId, out[1].adminId)
         assertEquals("abuse", out[0].reason)
         assertEquals(now, out[0].decidedAt)
         assertEquals(listOf("user" to userId.toString(), "payout" to "PAY-1", "dispute" to requestId.toString(),
             "event" to requestId.toString()), out.map { it.targetType to it.targetId })
+        Mockito.verify(users, Mockito.times(1)).findAllById(anyArg<Iterable<UUID>>())
+    }
+
+    @Test
+    fun `recent names a user target by e-mail when the name is blank and leaves a missing user unnamed`() {
+        val blank = UUID.randomUUID()
+        stub(listOf(
+            AdminDecisionLog(adminId = adminId, targetUserId = blank, decision = "approved"),
+            AdminDecisionLog(adminId = adminId, targetUserId = userId, decision = "approved"),
+        ))
+        Mockito.`when`(users.findAllById(setOf(adminId, blank, userId))).thenReturn(listOf(
+            User(id = blank, email = "quiet@test.local", passwordHash = "x", name = " ", role = Role.PHOTOGRAPHER),
+        ))
+
+        assertEquals(listOf("quiet@test.local", null), service.recent(20).map { it.targetName })
         Mockito.verify(users, Mockito.times(1)).findAllById(anyArg<Iterable<UUID>>())
     }
 

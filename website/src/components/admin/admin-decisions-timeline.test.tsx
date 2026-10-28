@@ -16,13 +16,13 @@ const renderTimeline = (props = {}) =>
   render(<QueryClientProvider client={client}><AdminDecisionsTimeline {...props} /></QueryClientProvider>);
 
 const row = (over: object) => ({
-  id: crypto.randomUUID(), decision: "approved", reason: null, decidedAt: "2026-10-27T09:30:00Z",
+  id: crypto.randomUUID(), targetName: null, decision: "approved", reason: null, decidedAt: "2026-10-27T09:30:00Z",
   targetType: "user", targetId: "11111111-2222-3333-4444-555555555555", adminId: "a1", adminName: "Dana Admin", ...over,
 });
 
 it("lists recent decisions with a readable label, the admin and the time", async () => {
   const get = vi.spyOn(api, "get").mockResolvedValue([
-    row({ decision: "suspended", reason: "Chargebacks" }),
+    row({ decision: "suspended", reason: "Chargebacks", targetName: "Pat Photo" }),
     row({ decision: "PAYOUT_MARKED_PAID", targetType: "payout", targetId: "PAY-1" }),
     row({ decision: "photo_removal_approved", targetType: "removal", adminId: "gone", adminName: null }),
   ]);
@@ -37,6 +37,14 @@ it("lists recent decisions with a readable label, the admin and the time", async
   expect(screen.getAllByText(/OCT 27/).length).toBe(3);
   expect(screen.getByText("Chargebacks")).toBeTruthy();
   expect(screen.getByText("Payout PAY-1")).toBeTruthy();
+  expect(screen.getByText("Pat Photo")).toBeTruthy();
+  expect(screen.queryByText("User 11111111")).toBeNull();
+});
+
+it("keeps the short id label for a user row with no name", async () => {
+  vi.spyOn(api, "get").mockResolvedValue([row({})]);
+  renderTimeline({ recent: true });
+  expect(await screen.findByText("User 11111111")).toBeTruthy();
 });
 
 it("shows the empty copy when nothing has been decided", async () => {

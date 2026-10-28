@@ -20,11 +20,12 @@ class AdminDecisionsService(
             PageRequest.of(0, (limit ?: DEFAULT_LIMIT).coerceIn(1, MAX_LIMIT)),
         )
         if (rows.isEmpty()) return emptyList()
-        val names = userRepository.findAllById(rows.map { it.adminId }.toSet())
+        // One lookup covers the admins and the user targets.
+        val names = userRepository.findAllById(rows.flatMap { listOfNotNull(it.adminId, it.targetUserId) }.toSet())
             .associate { it.id to it.name.ifBlank { it.email } }
         return rows.map {
             val (type, id) = target(it)
-            AdminDecisionDto(it.id, it.decision, it.reason, it.decidedAt, type, id, it.adminId, names[it.adminId])
+            AdminDecisionDto(it.id, it.decision, it.reason, it.decidedAt, type, id, it.targetUserId?.let(names::get), it.adminId, names[it.adminId])
         }
     }
 
