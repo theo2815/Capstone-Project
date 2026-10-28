@@ -81,6 +81,14 @@ class RunnerGalleryViewModelLiveTest {
         assertTrue(check())
     }
 
+    // Runner discovery mirrors the website's /events, so it asks for the
+    // photographer events an admin listed (V89).
+    @Test fun `runner discovery asks for admin-listed events`() {
+        RunnerGalleryViewModel(application).fetchPublicEvents()
+        awaitUntil { paths.any { it.startsWith("/api/v1/events?") } }
+        assertTrue(paths.first { it.startsWith("/api/v1/events?") }.contains("includeListed=true"))
+    }
+
     @Test fun `published pushes bump the badge, other frames do not, refresh clears it with a fresh page, retry restarts the socket`() {
         val vm = RunnerGalleryViewModel(application)
         vm.selectEvent(event(LocalDate.now()))

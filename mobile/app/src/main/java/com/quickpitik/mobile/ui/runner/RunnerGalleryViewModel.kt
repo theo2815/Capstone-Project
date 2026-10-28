@@ -281,7 +281,8 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
                 val response = RetrofitClient.apiService.getPublicEvents(
                     status = "ACTIVE,COMPLETED,ARCHIVED",
                     offset = 0,
-                    limit = 200
+                    limit = 200,
+                    includeListed = true
                 )
                 if (response.success && response.data != null) {
                     _eventsState.value = RunnerEventsState.Success(response.data.items)
