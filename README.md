@@ -8,6 +8,8 @@
 **A marathon photography ecosystem for Cebu, Philippines.**
 Camera → Mobile → Cloud → Marketplace, with AI-powered blur culling on the desktop and face/bib search on the web and mobile.
 
+Live at [quickpitik.com](https://quickpitik.com) · Desktop app: [BatchMyPhotos on the Microsoft Store](https://apps.microsoft.com/detail/9N1KKMV4NX4J)
+
 </div>
 
 ---
@@ -34,8 +36,8 @@ QuickPitik addresses both ends of the pipeline. Photographers tether their camer
 - **AI blur culling** (BatchMyPhotos desktop) — photographers remove blurry shots in seconds, not hours.
 - **Face search** (web + mobile) — runners upload a selfie and find every photo they appear in for a given event.
 - **Bib-number search** — OCR-based search for runners who prefer not to upload a selfie.
-- **Marketplace + checkout** — local payment methods (PayMongo) and watermarked previews until purchase.
-- **Per-event isolation** — face embeddings are scoped to a single event so runner data never leaks across races.
+- **Marketplace + checkout** — QR Ph through PayMongo on the website and the Android app, with watermarked previews until purchase.
+- **Per-event isolation** — every face search is scoped to one event (one collection per event in AWS Rekognition), so runner data never leaks across races.
 
 ---
 
@@ -49,23 +51,22 @@ QuickPitik addresses both ends of the pipeline. Photographers tether their camer
        │                  │                  │
        ▼                  ▼                  ▼
 ┌──────────────────────────────────┐   ┌──────────────────┐
-│  Spring Boot Backend             │   │  Desktop Backend │
-│  users · events · payments       │   │  own DB          │
-└────────────┬─────────────────────┘   └────────┬─────────┘
-             │                                  │
-             ▼                                  ▼
-┌──────────────────────────────────────────────────────┐
-│  ai-api                                              │
-│  · web + mobile use: face / bib                      │
-│  · desktop uses:     blur / batch                    │
-└──────────────────────────────────────────────────────┘
+│  Spring Boot Backend             │   │  ai-api          │
+│  users · events · payments       │   │  blur detection  │
+└────────────┬─────────────────────┘   └──────────────────┘
+             │
+             ▼
+┌──────────────────────────────────┐
+│  AWS Rekognition                 │
+│  face / bib search               │
+└──────────────────────────────────┘
 ```
 
 **Module boundaries**
 
-- Mobile and website never call `ai-api` directly — the Spring Boot backend proxies all inference.
+- Mobile and website never call `ai-api` directly — face and bib search run in the Spring Boot backend on AWS Rekognition.
 - The desktop app is the one exception. It calls `ai-api` with its own restricted key (scopes: `blur:read`, `jobs:read`).
-- Each backend owns its own domain data; `ai-api` is stateless about users and events, storing only face embeddings tagged with `api_key_id` + `event_id`.
+- Each backend owns its own domain data; `ai-api` is stateless about users and events, storing only API keys and blur jobs.
 
 Full integration contracts live in `ai-api/docs/integration-architecture.md` and `ai-api/docs/integration-contracts.md`.
 
@@ -75,23 +76,23 @@ Full integration contracts live in `ai-api/docs/integration-architecture.md` and
 
 | Product       | Stack                                                | Hosting           |
 |---------------|------------------------------------------------------|-------------------|
-| `ai-api/`     | FastAPI · Celery · Python 3.11+ · pgvector           | AWS EC2           |
-| `backend/`    | Spring Boot · Kotlin · PostgreSQL · PayMongo         | AWS EC2           |
+| `ai-api/`     | FastAPI · Celery · Python 3.11+ · ONNX Runtime       | Railway           |
+| `backend/`    | Spring Boot · Kotlin · PostgreSQL · PayMongo         | Railway           |
 | `website/`    | Next.js · React · Tailwind                           | Vercel            |
-| `mobile/`     | Kotlin · Jetpack Compose · MVVM (Android)            | Google Play Store |
+| `mobile/`     | Kotlin · Jetpack Compose · MVVM (Android 10+)        | APK download      |
 | `desktop/`    | Electron · React · Node.js (Windows, separate repo)  | Microsoft Store |
-| Database      | PostgreSQL 16 + pgvector                             | AWS RDS           |
-| Object Storage| AWS S3 (CloudFront CDN planned)                      | AWS               |
-| Task Queue    | Redis                                                | AWS EC2           |
+| Database      | PostgreSQL 16 (backend; the blur service has its own)| Railway           |
+| Object Storage| Cloudflare R2 (photos)                               | Cloudflare        |
+| Face / bib    | AWS Rekognition (one collection per event)           | AWS               |
+| Redis         | Blur service API keys and rate limits                | Railway           |
 
 ---
 
 ## AI Capabilities (ai-api)
 
-- **Blur Detection** — Laplacian variance + FFT analysis, and a CNN classifier (YOLOv8n-cls) for 4-class blur type classification. Real-event accuracy is not yet qualified; see `ai-api/docs/ai-system-overview.md`.
-- **Face Recognition** — InsightFace (RetinaFace + ArcFace) with pgvector cosine similarity search.
-- **Bib Number OCR** — PaddleOCR (PP-OCRv5) with optional YOLOv8 bib region detection.
-- **Async Batch Processing** — Celery + Redis for processing 100+ images per request.
+- **Blur Detection** — Laplacian variance + FFT analysis, then a person detector (YOLOv8n-seg, ONNX) that measures how sharp each runner is; each photo gets one of four labels. Real-event accuracy is not yet qualified; see `ai-api/docs/ai-system-overview.md`.
+- **Face and bib search are not in ai-api** — the Spring Boot backend runs them on AWS Rekognition.
+- **Async Batch Processing** — Celery + Redis for processing 100+ images per request; turned off on the live blur service.
 - **Optional C++ Acceleration** — pybind11 extensions for performance-critical paths (AVX2).
 
 ---
@@ -100,7 +101,7 @@ Full integration contracts live in `ai-api/docs/integration-architecture.md` and
 
 ```
 capstone-project/
-├── ai-api/        FastAPI + Celery — face / bib / blur inference
+├── ai-api/        FastAPI + Celery — blur detection for the desktop app
 ├── backend/       Spring Boot — users, events, orders, payments
 ├── website/       Next.js — public site, runner search, admin
 ├── mobile/        Kotlin/Compose — photographer + runner apps
@@ -118,9 +119,9 @@ Each module has its own setup. Start with the module's `CLAUDE.md` and `docs/` f
 
 ### Prerequisites
 
-- **ai-api**: Python 3.11+, PostgreSQL with pgvector, Redis
+- **ai-api**: Python 3.11+, Docker (PostgreSQL, Redis)
 - **backend**: JDK 21, PostgreSQL, Gradle
-- **website**: Node.js 20+, npm
+- **website**: Node.js 22, npm
 - **mobile**: Android Studio, JDK 17, an Android device or emulator
 
 ### Quick start — ai-api
@@ -188,13 +189,13 @@ QuickPitik is in active development. The AI service, Spring Boot backend, websit
 
 ## Team
 
-| Name                          | Role               |
-|-------------------------------|--------------------|
-| Chan, Theo Cedric             | Lead Developer     |
-| Tapales, Christian Kyle       | Developer          |
-| Ycoy, Dillan Marquin          | Developer          |
-| Purez, Kristine Eunice        | Lead Documents     |
-| Sy, Brye Kane L.              | Documents          |
+| Name                          | Role                       |
+|-------------------------------|----------------------------|
+| Chan, Theo Cedric             | Lead Developer             |
+| Tapales, Christian Kyle       | Developer                  |
+| Ycoy, Dillan Marquin          | Developer                  |
+| Pureza, Kristine Eunice       | Lead Documents, QA, Tester |
+| Sy, Brye Kane L.              | Supporting Documents       |
 
 **Adviser:** Joemarie C. Amparo
 
