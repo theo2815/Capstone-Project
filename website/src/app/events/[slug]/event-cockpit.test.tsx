@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { EventCockpit } from "@/app/events/[slug]/event-cockpit";
+import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 
 // FS-7 (2026-10-27): a face search can return up to 200 matches. They render a
@@ -16,16 +17,18 @@ const fixtures = vi.hoisted(() => {
   const matches = Array.from({ length: 130 }, (_, i) => ({
     id: `match-${i}`, bib: null, km: null, time: "06:30", tone: 0, span: "default" as const, price: 100,
   }));
-  return { event, matches };
+  // Per-test url flags and bib-search error (the default is the ?mine=1 landing).
+  const state = { url: { browse: "1", face: "1", mine: "1" } as Record<string, string>, bibError: null as unknown };
+  return { event, matches, state };
 });
 
 vi.mock("@/hooks/use-url-state", () => ({
   // Arrive from the "your photos are ready" email: face mode, auto-run search.
-  useUrlState: (key: string) => [["browse", "face", "mine"].includes(key) ? "1" : "", vi.fn()],
+  useUrlState: (key: string) => [fixtures.state.url[key] ?? "", vi.fn()],
   useUrlStateBatch: () => vi.fn(),
 }));
 vi.mock("@/hooks/use-event-photos", () => ({
-  useEventPhotos: () => ({ photos: [], total: 0, isLoading: false, isFetching: false, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn(), error: null }),
+  useEventPhotos: () => ({ photos: [], total: 0, isLoading: false, isFetching: false, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn(), error: fixtures.state.bibError }),
 }));
 vi.mock("@/hooks/use-event-live-photos", () => ({ useEventLivePhotos: () => ({ newCount: 0, reconnectFailed: false, refresh: vi.fn() }) }));
 vi.mock("@/hooks/use-selfies", () => ({ useSelfiesList: () => ({ selfies: [{ id: "s1", isPrimary: true }], isLoading: false }) }));
@@ -46,6 +49,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  fixtures.state.url = { browse: "1", face: "1", mine: "1" };
+  fixtures.state.bibError = null;
   useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false });
   vi.restoreAllMocks();
 });
@@ -68,4 +73,17 @@ it("shows face matches a page at a time, while Buy all still covers every match"
   await user.click(screen.getByRole("button", { name: "Load 10 more" }));
   expect(screen.getAllByTestId("tile")).toHaveLength(130);
   expect(screen.getByText("All 130 loaded")).toBeInTheDocument();
+});
+
+it("says how long to wait when a bib search is refused with a 429, not 'No matches yet'", async () => {
+  fixtures.state.url = { bib: "123" };
+  fixtures.state.bibError = new ApiError([{ code: "RATE_LIMITED", message: "Too many requests. Please slow down and try again." }], 429, 19);
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <EventCockpit event={fixtures.event} initialPhotos={{ items: [], total: 0, offset: 0, limit: 60 }} />
+    </QueryClientProvider>,
+  );
+
+  expect(await screen.findByText("Too many searches. Try again in about 19 seconds.")).toBeInTheDocument();
+  expect(screen.queryByText(/No matches yet|Still uploading/)).not.toBeInTheDocument();
 });

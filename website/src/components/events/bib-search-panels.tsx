@@ -14,7 +14,7 @@ import {
   searchEventByFace,
   type EventPhotosResult,
 } from "@/lib/api-photos";
-import { ApiError } from "@/lib/api";
+import { ApiError, searchRateLimitMessage } from "@/lib/api";
 import { captureAuthSession } from "@/lib/auth-session";
 import { FieldError } from "@/components/ui/field-error";
 import { buildLoginRedirect } from "@/lib/redirect";
@@ -140,7 +140,7 @@ export function SelfieSearchPanel({
       if (code === "AI_API_UNAVAILABLE") {
         return "Face search is offline right now. Try again in a few minutes.";
       }
-      return err.message || "Could not match your face right now.";
+      return searchRateLimitMessage(err) ?? (err.message || "Could not match your face right now.");
     }
     return "Could not match your face right now. Try again.";
   }

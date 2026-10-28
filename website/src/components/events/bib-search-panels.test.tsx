@@ -152,3 +152,10 @@ it("allows the replacement session to search without an old result clearing its 
   await act(async () => { finishNew(found()); await next; });
   expect(success).toHaveBeenCalledTimes(1);
 });
+
+it("tells the runner how long to wait when the search is refused with a 429", async () => {
+  const refused = () => new Response(JSON.stringify({ success: false, errors: [{ code: "RATE_LIMITED", message: "Too many requests. Please slow down and try again." }] }), { status: 429, headers: { "Retry-After": "19" } });
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => refused()));
+  mountAndPick(vi.fn());
+  expect(await screen.findByText("Too many searches. Try again in about 19 seconds.")).toBeInTheDocument();
+});
