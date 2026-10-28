@@ -74,7 +74,8 @@ data class WatermarkPlacement(
 // `phash` of the marked frame (what a screenshot looks like), `phashClean` of
 // the frame before any mark (what a cleaned copy looks like), `phashCentre` of
 // the clean middle 60% (what a copy cropped to the runner looks like).
-data class MarkedPreview(val jpeg: ByteArray, val phash: Long, val phashClean: Long, val phashCentre: Long)
+// `gridJpeg` is the same marked frame scaled to GRID_LONG_EDGE for gallery tiles.
+data class MarkedPreview(val jpeg: ByteArray, val gridJpeg: ByteArray, val phash: Long, val phashClean: Long, val phashCentre: Long)
 
 @Service
 class WatermarkService(
@@ -152,8 +153,11 @@ class WatermarkService(
         val phash = PerceptualHash.of(target)
         val out = ByteArrayOutputStream()
         ImageIO.write(target, "jpg", out)
+        val gridOut = ByteArrayOutputStream()
+        ImageIO.write(scaleToLongEdge(target, GRID_LONG_EDGE), "jpg", gridOut)
         val packet = JpegXmp.creditPacket(credit.name, credit.handle, credit.photoId, Year.now().value)
-        return MarkedPreview(JpegXmp.inject(out.toByteArray(), packet), phash, phashClean, phashCentre)
+        return MarkedPreview(JpegXmp.inject(out.toByteArray(), packet), JpegXmp.inject(gridOut.toByteArray(), packet),
+            phash, phashClean, phashCentre)
     }
 
     private fun seed(photoId: UUID): Long {
@@ -520,6 +524,7 @@ class WatermarkService(
 
     companion object {
         const val MAX_LONG_EDGE = 1280
+        const val GRID_LONG_EDGE = 400
         private const val WORDMARK_RESOURCE = "/brand/quickpitik-wordmark.png"
         private const val FONT_RESOURCE = "/fonts/Archivo-SemiBold.ttf"
         private val INK = Color(0x11, 0x11, 0x11)

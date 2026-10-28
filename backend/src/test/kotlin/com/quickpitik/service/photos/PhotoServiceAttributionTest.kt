@@ -229,6 +229,7 @@ class PhotoServiceAttributionTest {
             photo(null).also { it.thumbnailS3Key = null },
             photo(null).also { it.thumbnailS3Key = null; it.watermarkS3Key = "watermark.jpg" },
             photo(null).also { it.thumbnailS3Key = "thumbnail.jpg"; it.watermarkS3Key = "watermark.jpg" },
+            photo(null).also { it.thumbnailS3Key = "watermark.jpg"; it.watermarkS3Key = "watermark.jpg" },
         )
         stubPage(photos)
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg()))
@@ -236,7 +237,11 @@ class PhotoServiceAttributionTest {
 
         val items = service().listForEvent(eventId, bib = null, pagination = pagination).items
 
-        assertEquals(listOf(null, "https://storage/watermark.jpg", "https://storage/thumbnail.jpg"), items.map { it.imageUrl })
+        // imageUrl stays the 1280 preview (watermark key) even when a grid tile exists (FS-9).
+        assertEquals(listOf(null, "https://storage/watermark.jpg", "https://storage/watermark.jpg", "https://storage/watermark.jpg"),
+            items.map { it.imageUrl })
+        // gridUrl only when a separate tile exists; older photos (equal keys) leave it null.
+        assertEquals(listOf(null, null, "https://storage/thumbnail.jpg", null), items.map { it.gridUrl })
         assertTrue(items.all { it.cleanUrl == null && it.downloadUrl == null })
         Mockito.verify(storageService, Mockito.never()).presignedGetUrl(eqArg(photos.first().s3Key), anyArg())
     }

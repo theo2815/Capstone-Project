@@ -77,7 +77,7 @@ class PhotoRemovalQueryService(
             val state = if (item.state == RemovalItemState.REMOVED && !job.confirms(item.photoIdSnapshot)) RemovalItemState.REMOVAL_AUTHORIZED else item.state
             if (photo != null && photo.purgedAt == null && photo.deletionStartedAt == null && photo.removalState != RemovalState.REMOVED &&
                 item.state !in setOf(RemovalItemState.REMOVAL_AUTHORIZED, RemovalItemState.REMOVED)) {
-                (photo.thumbnailS3Key ?: photo.watermarkS3Key)?.let { keys[item.id] = it }
+                (photo.watermarkS3Key ?: photo.thumbnailS3Key)?.let { keys[item.id] = it }
             }
             PhotographerRemovalItemDto(item.id, item.photoIdSnapshot, state, item.ownerResponse, item.ownerResponseReason,
                 item.ownerRespondedAt, item.adminDecision, null, item.adminDecidedAt, item.retentionReviewAt,
@@ -205,7 +205,7 @@ class PhotoRemovalQueryService(
             ReviewPhoto(RemovalPhotoDto(dto, photo.photographerId, owners[photo.photographerId], selected[photo.id]?.id,
                 photo.removalState, photo.deletedAt != null, false, score, if (score != null) RemovalMatchSource.SELFIE else null),
                 photo.s3Key.takeIf { retained && it.isNotBlank() },
-                (photo.thumbnailS3Key ?: photo.watermarkS3Key).takeIf { retained })
+                (photo.watermarkS3Key ?: photo.thumbnailS3Key).takeIf { retained })
         }
     }
 

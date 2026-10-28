@@ -950,7 +950,7 @@ class OrderService(
     private fun thumbnailUrlOf(photo: Photo): String? {
         if (!photoRepository.isDeliveryAvailable(photo.id)) return null
         return storageService.presignedGetUrl(
-            photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key,
+            photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key,
             storageProperties.presignedTtl.thumbnail,
         )
     }

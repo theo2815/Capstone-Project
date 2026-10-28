@@ -323,7 +323,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         tx.executeWithoutResult {
             val stale = photos.findById(photo.id).orElseThrow()
             separateTx.execute {
-                assertEquals(1, photos.publishWatermarked(photo.id, "review/watermark.jpg", 1L, 2L, 3L))
+                assertEquals(1, photos.publishWatermarked(photo.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L))
             }
             stale.indexingStatus = IndexingStatus.SKIPPED
             photos.saveAndFlush(stale)
@@ -333,6 +333,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertEquals(IndexingStatus.SKIPPED, fresh.indexingStatus)
         assertEquals(PhotoStatus.LIVE, fresh.status)
         assertEquals("review/watermark.jpg", fresh.watermarkS3Key)
+        assertEquals("review/grid.jpg", fresh.thumbnailS3Key)
     }
 
     @Test fun `publishWatermarked only flips an eligible processing photo`() {
@@ -340,10 +341,10 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         val hidden = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/hidden.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.HIDDEN))
         val trashed = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/trashed.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.PROCESSING, deletedAt = OffsetDateTime.now()))
 
-        assertEquals(1, inTx { photos.publishWatermarked(processing.id, "review/watermark.jpg", 1L, 2L, 3L) })
-        assertEquals(0, inTx { photos.publishWatermarked(photo.id, "review/watermark.jpg", 1L, 2L, 3L) })
-        assertEquals(0, inTx { photos.publishWatermarked(hidden.id, "review/watermark.jpg", 1L, 2L, 3L) })
-        assertEquals(0, inTx { photos.publishWatermarked(trashed.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(1, inTx { photos.publishWatermarked(processing.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(photo.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(hidden.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(trashed.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L) })
         assertEquals(PhotoStatus.LIVE, photos.findById(processing.id).orElseThrow().status)
     }
 

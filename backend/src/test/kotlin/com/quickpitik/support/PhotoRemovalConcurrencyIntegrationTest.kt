@@ -132,7 +132,7 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
         items.saveAndFlush(item)
         tx.executeWithoutResult { availability.authorizeRemoval(photo.id, item.id, owner.id) }
         val stalePublishUpdatedRows = tx.execute {
-            photos.publishWatermarked(photo.id, "synthetic/late.jpg", 1L, 2L, 3L)
+            photos.publishWatermarked(photo.id, "synthetic/late.jpg", "synthetic/late-grid.jpg", 1L, 2L, 3L)
         }
         stale.altText = "Late writer"
         photos.saveAndFlush(stale)

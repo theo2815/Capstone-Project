@@ -161,6 +161,8 @@ class PhotoWatermarkService(
             }
 
             val watermarkKey = "events/${photo.eventId}/photos/${photo.id}/watermark.jpg"
+            // Erasure lists this fixed path in every manifest (PhotoErasureService).
+            val gridKey = "events/${photo.eventId}/photos/${photo.id}/grid.jpg"
             try {
                 if (!workFence.isCurrent(claim)) {
                     log.warn("Watermark {}: work claim ended before the preview upload; nothing written, left for the sweep", photoId)
@@ -168,12 +170,14 @@ class PhotoWatermarkService(
                 }
                 unresolvedWrite = true
                 storageService.put(watermarkKey, marked.jpeg, "image/jpeg")
+                storageService.put(gridKey, marked.gridJpeg, "image/jpeg")
                 unresolvedWrite = false
                 // Preserve the existing best-effort stale-derivative cleanup. The
                 // claim remains held and its target stays recorded even if DELETE fails.
                 val current = photoRepository.findById(photoId).orElse(null)
                 if (current == null || current.deletionStartedAt != null) {
                     storageService.delete(watermarkKey)
+                    storageService.delete(gridKey)
                     return
                 }
             } catch (ex: Exception) {
@@ -191,6 +195,7 @@ class PhotoWatermarkService(
                 val flipped = photoRepository.publishWatermarked(
                     photo.id,
                     watermarkKey,
+                    gridKey,
                     marked.phash,
                     marked.phashClean,
                     marked.phashCentre,
