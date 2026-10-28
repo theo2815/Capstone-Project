@@ -104,6 +104,12 @@ class Dispute(
     @Column(name = "refund_reason", columnDefinition = "TEXT")
     var refundReason: String? = null,
 
+    @Column(name = "refund_link_url", length = 500)
+    var refundLinkUrl: String? = null,
+
+    @Column(name = "refund_link_sent_at")
+    var refundLinkSentAt: OffsetDateTime? = null,
+
     @Column(name = "opened_at", nullable = false, updatable = false)
     val openedAt: OffsetDateTime = OffsetDateTime.now(),
 
