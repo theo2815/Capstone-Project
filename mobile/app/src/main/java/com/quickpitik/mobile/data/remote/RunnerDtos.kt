@@ -86,7 +86,11 @@ data class PhotoDto(
     // for every visitor); both null on paid events unless owned.
     val free: Boolean = false,
     val downloadUrl: String? = null,
-    val metadataAccess: String? = null
+    val metadataAccess: String? = null,
+    // Small watermarked tile for photo grids (backend FS-9). Null on photos
+    // published before it existed; grids then fall back to imageUrl. The
+    // lightbox always uses imageUrl / cleanUrl.
+    val gridUrl: String? = null,
 )
 
 data class SearchByFaceJsonRequest(

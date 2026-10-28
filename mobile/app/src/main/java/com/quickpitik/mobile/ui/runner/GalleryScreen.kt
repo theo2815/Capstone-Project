@@ -93,6 +93,7 @@ import com.quickpitik.mobile.ui.common.PhotoPreview
 import com.quickpitik.mobile.ui.common.PhotoPreviewMode
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.gridTileUrl
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.theme.ArrowLabel
@@ -1089,9 +1090,10 @@ private fun PhotoTile(
             .clickable(onClick = onOpen),
         contentAlignment = Alignment.Center,
     ) {
-        if (photo.imageUrl != null) {
+        val tileUrl = photo.gridTileUrl()
+        if (tileUrl != null) {
             AsyncImage(
-                model = RetrofitClient.resolveImageUrl(photo.imageUrl),
+                model = RetrofitClient.resolveImageUrl(tileUrl),
                 contentDescription = photo.bib?.let { "Race photo of bib $it" } ?: "Race photo",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
