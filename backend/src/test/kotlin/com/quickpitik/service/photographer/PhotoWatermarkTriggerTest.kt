@@ -6,8 +6,10 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 // FS-2 (R5-1): the watermark sweep counts the photos the hot path missed.
 class PhotoWatermarkTriggerTest {
@@ -33,5 +35,19 @@ class PhotoWatermarkTriggerTest {
         Mockito.verify(watermarkService).process(p1.id)
         Mockito.verify(watermarkService).process(p2.id)
         assertEquals(2.0, registry.counter("qp.watermark.reconciled").count())
+    }
+
+    // FS-3: photos the hot path dropped are picked up 30 s after upload, not 120 s.
+    @Test
+    fun `reconcile picks up photos uploaded more than 30 seconds ago`() {
+        var cutoff: OffsetDateTime? = null
+        Mockito.`when`(photoRepo.findWatermarkBacklog(Mockito.anyInt(), anyArg(), anyArg()))
+            .thenAnswer { cutoff = it.getArgument(1); emptyList<Photo>() }
+        val before = OffsetDateTime.now()
+
+        PhotoWatermarkTrigger(watermarkService, photoRepo, 5, registry).reconcile()
+
+        val after = OffsetDateTime.now()
+        assertTrue(!cutoff!!.isBefore(before.minusSeconds(30)) && !cutoff!!.isAfter(after.minusSeconds(30)), "cutoff $cutoff")
     }
 }

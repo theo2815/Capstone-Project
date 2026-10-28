@@ -79,7 +79,11 @@ class PhotoIndexingTrigger(
         // goal. The V23 partial index covers all three so the sweep stays cheap.
         val RETRYABLE_STATUSES =
             listOf(IndexingStatus.PENDING, IndexingStatus.FAILED, IndexingStatus.PARTIAL)
-        const val RECONCILE_GRACE_SECONDS = 120L
+        // 30, not 120 (FS-3): NRW lost whole upload minutes off the hot path, and those
+        // photos waited out the grace. Safe: the sweep skips token-held rows, claim refuses
+        // a second holder, and index() returns on INDEXED rows, so a queued photo the sweep
+        // grabs at a peak still runs once (qp.indexing.reconciled then over-counts).
+        const val RECONCILE_GRACE_SECONDS = 30L
         const val RECONCILE_BATCH_SIZE = 200 // see PhotoWatermarkTrigger
     }
 }
