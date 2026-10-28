@@ -179,3 +179,32 @@ it("keeps a delete confirmation open when another view owns the event", async ()
   expect(dialog).toBeInTheDocument(); expect(remove).not.toHaveBeenCalled();
   await act(async () => { request.resolve(adminEvent); await command; });
 });
+// "Show on /events" (V89): a live Public photographer event can be put on the public list.
+const owned = { ...adminEvent, id: "owned", slug: "nrw-fun-run", name: "NRW Fun Run", createdByHandle: "quickpitikfree", createdByName: "QuickPitik Free" };
+it("shows the /events switch only on a live public photographer event", () => {
+  rows = [adminEvent, { ...owned, id: "private", slug: "private", name: "Private Run", visibility: "unlisted" as const },
+    { ...owned, id: "draft", slug: "draft", name: "Draft Run", status: "DRAFT" as const, reviewStatus: "pending" as const }, owned];
+  client.setQueryData(key, rows); mount();
+  expect(screen.getAllByRole("checkbox", { name: "Show on /events" })).toHaveLength(1);
+  expect(screen.getByRole("checkbox", { name: "Show on /events" }).closest("article")).toHaveTextContent("@quickpitikfree");
+});
+it("lists a photographer event from the server's answer and refreshes the public catalog", async () => {
+  rows = [owned]; client.setQueryData(key, rows); client.setQueryData(["public", "events", "catalog"], []);
+  const request = deferred(); const patch = vi.spyOn(api, "fetch").mockReturnValueOnce(request.promise); mount();
+  const box = screen.getByRole("checkbox", { name: "Show on /events" });
+  await userEvent.click(box);
+  expect(patch).toHaveBeenCalledWith(`/admin/events/${owned.id}/listing`, { method: "PATCH", body: JSON.stringify({ listed: true }) });
+  expect(box).toBeDisabled();
+  await act(async () => { rows = [{ ...owned, listedOnEvents: true }]; request.resolve(rows[0]); });
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Show on /events" })).toBeChecked());
+  expect(client.getQueryState(["public", "events", "catalog"])?.isInvalidated).toBe(true);
+});
+it("keeps the switch as the server has it when listing fails", async () => {
+  rows = [owned]; client.setQueryData(key, rows);
+  vi.spyOn(api, "fetch").mockRejectedValueOnce(new ApiError([{ code: "VALIDATION_ERROR", message: "This event is Private. The photographer must make it Public first." }], 400));
+  mount();
+  await userEvent.click(screen.getByRole("checkbox", { name: "Show on /events" }));
+  await waitFor(() => expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ kind: "error", message: "This event is Private. The photographer must make it Public first." })]));
+  expect(screen.getByRole("checkbox", { name: "Show on /events" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Show on /events" })).toBeEnabled();
+});

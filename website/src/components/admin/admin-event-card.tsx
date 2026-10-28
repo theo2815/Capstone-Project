@@ -20,6 +20,9 @@ import type { EventReviewStatus } from "@/lib/photographer-mock";
 export interface AdminEventReview {
   owner: string;
   status: EventReviewStatus;
+  visibility: "public" | "unlisted";
+  // V89 admin "Show on /events" switch.
+  listed: boolean;
 }
 
 const REVIEW_LABEL: Record<EventReviewStatus, string> = {
@@ -36,6 +39,7 @@ interface AdminEventCardProps {
   pendingLabel?: string | null;
   onEdit: (event: ListEvent) => void;
   onDelete: (event: ListEvent) => void;
+  onSetListing?: (event: ListEvent, listed: boolean) => void;
 }
 
 export function AdminEventCard({
@@ -45,12 +49,15 @@ export function AdminEventCard({
   pendingLabel,
   onEdit,
   onDelete,
+  onSetListing,
 }: AdminEventCardProps) {
   const dateLabel = formatShortDate(event.date);
   const cityUpper = event.city.toUpperCase();
   // A pending / sent-back submission is a DRAFT: no public page to view,
   // so the link points at the queue instead.
   const awaitingReview = review !== undefined && event.status === "DRAFT";
+  // Only a live Public photographer event can go on /events; admin events always are.
+  const canList = review !== undefined && !awaitingReview && review.visibility === "public" && onSetListing;
 
   return (
     <article
@@ -96,7 +103,7 @@ export function AdminEventCard({
         )}
 
         <div className="mt-6 pt-4 border-t border-line flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <button
               type="button"
               onClick={() => onEdit(event)}
@@ -114,6 +121,18 @@ export function AdminEventCard({
             >
               Delete
             </button>
+            {canList && (
+              <label className="inline-flex items-center gap-2 min-h-[44px] font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink cursor-pointer has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed">
+                <input
+                  type="checkbox"
+                  className="size-5 accent-fresh"
+                  checked={review.listed}
+                  disabled={!!pendingLabel}
+                  onChange={(e) => onSetListing(event, e.target.checked)}
+                />
+                Show on /events
+              </label>
+            )}
           </div>
           {pendingLabel && <p role="status" className="font-sans text-sm text-slate">{pendingLabel}</p>}
           {awaitingReview ? (

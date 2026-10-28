@@ -9,6 +9,9 @@ export interface EventsListFilters {
   city?: string;
   dateFrom?: string;
   dateTo?: string;
+  // Adds photographer events an admin listed. Only the /events catalog sends
+  // it; upload pickers must not, or other photographers' events appear there.
+  includeListed?: boolean;
   offset?: number;
   limit?: number;
 }
@@ -37,6 +40,7 @@ export async function fetchEventsPage(
   if (filters.city) params.set("city", filters.city);
   if (filters.dateFrom) params.set("dateFrom", filters.dateFrom);
   if (filters.dateTo) params.set("dateTo", filters.dateTo);
+  if (filters.includeListed) params.set("includeListed", "true");
   params.set("offset", String(filters.offset ?? 0));
   params.set("limit", String(filters.limit ?? 200));
   const res = await api.get<PaginatedResponse<Event>>(
@@ -61,7 +65,7 @@ export async function fetchPublicEventsCatalog(signal?: AbortSignal): Promise<Li
     let total: number | undefined;
     while (true) {
       signal?.throwIfAborted();
-      const page = await fetchEventsPage({ offset }, signal);
+      const page = await fetchEventsPage({ offset, includeListed: true }, signal);
       signal?.throwIfAborted();
       if (page.offset !== offset || !Number.isSafeInteger(page.total) || page.total < 0) throw incomplete();
       if (total !== undefined && page.total !== total) break;

@@ -28,6 +28,14 @@ it("fetches the province that exists only after row 200", async () => {
   expect(result).toHaveLength(201); expect(result[200].provinceCode).toBe("bohol");
   expect(get.mock.calls.map(([url]) => new URLSearchParams(url.split("?")[1]).get("offset"))).toEqual(["0", "200"]);
 });
+it("asks for admin-listed photographer events on every catalog page, and only there", async () => {
+  const get = vi.spyOn(api, "get").mockResolvedValueOnce(page(["a"], 2)).mockResolvedValueOnce(page(["b"], 2, 1)).mockResolvedValue(page(["c"], 1));
+  await fetchPublicEventsCatalog();
+  expect(get.mock.calls.map(([url]) => new URLSearchParams(url.split("?")[1]).get("includeListed"))).toEqual(["true", "true"]);
+  await fetchEventsPage();
+  await fetchEventsList();
+  expect(get.mock.calls.slice(2).map(([url]) => url.includes("includeListed"))).toEqual([false, false]);
+});
 it("advances by returned length even when the server returns a short page", async () => {
   const get = vi.spyOn(api, "get").mockResolvedValueOnce(page(["a"], 2)).mockResolvedValueOnce(page(["b"], 2, 1));
   expect((await fetchPublicEventsCatalog()).map(e => e.id)).toEqual(["a", "b"]);

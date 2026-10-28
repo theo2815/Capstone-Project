@@ -105,6 +105,10 @@ class Event(
     @Column(name = "visibility", nullable = false, length = 10)
     var visibility: EventVisibility = EventVisibility.PUBLIC,
 
+    // V89: admin's "Show on /events" switch for a photographer-owned PUBLIC event.
+    @Column(name = "listed_on_events", nullable = false)
+    var listedOnEvents: Boolean = false,
+
     @Enumerated(EnumType.STRING)
     @Column(name = "pricing_mode", nullable = false, length = 10)
     var pricingMode: EventPricingMode = EventPricingMode.PAID,

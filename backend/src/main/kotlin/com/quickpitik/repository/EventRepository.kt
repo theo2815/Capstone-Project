@@ -54,17 +54,18 @@ interface EventRepository : JpaRepository<Event, UUID> {
     @Query("SELECT e.reviewStatus FROM Event e WHERE e.id = :id")
     fun findReviewStatus(@Param("id") id: UUID): EventReviewStatus?
 
-    // Public /events list: admin-created events only. Photographer-owned events
-    // (createdBy != null) surface on the owner's profile / a direct link, never
-    // the general list — so a foreign photographer never sees them in the upload
-    // picker either (the picker's public catalog is this same query).
+    // Public events list. By default: admin-created events only — the upload
+    // pickers (website, mobile, desktop) use this same query and rely on that,
+    // so a foreign photographer never sees another's event there.
+    // includeListed=true (sent only by the /events catalog and mobile runner
+    // discovery) also returns photographer events an admin listed (V89).
     // Sentinel values keep every named parameter typed (Postgres rejects nullable
     // unknown-typed parameters with "function lower(bytea) does not exist").
     @Query(
         """
         SELECT e FROM Event e
         WHERE e.deletedAt IS NULL
-          AND e.createdBy IS NULL
+          AND (e.createdBy IS NULL OR (:includeListed = TRUE AND e.listedOnEvents = TRUE))
           AND e.status IN :statuses
           AND e.visibility = com.quickpitik.entity.EventVisibility.PUBLIC
           AND (:search = '' OR
@@ -82,6 +83,7 @@ interface EventRepository : JpaRepository<Event, UUID> {
         @Param("city") city: String,
         @Param("dateFrom") dateFrom: LocalDate,
         @Param("dateTo") dateTo: LocalDate,
+        @Param("includeListed") includeListed: Boolean,
         pageable: Pageable,
     ): Page<Event>
 

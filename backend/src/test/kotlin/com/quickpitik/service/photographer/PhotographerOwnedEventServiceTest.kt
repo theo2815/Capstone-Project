@@ -40,6 +40,7 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -197,6 +198,22 @@ class PhotographerOwnedEventServiceTest {
         assertEquals(EventReviewStatus.APPROVED, event.reviewStatus)
         assertNull(event.pendingChange)
         assertTrue(published.isEmpty())
+    }
+
+    // V89: the photographer's Private choice wins over the admin's listing;
+    // making it Public again does not re-list it by surprise.
+    @Test
+    fun `making a listed event private takes it off events and public again keeps it off`() {
+        val event = liveEvent().apply { listedOnEvents = true }
+
+        service.update(photographerId, event.id, UpdateMyEventRequest(title = "Still Public"), null)
+        assertTrue(event.listedOnEvents, "an edit that keeps it Public leaves the listing alone")
+
+        service.update(photographerId, event.id, UpdateMyEventRequest(visibility = "unlisted"), null)
+        assertFalse(event.listedOnEvents)
+
+        service.update(photographerId, event.id, UpdateMyEventRequest(visibility = "public"), null)
+        assertFalse(event.listedOnEvents)
     }
 
     @Test

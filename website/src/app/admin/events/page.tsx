@@ -70,7 +70,7 @@ const SECTIONS: ReadonlyArray<{
 export default function AdminEventsPage() {
   const query = useAdminEvents();
   const catalog = query.data ?? EMPTY_ADMIN_EVENTS;
-  const { createEvent, editEvent, deleteEvent, pendingAction, isPending, recoveryNotice } = useAdminEventActions();
+  const { createEvent, editEvent, deleteEvent, setListing, pendingAction, isPending, recoveryNotice } = useAdminEventActions();
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
 
@@ -95,6 +95,8 @@ export default function AdminEventsPage() {
           ? `@${row.createdByHandle}`
           : (row.createdByName ?? "Photographer"),
         status: row.reviewStatus,
+        visibility: row.visibility,
+        listed: row.listedOnEvents,
       });
     }
     return map;
@@ -246,6 +248,7 @@ export default function AdminEventsPage() {
                     pendingLabel={pendingAction(event.id)}
                     onEdit={(e) => { if (editTarget?.id !== e.id || !recoveryNotice(e.id)) setEditTarget(e); setEditOpen(true); }}
                     onDelete={handleDelete}
+                    onSetListing={(e, listed) => { void setListing(e.id, listed).catch(() => {}); }}
                   />
                 ))}
               </div>
