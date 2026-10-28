@@ -42,4 +42,15 @@ class AsyncConfigTest {
     fun `the pool the email listeners name is a real bean`() {
         assertTrue("emailSending" in declaredPools, "AsyncConfig declares $declaredPools")
     }
+
+    @Test
+    fun `watermarking runs on four workers`() {
+        val pool = AsyncConfig().watermarkProcessingExecutor()
+        try {
+            assertEquals(4, pool.corePoolSize)
+            assertEquals(4, pool.maxPoolSize)
+        } finally {
+            pool.shutdown()
+        }
+    }
 }

@@ -35,9 +35,9 @@ class AsyncConfig {
     // LIVE for runners (2026-09-02 scale review).
     @Bean(name = ["watermarkProcessing"])
     fun watermarkProcessingExecutor(): ThreadPoolTaskExecutor = ThreadPoolTaskExecutor().apply {
-        // 2 until SubsampledDecode (P0-6) + the 2 GB limit (OPS-2) land, then back to 4
-        corePoolSize = 2
-        maxPoolSize = 2
+        // Back to 4 (2026-10-28): SubsampledDecode landed (2045aefd) and production has 8 GB RAM
+        corePoolSize = 4
+        maxPoolSize = corePoolSize
         queueCapacity = 2000
         setThreadNamePrefix("watermark-")
         setWaitForTasksToCompleteOnShutdown(true)
