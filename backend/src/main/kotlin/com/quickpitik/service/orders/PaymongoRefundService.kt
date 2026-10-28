@@ -36,6 +36,7 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Duration
 import java.time.OffsetDateTime
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 @Service
@@ -132,7 +133,8 @@ class PaymongoRefundService(
         val providerRef = payment.providerRef
             ?: throw checkoutConflict("The settled payment has no PayMongo reference.")
 
-        val now = OffsetDateTime.now()
+        // TIMESTAMPTZ keeps microseconds; store what the database will give back (INC-12).
+        val now = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS)
         dispute.resolution = resolution
         dispute.refundAmountPhp = amount
         dispute.refundStatus = REQUESTING
@@ -207,7 +209,7 @@ class PaymongoRefundService(
             val status = response.data.attributes.status.lowercase()
             transactionTemplate.executeWithoutResult {
                 val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId) ?: return@executeWithoutResult
-                if (isCompletedRefund(dispute) || dispute.refundRequestedAt != prepared.requestedAt) {
+                if (isCompletedRefund(dispute) || dispute.refundRequestedAt?.isEqual(prepared.requestedAt) != true) {
                     return@executeWithoutResult
                 }
                 if (dispute.providerRefundId != null &&
@@ -252,7 +254,7 @@ class PaymongoRefundService(
         transactionTemplate.executeWithoutResult {
             val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId) ?: return@executeWithoutResult
             if (!isCompletedRefund(dispute) &&
-                dispute.refundRequestedAt == prepared.requestedAt &&
+                dispute.refundRequestedAt?.isEqual(prepared.requestedAt) == true &&
                 dispute.providerRefundId == prepared.providerRefundId &&
                 dispute.refundStatus in IN_FLIGHT_STATUSES
             ) {

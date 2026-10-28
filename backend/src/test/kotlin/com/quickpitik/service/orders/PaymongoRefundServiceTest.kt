@@ -41,6 +41,8 @@ import org.springframework.http.HttpStatus
 import org.springframework.web.client.HttpClientErrorException
 import java.math.BigDecimal
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 import java.nio.charset.StandardCharsets
 import java.util.Optional
 import java.util.UUID
@@ -172,6 +174,56 @@ class PaymongoRefundServiceTest {
             mapOf("requestedResolution" to "refund_full", "refundAmount" to "127.50"),
             null,
         )
+    }
+
+    // INC-12: Postgres keeps microseconds and may hand the time back in another offset, so the
+    // reloaded row must still count as the same request. The offset always changes, so the test
+    // catches an exact-equality check on any machine's time zone.
+    private fun reloadFromDatabase(dispute: Dispute) {
+        val stored = dispute.refundRequestedAt!!
+        val otherOffset = if (stored.offset == ZoneOffset.UTC) ZoneOffset.ofHours(8) else ZoneOffset.UTC
+        dispute.refundRequestedAt = stored.truncatedTo(ChronoUnit.MICROS).withOffsetSameInstant(otherOffset)
+    }
+
+    @Test
+    fun `a refused refund goes to manual review at once after the database round trip`() {
+        val h = couponHarness()
+        Mockito.`when`(h.client.createRefund(anyArg(), anyArg())).thenAnswer {
+            reloadFromDatabase(h.dispute)
+            throw HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders(),
+                """{"errors":[{"code":"parameter_invalid","detail":"Refunds are not allowed for payments with source type qrph"}]}"""
+                    .toByteArray(StandardCharsets.UTF_8), StandardCharsets.UTF_8,
+            )
+        }
+
+        assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals("manual_review", h.dispute.refundStatus)
+        Mockito.verify(h.decisions, Mockito.times(1)).logDisputeDecision(
+            anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(),
+        )
+    }
+
+    @Test
+    fun `a refund PayMongo settles at once is saved after the database round trip`() {
+        val h = couponHarness()
+        Mockito.`when`(h.client.createRefund(anyArg(), anyArg())).thenAnswer {
+            reloadFromDatabase(h.dispute)
+            PaymongoRefundResponse(
+                PaymongoRefundResource(
+                    id = "ref_test",
+                    attributes = PaymongoRefundAttributes(amount = 12_750L, paymentId = "pay_test", status = "succeeded"),
+                ),
+            )
+        }
+
+        h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+
+        assertEquals("succeeded", h.dispute.refundStatus)
+        assertEquals("ref_test", h.dispute.providerRefundId)
     }
 
     @Test
