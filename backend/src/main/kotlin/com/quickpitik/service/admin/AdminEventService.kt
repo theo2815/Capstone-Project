@@ -217,6 +217,9 @@ class AdminEventService(
         if (listed && event.visibility == EventVisibility.UNLISTED) {
             throw ValidationException("This event is Private. The photographer must make it Public first.")
         }
+        if (listed && event.status == EventStatus.DRAFT) {
+            throw ValidationException("This event is still waiting for review. Approve it before showing it on /events.")
+        }
         if (event.listedOnEvents != listed) {
             event.listedOnEvents = listed
             eventRepository.save(event)
