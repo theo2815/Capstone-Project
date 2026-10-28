@@ -20,7 +20,7 @@ export interface MockPhoto {
   span: "default" | "wide";
   price: number;
   imageUrl?: string | null;
-  // Presigned 400 px watermarked tile for grids (FS-9). Null on photos
+  // Presigned 800 px watermarked tile for grids (FS-9). Null on photos
   // published before it existed; grids then fall back to `imageUrl`. The
   // lightbox always uses `imageUrl` / `cleanUrl`.
   gridUrl?: string | null;

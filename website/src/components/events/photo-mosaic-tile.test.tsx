@@ -61,7 +61,7 @@ describe("PhotoMosaicTile coupon badge", () => {
   });
 });
 
-// FS-11: the grid loads the 400 px tile; older photos without one keep the preview.
+// FS-11: the grid loads the 800 px tile; older photos without one keep the preview.
 describe("PhotoMosaicTile image source", () => {
   const event: EventDetail = {
     id: "event-1",

@@ -18,7 +18,7 @@ import java.time.Instant
 import java.util.UUID
 import kotlin.test.assertEquals
 
-// FS-10 (R7b): photos published before FS-9 get their 400 px grid.jpg, built
+// FS-10 (R7b): photos published before FS-9 get their 800 px grid.jpg, built
 // from the stored marked preview, only while the owner has the sweep on.
 class PhotoGridBackfillTest {
     private val photoRepo = Mockito.mock(PhotoRepository::class.java)
