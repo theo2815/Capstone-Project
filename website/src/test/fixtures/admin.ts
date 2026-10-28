@@ -44,7 +44,7 @@ export const adminEvent: import("@/lib/api-admin").AdminEventRow = {
   photoCount: 10, participantCount: 20, pricePerPhoto: 80,
   createdByHandle: null, createdByName: null, visibility: "public", pricingMode: "paid",
   watermarkPolicy: "platform", reviewStatus: "approved", reviewNote: null, pendingChange: null,
-  reviewRevision: 4,
+  reviewRevision: 4, listedOnEvents: false,
 };
 
 export const adminUser: import("@/lib/admin-user-registry").AdminUserRow = {

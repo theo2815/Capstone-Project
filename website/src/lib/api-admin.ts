@@ -64,6 +64,7 @@ const ADMIN_LIST_LIMIT = 200;
 //   GET    /api/v1/admin/events?state=&offset=&limit=      → PaginatedResponse<ListEvent>
 //   POST   /api/v1/admin/events                  { title, date, location, bannerUrl? } → ListEvent
 //   PATCH  /api/v1/admin/events/{id}             { title?, date?, location? } → ListEvent
+//   PATCH  /api/v1/admin/events/{id}/listing     { listed } → AdminEventRow
 //   DELETE /api/v1/admin/events/{id}                       → { removed: boolean }
 //
 //   GET    /api/v1/admin/sales/kpis?range=week|month|ytd   → AdminSalesKpis
@@ -651,6 +652,8 @@ export interface AdminEventRow extends ListEvent {
   reviewStatus: EventReviewStatus;
   reviewNote: string | null;
   pendingChange: PendingPricingChange | null;
+  // V89 "Show on /events" for a photographer-owned Public event.
+  listedOnEvents: boolean;
 }
 
 export async function fetchAdminEvents(
@@ -688,6 +691,14 @@ export async function rejectAdminEvent(
   return api.post<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}/reject`,
     { reason, expectedRevision },
+  );
+}
+
+// PATCH /admin/events/{id}/listing — show a photographer's Public event on /events.
+export async function setAdminEventListing(eventId: string, listed: boolean): Promise<AdminEventRow> {
+  return api.fetch<AdminEventRow>(
+    `/admin/events/${encodeURIComponent(eventId)}/listing`,
+    { method: "PATCH", body: JSON.stringify({ listed }) },
   );
 }
 
