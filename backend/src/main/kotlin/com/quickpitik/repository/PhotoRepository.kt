@@ -358,6 +358,27 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("phashCentre") phashCentre: Long,
     ): Int
 
+    // Grid-tile backfill (FS-10): LIVE photos published before the 400 px tile,
+    // whose thumbnail key is still the preview's. Walked by id after a cursor.
+    @Query(
+        """
+        SELECT p FROM Photo p
+        WHERE p.status = com.quickpitik.entity.PhotoStatus.LIVE
+          AND p.deletedAt IS NULL
+          AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.thumbnailS3Key = p.watermarkS3Key
+          AND p.id > :after
+        ORDER BY p.id ASC
+        """,
+    )
+    fun findGridBackfill(@Param("after") after: UUID, pageable: Pageable): List<Photo>
+
+    // Conditional so a stale backfill never replaces a tile the watermark job wrote.
+    @Modifying
+    @Query("UPDATE Photo p SET p.thumbnailS3Key = :gridKey WHERE p.id = :id AND p.thumbnailS3Key = p.watermarkS3Key")
+    fun setGridKey(@Param("id") id: UUID, @Param("gridKey") gridKey: String): Int
+
     @Modifying
     @Query("UPDATE Photo p SET p.processingAttempts = p.processingAttempts + 1 WHERE p.id = :id")
     fun incrementProcessingAttempts(@Param("id") id: UUID): Int

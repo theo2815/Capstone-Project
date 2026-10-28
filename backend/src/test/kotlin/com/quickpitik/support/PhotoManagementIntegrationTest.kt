@@ -439,4 +439,30 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         val backlog = photos.findWatermarkBacklog(3, OffsetDateTime.now(), PageRequest.of(0, 200)).map { it.id }
         assertTrue(pending.id in backlog, "the sweep is what re-renders the preview after a restore")
     }
+
+    // FS-10: the grid backfill picks only LIVE, untouched rows whose tile is still the
+    // preview, walks forward by id, and its conditional update never overwrites a real tile.
+    @Test fun `grid backfill finds pre-tile photos by id and points each at its tile once`() {
+        fun row(status: PhotoStatus = PhotoStatus.LIVE, grid: String? = null, deletedAt: OffsetDateTime? = null): Photo {
+            val preview = "review/${UUID.randomUUID()}/watermark.jpg"
+            return photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/${UUID.randomUUID()}/original.jpg",
+                watermarkS3Key = preview, thumbnailS3Key = grid ?: preview, pricePhp = BigDecimal("125"), status = status, deletedAt = deletedAt))
+        }
+        val old = row()
+        val tiled = row(grid = "review/${UUID.randomUUID()}/grid.jpg")
+        val processing = row(status = PhotoStatus.PROCESSING)
+        val trashed = row(deletedAt = OffsetDateTime.now())
+
+        val found = photos.findGridBackfill(UUID(0, 0), PageRequest.of(0, 10_000)).map { it.id }
+        assertTrue(old.id in found)
+        assertFalse(tiled.id in found || processing.id in found || trashed.id in found, found.toString())
+        assertEquals(found.sortedWith(compareBy { it.toString() }), found, "ordered by id so the cursor never skips a row")
+        assertFalse(old.id in photos.findGridBackfill(old.id, PageRequest.of(0, 10_000)).map { it.id })
+
+        val gridKey = "events/${event.id}/photos/${old.id}/grid.jpg"
+        assertEquals(1, inTx { photos.setGridKey(old.id, gridKey) })
+        assertEquals(gridKey, photos.findById(old.id).orElseThrow().thumbnailS3Key)
+        assertEquals(0, inTx { photos.setGridKey(old.id, "other/grid.jpg") }, "a row that already has a tile is left alone")
+        assertEquals(0, inTx { photos.setGridKey(tiled.id, gridKey) })
+    }
 }

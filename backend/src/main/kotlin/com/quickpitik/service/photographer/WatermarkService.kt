@@ -160,6 +160,16 @@ class WatermarkService(
             phash, phashClean, phashCentre)
     }
 
+    // Grid tile for a photo published before tiles existed (PhotoGridBackfill):
+    // the stored preview is already marked, so only scale it and keep its credit.
+    fun gridFromPreview(preview: ByteArray): ByteArray {
+        val image = ImageIO.read(ByteArrayInputStream(preview))
+            ?: throw IllegalArgumentException("Unreadable preview bytes")
+        val out = ByteArrayOutputStream()
+        ImageIO.write(scaleToLongEdge(image, GRID_LONG_EDGE), "jpg", out)
+        return JpegXmp.packetOf(preview)?.let { JpegXmp.inject(out.toByteArray(), it) } ?: out.toByteArray()
+    }
+
     private fun seed(photoId: UUID): Long {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(seedSecret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
