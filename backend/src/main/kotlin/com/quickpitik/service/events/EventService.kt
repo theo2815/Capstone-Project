@@ -34,6 +34,7 @@ class EventService(
         city: String?,
         dateFrom: LocalDate?,
         dateTo: LocalDate?,
+        includeListed: Boolean,
         pagination: PaginationParams,
     ): PaginatedResponse<EventDto> {
         val effectiveStatuses = statuses.ifEmpty { LIST_DEFAULT_STATUSES }
@@ -44,6 +45,7 @@ class EventService(
             city = city?.takeIf { it.isNotBlank() }.orEmpty(),
             dateFrom = dateFrom ?: DATE_MIN_SENTINEL,
             dateTo = dateTo ?: DATE_MAX_SENTINEL,
+            includeListed = includeListed,
             pageable = pageable,
         )
         return PaginatedResponse(

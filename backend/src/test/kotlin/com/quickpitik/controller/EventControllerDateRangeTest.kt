@@ -24,7 +24,7 @@ class EventControllerDateRangeTest {
     @BeforeEach
     fun setUp() {
         eventService = Mockito.mock(EventService::class.java)
-        Mockito.`when`(eventService.list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+        Mockito.`when`(eventService.list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(), anyArg()))
             .thenReturn(PaginatedResponse(emptyList<EventDto>(), 0L, 0, 20))
         controller = EventController(eventService)
     }
@@ -38,14 +38,14 @@ class EventControllerDateRangeTest {
         assertEquals(ErrorCodes.VALIDATION_ERROR, ex.code)
         assertEquals("dateTo", ex.field)
         Mockito.verify(eventService, Mockito.never())
-            .list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+            .list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(), anyArg())
     }
 
     @Test
     fun `an identical dateFrom and dateTo is a valid single-day filter`() {
         list(dateFrom = "2026-01-11", dateTo = "2026-01-11")
 
-        Mockito.verify(eventService).list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(eventService).list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(), anyArg())
     }
 
     @Test
@@ -55,7 +55,7 @@ class EventControllerDateRangeTest {
         list(dateFrom = null, dateTo = null)
 
         Mockito.verify(eventService, Mockito.times(3))
-            .list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+            .list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(), anyArg())
     }
 
     @Test
@@ -65,12 +65,27 @@ class EventControllerDateRangeTest {
         assertEquals("dateFrom", ex.field)
     }
 
-    private fun list(dateFrom: String?, dateTo: String?) = controller.list(
+    // Upload pickers (website, mobile, desktop) send no flag and must keep the
+    // admin-only list; only an explicit includeListed=true widens it.
+    @Test
+    fun `includeListed is false unless the caller sends true`() {
+        list(dateFrom = null, dateTo = null)
+        list(dateFrom = null, dateTo = null, includeListed = false)
+        list(dateFrom = null, dateTo = null, includeListed = true)
+
+        Mockito.verify(eventService, Mockito.times(2))
+            .list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.eq(false), anyArg())
+        Mockito.verify(eventService, Mockito.times(1))
+            .list(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.eq(true), anyArg())
+    }
+
+    private fun list(dateFrom: String?, dateTo: String?, includeListed: Boolean? = null) = controller.list(
         status = null,
         search = null,
         city = null,
         dateFrom = dateFrom,
         dateTo = dateTo,
+        includeListed = includeListed,
         offset = null,
         limit = null,
     )

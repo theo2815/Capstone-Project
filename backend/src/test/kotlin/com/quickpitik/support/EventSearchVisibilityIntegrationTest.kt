@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.domain.PageRequest
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -60,6 +61,7 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
             city = "",
             dateFrom = LocalDate.of(1900, 1, 1),
             dateTo = LocalDate.of(9999, 12, 31),
+            includeListed = false,
             pageable = PageRequest.of(0, 100),
         ).content.map { it.id }.toSet()
 
@@ -72,6 +74,55 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
         // Pre-existing visibility filter still holds for admin events too.
         assertFalse(adminUnlisted in hits, "admin UNLISTED event must be excluded")
     }
+
+    // V89: an admin can list one photographer-owned PUBLIC live event on /events.
+    // Only the /events catalog opts in (includeListed); the pickers never do.
+    @Test
+    fun `includeListed adds only admin-listed live PUBLIC photographer events`() {
+        val marker = "listed-${UUID.randomUUID()}"
+        val owner = userRepository.save(
+            User(
+                email = "owner-${UUID.randomUUID()}@test.local",
+                passwordHash = "stub",
+                name = "Owner",
+                role = Role.PHOTOGRAPHER,
+            ),
+        ).id
+
+        val adminPublic = save(marker, createdBy = null, visibility = EventVisibility.PUBLIC)
+        val listed = save(marker, createdBy = owner, visibility = EventVisibility.PUBLIC, listed = true)
+        val notListed = save(marker, createdBy = owner, visibility = EventVisibility.PUBLIC)
+        val listedPrivate = save(marker, createdBy = owner, visibility = EventVisibility.UNLISTED, listed = true)
+        val listedDraft = save(
+            marker, createdBy = owner, visibility = EventVisibility.PUBLIC, status = EventStatus.DRAFT, listed = true,
+        )
+        val listedDeleted = save(
+            marker, createdBy = owner, visibility = EventVisibility.PUBLIC, listed = true,
+            deletedAt = OffsetDateTime.now(),
+        )
+
+        val catalog = search(marker, includeListed = true)
+        assertTrue(adminPublic in catalog, "admin PUBLIC event stays on /events")
+        assertTrue(listed in catalog, "admin-listed PUBLIC photographer event must appear")
+        assertFalse(notListed in catalog, "unlisted-by-admin photographer event must stay off")
+        assertFalse(listedPrivate in catalog, "a Private event must stay off even with the flag")
+        assertFalse(listedDraft in catalog, "a DRAFT submission must stay off even with the flag")
+        assertFalse(listedDeleted in catalog, "a deleted event must stay off even with the flag")
+
+        // The default (upload pickers) is unchanged: the flag alone never widens it.
+        assertEquals(setOf(adminPublic), search(marker, includeListed = false))
+    }
+
+    private fun search(marker: String, includeListed: Boolean): Set<UUID> =
+        eventRepository.search(
+            statuses = listOf(EventStatus.ACTIVE, EventStatus.COMPLETED, EventStatus.ARCHIVED),
+            search = marker,
+            city = "",
+            dateFrom = LocalDate.of(1900, 1, 1),
+            dateTo = LocalDate.of(9999, 12, 31),
+            includeListed = includeListed,
+            pageable = PageRequest.of(0, 100),
+        ).content.map { it.id }.toSet()
 
     // The other SQL-only V46 rule: a DRAFT — a pending or rejected photographer
     // submission — has no public page even by direct link, while an UNLISTED
@@ -101,6 +152,8 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
         createdBy: UUID?,
         visibility: EventVisibility,
         status: EventStatus = EventStatus.ACTIVE,
+        listed: Boolean = false,
+        deletedAt: OffsetDateTime? = null,
     ): UUID =
         eventRepository.save(
             Event(
@@ -111,6 +164,8 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
                 status = status,
                 createdBy = createdBy,
                 visibility = visibility,
+                listedOnEvents = listed,
+                deletedAt = deletedAt,
             ),
         ).id
 }
