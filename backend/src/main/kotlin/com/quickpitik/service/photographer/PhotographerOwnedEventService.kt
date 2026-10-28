@@ -217,6 +217,8 @@ class PhotographerOwnedEventService(
         req.organizerName?.takeIf { it.isNotBlank() }?.let { event.organizerName = it.trim() }
         req.description?.takeIf { it.isNotBlank() }?.let { event.description = it.trim() }
         req.visibility?.takeIf { it.isNotBlank() }?.let { event.visibility = parseVisibility(it) }
+        // Going Private takes the event off /events; the admin must list it again (V89).
+        if (event.visibility == EventVisibility.UNLISTED) event.listedOnEvents = false
         if (coverKey != null) event.coverS3Key = coverKey
 
         if (req.withdrawPendingChange && event.reviewStatus == EventReviewStatus.CHANGE_PENDING) {
