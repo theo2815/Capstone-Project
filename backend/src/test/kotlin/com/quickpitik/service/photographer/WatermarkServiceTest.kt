@@ -40,6 +40,44 @@ class WatermarkServiceTest {
     }
 
     @Test
+    fun `grid tile is an 800 px JPEG with the same credit while the preview stays 1280`() {
+        val marked = service.processThumbnail(photoJpeg(3000, 2000), logoPng(), credit, platformMark = true)
+
+        val grid = ImageIO.read(ByteArrayInputStream(marked.gridJpeg))
+        assertEquals(800, grid.width)
+        assertEquals(533, grid.height)
+        assertEquals(1280, ImageIO.read(ByteArrayInputStream(marked.jpeg)).width)
+        val props = ImageMetadataReader.readMetadata(ByteArrayInputStream(marked.gridJpeg))
+            .getFirstDirectoryOfType(XmpDirectory::class.java)?.xmpProperties ?: emptyMap()
+        assertEquals(photoId.toString(), props["quickpitik:photoId"], "photoId missing in $props")
+    }
+
+    // FS-10 backfill: a tile cut from a stored preview matches a freshly rendered one.
+    @Test
+    fun `grid tile from a stored preview is 800 px and keeps the preview's credit`() {
+        val preview = service.processThumbnail(photoJpeg(3000, 2000), logoPng(), credit, platformMark = true).jpeg
+
+        val tile = service.gridFromPreview(preview)
+
+        val grid = ImageIO.read(ByteArrayInputStream(tile))
+        assertEquals(800, grid.width)
+        assertEquals(533, grid.height)
+        val props = ImageMetadataReader.readMetadata(ByteArrayInputStream(tile))
+            .getFirstDirectoryOfType(XmpDirectory::class.java)?.xmpProperties ?: emptyMap()
+        assertEquals(photoId.toString(), props["quickpitik:photoId"], "photoId missing in $props")
+        assertEquals("Ana Reyes Studio", props["dc:creator[1]"], "dc:creator missing in $props")
+    }
+
+    @Test
+    fun `a preview without a credit packet still gets a tile`() {
+        val tile = service.gridFromPreview(photoJpeg(800, 1200))
+
+        val grid = ImageIO.read(ByteArrayInputStream(tile))
+        assertEquals(533, grid.width)
+        assertEquals(800, grid.height)
+    }
+
+    @Test
     fun `orientation 6 preview is portrait and rotates the landmark clockwise`() {
         val marked = service.processThumbnail(orientation6Jpeg(), null, credit, platformMark = false)
         val decoded = ImageIO.read(ByteArrayInputStream(marked.jpeg))

@@ -48,4 +48,7 @@ export interface DecisionLogEntry {
   reason: string | null;
   decidedAt: string;
   meta?: { field?: string; from?: string; to?: string };
+  adminId?: string | null;
+  /** Null when the admin account no longer exists. */
+  adminName?: string | null;
 }

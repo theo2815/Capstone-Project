@@ -122,7 +122,7 @@ class RekognitionR2E2eSmokeTest {
             "Need >=2 selfies of one person under .storage/selfies/<id>/ — skipping (none found)"
         }
         val (enrollImg, searchImg) = pair!!
-        val client = RekognitionAiClient(rek, props)
+        val client = RekognitionAiClient(rek, props, io.micrometer.core.instrument.simple.SimpleMeterRegistry())
         val eventId = UUID.randomUUID()
         val photoId = UUID.randomUUID()
         try {
@@ -181,7 +181,7 @@ class RekognitionR2E2eSmokeTest {
         }
         val photo = findEventPhoto()
         assumeTrue(photo != null) { "No .storage/events/*/photos/*/original.jpg found — skipping" }
-        val client = RekognitionAiClient(rek, props)
+        val client = RekognitionAiClient(rek, props, io.micrometer.core.instrument.simple.SimpleMeterRegistry())
         val result = client.bibsRecognize(photo!!.readBytes(), "image/jpeg", photo.name, minChars = 1)
         val bibs = result.detections.joinToString(", ") { "${it.bib_number} (${"%.2f".format(it.confidence)})" }
         println("✅ DetectText OK on ${photo.name} — bib-like tokens: ${bibs.ifEmpty { "(none found in this photo)" }}")

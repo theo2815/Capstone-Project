@@ -15,6 +15,11 @@ import java.util.UUID
 // The ai-api-only async surface (mega jobs, webhooks, jobStatus) stays on
 // AiApiClient — it has no Rekognition analogue and is inert under that provider.
 interface FaceBibProvider {
+    // The image bytes as this provider would send them, so a caller making
+    // several calls on one photo prepares them once. Feeding the result back to
+    // any call must send exactly the same bytes. Default: sent as given.
+    fun prepareInlineImage(file: ByteArray): ByteArray = file
+
     fun facesDetect(file: ByteArray, contentType: String, filename: String): FacesDetectResult
 
     fun facesEnroll(

@@ -26,7 +26,7 @@ export interface DisputePhotoSnapshot {
 export interface DisputeActivityEntry {
   id: string;
   decidedAt: string;
-  decision: "resolved" | "denied" | "escalated";
+  decision: "resolved" | "denied" | "escalated" | "refund_sent_to_manual_review";
   resolution: DisputeResolution | null;
   refundAmount: number | null;
   reason: string | null;

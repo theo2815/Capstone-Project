@@ -29,6 +29,7 @@ class EventController(
         @RequestParam(required = false) city: String?,
         @RequestParam(required = false) dateFrom: String?,
         @RequestParam(required = false) dateTo: String?,
+        @RequestParam(required = false) includeListed: Boolean?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
     ): PaginatedResponse<EventDto> {
@@ -46,7 +47,7 @@ class EventController(
                 field = "dateTo",
             )
         }
-        return eventService.list(statuses, search, city, from, to, pagination)
+        return eventService.list(statuses, search, city, from, to, includeListed == true, pagination)
     }
 
     // Race-day-only viewing is enforced FE-side: /events/[slug] swaps the

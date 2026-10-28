@@ -156,11 +156,14 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
         assertNull(photos.findById(photo.id).orElseThrow().purgedAt)
         val lateKey = "events/${event.id}/photos/${photo.id}/watermark.jpg"
+        val lateGrid = "events/${event.id}/photos/${photo.id}/grid.jpg"
         blobs.add(lateKey)
+        blobs.add(lateGrid)
         assertFalse(fence.isCurrent(writer))
         fence.finish(writer)
         assertEquals(PhotoErasureOutcome.COMPLETE, eraser.attempt(job))
         assertFalse(lateKey in blobs)
+        assertFalse(lateGrid in blobs)
     }
 
     @Test fun `known verifying upload keeps blobs intact even after its lease expires`() {

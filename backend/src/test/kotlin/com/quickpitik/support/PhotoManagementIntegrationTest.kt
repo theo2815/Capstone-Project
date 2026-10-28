@@ -323,7 +323,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         tx.executeWithoutResult {
             val stale = photos.findById(photo.id).orElseThrow()
             separateTx.execute {
-                assertEquals(1, photos.publishWatermarked(photo.id, "review/watermark.jpg", 1L, 2L, 3L))
+                assertEquals(1, photos.publishWatermarked(photo.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L))
             }
             stale.indexingStatus = IndexingStatus.SKIPPED
             photos.saveAndFlush(stale)
@@ -333,6 +333,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertEquals(IndexingStatus.SKIPPED, fresh.indexingStatus)
         assertEquals(PhotoStatus.LIVE, fresh.status)
         assertEquals("review/watermark.jpg", fresh.watermarkS3Key)
+        assertEquals("review/grid.jpg", fresh.thumbnailS3Key)
     }
 
     @Test fun `publishWatermarked only flips an eligible processing photo`() {
@@ -340,10 +341,10 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         val hidden = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/hidden.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.HIDDEN))
         val trashed = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/trashed.jpg", pricePhp = BigDecimal("125"), status = PhotoStatus.PROCESSING, deletedAt = OffsetDateTime.now()))
 
-        assertEquals(1, inTx { photos.publishWatermarked(processing.id, "review/watermark.jpg", 1L, 2L, 3L) })
-        assertEquals(0, inTx { photos.publishWatermarked(photo.id, "review/watermark.jpg", 1L, 2L, 3L) })
-        assertEquals(0, inTx { photos.publishWatermarked(hidden.id, "review/watermark.jpg", 1L, 2L, 3L) })
-        assertEquals(0, inTx { photos.publishWatermarked(trashed.id, "review/watermark.jpg", 1L, 2L, 3L) })
+        assertEquals(1, inTx { photos.publishWatermarked(processing.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(photo.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(hidden.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L) })
+        assertEquals(0, inTx { photos.publishWatermarked(trashed.id, "review/watermark.jpg", "review/grid.jpg", 1L, 2L, 3L) })
         assertEquals(PhotoStatus.LIVE, photos.findById(processing.id).orElseThrow().status)
     }
 
@@ -437,5 +438,31 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, restored.processingAttempts, "an exhausted budget would strand the row outside the sweep")
         val backlog = photos.findWatermarkBacklog(3, OffsetDateTime.now(), PageRequest.of(0, 200)).map { it.id }
         assertTrue(pending.id in backlog, "the sweep is what re-renders the preview after a restore")
+    }
+
+    // FS-10: the grid backfill picks only LIVE, untouched rows whose tile is still the
+    // preview, walks forward by id, and its conditional update never overwrites a real tile.
+    @Test fun `grid backfill finds pre-tile photos by id and points each at its tile once`() {
+        fun row(status: PhotoStatus = PhotoStatus.LIVE, grid: String? = null, deletedAt: OffsetDateTime? = null): Photo {
+            val preview = "review/${UUID.randomUUID()}/watermark.jpg"
+            return photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id, s3Key = "review/${UUID.randomUUID()}/original.jpg",
+                watermarkS3Key = preview, thumbnailS3Key = grid ?: preview, pricePhp = BigDecimal("125"), status = status, deletedAt = deletedAt))
+        }
+        val old = row()
+        val tiled = row(grid = "review/${UUID.randomUUID()}/grid.jpg")
+        val processing = row(status = PhotoStatus.PROCESSING)
+        val trashed = row(deletedAt = OffsetDateTime.now())
+
+        val found = photos.findGridBackfill(UUID(0, 0), PageRequest.of(0, 10_000)).map { it.id }
+        assertTrue(old.id in found)
+        assertFalse(tiled.id in found || processing.id in found || trashed.id in found, found.toString())
+        assertEquals(found.sortedWith(compareBy { it.toString() }), found, "ordered by id so the cursor never skips a row")
+        assertFalse(old.id in photos.findGridBackfill(old.id, PageRequest.of(0, 10_000)).map { it.id })
+
+        val gridKey = "events/${event.id}/photos/${old.id}/grid.jpg"
+        assertEquals(1, inTx { photos.setGridKey(old.id, gridKey) })
+        assertEquals(gridKey, photos.findById(old.id).orElseThrow().thumbnailS3Key)
+        assertEquals(0, inTx { photos.setGridKey(old.id, "other/grid.jpg") }, "a row that already has a tile is left alone")
+        assertEquals(0, inTx { photos.setGridKey(tiled.id, gridKey) })
     }
 }

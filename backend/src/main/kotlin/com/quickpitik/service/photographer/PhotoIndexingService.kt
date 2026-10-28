@@ -68,7 +68,10 @@ class PhotoIndexingService(
         }
 
         // Phase B — network I/O with no transaction open.
-        val claim = workFence.claim(photoId, PhotoWorkKind.INDEXING) ?: return
+        val claim = workFence.claim(photoId, PhotoWorkKind.INDEXING) ?: run {
+            log.warn("Indexing {}: work claim not granted (another worker holds it); left for the sweep", photoId)
+            return
+        }
         val outcome = runInference(photo, claim)
 
         // Phase C — short write transaction.
@@ -112,6 +115,14 @@ class PhotoIndexingService(
         // anti-piracy overlay would corrupt face + bib detection.
         val contentType = sniffContentType(bytes)
         val filename = "${photo.id}.jpg"
+        // Prepared once for both calls: Rekognition otherwise shrinks a large
+        // original twice (~0.5-0.9 s each). If preparing fails, each call gets
+        // the original and fails inside its own guard, exactly as before.
+        val inline = try {
+            aiApiClient.prepareInlineImage(bytes)
+        } catch (ex: Exception) {
+            bytes
+        }
 
         var error: String? = null
 
@@ -124,11 +135,14 @@ class PhotoIndexingService(
         var facesTransport = false
         var facesUnresolved = false
         // A face write may start only while the claim is current, so its call deadline bounds when it ended.
-        if (!workFence.isCurrent(claim)) return InferenceOutcome(error = "Indexing claim ended before enrollment", facesTransport = true, bibsTransport = true)
+        if (!workFence.isCurrent(claim)) {
+            log.warn("Indexing {}: work claim ended before enrollment; nothing written, left for the sweep", photo.id)
+            return InferenceOutcome(error = "Indexing claim ended before enrollment", facesTransport = true, bibsTransport = true)
+        }
         try {
             val enroll = meterRegistry.timer("qp.ai.call", "op", "enroll").recordCallable {
                 aiApiClient.facesEnroll(
-                    file = bytes,
+                    file = inline,
                     contentType = contentType,
                     filename = filename,
                     personName = photo.id.toString(),
@@ -159,7 +173,7 @@ class PhotoIndexingService(
         var bibsTransport = false
         try {
             val result = meterRegistry.timer("qp.ai.call", "op", "bib").recordCallable {
-                aiApiClient.bibsRecognize(bytes, contentType, filename)
+                aiApiClient.bibsRecognize(inline, contentType, filename)
             }!!
             // Group only the QUALIFYING detections by normalized bib number and
             // store the max confidence among them — a re-lookup over the full

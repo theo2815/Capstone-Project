@@ -10,6 +10,7 @@ import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventPricingMode
 import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.EventVisibility
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.WatermarkPolicy
 import com.quickpitik.exception.ConflictException
@@ -500,6 +501,81 @@ class AdminEventServiceReviewTest {
             }
         }
         Mockito.verifyNoInteractions(covers, decisions)
+    }
+
+    // ── "Show on /events" (V89) ──────────────────────────────────────────
+    @Test
+    fun `listing a public photographer event shows it on events and logs the decision`() {
+        val event = live()
+        val revision = event.reviewRevision
+
+        val row = service.setListing(adminId, event.id, listed = true)
+
+        assertTrue(event.listedOnEvents)
+        assertTrue(row.listedOnEvents)
+        assertEquals(EventReviewStatus.APPROVED, event.reviewStatus)
+        assertEquals(revision, event.reviewRevision)
+        Mockito.verify(decisions).logEventDecision(eqArg(adminId), eqArg(event.id), eqArg("event_listed"), anyArg(), anyArg())
+        Mockito.verify(eventRepository).save(event)
+    }
+
+    @Test
+    fun `listing an admin event is refused because it is always listed`() {
+        val event = live().apply { createdBy = null }
+
+        val ex = assertFailsWith<ValidationException> { service.setListing(adminId, event.id, listed = true) }
+
+        assertEquals("Admin events are always listed on /events.", ex.message)
+        assertFalse(event.listedOnEvents)
+        Mockito.verifyNoInteractions(decisions)
+    }
+
+    @Test
+    fun `listing a private event is refused until the photographer makes it public`() {
+        val event = live().apply { visibility = EventVisibility.UNLISTED }
+
+        val ex = assertFailsWith<ValidationException> { service.setListing(adminId, event.id, listed = true) }
+
+        assertEquals("This event is Private. The photographer must make it Public first.", ex.message)
+        assertFalse(event.listedOnEvents)
+        Mockito.verifyNoInteractions(decisions)
+    }
+
+    @Test
+    fun `listing a draft event is refused until it is approved`() {
+        val event = live().apply { status = EventStatus.DRAFT }
+
+        val ex = assertFailsWith<ValidationException> { service.setListing(adminId, event.id, listed = true) }
+
+        assertEquals("This event is still waiting for review. Approve it before showing it on /events.", ex.message)
+        assertFalse(event.listedOnEvents)
+        Mockito.verifyNoInteractions(decisions)
+    }
+
+    @Test
+    fun `unlisting always works even on a private event`() {
+        val event = live().apply { visibility = EventVisibility.UNLISTED; listedOnEvents = true }
+
+        val row = service.setListing(adminId, event.id, listed = false)
+
+        assertFalse(event.listedOnEvents)
+        assertFalse(row.listedOnEvents)
+        Mockito.verify(decisions).logEventDecision(eqArg(adminId), eqArg(event.id), eqArg("event_unlisted"), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `listing an unknown event is not found`() {
+        assertFailsWith<NotFoundException> { service.setListing(adminId, UUID.randomUUID(), listed = true) }
+    }
+
+    @Test
+    fun `setting the listing to its current value writes no second audit row`() {
+        val event = live().apply { listedOnEvents = true }
+
+        val row = service.setListing(adminId, event.id, listed = true)
+
+        assertTrue(row.listedOnEvents)
+        Mockito.verifyNoInteractions(decisions)
     }
 
     private fun createRequest() = CreateAdminEventRequest(

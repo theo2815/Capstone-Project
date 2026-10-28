@@ -60,3 +60,52 @@ describe("PhotoMosaicTile coupon badge", () => {
     expect(screen.queryByText(/applied at checkout/)).not.toBeInTheDocument();
   });
 });
+
+// FS-11: the grid loads the 800 px tile; older photos without one keep the preview.
+describe("PhotoMosaicTile image source", () => {
+  const event: EventDetail = {
+    id: "event-1",
+    slug: "event-1",
+    name: "Event One",
+    date: "2026-09-04",
+    location: "Cebu",
+    photoCount: 1,
+    participantCount: 1,
+    status: "ACTIVE",
+    description: "",
+    organizerName: "",
+    categories: [],
+    pricePerPhoto: 150,
+  };
+  const photo: MockPhoto = {
+    id: "photo-1",
+    bib: "101",
+    km: null,
+    time: "",
+    tone: 0,
+    span: "default",
+    price: 150,
+    imageUrl: "https://cdn.test/watermark.jpg",
+  };
+
+  it("uses the grid tile when the photo has one", () => {
+    render(
+      <PhotoMosaicTile
+        event={event}
+        photo={{ ...photo, gridUrl: "https://cdn.test/grid.jpg" }}
+        index={0}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByAltText("Race photo of bib 101")).toHaveAttribute("src", "https://cdn.test/grid.jpg");
+  });
+
+  it("falls back to the preview when there is no grid tile", () => {
+    render(
+      <PhotoMosaicTile event={event} photo={{ ...photo, gridUrl: null }} index={0} onOpen={vi.fn()} />,
+    );
+
+    expect(screen.getByAltText("Race photo of bib 101")).toHaveAttribute("src", "https://cdn.test/watermark.jpg");
+  });
+});

@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminEvents, createAdminEvent, updateAdminEvent, deleteAdminEvent,
-  approveAdminEvent, rejectAdminEvent, fetchAdminCommand,
+  approveAdminEvent, rejectAdminEvent, setAdminEventListing, fetchAdminCommand,
   type AdminEventListArgs, type AdminEventRow,
   type CreateAdminEventArgs, type UpdateAdminEventPatch,
 } from "@/lib/api-admin";
@@ -162,5 +162,6 @@ export function useAdminEventActions() {
       deleteEvent: (id: string) => run(id, "Deleting…", "delete", () => deleteAdminEvent(id), id),
       approve: (id: string, revision?: number) => run(id, "Approving…", "approve", () => approveAdminEvent(id, revision)),
       reject: (id: string, reason: string, revision?: number) => run(id, "Sending back…", "reject", () => rejectAdminEvent(id, reason, revision)),
+      setListing: (id: string, listed: boolean) => run(id, "Saving…", "update", () => setAdminEventListing(id, listed)),
     };
 }

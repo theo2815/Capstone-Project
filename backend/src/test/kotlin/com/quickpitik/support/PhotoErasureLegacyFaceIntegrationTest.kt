@@ -85,7 +85,7 @@ class PhotoErasureLegacyFaceIntegrationTest : PostgresIntegrationTest() {
             faces.removeAll(request.faceIds().toSet())
             DeleteFacesResponse.builder().deletedFaces(request.faceIds()).build()
         }
-        val rekognition = RekognitionAiClient(sdk, RekognitionProperties())
+        val rekognition = RekognitionAiClient(sdk, RekognitionProperties(), io.micrometer.core.instrument.simple.SimpleMeterRegistry())
         val faceEraser = PhotoFaceErasureService(photos, ai,
             StaticListableBeanFactory(mapOf("rekognition" to rekognition)).getBeanProvider(RekognitionAiClient::class.java),
             AiApiProperties(enabled = true), fence, json, tx, Clock.systemUTC())

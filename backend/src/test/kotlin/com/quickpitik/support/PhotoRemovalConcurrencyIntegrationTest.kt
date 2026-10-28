@@ -132,7 +132,7 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
         items.saveAndFlush(item)
         tx.executeWithoutResult { availability.authorizeRemoval(photo.id, item.id, owner.id) }
         val stalePublishUpdatedRows = tx.execute {
-            photos.publishWatermarked(photo.id, "synthetic/late.jpg", 1L, 2L, 3L)
+            photos.publishWatermarked(photo.id, "synthetic/late.jpg", "synthetic/late-grid.jpg", 1L, 2L, 3L)
         }
         stale.altText = "Late writer"
         photos.saveAndFlush(stale)
@@ -489,7 +489,7 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
         val sdk = org.mockito.Mockito.mock(software.amazon.awssdk.services.rekognition.RekognitionClient::class.java)
         org.mockito.Mockito.`when`(sdk.listFaces(anyArg<software.amazon.awssdk.services.rekognition.model.ListFacesRequest>()))
             .thenThrow(software.amazon.awssdk.services.rekognition.model.ResourceNotFoundException.builder().message("Synthetic absent collection").build())
-        val oldAdapter = com.quickpitik.service.ai.RekognitionAiClient(sdk, com.quickpitik.config.RekognitionProperties())
+        val oldAdapter = com.quickpitik.service.ai.RekognitionAiClient(sdk, com.quickpitik.config.RekognitionProperties(), io.micrometer.core.instrument.simple.SimpleMeterRegistry())
         val oldAdapters = org.springframework.beans.factory.support.StaticListableBeanFactory(mapOf("oldAdapter" to oldAdapter))
         val enabledProps = context.getBean(com.quickpitik.config.AiApiProperties::class.java).copy(enabled = true)
         val erasure = com.quickpitik.service.photos.PhotoFaceErasureService(photos, provider,

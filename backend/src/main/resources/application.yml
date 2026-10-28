@@ -242,6 +242,10 @@ app:
     # public photo id alone can't regenerate the layer. Keep it stable: a
     # change re-seeds every future render (existing previews are unaffected).
     seed-secret: ${WATERMARK_SEED_SECRET:dev-only-watermark-seed-DO-NOT-USE-IN-PRODUCTION}
+  thumbnails:
+    # One-off sweep (FS-10): adds the 800 px grid.jpg to photos published before
+    # it existed, 50 a minute. Turn on, wait for "thumbnail backfill complete", turn off.
+    backfill-enabled: ${THUMBNAIL_BACKFILL_ENABLED:false}
   photo-metadata:
     recovery-enabled: ${PHOTO_METADATA_RECOVERY_ENABLED:true}
     recovery-interval-ms: ${PHOTO_METADATA_RECOVERY_INTERVAL_MS:60000}

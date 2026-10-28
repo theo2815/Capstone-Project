@@ -218,7 +218,7 @@ function RequestRow({
           <Detail label="Organizer" value={row.organizerName || "Not given"} />
           <Detail
             label="Visibility"
-            value={row.visibility === "unlisted" ? "Unlisted · link only" : "Public · listed on Events"}
+            value={row.visibility === "unlisted" ? "Unlisted · link only" : "Public · link and profile"}
           />
           {!isChange && <Detail label="Pricing" value={current} />}
           <div className="sm:col-span-2">

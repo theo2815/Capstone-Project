@@ -52,6 +52,7 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.DisputeRepository
@@ -881,7 +882,9 @@ class OrderService(
         val notes = adminDecisionLogRepository
             .findByTargetDisputeIdInOrderByDecidedAtDesc(disputes.map { it.id })
             .groupBy { it.targetDisputeId }
-            .mapNotNull { (id, rows) -> id?.let { it to rows.first().reason } }
+            .mapNotNull { (id, rows) ->
+                id?.let { it to rows.firstOrNull { row -> row.decision != REFUND_SENT_TO_MANUAL_REVIEW }?.reason }
+            }
             .toMap()
         return disputes.map { dispute ->
             dispute.orderId to RunnerDisputeDto(
@@ -947,7 +950,7 @@ class OrderService(
     private fun thumbnailUrlOf(photo: Photo): String? {
         if (!photoRepository.isDeliveryAvailable(photo.id)) return null
         return storageService.presignedGetUrl(
-            photo.thumbnailS3Key ?: photo.watermarkS3Key ?: photo.s3Key,
+            photo.watermarkS3Key ?: photo.thumbnailS3Key ?: photo.s3Key,
             storageProperties.presignedTtl.thumbnail,
         )
     }

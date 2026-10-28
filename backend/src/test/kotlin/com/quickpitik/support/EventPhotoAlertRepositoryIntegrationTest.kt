@@ -153,8 +153,8 @@ class EventPhotoAlertRepositoryIntegrationTest : PostgresIntegrationTest() {
         var retryClaimToken: OffsetDateTime? = null
         Mockito.`when`(storage.getBytes(selfie.s3Key)).thenReturn(byteArrayOf(1, 2, 3))
         Mockito.`when`(
-            search.searchByFace(
-                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(),
+            search.searchByFaceForAlert(
+                anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(),
             ),
         ).thenReturn(PaginatedResponse(emptyList<PhotoDto>(), 1L, 0, 1))
         Mockito.doThrow(RuntimeException("resend down")).doAnswer {

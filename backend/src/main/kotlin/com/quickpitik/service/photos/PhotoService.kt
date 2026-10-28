@@ -116,6 +116,7 @@ class PhotoService(
             items = photos.map {
                 it.toDto(
                     thumbnailUrlResolver = ::resolveThumbnailUrl,
+                    gridUrlResolver = ::resolveGridUrl,
                     cleanUrlResolver = { photo ->
                         if (free || photo.id in ownedIds) resolveCleanUrl(photo) else null
                     },
@@ -172,7 +173,13 @@ class PhotoService(
     }
 
     private fun resolveThumbnailUrl(photo: Photo): String? {
-        val key = photo.thumbnailS3Key ?: photo.watermarkS3Key ?: return null
+        val key = photo.watermarkS3Key ?: photo.thumbnailS3Key ?: return null
+        return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
+    }
+
+    // Before FS-9 both columns held watermark.jpg; only a distinct key is a real grid tile.
+    private fun resolveGridUrl(photo: Photo): String? {
+        val key = photo.thumbnailS3Key?.takeIf { photo.watermarkS3Key != null && it != photo.watermarkS3Key } ?: return null
         return storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
     }
 

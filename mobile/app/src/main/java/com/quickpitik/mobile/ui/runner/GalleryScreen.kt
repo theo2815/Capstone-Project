@@ -93,6 +93,7 @@ import com.quickpitik.mobile.ui.common.PhotoPreview
 import com.quickpitik.mobile.ui.common.PhotoPreviewMode
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.gridTileUrl
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.theme.ArrowLabel
@@ -165,9 +166,10 @@ fun RunnerGalleryScreen(
     var selfieAddOnly by rememberSaveable { mutableStateOf(false) }
     // A selfie search is in flight from the panel; the screen enters Browse
     // only once it succeeds, so an error never strands the runner on an empty
-    // wall (the panel shows the message instead).
-    var faceSearchPending by remember { mutableStateOf(false) }
-    var faceSearchError by remember { mutableStateOf<String?>(null) }
+    // wall (the panel shows the message instead). The ViewModel holds the
+    // in-flight flag so a rotation can't drop the result.
+    val faceSearchPending by viewModel.faceSearchPending.collectAsState()
+    var faceSearchError by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPhotoForDetail by remember { mutableStateOf<PhotoDto?>(null) }
 
     val inboxMessages by inboxViewModel.messages.collectAsState()
@@ -250,10 +252,10 @@ fun RunnerGalleryScreen(
             }
         }
     }
-    var pendingSelfieUri by remember { mutableStateOf<Uri?>(null) }
+    // Saveable: rotating inside the camera app must not lose the photo's Uri.
+    var pendingSelfieUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     fun startFaceSearch(run: () -> Unit) {
         faceSearchError = null
-        faceSearchPending = true
         run()
     }
     // One landing for both launchers: the alert card's sheet saves to the
@@ -307,13 +309,13 @@ fun RunnerGalleryScreen(
         if (!faceSearchPending) return@LaunchedEffect
         when (val s = searchState) {
             is PhotosSearchState.Success -> {
-                faceSearchPending = false
+                viewModel.consumeFaceSearch()
                 submittedBib = ""
                 showFindSheet = false
                 mode = GalleryMode.Browse
             }
             is PhotosSearchState.Error -> {
-                faceSearchPending = false
+                viewModel.consumeFaceSearch()
                 faceSearchError = s.message
             }
             else -> Unit
@@ -1088,9 +1090,10 @@ private fun PhotoTile(
             .clickable(onClick = onOpen),
         contentAlignment = Alignment.Center,
     ) {
-        if (photo.imageUrl != null) {
+        val tileUrl = photo.gridTileUrl()
+        if (tileUrl != null) {
             AsyncImage(
-                model = RetrofitClient.resolveImageUrl(photo.imageUrl),
+                model = RetrofitClient.resolveImageUrl(tileUrl),
                 contentDescription = photo.bib?.let { "Race photo of bib $it" } ?: "Race photo",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,

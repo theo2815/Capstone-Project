@@ -64,7 +64,8 @@ class PhotoErasureService(
             val receipts = intents.findByPhotoIdOrResultPhotoId(photo.id, photo.id)
             val manifest = ErasureManifest(
                 (listOfNotNull(photo.s3Key, photo.thumbnailS3Key, photo.watermarkS3Key,
-                    "events/${photo.eventId}/photos/${photo.id}/watermark.jpg") + photos.erasureWorkKeys(photo.id) +
+                    "events/${photo.eventId}/photos/${photo.id}/watermark.jpg",
+                    "events/${photo.eventId}/photos/${photo.id}/grid.jpg") + photos.erasureWorkKeys(photo.id) +
                     receipts.flatMap { listOf(it.stagingKey, it.originalKey) }).filter { it.isNotBlank() }.distinct(),
                 receipts.map { snapshotIntent(it, now) },
                 photo.facePersons.isEmpty() && photo.indexingAttempts == 0 && photo.indexedProvider == null &&

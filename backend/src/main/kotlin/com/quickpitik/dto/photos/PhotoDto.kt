@@ -34,6 +34,9 @@ data class PhotoDto(
     val span: String,
     val price: BigDecimal,
     val imageUrl: String?,
+    // An 800 px tile of the same marked preview, for gallery grids only (FS-9).
+    // Null for photos published before it existed: clients use `gridUrl ?: imageUrl`.
+    val gridUrl: String? = null,
     val cleanUrl: String? = null,
     val alt: String?,
     val photographerHandle: String? = null,
@@ -79,6 +82,7 @@ fun Photo.toDto(
     downloadUrlResolver: (Photo) -> String? = { null },
     free: Boolean = false,
     metadataAccess: String = "none",
+    gridUrlResolver: (Photo) -> String? = { null },
 ): PhotoDto {
     val photographer = photographerResolver(this)
     val coupon = couponResolver(this)
@@ -91,6 +95,7 @@ fun Photo.toDto(
         span = span.wire,
         price = pricePhp,
         imageUrl = thumbnailUrlResolver(this),
+        gridUrl = gridUrlResolver(this),
         cleanUrl = cleanUrlResolver(this),
         alt = altText,
         photographerHandle = photographer?.handle,

@@ -19,6 +19,7 @@ import {
 } from "@/lib/api-selfies";
 import {
   ACCEPTED_IMAGE_MIME,
+  shrinkSelfie,
   validateImageFile,
 } from "@/lib/image-utils";
 
@@ -71,7 +72,9 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
         }
 
         try {
-          await uploadSelfie(file);
+          const upload = await shrinkSelfie(file);
+          if (!isCurrent()) return;
+          await uploadSelfie(upload);
           if (!isCurrent()) return;
           addedCount++;
         } catch (err) {

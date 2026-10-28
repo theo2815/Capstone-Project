@@ -30,6 +30,7 @@ import java.time.LocalDate
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The event cockpit's search wall: bib search and paging over a frozen
@@ -61,6 +62,7 @@ class RunnerGalleryViewModelSearchTest {
     @Volatile private var alertToggle: MockResponse = ok("""{"registered":true,"selfieId":"s1"}""")
     @Volatile private var failNextPage = false
     @Volatile private var holdNextPage: CountDownLatch? = null
+    @Volatile private var holdSelfies: CountDownLatch? = null
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -79,7 +81,10 @@ class RunnerGalleryViewModelSearchTest {
                     path.endsWith("/photos") -> page(r)
                     path.endsWith("/photo-alert") && r.method == "GET" -> ok("""{"registered":false,"selfieId":null}""")
                     path.endsWith("/photo-alert") -> alertToggle
-                    path == "/api/v1/me/selfies" && r.method == "GET" -> ok(selfies)
+                    path == "/api/v1/me/selfies" && r.method == "GET" -> {
+                        holdSelfies?.let { latch -> holdSelfies = null; latch.await(5, TimeUnit.SECONDS) }
+                        ok(selfies)
+                    }
                     path == "/api/v1/me/selfies" -> selfieUpload
                     else -> MockResponse().setResponseCode(404) // event detail is best-effort
                 }
@@ -89,6 +94,7 @@ class RunnerGalleryViewModelSearchTest {
 
     @After fun tearDown() {
         holdNextPage?.countDown()
+        holdSelfies?.countDown()
         SessionManager.getInstance(application).clearSession()
     }
 
@@ -135,6 +141,7 @@ class RunnerGalleryViewModelSearchTest {
     private fun pages() = seen.filter { it.path.endsWith("/photos") }
     private fun faceSearches() = seen.filter { it.path.endsWith("/photos/search-by-face") }
     private fun selfieUploads() = seen.count { it.method == "POST" && it.path == "/api/v1/me/selfies" }
+    private fun lastUpload() = seen.last { it.method == "POST" && it.path == "/api/v1/me/selfies" }
     private fun ids(state: PhotosSearchState) = (state as PhotosSearchState.Success).photos.map { it.id }
 
     private fun RunnerGalleryViewModel.awaitPhotos(vararg ids: String) = searchState.awaitFirst {
@@ -280,6 +287,7 @@ class RunnerGalleryViewModelSearchTest {
         vm.searchBySelfieUri(picked("a.jpg", 16))
         vm.awaitPhotos("f1", "f2")
         assertEquals("Saved to your selfie library.", vm.selfieSaveNotice.value)
+        assertTrue(lastUpload().body.contains(" ".repeat(16))) // undecodable: sent exactly as picked
         assertTrue(faceSearches().single().body.contains(""""allSelfies":true"""))
 
         selfieUpload = MockResponse().setResponseCode(422)
@@ -298,6 +306,67 @@ class RunnerGalleryViewModelSearchTest {
         assertNull(vm.selfieSaveNotice.value)
         assertEquals(uploads, selfieUploads())
         assertTrue(faceSearches().last().type!!.startsWith("multipart/"))
+    }
+
+    @Test fun `a fresh selfie is shrunk once per pick, and the shrunk bytes are what every selfie upload sends`() {
+        val shrinks = AtomicInteger()
+        val vm = RunnerGalleryViewModel(application) { shrinks.incrementAndGet(); "SHRUNK-${it.size}".toByteArray() }
+        vm.selectEvent(event("ev"))
+        vm.awaitPhotos("p1", "p2")
+
+        vm.searchBySelfieUri(picked("a.jpg", 16))
+        vm.awaitPhotos("f1", "f2")
+        assertTrue(lastUpload().body.contains("SHRUNK-16"))
+
+        selfieUpload = MockResponse().setResponseCode(422)
+            .setBody("""{"success":false,"errors":[{"code":"SELFIE_REJECTED","message":"No face found"}]}""")
+        vm.searchBySelfieUri(picked("b.jpg", 16))
+        awaitUntil { faceSearches().size == 2 }
+        vm.awaitPhotos("f1", "f2")
+        assertTrue(lastUpload().body.contains("SHRUNK-16"))
+        assertTrue(faceSearches().last().body.contains("SHRUNK-16")) // the fallback reuses it
+        assertEquals(2, shrinks.get())
+
+        // "Add a selfie" on the photo-alert card, as a JPEG whatever was picked.
+        selfieUpload = ok(selfie("s9", primary = false))
+        vm.addSelfieToLibrary(picked("c.png", 16))
+        awaitUntil { shrinks.get() == 3 && selfieUploads() == 3 }
+        assertTrue(lastUpload().body.contains("SHRUNK-16"))
+        assertTrue(lastUpload().body.contains("Content-Type: image/jpeg"))
+    }
+
+    @Test fun `a face search stays pending until the screen shows it, and leaving the event drops it`() {
+        val vm = RunnerGalleryViewModel(application)
+        vm.selectEvent(event("ev"))
+        vm.awaitPhotos("p1", "p2")
+        assertFalse(vm.faceSearchPending.value) // browsing is not a face search
+
+        vm.searchWithAllSelfies()
+        assertTrue(vm.faceSearchPending.value)
+        vm.awaitPhotos("f1", "f2")
+        assertTrue(vm.faceSearchPending.value) // a screen rebuilt after a rotation still sees it
+        vm.consumeFaceSearch()
+        assertFalse(vm.faceSearchPending.value)
+
+        vm.searchBySelfieId("NO_FACES")
+        vm.awaitError()
+        assertTrue(vm.faceSearchPending.value) // the error waits for the panel too
+        vm.consumeFaceSearch()
+
+        val held = CountDownLatch(1).also { holdSelfies = it }
+        vm.searchByStoredSelfie() // empty cache: re-fetch the library first
+        assertTrue(vm.faceSearchPending.value)
+        // No stale result may sit beside the flag, or the screen would show it as the match.
+        assertEquals(PhotosSearchState.Loading, vm.searchState.value)
+        held.countDown()
+        vm.selectEvent(event("ev2")) // another event's first page is not a face result
+        assertFalse(vm.faceSearchPending.value)
+        vm.awaitPhotos("p1", "p2")
+
+        vm.searchBySelfieUri(picked("a.jpg", 16))
+        assertTrue(vm.faceSearchPending.value)
+        vm.clearSelectedEvent()
+        assertFalse(vm.faceSearchPending.value)
     }
 
     @Test fun `a refused photo-alert switch snaps back with the reason, or asks for a selfie when it vanished`() {

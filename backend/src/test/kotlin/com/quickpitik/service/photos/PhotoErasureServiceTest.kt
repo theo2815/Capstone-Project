@@ -84,6 +84,27 @@ class PhotoErasureServiceTest {
         Mockito.verifyNoInteractions(storage)
     }
 
+    @Test fun `the erasure manifest always lists the grid tile beside the preview`() {
+        val photos = mock<com.quickpitik.repository.PhotoRepository>()
+        val eraser = PhotoErasureService(photos, jobs, mock(), mock(), mock(), mock(), mock(), mock(), mock(),
+            storage, mock(), com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
+            TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC(),
+            io.micrometer.core.instrument.simple.SimpleMeterRegistry())
+        val owner = UUID.randomUUID()
+        val photo = Photo(eventId = UUID.randomUUID(), photographerId = owner, s3Key = "original.jpg",
+            pricePhp = java.math.BigDecimal("199.00")).also { it.deletedAt = java.time.OffsetDateTime.now() }
+        Mockito.`when`(photos.findAllByIdForUpdate(listOf(photo.id))).thenReturn(listOf(photo))
+        var saved: PhotoErasureJob? = null
+        Mockito.doAnswer { saved = it.getArgument(0); saved }.`when`(jobs).saveAndFlush(Mockito.any(PhotoErasureJob::class.java))
+
+        eraser.request(PhotoErasureCommand(photo.id, PhotoErasurePurpose.PHOTOGRAPHER_DELETE,
+            RemovalActorType.PHOTOGRAPHER, owner, "Photographer permanent deletion", commandId = UUID.randomUUID()))
+
+        val keys = saved!!.manifest.keys
+        kotlin.test.assertTrue("events/${photo.eventId}/photos/${photo.id}/grid.jpg" in keys, "manifest: $keys")
+        kotlin.test.assertTrue("events/${photo.eventId}/photos/${photo.id}/watermark.jpg" in keys, "manifest: $keys")
+    }
+
     @Test fun `makeDue moves a backed-off job to now without other changes`() {
         val job = job().also { it.nextAttemptAt = Instant.now().plusSeconds(3600); it.outcome = PhotoErasureOutcome.RETRY_REQUIRED }
         service.makeDue(job)

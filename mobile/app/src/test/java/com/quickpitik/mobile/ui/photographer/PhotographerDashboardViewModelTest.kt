@@ -79,6 +79,16 @@ class PhotographerDashboardViewModelTest {
         assertTrue(check())
     }
 
+    // The upload roster must keep the admin-only list: another photographer's
+    // admin-listed event is not uploadable here.
+    @Test fun `the public events roster never asks for admin-listed events`() {
+        val requested = CopyOnWriteArrayList<String>()
+        route("GET /api/v1/events") { requested += it.path.orEmpty(); ok("""{"items":[],"total":0,"offset":0,"limit":100}""") }
+        model().fetchPublicEvents()
+        awaitUntil { requested.isNotEmpty() }
+        assertFalse(requested.single().contains("includeListed"))
+    }
+
     @Test fun `event metadata visibility loads selected event, cancels, and saves its own setting`() {
         val path = "$EVENTS/ev-1/metadata-visibility"
         route("GET $path") { ok("""{"metadataPublic":false}""") }

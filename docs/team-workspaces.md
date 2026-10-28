@@ -43,6 +43,7 @@ back to a different member's directory.
 
 - **Second Brain (vault):** `C:\Users\Dillan\Documents\Capstone-Obsidian-Vault`
 - **Monorepo:** `C:\Users\Dillan\Capstone-Project\Capstone-Project`
+- **BatchMyPhotos:** `C:\Users\Dillan\Batch-My-Photos\Batch-My-Photos`
 
 ## Tapales, Christian Kyle — Developer
 

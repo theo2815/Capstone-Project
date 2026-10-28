@@ -17,6 +17,7 @@ import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.EventVisibility
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.exception.ConflictException
@@ -205,6 +206,29 @@ class AdminEventService(
             else -> throw ConflictException(code = ErrorCodes.CONFLICT, message = "This event is not awaiting review.")
         }
         eventRepository.save(event)
+        return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
+    }
+
+    // "Show on /events" (V89): puts a photographer's Public event on the public
+    // list while they keep ownership. Review state is untouched.
+    fun setListing(adminId: UUID, eventId: UUID, listed: Boolean): AdminListEventDto {
+        val event = loadForReview(eventId)
+        if (event.createdBy == null) throw ValidationException("Admin events are always listed on /events.")
+        if (listed && event.visibility == EventVisibility.UNLISTED) {
+            throw ValidationException("This event is Private. The photographer must make it Public first.")
+        }
+        if (listed && event.status == EventStatus.DRAFT) {
+            throw ValidationException("This event is still waiting for review. Approve it before showing it on /events.")
+        }
+        if (event.listedOnEvents != listed) {
+            event.listedOnEvents = listed
+            eventRepository.save(event)
+            adminDecisionLogService.logEventDecision(
+                adminId = adminId,
+                targetEventId = event.id,
+                decision = if (listed) "event_listed" else "event_unlisted",
+            )
+        }
         return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
     }
 

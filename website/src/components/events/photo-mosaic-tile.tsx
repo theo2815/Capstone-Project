@@ -44,14 +44,16 @@ export function PhotoMosaicTile({
   const wide = photo.span === "wide";
   const colorIdx = photo.tone % TONE_COLORS.length;
   const opacity = 0.7 + (index % 3) * 0.1;
-  const hasImage = Boolean(photo.imageUrl);
+  // The small grid tile when the photo has one; older photos keep the preview.
+  const tileUrl = photo.gridUrl ?? photo.imageUrl;
+  const hasImage = Boolean(tileUrl);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     setImageLoaded(false);
     setImageFailed(false);
-  }, [photo.id, photo.imageUrl]);
+  }, [photo.id, tileUrl]);
 
   const cartPayload = {
     photoId: photo.id,
@@ -113,7 +115,7 @@ export function PhotoMosaicTile({
           {hasImage && !imageFailed && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={photo.imageUrl ?? ""}
+              src={tileUrl ?? ""}
               loading="lazy"
               decoding="async"
               alt={

@@ -351,7 +351,7 @@ class AdminDisputeService(
                 kmMark = photo?.km,
                 bib = photo?.bibs?.minByOrNull { it.bibNumber }?.bibNumber,
                 thumbnailUrl = photo?.let {
-                    val key = it.thumbnailS3Key ?: it.watermarkS3Key ?: it.s3Key
+                    val key = it.watermarkS3Key ?: it.thumbnailS3Key ?: it.s3Key
                     storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
                 },
             ),

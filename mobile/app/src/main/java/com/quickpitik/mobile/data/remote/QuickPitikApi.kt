@@ -449,7 +449,10 @@ interface QuickPitikApi {
     suspend fun getPublicEvents(
         @Query("status") status: String = "ACTIVE",
         @Query("offset") offset: Int = 0,
-        @Query("limit") limit: Int = 100
+        @Query("limit") limit: Int = 100,
+        // true adds photographer events an admin listed (runner discovery only;
+        // the upload roster must leave it null so Retrofit omits it).
+        @Query("includeListed") includeListed: Boolean? = null
     ): ApiResponseEnvelope<PaginatedResponse<EventDto>>
 
     // Event editorial detail (organizer, description, categories, pricing) —

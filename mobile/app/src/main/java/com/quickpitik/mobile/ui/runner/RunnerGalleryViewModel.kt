@@ -18,6 +18,7 @@ import com.quickpitik.mobile.data.remote.SearchByFaceJsonRequest
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.data.remote.WsFrameEnvelope
 import com.quickpitik.mobile.data.remote.WsState
+import com.quickpitik.mobile.data.shrinkSelfie
 import com.quickpitik.mobile.ui.common.EventState
 import com.quickpitik.mobile.ui.common.deriveEventState
 import kotlinx.coroutines.CancellationException
@@ -72,7 +73,10 @@ sealed class PhotoAlertUiState {
     ) : PhotoAlertUiState()
 }
 
-class RunnerGalleryViewModel(application: Application) : AndroidViewModel(application) {
+class RunnerGalleryViewModel @JvmOverloads constructor(
+    application: Application,
+    private val shrink: (ByteArray) -> ByteArray = ::shrinkSelfie,
+) : AndroidViewModel(application) {
     private val _eventsState = MutableStateFlow<RunnerEventsState>(RunnerEventsState.Loading)
     val eventsState: StateFlow<RunnerEventsState> = _eventsState
 
@@ -84,6 +88,16 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     private val _isFiltered = MutableStateFlow(false)
     val isFiltered: StateFlow<Boolean> = _isFiltered
+
+    // A face search the runner started that the screen hasn't shown yet. Held
+    // here, not in the screen, so a rotation mid-search still lands its result.
+    private val _faceSearchPending = MutableStateFlow(false)
+    val faceSearchPending: StateFlow<Boolean> = _faceSearchPending
+
+    /** The screen has shown the face search's result: the wall, or the panel's error. */
+    fun consumeFaceSearch() {
+        _faceSearchPending.value = false
+    }
 
     private val _photoAlert = MutableStateFlow<PhotoAlertUiState>(PhotoAlertUiState.Loading)
     val photoAlert: StateFlow<PhotoAlertUiState> = _photoAlert
@@ -267,7 +281,8 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                 val response = RetrofitClient.apiService.getPublicEvents(
                     status = "ACTIVE,COMPLETED,ARCHIVED",
                     offset = 0,
-                    limit = 200
+                    limit = 200,
+                    includeListed = true
                 )
                 if (response.success && response.data != null) {
                     _eventsState.value = RunnerEventsState.Success(response.data.items)
@@ -288,6 +303,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     fun selectEvent(event: EventDto) {
         _activeEvent.value = event
         _isFiltered.value = false
+        _faceSearchPending.value = false
         // Editorial detail is best-effort and non-blocking — the cockpit
         // renders from the list DTO while this fills the AboutStrip in.
         _eventDetail.value = null
@@ -322,6 +338,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
         _activeEvent.value = null
         _searchState.value = PhotosSearchState.Idle
         _isFiltered.value = false
+        _faceSearchPending.value = false
         _eventDetail.value = null
         // As in selectEvent: the lifecycle effect closes the socket when the
         // active event id changes. Here we only drop the derived state.
@@ -502,10 +519,12 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     }
 
     // Real selfie capture/upload path: read the bytes the camera (or gallery
-    // picker) handed us via the content URI, spool them to a cache file, then
-    // run the same multipart face-search the stored-selfie path uses.
+    // picker) handed us via the content URI, shrink them once, spool them to a
+    // cache file, then run the same multipart face-search the stored-selfie
+    // path uses. The save and the fallback search both send that one file.
     fun searchBySelfieUri(uri: Uri) {
         _activeEvent.value ?: return
+        _faceSearchPending.value = true
         isFaceSearchMode = true
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
@@ -522,7 +541,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
                     val copied = resolver.openInputStream(uri)?.use { input ->
                         val bytes = input.readAtMost(MAX_UPLOAD_BYTES + 1)
                         if (bytes.size > MAX_UPLOAD_BYTES) 0L else {
-                            target.outputStream().use { it.write(bytes) }
+                            target.outputStream().use { it.write(shrink(bytes)) }
                             bytes.size.toLong()
                         }
                     } ?: 0L
@@ -587,15 +606,17 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
             _photoAlert.value = PhotoAlertUiState.NeedsSelfie(uploading = true)
             val resolver = getApplication<Application>().contentResolver
             val result = runCatching {
-                val bytes = withContext(Dispatchers.IO) {
+                val picked = withContext(Dispatchers.IO) {
                     resolver.openInputStream(uri)?.use { it.readAtMost(MAX_UPLOAD_BYTES + 1) }
                 } ?: error("Couldn't read that photo.")
-                if (bytes.size > MAX_UPLOAD_BYTES) error("Selfies must be 8 MB or smaller.")
+                if (picked.size > MAX_UPLOAD_BYTES) error("Selfies must be 8 MB or smaller.")
+                val bytes = withContext(Dispatchers.IO) { shrink(picked) }
                 profileRepository.uploadSelfie(
                     token = token,
                     fileBytes = bytes,
                     filename = "selfie_${System.currentTimeMillis()}.jpg",
-                    contentType = resolver.getType(uri) ?: "image/jpeg",
+                    // Only bytes the phone couldn't decode keep their picked type.
+                    contentType = if (bytes === picked) resolver.getType(uri) ?: "image/jpeg" else "image/jpeg",
                 ).getOrThrow()
             }
             result.onSuccess { loadGalleryMetadata(photoAlertSlug) }
@@ -619,6 +640,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
 
     private fun searchWithStoredSelfies(request: SearchByFaceJsonRequest) {
         val event = _activeEvent.value ?: return
+        _faceSearchPending.value = true
         _isFiltered.value = true
         isFaceSearchMode = true
         searchJob?.cancel()
@@ -653,6 +675,7 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun searchByStoredSelfie() {
+        _faceSearchPending.value = true
         // A library exists: match with all of it (2026-09-02), not just the
         // primary — each saved selfie is another angle of the same runner.
         if (_selfies.value.isNotEmpty()) {
@@ -669,6 +692,9 @@ class RunnerGalleryViewModel(application: Application) : AndroidViewModel(applic
             return
         }
         searchJob = viewModelScope.launch {
+            // The re-fetch is part of the search: never leave an old result
+            // beside the pending flag for the screen to mistake for the match.
+            _searchState.value = PhotosSearchState.Loading
             val primary = try {
                 val response = RetrofitClient.apiService.getSelfies("Bearer $token")
                 if (response.success && response.data != null) _selfies.value = response.data

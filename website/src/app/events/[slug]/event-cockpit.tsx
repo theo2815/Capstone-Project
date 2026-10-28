@@ -39,7 +39,7 @@ import { deriveEventState } from "@/lib/event-catalog";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
-import { ApiError, formatRetryWait } from "@/lib/api";
+import { ApiError, searchRateLimitMessage } from "@/lib/api";
 import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 
@@ -101,16 +101,18 @@ export function EventCockpit({ event, initialPhotos }: Props) {
     if (!isFaceMode) setFaceSearchResult(null);
   }, [isFaceMode]);
 
+  // Face search is one-shot local state: every match arrives in one response
+  // (up to 200). Show them a page at a time like the bib gallery, so the first
+  // paint loads one page of images, not all of them (FS-7).
+  const [faceShown, setFaceShown] = useState<number>(PAGE_SIZE.PHOTO_INITIAL);
+  const faceMatches = faceSearchResult?.items ?? [];
   const visiblePhotos = isFaceMode
-    ? faceSearchResult?.items ?? []
+    ? faceMatches.slice(0, faceShown)
     : bibPhotos.photos;
-  // Face search is one-shot local state (Step 2 turns it into a real infinite
-  // query); render all its matches at once and read `total` from what's loaded
-  // so Load-more shows the terminal kicker instead of a dead button.
-  const visibleTotal = isFaceMode
-    ? faceSearchResult?.items.length ?? 0
-    : bibPhotos.total;
-  const onLoadMore = isFaceMode ? () => {} : bibPhotos.fetchNextPage;
+  const visibleTotal = isFaceMode ? faceMatches.length : bibPhotos.total;
+  const onLoadMore = isFaceMode
+    ? () => setFaceShown((n) => n + PAGE_SIZE.PHOTO_INCREMENT)
+    : bibPhotos.fetchNextPage;
   const isLoadingMore = isFaceMode ? false : bibPhotos.isFetchingNextPage;
 
   const submitBib = (raw: string) => {
@@ -141,6 +143,7 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const handleFaceSearchSuccess = useCallback(
     (result: EventPhotosResult) => {
       setFaceSearchResult(result);
+      setFaceShown(PAGE_SIZE.PHOTO_INITIAL);
       setUrlBatch({ face: "1", browse: "1", bib: null, mine: null });
     },
     [setUrlBatch],
@@ -211,10 +214,13 @@ export function EventCockpit({ event, initialPhotos }: Props) {
       <BrowseMode
         event={event}
         photos={visiblePhotos}
+        // Buy all keeps every face match, not just the page on screen.
+        buyAllPhotos={isFaceMode ? faceMatches : undefined}
         total={visibleTotal}
         onLoadMore={onLoadMore}
         isLoadingMore={isLoadingMore}
         isLoadingPhotos={isFaceMode ? false : bibPhotos.isLoading}
+        bibSearchError={searchRateLimitMessage(bibPhotos.error)}
         bibFilter={bibFilter}
         isFaceMode={isFaceMode}
         canShowMyPhotos={isAuthenticated && !!primarySelfieId}
@@ -623,10 +629,12 @@ function AboutStrip({ event }: { event: EventDetail }) {
 function BrowseMode({
   event,
   photos,
+  buyAllPhotos,
   total,
   onLoadMore,
   isLoadingMore,
   isLoadingPhotos,
+  bibSearchError,
   bibFilter,
   isFaceMode,
   canShowMyPhotos,
@@ -641,10 +649,12 @@ function BrowseMode({
 }: {
   event: EventDetail;
   photos: MockPhoto[];
+  buyAllPhotos?: MockPhoto[];
   total: number;
   onLoadMore: () => void;
   isLoadingMore: boolean;
   isLoadingPhotos: boolean;
+  bibSearchError: string | null;
   bibFilter: string;
   isFaceMode: boolean;
   canShowMyPhotos: boolean;
@@ -682,9 +692,10 @@ function BrowseMode({
     }
   }, [visible.length, previewIndex]);
 
-  const totalPrice = visible.reduce((sum, p) => sum + p.price, 0);
+  const buyAll = buyAllPhotos ?? visible;
+  const totalPrice = buyAll.reduce((sum, p) => sum + p.price, 0);
   const showBuyAll =
-    isAnyFilter && visible.length > 0 && event.pricingMode !== "free";
+    isAnyFilter && buyAll.length > 0 && event.pricingMode !== "free";
   const previewPhoto =
     previewIndex !== null ? visible[previewIndex] ?? null : null;
 
@@ -720,6 +731,8 @@ function BrowseMode({
               visible.length === 0 ? (
                 isLoadingPhotos ? (
                   "Searching…"
+                ) : bibSearchError ? (
+                  "Search paused."
                 ) : (
                   "No matches yet."
                 )
@@ -890,6 +903,12 @@ function BrowseMode({
               </div>
             </div>
           </div>
+        ) : isBibFilter && visible.length === 0 && bibSearchError ? (
+          <div className="max-w-7xl mx-auto px-6 md:px-10 py-10">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-error">
+              {bibSearchError}
+            </p>
+          </div>
         ) : isBibFilter && visible.length === 0 ? (
           <BibEmptyResult event={event} bib={bibFilter} onClear={onClearBib} />
         ) : isFaceMode && visible.length === 0 ? (
@@ -929,7 +948,7 @@ function BrowseMode({
         )}
       </div>
 
-      {showBuyAll && <BuyAllBar event={event} photos={visible} total={totalPrice} />}
+      {showBuyAll && <BuyAllBar event={event} photos={buyAll} total={totalPrice} />}
 
       {searchOpen && (
         <FindPhotosModal
@@ -1150,11 +1169,8 @@ function myPhotosErrorMessage(err: unknown): string {
     if (code === "LOW_CONFIDENCE") {
       return "We couldn't find you in this event yet. Try again as more photos land.";
     }
-    // Face + bib search share a 30-per-15-min bucket; the header says exactly
-    // how long the wait is, so say it instead of the generic "slow down".
-    if (err.status === 429 && err.retryAfterSeconds != null) {
-      return `Too many searches. Try again in about ${formatRetryWait(err.retryAfterSeconds)}.`;
-    }
+    const wait = searchRateLimitMessage(err);
+    if (wait) return wait;
     return err.message || "Couldn't load your photos right now.";
   }
   return "Couldn't load your photos right now. Try again.";

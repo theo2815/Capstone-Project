@@ -61,6 +61,7 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.common.PhotoPreview
 import com.quickpitik.mobile.ui.common.PhotoPreviewMode
 import com.quickpitik.mobile.ui.common.count
+import com.quickpitik.mobile.ui.common.gridTileUrl
 import com.quickpitik.mobile.ui.common.toPreviewData
 import com.quickpitik.mobile.ui.runner.CartViewModel
 import com.quickpitik.mobile.ui.runner.rememberIsTrueRunner
@@ -453,7 +454,7 @@ private fun ProfileEventGalleryView(
                                             .clickable { selectedPhoto = photo },
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        val url = resolveProfileImageUrl(photo.imageUrl)
+                                        val url = resolveProfileImageUrl(photo.gridTileUrl())
                                         if (url != null) {
                                             AsyncImage(
                                                 model = url,
