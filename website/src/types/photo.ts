@@ -20,6 +20,10 @@ export interface MockPhoto {
   span: "default" | "wide";
   price: number;
   imageUrl?: string | null;
+  // Presigned 400 px watermarked tile for grids (FS-9). Null on photos
+  // published before it existed; grids then fall back to `imageUrl`. The
+  // lightbox always uses `imageUrl` / `cleanUrl`.
+  gridUrl?: string | null;
   // Presigned URL for the clean original. Populated by the BE only when the
   // requester owns the photo (an unexpired DownloadGrant exists). When set,
   // the lightbox swaps `imageUrl` for `cleanUrl` so a runner who already
