@@ -175,18 +175,23 @@ class PaymongoRefundServiceTest {
     }
 
     @Test
-    fun `reaching manual review again for the same dispute writes no second row`() {
-        val h = refusedRefundHarness()
+    fun `a worker that lost the race to manual review writes no second row`() {
+        val h = couponHarness()
+        // Another worker already moved the dispute to manual review while the 400 was in flight.
+        Mockito.`when`(h.client.createRefund(anyArg(), anyArg())).thenAnswer {
+            h.dispute.refundStatus = "manual_review"
+            throw HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders(),
+                """{"errors":[{"code":"parameter_invalid","detail":"Refunds are not allowed for payments with source type qrph"}]}"""
+                    .toByteArray(StandardCharsets.UTF_8), StandardCharsets.UTF_8,
+            )
+        }
+
         assertFailsWith<ConflictException> {
             h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
         }
-        Mockito.`when`(h.disputes.findByRefundStatusInOrderByRefundRequestedAtAsc(anyArg(), anyArg()))
-            .thenReturn(listOf(h.dispute))
 
-        h.service.reconcile()
-
-        Mockito.verify(h.decisions, Mockito.times(1))
-            .logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verifyNoInteractions(h.decisions)
     }
 
     @Test

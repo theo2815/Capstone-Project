@@ -6,6 +6,7 @@ import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundRequestAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequestEnvelope
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.DownloadGrantId
@@ -264,7 +265,7 @@ class PaymongoRefundService(
                     adminDecisionLogService.logDisputeDecision(
                         adminId = adminId,
                         targetDisputeId = dispute.id,
-                        decision = "refund_sent_to_manual_review",
+                        decision = REFUND_SENT_TO_MANUAL_REVIEW,
                         reason = null,
                         meta = mapOf(
                             "requestedResolution" to dispute.resolution?.wire,

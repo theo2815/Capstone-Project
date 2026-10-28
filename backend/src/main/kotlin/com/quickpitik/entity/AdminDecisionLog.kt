@@ -9,6 +9,10 @@ import org.hibernate.type.SqlTypes
 import java.time.OffsetDateTime
 import java.util.UUID
 
+// Decision code for a refund PayMongo refused and an admin now settles by hand. It writes no
+// money, so runner-facing dispute notes skip it (see OrderService / RefundService).
+const val REFUND_SENT_TO_MANUAL_REVIEW = "refund_sent_to_manual_review"
+
 // Append-only audit trail of every ADMIN write action. group_id is nullable
 // per Q-A4 — bulk endpoints (POST /admin/payouts/bulk) share one UUID across
 // every per-target row so the dashboard kpi `decisionsThisWeek` count can
