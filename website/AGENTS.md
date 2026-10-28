@@ -95,3 +95,13 @@ See `QuickPitik Vault/website/` for page designs, component patterns, design-sys
   For private reads, `hooks/use-private-query-session.ts` provides the auth/role gate and owner/role/session key suffix. Preserve domain prefixes used by invalidation and pass Query's cancellation signal through the API (including infinite pages). Public profiles/catalogs stay public. Orders and owned-photo hints share `useOrdersList`; do not restore a persisted order-history cache. Shared order contracts belong in `types/order.ts`.
 - **Test behavior at risk boundaries.** Colocate focused `*.test.ts(x)` tests with the relevant domain module: unit tests for calculations/transitions, component/integration tests for API outcomes and user interactions. Reserve E2E tests for critical cross-route/browser flows under `e2e/` when introduced. Cover failure, retry, and session isolation where they matter; do not require a test per file or snapshots of static markup. Mock the network/API boundary rather than the behavior being verified.
 - **Hold the baseline.** Run `npm run test`, `npx tsc --noEmit`, and `npm run lint` for behavioral changes; preserve existing lint warnings and follow the browser/build checks above. Keep the test environment independent of Node's native browser-storage implementation.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
