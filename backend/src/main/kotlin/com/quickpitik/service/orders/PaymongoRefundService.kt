@@ -259,8 +259,8 @@ class PaymongoRefundService(
                 dispute.refundStatus = MANUAL_REVIEW
                 dispute.status = DisputeStatus.ESCALATED
                 disputeRepository.save(dispute)
-                // Reason stays null (runners see the newest row's reason) and the meta key is not
-                // "resolution" (the admin history reads that as a final outcome); no money has moved.
+                // Reason stays null: no money has moved yet, and the admin's dispute history shows a reason as a note.
+                // The meta key is not "resolution" (the admin history reads that as a final outcome).
                 dispute.refundRequestedBy?.let { adminId ->
                     adminDecisionLogService.logDisputeDecision(
                         adminId = adminId,
