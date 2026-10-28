@@ -10,6 +10,8 @@ export function useAdminDecisions(limit: number, enabled = true) {
     queryKey: ["admin", "decisions", user?.id ?? null, limit] as const,
     queryFn: ({ signal }) => fetchRecentAdminDecisions(limit, signal),
     enabled: enabled && user?.role === "ADMIN",
-    staleTime: 30_000,
+    // Any admin action adds a row; refetch on every visit rather than invalidating from each mutation.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }

@@ -26,7 +26,7 @@ it("lists recent decisions with a readable label, the admin and the time", async
     row({ decision: "PAYOUT_MARKED_PAID", targetType: "payout", targetId: "PAY-1" }),
     row({ decision: "photo_removal_approved", targetType: "removal", adminId: "gone", adminName: null }),
   ]);
-  renderTimeline();
+  renderTimeline({ recent: true });
 
   expect(await screen.findByText("Suspended")).toBeTruthy();
   expect(get).toHaveBeenCalledWith("/admin/decisions?limit=10", expect.anything());
@@ -41,8 +41,15 @@ it("lists recent decisions with a readable label, the admin and the time", async
 
 it("shows the empty copy when nothing has been decided", async () => {
   vi.spyOn(api, "get").mockResolvedValue([]);
-  renderTimeline();
+  renderTimeline({ recent: true });
   expect(await screen.findByText("No decisions on file yet.")).toBeTruthy();
+});
+
+it("with no user id and not opted in, shows the placeholder and makes no request", () => {
+  const get = vi.spyOn(api, "get").mockResolvedValue([]);
+  renderTimeline();
+  expect(screen.getByText(/Decision history is available on each/)).toBeTruthy();
+  expect(get).not.toHaveBeenCalled();
 });
 
 it("shows who made each decision on a photographer's page", async () => {

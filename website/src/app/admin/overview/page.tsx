@@ -144,7 +144,7 @@ export default function AdminOverviewPage() {
         number="03"
         title="Decision history"
       >
-        <AdminDecisionsTimeline />
+        <AdminDecisionsTimeline recent />
       </Slab>
     </>
   );

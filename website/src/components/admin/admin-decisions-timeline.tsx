@@ -1,6 +1,7 @@
 "use client";
 
 import { useAdminUserDetail } from "@/hooks/use-admin-users";
+import Link from "next/link";
 import { useAdminDecisions } from "@/hooks/use-admin-decisions";
 import type { RecentAdminDecision } from "@/lib/api-admin";
 import type { DecisionLogEntry } from "@/lib/admin-user-registry";
@@ -10,6 +11,8 @@ interface AdminDecisionsTimelineProps {
   limit?: number;
   /** Filter to a single user — used by the photographer detail page. */
   userId?: string;
+  /** Overview only: with no user id, list recent decisions of every kind instead of the placeholder. */
+  recent?: boolean;
   /** Empty-state copy. */
   emptyCopy?: string;
 }
@@ -17,10 +20,12 @@ interface AdminDecisionsTimelineProps {
 export function AdminDecisionsTimeline({
   limit = 10,
   userId,
+  recent = false,
   emptyCopy = "No decisions on file yet.",
 }: AdminDecisionsTimelineProps) {
   const userQuery = useAdminUserDetail(userId ?? null);
-  const recentQuery = useAdminDecisions(limit, !userId);
+  const recentQuery = useAdminDecisions(limit, recent && !userId);
+  if (!userId && !recent) return <p className="font-sans text-sm text-slate-soft">Decision history is available on each <Link className="underline" href="/admin/photographers">photographer’s profile</Link>.</p>;
   const query = userId ? userQuery : recentQuery;
   if (query.isPending) return <p role="status">Loading decisions…</p>;
   if (query.isError) return <p role="alert">Couldn&apos;t load decisions. <button onClick={() => void query.refetch()}>Try again</button></p>;

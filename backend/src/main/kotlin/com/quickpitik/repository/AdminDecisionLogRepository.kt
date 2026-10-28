@@ -37,7 +37,7 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
         pageable: Pageable,
     ): List<AdminDecisionLog>
 
-    // Overview "recent decisions": newest first, same tiebreak as findForUser.
+    // Overview "recent decisions": newest first, same tiebreak as findForUserCapped.
     fun findAllByOrderByDecidedAtDescIdAsc(pageable: Pageable): List<AdminDecisionLog>
 
     // Counts logical decisions in the window — collapses bulk groups (same
