@@ -35,6 +35,7 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertFailsWith
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 // Free checkout (2026-09-05): a 100% giveaway charged nothing, so a refund
 // request on it is refused before a dispute row exists — the admin path
@@ -143,7 +144,7 @@ class RefundServiceTest {
     }
 
     @Test
-    fun `withdraw returns the dispute's refund status and link`() {
+    fun `withdraw returns the refund status and no link once the refund left manual review`() {
         val runnerId = UUID.randomUUID()
         val sentAt = OffsetDateTime.parse("2026-10-29T10:15:30Z")
         val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
@@ -168,7 +169,7 @@ class RefundServiceTest {
         val dto = service.withdraw(runnerId, dispute.id)
 
         assertEquals("failed", dto.refundStatus)
-        assertEquals("https://transfer.paymongo.com/abc", dto.refundLinkUrl)
+        assertNull(dto.refundLinkUrl)
         assertEquals(sentAt, dto.refundLinkSentAt)
     }
 

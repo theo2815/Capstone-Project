@@ -11,6 +11,7 @@ import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeReason
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.OrderStatus
+import com.quickpitik.entity.claimableRefundLinkUrl
 import com.quickpitik.entity.refundNeedsReconciliation
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
@@ -265,7 +266,7 @@ class RefundService(
             resolvedAt = dispute.resolvedAt,
             withdrawnAt = dispute.withdrawnAt,
             refundStatus = dispute.refundStatus,
-            refundLinkUrl = dispute.refundLinkUrl,
+            refundLinkUrl = dispute.claimableRefundLinkUrl(),
             refundLinkSentAt = dispute.refundLinkSentAt,
             refundLinkExpiresAt = dispute.takeIf { it.refundStatus == "manual_review" }
                 ?.let { paymongoProperties.refundLinkExpiresAt(it) },

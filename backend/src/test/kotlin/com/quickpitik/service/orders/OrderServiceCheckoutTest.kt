@@ -249,7 +249,7 @@ class OrderServiceCheckoutTest {
     }
 
     @Test
-    fun `the runner's link expiry is only shown while the refund waits for a manual refund`() {
+    fun `the runner's link and its expiry are only shown while the refund waits for a manual refund`() {
         val userId = UUID.randomUUID()
         val order = Order(
             userId = userId,
@@ -260,20 +260,63 @@ class OrderServiceCheckoutTest {
             totalPhp = BigDecimal("125.00"),
         )
         val sentAt = OffsetDateTime.parse("2026-10-29T10:15:30Z")
-        val done = Dispute(orderId = order.id, photoId = photo.id, runnerId = userId, reasonWire = "other")
-        done.refundStatus = "succeeded"
-        done.refundLinkUrl = "https://transfer.paymongo.com/abc"
-        done.refundLinkSentAt = sentAt
         Mockito.`when`(orderRepository.findByUserIdOrderByPaidAtDescCreatedAtDesc(anyArg(), anyArg()))
             .thenReturn(org.springframework.data.domain.PageImpl(listOf(order)))
         Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenReturn(emptyList())
-        Mockito.`when`(disputeRepository.findByOrderIdIn(anyArg())).thenReturn(listOf(done))
         Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(anyArg())).thenReturn(emptyList())
 
-        val dto = service.listForUser(userId, PaginationParams(0, 20)).items.single().disputes.single()
+        for (refundStatus in listOf("succeeded", "cancelled")) {
+            val done = Dispute(orderId = order.id, photoId = photo.id, runnerId = userId, reasonWire = "other")
+            done.refundStatus = refundStatus
+            done.refundLinkUrl = "https://transfer.paymongo.com/abc"
+            done.refundLinkSentAt = sentAt
+            Mockito.`when`(disputeRepository.findByOrderIdIn(anyArg())).thenReturn(listOf(done))
 
-        assertEquals(sentAt, dto.refundLinkSentAt)
-        assertNull(dto.refundLinkExpiresAt)
+            val dto = service.listForUser(userId, PaginationParams(0, 20)).items.single().disputes.single()
+
+            assertNull(dto.refundLinkUrl, refundStatus)
+            assertEquals(sentAt, dto.refundLinkSentAt, refundStatus)
+            assertNull(dto.refundLinkExpiresAt, refundStatus)
+        }
+    }
+
+    @Test
+    fun `the receipt-link order reply carries no refund link or link dates`() {
+        val userId = UUID.randomUUID()
+        val order = Order(
+            userId = userId,
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("125.00"),
+        )
+        val sentAt = OffsetDateTime.parse("2026-10-29T10:15:30Z")
+        val waiting = Dispute(orderId = order.id, photoId = photo.id, runnerId = userId, reasonWire = "other")
+        waiting.refundStatus = "manual_review"
+        waiting.refundLinkUrl = "https://transfer.paymongo.com/abc"
+        waiting.refundLinkSentAt = sentAt
+        val done = Dispute(orderId = order.id, photoId = UUID.randomUUID(), runnerId = userId, reasonWire = "other")
+        done.refundStatus = "succeeded"
+        done.refundLinkUrl = "https://transfer.paymongo.com/def"
+        done.refundLinkSentAt = sentAt
+        Mockito.`when`(orderRepository.findById(order.id)).thenReturn(Optional.of(order))
+        Mockito.`when`(disputeRepository.findByOrderIdIn(anyArg())).thenReturn(listOf(waiting, done))
+        Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(anyArg())).thenReturn(emptyList())
+
+        val detail = service.detailByIdAndToken(order.id, OrderAccessTokenService(platform).issue(order, OrderCapability.RETURN))
+
+        val disputes = detail.disputes.associateBy { it.id }
+        assertEquals(2, disputes.size)
+        assertEquals("manual_review", disputes.getValue(waiting.id).refundStatus)
+        assertEquals("succeeded", disputes.getValue(done.id).refundStatus)
+        for (dto in disputes.values) {
+            assertNull(dto.refundLinkUrl)
+            assertNull(dto.refundLinkSentAt)
+            assertNull(dto.refundLinkExpiresAt)
+        }
+        val loggedIn = service.getDetail(userId, order.id).disputes.associateBy { it.id }
+        assertEquals("https://transfer.paymongo.com/abc", loggedIn.getValue(waiting.id).refundLinkUrl)
     }
 
     private fun newService(

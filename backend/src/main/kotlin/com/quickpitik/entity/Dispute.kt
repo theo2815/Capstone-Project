@@ -135,3 +135,6 @@ class Dispute(
 private val UNSETTLED_REFUND_STATUSES = setOf("requesting", "pending", "processing", "manual_review")
 
 fun Dispute.refundNeedsReconciliation(): Boolean = refundStatus in UNSETTLED_REFUND_STATUSES
+
+// The runner may only claim the link while the refund waits for it; afterwards it is spent or cancelled.
+fun Dispute.claimableRefundLinkUrl(): String? = refundLinkUrl.takeIf { refundStatus == "manual_review" }
