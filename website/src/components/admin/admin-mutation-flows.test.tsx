@@ -91,13 +91,13 @@ it("does not show an unknown refund outcome as refunded in the dispute drawer", 
   expect(within(drawer).queryByText(/^refunded$/i)).not.toBeInTheDocument();
 });
 
-it("does not prescribe manual review for an escalated refund still in flight", async () => {
-  const inFlight: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "requesting" };
+it.each(["requesting", "pending"])("shows no refund panel for an escalated refund still in flight (%s)", async (refundStatus) => {
+  const inFlight: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus };
   fixtures.search = `row=${inFlight.id}`;
   client.setQueryData(adminDisputeKeys.list(admin.id), [inFlight]);
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
   const drawer = await screen.findByRole("dialog");
-  expect(drawer).not.toHaveTextContent("Review the payment in PayMongo before another refund attempt.");
+  expect(within(drawer).queryByLabelText("Refund link")).not.toBeInTheDocument();
 });
 
 it.each([false, true])("preserves the selected dispute while loading (stale cache: %s)", async (stale) => {

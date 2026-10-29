@@ -7,6 +7,7 @@ import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
 import type { Dispute } from "@/lib/admin-disputes";
 import { formatLongDate, formatSalesDate } from "@/lib/format";
+import { isRefundLinkExpired } from "@/lib/refund-helpers";
 import { copyToClipboard, formatPrice } from "@/lib/utils";
 
 const sm = BTN_SIZE.sm;
@@ -49,6 +50,10 @@ export function AdminRefundPanel({
 
   async function handleSend() {
     if (busy || !trimmed) return;
+    if (trimmed === savedLink) {
+      showToast({ kind: "info", message: "This link was already sent." });
+      return;
+    }
     if (!(await sendRefundLink(dispute.id, trimmed))) return;
     setUrl("");
     setReplacing(false);
@@ -65,11 +70,14 @@ export function AdminRefundPanel({
   return (
     <div className="space-y-4 font-sans text-sm text-ink-soft">
       {dispute.paymentId ? (
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-mono tnum break-all text-ink">{dispute.paymentId}</span>
-          <button type="button" onClick={() => handleCopy(dispute.paymentId!)} disabled={busy} className={`${BTN_GHOST} ${sm}`}>
-            Copy
-          </button>
+        <div className="space-y-1">
+          <p className="text-ink">Payment ID</p>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono tnum break-all text-ink">{dispute.paymentId}</span>
+            <button type="button" aria-label="Copy payment ID" onClick={() => handleCopy(dispute.paymentId!)} disabled={busy} className={`${BTN_GHOST} ${sm}`}>
+              Copy
+            </button>
+          </div>
         </div>
       ) : (
         <p>
@@ -106,10 +114,16 @@ export function AdminRefundPanel({
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-ink">
-            Refund link sent
-            {dispute.refundLinkSentAt && <> · <span className="tnum">{formatSalesDate(dispute.refundLinkSentAt)}</span></>}
-          </p>
+          {isRefundLinkExpired(dispute.refundLinkExpiresAt) ? (
+            <p className="text-ink">
+              Refund link expired · <span className="tnum">{formatSalesDate(dispute.refundLinkExpiresAt!)}</span>
+            </p>
+          ) : (
+            <p className="text-ink">
+              Refund link sent
+              {dispute.refundLinkSentAt && <> · <span className="tnum">{formatSalesDate(dispute.refundLinkSentAt)}</span></>}
+            </p>
+          )}
           <p className="font-mono break-all text-ink">{savedLink}</p>
           <button type="button" onClick={() => setReplacing(true)} disabled={busy} className={`${BTN_GHOST} ${sm}`}>
             Send a new link

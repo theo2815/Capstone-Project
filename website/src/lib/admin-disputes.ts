@@ -62,6 +62,7 @@ export interface Dispute {
   // Manual QR Ph refund: the transfer link sent to the runner, and when.
   refundLinkUrl?: string | null;
   refundLinkSentAt?: string | null;
+  refundLinkExpiresAt?: string | null;
   // Parked QR Ph refund only: when PayMongo stops refunding, and when an unfinished refund is cancelled.
   refundWindowClosesAt?: string | null;
   refundCancelsAt?: string | null;

@@ -60,13 +60,19 @@ function renderAside(d: Dispute) {
 const lastToast = () => useToastStore.getState().toasts.at(-1);
 
 describe("manual refund panel", () => {
+  it("shows the payment id under a Payment ID label with a named copy button", () => {
+    renderAside(parked);
+    expect(screen.getByText("Payment ID")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy payment ID" })).toHaveTextContent("Copy");
+  });
+
   it("shows the payment id with a Copy button and copies it", async () => {
     const user = userEvent.setup();
     const copy = vi.spyOn(utils, "copyToClipboard").mockResolvedValue(true);
     renderAside(parked);
     expect(screen.getByText("pay_abc123")).toBeInTheDocument();
     expect(screen.queryByText("Review the payment in PayMongo before another refund attempt.")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copy payment ID" }));
     expect(copy).toHaveBeenCalledWith("pay_abc123");
     expect(lastToast()?.kind).toBe("success");
   });
@@ -75,13 +81,13 @@ describe("manual refund panel", () => {
     const user = userEvent.setup();
     vi.spyOn(utils, "copyToClipboard").mockResolvedValue(false);
     renderAside(parked);
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copy payment ID" }));
     expect(lastToast()?.kind).toBe("error");
   });
 
   it("falls back to the checkout reference, amount and paid time when there is no payment id", () => {
     renderAside({ ...parked, paymentId: null });
-    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy payment ID" })).not.toBeInTheDocument();
     expect(screen.getByText("cs_xyz")).toBeInTheDocument();
     expect(screen.getByText("₱100.00")).toBeInTheDocument();
     expect(screen.getByText(/Search these in PayMongo\./)).toBeInTheDocument();
@@ -133,6 +139,37 @@ describe("manual refund panel", () => {
     expect(screen.queryByLabelText("Refund link")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Send a new link" }));
     expect(screen.getByLabelText("Refund link")).toBeInTheDocument();
+  });
+
+  it("sending the same link again says it was already sent and calls nothing", async () => {
+    const user = userEvent.setup();
+    const post = vi.spyOn(api, "post");
+    renderAside({ ...parked, refundLinkUrl: "https://pay.example/r/1", refundLinkSentAt: "2026-10-29T01:00:00Z" });
+    await user.click(screen.getByRole("button", { name: "Send a new link" }));
+    await user.type(screen.getByLabelText("Refund link"), "  https://pay.example/r/1  ");
+    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    expect(post).not.toHaveBeenCalled();
+    expect(lastToast()).toMatchObject({ kind: "info", message: "This link was already sent." });
+  });
+
+  describe("with the clock pinned", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-30T12:00:00Z"));
+    });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it.each([
+      ["in the past", "2026-10-30T11:00:00Z", "Refund link expired", "Refund link sent"],
+      ["in the future", "2026-10-30T13:00:00Z", "Refund link sent", "Refund link expired"],
+    ])("words the saved link by its expiry %s", (_when, expiresAt, shown, hidden) => {
+      renderAside({ ...parked, refundLinkUrl: "https://pay.example/r/1", refundLinkSentAt: "2026-10-29T01:00:00Z", refundLinkExpiresAt: expiresAt });
+      const line = screen.getByText(new RegExp(`^${shown}`));
+      expect(line).toHaveTextContent(`${shown} · ${formatSalesDate(shown === "Refund link expired" ? expiresAt : "2026-10-29T01:00:00Z")}`);
+      expect(screen.queryByText(new RegExp(`^${hidden}`))).not.toBeInTheDocument();
+      expect(screen.getByText("https://pay.example/r/1")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Send a new link" })).toBeInTheDocument();
+    });
   });
 
   it("shows the saved link, its sent time and Send a new link after a successful send", async () => {
@@ -211,7 +248,7 @@ describe("manual refund panel", () => {
     renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
     await user.click(screen.getByRole("button", { name: "Send to runner" }));
-    expect(screen.getByRole("button", { name: "Copy" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Copy payment ID" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Mark refunded" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Send/ })).toBeDisabled();
     await act(async () => { release({ ...parked, refundLinkUrl: "https://pay.example/r/1" }); });
