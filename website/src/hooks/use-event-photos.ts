@@ -88,13 +88,20 @@ export function useEventPhotos(args: UseEventPhotosArgs): UseEventPhotosResult {
   };
 }
 
-export function usePublicPhotographerEventPhotos(handle: string, slug: string) {
+// With a bib, the server searches this photographer's photos at the event
+// (INC-10); the bib list caches and pages apart from the plain gallery.
+export function usePublicPhotographerEventPhotos(
+  handle: string,
+  slug: string,
+  { bib, enabled }: { bib?: string; enabled?: boolean } = {},
+) {
   const viewer = usePrivateQuerySession();
   return useInfiniteList<Photo>({
-    queryKey: ["photographer", "public", handle, slug, "photos", ...viewer.key],
+    queryKey: ["photographer", "public", handle, slug, "photos", { bib: bib ?? null }, ...viewer.key],
     fetchPage: (offset, limit, signal) =>
-      fetchPublicPhotographerEventPhotos(handle, slug, { offset, limit }, signal),
+      fetchPublicPhotographerEventPhotos(handle, slug, { bib, offset, limit }, signal),
     limit: PAGE_SIZE.PHOTO_INCREMENT,
+    enabled,
     staleTime: 60_000,
   });
 }

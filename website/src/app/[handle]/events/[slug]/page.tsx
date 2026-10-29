@@ -22,6 +22,7 @@ import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
+import { searchRateLimitMessage } from "@/lib/api";
 import { formatLongDate } from "@/lib/format";
 import { savePhoto } from "@/lib/save-photo";
 import { fetchEventDetail } from "@/lib/api-events";
@@ -38,8 +39,8 @@ import type { MockPhoto } from "@/types/photo";
 // the named event, but otherwise mirrors `/events/[slug]?browse=1`:
 // mosaic photo grid + per-tile +cart/buy buttons + sticky "Find your photos"
 // search → FindPhotosModal + BuyAllBar when filtered + BibEmptyResult on
-// no-match. The bib filter scope is photographer-only (their slice), not the
-// full event pool.
+// no-match. The bib search runs on the server, scoped to this photographer
+// (their slice), not the full event pool.
 //
 // Single data path: GET /public/photographers/{handle} + GET .../events/{slug}
 // + GET .../events/{slug}/photos. No isOwner branch — owner-self sees the
@@ -126,11 +127,9 @@ function Gallery({
       ? BRAND_COLOR_HEX[profile.brandColor]
       : null;
 
-  // Real server pagination for the browse. bib filtering is client-side (the
-  // public endpoint has no bib param — see "requires backend changes"), so
-  // Load-more progresses the whole gallery and the bib filter is a view over
-  // what's loaded; runners searching a specific bib use /events/[slug] (server
-  // bib search) instead.
+  // Real server pagination for the browse. A bib is searched on the server
+  // across all of this photographer's photos (bibList below), never over the
+  // pages loaded here (INC-10).
   const list = usePublicPhotographerEventPhotos(profile.handle, event.slug);
   const photos = list.items;
 
@@ -157,6 +156,14 @@ function Gallery({
   const isBibFiltered = cleanedQuery.length > 0;
   const isFaceFiltered = faceResult !== null;
   const isFiltered = isBibFiltered || isFaceFiltered;
+  const bibList = usePublicPhotographerEventPhotos(profile.handle, event.slug, {
+    bib: cleanedQuery,
+    enabled: isBibFiltered,
+  });
+  // The list the grid pages through: the bib search while a bib is set.
+  // A selfie result wins over a bib left in the URL.
+  const isBibSearch = isBibFiltered && !isFaceFiltered;
+  const shown = isBibSearch ? bibList : list;
 
   const visible = useMemo(() => {
     if (faceResult) {
@@ -164,13 +171,9 @@ function Gallery({
         (p) => p.photographerHandle?.toLowerCase() === profile.handle,
       );
     }
-    if (!isBibFiltered) return photos;
-    return photos.filter((p) => {
-      if (!p.bib) return false;
-      const num = p.bib.replace(/^B-/, "");
-      return num.includes(cleanedQuery);
-    });
-  }, [photos, cleanedQuery, isBibFiltered, faceResult, profile.handle]);
+    return isBibFiltered ? bibList.items : photos;
+  }, [photos, isBibFiltered, bibList.items, faceResult, profile.handle]);
+  const foundCount = isBibSearch ? bibList.total : visible.length;
 
   useEffect(() => {
     if (previewIndex !== null && previewIndex >= visible.length) {
@@ -212,11 +215,10 @@ function Gallery({
           <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight leading-[0.95] text-ink mt-4">
             {isFiltered ? (
               visible.length === 0 ? (
-                // The bib filter is a client view over loaded pages — while
-                // unsearched pages remain (or a fetch is in flight), the
-                // negative isn't known yet.
-                isBibFiltered && (list.hasNextPage || list.isFetching) ? (
+                isBibSearch && bibList.isFetching ? (
                   "Searching…"
+                ) : isBibSearch && bibList.error ? (
+                  "Search didn't finish."
                 ) : (
                   "No matches yet."
                 )
@@ -231,9 +233,9 @@ function Gallery({
                       opacity: 0,
                     }}
                   >
-                    {visible.length}
+                    {foundCount}
                   </span>{" "}
-                  {visible.length === 1 ? "photo" : "photos"}.
+                  {foundCount === 1 ? "photo" : "photos"}.
                 </>
               )
             ) : (
@@ -286,7 +288,7 @@ function Gallery({
         </div>
       </header>
 
-      {photos.length > 0 && (
+      {(photos.length > 0 || isFiltered) && (
         <div className="sticky top-[var(--site-header-h)] z-20 bg-bone/90 backdrop-blur-md border-b border-line">
           <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center gap-3">
             <Kicker
@@ -345,7 +347,7 @@ function Gallery({
 
       <div className="flex-1 px-6 md:px-10 py-10 md:py-14 pb-32">
         <div className="max-w-7xl mx-auto">
-          {list.isLoading ? (
+          {list.isLoading || shown.isLoading ? (
             // First photos page is a client fetch with no SSR seed — don't
             // show "Photos coming soon" (or an error's empty fallback) while
             // it's still in flight.
@@ -357,26 +359,26 @@ function Gallery({
                 <Skeleton key={i} className="h-full w-full rounded-xl" />
               ))}
             </div>
-          ) : list.error && photos.length === 0 ? (
+          ) : shown.error && shown.items.length === 0 ? (
             <div className="border border-dashed border-line rounded-2xl p-10 md:p-16 text-center max-w-2xl mx-auto">
               <Kicker as="p" tone="soft">
                 Gallery
               </Kicker>
               <p className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink mt-4">
-                Couldn&apos;t load photos.
+                {searchRateLimitMessage(shown.error) ?? "Couldn't load photos."}
               </p>
               <Kicker
                 as="button"
                 type="button"
-                onClick={list.refetch}
+                onClick={shown.refetch}
                 className="mt-6 inline-flex text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
               >
                 Try again ↻
               </Kicker>
             </div>
-          ) : photos.length === 0 ? (
+          ) : photos.length === 0 && !isBibFiltered ? (
             <EmptyGalleryPanel displayName={profile.displayName} />
-          ) : isBibFiltered && visible.length === 0 && !list.hasNextPage ? (
+          ) : isBibSearch && visible.length === 0 && !bibList.hasNextPage ? (
             <BibEmptyResult
               event={event}
               bib={bibFilter}
@@ -398,15 +400,14 @@ function Gallery({
                   />
                 ))}
               </div>
-              {/* Load-more progresses the whole gallery; when a bib is active
-                  the grid above is the filtered view over what's loaded. */}
+              {/* Load-more pages the gallery, or the bib search when a bib is set. */}
               {!isFaceFiltered && (
                 <LoadMoreButton
-                  shown={photos.length}
-                  total={list.total}
+                  shown={shown.items.length}
+                  total={shown.total}
                   increment={PAGE_SIZE.PHOTO_INCREMENT}
-                  onLoadMore={list.fetchNextPage}
-                  isLoading={list.isFetchingNextPage}
+                  onLoadMore={shown.fetchNextPage}
+                  isLoading={shown.isFetchingNextPage}
                   countSuffix={isBibFiltered ? `· BIB ${bibFilter}` : undefined}
                 />
               )}

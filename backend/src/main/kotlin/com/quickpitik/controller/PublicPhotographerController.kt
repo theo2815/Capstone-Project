@@ -39,18 +39,24 @@ class PublicPhotographerController(
         @AuthenticationPrincipal principal: AuthPrincipal?,
         @PathVariable handle: String,
         @PathVariable slug: String,
+        @RequestParam(required = false) bib: String?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
         request: HttpServletRequest,
         response: HttpServletResponse,
     ): PaginatedResponse<PhotoDto> {
         rateLimit(request)
+        // A bib is a search: same shared bucket and key as the event bib search.
+        if (!bib.isNullOrBlank()) {
+            rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_PHOTO_SEARCH, principal?.userId?.toString() ?: clientIp(request))
+        }
         if (principal != null) response.setHeader("Cache-Control", "private, no-store")
         return publicPhotographerService.listEventPhotos(
             handle = handle,
             eventSlug = slug,
             pagination = PaginationParams.of(offset, limit),
             requesterUserId = principal?.userId,
+            bib = bib,
         )
     }
 

@@ -625,6 +625,39 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         pageable: Pageable,
     ): Page<Photo>
 
+    // searchForEvent scoped to one photographer: the bib search on a
+    // photographer's public event page (INC-10). Same filters, match and order.
+    @Query(
+        """
+        SELECT DISTINCT p FROM Photo p
+        JOIN p.bibs b
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+          AND p.status = :status
+          AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%')
+        ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
+        """,
+        countQuery = """
+        SELECT COUNT(DISTINCT p) FROM Photo p
+        JOIN p.bibs b
+        WHERE p.eventId = :eventId
+          AND p.photographerId = :photographerId
+          AND p.status = :status
+          AND p.deletedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%')
+        """,
+    )
+    fun searchPhotographerLibraryByBib(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("status") status: PhotoStatus,
+        @Param("bib") bib: String,
+        pageable: Pageable,
+    ): Page<Photo>
+
     // Public catalog counts use the same predicate as Photo.isSellable;
     // upload/owner/admin counters retain their existing meaning.
     @Query("SELECT COUNT(p) FROM Photo p WHERE p.eventId = :eventId " +

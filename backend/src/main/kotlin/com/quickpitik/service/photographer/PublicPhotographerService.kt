@@ -125,6 +125,7 @@ class PublicPhotographerService(
         eventSlug: String,
         pagination: PaginationParams,
         requesterUserId: UUID? = null,
+        bib: String? = null,
     ): PaginatedResponse<PhotoDto> {
         val normalized = handle.trim().lowercase()
         val settings = photographerSettingsRepository.findByHandleIgnoreCase(normalized)
@@ -142,7 +143,18 @@ class PublicPhotographerService(
         // invisible. Filter at the query layer so pagination `total` reflects
         // the visible count — a post-fetch filter would leak phantom pages
         // (FE shows N items but the next page is short or empty).
-        val page = photoRepository.findPhotographerLibraryByStatus(
+        val cleanedBib = PhotoService.normalizeBib(bib)
+        // A bib of only symbols (like "#") matches no photo; do not fall back to the whole gallery.
+        if (!bib.isNullOrBlank() && cleanedBib.isEmpty()) return PaginatedResponse.empty(pagination)
+        val page = if (cleanedBib.isNotEmpty()) {
+            photoRepository.searchPhotographerLibraryByBib(
+                eventId = event.id,
+                photographerId = settings.userId,
+                status = PhotoStatus.LIVE,
+                bib = cleanedBib,
+                pageable = OffsetLimitPageable(pagination),
+            )
+        } else photoRepository.findPhotographerLibraryByStatus(
             eventId = event.id,
             photographerId = settings.userId,
             status = PhotoStatus.LIVE,
