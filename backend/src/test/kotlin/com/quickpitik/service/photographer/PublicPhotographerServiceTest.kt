@@ -7,6 +7,7 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
@@ -25,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.data.domain.PageImpl
+import org.springframework.data.domain.PageRequest
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -106,6 +108,42 @@ class PublicPhotographerServiceTest {
         assertEquals(listOf(null, "https://storage/thumbnail.jpg", "https://storage/watermark.jpg"), items.map { it.imageUrl })
         assertTrue(items.all { it.cleanUrl == null && it.downloadUrl == null })
         Mockito.verify(storageService, Mockito.never()).presignedGetUrl(eqArg("original.jpg"), anyArg())
+    }
+
+    // INC-10: the photographer's event page searched a bib only among the photos
+    // already loaded in the browser. The bib now filters in the database.
+    @Test
+    fun `a bib searches every photo of this photographer at the event`() {
+        photographer("shooter", VerificationStatus.APPROVED, suspended = false)
+        val ownerId = photographerSettingsRepository.findByHandleIgnoreCase("shooter")!!.userId
+        val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
+        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        val match = Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN)
+        Mockito.`when`(photoRepository.searchPhotographerLibraryByBib(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            // A full page of 1 so PageImpl keeps the database total (12).
+            .thenReturn(PageImpl(listOf(match), PageRequest.of(0, 1), 12))
+
+        val page = service().listEventPhotos("shooter", "race", PaginationParams.of(0, 20), bib = "b-10342")
+
+        assertEquals(12, page.total)
+        assertEquals(listOf(match.id), page.items.map { it.id })
+        Mockito.verify(photoRepository).searchPhotographerLibraryByBib(
+            eqArg(event.id), eqArg(ownerId), eqArg(PhotoStatus.LIVE), eqArg("10342"), anyArg(),
+        )
+        Mockito.verify(photoRepository, Mockito.never()).findPhotographerLibraryByStatus(anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a blank bib keeps the plain gallery`() {
+        photographer("shooter", VerificationStatus.APPROVED, suspended = false)
+        val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
+        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(photoRepository.findPhotographerLibraryByStatus(anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(PageImpl(emptyList()))
+
+        service().listEventPhotos("shooter", "race", PaginationParams.of(0, 20), bib = "  ")
+
+        Mockito.verify(photoRepository, Mockito.never()).searchPhotographerLibraryByBib(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
     }
 
     private fun <T> anyArg(): T = Mockito.any()

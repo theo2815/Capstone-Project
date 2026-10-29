@@ -99,6 +99,27 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1L, photos.findPhotographerTrash(event.id, owner.id, page).totalElements)
     }
 
+    // INC-10: the photographer gallery's bib search runs in the database, scoped
+    // to one photographer, with the event search's substring match.
+    @Test fun `photographer bib search finds only this photographer's live photos with that bib`() {
+        fun bibbed(by: User, bib: String) = photos.saveAndFlush(Photo(eventId = event.id, photographerId = by.id,
+            s3Key = "review/${UUID.randomUUID()}/original.jpg", pricePhp = BigDecimal("125"),
+            bibs = mutableSetOf(PhotoBibEmbed(bib, BigDecimal("0.9900")))))
+        val other = users.save(User(email = "other-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Other", role = Role.PHOTOGRAPHER))
+        val mine = bibbed(owner, "10342")
+        val trashed = bibbed(owner, "10342")
+        bibbed(owner, "55555")
+        bibbed(other, "10342")
+        manager.trash(owner.id, event.id, listOf(trashed.id))
+        val page = PageRequest.of(0, 20)
+
+        val found = photos.searchPhotographerLibraryByBib(event.id, owner.id, PhotoStatus.LIVE, "0342", page)
+
+        assertEquals(listOf(mine.id), found.content.map { it.id })
+        assertEquals(1L, found.totalElements)
+        assertEquals(0L, photos.searchPhotographerLibraryByBib(event.id, owner.id, PhotoStatus.LIVE, "99999", page).totalElements)
+    }
+
     @Test fun `trashed free photo must not resolve an unauthenticated original download`() {
         event.pricingMode = EventPricingMode.FREE
         events.saveAndFlush(event)
