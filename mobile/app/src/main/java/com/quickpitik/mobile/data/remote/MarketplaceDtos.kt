@@ -174,7 +174,11 @@ data class RunnerDisputeDto(
     val resolutionNote: String? = null,
     val openedAt: String,
     val resolvedAt: String? = null,
-    val withdrawnAt: String? = null
+    val withdrawnAt: String? = null,
+    val refundStatus: String? = null,
+    val refundLinkUrl: String? = null,
+    val refundLinkSentAt: String? = null,
+    val refundLinkExpiresAt: String? = null
 )
 
 // POST /coupons/preview { photoIds, code? } — server prices coupon-eligible
