@@ -146,6 +146,20 @@ class PublicPhotographerServiceTest {
         Mockito.verify(photoRepository, Mockito.never()).searchPhotographerLibraryByBib(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
     }
 
+    @Test
+    fun `a bib with no letters or digits finds nothing`() {
+        photographer("shooter", VerificationStatus.APPROVED, suspended = false)
+        val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
+        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+
+        val page = service().listEventPhotos("shooter", "race", PaginationParams.of(0, 20), bib = "#")
+
+        assertEquals(0, page.total)
+        assertTrue(page.items.isEmpty())
+        Mockito.verify(photoRepository, Mockito.never()).findPhotographerLibraryByStatus(anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).searchPhotographerLibraryByBib(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
     private fun <T> anyArg(): T = Mockito.any()
     private fun <T> eqArg(value: T): T = Mockito.eq(value) ?: value
 

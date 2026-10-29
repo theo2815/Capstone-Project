@@ -144,6 +144,8 @@ class PublicPhotographerService(
         // the visible count — a post-fetch filter would leak phantom pages
         // (FE shows N items but the next page is short or empty).
         val cleanedBib = PhotoService.normalizeBib(bib)
+        // A bib of only symbols (like "#") matches no photo; do not fall back to the whole gallery.
+        if (!bib.isNullOrBlank() && cleanedBib.isEmpty()) return PaginatedResponse.empty(pagination)
         val page = if (cleanedBib.isNotEmpty()) {
             photoRepository.searchPhotographerLibraryByBib(
                 eventId = event.id,
