@@ -38,6 +38,7 @@ import {
 import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
+  formatLongDate,
   formatMemberSince,
   formatMonthYear,
   formatPaidAt,
@@ -47,7 +48,6 @@ import { cn, formatPrice } from "@/lib/utils";
 import { savePhoto } from "@/lib/save-photo";
 import { SavePhotosButton } from "@/components/orders/save-photos-button";
 import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { formatLongDate } from "@/lib/format";
 
 const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "spend", label: "Spend" },
@@ -759,7 +759,7 @@ function RefundStatusChip({
         <span
           aria-hidden="true"
           className={cn(
-            "size-1.5 rounded-full",
+            "size-1.5 shrink-0 rounded-full",
             status.kind === "approved"
               ? "bg-fresh"
               : status.kind === "rejected"

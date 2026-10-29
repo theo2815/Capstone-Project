@@ -41,7 +41,7 @@ function renderOrders(d: RunnerDispute) {
 }
 
 it("shows the claim link and claim-by date when the admin sent a link", async () => {
-  renderOrders(dispute({ refundLinkUrl: link, refundLinkSentAt: "2026-10-27T02:00:00Z", refundLinkExpiresAt: "2026-10-30T02:00:00Z" }));
+  renderOrders(dispute({ refundLinkUrl: link, refundLinkSentAt: "2026-10-27T12:00:00Z", refundLinkExpiresAt: "2026-10-30T12:00:00Z" }));
   const a = await screen.findByRole("link", { name: /Claim your refund/ });
   expect(a).toHaveAttribute("href", link);
   expect(a).toHaveAttribute("target", "_blank");
@@ -51,7 +51,7 @@ it("shows the claim link and claim-by date when the admin sent a link", async ()
 });
 
 it("shows only the sent date when the server gave no claim-by date", async () => {
-  renderOrders(dispute({ refundLinkUrl: link, refundLinkSentAt: "2026-10-27T02:00:00Z" }));
+  renderOrders(dispute({ refundLinkUrl: link, refundLinkSentAt: "2026-10-27T12:00:00Z" }));
   expect(await screen.findByText("Sent OCT 27 · 2026.")).toBeVisible();
 });
 
@@ -62,7 +62,7 @@ it("shows no claim link before a link exists", async () => {
 });
 
 it("shows no claim link after the refund succeeded", async () => {
-  renderOrders(dispute({ status: "resolved", refundStatus: "succeeded", refundAmount: 80, refundLinkUrl: link, refundLinkSentAt: "2026-10-27T02:00:00Z" }));
+  renderOrders(dispute({ status: "resolved", refundStatus: "succeeded", refundAmount: 80, refundLinkUrl: link, refundLinkSentAt: "2026-10-27T12:00:00Z" }));
   expect(await screen.findByText(/Refund approved/)).toBeVisible();
   expect(screen.queryByRole("link", { name: /Claim your refund/ })).not.toBeInTheDocument();
 });
