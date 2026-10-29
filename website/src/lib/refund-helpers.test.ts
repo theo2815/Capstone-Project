@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RunnerDispute } from "@/lib/api-orders";
 import type { OrderSummary } from "@/types/order";
 import {
   getOrderRefundStatus,
   getRefundClaimLink,
   getRefundStatusLabel,
+  isRefundLinkExpired,
 } from "./refund-helpers";
 
 const dispute = (over: Partial<RunnerDispute> = {}): RunnerDispute => ({
@@ -82,5 +83,54 @@ describe("getOrderRefundStatus label", () => {
   });
   it("is null when no dispute has one", () => {
     expect(getOrderRefundStatus(order([dispute()])).label).toBeNull();
+  });
+});
+
+describe("expired refund link", () => {
+  const expiry = Date.parse("2026-10-30T12:00:00Z");
+  const sent = (expiresAt: string | null) =>
+    dispute({
+      status: "escalated",
+      refundStatus: "manual_review",
+      refundLinkUrl: "https://pm.test/r",
+      refundLinkExpiresAt: expiresAt,
+    });
+
+  afterEach(() => vi.useRealTimers());
+
+  it("isRefundLinkExpired is true only at or after the expiry instant", () => {
+    const at = "2026-10-30T12:00:00Z";
+    expect(isRefundLinkExpired(at, expiry - 1)).toBe(false);
+    expect(isRefundLinkExpired(at, expiry)).toBe(true);
+    expect(isRefundLinkExpired(at, expiry + 1)).toBe(true);
+    expect(isRefundLinkExpired(null, expiry)).toBe(false);
+    expect(isRefundLinkExpired(undefined, expiry)).toBe(false);
+    expect(isRefundLinkExpired("", expiry)).toBe(false);
+    expect(isRefundLinkExpired("garbage", expiry)).toBe(false);
+  });
+  it("keeps the claim link 1 ms before expiry, drops it at and after expiry", () => {
+    const d = sent("2026-10-30T12:00:00Z");
+    expect(getRefundClaimLink(d, expiry - 1)).toBe("https://pm.test/r");
+    expect(getRefundClaimLink(d, expiry)).toBeNull();
+    expect(getRefundClaimLink(d, expiry + 1)).toBeNull();
+  });
+  it("keeps the claim link when the expiry is missing or garbage", () => {
+    expect(getRefundClaimLink(sent(null), expiry)).toBe("https://pm.test/r");
+    expect(getRefundClaimLink(sent("garbage"), expiry)).toBe("https://pm.test/r");
+  });
+  it("labels the dispute expired or sent", () => {
+    const d = sent("2026-10-30T12:00:00Z");
+    expect(getRefundStatusLabel(d, expiry)).toBe("Refund link expired");
+    expect(getRefundStatusLabel(d, expiry - 1)).toBe("Refund link sent");
+  });
+  it("rolls up the expired label from a later dispute", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(expiry + 1000);
+    const o = {
+      id: "o1",
+      photoIds: ["p1", "p2"],
+      disputes: [dispute({ id: "d1", photoId: "p1" }), { ...sent("2026-10-30T12:00:00Z"), id: "d2", photoId: "p2" }],
+    } as unknown as OrderSummary;
+    expect(getOrderRefundStatus(o).label).toBe("Refund link expired");
   });
 });

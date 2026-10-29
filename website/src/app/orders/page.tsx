@@ -32,6 +32,7 @@ import { RefundModal } from "@/components/orders/refund-modal";
 import { RefundTimeline } from "@/components/orders/refund-timeline";
 import {
   getRefundClaimLink,
+  isRefundLinkExpired,
   getOrderRefundStatus,
   type OrderRefundStatus,
 } from "@/lib/refund-helpers";
@@ -469,6 +470,14 @@ function ReceiptRow({
             status={refundStatus}
             photoCount={photoCount}
             claimDispute={disputes.find((d) => getRefundClaimLink(d)) ?? null}
+            expiredDispute={
+              disputes.find(
+                (d) =>
+                  d.refundStatus === "manual_review" &&
+                  d.refundLinkUrl &&
+                  isRefundLinkExpired(d.refundLinkExpiresAt),
+              ) ?? null
+            }
           />
         </div>
         <div className="flex items-baseline justify-between md:flex-col md:items-end gap-3 md:gap-2 shrink-0">
@@ -729,10 +738,12 @@ function RefundStatusChip({
   status,
   photoCount,
   claimDispute,
+  expiredDispute,
 }: {
   status: OrderRefundStatus;
   photoCount: number;
   claimDispute: RunnerDispute | null;
+  expiredDispute: RunnerDispute | null;
 }) {
   if (status.kind === "none") return null;
 
@@ -792,6 +803,13 @@ function RefundStatusChip({
             {claimDispute.refundLinkExpiresAt
               ? ` Claim by ${formatLongDate(claimDispute.refundLinkExpiresAt)}.`
               : ""}
+          </p>
+        </div>
+      )}
+      {!claimDispute && expiredDispute && (
+        <div className="pt-1.5">
+          <p className="font-sans text-sm text-ink-soft tnum">
+            Your refund link expired on {formatLongDate(expiredDispute.refundLinkExpiresAt)}. We will send a new link or contact you.
           </p>
         </div>
       )}

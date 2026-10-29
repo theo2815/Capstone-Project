@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
@@ -24,7 +24,12 @@ const dispute = (over: Partial<RunnerDispute>): RunnerDispute => ({
   resolutionNote: null, openedAt: "2026-10-20T00:00:00Z", resolvedAt: null, withdrawnAt: null, refundStatus: "manual_review", ...over,
 });
 
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-28T00:00:00Z"));
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks(); useAuthStore.getState().logout();
   useCartStore.getState().setSyncEnabled(false); useCartStore.getState().setItems([]);
 });
@@ -74,4 +79,13 @@ it("shows no claim link after the refund succeeded", async () => {
   renderOrders(dispute({ status: "resolved", refundStatus: "succeeded", refundAmount: 80, refundLinkUrl: link, refundLinkSentAt: "2026-10-27T12:00:00Z" }));
   expect(await screen.findByText(/Refund approved/)).toBeVisible();
   expect(screen.queryByRole("link", { name: /Claim your refund/ })).not.toBeInTheDocument();
+});
+
+it("an expired link shows the expired line and no claim button", async () => {
+  vi.setSystemTime(new Date("2026-10-31T00:00:00Z"));
+  renderOrders(dispute({ refundLinkUrl: link, refundLinkSentAt: "2026-10-27T12:00:00Z", refundLinkExpiresAt: "2026-10-30T12:00:00Z" }));
+  expect(await screen.findByText("Your refund link expired on OCT 30 · 2026. We will send a new link or contact you.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: /Claim your refund/ })).not.toBeInTheDocument();
+  expect(screen.getByText("Refund link expired")).toBeVisible();
+  expect(screen.queryByText("Refund link sent")).not.toBeInTheDocument();
 });

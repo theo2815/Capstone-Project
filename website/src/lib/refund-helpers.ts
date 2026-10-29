@@ -38,9 +38,24 @@ export interface OrderRefundStatus {
   label: string | null;
 }
 
+// True once the server's expiry instant has passed; a missing or unparseable date is not expired.
+export function isRefundLinkExpired(
+  expiresAt: string | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  const t = Date.parse(expiresAt ?? "");
+  return Number.isFinite(t) && t <= now;
+}
+
 // Runner-facing label for a manual QR Ph refund; null means keep the usual label.
-export function getRefundStatusLabel(d: RunnerDispute): string | null {
+export function getRefundStatusLabel(
+  d: RunnerDispute,
+  now = Date.now(),
+): string | null {
   if (d.status === "escalated" && d.refundStatus === "manual_review") {
+    if (d.refundLinkUrl && isRefundLinkExpired(d.refundLinkExpiresAt, now)) {
+      return "Refund link expired";
+    }
     return d.refundLinkUrl
       ? "Refund link sent"
       : "Refund approved, waiting for PayMongo refund link";
@@ -52,8 +67,13 @@ export function getRefundStatusLabel(d: RunnerDispute): string | null {
 }
 
 // The PayMongo link the runner can still use to claim the money, else null.
-export function getRefundClaimLink(d: RunnerDispute): string | null {
-  return d.refundStatus === "manual_review" && d.refundLinkUrl
+export function getRefundClaimLink(
+  d: RunnerDispute,
+  now = Date.now(),
+): string | null {
+  return d.refundStatus === "manual_review" &&
+    d.refundLinkUrl &&
+    !isRefundLinkExpired(d.refundLinkExpiresAt, now)
     ? d.refundLinkUrl
     : null;
 }
@@ -105,7 +125,7 @@ export function getOrderRefundStatus(
     rejectedCount,
     rejectedNote,
     totalDisputed,
-    label: visible.map(getRefundStatusLabel).find((l) => l !== null) ?? null,
+    label: visible.map((d) => getRefundStatusLabel(d)).find((l) => l !== null) ?? null,
   };
 }
 
