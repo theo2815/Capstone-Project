@@ -215,18 +215,26 @@ fun computeRefundRollup(photoCount: Int, disputes: List<RunnerDisputeDto>): Refu
 }
 
 // Port of website getRefundStatusLabel: the QR Ph manual-refund states. null = keep the usual label.
-fun refundStatusLabel(dispute: RunnerDisputeDto): String? = when {
+fun refundStatusLabel(dispute: RunnerDisputeDto, nowMillis: Long = System.currentTimeMillis()): String? = when {
     dispute.status == "escalated" && dispute.refundStatus == "manual_review" ->
         if (dispute.refundLinkUrl.isNullOrBlank()) "Refund approved, waiting for PayMongo refund link"
+        else if (refundLinkExpired(dispute, nowMillis)) "Refund link expired"
         else "Refund link sent"
     dispute.status == "denied" && dispute.refundStatus == "cancelled" ->
         "Refund cancelled: the refund window closed"
     else -> null
 }
 
+// Port of website isRefundLinkExpired: true once the server's expiry instant has passed;
+// a missing or unreadable date is not expired.
+internal fun refundLinkExpired(dispute: RunnerDisputeDto, nowMillis: Long = System.currentTimeMillis()): Boolean =
+    dispute.refundLinkExpiresAt?.let(::parseInstantMillis)?.let { it <= nowMillis } == true
+
 // Port of website getRefundClaimLink: the link only matters while it can still be claimed.
-fun refundClaimLink(dispute: RunnerDisputeDto): String? =
-    dispute.refundLinkUrl?.takeIf { dispute.refundStatus == "manual_review" && it.isNotBlank() }
+fun refundClaimLink(dispute: RunnerDisputeDto, nowMillis: Long = System.currentTimeMillis()): String? =
+    dispute.refundLinkUrl?.takeIf {
+        dispute.refundStatus == "manual_review" && it.isNotBlank() && !refundLinkExpired(dispute, nowMillis)
+    }
 
 // Rollup mirrors website getOrderRefundStatus.kind: none|pending|partial|approved|rejected.
 fun orderRefundKind(order: OrderDetailDto): String =
@@ -370,6 +378,17 @@ fun RefundActionsRow(
             if (dates.isNotEmpty()) {
                 Text(text = dates.joinToString(" "), style = Typography.bodySmall, color = Slate)
             }
+        }
+
+        val expiredDispute = if (claimDispute != null) null else order.disputes.firstOrNull {
+            it.refundStatus == "manual_review" && !it.refundLinkUrl.isNullOrBlank() && refundLinkExpired(it)
+        }
+        formatManila(expiredDispute?.refundLinkExpiresAt, "MMM dd · yyyy")?.uppercase()?.let { expiredOn ->
+            Text(
+                text = "Your refund link expired on $expiredOn. We will send a new link or contact you.",
+                style = Typography.bodySmall,
+                color = Slate
+            )
         }
 
         if (cancellable != null) {
@@ -823,12 +842,19 @@ private fun previewOrder(dispute: RunnerDisputeDto) = OrderDetailDto(
     eventName = null, eventSlug = null, status = "PAID", photos = emptyList(), disputes = listOf(dispute),
 )
 
-private fun previewDispute(status: String, refundStatus: String, link: String? = null, amount: Double? = null) =
+private fun previewDispute(
+    status: String,
+    refundStatus: String,
+    link: String? = null,
+    amount: Double? = null,
+    // Far future by default so the "sent" preview stays live on the real clock.
+    expires: String = "2099-10-31T02:00:00Z",
+) =
     RunnerDisputeDto(
         id = "d1", photoId = "p1", reason = "other", note = "", status = status, refundAmount = amount,
         openedAt = "2026-10-26T02:00:00Z", refundStatus = refundStatus, refundLinkUrl = link,
         refundLinkSentAt = link?.let { "2026-10-28T02:00:00Z" },
-        refundLinkExpiresAt = link?.let { "2026-10-31T02:00:00Z" },
+        refundLinkExpiresAt = link?.let { expires },
     )
 
 @Composable
@@ -851,6 +877,13 @@ private fun RefundWaitingPreview() =
 @Composable
 private fun RefundLinkSentPreview() =
     RefundActionsPreview(previewDispute("escalated", "manual_review", link = "https://pm.link/example"))
+
+@Preview(name = "Refund link expired", showBackground = true, backgroundColor = 0xFFF7F6F2)
+@Composable
+private fun RefundLinkExpiredPreview() =
+    RefundActionsPreview(
+        previewDispute("escalated", "manual_review", link = "https://pm.link/example", expires = "2026-10-29T02:00:00Z")
+    )
 
 @Preview(name = "Refund refunded", showBackground = true, backgroundColor = 0xFFF7F6F2)
 @Composable

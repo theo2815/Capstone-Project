@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 
 /**
  * The refund rules ported from the website's getOrderRefundStatus: which photos
@@ -97,6 +98,35 @@ class RefundComponentsTest {
         assertNull(refundClaimLink(dispute("a", "denied", refundStatus = "cancelled", link = url)))
     }
 
+    @Test fun `a refund link stops being claimable at the server's expiry instant`() {
+        val url = "https://pm.link/x"
+        val expires = "2026-10-31T02:00:00Z"
+        val at = Instant.parse(expires).toEpochMilli()
+        val sent = dispute("a", "escalated", refundStatus = "manual_review", link = url, expires = expires)
+        assertEquals(url, refundClaimLink(sent, nowMillis = at - 1))
+        assertFalse(refundLinkExpired(sent, nowMillis = at - 1))
+        assertNull(refundClaimLink(sent, nowMillis = at))
+        assertTrue(refundLinkExpired(sent, nowMillis = at))
+        assertNull(refundClaimLink(sent, nowMillis = at + 60_000))
+        // A missing or unreadable expiry keeps today's behaviour: the link stays.
+        val noDate = dispute("a", "escalated", refundStatus = "manual_review", link = url)
+        val garbled = dispute("a", "escalated", refundStatus = "manual_review", link = url, expires = "garbage")
+        assertEquals(url, refundClaimLink(noDate, nowMillis = at))
+        assertEquals(url, refundClaimLink(garbled, nowMillis = at))
+        assertFalse(refundLinkExpired(garbled, nowMillis = at))
+    }
+
+    @Test fun `the label says the refund link expired once its expiry has passed`() {
+        val expires = "2026-10-31T02:00:00Z"
+        val at = Instant.parse(expires).toEpochMilli()
+        val sent = dispute("a", "escalated", refundStatus = "manual_review", link = "https://pm.link/x", expires = expires)
+        assertEquals("Refund link sent", refundStatusLabel(sent, nowMillis = at - 1))
+        assertEquals("Refund link expired", refundStatusLabel(sent, nowMillis = at))
+        // The order chip reads the rollup label on the real clock; a long-past expiry is expired.
+        val old = dispute("b", "escalated", refundStatus = "manual_review", link = "https://pm.link/y", expires = "2020-01-01T00:00:00Z")
+        assertEquals("Refund link expired", computeRefundRollup(1, listOf(old)).label)
+    }
+
     @Test fun `the rollup label is the first one from a dispute that is not withdrawn`() {
         val waiting = dispute("a", "escalated", refundStatus = "manual_review")
         val sent = dispute("b", "escalated", refundStatus = "manual_review", link = "https://pm.link/x")
@@ -134,10 +164,11 @@ class RefundComponentsTest {
         resolutionNote: String? = null,
         refundStatus: String? = null,
         link: String? = null,
+        expires: String? = null,
     ) = RunnerDisputeDto(
         id = "d-$photoId-$status", photoId = photoId, reason = "quality", note = note, status = status,
         refundAmount = refund, resolutionNote = resolutionNote, openedAt = "2026-09-01T00:00:00Z",
-        refundStatus = refundStatus, refundLinkUrl = link,
+        refundStatus = refundStatus, refundLinkUrl = link, refundLinkExpiresAt = expires,
     )
 
     private fun order(photoIds: List<String>, disputes: List<RunnerDisputeDto>) = OrderDetailDto(
