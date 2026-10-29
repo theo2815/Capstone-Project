@@ -43,6 +43,19 @@ it("lists recent decisions with a readable label, the admin and the time", async
   expect(screen.queryByText("User 11111111")).toBeNull();
 });
 
+it("labels the manual QR Ph refund steps on a dispute", async () => {
+  vi.spyOn(api, "get").mockResolvedValue(paged([
+    row({ decision: "refund_sent_to_manual_review", targetType: "dispute" }),
+    row({ decision: "refund_link_sent", targetType: "dispute" }),
+    row({ decision: "refund_cancelled", targetType: "dispute", adminId: null, adminName: null }),
+  ]));
+  renderTimeline({ recent: true });
+
+  expect(await screen.findByText("Refund approved, waiting for PayMongo")).toBeTruthy();
+  expect(screen.getByText("Refund link sent")).toBeTruthy();
+  expect(screen.getByText("Refund cancelled: window closed")).toBeTruthy();
+});
+
 it("keeps the short id label for a user row with no name", async () => {
   vi.spyOn(api, "get").mockResolvedValue(paged([row({})]));
   renderTimeline({ recent: true });
