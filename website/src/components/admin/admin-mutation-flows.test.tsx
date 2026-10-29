@@ -87,8 +87,8 @@ it("does not show an unknown refund outcome as refunded in the dispute drawer", 
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
   const drawer = await screen.findByRole("dialog");
   expect(drawer).toHaveTextContent("Escalated");
-  expect(drawer).toHaveTextContent("Review the payment in PayMongo before another refund attempt.");
-  expect(within(drawer).queryByText(/refunded/i)).not.toBeInTheDocument();
+  expect(within(drawer).getByLabelText("Refund link")).toBeInTheDocument();
+  expect(within(drawer).queryByText(/^refunded$/i)).not.toBeInTheDocument();
 });
 
 it("does not prescribe manual review for an escalated refund still in flight", async () => {

@@ -18,6 +18,7 @@ import { AdminResolveDisputeModal } from "@/components/admin/admin-resolve-dispu
 import { AdminRefundConfirmModal } from "@/components/admin/admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "@/components/admin/admin-deny-dispute-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
+import { AdminRefundPanel } from "@/components/admin/admin-refund-panel";
 import { useAdminDisputes, useDisputeActions, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
@@ -394,6 +395,7 @@ export function DisputesQueue() {
                 amount={pendingResolve.refundAmount}
                 runnerHandle={openRow.runnerHandle}
                 isFull={pendingResolve.resolution === "refund_full"}
+                paymentMethod={openRow.orderSnapshot.paymentMethod}
               />
             )}
           <AdminDenyDisputeModal
@@ -513,11 +515,10 @@ function DisputeDrawerActions({
   const isOpen = dispute.status === "open";
 
   if (!isOpen) {
+    if (dispute.refundStatus === "manual_review") return <AdminRefundPanel dispute={dispute} />;
     return (
       <p className="font-sans text-sm text-slate-soft">
-        {dispute.refundStatus === "manual_review"
-          ? "Review the payment in PayMongo before another refund attempt."
-          : "This dispute is closed. No further actions are available."}
+        This dispute is closed. No further actions are available.
       </p>
     );
   }
