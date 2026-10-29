@@ -60,6 +60,15 @@ class AdminDisputesController(
         return adminDisputeService.sendRefundLink(principal.userId, disputeId, body.url)
     }
 
+    @PostMapping("/{disputeId}/mark-refunded")
+    fun markRefunded(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable disputeId: UUID,
+    ): AdminDisputeDto {
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+        return adminDisputeService.markRefunded(principal.userId, disputeId)
+    }
+
     @PostMapping("/{disputeId}/deny")
     fun deny(
         @AuthenticationPrincipal principal: AuthPrincipal,

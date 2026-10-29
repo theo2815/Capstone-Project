@@ -134,6 +134,52 @@ class AdminDisputesControllerTest {
         Mockito.verifyNoInteractions(service)
     }
 
+    private fun markRefunded(): ResultActions =
+        mvc.perform(post("/api/v1/admin/disputes/{id}/mark-refunded", disputeId))
+
+    @Test
+    fun `a non-admin cannot mark a refund refunded`() {
+        for (role in listOf(Role.RUNNER, Role.PHOTOGRAPHER)) {
+            signIn(role)
+            markRefunded().andExpect(status().isForbidden)
+        }
+        Mockito.verifyNoInteractions(service)
+        Mockito.verifyNoInteractions(limiter)
+    }
+
+    @Test
+    fun `an admin marks a refund refunded through the service after taking a rate-limit slot`() {
+        signIn(Role.ADMIN)
+        allowRate()
+        Mockito.`when`(service.markRefunded(adminId, disputeId)).thenReturn(dto())
+
+        markRefunded().andExpect(status().isOk).andExpect(jsonPath("$.id").value(disputeId.toString()))
+
+        Mockito.verify(limiter).tryAcquire(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, adminId.toString())
+        Mockito.verify(service, Mockito.times(1)).markRefunded(adminId, disputeId)
+    }
+
+    @Test
+    fun `marking a dispute that is not in manual review refunded is a 409`() {
+        signIn(Role.ADMIN)
+        allowRate()
+        Mockito.`when`(service.markRefunded(adminId, disputeId))
+            .thenThrow(ConflictException(message = "Not in manual review", code = ErrorCodes.CONFLICT))
+
+        markRefunded().andExpect(status().isConflict)
+    }
+
+    @Test
+    fun `a rate-limited admin marking refunded gets 429 and the service is not reached`() {
+        signIn(Role.ADMIN)
+        Mockito.`when`(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, adminId.toString()))
+            .thenReturn(RateLimiter.Decision(false, Duration.ofSeconds(30)))
+
+        markRefunded().andExpect(status().isTooManyRequests)
+
+        Mockito.verifyNoInteractions(service)
+    }
+
     @Test
     fun `a rate-limited admin gets 429 and the service is not reached`() {
         signIn(Role.ADMIN)

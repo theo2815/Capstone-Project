@@ -45,7 +45,7 @@ PayMongo cannot refund a QR Ph payment through its API, so an approved QR Ph dis
 4. POST `/api/v1/admin/disputes/{id}/refund-link` with an admin token and body `{ "url": "https://example.test/test-refund" }`. Never use a real or live PayMongo link here.
 5. Check the runner's inbox for "Your refund link is ready" and the backend log for the `[EMAIL STUB] refund link for ...` line. Posting again replaces the link and sends both again.
 
-"Mark refunded" (closing the dispute once the money moves) comes with task B6.
+6. Only after PayMongo (test mode) shows the payment as refunded, POST `/api/v1/admin/disputes/{id}/mark-refunded` as the admin (no body). Check: the dispute is `resolved` with refund_status `succeeded`; `transactions` has one `is_refund` row; the order is `REFUNDED` when every photo in it is fully refunded; the runner's inbox says "Your refund of PHP ... is complete."; the photographer gets a "resolved" message. Posting again changes nothing.
 
 ## Where the pieces live
 

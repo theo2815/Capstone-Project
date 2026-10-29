@@ -128,6 +128,23 @@ class PaymongoRefundService(
         }
     }
 
+    // PayMongo's dashboard shows the parked payment as Refunded: finish it like an API refund that succeeded.
+    // A second click finds it already completed and changes nothing. The log row names the admin who clicked.
+    fun markRefunded(adminId: UUID, disputeId: UUID) {
+        transactionTemplate.executeWithoutResult {
+            val dispute = disputeRepository.findByIdForUpdate(disputeId)
+                ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
+            if (isCompletedRefund(dispute)) return@executeWithoutResult
+            if (dispute.refundStatus != MANUAL_REVIEW) {
+                throw checkoutConflict("This dispute is not waiting for a manual refund.")
+            }
+            if (dispute.resolution == null || dispute.refundAmountPhp == null) {
+                throw checkoutConflict("This dispute has no approved refund amount.")
+            }
+            completeSucceededRefund(dispute, adminId)
+        }
+    }
+
     fun handleWebhook(providerRefundId: String, status: String): Boolean =
         transactionTemplate.execute {
             val dispute = disputeRepository.findByProviderRefundId(providerRefundId) ?: return@execute false
@@ -388,7 +405,7 @@ class PaymongoRefundService(
         return paidPaymentId
     }
 
-    private fun completeSucceededRefund(dispute: Dispute) {
+    private fun completeSucceededRefund(dispute: Dispute, adminId: UUID? = dispute.refundRequestedBy) {
         if (dispute.status == DisputeStatus.RESOLVED && dispute.refundedAt != null) return
         val resolution = dispute.resolution ?: return
         val refundAmount = dispute.refundAmountPhp ?: return
@@ -407,7 +424,7 @@ class PaymongoRefundService(
             downloadGrantRepository.deleteById(DownloadGrantId(dispute.orderId, dispute.photoId))
         }
         updateOrderSettlementStatus(dispute.orderId)
-        publishOutcome(dispute, resolution, refundAmount, photo?.photographerId)
+        publishOutcome(dispute, resolution, refundAmount, photo?.photographerId, adminId)
     }
 
     private fun updateOrderSettlementStatus(orderId: UUID) {
@@ -432,8 +449,9 @@ class PaymongoRefundService(
         resolution: DisputeResolution,
         refundAmount: BigDecimal,
         photographerId: UUID?,
+        adminId: UUID?,
     ) {
-        val adminId = dispute.refundRequestedBy ?: return
+        if (adminId == null) return
         val decision = adminDecisionLogService.logDisputeDecision(
             adminId = adminId,
             targetDisputeId = dispute.id,
@@ -458,7 +476,7 @@ class PaymongoRefundService(
             runnerMessagesService.pushMessage(
                 runnerId = runnerId,
                 kind = RunnerMessageKind.DISPUTE_RESOLVED,
-                body = "Your refund has been approved - PHP ${refundAmount.toPlainString()} refunded.",
+                body = "Your refund of PHP ${refundAmount.toPlainString()} is complete.",
                 sourceAdminId = adminId,
                 sourceDecisionId = decision.id,
                 orderId = dispute.orderId,

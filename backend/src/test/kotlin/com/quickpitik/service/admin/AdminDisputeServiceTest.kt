@@ -101,6 +101,38 @@ class AdminDisputeServiceTest {
     }
 
     @Test
+    fun `marking refunded delegates to the refund service then returns the refreshed dispute`() {
+        val refunds = Mockito.mock(PaymongoRefundService::class.java)
+        val withTx = AdminDisputeService(
+            disputeRepository,
+            orderRepository,
+            orderItemRepository,
+            paymentRepository,
+            photoRepository,
+            eventRepository,
+            userRepository,
+            settingsRepository,
+            Mockito.mock(StorageService::class.java),
+            StorageProperties(),
+            decisionLogService,
+            decisionLogRepository,
+            Mockito.mock(RunnerMessagesService::class.java),
+            refunds,
+            testTransactionTemplate(),
+        )
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.refundStatus = "succeeded"
+        Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
+
+        val dto = withTx.markRefunded(adminId, dispute.id)
+
+        Mockito.verify(refunds).markRefunded(adminId, dispute.id)
+        assertEquals(dispute.id, dto.id)
+        assertEquals("succeeded", dto.refundStatus)
+    }
+
+    @Test
     fun `deny refuses a dispute while its refund is pending`() {
         val adminId = UUID.randomUUID()
         val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")

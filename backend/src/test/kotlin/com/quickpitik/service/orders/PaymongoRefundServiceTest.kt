@@ -24,6 +24,7 @@ import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -427,6 +428,7 @@ class PaymongoRefundServiceTest {
         val grants: DownloadGrantRepository,
         val runnerId: UUID,
         val events: ApplicationEventPublisher,
+        val items: OrderItemRepository,
         val sentRequestRef: () -> PaymongoRefundRequest?,
     ) {
         val sentRequest: PaymongoRefundRequest? get() = sentRequestRef()
@@ -522,7 +524,7 @@ class PaymongoRefundServiceTest {
         )
         return CouponHarness(
             service, adminId, dispute, order, photographerId, client, minting, disputes, decisions,
-            runnerMessages, grants, runnerId, events,
+            runnerMessages, grants, runnerId, events, items,
         ) { sentRequest }
     }
     @Test
@@ -824,6 +826,150 @@ class PaymongoRefundServiceTest {
             Mockito.verify(h.disputes, Mockito.never()).findByIdForUpdate(h.dispute.id)
             assertNothingSavedOrSent(h)
         }
+    }
+
+    private fun markRefundedHarness(): CouponHarness {
+        val h = parkedHarness()
+        h.dispute.resolution = DisputeResolution.REFUND_FULL
+        h.dispute.refundRequestedBy = UUID.randomUUID() // the approving admin, not the one who clicks
+        h.dispute.refundLinkUrl = sentLink
+        h.dispute.refundLinkSentAt = OffsetDateTime.now()
+        return h
+    }
+
+    @Test
+    fun `marking a parked refund refunded completes it once and keeps the link`() {
+        val h = markRefundedHarness()
+
+        h.service.markRefunded(h.adminId, h.dispute.id)
+
+        assertEquals("succeeded", h.dispute.refundStatus)
+        assertEquals(DisputeStatus.RESOLVED, h.dispute.status)
+        assertNotNull(h.dispute.refundedAt)
+        assertNotNull(h.dispute.resolvedAt)
+        assertEquals(sentLink, h.dispute.refundLinkUrl)
+        assertNotNull(h.dispute.refundLinkSentAt)
+        Mockito.verify(h.minting, Mockito.times(1)).mintRefund(h.dispute, BigDecimal("127.50"), h.photographerId)
+        Mockito.verify(h.grants).deleteById(DownloadGrantId(h.order.id, h.dispute.photoId))
+        Mockito.verifyNoInteractions(h.client)
+    }
+
+    @Test
+    fun `marking the only photo of an order refunded makes the order REFUNDED`() {
+        val h = markRefundedHarness()
+
+        h.service.markRefunded(h.adminId, h.dispute.id)
+
+        assertEquals(OrderStatus.REFUNDED, h.order.status)
+    }
+
+    @Test
+    fun `marking one photo of a two-photo order refunded leaves the order as it was`() {
+        val h = markRefundedHarness()
+        val other = UUID.randomUUID()
+        Mockito.`when`(h.items.findByIdOrderId(h.order.id)).thenReturn(
+            listOf(
+                OrderItem(OrderItemId(h.order.id, h.dispute.photoId), BigDecimal("150.00")),
+                OrderItem(OrderItemId(h.order.id, other), BigDecimal("150.00")),
+            ),
+        )
+
+        h.service.markRefunded(h.adminId, h.dispute.id)
+
+        assertEquals(OrderStatus.FULFILLED, h.order.status)
+    }
+
+    @Test
+    fun `marking a refund refunded names the clicking admin on the log row and both messages`() {
+        val h = markRefundedHarness()
+        val approvingAdmin = h.dispute.refundRequestedBy!!
+        val decision = AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "resolved")
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(decision)
+
+        h.service.markRefunded(h.adminId, h.dispute.id)
+
+        assertTrue(approvingAdmin != h.adminId)
+        Mockito.verify(h.decisions, Mockito.times(1)).logDisputeDecision(
+            h.adminId,
+            h.dispute.id,
+            "resolved",
+            null,
+            mapOf("resolution" to "refund_full", "refundAmount" to "127.50", "providerRefundId" to null),
+            null,
+        )
+        Mockito.verify(h.decisions).pushMessage(
+            h.photographerId,
+            PhotographerMessageKind.DISPUTE_RESOLVED,
+            "A dispute on photo ${h.dispute.photoId} was resolved as refund_full.",
+            h.adminId,
+            decision.id,
+            null,
+            null,
+        )
+        Mockito.verify(h.runnerMessages).pushMessage(
+            h.runnerId,
+            RunnerMessageKind.DISPUTE_RESOLVED,
+            "Your refund of PHP 127.50 is complete.",
+            h.adminId,
+            decision.id,
+            h.order.id,
+            null,
+        )
+    }
+
+    @Test
+    fun `marking a refund refunded a second time changes nothing`() {
+        val h = markRefundedHarness()
+
+        h.service.markRefunded(h.adminId, h.dispute.id)
+        val refundedAt = h.dispute.refundedAt
+        h.service.markRefunded(UUID.randomUUID(), h.dispute.id)
+
+        assertEquals(refundedAt, h.dispute.refundedAt)
+        Mockito.verify(h.minting, Mockito.times(1)).mintRefund(anyArg(), anyArg(), anyArg())
+        Mockito.verify(h.decisions, Mockito.times(1))
+            .logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(h.runnerMessages, Mockito.times(1))
+            .pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(h.decisions, Mockito.times(1))
+            .pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `marking refunded is refused unless the dispute waits for a manual refund`() {
+        for (state in listOf(null, "requesting", "failed")) {
+            val h = markRefundedHarness()
+            h.dispute.refundStatus = state
+
+            assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id) }
+
+            assertEquals(state, h.dispute.refundStatus)
+            Mockito.verifyNoInteractions(h.minting)
+            Mockito.verifyNoInteractions(h.decisions)
+            Mockito.verifyNoInteractions(h.runnerMessages)
+        }
+    }
+
+    @Test
+    fun `marking refunded is refused when the parked dispute has no approved amount`() {
+        val h = markRefundedHarness()
+        h.dispute.refundAmountPhp = null
+
+        assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id) }
+
+        assertEquals("manual_review", h.dispute.refundStatus)
+        Mockito.verifyNoInteractions(h.minting)
+        Mockito.verifyNoInteractions(h.decisions)
+    }
+
+    @Test
+    fun `marking a missing dispute refunded is a 404`() {
+        val h = markRefundedHarness()
+
+        assertFailsWith<NotFoundException> { h.service.markRefunded(h.adminId, UUID.randomUUID()) }
+
+        Mockito.verifyNoInteractions(h.minting)
     }
 
     private fun <T> anyArg(): T = Mockito.any()
