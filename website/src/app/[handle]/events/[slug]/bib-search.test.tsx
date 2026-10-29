@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi, type MockInstance } from "vitest";
+import { ApiError } from "@/lib/api";
 import * as eventsApi from "@/lib/api-events";
 import * as photographerApi from "@/lib/api-photographer-public";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
@@ -55,7 +56,6 @@ it("a bib on no photo ends in the no-match panel, not an endless search", async 
 
   expect(await screen.findByRole("heading", { name: "No matches yet." })).toBeInTheDocument();
   expect(screen.getByText(/BIB 99999/)).toBeInTheDocument();
-  expect(screen.queryByText(/Showing 60 of 3,026/)).not.toBeInTheDocument();
 });
 
 it("a bib finds every match of this photographer on the server, not only loaded photos", async () => {
@@ -65,6 +65,20 @@ it("a bib finds every match of this photographer on the server, not only loaded 
 
   expect(await screen.findByRole("heading", { name: /We found\s*3\s*photos/ })).toBeInTheDocument();
   expect(listSpy).toHaveBeenCalledWith("shooter", "nrw", expect.objectContaining({ bib: "10342" }), expect.anything());
+  // The counter follows the bib list (3 of 3, so the "all loaded" line), not the gallery's 60 of 3,026.
+  expect(screen.getByText("All 3 loaded")).toBeInTheDocument();
+  expect(screen.queryByText(/Showing 60 of 3,026/)).not.toBeInTheDocument();
+});
+
+it("a bib search refused by the rate limit says so, not 'no matches'", async () => {
+  listSpy.mockImplementation(async (_h, _s, args) => {
+    if (args?.bib) throw new ApiError([], 429, 60);
+    return galleryPage;
+  });
+  renderPage("bib=10342");
+
+  expect(await screen.findByRole("heading", { name: "Search didn't finish." })).toBeInTheDocument();
+  expect(screen.getByText(/Too many searches/)).toBeInTheDocument();
 });
 
 it("a bib typed as B-10342 asks the server for 10342", async () => {
