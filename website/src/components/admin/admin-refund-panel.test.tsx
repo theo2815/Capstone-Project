@@ -110,6 +110,11 @@ describe("manual refund panel", () => {
     expect(lastToast()?.kind).toBe("success");
   });
 
+  it("draws the link field as a boxed admin input, not a bare underline", () => {
+    renderAside(parked);
+    expect(screen.getByLabelText("Refund link")).toHaveClass("rounded-2xl", "border", "bg-surface");
+  });
+
   it("keeps the typed link and shows no success toast when the send fails", async () => {
     const user = userEvent.setup();
     vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Backend unavailable"));

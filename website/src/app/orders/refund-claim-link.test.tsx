@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
@@ -48,6 +48,15 @@ it("shows the claim link and claim-by date when the admin sent a link", async ()
   expect(a).toHaveAttribute("rel", "noopener noreferrer");
   expect(screen.getByText("Refund link sent")).toBeVisible();
   expect(screen.getByText("Sent OCT 27 · 2026. Claim by OCT 30 · 2026.")).toBeVisible();
+});
+
+it("labels the opened order with the link state, not 'Refund pending review'", async () => {
+  renderOrders(dispute({ refundLinkUrl: link, refundLinkSentAt: "2026-10-27T12:00:00Z" }));
+  fireEvent.click(await screen.findByRole("button", { name: /View photos/ }));
+  expect(await screen.findByRole("button", { name: /Hide photos/ })).toBeVisible();
+  expect(screen.queryByText("Refund pending review")).not.toBeInTheDocument();
+  // the chip, the refund history row, and the line under the photos
+  expect(screen.getAllByText("Refund link sent")).toHaveLength(3);
 });
 
 it("shows only the sent date when the server gave no claim-by date", async () => {

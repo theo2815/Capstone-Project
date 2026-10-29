@@ -98,7 +98,7 @@ export function AdminRefundPanel({
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             disabled={busy}
-            className="w-full border-b border-line bg-transparent py-2 text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <button type="button" onClick={handleSend} disabled={busy || !trimmed} className={`${BTN_SECONDARY} ${sm} w-full`}>
             Send to runner

@@ -549,7 +549,7 @@ function ReceiptRow({
               <span className="font-sans text-sm text-slate-soft">
                 {refundStatus.kind === "approved"
                   ? "Refund issued · cannot resubmit"
-                  : "Refund pending review"}
+                  : (refundStatus.label ?? "Refund pending review")}
               </span>
             )}
             {cancellableDispute && (
