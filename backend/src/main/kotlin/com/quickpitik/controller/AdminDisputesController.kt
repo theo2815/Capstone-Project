@@ -57,6 +57,7 @@ class AdminDisputesController(
         @Valid @RequestBody body: SendRefundLinkRequest,
     ): AdminDisputeDto {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_REFUND_LINK_PER_DISPUTE, "dispute:$disputeId")
         return adminDisputeService.sendRefundLink(principal.userId, disputeId, body.url)
     }
 

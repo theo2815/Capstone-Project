@@ -321,6 +321,10 @@ app:
     photo-verify:
       capacity: 10
       refill-period: PT15M
+    # Refund-link sends per dispute (each one mails the runner), on top of the per-admin bucket.
+    refund-link-per-dispute:
+      capacity: 3
+      refill-period: PT1H
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}

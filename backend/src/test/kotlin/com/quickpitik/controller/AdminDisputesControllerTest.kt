@@ -64,6 +64,8 @@ class AdminDisputesControllerTest {
     private fun allowRate() {
         Mockito.`when`(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, adminId.toString()))
             .thenReturn(RateLimiter.Decision(true))
+        Mockito.`when`(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_REFUND_LINK_PER_DISPUTE, "dispute:$disputeId"))
+            .thenReturn(RateLimiter.Decision(true))
     }
 
     private fun sendLink(body: String = "{\"url\":\"$url\"}"): ResultActions =
@@ -103,6 +105,30 @@ class AdminDisputesControllerTest {
 
         Mockito.verify(limiter).tryAcquire(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, adminId.toString())
         Mockito.verify(service).sendRefundLink(adminId, disputeId, url)
+    }
+
+    @Test
+    fun `an admin sending a link also takes a slot for that dispute`() {
+        signIn(Role.ADMIN)
+        allowRate()
+        Mockito.`when`(service.sendRefundLink(adminId, disputeId, url)).thenReturn(dto())
+
+        sendLink().andExpect(status().isOk)
+
+        Mockito.verify(limiter).tryAcquire(Bucket4jRateLimiter.POLICY_REFUND_LINK_PER_DISPUTE, "dispute:$disputeId")
+    }
+
+    @Test
+    fun `a dispute that got too many links answers 429 and the service is not reached`() {
+        signIn(Role.ADMIN)
+        Mockito.`when`(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, adminId.toString()))
+            .thenReturn(RateLimiter.Decision(true))
+        Mockito.`when`(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_REFUND_LINK_PER_DISPUTE, "dispute:$disputeId"))
+            .thenReturn(RateLimiter.Decision(false, Duration.ofMinutes(20)))
+
+        sendLink().andExpect(status().isTooManyRequests)
+
+        Mockito.verifyNoInteractions(service)
     }
 
     @Test
