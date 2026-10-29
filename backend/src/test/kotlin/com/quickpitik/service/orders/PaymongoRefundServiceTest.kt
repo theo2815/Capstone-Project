@@ -45,6 +45,7 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.web.client.HttpClientErrorException
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
@@ -441,6 +442,7 @@ class PaymongoRefundServiceTest {
         method: PaymentMethod = PaymentMethod.GCASH,
         siblingPaymentPhp: BigDecimal? = null,
         prefixes: List<String> = listOf(linkPrefix),
+        clock: Clock = Clock.systemUTC(),
     ): CouponHarness {
         val adminId = UUID.randomUUID()
         val photographerId = UUID.randomUUID()
@@ -521,6 +523,7 @@ class PaymongoRefundServiceTest {
             testTransactionTemplate(),
             PaymongoProperties(refundLinkAllowedPrefixes = prefixes),
             events,
+            clock,
         )
         return CouponHarness(
             service, adminId, dispute, order, photographerId, client, minting, disputes, decisions,
@@ -605,6 +608,7 @@ class PaymongoRefundServiceTest {
             testTransactionTemplate(),
             PaymongoProperties(),
             Mockito.mock(ApplicationEventPublisher::class.java),
+            Clock.systemUTC(),
         )
 
         service.request(adminId, dispute.id, DisputeResolution.REFUND_FULL, null, "Duplicate charge")
@@ -659,6 +663,7 @@ class PaymongoRefundServiceTest {
             testTransactionTemplate(),
             PaymongoProperties(),
             Mockito.mock(ApplicationEventPublisher::class.java),
+            Clock.systemUTC(),
         )
 
         service.reconcile()
@@ -970,6 +975,226 @@ class PaymongoRefundServiceTest {
         assertFailsWith<NotFoundException> { h.service.markRefunded(h.adminId, UUID.randomUUID()) }
 
         Mockito.verifyNoInteractions(h.minting)
+    }
+
+    // --- B8: an unfinished QR Ph refund is cancelled when PayMongo's window closes ---
+
+    private val paidOn = OffsetDateTime.parse("2026-10-01T00:00:00Z")
+    private val cancelReason = "PayMongo's 30-day refund window closed before the refund was completed."
+    private fun at(time: OffsetDateTime): Clock = Clock.fixed(time.toInstant(), ZoneOffset.UTC)
+
+    // A parked QR Ph refund paid on Oct 1 (window closes Oct 31); the query hands back the dispute whatever the time.
+    private fun cancelHarness(now: OffsetDateTime, linkSentAt: OffsetDateTime? = null): CouponHarness {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", clock = at(now))
+        h.order.paidAt = paidOn
+        h.dispute.refundStatus = "manual_review"
+        h.dispute.status = DisputeStatus.ESCALATED
+        h.dispute.resolution = DisputeResolution.REFUND_FULL
+        h.dispute.refundAmountPhp = BigDecimal("127.50")
+        h.dispute.refundRequestedBy = h.adminId
+        h.dispute.refundLinkUrl = linkSentAt?.let { sentLink }
+        h.dispute.refundLinkSentAt = linkSentAt
+        Mockito.`when`(h.disputes.findDueForAutoCancel(anyArg(), anyArg(), anyArg())).thenReturn(listOf(h.dispute))
+        return h
+    }
+
+    private fun assertUntouched(h: CouponHarness) {
+        Mockito.verify(h.disputes, Mockito.never()).save(Mockito.any(Dispute::class.java))
+        Mockito.verifyNoInteractions(h.decisions)
+        Mockito.verifyNoInteractions(h.runnerMessages)
+        Mockito.verifyNoInteractions(h.client)
+    }
+
+    @Test
+    fun `the auto-cancel job asks only for disputes past both cut-offs`() {
+        val now = paidOn.plusDays(40)
+        val h = cancelHarness(now)
+
+        h.service.autoCancelExpiredRefunds()
+
+        Mockito.verify(h.disputes).findDueForAutoCancel(
+            now.minusDays(30), now.minusDays(3), org.springframework.data.domain.PageRequest.of(0, 100),
+        )
+    }
+
+    @Test
+    fun `a parked QR Ph refund is left alone while PayMongo's window is still open`() {
+        val h = cancelHarness(paidOn.plusDays(30).minusSeconds(1)) // the query returned it early
+
+        h.service.autoCancelExpiredRefunds()
+
+        assertEquals("manual_review", h.dispute.refundStatus)
+        assertEquals(DisputeStatus.ESCALATED, h.dispute.status)
+        assertUntouched(h)
+    }
+
+    @Test
+    fun `thirty days after payment with no link sent the refund is cancelled and everyone is told once`() {
+        val now = paidOn.plusDays(30)
+        val h = cancelHarness(now)
+        val decision = AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_cancelled")
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(decision)
+
+        h.service.autoCancelExpiredRefunds()
+
+        assertEquals("cancelled", h.dispute.refundStatus)
+        assertEquals(DisputeStatus.DENIED, h.dispute.status)
+        assertEquals(DisputeResolution.DENY, h.dispute.resolution)
+        assertNull(h.dispute.refundAmountPhp)
+        assertEquals(now.toInstant(), h.dispute.resolvedAt!!.toInstant())
+        Mockito.verify(h.decisions, Mockito.times(1)).logDisputeDecision(
+            h.adminId, h.dispute.id, "refund_cancelled", cancelReason,
+            mapOf("auto" to true, "refundAmount" to "127.50"), null,
+        )
+        Mockito.verify(h.runnerMessages, Mockito.times(1)).pushMessage(
+            h.runnerId,
+            RunnerMessageKind.DISPUTE_DENIED,
+            "Your approved refund of PHP 127.50 could not be completed because PayMongo's refund window closed. " +
+                "Please contact QuickPitik support.",
+            h.adminId,
+            decision.id,
+            h.order.id,
+            null,
+        )
+        Mockito.verify(h.decisions, Mockito.times(1)).pushMessage(
+            h.photographerId,
+            PhotographerMessageKind.DISPUTE_DENIED,
+            "The refund on photo ${h.dispute.photoId} was cancelled.",
+            h.adminId,
+            decision.id,
+            null,
+            null,
+        )
+        Mockito.verifyNoInteractions(h.client)
+        Mockito.verifyNoInteractions(h.minting)
+    }
+
+    @Test
+    fun `a cancelled refund keeps the link it was sent`() {
+        val h = cancelHarness(paidOn.plusDays(40), linkSentAt = paidOn.plusDays(10))
+
+        h.service.autoCancelExpiredRefunds()
+
+        assertEquals("cancelled", h.dispute.refundStatus)
+        assertEquals(sentLink, h.dispute.refundLinkUrl)
+        assertEquals(paidOn.plusDays(10), h.dispute.refundLinkSentAt)
+    }
+
+    @Test
+    fun `a link sent on day 29 keeps the refund alive on day 31 and cancels it from day 32`() {
+        val sentOnDay29 = paidOn.plusDays(29)
+
+        val day31 = cancelHarness(paidOn.plusDays(31), linkSentAt = sentOnDay29)
+        day31.service.autoCancelExpiredRefunds()
+        assertEquals("manual_review", day31.dispute.refundStatus)
+        assertUntouched(day31)
+
+        val day32 = cancelHarness(paidOn.plusDays(32), linkSentAt = sentOnDay29)
+        day32.service.autoCancelExpiredRefunds()
+        assertEquals("cancelled", day32.dispute.refundStatus)
+        assertEquals(DisputeStatus.DENIED, day32.dispute.status)
+    }
+
+    @Test
+    fun `a refund that succeeded before the job locked it is not touched`() {
+        val h = cancelHarness(paidOn.plusDays(40))
+        h.dispute.refundStatus = "succeeded"
+        h.dispute.status = DisputeStatus.RESOLVED
+
+        h.service.autoCancelExpiredRefunds()
+
+        assertEquals("succeeded", h.dispute.refundStatus)
+        assertEquals(DisputeStatus.RESOLVED, h.dispute.status)
+        assertEquals(BigDecimal("127.50"), h.dispute.refundAmountPhp)
+        assertUntouched(h)
+    }
+
+    @Test
+    fun `a manual review row on a non QR Ph order is never cancelled`() {
+        val h = cancelHarness(paidOn.plusDays(40))
+        h.order.paymentMethod = PaymentMethod.GCASH
+
+        h.service.autoCancelExpiredRefunds()
+
+        assertEquals("manual_review", h.dispute.refundStatus)
+        assertUntouched(h)
+    }
+
+    @Test
+    fun `a row with no approving admin is skipped`() {
+        val h = cancelHarness(paidOn.plusDays(40))
+        h.dispute.refundRequestedBy = null
+
+        h.service.autoCancelExpiredRefunds()
+
+        assertEquals("manual_review", h.dispute.refundStatus)
+        assertUntouched(h)
+    }
+
+    @Test
+    fun `running the job again changes nothing and sends nothing more`() {
+        val h = cancelHarness(paidOn.plusDays(40))
+
+        h.service.autoCancelExpiredRefunds()
+        val resolvedAt = h.dispute.resolvedAt
+        h.service.autoCancelExpiredRefunds()
+
+        assertEquals(resolvedAt, h.dispute.resolvedAt)
+        Mockito.verify(h.decisions, Mockito.times(1))
+            .logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(h.runnerMessages, Mockito.times(1))
+            .pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(h.decisions, Mockito.times(1))
+            .pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `one failing refund does not stop the next one`() {
+        val h = cancelHarness(paidOn.plusDays(40))
+        val second = Dispute(orderId = h.order.id, photoId = UUID.randomUUID(), runnerId = h.runnerId, reasonWire = "other").apply {
+            refundStatus = "manual_review"
+            status = DisputeStatus.ESCALATED
+            resolution = DisputeResolution.REFUND_FULL
+            refundAmountPhp = BigDecimal("127.50")
+            refundRequestedBy = h.adminId
+        }
+        Mockito.`when`(h.disputes.findDueForAutoCancel(anyArg(), anyArg(), anyArg())).thenReturn(listOf(h.dispute, second))
+        Mockito.`when`(h.disputes.findByIdForUpdate(second.id)).thenReturn(second)
+        val decision = AdminDecisionLog(adminId = h.adminId, targetDisputeId = second.id, decision = "refund_cancelled")
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenAnswer { call ->
+                if (call.getArgument<UUID>(1) == h.dispute.id) throw IllegalStateException("boom")
+                decision
+            }
+
+        h.service.autoCancelExpiredRefunds()
+
+        assertEquals("cancelled", second.refundStatus)
+        assertEquals(DisputeStatus.DENIED, second.status)
+    }
+
+    @Test
+    fun `a QR Ph refund cannot be approved once PayMongo's window has closed`() {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", clock = at(paidOn.plusDays(30)))
+        h.order.paidAt = paidOn
+
+        val error = assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals("PayMongo's refund window for this payment has closed. Deny this request with a reason instead.", error.message)
+        assertRefusedWithoutChanges(h)
+    }
+
+    @Test
+    fun `a QR Ph refund can still be approved one second before the window closes`() {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", clock = at(paidOn.plusDays(30).minusSeconds(1)))
+        h.order.paidAt = paidOn
+
+        h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+
+        assertEquals("manual_review", h.dispute.refundStatus)
     }
 
     private fun <T> anyArg(): T = Mockito.any()

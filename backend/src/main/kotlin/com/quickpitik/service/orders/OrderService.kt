@@ -902,6 +902,8 @@ class OrderService(
                 refundStatus = dispute.refundStatus,
                 refundLinkUrl = dispute.refundLinkUrl,
                 refundLinkSentAt = dispute.refundLinkSentAt,
+                refundLinkExpiresAt = dispute.takeIf { it.refundStatus == "manual_review" }
+                    ?.let { paymongoProperties.refundLinkExpiresAt(it) },
             )
         }.groupBy({ it.first }, { it.second })
     }

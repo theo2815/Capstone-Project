@@ -77,7 +77,8 @@ class AdminDisputesControllerTest {
         eventName = null, runnerHandle = "r", photographerHandle = "p", reason = "other", note = "", status = "escalated",
         reportedAt = "2026-10-29T00:00:00Z", resolvedAt = null, refundAmount = BigDecimal("127.50"),
         refundStatus = "manual_review", paymentId = null, paymentRef = null, refundLinkUrl = url,
-        refundLinkSentAt = "2026-10-29T00:00:00Z", itemChargeAmount = null, resolution = "refund_full",
+        refundLinkSentAt = "2026-10-29T00:00:00Z", refundWindowClosesAt = null, refundCancelsAt = null,
+        itemChargeAmount = null, resolution = "refund_full",
         orderSnapshot = DisputeOrderSnapshotDto(BigDecimal("127.50"), "qrph", null),
         photoSnapshot = DisputePhotoSnapshotDto("", null, null, null),
     )

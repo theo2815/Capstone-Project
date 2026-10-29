@@ -57,6 +57,9 @@ data class AdminDisputeDto(
     val paymentRef: String?,
     val refundLinkUrl: String?,
     val refundLinkSentAt: String?,
+    // Set only for a parked QR Ph refund: when PayMongo stops refunding the payment, and when we cancel an unfinished refund.
+    val refundWindowClosesAt: String?,
+    val refundCancelsAt: String?,
     val itemChargeAmount: BigDecimal?,
     val resolution: String?,
     val orderSnapshot: DisputeOrderSnapshotDto,

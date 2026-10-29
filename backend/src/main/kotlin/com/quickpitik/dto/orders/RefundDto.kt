@@ -55,4 +55,6 @@ data class RunnerDisputeDto(
     val refundStatus: String?,
     val refundLinkUrl: String?,
     val refundLinkSentAt: OffsetDateTime?,
+    // refundLinkSentAt + the link's validity; set only while the refund waits for a manual refund.
+    val refundLinkExpiresAt: OffsetDateTime?,
 )

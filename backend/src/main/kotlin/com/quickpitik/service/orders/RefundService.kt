@@ -1,6 +1,7 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.RefundDisputeDto
 import com.quickpitik.dto.orders.RefundRequest
@@ -44,6 +45,7 @@ class RefundService(
     private val photoRepository: PhotoRepository,
     private val userRepository: UserRepository,
     private val clock: Clock,
+    private val paymongoProperties: PaymongoProperties,
 ) {
     /**
      * POST /api/v1/me/orders/{id}/refund.
@@ -264,6 +266,8 @@ class RefundService(
             refundStatus = dispute.refundStatus,
             refundLinkUrl = dispute.refundLinkUrl,
             refundLinkSentAt = dispute.refundLinkSentAt,
+            refundLinkExpiresAt = dispute.takeIf { it.refundStatus == "manual_review" }
+                ?.let { paymongoProperties.refundLinkExpiresAt(it) },
         )
     }
 }

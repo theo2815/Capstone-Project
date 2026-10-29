@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminDisputeDto
 import com.quickpitik.dto.admin.DisputeActivityEntry
@@ -19,6 +20,7 @@ import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.Payment
+import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
@@ -39,6 +41,8 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.orders.PaymongoRefundService
+import com.quickpitik.service.orders.refundCancelsAt
+import com.quickpitik.service.orders.refundWindowClosesAt
 import com.quickpitik.service.orders.settledPaymongo
 import com.quickpitik.service.storage.StorageService
 import org.springframework.http.HttpStatus
@@ -68,6 +72,7 @@ class AdminDisputeService(
     private val runnerMessagesService: RunnerMessagesService,
     private val paymongoRefundService: PaymongoRefundService,
     private val transactionTemplate: TransactionTemplate,
+    private val paymongoProperties: PaymongoProperties,
 ) {
 
     @Transactional(readOnly = true)
@@ -354,6 +359,9 @@ class AdminDisputeService(
 
         val eventId = order?.eventId ?: photo?.eventId ?: dispute.orderId // fallback for ghost rows
         val eventName = event?.name
+        val parkedQrph = order?.takeIf {
+            it.paymentMethod == PaymentMethod.QRPH && dispute.refundStatus == "manual_review"
+        }
 
         return AdminDisputeDto(
             id = dispute.id,
@@ -374,6 +382,8 @@ class AdminDisputeService(
             paymentRef = payment?.providerRef,
             refundLinkUrl = dispute.refundLinkUrl,
             refundLinkSentAt = dispute.refundLinkSentAt?.toString(),
+            refundWindowClosesAt = parkedQrph?.let { paymongoProperties.refundWindowClosesAt(it).toString() },
+            refundCancelsAt = parkedQrph?.let { paymongoProperties.refundCancelsAt(it, dispute).toString() },
             itemChargeAmount = orderItem?.pricePhpAtPurchase?.subtract(orderItem.discountPhp),
             resolution = dispute.resolutionWire,
             orderSnapshot = DisputeOrderSnapshotDto(

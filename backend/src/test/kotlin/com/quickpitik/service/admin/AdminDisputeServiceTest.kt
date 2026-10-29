@@ -1,5 +1,6 @@
 package com.quickpitik.service.admin
 
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginationParams
@@ -66,6 +67,7 @@ class AdminDisputeServiceTest {
         Mockito.mock(RunnerMessagesService::class.java),
         Mockito.mock(PaymongoRefundService::class.java),
         Mockito.mock(TransactionTemplate::class.java),
+        PaymongoProperties(),
     )
 
     @Test
@@ -87,6 +89,7 @@ class AdminDisputeServiceTest {
             Mockito.mock(RunnerMessagesService::class.java),
             refunds,
             testTransactionTemplate(),
+            PaymongoProperties(),
         )
         val adminId = UUID.randomUUID()
         val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
@@ -119,6 +122,7 @@ class AdminDisputeServiceTest {
             Mockito.mock(RunnerMessagesService::class.java),
             refunds,
             testTransactionTemplate(),
+            PaymongoProperties(),
         )
         val adminId = UUID.randomUUID()
         val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
@@ -323,6 +327,51 @@ class AdminDisputeServiceTest {
         assertEquals(409, error.status.value())
         assertEquals(DisputeStatus.WITHDRAWN, d.status)
         Mockito.verifyNoInteractions(decisionLogService)
+    }
+
+    private val paidOn = OffsetDateTime.parse("2026-10-01T00:00:00Z")
+
+    private fun qrphOrder() = Order(
+        eventId = UUID.randomUUID(),
+        recipientEmail = "runner@example.test",
+        paymentMethodWire = "qrph",
+        totalPhp = BigDecimal("150.00"),
+        paidAt = paidOn,
+    )
+
+    @Test
+    fun `hydrate shows when PayMongo's window closes and when a parked QR Ph refund cancels itself`() {
+        val order = qrphOrder()
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.refundStatus = "manual_review"
+
+        val noLink = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
+        assertEquals(paidOn.plusDays(30).toString(), noLink.refundWindowClosesAt)
+        assertEquals(paidOn.plusDays(30).toString(), noLink.refundCancelsAt)
+
+        dispute.refundLinkSentAt = paidOn.plusDays(29)
+        val withLink = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
+        assertEquals(paidOn.plusDays(30).toString(), withLink.refundWindowClosesAt)
+        assertEquals(paidOn.plusDays(32).toString(), withLink.refundCancelsAt)
+    }
+
+    @Test
+    fun `hydrate leaves the refund dates null unless a QR Ph refund waits for a manual refund`() {
+        val qrph = qrphOrder()
+        for ((order, status) in listOf(
+            order(BigDecimal("150.00")).also { it.paidAt = paidOn } to "manual_review",
+            qrph to "succeeded",
+            qrph to "cancelled",
+            qrph to null,
+        )) {
+            val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+            dispute.refundStatus = status
+
+            val dto = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
+
+            assertNull(dto.refundWindowClosesAt, "status $status on ${order.paymentMethodWire}")
+            assertNull(dto.refundCancelsAt, "status $status on ${order.paymentMethodWire}")
+        }
     }
 
     private fun order(total: BigDecimal) = Order(

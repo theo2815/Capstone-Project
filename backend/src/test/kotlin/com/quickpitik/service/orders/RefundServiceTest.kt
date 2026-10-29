@@ -1,5 +1,6 @@
 package com.quickpitik.service.orders
 
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.entity.Order
@@ -63,6 +64,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
 
         val error = assertFailsWith<ApiException> { service.withdraw(runnerId, dispute.id) }
@@ -99,6 +101,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
 
         val error = assertFailsWith<ApiException> { service.withdraw(runnerId, dispute.id) }
@@ -131,6 +134,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
 
         assertEquals("X", service.withdraw(runnerId, dispute.id).resolutionNote)
@@ -156,6 +160,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
 
         val dto = service.withdraw(runnerId, dispute.id)
@@ -194,6 +199,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
 
         assertFailsWith<ConflictException> {
@@ -310,6 +316,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
         return Fixture(service, disputes, order, photoId, publisher)
     }

@@ -239,9 +239,39 @@ class OrderServiceCheckoutTest {
         assertEquals("manual_review", disputes.getValue(withLink.id).refundStatus)
         assertEquals("https://transfer.paymongo.com/abc", disputes.getValue(withLink.id).refundLinkUrl)
         assertEquals(sentAt, disputes.getValue(withLink.id).refundLinkSentAt)
+        assertEquals(sentAt.plusDays(3), disputes.getValue(withLink.id).refundLinkExpiresAt)
         assertNull(disputes.getValue(plain.id).refundStatus)
         assertNull(disputes.getValue(plain.id).refundLinkUrl)
         assertNull(disputes.getValue(plain.id).refundLinkSentAt)
+        assertNull(disputes.getValue(plain.id).refundLinkExpiresAt)
+    }
+
+    @Test
+    fun `the runner's link expiry is only shown while the refund waits for a manual refund`() {
+        val userId = UUID.randomUUID()
+        val order = Order(
+            userId = userId,
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("125.00"),
+        )
+        val sentAt = OffsetDateTime.parse("2026-10-29T10:15:30Z")
+        val done = Dispute(orderId = order.id, photoId = photo.id, runnerId = userId, reasonWire = "other")
+        done.refundStatus = "succeeded"
+        done.refundLinkUrl = "https://transfer.paymongo.com/abc"
+        done.refundLinkSentAt = sentAt
+        Mockito.`when`(orderRepository.findByUserIdOrderByPaidAtDescCreatedAtDesc(anyArg(), anyArg()))
+            .thenReturn(org.springframework.data.domain.PageImpl(listOf(order)))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenReturn(emptyList())
+        Mockito.`when`(disputeRepository.findByOrderIdIn(anyArg())).thenReturn(listOf(done))
+        Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(anyArg())).thenReturn(emptyList())
+
+        val dto = service.listForUser(userId, PaginationParams(0, 20)).items.single().disputes.single()
+
+        assertEquals(sentAt, dto.refundLinkSentAt)
+        assertNull(dto.refundLinkExpiresAt)
     }
 
     private fun newService(
