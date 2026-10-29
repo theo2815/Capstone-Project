@@ -9,6 +9,7 @@ import { adminDisputeKeys } from "@/hooks/use-admin-disputes";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
 import { admin, dispute } from "@/test/fixtures/admin";
+import { formatLongDate, formatSalesDate } from "@/lib/format";
 import { AdminDisputeActionAside } from "./admin-dispute-action-aside";
 import { AdminRefundConfirmModal } from "./admin-refund-confirm-modal";
 import { DisputesQueue } from "./disputes-queue";
@@ -89,7 +90,9 @@ describe("manual refund panel", () => {
 
   it("shows the cancel date sentence only when both dates are set", () => {
     const { unmount } = renderAside({ ...parked, refundWindowClosesAt: "2026-11-20T00:00:00Z", refundCancelsAt: "2026-11-27T00:00:00Z" });
-    expect(screen.getByText(/PayMongo window closes NOV 2\d · 2026\. QuickPitik cancels this refund on NOV 2\d · 2026 if it is not done\./)).toBeInTheDocument();
+    const closes = formatLongDate("2026-11-20T00:00:00Z");
+    const cancels = formatLongDate("2026-11-27T00:00:00Z");
+    expect(screen.getByText(`PayMongo window closes ${closes}. QuickPitik cancels this refund on ${cancels} if it is not done.`)).toBeInTheDocument();
     unmount();
     renderAside({ ...parked, refundWindowClosesAt: "2026-11-20T00:00:00Z", refundCancelsAt: null });
     expect(screen.queryByText(/PayMongo window closes/)).not.toBeInTheDocument();
@@ -125,6 +128,49 @@ describe("manual refund panel", () => {
     expect(screen.queryByLabelText("Refund link")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Send a new link" }));
     expect(screen.getByLabelText("Refund link")).toBeInTheDocument();
+  });
+
+  it("shows the saved link, its sent time and Send a new link after a successful send", async () => {
+    const user = userEvent.setup();
+    const sent = { ...parked, refundLinkUrl: "https://pay.example/r/1", refundLinkSentAt: "2026-10-29T01:00:00Z" };
+    vi.spyOn(api, "post").mockResolvedValueOnce(sent);
+    const view = renderAside(parked);
+    await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
+    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <AdminDisputeActionAside dispute={sent} runnerHandle={sent.runnerHandle} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("https://pay.example/r/1")).toBeInTheDocument();
+    expect(screen.getByText(formatSalesDate(sent.refundLinkSentAt))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send a new link" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Refund link")).not.toBeInTheDocument();
+  });
+
+  it("keeps the confirm open and shows no success toast when Mark refunded fails", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Backend unavailable"));
+    renderAside(parked);
+    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
+    await user.click(within(dialog).getByRole("button", { name: "Mark refunded" }));
+    expect(screen.getByRole("dialog", { name: "Mark refunded" })).toBeInTheDocument();
+    expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["error"]);
+  });
+
+  it("closes only the Mark refunded confirm on Escape, not the queue drawer", async () => {
+    const user = userEvent.setup();
+    fixtures.search = `row=${parked.id}`;
+    render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
+    const drawer = await screen.findByRole("dialog");
+    await user.click(within(drawer).getByRole("button", { name: "Mark refunded" }));
+    expect(screen.getByRole("dialog", { name: "Mark refunded" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Mark refunded" })).not.toBeInTheDocument();
+    expect(screen.getByText("pay_abc123")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument();
   });
 
   it("needs the confirm step before Mark refunded calls the API", async () => {

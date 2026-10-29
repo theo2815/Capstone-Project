@@ -16,13 +16,24 @@ const sm = BTN_SIZE.sm;
 // refund link in the PayMongo dashboard, sends it to the runner here, then
 // marks the refund done. The server checks the link's prefix against config,
 // so the browser only requires a non-empty value.
-export function AdminRefundPanel({ dispute }: { dispute: Dispute }) {
+export function AdminRefundPanel({
+  dispute,
+  onConfirmOpenChange,
+}: {
+  dispute: Dispute;
+  // Lets a host drawer stand its own Esc handler down while the confirm is up.
+  onConfirmOpenChange?: (open: boolean) => void;
+}) {
   const { showToast } = useToast();
   const { sendRefundLink, markRefunded, isPending } = useDisputeActions();
   const busy = isPending(dispute.id);
   const [url, setUrl] = useState("");
   const [replacing, setReplacing] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmOpen, setConfirmOpenState] = useState(false);
+  function setConfirmOpen(open: boolean) {
+    setConfirmOpenState(open);
+    onConfirmOpenChange?.(open);
+  }
 
   const savedLink = dispute.refundLinkUrl;
   const showField = !savedLink || replacing;
@@ -86,7 +97,7 @@ export function AdminRefundPanel({ dispute }: { dispute: Dispute }) {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             disabled={busy}
-            className="w-full border-b border-line bg-transparent py-2 text-ink focus:border-fresh disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full border-b border-line bg-transparent py-2 text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <button type="button" onClick={handleSend} disabled={busy || !trimmed} className={`${BTN_SECONDARY} ${sm} w-full`}>
             Send to runner

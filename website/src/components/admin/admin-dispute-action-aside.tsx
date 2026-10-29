@@ -156,7 +156,7 @@ export function AdminDisputeActionAside({
             Escalate…
           </button>
         )}
-        {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel dispute={dispute} />}
+        {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} />}
         {!isOpen && dispute.refundStatus !== "manual_review" && (
           <p className="font-sans text-sm text-slate-soft">
             This dispute is closed. No further actions are available.

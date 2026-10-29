@@ -91,6 +91,8 @@ export function DisputesQueue() {
   const [resolveOpen, setResolveOpen] = useState(false);
   const [denyOpen, setDenyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
+  // The Mark refunded confirm lives inside the drawer actions; the drawer must ignore Esc while it is up.
+  const [refundConfirmOpen, setRefundConfirmOpen] = useState(false);
   const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(
     null,
   );
@@ -140,7 +142,7 @@ export function DisputesQueue() {
   );
 
   const drawerEscDisabled =
-    resolveOpen || denyOpen || escalateOpen || pendingResolve !== null;
+    resolveOpen || denyOpen || escalateOpen || pendingResolve !== null || refundConfirmOpen;
 
   // Pagination — load-more model. Open keeps full visibility because
   // that's where the triage flow + J/K nav land. Read-only history slabs
@@ -361,6 +363,7 @@ export function DisputesQueue() {
               onResolve={() => setResolveOpen(true)}
               onDeny={() => setDenyOpen(true)}
               onEscalate={() => setEscalateOpen(true)}
+              onRefundConfirmOpenChange={setRefundConfirmOpen}
             />
           }
         >
@@ -504,18 +507,20 @@ function DisputeDrawerActions({
   onResolve,
   onDeny,
   onEscalate,
+  onRefundConfirmOpenChange,
 }: {
   dispute: Dispute;
   submitting: boolean;
   onResolve: () => void;
   onDeny: () => void;
   onEscalate: () => void;
+  onRefundConfirmOpenChange: (open: boolean) => void;
 }) {
   // Every action needs an open dispute: the server escalates open ones only.
   const isOpen = dispute.status === "open";
 
   if (!isOpen) {
-    if (dispute.refundStatus === "manual_review") return <AdminRefundPanel dispute={dispute} />;
+    if (dispute.refundStatus === "manual_review") return <AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={onRefundConfirmOpenChange} />;
     return (
       <p className="font-sans text-sm text-slate-soft">
         This dispute is closed. No further actions are available.
