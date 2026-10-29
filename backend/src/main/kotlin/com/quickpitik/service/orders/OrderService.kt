@@ -899,6 +899,9 @@ class OrderService(
                 openedAt = dispute.openedAt,
                 resolvedAt = dispute.resolvedAt,
                 withdrawnAt = dispute.withdrawnAt,
+                refundStatus = dispute.refundStatus,
+                refundLinkUrl = dispute.refundLinkUrl,
+                refundLinkSentAt = dispute.refundLinkSentAt,
             )
         }.groupBy({ it.first }, { it.second })
     }

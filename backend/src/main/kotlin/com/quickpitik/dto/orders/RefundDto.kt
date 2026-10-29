@@ -52,4 +52,7 @@ data class RunnerDisputeDto(
     val openedAt: OffsetDateTime,
     val resolvedAt: OffsetDateTime?,
     val withdrawnAt: OffsetDateTime?,
+    val refundStatus: String?,
+    val refundLinkUrl: String?,
+    val refundLinkSentAt: OffsetDateTime?,
 )

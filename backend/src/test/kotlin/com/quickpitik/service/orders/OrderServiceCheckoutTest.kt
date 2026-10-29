@@ -75,6 +75,7 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class OrderServiceCheckoutTest {
@@ -208,6 +209,39 @@ class OrderServiceCheckoutTest {
         val note = service.listForUser(userId, PaginationParams(0, 20)).items.single().disputes.single().resolutionNote
 
         assertEquals("X", note)
+    }
+
+    @Test
+    fun `the runner's dispute carries the refund status and link, or nulls when absent`() {
+        val userId = UUID.randomUUID()
+        val order = Order(
+            userId = userId,
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = PaymentMethod.QRPH.wire,
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("125.00"),
+        )
+        val sentAt = OffsetDateTime.parse("2026-10-29T10:15:30Z")
+        val withLink = Dispute(orderId = order.id, photoId = photo.id, runnerId = userId, reasonWire = "other")
+        withLink.refundStatus = "manual_review"
+        withLink.refundLinkUrl = "https://transfer.paymongo.com/abc"
+        withLink.refundLinkSentAt = sentAt
+        val plain = Dispute(orderId = order.id, photoId = UUID.randomUUID(), runnerId = userId, reasonWire = "other")
+        Mockito.`when`(orderRepository.findByUserIdOrderByPaidAtDescCreatedAtDesc(anyArg(), anyArg()))
+            .thenReturn(org.springframework.data.domain.PageImpl(listOf(order)))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenReturn(emptyList())
+        Mockito.`when`(disputeRepository.findByOrderIdIn(anyArg())).thenReturn(listOf(withLink, plain))
+        Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(anyArg())).thenReturn(emptyList())
+
+        val disputes = service.listForUser(userId, PaginationParams(0, 20)).items.single().disputes.associateBy { it.id }
+
+        assertEquals("manual_review", disputes.getValue(withLink.id).refundStatus)
+        assertEquals("https://transfer.paymongo.com/abc", disputes.getValue(withLink.id).refundLinkUrl)
+        assertEquals(sentAt, disputes.getValue(withLink.id).refundLinkSentAt)
+        assertNull(disputes.getValue(plain.id).refundStatus)
+        assertNull(disputes.getValue(plain.id).refundLinkUrl)
+        assertNull(disputes.getValue(plain.id).refundLinkSentAt)
     }
 
     private fun newService(

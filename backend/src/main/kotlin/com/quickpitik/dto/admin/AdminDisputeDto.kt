@@ -51,6 +51,12 @@ data class AdminDisputeDto(
     val resolvedAt: String?,
     val refundAmount: BigDecimal?,
     val refundStatus: String?,
+    // The order's settled PayMongo payment: pay_ id and its cs_/pi_ reference,
+    // so an admin can find it in the PayMongo dashboard.
+    val paymentId: String?,
+    val paymentRef: String?,
+    val refundLinkUrl: String?,
+    val refundLinkSentAt: String?,
     val itemChargeAmount: BigDecimal?,
     val resolution: String?,
     val orderSnapshot: DisputeOrderSnapshotDto,

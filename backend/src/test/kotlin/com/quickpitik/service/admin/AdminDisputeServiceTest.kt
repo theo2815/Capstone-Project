@@ -10,11 +10,14 @@ import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
+import com.quickpitik.entity.Payment
+import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
+import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
@@ -28,6 +31,7 @@ import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.Pageable
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.UUID
 import java.util.Optional
 import kotlin.test.assertEquals
@@ -38,6 +42,7 @@ class AdminDisputeServiceTest {
     private val disputeRepository = Mockito.mock(DisputeRepository::class.java)
     private val orderRepository = Mockito.mock(OrderRepository::class.java)
     private val orderItemRepository = Mockito.mock(OrderItemRepository::class.java)
+    private val paymentRepository = Mockito.mock(PaymentRepository::class.java)
     private val photoRepository = Mockito.mock(PhotoRepository::class.java)
     private val eventRepository = Mockito.mock(EventRepository::class.java)
     private val userRepository = Mockito.mock(UserRepository::class.java)
@@ -48,6 +53,7 @@ class AdminDisputeServiceTest {
         disputeRepository,
         orderRepository,
         orderItemRepository,
+        paymentRepository,
         photoRepository,
         eventRepository,
         userRepository,
@@ -156,6 +162,43 @@ class AdminDisputeServiceTest {
     }
 
     @Test
+    fun `hydrate shows the settled PayMongo payment ids and the refund link`() {
+        val order = order(BigDecimal("150.00"))
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        val sentAt = OffsetDateTime.parse("2026-10-29T10:15:30Z")
+        dispute.refundLinkUrl = "https://transfer.paymongo.com/abc"
+        dispute.refundLinkSentAt = sentAt
+        Mockito.`when`(paymentRepository.findByOrderId(order.id)).thenReturn(
+            listOf(
+                payment(order.id, "cs_failed", "pay_failed", PaymentStatus.FAILED),
+                payment(order.id, "cs_paid", "pay_paid", PaymentStatus.SUCCEEDED),
+            ),
+        )
+
+        val dto = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
+
+        assertEquals("pay_paid", dto.paymentId)
+        assertEquals("cs_paid", dto.paymentRef)
+        assertEquals("https://transfer.paymongo.com/abc", dto.refundLinkUrl)
+        assertEquals(sentAt.toString(), dto.refundLinkSentAt)
+    }
+
+    @Test
+    fun `hydrate leaves payment and refund link fields null when absent`() {
+        val order = order(BigDecimal("150.00"))
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        Mockito.`when`(paymentRepository.findByOrderId(order.id))
+            .thenReturn(listOf(payment(order.id, "cs_pending", null, PaymentStatus.PENDING)))
+
+        val dto = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
+
+        assertNull(dto.paymentId)
+        assertNull(dto.paymentRef)
+        assertNull(dto.refundLinkUrl)
+        assertNull(dto.refundLinkSentAt)
+    }
+
+    @Test
     fun `list batches historical items for the dispute page`() {
         val order = order(BigDecimal("300.00"))
         val first = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
@@ -174,11 +217,16 @@ class AdminDisputeServiceTest {
         Mockito.`when`(eventRepository.findAllById(setOf(order.eventId))).thenReturn(emptyList())
         Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(first.id, second.id)))
             .thenReturn(emptyList())
+        Mockito.`when`(paymentRepository.findByOrderIdIn(setOf(order.id)))
+            .thenReturn(listOf(payment(order.id, "cs_paid", "pay_paid", PaymentStatus.SUCCEEDED)))
 
         val page = service.list(null, PaginationParams.of(0, 10))
         assertEquals(listOf(BigDecimal("100.00"), BigDecimal("127.50")), page.items.map { it.itemChargeAmount })
+        assertEquals(listOf("pay_paid", "pay_paid"), page.items.map { it.paymentId })
         Mockito.verify(orderItemRepository).findByIdOrderIdIn(setOf(order.id))
         Mockito.verify(orderItemRepository, Mockito.never()).findById(Mockito.any(OrderItemId::class.java))
+        Mockito.verify(paymentRepository).findByOrderIdIn(setOf(order.id))
+        Mockito.verify(paymentRepository, Mockito.never()).findByOrderId(Mockito.any(UUID::class.java) ?: UUID.randomUUID())
     }
 
     @Test
@@ -217,6 +265,15 @@ class AdminDisputeServiceTest {
         recipientEmail = "runner@example.test",
         paymentMethodWire = "gcash",
         totalPhp = total,
+    )
+
+    private fun payment(orderId: UUID, ref: String, payId: String?, status: PaymentStatus) = Payment(
+        orderId = orderId,
+        provider = "paymongo",
+        providerRef = ref,
+        providerPaymentId = payId,
+        amountPhp = BigDecimal("150.00"),
+        status = status,
     )
 
     private fun item(dispute: Dispute, price: String, discount: String) = OrderItem(

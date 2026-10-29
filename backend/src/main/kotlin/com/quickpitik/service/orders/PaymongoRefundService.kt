@@ -11,6 +11,7 @@ import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.entity.OrderStatus
+import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.RunnerMessageKind
@@ -127,8 +128,7 @@ class PaymongoRefundService(
             DisputeResolution.REFUND_PARTIAL -> validatePartialAmount(requestedAmount, charged)
             DisputeResolution.DENY -> error("DENY is not a provider refund")
         }
-        val payment = paymentRepository.findByOrderId(dispute.orderId)
-            .firstOrNull { it.provider == PAYMONGO && it.status == PaymentStatus.SUCCEEDED }
+        val payment = paymentRepository.findByOrderId(dispute.orderId).settledPaymongo()
             ?: throw checkoutConflict("The order has no settled PayMongo payment to refund.")
         val providerRef = payment.providerRef
             ?: throw checkoutConflict("The settled payment has no PayMongo reference.")
@@ -427,3 +427,7 @@ class PaymongoRefundService(
         const val BATCH_SIZE = 100
     }
 }
+
+// The order's settled PayMongo payment: the one a refund targets.
+internal fun Iterable<Payment>.settledPaymongo(): Payment? =
+    firstOrNull { it.provider == "paymongo" && it.status == PaymentStatus.SUCCEEDED }

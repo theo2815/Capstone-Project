@@ -103,6 +103,35 @@ class RefundServiceTest {
     }
 
     @Test
+    fun `withdraw returns the dispute's refund status and link`() {
+        val runnerId = UUID.randomUUID()
+        val sentAt = OffsetDateTime.parse("2026-10-29T10:15:30Z")
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        dispute.refundStatus = "failed"
+        dispute.refundLinkUrl = "https://transfer.paymongo.com/abc"
+        dispute.refundLinkSentAt = sentAt
+        val disputes = Mockito.mock(DisputeRepository::class.java)
+        Mockito.`when`(disputes.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        val service = RefundService(
+            Mockito.mock(OrderRepository::class.java),
+            Mockito.mock(OrderItemRepository::class.java),
+            disputes,
+            Mockito.mock(AdminDecisionLogRepository::class.java),
+            Mockito.mock(ApplicationEventPublisher::class.java),
+            PlatformProperties(),
+            Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(UserRepository::class.java),
+            Clock.systemUTC(),
+        )
+
+        val dto = service.withdraw(runnerId, dispute.id)
+
+        assertEquals("failed", dto.refundStatus)
+        assertEquals("https://transfer.paymongo.com/abc", dto.refundLinkUrl)
+        assertEquals(sentAt, dto.refundLinkSentAt)
+    }
+
+    @Test
     fun `a photo that was charged nothing cannot be disputed`() {
         val runnerId = UUID.randomUUID()
         val photoId = UUID.randomUUID()
