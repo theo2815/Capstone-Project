@@ -520,7 +520,8 @@ function DisputeDrawerActions({
   const isOpen = dispute.status === "open";
 
   if (!isOpen) {
-    if (dispute.refundStatus === "manual_review") return <AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={onRefundConfirmOpenChange} />;
+    // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
+    if (dispute.refundStatus === "manual_review") return <div className="w-full max-h-[50vh] overflow-y-auto p-1"><AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={onRefundConfirmOpenChange} /></div>;
     return (
       <p className="font-sans text-sm text-slate-soft">
         This dispute is closed. No further actions are available.

@@ -91,6 +91,19 @@ it("does not show an unknown refund outcome as refunded in the dispute drawer", 
   expect(within(drawer).queryByText(/^refunded$/i)).not.toBeInTheDocument();
 });
 
+it("lets the refund panel span the drawer footer and scroll on its own", async () => {
+  const parked: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [] };
+  fixtures.search = `row=${parked.id}`;
+  client.setQueryData(adminDisputeKeys.list(admin.id), [parked]);
+  render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
+  const footer = (await screen.findByRole("dialog")).querySelector("footer")!;
+  const wrapper = footer.firstElementChild!.firstElementChild!;
+  expect(wrapper).toContainElement(within(footer).getByLabelText("Refund link"));
+  // p-1 leaves room for the 2px focus outline + 2px offset, which the scroll box would otherwise cut off.
+  expect(wrapper).toHaveClass("w-full", "overflow-y-auto", "p-1");
+  expect(wrapper.className).toMatch(/(^|\s)max-h-/);
+});
+
 it.each(["requesting", "pending"])("shows no refund panel for an escalated refund still in flight (%s)", async (refundStatus) => {
   const inFlight: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus };
   fixtures.search = `row=${inFlight.id}`;
