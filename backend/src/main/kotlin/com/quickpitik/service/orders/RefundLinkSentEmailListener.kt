@@ -10,7 +10,8 @@ import org.springframework.transaction.event.TransactionalEventListener
 
 // Mails the PayMongo refund link once the admin's save has committed. AFTER_COMMIT so a rolled-back
 // save never mails; @Async so a Resend outage never blocks the admin request. A send failure is logged
-// and dropped: the runner's inbox message is the durable copy and the admin can send the link again.
+// and dropped: the runner's inbox message is the durable copy. Sending the same link again sends nothing;
+// only a different link sends a new e-mail.
 // Mirrors PayoutAccountChangedEmailListener.
 @Component
 class RefundLinkSentEmailListener(

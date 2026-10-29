@@ -356,6 +356,19 @@ class AdminDisputeServiceTest {
     }
 
     @Test
+    fun `hydrate shows when the refund link expires while a QR Ph refund waits for a manual refund`() {
+        val order = qrphOrder()
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.refundStatus = "manual_review"
+        val sentAt = paidOn.plusDays(2)
+        dispute.refundLinkSentAt = sentAt
+
+        val dto = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
+
+        assertEquals(sentAt.plusDays(3).toString(), dto.refundLinkExpiresAt)
+    }
+
+    @Test
     fun `hydrate leaves the refund dates null unless a QR Ph refund waits for a manual refund`() {
         val qrph = qrphOrder()
         for ((order, status) in listOf(
@@ -366,11 +379,13 @@ class AdminDisputeServiceTest {
         )) {
             val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
             dispute.refundStatus = status
+            dispute.refundLinkSentAt = paidOn
 
             val dto = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
 
             assertNull(dto.refundWindowClosesAt, "status $status on ${order.paymentMethodWire}")
             assertNull(dto.refundCancelsAt, "status $status on ${order.paymentMethodWire}")
+            assertNull(dto.refundLinkExpiresAt, "status $status on ${order.paymentMethodWire}")
         }
     }
 

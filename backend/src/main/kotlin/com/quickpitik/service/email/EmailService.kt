@@ -144,7 +144,8 @@ class EmailService(
     }
 
     // PayMongo refund transfer link for a parked QR Ph dispute. Sent AFTER_COMMIT + async via RefundLinkSentEmailListener.
-    // A failure is logged and dropped: the runner's inbox message is the durable copy and the admin can resend.
+    // A failure is logged and dropped: the runner's inbox message is the durable copy. Sending the same link
+    // again sends nothing; only a different link sends a new e-mail.
     fun sendRefundLinkEmail(toEmail: String, url: String, amountPhp: BigDecimal, validityDays: Long) {
         if (devMode) {
             log.info("[EMAIL STUB] refund link for {} — link: {}", toEmail, url)

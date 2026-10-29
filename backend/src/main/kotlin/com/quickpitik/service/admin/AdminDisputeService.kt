@@ -42,6 +42,7 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.orders.PaymongoRefundService
 import com.quickpitik.service.orders.refundCancelsAt
+import com.quickpitik.service.orders.refundLinkExpiresAt
 import com.quickpitik.service.orders.refundWindowClosesAt
 import com.quickpitik.service.orders.settledPaymongo
 import com.quickpitik.service.storage.StorageService
@@ -382,6 +383,7 @@ class AdminDisputeService(
             paymentRef = payment?.providerRef,
             refundLinkUrl = dispute.refundLinkUrl,
             refundLinkSentAt = dispute.refundLinkSentAt?.toString(),
+            refundLinkExpiresAt = parkedQrph?.let { paymongoProperties.refundLinkExpiresAt(dispute)?.toString() },
             refundWindowClosesAt = parkedQrph?.let { paymongoProperties.refundWindowClosesAt(it).toString() },
             refundCancelsAt = parkedQrph?.let { paymongoProperties.refundCancelsAt(it, dispute).toString() },
             itemChargeAmount = orderItem?.pricePhpAtPurchase?.subtract(orderItem.discountPhp),
