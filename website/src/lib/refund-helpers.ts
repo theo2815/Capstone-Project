@@ -34,6 +34,28 @@ export interface OrderRefundStatus {
   rejectedCount: number;
   rejectedNote: string | null;
   totalDisputed: number;
+  // Manual QR Ph refund label of the first live dispute that has one, else null.
+  label: string | null;
+}
+
+// Runner-facing label for a manual QR Ph refund; null means keep the usual label.
+export function getRefundStatusLabel(d: RunnerDispute): string | null {
+  if (d.status === "escalated" && d.refundStatus === "manual_review") {
+    return d.refundLinkUrl
+      ? "Refund link sent"
+      : "Refund approved, waiting for PayMongo refund link";
+  }
+  if (d.status === "denied" && d.refundStatus === "cancelled") {
+    return "Refund cancelled: the refund window closed";
+  }
+  return null;
+}
+
+// The PayMongo link the runner can still use to claim the money, else null.
+export function getRefundClaimLink(d: RunnerDispute): string | null {
+  return d.refundStatus === "manual_review" && d.refundLinkUrl
+    ? d.refundLinkUrl
+    : null;
 }
 
 export function getOrderRefundStatus(
@@ -83,6 +105,7 @@ export function getOrderRefundStatus(
     rejectedCount,
     rejectedNote,
     totalDisputed,
+    label: visible.map(getRefundStatusLabel).find((l) => l !== null) ?? null,
   };
 }
 

@@ -31,6 +31,7 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { RefundModal } from "@/components/orders/refund-modal";
 import { RefundTimeline } from "@/components/orders/refund-timeline";
 import {
+  getRefundClaimLink,
   getOrderRefundStatus,
   type OrderRefundStatus,
 } from "@/lib/refund-helpers";
@@ -45,7 +46,8 @@ import { ApiError } from "@/lib/api";
 import { cn, formatPrice } from "@/lib/utils";
 import { savePhoto } from "@/lib/save-photo";
 import { SavePhotosButton } from "@/components/orders/save-photos-button";
-import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { formatLongDate } from "@/lib/format";
 
 const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "spend", label: "Spend" },
@@ -466,6 +468,7 @@ function ReceiptRow({
           <RefundStatusChip
             status={refundStatus}
             photoCount={photoCount}
+            claimDispute={disputes.find((d) => getRefundClaimLink(d)) ?? null}
           />
         </div>
         <div className="flex items-baseline justify-between md:flex-col md:items-end gap-3 md:gap-2 shrink-0">
@@ -725,13 +728,15 @@ function labelForPaymentMethod(method: string): string {
 function RefundStatusChip({
   status,
   photoCount,
+  claimDispute,
 }: {
   status: OrderRefundStatus;
   photoCount: number;
+  claimDispute: RunnerDispute | null;
 }) {
   if (status.kind === "none") return null;
 
-  const label = (() => {
+  const label = status.label ?? (() => {
     switch (status.kind) {
       case "pending":
         return `Refund pending · ${status.pendingCount} of ${photoCount} photo${photoCount === 1 ? "" : "s"}`;
@@ -769,6 +774,26 @@ function RefundStatusChip({
           <span className="text-slate">Admin note · </span>
           {status.rejectedNote}
         </p>
+      )}
+      {claimDispute && (
+        <div className="pt-1.5">
+          {/* BTN_SECONDARY: the page already shows a fresh figure up top, so keep one fresh element per viewport. */}
+          <a
+            href={getRefundClaimLink(claimDispute) ?? undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            Claim your refund
+            <span className="sr-only"> (opens in a new tab)</span>
+          </a>
+          <p className="font-sans text-sm text-ink-soft mt-2 tnum">
+            Sent {formatLongDate(claimDispute.refundLinkSentAt)}.
+            {claimDispute.refundLinkExpiresAt
+              ? ` Claim by ${formatLongDate(claimDispute.refundLinkExpiresAt)}.`
+              : ""}
+          </p>
+        </div>
       )}
     </div>
   );

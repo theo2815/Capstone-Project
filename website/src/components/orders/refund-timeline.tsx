@@ -6,6 +6,7 @@ import {
   type DisputeReason,
 } from "@/lib/admin-disputes";
 import type { RunnerDispute, RunnerDisputeStatus } from "@/lib/api-orders";
+import { getRefundStatusLabel } from "@/lib/refund-helpers";
 import { cn, formatPrice } from "@/lib/utils";
 
 interface RefundTimelineProps {
@@ -48,6 +49,7 @@ export function RefundTimeline({ disputes, className }: RefundTimelineProps) {
 
 function RefundTimelineRow({ dispute }: { dispute: RunnerDispute }) {
   const statusBadge = STATUS_BADGE[dispute.status];
+  const statusLabel = getRefundStatusLabel(dispute);
 
   return (
     <div className="space-y-2.5">
@@ -79,12 +81,20 @@ function RefundTimelineRow({ dispute }: { dispute: RunnerDispute }) {
       <ol className="font-sans text-sm text-slate space-y-1 pl-3.5">
         <TimelineLine label="Filed" timestamp={dispute.openedAt} />
         {dispute.status === "escalated" && (
-          <TimelineLine label="Escalated for review" timestamp={null} muted />
+          <TimelineLine
+            label={statusLabel ?? "Escalated for review"}
+            timestamp={dispute.refundLinkSentAt ?? null}
+            muted
+          />
         )}
         {dispute.resolvedAt &&
           (dispute.status === "resolved" || dispute.status === "denied") && (
             <TimelineLine
-              label={dispute.status === "resolved" ? "Resolved" : "Denied"}
+              label={
+                dispute.status === "resolved"
+                  ? "Resolved"
+                  : (statusLabel ?? "Denied")
+              }
               timestamp={dispute.resolvedAt}
             />
           )}
