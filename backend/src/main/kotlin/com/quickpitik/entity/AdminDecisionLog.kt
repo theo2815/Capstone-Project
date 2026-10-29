@@ -13,6 +13,9 @@ import java.util.UUID
 // money, so runner-facing dispute notes skip it (see OrderService / RefundService).
 const val REFUND_SENT_TO_MANUAL_REVIEW = "refund_sent_to_manual_review"
 
+// An admin saved a PayMongo refund link on a parked QR Ph dispute and told the runner. Writes no money either.
+const val REFUND_LINK_SENT = "refund_link_sent"
+
 // Append-only audit trail of every ADMIN write action. group_id is nullable
 // per Q-A4 — bulk endpoints (POST /admin/payouts/bulk) share one UUID across
 // every per-target row so the dashboard kpi `decisionsThisWeek` count can

@@ -1,5 +1,6 @@
 package com.quickpitik.service.orders
 
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.dto.orders.PaymongoRefundAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundResource
@@ -25,6 +26,7 @@ import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.exception.ConflictException
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.DownloadGrantRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -37,6 +39,7 @@ import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.web.client.HttpClientErrorException
@@ -50,6 +53,8 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PaymongoRefundServiceTest {
     // ₱150 list, PHOTO20 (20% of the photographer's ₱112.50 share = ₱22.50):
@@ -421,6 +426,7 @@ class PaymongoRefundServiceTest {
         val runnerMessages: RunnerMessagesService,
         val grants: DownloadGrantRepository,
         val runnerId: UUID,
+        val events: ApplicationEventPublisher,
         val sentRequestRef: () -> PaymongoRefundRequest?,
     ) {
         val sentRequest: PaymongoRefundRequest? get() = sentRequestRef()
@@ -432,6 +438,7 @@ class PaymongoRefundServiceTest {
         providerPaymentId: String? = "pay_test",
         method: PaymentMethod = PaymentMethod.GCASH,
         siblingPaymentPhp: BigDecimal? = null,
+        prefixes: List<String> = listOf(linkPrefix),
     ): CouponHarness {
         val adminId = UUID.randomUUID()
         val photographerId = UUID.randomUUID()
@@ -497,6 +504,7 @@ class PaymongoRefundServiceTest {
         ).thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "resolved"))
         val grants = Mockito.mock(DownloadGrantRepository::class.java)
         val runnerMessages = Mockito.mock(RunnerMessagesService::class.java)
+        val events = Mockito.mock(ApplicationEventPublisher::class.java)
         val service = PaymongoRefundService(
             disputes,
             orders,
@@ -509,10 +517,12 @@ class PaymongoRefundServiceTest {
             decisions,
             runnerMessages,
             testTransactionTemplate(),
+            PaymongoProperties(refundLinkAllowedPrefixes = prefixes),
+            events,
         )
         return CouponHarness(
             service, adminId, dispute, order, photographerId, client, minting, disputes, decisions,
-            runnerMessages, grants, runnerId,
+            runnerMessages, grants, runnerId, events,
         ) { sentRequest }
     }
     @Test
@@ -591,6 +601,8 @@ class PaymongoRefundServiceTest {
             decisions,
             runnerMessages,
             testTransactionTemplate(),
+            PaymongoProperties(),
+            Mockito.mock(ApplicationEventPublisher::class.java),
         )
 
         service.request(adminId, dispute.id, DisputeResolution.REFUND_FULL, null, "Duplicate charge")
@@ -643,6 +655,8 @@ class PaymongoRefundServiceTest {
             Mockito.mock(AdminDecisionLogService::class.java),
             Mockito.mock(RunnerMessagesService::class.java),
             testTransactionTemplate(),
+            PaymongoProperties(),
+            Mockito.mock(ApplicationEventPublisher::class.java),
         )
 
         service.reconcile()
@@ -650,6 +664,166 @@ class PaymongoRefundServiceTest {
         assertEquals("manual_review", dispute.refundStatus)
         assertEquals(DisputeStatus.ESCALATED, dispute.status)
         Mockito.verifyNoInteractions(client)
+    }
+
+    private val linkPrefix = "https://transfer.test/"
+    private val sentLink = "https://transfer.test/abc123"
+
+    private fun parkedHarness(prefixes: List<String> = listOf(linkPrefix)): CouponHarness {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", prefixes = prefixes)
+        h.dispute.refundStatus = "manual_review"
+        h.dispute.status = DisputeStatus.ESCALATED
+        h.dispute.refundAmountPhp = BigDecimal("127.50")
+        return h
+    }
+
+    private fun assertNothingSavedOrSent(h: CouponHarness) {
+        assertNull(h.dispute.refundLinkUrl)
+        assertNull(h.dispute.refundLinkSentAt)
+        Mockito.verify(h.disputes, Mockito.never()).save(Mockito.any(Dispute::class.java))
+        Mockito.verifyNoInteractions(h.decisions)
+        Mockito.verifyNoInteractions(h.runnerMessages)
+        Mockito.verifyNoInteractions(h.events)
+    }
+
+    @Test
+    fun `sending a refund link saves it, logs one row, tells the runner and publishes one event`() {
+        val h = parkedHarness()
+        val decision = AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_link_sent")
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(decision)
+
+        h.service.sendRefundLink(h.adminId, h.dispute.id, "  $sentLink ")
+
+        assertEquals(sentLink, h.dispute.refundLinkUrl)
+        assertNotNull(h.dispute.refundLinkSentAt)
+        Mockito.verify(h.decisions, Mockito.times(1)).logDisputeDecision(
+            h.adminId, h.dispute.id, "refund_link_sent", null, mapOf("refundLinkUrl" to sentLink), null,
+        )
+        Mockito.verifyNoMoreInteractions(h.decisions)
+        Mockito.verify(h.runnerMessages).pushMessage(
+            h.runnerId,
+            RunnerMessageKind.ADMIN_MESSAGE,
+            "Claim your refund of PHP 127.50 with this PayMongo link: $sentLink The link works for 3 days.",
+            h.adminId,
+            decision.id,
+            h.order.id,
+            "Your refund link is ready",
+        )
+        Mockito.verifyNoMoreInteractions(h.runnerMessages)
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50")))
+        Mockito.verifyNoMoreInteractions(h.events)
+        Mockito.verifyNoInteractions(h.client)
+    }
+
+    @Test
+    fun `sending a second link replaces the first and sends everything again`() {
+        val h = parkedHarness()
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_link_sent"))
+        val second = "https://transfer.test/def456"
+
+        h.service.sendRefundLink(h.adminId, h.dispute.id, sentLink)
+        val firstSentAt = assertNotNull(h.dispute.refundLinkSentAt)
+        h.service.sendRefundLink(h.adminId, h.dispute.id, second)
+
+        assertEquals(second, h.dispute.refundLinkUrl)
+        assertTrue(!assertNotNull(h.dispute.refundLinkSentAt).isBefore(firstSentAt))
+        Mockito.verify(h.decisions, Mockito.times(2))
+            .logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(h.runnerMessages, Mockito.times(2))
+            .pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50")))
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, second, BigDecimal("127.50")))
+    }
+
+    @Test
+    fun `a link of exactly 500 characters is accepted`() {
+        val h = parkedHarness()
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_link_sent"))
+        val url = linkPrefix + "a".repeat(500 - linkPrefix.length)
+
+        h.service.sendRefundLink(h.adminId, h.dispute.id, url)
+
+        assertEquals(url, h.dispute.refundLinkUrl)
+    }
+
+    @Test
+    fun `a dispute with no runner still saves and mails the link but gets no inbox message`() {
+        val h = parkedHarness()
+        h.dispute.runnerId = null
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_link_sent"))
+
+        h.service.sendRefundLink(h.adminId, h.dispute.id, sentLink)
+
+        assertEquals(sentLink, h.dispute.refundLinkUrl)
+        Mockito.verifyNoInteractions(h.runnerMessages)
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50")))
+    }
+
+    @Test
+    fun `a refund link is refused unless the dispute waits for a manual refund`() {
+        for (state in listOf(null, "requesting", "succeeded")) {
+            val h = parkedHarness()
+            h.dispute.refundStatus = state
+
+            assertFailsWith<ConflictException> { h.service.sendRefundLink(h.adminId, h.dispute.id, sentLink) }
+
+            assertNothingSavedOrSent(h)
+        }
+    }
+
+    @Test
+    fun `a configured prefix without a trailing slash is ignored so look-alike hosts cannot pass`() {
+        val h = parkedHarness(prefixes = listOf("https://transfer.test"))
+
+        for (url in listOf("https://transfer.test.evil.example/x", "https://transfer.test/abc")) {
+            assertFailsWith<ValidationException>("link: $url") { h.service.sendRefundLink(h.adminId, h.dispute.id, url) }
+        }
+
+        assertNothingSavedOrSent(h)
+    }
+
+    @Test
+    fun `a refund link for a missing dispute is a 404`() {
+        val h = parkedHarness()
+
+        assertFailsWith<NotFoundException> { h.service.sendRefundLink(h.adminId, UUID.randomUUID(), sentLink) }
+
+        assertNothingSavedOrSent(h)
+    }
+
+    @Test
+    fun `a link that is not from an allowed prefix is refused before the dispute is locked and nothing is saved or sent`() {
+        val bad = listOf(
+            "",
+            "   ",
+            "https://evil.example/x",
+            "https://transfer.test.evil.example/x",
+            "http://transfer.test/abc",
+            "https://transfer.test/a b",
+            "https://transfer.test/a\tb",
+            "https://transfer.test/a\nb",
+            linkPrefix + "a".repeat(500),
+            // starts with the prefix and has no whitespace, but would break out of the e-mail's href
+            linkPrefix + "x\"><a/href=\"https://evil.example/\">Claim</a><!--",
+            linkPrefix + "x<b>",
+            linkPrefix + "x\\y",
+            linkPrefix + "x\u0001y",
+        )
+        for (url in bad) {
+            val h = parkedHarness()
+
+            val error = assertFailsWith<ValidationException>("link: $url") {
+                h.service.sendRefundLink(h.adminId, h.dispute.id, url)
+            }
+
+            assertEquals("url", error.field)
+            Mockito.verify(h.disputes, Mockito.never()).findByIdForUpdate(h.dispute.id)
+            assertNothingSavedOrSent(h)
+        }
     }
 
     private fun <T> anyArg(): T = Mockito.any()

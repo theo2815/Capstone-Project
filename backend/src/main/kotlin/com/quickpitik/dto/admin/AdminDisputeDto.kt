@@ -78,6 +78,13 @@ data class ResolveDisputeRequest(
     val reason: String? = null,
 )
 
+// POST /admin/disputes/{id}/refund-link — body { url }. The service checks the allowed prefix.
+data class SendRefundLinkRequest(
+    @field:NotBlank
+    @field:Size(max = 500)
+    val url: String,
+)
+
 // POST /admin/disputes/{id}/deny — body { reason }.
 //
 // `reason` is shown to the runner: verbatim in the inbox message body, and as

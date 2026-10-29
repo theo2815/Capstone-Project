@@ -98,6 +98,17 @@ class AdminDisputeService(
         } ?: error("Refund resolution returned null")
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun sendRefundLink(adminId: UUID, disputeId: UUID, url: String): AdminDisputeDto {
+        paymongoRefundService.sendRefundLink(adminId, disputeId, url)
+        return transactionTemplate.execute {
+            val dispute = disputeRepository.findById(disputeId).orElseThrow {
+                NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+            }
+            hydrateOne(dispute)
+        } ?: error("Refund link returned null")
+    }
+
     /**
      * `reason` is **runner-facing**, deliberately. It is interpolated into the
      * inbox message below, and every dispute decision's reason also reaches

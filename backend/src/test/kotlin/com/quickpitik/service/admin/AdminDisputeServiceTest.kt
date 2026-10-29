@@ -24,6 +24,7 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.orders.PaymongoRefundService
 import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.storage.StorageService
+import com.quickpitik.support.testTransactionTemplate
 import com.quickpitik.exception.ApiException
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -66,6 +67,38 @@ class AdminDisputeServiceTest {
         Mockito.mock(PaymongoRefundService::class.java),
         Mockito.mock(TransactionTemplate::class.java),
     )
+
+    @Test
+    fun `sending a refund link delegates to the refund service then returns the refreshed dispute`() {
+        val refunds = Mockito.mock(PaymongoRefundService::class.java)
+        val withTx = AdminDisputeService(
+            disputeRepository,
+            orderRepository,
+            orderItemRepository,
+            paymentRepository,
+            photoRepository,
+            eventRepository,
+            userRepository,
+            settingsRepository,
+            Mockito.mock(StorageService::class.java),
+            StorageProperties(),
+            decisionLogService,
+            decisionLogRepository,
+            Mockito.mock(RunnerMessagesService::class.java),
+            refunds,
+            testTransactionTemplate(),
+        )
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.refundLinkUrl = "https://transfer.test/abc"
+        Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
+
+        val dto = withTx.sendRefundLink(adminId, dispute.id, "https://transfer.test/abc")
+
+        Mockito.verify(refunds).sendRefundLink(adminId, dispute.id, "https://transfer.test/abc")
+        assertEquals(dispute.id, dto.id)
+        assertEquals("https://transfer.test/abc", dto.refundLinkUrl)
+    }
 
     @Test
     fun `deny refuses a dispute while its refund is pending`() {

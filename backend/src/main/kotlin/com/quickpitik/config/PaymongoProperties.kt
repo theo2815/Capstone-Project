@@ -49,4 +49,6 @@ data class PaymongoProperties(
     val connectTimeout: Duration = Duration.ofSeconds(5),
     val readTimeout: Duration = Duration.ofSeconds(15),
     val checkoutTtl: Duration = Duration.ofMinutes(30),
+    // A QR Ph refund link an admin pastes in must start with one of these (anti-phishing). Env value is comma-separated.
+    val refundLinkAllowedPrefixes: List<String> = listOf("https://transfer.paymongo.com/"),
 )

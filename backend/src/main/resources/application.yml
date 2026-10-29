@@ -387,6 +387,7 @@ app:
       connect-timeout: PT5S
       read-timeout: PT15S
       checkout-ttl: ${PAYMONGO_CHECKOUT_TTL:PT30M}
+      refund-link-allowed-prefixes: ${PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES:https://transfer.paymongo.com/}
   email:
     resend:
       # Resend transactional email wiring. Free-tier dev sender

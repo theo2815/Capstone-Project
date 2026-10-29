@@ -1,11 +1,13 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.common.toCentavos
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundRequestAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequestEnvelope
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.REFUND_LINK_SENT
 import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
@@ -29,6 +31,7 @@ import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.runner.RunnerMessagesService
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -36,6 +39,8 @@ import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.client.RestClientResponseException
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.net.URI
+import java.net.URISyntaxException
 import java.time.Duration
 import java.time.OffsetDateTime
 import java.time.temporal.ChronoUnit
@@ -54,6 +59,8 @@ class PaymongoRefundService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val runnerMessagesService: RunnerMessagesService,
     private val transactionTemplate: TransactionTemplate,
+    private val paymongoProperties: PaymongoProperties,
+    private val events: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -69,6 +76,56 @@ class PaymongoRefundService(
             prepare(adminId, disputeId, resolution, requestedAmount, reason)
         } ?: error("Refund preparation returned null")
         if (!prepared.completed && !prepared.parked) process(prepared, reportFailure = true)
+    }
+
+    // The admin refunded a parked QR Ph payment in the PayMongo dashboard and pastes the refund transfer link here.
+    // The link is mailed to the runner, so it must start with a configured PayMongo prefix (anti-phishing); that check
+    // runs before the lock. Calling again replaces the link (expired-link case) and tells the runner again.
+    fun sendRefundLink(adminId: UUID, disputeId: UUID, url: String) {
+        val link = url.trim()
+        if (link.isEmpty() || link.length > MAX_REFUND_LINK_LENGTH || link.any { it.isWhitespace() } ||
+            // A prefix must end in "/" or "https://host" would also match "https://host.evil.example".
+            paymongoProperties.refundLinkAllowedPrefixes.none { it.endsWith("/") && link.startsWith(it) } ||
+            !isPlainHttpsUrl(link)
+        ) {
+            throw ValidationException(
+                message = "Paste the refund transfer link from the PayMongo dashboard.",
+                code = ErrorCodes.VALIDATION_ERROR,
+                field = "url",
+            )
+        }
+        transactionTemplate.executeWithoutResult {
+            val dispute = disputeRepository.findByIdForUpdate(disputeId)
+                ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
+            if (dispute.refundStatus != MANUAL_REVIEW) {
+                throw checkoutConflict("This dispute is not waiting for a manual refund.")
+            }
+            val amount = dispute.refundAmountPhp ?: throw checkoutConflict("This dispute has no approved refund amount.")
+            dispute.refundLinkUrl = link
+            dispute.refundLinkSentAt = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS)
+            disputeRepository.save(dispute)
+            // The url in meta is the audit trail: this link goes to a customer.
+            val decision = adminDecisionLogService.logDisputeDecision(
+                adminId = adminId,
+                targetDisputeId = dispute.id,
+                decision = REFUND_LINK_SENT,
+                reason = null,
+                meta = mapOf("refundLinkUrl" to link),
+            )
+            dispute.runnerId?.let { runnerId ->
+                runnerMessagesService.pushMessage(
+                    runnerId = runnerId,
+                    kind = RunnerMessageKind.ADMIN_MESSAGE,
+                    title = "Your refund link is ready",
+                    body = "Claim your refund of PHP ${amount.toPlainString()} with this PayMongo link: $link " +
+                        "The link works for 3 days.",
+                    sourceAdminId = adminId,
+                    sourceDecisionId = decision.id,
+                    orderId = dispute.orderId,
+                )
+            }
+            events.publishEvent(RefundLinkSentEvent(dispute.orderId, link, amount))
+        }
     }
 
     fun handleWebhook(providerRefundId: String, status: String): Boolean =
@@ -431,6 +488,13 @@ class PaymongoRefundService(
         }
     }
 
+    // URI() rejects quotes, angle brackets, backslashes and control characters, which would break out of the e-mail href.
+    private fun isPlainHttpsUrl(link: String): Boolean = try {
+        URI(link).let { it.scheme == "https" && it.userInfo == null }
+    } catch (_: URISyntaxException) {
+        false
+    }
+
     private fun checkoutConflict(message: String): ConflictException =
         ConflictException(message = message, code = ErrorCodes.CONFLICT)
 
@@ -458,6 +522,7 @@ class PaymongoRefundService(
         val IN_FLIGHT_STATUSES = listOf(REQUESTING, "pending", "processing")
         val PROVIDER_RETRY_WINDOW: Duration = Duration.ofHours(23)
         const val BATCH_SIZE = 100
+        const val MAX_REFUND_LINK_LENGTH = 500
     }
 }
 

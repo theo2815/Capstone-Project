@@ -5,6 +5,7 @@ import com.quickpitik.dto.email.ResendSendEmailRequest
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
+import java.math.BigDecimal
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
@@ -142,6 +143,29 @@ class EmailService(
         log.info("Photos-ready email sent · to={} resendId={}", toEmail, response.id)
     }
 
+    // PayMongo refund transfer link for a parked QR Ph dispute. Sent AFTER_COMMIT + async via RefundLinkSentEmailListener.
+    // A failure is logged and dropped: the runner's inbox message is the durable copy and the admin can resend.
+    fun sendRefundLinkEmail(toEmail: String, url: String, amountPhp: BigDecimal) {
+        if (devMode) {
+            log.info("[EMAIL STUB] refund link for {} — link: {}", toEmail, url)
+            return
+        }
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        try {
+            val response = resendClient.send(
+                ResendSendEmailRequest(
+                    from = sender,
+                    to = listOf(toEmail),
+                    subject = "Your QuickPitik refund link",
+                    html = renderRefundLinkHtml(url, amountPhp),
+                ),
+            )
+            log.info("Refund-link email sent · to={} resendId={}", toEmail, response.id)
+        } catch (ex: Exception) {
+            log.error("Refund-link email failed · to={} err={}", toEmail, ex.message, ex)
+        }
+    }
+
     // Security alert to the account OWNER (their registered email — never the new
     // payout number) when a payout destination changes. Sent AFTER_COMMIT + async
     // via PayoutAccountChangedEmailListener. Failures are logged and dropped like
@@ -277,6 +301,59 @@ class EmailService(
         </td></tr>
       </table>
       <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
+    private fun renderRefundLinkHtml(url: String, amountPhp: BigDecimal): String {
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>Your QuickPitik refund link</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Your refund
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:32px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.05;color:#1a1a1a;">
+            Your refund is ready.
+          </h1>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 28px;">
+            We approved your refund of <strong style="font-variant-numeric:tabular-nums;">&#8369;${escapeHtml(amountPhp.toPlainString())}</strong>.
+            Tap below to claim it through PayMongo.
+          </p>
+
+          <table cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+            <tr><td style="padding:6px 0;">
+              <a href="${escapeHtml(url)}"
+                 style="display:inline-block;background:#3b8c5f;color:#fafaf6;
+                        text-decoration:none;padding:16px 32px;border-radius:999px;
+                        font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+                        text-transform:uppercase;letter-spacing:0.2em;font-size:13px;
+                        font-weight:500;">
+                Claim my refund  &rarr;
+              </a>
+            </td></tr>
+          </table>
+
+          <p style="font-size:14px;line-height:1.6;color:#3a3a3a;margin:0 0 24px;">
+            The link works for 3 days.
+          </p>
+
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />
+
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            The same link is in your QuickPitik inbox. If you did not ask for a refund, you can ignore this email.
+          </p>
+        </td></tr>
+      </table>
+      <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.25em;font-size:10px;color:#9a9a9a;margin:20px 0 0;">
         QuickPitik · Cebu, Philippines
       </p>
     </td></tr>
