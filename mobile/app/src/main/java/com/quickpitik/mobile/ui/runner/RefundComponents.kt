@@ -576,9 +576,10 @@ private fun TimelineLine(label: String, timestamp: String?) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(label, style = Typography.bodySmall, color = SlateSoft)
+        // A long label wraps in the space the time leaves; the time keeps one line.
+        Text(label, style = Typography.bodySmall, color = SlateSoft, modifier = Modifier.weight(1f, fill = false))
         if (timestamp != null) {
-            Text(timestamp, style = Typography.bodySmall, color = Slate)
+            Text(timestamp, style = Typography.bodySmall, color = Slate, maxLines = 1)
         }
     }
 }
@@ -685,14 +686,17 @@ fun RefundRequestDialog(
                                             text = "Photo ${index + 1}",
                                             style = Typography.bodyMedium,
                                             color = if (isLocked) SlateSoft else Ink,
-                                            modifier = Modifier.weight(1f),
+                                            maxLines = 1,
                                         )
                                         if (isLocked && lockedDispute != null) {
+                                            // A long refund label wraps in the space left, so "Photo N" stays readable.
                                             Text(
                                                 text = refundStatusLabel(lockedDispute)
                                                     ?: "Refund ${refundChipLabel(lockedDispute.status)}",
                                                 style = Typography.labelSmall,
-                                                color = Slate
+                                                color = Slate,
+                                                textAlign = TextAlign.End,
+                                                modifier = Modifier.weight(1f),
                                             )
                                         }
                                     }
