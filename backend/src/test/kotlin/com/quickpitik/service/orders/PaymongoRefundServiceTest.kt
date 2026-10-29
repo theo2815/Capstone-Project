@@ -18,6 +18,7 @@ import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.OrderStatus
+import com.quickpitik.entity.RunnerMessageKind
 import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
@@ -324,6 +325,89 @@ class PaymongoRefundServiceTest {
         assertEquals("succeeded", h.dispute.refundStatus)
     }
 
+    private val qrphRefusal = "PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead."
+
+    @Test
+    fun `approving a whole QR Ph payment parks it for a manual refund and never calls PayMongo`() {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test")
+        val decision = AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_sent_to_manual_review")
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(decision)
+
+        h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, "  QR Ph  ")
+
+        Mockito.verifyNoInteractions(h.client)
+        assertEquals("manual_review", h.dispute.refundStatus)
+        assertEquals(DisputeStatus.ESCALATED, h.dispute.status)
+        assertEquals(h.adminId, h.dispute.refundRequestedBy)
+        assertEquals(BigDecimal("127.50"), h.dispute.refundAmountPhp)
+        assertEquals("QR Ph", h.dispute.refundReason)
+        Mockito.verify(h.decisions, Mockito.times(1)).logDisputeDecision(
+            h.adminId,
+            h.dispute.id,
+            "refund_sent_to_manual_review",
+            null,
+            mapOf("requestedResolution" to "refund_full", "refundAmount" to "127.50"),
+            null,
+        )
+        Mockito.verifyNoMoreInteractions(h.decisions)
+        Mockito.verify(h.runnerMessages).pushMessage(
+            h.runnerId,
+            RunnerMessageKind.ADMIN_MESSAGE,
+            "Your refund of PHP 127.50 was approved. We will send you a PayMongo link to claim it.",
+            h.adminId,
+            decision.id,
+            h.order.id,
+            "Refund approved",
+        )
+        Mockito.verifyNoMoreInteractions(h.runnerMessages)
+        Mockito.verifyNoInteractions(h.minting)
+        Mockito.verifyNoInteractions(h.grants)
+    }
+
+    @Test
+    fun `a partial refund of a QR Ph payment is refused because the dashboard cannot do partial refunds`() {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test")
+
+        val error = assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_PARTIAL, BigDecimal("63.75"), null)
+        }
+
+        assertEquals(qrphRefusal, error.message)
+        assertRefusedWithoutChanges(h)
+    }
+
+    @Test
+    fun `a full refund of one photo is refused when the QR Ph checkout paid for more`() {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", siblingPaymentPhp = BigDecimal("100.00"))
+
+        val error = assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals(qrphRefusal, error.message)
+        assertRefusedWithoutChanges(h)
+    }
+
+    private fun assertRefusedWithoutChanges(h: CouponHarness) {
+        Mockito.verify(h.disputes, Mockito.never()).save(h.dispute)
+        assertEquals(null, h.dispute.refundStatus)
+        assertEquals(DisputeStatus.OPEN, h.dispute.status)
+        Mockito.verifyNoInteractions(h.client)
+        Mockito.verifyNoInteractions(h.decisions)
+        Mockito.verifyNoInteractions(h.runnerMessages)
+    }
+
+    @Test
+    fun `a payment that is not QR Ph still asks PayMongo to refund`() {
+        val h = couponHarness(method = PaymentMethod.GCASH)
+
+        h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+
+        Mockito.verify(h.client, Mockito.times(1)).createRefund(anyArg(), anyArg())
+        assertEquals("succeeded", h.dispute.refundStatus)
+    }
+
     private class CouponHarness(
         val service: PaymongoRefundService,
         val adminId: UUID,
@@ -334,6 +418,9 @@ class PaymongoRefundServiceTest {
         val minting: TransactionMintingService,
         val disputes: DisputeRepository,
         val decisions: AdminDecisionLogService,
+        val runnerMessages: RunnerMessagesService,
+        val grants: DownloadGrantRepository,
+        val runnerId: UUID,
         val sentRequestRef: () -> PaymongoRefundRequest?,
     ) {
         val sentRequest: PaymongoRefundRequest? get() = sentRequestRef()
@@ -343,6 +430,8 @@ class PaymongoRefundServiceTest {
         providerAmount: Long = 12_750L,
         providerRef: String = "cs_test",
         providerPaymentId: String? = "pay_test",
+        method: PaymentMethod = PaymentMethod.GCASH,
+        siblingPaymentPhp: BigDecimal? = null,
     ): CouponHarness {
         val adminId = UUID.randomUUID()
         val photographerId = UUID.randomUUID()
@@ -351,12 +440,13 @@ class PaymongoRefundServiceTest {
         val order = Order(
             eventId = photo.eventId,
             recipientEmail = "runner@example.com",
-            paymentMethodWire = PaymentMethod.GCASH.wire,
+            paymentMethodWire = method.wire,
             status = OrderStatus.FULFILLED,
             totalPhp = BigDecimal("127.50"),
             couponCode = "PHOTO20",
         )
-        val dispute = Dispute(orderId = order.id, photoId = photo.id, reasonWire = "other")
+        val runnerId = UUID.randomUUID()
+        val dispute = Dispute(orderId = order.id, photoId = photo.id, runnerId = runnerId, reasonWire = "other")
         val payment = Payment(
             orderId = order.id,
             provider = "paymongo",
@@ -379,6 +469,13 @@ class PaymongoRefundServiceTest {
             listOf(OrderItem(OrderItemId(order.id, photo.id), photo.pricePhp, discountPhp = BigDecimal("22.50"))),
         )
         Mockito.`when`(payments.findByOrderId(order.id)).thenReturn(listOf(payment))
+        // One QR Ph payment covers the whole checkout: a sibling order's row shares the same pi_ reference.
+        val sibling = siblingPaymentPhp?.let {
+            Payment(orderId = UUID.randomUUID(), provider = "paymongo", providerRef = providerRef, amountPhp = it, status = PaymentStatus.SUCCEEDED)
+        }
+        Mockito.`when`(payments.findAllByProviderAndProviderRef("paymongo", providerRef))
+            .thenReturn(listOfNotNull(payment, sibling))
+        Mockito.`when`(orders.findById(order.id)).thenReturn(Optional.of(order))
         Mockito.`when`(orders.findByIdForUpdate(order.id)).thenReturn(order)
         Mockito.`when`(photos.findById(photo.id)).thenReturn(Optional.of(photo))
         var sentRequest: PaymongoRefundRequest? = null
@@ -398,20 +495,25 @@ class PaymongoRefundServiceTest {
         Mockito.`when`(
             decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()),
         ).thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "resolved"))
+        val grants = Mockito.mock(DownloadGrantRepository::class.java)
+        val runnerMessages = Mockito.mock(RunnerMessagesService::class.java)
         val service = PaymongoRefundService(
             disputes,
             orders,
             items,
             payments,
-            Mockito.mock(DownloadGrantRepository::class.java),
+            grants,
             photos,
             minting,
             client,
             decisions,
-            Mockito.mock(RunnerMessagesService::class.java),
+            runnerMessages,
             testTransactionTemplate(),
         )
-        return CouponHarness(service, adminId, dispute, order, photographerId, client, minting, disputes, decisions) { sentRequest }
+        return CouponHarness(
+            service, adminId, dispute, order, photographerId, client, minting, disputes, decisions,
+            runnerMessages, grants, runnerId,
+        ) { sentRequest }
     }
     @Test
     fun `successful full refund uses PayMongo then revokes the grant`() {

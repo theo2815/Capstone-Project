@@ -75,6 +75,40 @@ class RefundServiceTest {
     }
 
     @Test
+    fun `a refund parked for the admin to make by hand cannot be withdrawn`() {
+        val runnerId = UUID.randomUUID()
+        val dispute = Dispute(
+            orderId = UUID.randomUUID(),
+            photoId = UUID.randomUUID(),
+            runnerId = runnerId,
+            reasonWire = "other",
+        ).apply {
+            status = DisputeStatus.ESCALATED
+            refundStatus = "manual_review"
+            refundAmountPhp = BigDecimal("125.00")
+        }
+        val disputes = Mockito.mock(DisputeRepository::class.java)
+        Mockito.`when`(disputes.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        val service = RefundService(
+            Mockito.mock(OrderRepository::class.java),
+            Mockito.mock(OrderItemRepository::class.java),
+            disputes,
+            Mockito.mock(AdminDecisionLogRepository::class.java),
+            Mockito.mock(ApplicationEventPublisher::class.java),
+            PlatformProperties(),
+            Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(UserRepository::class.java),
+            Clock.systemUTC(),
+        )
+
+        val error = assertFailsWith<ApiException> { service.withdraw(runnerId, dispute.id) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.ESCALATED, dispute.status)
+        Mockito.verify(disputes, Mockito.never()).save(dispute)
+    }
+
+    @Test
     fun `a withdrawn dispute keeps the last real note, not the manual review hand-off`() {
         val runnerId = UUID.randomUUID()
         val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")

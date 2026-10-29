@@ -12,6 +12,7 @@ import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.Payment
+import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.RunnerMessageKind
@@ -67,7 +68,7 @@ class PaymongoRefundService(
         val prepared = transactionTemplate.execute {
             prepare(adminId, disputeId, resolution, requestedAmount, reason)
         } ?: error("Refund preparation returned null")
-        if (!prepared.completed) process(prepared, reportFailure = true)
+        if (!prepared.completed && !prepared.parked) process(prepared, reportFailure = true)
     }
 
     fun handleWebhook(providerRefundId: String, status: String): Boolean =
@@ -135,14 +136,42 @@ class PaymongoRefundService(
 
         // TIMESTAMPTZ keeps microseconds; store what the database will give back (INC-12).
         val now = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS)
+        // QR Ph payments cannot be refunded through the API. PayMongo's dashboard refunds a whole payment
+        // only, and one payment covers the whole checkout, so approval needs the refund to equal that total.
+        val qrph = orderRepository.findById(dispute.orderId).orElse(null)?.paymentMethod == PaymentMethod.QRPH
+        if (qrph) {
+            val checkoutTotal = paymentRepository.findAllByProviderAndProviderRef(PAYMONGO, providerRef)
+                .fold(BigDecimal.ZERO) { sum, it -> sum + it.amountPhp }
+            if (amount.compareTo(checkoutTotal) != 0) {
+                throw checkoutConflict(
+                    "PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead.",
+                )
+            }
+        }
         dispute.resolution = resolution
         dispute.refundAmountPhp = amount
-        dispute.refundStatus = REQUESTING
+        dispute.refundStatus = if (qrph) MANUAL_REVIEW else REQUESTING
         dispute.refundRequestedAt = now
         dispute.refundRequestedBy = adminId
         dispute.refundReason = reason?.trim()?.takeIf { it.isNotEmpty() }
         dispute.providerRefundId = null
+        if (qrph) dispute.status = DisputeStatus.ESCALATED
         disputeRepository.save(dispute)
+        if (qrph) {
+            val decision = logManualReviewHandoff(adminId, dispute)
+            dispute.runnerId?.let { runnerId ->
+                runnerMessagesService.pushMessage(
+                    runnerId = runnerId,
+                    kind = RunnerMessageKind.ADMIN_MESSAGE,
+                    title = "Refund approved",
+                    body = "Your refund of PHP ${amount.toPlainString()} was approved. " +
+                        "We will send you a PayMongo link to claim it.",
+                    sourceAdminId = adminId,
+                    sourceDecisionId = decision.id,
+                    orderId = dispute.orderId,
+                )
+            }
+        }
         return PreparedRefund(
             disputeId = dispute.id,
             paymentId = payment.providerPaymentId,
@@ -150,6 +179,7 @@ class PaymongoRefundService(
             amount = amount,
             requestedAt = now,
             providerRefundId = null,
+            parked = qrph,
         )
     }
 
@@ -261,23 +291,24 @@ class PaymongoRefundService(
                 dispute.refundStatus = MANUAL_REVIEW
                 dispute.status = DisputeStatus.ESCALATED
                 disputeRepository.save(dispute)
-                // Reason stays null: no money has moved yet, and the admin's dispute history shows a reason as a note.
-                // The meta key is not "resolution" (the admin history reads that as a final outcome).
-                dispute.refundRequestedBy?.let { adminId ->
-                    adminDecisionLogService.logDisputeDecision(
-                        adminId = adminId,
-                        targetDisputeId = dispute.id,
-                        decision = REFUND_SENT_TO_MANUAL_REVIEW,
-                        reason = null,
-                        meta = mapOf(
-                            "requestedResolution" to dispute.resolution?.wire,
-                            "refundAmount" to dispute.refundAmountPhp?.toPlainString(),
-                        ),
-                    )
-                }
+                dispute.refundRequestedBy?.let { logManualReviewHandoff(it, dispute) }
             }
         }
     }
+
+    // Reason stays null: no money has moved yet, and the admin's dispute history shows a reason as a note.
+    // The meta key is not "resolution" (the admin history reads that as a final outcome).
+    private fun logManualReviewHandoff(adminId: UUID, dispute: Dispute) =
+        adminDecisionLogService.logDisputeDecision(
+            adminId = adminId,
+            targetDisputeId = dispute.id,
+            decision = REFUND_SENT_TO_MANUAL_REVIEW,
+            reason = null,
+            meta = mapOf(
+                "requestedResolution" to dispute.resolution?.wire,
+                "refundAmount" to dispute.refundAmountPhp?.toPlainString(),
+            ),
+        )
 
     private fun recoverPaymentId(prepared: PreparedRefund): String {
         val paymentId = if (prepared.providerRef.startsWith("pi_")) {
@@ -414,6 +445,8 @@ class PaymongoRefundService(
         val requestedAt: OffsetDateTime,
         val providerRefundId: String?,
         val completed: Boolean = false,
+        // Parked for a manual refund in PayMongo's dashboard: nothing to send to the API.
+        val parked: Boolean = false,
     )
 
     private companion object {
