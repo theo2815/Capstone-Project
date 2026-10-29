@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -171,6 +171,19 @@ describe("manual refund panel", () => {
     expect(screen.getByText("pay_abc123")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument();
+  });
+
+  it("releases the drawer Escape when the panel disappears with the confirm open", async () => {
+    const user = userEvent.setup();
+    fixtures.search = `row=${parked.id}`;
+    render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
+    const drawer = await screen.findByRole("dialog");
+    await user.click(within(drawer).getByRole("button", { name: "Mark refunded" }));
+    act(() => { client.setQueryData(adminDisputeKeys.list(admin.id), [{ ...parked, status: "resolved", refundStatus: "succeeded" }]); });
+    await waitFor(() => expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument());
+    await user.keyboard("{Escape}");
+    expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("needs the confirm step before Mark refunded calls the API", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useDisputeActions } from "@/hooks/use-admin-disputes";
@@ -29,11 +29,12 @@ export function AdminRefundPanel({
   const busy = isPending(dispute.id);
   const [url, setUrl] = useState("");
   const [replacing, setReplacing] = useState(false);
-  const [confirmOpen, setConfirmOpenState] = useState(false);
-  function setConfirmOpen(open: boolean) {
-    setConfirmOpenState(open);
-    onConfirmOpenChange?.(open);
-  }
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // The cleanup also clears the host flag if the panel unmounts with the confirm open.
+  useEffect(() => {
+    onConfirmOpenChange?.(confirmOpen);
+    return () => onConfirmOpenChange?.(false);
+  }, [confirmOpen, onConfirmOpenChange]);
 
   const savedLink = dispute.refundLinkUrl;
   const showField = !savedLink || replacing;
