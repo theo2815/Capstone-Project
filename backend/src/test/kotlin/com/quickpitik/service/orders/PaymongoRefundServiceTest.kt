@@ -46,6 +46,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.web.client.HttpClientErrorException
 import java.math.BigDecimal
 import java.time.Clock
+import java.time.Duration
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
@@ -443,6 +444,8 @@ class PaymongoRefundServiceTest {
         siblingPaymentPhp: BigDecimal? = null,
         prefixes: List<String> = listOf(linkPrefix),
         clock: Clock = Clock.systemUTC(),
+        window: Duration = Duration.ofDays(30),
+        validity: Duration = Duration.ofDays(3),
     ): CouponHarness {
         val adminId = UUID.randomUUID()
         val photographerId = UUID.randomUUID()
@@ -521,7 +524,7 @@ class PaymongoRefundServiceTest {
             decisions,
             runnerMessages,
             testTransactionTemplate(),
-            PaymongoProperties(refundLinkAllowedPrefixes = prefixes),
+            PaymongoProperties(refundLinkAllowedPrefixes = prefixes, qrphRefundWindow = window, refundLinkValidity = validity),
             events,
             clock,
         )
@@ -676,8 +679,12 @@ class PaymongoRefundServiceTest {
     private val linkPrefix = "https://transfer.test/"
     private val sentLink = "https://transfer.test/abc123"
 
-    private fun parkedHarness(prefixes: List<String> = listOf(linkPrefix)): CouponHarness {
-        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", prefixes = prefixes)
+    private fun parkedHarness(
+        prefixes: List<String> = listOf(linkPrefix),
+        clock: Clock = Clock.systemUTC(),
+        validity: Duration = Duration.ofDays(3),
+    ): CouponHarness {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", prefixes = prefixes, clock = clock, validity = validity)
         h.dispute.refundStatus = "manual_review"
         h.dispute.status = DisputeStatus.ESCALATED
         h.dispute.refundAmountPhp = BigDecimal("127.50")
@@ -718,9 +725,69 @@ class PaymongoRefundServiceTest {
             "Your refund link is ready",
         )
         Mockito.verifyNoMoreInteractions(h.runnerMessages)
-        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50")))
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50"), 3))
         Mockito.verifyNoMoreInteractions(h.events)
         Mockito.verifyNoInteractions(h.client)
+    }
+
+    @Test
+    fun `the link message and mail use the configured number of days`() {
+        val h = parkedHarness(validity = Duration.ofDays(5))
+        val decision = AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_link_sent")
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(decision)
+
+        h.service.sendRefundLink(h.adminId, h.dispute.id, sentLink)
+
+        Mockito.verify(h.runnerMessages).pushMessage(
+            h.runnerId,
+            RunnerMessageKind.ADMIN_MESSAGE,
+            "Claim your refund of PHP 127.50 with this PayMongo link: $sentLink The link works for 5 days.",
+            h.adminId,
+            decision.id,
+            h.order.id,
+            "Your refund link is ready",
+        )
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50"), 5))
+    }
+
+    @Test
+    fun `the link time comes from the clock and a link is refused once PayMongo's window has closed`() {
+        val closes = paidOn.plusDays(30)
+        val before = closes.minusNanos(1_000)
+        val h = parkedHarness(clock = at(before))
+        h.order.paidAt = paidOn
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_link_sent"))
+
+        h.service.sendRefundLink(h.adminId, h.dispute.id, sentLink)
+
+        assertEquals(before.toInstant(), assertNotNull(h.dispute.refundLinkSentAt).toInstant())
+
+        val late = parkedHarness(clock = at(closes))
+        late.order.paidAt = paidOn
+        val error = assertFailsWith<ConflictException> { late.service.sendRefundLink(late.adminId, late.dispute.id, sentLink) }
+        assertEquals("PayMongo's refund window for this payment has closed, so a refund link can no longer be sent.", error.message)
+        assertNothingSavedOrSent(late)
+    }
+
+    @Test
+    fun `sending the same link again changes nothing, even after the window has closed`() {
+        val sentAt = paidOn.plusDays(1)
+        listOf(at(paidOn.plusDays(2)), at(paidOn.plusDays(31))).forEach { clock ->
+            val h = parkedHarness(clock = clock)
+            h.order.paidAt = paidOn
+            h.dispute.refundLinkUrl = sentLink
+            h.dispute.refundLinkSentAt = sentAt
+
+            h.service.sendRefundLink(h.adminId, h.dispute.id, "  $sentLink ")
+
+            assertEquals(sentAt, h.dispute.refundLinkSentAt)
+            Mockito.verify(h.disputes, Mockito.never()).save(Mockito.any(Dispute::class.java))
+            Mockito.verifyNoInteractions(h.decisions)
+            Mockito.verifyNoInteractions(h.runnerMessages)
+            Mockito.verifyNoInteractions(h.events)
+        }
     }
 
     @Test
@@ -740,8 +807,8 @@ class PaymongoRefundServiceTest {
             .logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
         Mockito.verify(h.runnerMessages, Mockito.times(2))
             .pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
-        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50")))
-        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, second, BigDecimal("127.50")))
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50"), 3))
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, second, BigDecimal("127.50"), 3))
     }
 
     @Test
@@ -767,7 +834,7 @@ class PaymongoRefundServiceTest {
 
         assertEquals(sentLink, h.dispute.refundLinkUrl)
         Mockito.verifyNoInteractions(h.runnerMessages)
-        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50")))
+        Mockito.verify(h.events).publishEvent(RefundLinkSentEvent(h.order.id, sentLink, BigDecimal("127.50"), 3))
     }
 
     @Test
@@ -984,8 +1051,8 @@ class PaymongoRefundServiceTest {
     private fun at(time: OffsetDateTime): Clock = Clock.fixed(time.toInstant(), ZoneOffset.UTC)
 
     // A parked QR Ph refund paid on Oct 1 (window closes Oct 31); the query hands back the dispute whatever the time.
-    private fun cancelHarness(now: OffsetDateTime, linkSentAt: OffsetDateTime? = null): CouponHarness {
-        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", clock = at(now))
+    private fun cancelHarness(now: OffsetDateTime, linkSentAt: OffsetDateTime? = null, window: Duration = Duration.ofDays(30)): CouponHarness {
+        val h = couponHarness(method = PaymentMethod.QRPH, providerRef = "pi_test", clock = at(now), window = window)
         h.order.paidAt = paidOn
         h.dispute.refundStatus = "manual_review"
         h.dispute.status = DisputeStatus.ESCALATED
@@ -1068,6 +1135,21 @@ class PaymongoRefundServiceTest {
         )
         Mockito.verifyNoInteractions(h.client)
         Mockito.verifyNoInteractions(h.minting)
+    }
+
+    @Test
+    fun `the cancel reason names the configured window`() {
+        val h = cancelHarness(paidOn.plusDays(20), window = Duration.ofDays(20))
+        Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(AdminDecisionLog(adminId = h.adminId, targetDisputeId = h.dispute.id, decision = "refund_cancelled"))
+
+        h.service.autoCancelExpiredRefunds()
+
+        Mockito.verify(h.decisions).logDisputeDecision(
+            h.adminId, h.dispute.id, "refund_cancelled",
+            "PayMongo's 20-day refund window closed before the refund was completed.",
+            mapOf("auto" to true, "refundAmount" to "127.50"), null,
+        )
     }
 
     @Test

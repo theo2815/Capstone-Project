@@ -10,6 +10,7 @@ import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.REFUND_LINK_SENT
 import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.common.ErrorCodes
@@ -120,6 +121,7 @@ class RefundServiceTest {
         val log = Mockito.mock(AdminDecisionLogRepository::class.java)
         Mockito.`when`(log.findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(dispute.id))).thenReturn(
             listOf(
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_LINK_SENT),
                 AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_SENT_TO_MANUAL_REVIEW),
                 AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = "escalated", reason = "X"),
             ),

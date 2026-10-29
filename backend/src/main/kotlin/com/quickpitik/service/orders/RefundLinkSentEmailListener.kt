@@ -27,6 +27,6 @@ class RefundLinkSentEmailListener(
             log.warn("Refund-link email skipped · order {} not found", event.orderId)
             return
         }
-        emailService.sendRefundLinkEmail(order.recipientEmail, event.url, event.amountPhp)
+        emailService.sendRefundLinkEmail(order.recipientEmail, event.url, event.amountPhp, event.validityDays)
     }
 }

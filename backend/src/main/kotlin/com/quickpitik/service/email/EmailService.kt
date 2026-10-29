@@ -145,7 +145,7 @@ class EmailService(
 
     // PayMongo refund transfer link for a parked QR Ph dispute. Sent AFTER_COMMIT + async via RefundLinkSentEmailListener.
     // A failure is logged and dropped: the runner's inbox message is the durable copy and the admin can resend.
-    fun sendRefundLinkEmail(toEmail: String, url: String, amountPhp: BigDecimal) {
+    fun sendRefundLinkEmail(toEmail: String, url: String, amountPhp: BigDecimal, validityDays: Long) {
         if (devMode) {
             log.info("[EMAIL STUB] refund link for {} — link: {}", toEmail, url)
             return
@@ -157,7 +157,7 @@ class EmailService(
                     from = sender,
                     to = listOf(toEmail),
                     subject = "Your QuickPitik refund link",
-                    html = renderRefundLinkHtml(url, amountPhp),
+                    html = renderRefundLinkHtml(url, amountPhp, validityDays),
                 ),
             )
             log.info("Refund-link email sent · to={} resendId={}", toEmail, response.id)
@@ -309,7 +309,7 @@ class EmailService(
         """.trimIndent()
     }
 
-    private fun renderRefundLinkHtml(url: String, amountPhp: BigDecimal): String {
+    private fun renderRefundLinkHtml(url: String, amountPhp: BigDecimal, validityDays: Long): String {
         return """
 <!DOCTYPE html>
 <html><head><meta charset="utf-8" /><title>Your QuickPitik refund link</title></head>
@@ -343,7 +343,7 @@ class EmailService(
           </table>
 
           <p style="font-size:14px;line-height:1.6;color:#3a3a3a;margin:0 0 24px;">
-            The link works for 3 days.
+            The link works for $validityDays days.
           </p>
 
           <hr style="border:none;border-top:1px solid #e5e2d8;margin:28px 0;" />

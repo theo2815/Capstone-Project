@@ -19,9 +19,9 @@ class RefundLinkSentEmailListenerTest {
         val order = Order(eventId = UUID.randomUUID(), recipientEmail = "runner@example.com", paymentMethodWire = "qrph", totalPhp = BigDecimal("127.50"))
         Mockito.`when`(orders.findById(order.id)).thenReturn(Optional.of(order))
 
-        listener.onRefundLinkSent(RefundLinkSentEvent(order.id, "https://transfer.test/abc", BigDecimal("127.50")))
+        listener.onRefundLinkSent(RefundLinkSentEvent(order.id, "https://transfer.test/abc", BigDecimal("127.50"), 5))
 
-        Mockito.verify(emailService).sendRefundLinkEmail("runner@example.com", "https://transfer.test/abc", BigDecimal("127.50"))
+        Mockito.verify(emailService).sendRefundLinkEmail("runner@example.com", "https://transfer.test/abc", BigDecimal("127.50"), 5)
     }
 
     @Test
@@ -29,7 +29,7 @@ class RefundLinkSentEmailListenerTest {
         val orderId = UUID.randomUUID()
         Mockito.`when`(orders.findById(orderId)).thenReturn(Optional.empty())
 
-        listener.onRefundLinkSent(RefundLinkSentEvent(orderId, "https://transfer.test/abc", BigDecimal("127.50")))
+        listener.onRefundLinkSent(RefundLinkSentEvent(orderId, "https://transfer.test/abc", BigDecimal("127.50"), 5))
 
         Mockito.verifyNoInteractions(emailService)
     }

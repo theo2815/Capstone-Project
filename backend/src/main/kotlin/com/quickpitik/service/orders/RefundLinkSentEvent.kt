@@ -9,4 +9,5 @@ data class RefundLinkSentEvent(
     val orderId: UUID,
     val url: String,
     val amountPhp: BigDecimal,
+    val validityDays: Long,
 )

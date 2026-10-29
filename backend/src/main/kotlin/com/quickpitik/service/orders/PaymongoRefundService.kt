@@ -105,8 +105,17 @@ class PaymongoRefundService(
                 throw checkoutConflict("This dispute is not waiting for a manual refund.")
             }
             val amount = dispute.refundAmountPhp ?: throw checkoutConflict("This dispute has no approved refund amount.")
+            // The same link again (double click, two admins) is a no-op; checked before the window so it never turns into a 409.
+            if (dispute.refundLinkUrl == link) return@executeWithoutResult
+            val now = OffsetDateTime.now(clock)
+            // Each send pushes the auto-cancel date out, but PayMongo refuses refunds after its window.
+            val qrphOrder = orderRepository.findById(dispute.orderId).orElse(null)
+                ?.takeIf { it.paymentMethod == PaymentMethod.QRPH }
+            if (qrphOrder != null && !now.isBefore(paymongoProperties.refundWindowClosesAt(qrphOrder))) {
+                throw checkoutConflict("PayMongo's refund window for this payment has closed, so a refund link can no longer be sent.")
+            }
             dispute.refundLinkUrl = link
-            dispute.refundLinkSentAt = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS)
+            dispute.refundLinkSentAt = now.truncatedTo(ChronoUnit.MICROS)
             disputeRepository.save(dispute)
             // The url in meta is the audit trail: this link goes to a customer.
             val decision = adminDecisionLogService.logDisputeDecision(
@@ -122,13 +131,13 @@ class PaymongoRefundService(
                     kind = RunnerMessageKind.ADMIN_MESSAGE,
                     title = "Your refund link is ready",
                     body = "Claim your refund of PHP ${amount.toPlainString()} with this PayMongo link: $link " +
-                        "The link works for 3 days.",
+                        "The link works for ${paymongoProperties.refundLinkValidity.toDays()} days.",
                     sourceAdminId = adminId,
                     sourceDecisionId = decision.id,
                     orderId = dispute.orderId,
                 )
             }
-            events.publishEvent(RefundLinkSentEvent(dispute.orderId, link, amount))
+            events.publishEvent(RefundLinkSentEvent(dispute.orderId, link, amount, paymongoProperties.refundLinkValidity.toDays()))
         }
     }
 
@@ -212,7 +221,7 @@ class PaymongoRefundService(
             adminId = adminId,
             targetDisputeId = dispute.id,
             decision = REFUND_CANCELLED,
-            reason = "PayMongo's 30-day refund window closed before the refund was completed.",
+            reason = "PayMongo's ${paymongoProperties.qrphRefundWindow.toDays()}-day refund window closed before the refund was completed.",
             meta = mapOf("auto" to true, "refundAmount" to amount.toPlainString()),
         )
         photoRepository.findById(dispute.photoId).map { it.photographerId }.orElse(null)?.let {

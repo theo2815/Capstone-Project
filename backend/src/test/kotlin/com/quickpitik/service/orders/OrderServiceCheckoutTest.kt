@@ -44,6 +44,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.REFUND_LINK_SENT
 import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.CartItemRepository
@@ -201,6 +202,7 @@ class OrderServiceCheckoutTest {
         Mockito.`when`(disputeRepository.findByOrderIdIn(anyArg())).thenReturn(listOf(dispute))
         Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(anyArg())).thenReturn(
             listOf(
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_LINK_SENT),
                 AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_SENT_TO_MANUAL_REVIEW),
                 AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = "escalated", reason = "X"),
             ),
