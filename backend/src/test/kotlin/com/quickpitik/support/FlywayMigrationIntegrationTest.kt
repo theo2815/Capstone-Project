@@ -287,6 +287,32 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // Upgrade rehearsal: staging and production were on V89 when V90 was written.
+    @Test
+    fun `V90 upgrades V89 with two nullable refund link columns on disputes`() {
+        val schema = "refund_link_v90_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "89").migrate()
+            flywayFor(schema, "90").migrate()
+
+            val columns = jdbcTemplate.queryForList(
+                "SELECT column_name, data_type, character_maximum_length, is_nullable " +
+                    "FROM information_schema.columns WHERE table_schema = ? AND table_name = 'disputes' " +
+                    "AND column_name IN ('refund_link_url', 'refund_link_sent_at') ORDER BY column_name",
+                schema,
+            ).map { listOf(it["column_name"], it["data_type"], it["character_maximum_length"], it["is_nullable"]) }
+            assertEquals(
+                listOf(
+                    listOf("refund_link_sent_at", "timestamp with time zone", null, "YES"),
+                    listOf("refund_link_url", "character varying", 500, "YES"),
+                ),
+                columns,
+            )
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
     private fun flywayFor(schema: String, target: String): Flyway = Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration")

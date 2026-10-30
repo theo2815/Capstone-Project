@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminDisputeDto
 import com.quickpitik.dto.admin.DisputeActivityEntry
@@ -18,6 +19,8 @@ import com.quickpitik.entity.Event
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
+import com.quickpitik.entity.Payment
+import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
@@ -32,11 +35,16 @@ import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.OrderItemRepository
+import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.orders.PaymongoRefundService
+import com.quickpitik.service.orders.refundCancelsAt
+import com.quickpitik.service.orders.refundLinkExpiresAt
+import com.quickpitik.service.orders.refundWindowClosesAt
+import com.quickpitik.service.orders.settledPaymongo
 import com.quickpitik.service.storage.StorageService
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -53,6 +61,7 @@ class AdminDisputeService(
     private val disputeRepository: DisputeRepository,
     private val orderRepository: OrderRepository,
     private val orderItemRepository: OrderItemRepository,
+    private val paymentRepository: PaymentRepository,
     private val photoRepository: PhotoRepository,
     private val eventRepository: EventRepository,
     private val userRepository: UserRepository,
@@ -64,6 +73,7 @@ class AdminDisputeService(
     private val runnerMessagesService: RunnerMessagesService,
     private val paymongoRefundService: PaymongoRefundService,
     private val transactionTemplate: TransactionTemplate,
+    private val paymongoProperties: PaymongoProperties,
 ) {
 
     @Transactional(readOnly = true)
@@ -92,6 +102,28 @@ class AdminDisputeService(
             }
             hydrateOne(dispute)
         } ?: error("Refund resolution returned null")
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun sendRefundLink(adminId: UUID, disputeId: UUID, url: String): AdminDisputeDto {
+        paymongoRefundService.sendRefundLink(adminId, disputeId, url)
+        return transactionTemplate.execute {
+            val dispute = disputeRepository.findById(disputeId).orElseThrow {
+                NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+            }
+            hydrateOne(dispute)
+        } ?: error("Refund link returned null")
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun markRefunded(adminId: UUID, disputeId: UUID): AdminDisputeDto {
+        paymongoRefundService.markRefunded(adminId, disputeId)
+        return transactionTemplate.execute {
+            val dispute = disputeRepository.findById(disputeId).orElseThrow {
+                NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+            }
+            hydrateOne(dispute)
+        } ?: error("Mark refunded returned null")
     }
 
     /**
@@ -239,6 +271,9 @@ class AdminDisputeService(
         val itemsById = orderItemRepository
             .findByIdOrderIdIn(disputes.mapTo(mutableSetOf()) { it.orderId })
             .associateBy { it.id }
+        val paymentsByOrder = paymentRepository
+            .findByOrderIdIn(disputes.mapTo(mutableSetOf()) { it.orderId })
+            .groupBy { it.orderId }
         val photosById = photoRepository
             .findAllById(disputes.mapTo(mutableSetOf()) { it.photoId })
             .associateBy { it.id }
@@ -263,6 +298,7 @@ class AdminDisputeService(
                 activity = activityByDispute[d.id].orEmpty(),
                 order = order,
                 orderItem = itemsById[OrderItemId(d.orderId, d.photoId)],
+                payment = paymentsByOrder[d.orderId].orEmpty().settledPaymongo(),
                 photo = photo,
                 runner = d.runnerId?.let { runnersById[it] },
                 photographerSettings = photo?.photographerId?.let { settingsById[it] },
@@ -305,6 +341,7 @@ class AdminDisputeService(
         activity: List<DisputeActivityEntry> = loadActivityForDisputes(listOf(dispute.id))[dispute.id].orEmpty(),
         order: Order? = orderRepository.findById(dispute.orderId).orElse(null),
         orderItem: OrderItem? = orderItemRepository.findById(OrderItemId(dispute.orderId, dispute.photoId)).orElse(null),
+        payment: Payment? = paymentRepository.findByOrderId(dispute.orderId).settledPaymongo(),
         photo: Photo? = photoRepository.findById(dispute.photoId).orElse(null),
         runner: User? = dispute.runnerId?.let { userRepository.findById(it).orElse(null) },
         photographerSettings: PhotographerSettings? =
@@ -323,6 +360,9 @@ class AdminDisputeService(
 
         val eventId = order?.eventId ?: photo?.eventId ?: dispute.orderId // fallback for ghost rows
         val eventName = event?.name
+        val parkedQrph = order?.takeIf {
+            it.paymentMethod == PaymentMethod.QRPH && dispute.refundStatus == "manual_review"
+        }
 
         return AdminDisputeDto(
             id = dispute.id,
@@ -339,6 +379,13 @@ class AdminDisputeService(
             resolvedAt = dispute.resolvedAt?.toString(),
             refundAmount = dispute.refundAmountPhp,
             refundStatus = dispute.refundStatus,
+            paymentId = payment?.providerPaymentId,
+            paymentRef = payment?.providerRef,
+            refundLinkUrl = dispute.refundLinkUrl,
+            refundLinkSentAt = dispute.refundLinkSentAt?.toString(),
+            refundLinkExpiresAt = parkedQrph?.let { paymongoProperties.refundLinkExpiresAt(dispute)?.toString() },
+            refundWindowClosesAt = parkedQrph?.let { paymongoProperties.refundWindowClosesAt(it).toString() },
+            refundCancelsAt = parkedQrph?.let { paymongoProperties.refundCancelsAt(it, dispute).toString() },
             itemChargeAmount = orderItem?.pricePhpAtPurchase?.subtract(orderItem.discountPhp),
             resolution = dispute.resolutionWire,
             orderSnapshot = DisputeOrderSnapshotDto(

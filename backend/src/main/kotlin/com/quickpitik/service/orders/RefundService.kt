@@ -1,6 +1,7 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.RefundDisputeDto
 import com.quickpitik.dto.orders.RefundRequest
@@ -10,11 +11,13 @@ import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeReason
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.OrderStatus
+import com.quickpitik.entity.claimableRefundLinkUrl
 import com.quickpitik.entity.refundNeedsReconciliation
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.entity.REFUND_LINK_SENT
 import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
@@ -44,6 +47,7 @@ class RefundService(
     private val photoRepository: PhotoRepository,
     private val userRepository: UserRepository,
     private val clock: Clock,
+    private val paymongoProperties: PaymongoProperties,
 ) {
     /**
      * POST /api/v1/me/orders/{id}/refund.
@@ -246,7 +250,7 @@ class RefundService(
 
         val latestNote = adminDecisionLogRepository
             .findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(dispute.id))
-            .firstOrNull { it.decision != REFUND_SENT_TO_MANUAL_REVIEW }
+            .firstOrNull { it.decision != REFUND_SENT_TO_MANUAL_REVIEW && it.decision != REFUND_LINK_SENT }
             ?.reason
 
         return RunnerDisputeDto(
@@ -261,6 +265,11 @@ class RefundService(
             openedAt = dispute.openedAt,
             resolvedAt = dispute.resolvedAt,
             withdrawnAt = dispute.withdrawnAt,
+            refundStatus = dispute.refundStatus,
+            refundLinkUrl = dispute.claimableRefundLinkUrl(),
+            refundLinkSentAt = dispute.refundLinkSentAt,
+            refundLinkExpiresAt = dispute.takeIf { it.refundStatus == "manual_review" }
+                ?.let { paymongoProperties.refundLinkExpiresAt(it) },
         )
     }
 }

@@ -14,6 +14,8 @@ import java.util.UUID
 interface PaymentRepository : JpaRepository<Payment, UUID> {
     fun findByOrderId(orderId: UUID): List<Payment>
 
+    fun findByOrderIdIn(orderIds: Collection<UUID>): List<Payment>
+
     fun findByProviderAndProviderRef(provider: String, providerRef: String): Payment?
 
     // Multi-row variant for PayMongo — one Checkout Session covers N orders

@@ -18,6 +18,7 @@ import { AdminResolveDisputeModal } from "@/components/admin/admin-resolve-dispu
 import { AdminRefundConfirmModal } from "@/components/admin/admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "@/components/admin/admin-deny-dispute-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
+import { AdminRefundPanel } from "@/components/admin/admin-refund-panel";
 import { useAdminDisputes, useDisputeActions, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
@@ -90,6 +91,8 @@ export function DisputesQueue() {
   const [resolveOpen, setResolveOpen] = useState(false);
   const [denyOpen, setDenyOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
+  // The Mark refunded confirm lives inside the drawer actions; the drawer must ignore Esc while it is up.
+  const [refundConfirmOpen, setRefundConfirmOpen] = useState(false);
   const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(
     null,
   );
@@ -139,7 +142,7 @@ export function DisputesQueue() {
   );
 
   const drawerEscDisabled =
-    resolveOpen || denyOpen || escalateOpen || pendingResolve !== null;
+    resolveOpen || denyOpen || escalateOpen || pendingResolve !== null || refundConfirmOpen;
 
   // Pagination — load-more model. Open keeps full visibility because
   // that's where the triage flow + J/K nav land. Read-only history slabs
@@ -360,6 +363,7 @@ export function DisputesQueue() {
               onResolve={() => setResolveOpen(true)}
               onDeny={() => setDenyOpen(true)}
               onEscalate={() => setEscalateOpen(true)}
+              onRefundConfirmOpenChange={setRefundConfirmOpen}
             />
           }
         >
@@ -394,6 +398,7 @@ export function DisputesQueue() {
                 amount={pendingResolve.refundAmount}
                 runnerHandle={openRow.runnerHandle}
                 isFull={pendingResolve.resolution === "refund_full"}
+                paymentMethod={openRow.orderSnapshot.paymentMethod}
               />
             )}
           <AdminDenyDisputeModal
@@ -502,22 +507,24 @@ function DisputeDrawerActions({
   onResolve,
   onDeny,
   onEscalate,
+  onRefundConfirmOpenChange,
 }: {
   dispute: Dispute;
   submitting: boolean;
   onResolve: () => void;
   onDeny: () => void;
   onEscalate: () => void;
+  onRefundConfirmOpenChange: (open: boolean) => void;
 }) {
   // Every action needs an open dispute: the server escalates open ones only.
   const isOpen = dispute.status === "open";
 
   if (!isOpen) {
+    // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
+    if (dispute.refundStatus === "manual_review") return <div className="w-full max-h-[50vh] overflow-y-auto p-1"><AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={onRefundConfirmOpenChange} /></div>;
     return (
       <p className="font-sans text-sm text-slate-soft">
-        {dispute.refundStatus === "manual_review"
-          ? "Review the payment in PayMongo before another refund attempt."
-          : "This dispute is closed. No further actions are available."}
+        This dispute is closed. No further actions are available.
       </p>
     );
   }

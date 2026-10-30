@@ -43,12 +43,14 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
     // Counts logical decisions in the window — collapses bulk groups (same
     // group_id) down to one logical decision per Q-A4. Native SQL because
     // JPQL has no clean COALESCE/cast for the group_id-or-id case.
+    // Refund hand-off rows are steps of one refund decision, so neither count includes them.
     @Query(
         value = """
         SELECT COUNT(*) FROM (
             SELECT COALESCE(group_id::text, id::text) AS bucket
             FROM admin_decision_log
             WHERE decided_at >= :from AND decided_at < :to
+              AND decision NOT IN ('refund_sent_to_manual_review', 'refund_link_sent', 'refund_cancelled')
             GROUP BY bucket
         ) t
         """,
@@ -66,6 +68,7 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
                COUNT(DISTINCT COALESCE(group_id::text, id::text)) AS decision_count
         FROM admin_decision_log
         WHERE decided_at >= :from AND decided_at < :to
+          AND decision NOT IN ('refund_sent_to_manual_review', 'refund_link_sent', 'refund_cancelled')
         GROUP BY day
         ORDER BY day
         """,

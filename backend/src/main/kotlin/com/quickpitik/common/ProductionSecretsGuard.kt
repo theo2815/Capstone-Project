@@ -1,13 +1,17 @@
 package com.quickpitik.common
 
+import com.quickpitik.config.PaymongoProperties
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.flyway.FlywayConfigurationCustomizer
 import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Component
+import java.net.URI
+import java.net.URISyntaxException
 
 /**
  * Refuses to boot under the `prod` profile while any secret is still the
- * in-repo dev placeholder, or the origin secret is blank. Dev defaults let
+ * in-repo dev placeholder, the origin secret is blank, or a refund-link
+ * prefix is not an https PayMongo address. Dev defaults let
  * the app run locally, but do not otherwise trip a production runtime error
  * (the JWT placeholder is long enough for jjwt,
  * Resend silently logs instead of sending, LOCAL storage just writes to the
@@ -32,6 +36,7 @@ class ProductionSecretsGuard(
     @Value("\${app.admin.bootstrap-password:}") adminBootstrapPassword: String,
     @Value("\${app.storage.backend}") storageBackend: String,
     @Value("\${app.security.origin-secret}") originSecret: String,
+    paymongoProperties: PaymongoProperties,
 ) : FlywayConfigurationCustomizer {
     override fun customize(configuration: org.flywaydb.core.api.configuration.FluentConfiguration) = Unit
 
@@ -47,6 +52,7 @@ class ProductionSecretsGuard(
             adminBootstrapPassword = adminBootstrapPassword,
             storageBackend = storageBackend,
             originSecret = originSecret,
+            refundLinkAllowedPrefixes = paymongoProperties.refundLinkAllowedPrefixes,
         )
         check(offenders.isEmpty()) {
             "Refusing to start with profile 'prod': invalid values for " +
@@ -69,6 +75,7 @@ class ProductionSecretsGuard(
             adminBootstrapPassword: String,
             storageBackend: String,
             originSecret: String,
+            refundLinkAllowedPrefixes: List<String>,
         ): List<String> = buildList {
             if (PLACEHOLDER in jwtSecret) add("JWT_SECRET")
             if (PLACEHOLDER in orderCapabilitySecret) add("ORDER_CAPABILITY_SECRET")
@@ -80,6 +87,19 @@ class ProductionSecretsGuard(
             if (adminBootstrapPassword == "changeme123") add("ADMIN_BOOTSTRAP_PASSWORD")
             if (!storageBackend.equals("S3", ignoreCase = true)) add("STORAGE_BACKEND")
             if (originSecret.isBlank() || PLACEHOLDER in originSecret) add("ORIGIN_SECRET")
+            if (refundLinkAllowedPrefixes.isEmpty() || !refundLinkAllowedPrefixes.all(::isPaymongoPrefix)) {
+                add("PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES")
+            }
+        }
+
+        // A test host left in production would let admins send runners non-PayMongo refund links.
+        private fun isPaymongoPrefix(prefix: String): Boolean = try {
+            val uri = URI(prefix)
+            val host = uri.host?.lowercase()
+            uri.scheme == "https" && uri.userInfo == null && prefix.endsWith("/") && host != null &&
+                (host == "paymongo.com" || host.endsWith(".paymongo.com"))
+        } catch (_: URISyntaxException) {
+            false
         }
     }
 }

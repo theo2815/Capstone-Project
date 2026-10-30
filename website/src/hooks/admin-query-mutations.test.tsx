@@ -20,6 +20,12 @@ const confirmedDispute: Dispute = {
   resolvedAt: "2026-09-10T01:02:03Z",
   activity: [{ id: "server-log-1", decision: "resolved", resolution: "refund_partial", refundAmount: 25, reason, decidedAt: "2026-09-10T01:02:03Z" }],
 };
+const refundLink = "https://transfer.paymongo.com/abc";
+const linkSentDispute: Dispute = {
+  ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 125, refundStatus: "manual_review",
+  refundLinkUrl: refundLink, refundLinkSentAt: "2026-09-10T01:02:03Z",
+  activity: [{ id: "server-log-2", decision: "refund_link_sent", resolution: null, refundAmount: null, reason: null, decidedAt: "2026-09-10T01:02:03Z" }],
+};
 const confirmedReport: PayoutReport = {
   ...report, status: "resolved", resolutionNote: reason, resolvedAt: "2026-09-10T01:02:03Z",
 };
@@ -39,6 +45,8 @@ function useActionRunner(action: string) {
       case "resolve dispute": return disputes.resolve(dispute.id, resolution);
       case "deny dispute": return disputes.deny(dispute.id, reason);
       case "escalate dispute": return disputes.escalate(dispute.id, reason);
+      case "send refund link": return disputes.sendRefundLink(dispute.id, refundLink);
+      case "mark refunded": return disputes.markRefunded(dispute.id);
       case "acknowledge report": return reports.acknowledge(report.id, reason);
       default: return reports.resolve(report.id, reason);
     }
@@ -49,6 +57,8 @@ const cases = [
   { action: "resolve dispute", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/resolve`, payload: resolution, base: dispute, confirmed: confirmedDispute, domain: "disputes" },
   { action: "deny dispute", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/deny`, payload: { reason }, base: dispute, confirmed: { ...confirmedDispute, status: "denied" as const, resolution: "deny" as const, refundAmount: null }, domain: "disputes" },
   { action: "escalate dispute", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/escalate`, payload: { reason }, base: dispute, confirmed: { ...dispute, status: "escalated" as const, activity: [{ ...confirmedDispute.activity![0], decision: "escalated" as const }] }, domain: "disputes" },
+  { action: "send refund link", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/refund-link`, payload: { url: refundLink }, base: dispute, confirmed: linkSentDispute, domain: "disputes" },
+  { action: "mark refunded", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/mark-refunded`, payload: undefined, base: linkSentDispute, confirmed: { ...linkSentDispute, status: "resolved" as const, refundStatus: "succeeded" }, domain: "disputes" },
   { action: "acknowledge report", method: "fetch" as const, endpoint: `/admin/payouts/reports/${report.id}/acknowledge`, payload: { method: "PATCH", body: JSON.stringify({ reply: reason }) }, base: report, confirmed: { ...report, status: "acknowledged" as const, acknowledgeReply: reason, acknowledgedAt: "2026-09-10T01:02:03Z" }, domain: "reports" },
   { action: "resolve report", method: "fetch" as const, endpoint: `/admin/payouts/reports/${report.id}/resolve`, payload: { method: "PATCH", body: JSON.stringify({ resolutionNote: reason }) }, base: report, confirmed: confirmedReport, domain: "reports" },
 ];
@@ -101,7 +111,7 @@ describe.each(cases)("$action", ({ action, method, endpoint, payload, base, conf
     let operation!: Promise<boolean | Dispute | null>;
     act(() => { operation = result.current(); });
 
-    await waitFor(() => expect(request).toHaveBeenCalledWith(endpoint, payload));
+    await waitFor(() => expect(request).toHaveBeenCalledWith(...(payload === undefined ? [endpoint] : [endpoint, payload])));
     expect(client.getQueryData(listKey)).toEqual([base]);
     expect(useToastStore.getState().toasts).toEqual([]);
     await act(async () => { response.resolve(confirmed); expect(await operation).toEqual(action === "resolve dispute" ? confirmed : true); });
@@ -116,6 +126,19 @@ describe.each(cases)("$action", ({ action, method, endpoint, payload, base, conf
       expect(invalidate).toHaveBeenCalledWith({ queryKey: payoutReportKeys.photographer });
     }
   });
+});
+
+it("shows the backend's reason when a refund link is refused", async () => {
+  vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError(
+    [{ code: "VALIDATION_ERROR", message: "Paste the refund transfer link from the PayMongo dashboard.", field: "url" }], 400,
+  ));
+  const { result } = renderHook(() => useDisputeActions(), { wrapper: Wrapper });
+
+  await act(async () => { expect(await result.current.sendRefundLink(dispute.id, "https://evil.example/x")).toBe(false); });
+
+  expect(useToastStore.getState().toasts).toEqual([
+    expect.objectContaining({ kind: "error", message: "Paste the refund transfer link from the PayMongo dashboard." }),
+  ]);
 });
 
 it("returns the backend dispute from resolve so callers can distinguish pending from refunded", async () => {

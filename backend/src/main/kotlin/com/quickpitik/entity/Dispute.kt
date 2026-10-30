@@ -104,6 +104,12 @@ class Dispute(
     @Column(name = "refund_reason", columnDefinition = "TEXT")
     var refundReason: String? = null,
 
+    @Column(name = "refund_link_url", length = 500)
+    var refundLinkUrl: String? = null,
+
+    @Column(name = "refund_link_sent_at")
+    var refundLinkSentAt: OffsetDateTime? = null,
+
     @Column(name = "opened_at", nullable = false, updatable = false)
     val openedAt: OffsetDateTime = OffsetDateTime.now(),
 
@@ -129,3 +135,6 @@ class Dispute(
 private val UNSETTLED_REFUND_STATUSES = setOf("requesting", "pending", "processing", "manual_review")
 
 fun Dispute.refundNeedsReconciliation(): Boolean = refundStatus in UNSETTLED_REFUND_STATUSES
+
+// The runner may only claim the link while the refund waits for it; afterwards it is spent or cancelled.
+fun Dispute.claimableRefundLinkUrl(): String? = refundLinkUrl.takeIf { refundStatus == "manual_review" }

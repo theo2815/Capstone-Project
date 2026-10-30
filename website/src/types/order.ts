@@ -121,4 +121,10 @@ export interface RunnerDispute {
   openedAt: string;
   resolvedAt: string | null;
   withdrawnAt: string | null;
+  // Manual QR Ph refund: "manual_review" until an admin marks it refunded; the link
+  // is set once the admin sends it. Older responses omit these.
+  refundStatus?: string | null;
+  refundLinkUrl?: string | null;
+  refundLinkSentAt?: string | null;
+  refundLinkExpiresAt?: string | null;
 }

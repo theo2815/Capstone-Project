@@ -11,6 +11,7 @@ interface AdminRefundConfirmModalProps {
   amount: number;
   runnerHandle: string;
   isFull: boolean;
+  paymentMethod: string;
 }
 
 // Stacked confirmation child for the dispute Resolve flow. Mounts on top
@@ -25,6 +26,7 @@ export function AdminRefundConfirmModal({
   amount,
   runnerHandle,
   isFull,
+  paymentMethod,
 }: AdminRefundConfirmModalProps) {
   return (
     <AdminConfirmModal
@@ -46,8 +48,9 @@ export function AdminRefundConfirmModal({
         <span className="text-ink">@{runnerHandle}</span>?
       </p>
       <p className="font-sans text-sm text-slate">
-        The refund goes to the original payment method when the provider confirms it.
-        The dispute then closes.
+        {paymentMethod === "qrph"
+          ? "After you approve, make the refund link in the PayMongo dashboard and send it here. PayMongo's dashboard can only refund the whole payment."
+          : "The refund goes to the original payment method when the provider confirms it. The dispute then closes."}
       </p>
     </AdminConfirmModal>
   );

@@ -23,6 +23,8 @@ export async function fetchPublicPhotographer(
 }
 
 export interface PublicPhotographerPhotosArgs {
+  /** Server-side bib search within this photographer's photos (INC-10). */
+  bib?: string;
   offset?: number;
   limit?: number;
 }
@@ -34,6 +36,7 @@ export async function fetchPublicPhotographerEventPhotos(
   signal?: AbortSignal,
 ): Promise<PaginatedResponse<MockPhoto>> {
   const p = new URLSearchParams();
+  if (args.bib) p.set("bib", args.bib);
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? 24));
   return api.get<PaginatedResponse<MockPhoto>>(

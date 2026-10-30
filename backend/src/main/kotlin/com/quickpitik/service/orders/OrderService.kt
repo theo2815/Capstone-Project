@@ -52,7 +52,9 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.entity.REFUND_LINK_SENT
 import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
+import com.quickpitik.entity.claimableRefundLinkUrl
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.DisputeRepository
@@ -656,7 +658,11 @@ class OrderService(
     fun detailByIdAndToken(orderId: UUID, token: String?): OrderDetailDto {
         val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
         requireValidReturnToken(order, token)
-        return hydrateDetail(order)
+        val detail = hydrateDetail(order)
+        // The receipt token needs no login and lives until tokenExpiresAt; only the logged-in runner may see the refund link.
+        return detail.copy(
+            disputes = detail.disputes.map { it.copy(refundLinkUrl = null, refundLinkSentAt = null, refundLinkExpiresAt = null) },
+        )
     }
 
     private fun resolveRecipientEmail(userId: UUID?, requestEmail: String?): String {
@@ -883,7 +889,7 @@ class OrderService(
             .findByTargetDisputeIdInOrderByDecidedAtDesc(disputes.map { it.id })
             .groupBy { it.targetDisputeId }
             .mapNotNull { (id, rows) ->
-                id?.let { it to rows.firstOrNull { row -> row.decision != REFUND_SENT_TO_MANUAL_REVIEW }?.reason }
+                id?.let { it to rows.firstOrNull { row -> row.decision != REFUND_SENT_TO_MANUAL_REVIEW && row.decision != REFUND_LINK_SENT }?.reason }
             }
             .toMap()
         return disputes.map { dispute ->
@@ -899,6 +905,11 @@ class OrderService(
                 openedAt = dispute.openedAt,
                 resolvedAt = dispute.resolvedAt,
                 withdrawnAt = dispute.withdrawnAt,
+                refundStatus = dispute.refundStatus,
+                refundLinkUrl = dispute.claimableRefundLinkUrl(),
+                refundLinkSentAt = dispute.refundLinkSentAt,
+                refundLinkExpiresAt = dispute.takeIf { it.refundStatus == "manual_review" }
+                    ?.let { paymongoProperties.refundLinkExpiresAt(it) },
             )
         }.groupBy({ it.first }, { it.second })
     }

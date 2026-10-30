@@ -1,16 +1,22 @@
 package com.quickpitik.service.orders
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.common.toCentavos
 import com.quickpitik.dto.orders.PaymongoRefundRequest
 import com.quickpitik.dto.orders.PaymongoRefundRequestAttributes
 import com.quickpitik.dto.orders.PaymongoRefundRequestEnvelope
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.Order
+import com.quickpitik.entity.REFUND_CANCELLED
+import com.quickpitik.entity.REFUND_LINK_SENT
 import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.entity.OrderStatus
+import com.quickpitik.entity.Payment
+import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.RunnerMessageKind
@@ -27,6 +33,7 @@ import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.runner.RunnerMessagesService
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -34,8 +41,12 @@ import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.client.RestClientResponseException
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.net.URI
+import java.net.URISyntaxException
+import java.time.Clock
 import java.time.Duration
 import java.time.OffsetDateTime
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 @Service
@@ -51,6 +62,9 @@ class PaymongoRefundService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val runnerMessagesService: RunnerMessagesService,
     private val transactionTemplate: TransactionTemplate,
+    private val paymongoProperties: PaymongoProperties,
+    private val events: ApplicationEventPublisher,
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -65,7 +79,83 @@ class PaymongoRefundService(
         val prepared = transactionTemplate.execute {
             prepare(adminId, disputeId, resolution, requestedAmount, reason)
         } ?: error("Refund preparation returned null")
-        if (!prepared.completed) process(prepared, reportFailure = true)
+        if (!prepared.completed && !prepared.parked) process(prepared, reportFailure = true)
+    }
+
+    // The admin refunded a parked QR Ph payment in the PayMongo dashboard and pastes the refund transfer link here.
+    // The link is mailed to the runner, so it must start with a configured PayMongo prefix (anti-phishing); that check
+    // runs before the lock. Calling again replaces the link (expired-link case) and tells the runner again.
+    fun sendRefundLink(adminId: UUID, disputeId: UUID, url: String) {
+        val link = url.trim()
+        if (link.isEmpty() || link.length > MAX_REFUND_LINK_LENGTH || link.any { it.isWhitespace() } ||
+            // A prefix must end in "/" or "https://host" would also match "https://host.evil.example".
+            paymongoProperties.refundLinkAllowedPrefixes.none { it.endsWith("/") && link.startsWith(it) } ||
+            !isPlainHttpsUrl(link)
+        ) {
+            throw ValidationException(
+                message = "Paste the refund transfer link from the PayMongo dashboard.",
+                code = ErrorCodes.VALIDATION_ERROR,
+                field = "url",
+            )
+        }
+        transactionTemplate.executeWithoutResult {
+            val dispute = disputeRepository.findByIdForUpdate(disputeId)
+                ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
+            if (dispute.refundStatus != MANUAL_REVIEW) {
+                throw checkoutConflict("This dispute is not waiting for a manual refund.")
+            }
+            val amount = dispute.refundAmountPhp ?: throw checkoutConflict("This dispute has no approved refund amount.")
+            // The same link again (double click, two admins) is a no-op; checked before the window so it never turns into a 409.
+            if (dispute.refundLinkUrl == link) return@executeWithoutResult
+            val now = OffsetDateTime.now(clock)
+            // Each send pushes the auto-cancel date out, but PayMongo refuses refunds after its window.
+            val qrphOrder = orderRepository.findById(dispute.orderId).orElse(null)
+                ?.takeIf { it.paymentMethod == PaymentMethod.QRPH }
+            if (qrphOrder != null && !now.isBefore(paymongoProperties.refundWindowClosesAt(qrphOrder))) {
+                throw checkoutConflict("PayMongo's refund window for this payment has closed, so a refund link can no longer be sent.")
+            }
+            dispute.refundLinkUrl = link
+            dispute.refundLinkSentAt = now.truncatedTo(ChronoUnit.MICROS)
+            disputeRepository.save(dispute)
+            // The url in meta is the audit trail: this link goes to a customer.
+            val decision = adminDecisionLogService.logDisputeDecision(
+                adminId = adminId,
+                targetDisputeId = dispute.id,
+                decision = REFUND_LINK_SENT,
+                reason = null,
+                meta = mapOf("refundLinkUrl" to link),
+            )
+            dispute.runnerId?.let { runnerId ->
+                runnerMessagesService.pushMessage(
+                    runnerId = runnerId,
+                    kind = RunnerMessageKind.ADMIN_MESSAGE,
+                    title = "Your refund link is ready",
+                    body = "Claim your refund of PHP ${amount.toPlainString()} with this PayMongo link: $link " +
+                        "The link works for ${paymongoProperties.refundLinkValidity.toDays()} days.",
+                    sourceAdminId = adminId,
+                    sourceDecisionId = decision.id,
+                    orderId = dispute.orderId,
+                )
+            }
+            events.publishEvent(RefundLinkSentEvent(dispute.orderId, link, amount, paymongoProperties.refundLinkValidity.toDays()))
+        }
+    }
+
+    // PayMongo's dashboard shows the parked payment as Refunded: finish it like an API refund that succeeded.
+    // A second click finds it already completed and changes nothing. The log row names the admin who clicked.
+    fun markRefunded(adminId: UUID, disputeId: UUID) {
+        transactionTemplate.executeWithoutResult {
+            val dispute = disputeRepository.findByIdForUpdate(disputeId)
+                ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
+            if (isCompletedRefund(dispute)) return@executeWithoutResult
+            if (dispute.refundStatus != MANUAL_REVIEW) {
+                throw checkoutConflict("This dispute is not waiting for a manual refund.")
+            }
+            if (dispute.resolution == null || dispute.refundAmountPhp == null) {
+                throw checkoutConflict("This dispute has no approved refund amount.")
+            }
+            completeSucceededRefund(dispute, adminId)
+        }
     }
 
     fun handleWebhook(providerRefundId: String, status: String): Boolean =
@@ -88,6 +178,71 @@ class PaymongoRefundService(
         ).forEach { dispute ->
             val prepared = transactionTemplate.execute { snapshot(dispute.id) } ?: return@forEach
             process(prepared, reportFailure = false)
+        }
+    }
+
+    // Hourly: an approved QR Ph refund nobody finished is cancelled once PayMongo's window and the link's life are both over.
+    @Scheduled(fixedDelayString = "\${app.payments.paymongo.refund-auto-cancel-interval-ms:3600000}")
+    fun autoCancelExpiredRefunds() {
+        val now = OffsetDateTime.now(clock)
+        disputeRepository.findDueForAutoCancel(
+            now.minus(paymongoProperties.qrphRefundWindow),
+            now.minus(paymongoProperties.refundLinkValidity),
+            PageRequest.of(0, BATCH_SIZE),
+        ).forEach { due ->
+            try {
+                transactionTemplate.executeWithoutResult { cancelIfStillDue(due.id) }
+            } catch (ex: Exception) {
+                log.warn("Auto-cancel of refund {} failed: {}", due.id, ex.message)
+            }
+        }
+    }
+
+    // Re-checks everything under the lock: the admin may have finished the refund since the query ran.
+    private fun cancelIfStillDue(disputeId: UUID) {
+        val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: return
+        val adminId = dispute.refundRequestedBy ?: return
+        val amount = dispute.refundAmountPhp ?: return
+        val order = orderRepository.findById(dispute.orderId).orElse(null) ?: return
+        val now = OffsetDateTime.now(clock)
+        if (dispute.refundStatus != MANUAL_REVIEW || order.paymentMethod != PaymentMethod.QRPH ||
+            now.isBefore(paymongoProperties.refundCancelsAt(order, dispute))
+        ) {
+            return
+        }
+        dispute.status = DisputeStatus.DENIED
+        dispute.resolution = DisputeResolution.DENY
+        dispute.refundAmountPhp = null
+        dispute.resolvedAt = now
+        dispute.refundStatus = CANCELLED
+        disputeRepository.save(dispute)
+
+        val decision = adminDecisionLogService.logDisputeDecision(
+            adminId = adminId,
+            targetDisputeId = dispute.id,
+            decision = REFUND_CANCELLED,
+            reason = "PayMongo's ${paymongoProperties.qrphRefundWindow.toDays()}-day refund window closed before the refund was completed.",
+            meta = mapOf("auto" to true, "refundAmount" to amount.toPlainString()),
+        )
+        photoRepository.findById(dispute.photoId).map { it.photographerId }.orElse(null)?.let {
+            adminDecisionLogService.pushMessage(
+                photographerId = it,
+                kind = PhotographerMessageKind.DISPUTE_DENIED,
+                body = "The refund on photo ${dispute.photoId} was cancelled.",
+                sourceAdminId = adminId,
+                sourceDecisionId = decision.id,
+            )
+        }
+        dispute.runnerId?.let { runnerId ->
+            runnerMessagesService.pushMessage(
+                runnerId = runnerId,
+                kind = RunnerMessageKind.DISPUTE_DENIED,
+                body = "Your approved refund of PHP ${amount.toPlainString()} could not be completed because " +
+                    "PayMongo's refund window closed. Please contact QuickPitik support.",
+                sourceAdminId = adminId,
+                sourceDecisionId = decision.id,
+                orderId = dispute.orderId,
+            )
         }
     }
 
@@ -126,21 +281,55 @@ class PaymongoRefundService(
             DisputeResolution.REFUND_PARTIAL -> validatePartialAmount(requestedAmount, charged)
             DisputeResolution.DENY -> error("DENY is not a provider refund")
         }
-        val payment = paymentRepository.findByOrderId(dispute.orderId)
-            .firstOrNull { it.provider == PAYMONGO && it.status == PaymentStatus.SUCCEEDED }
+        val payment = paymentRepository.findByOrderId(dispute.orderId).settledPaymongo()
             ?: throw checkoutConflict("The order has no settled PayMongo payment to refund.")
         val providerRef = payment.providerRef
             ?: throw checkoutConflict("The settled payment has no PayMongo reference.")
 
-        val now = OffsetDateTime.now()
+        // TIMESTAMPTZ keeps microseconds; store what the database will give back (INC-12).
+        val now = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS)
+        // QR Ph payments cannot be refunded through the API. PayMongo's dashboard refunds a whole payment
+        // only, and one payment covers the whole checkout, so approval needs the refund to equal that total.
+        val qrphOrder = orderRepository.findById(dispute.orderId).orElse(null)
+            ?.takeIf { it.paymentMethod == PaymentMethod.QRPH }
+        val qrph = qrphOrder != null
+        if (qrphOrder != null) {
+            // PayMongo's dashboard cannot refund a payment older than its window, so approving would strand the runner.
+            if (!OffsetDateTime.now(clock).isBefore(paymongoProperties.refundWindowClosesAt(qrphOrder))) {
+                throw checkoutConflict("PayMongo's refund window for this payment has closed. Deny this request with a reason instead.")
+            }
+            val checkoutTotal = paymentRepository.findAllByProviderAndProviderRef(PAYMONGO, providerRef)
+                .fold(BigDecimal.ZERO) { sum, it -> sum + it.amountPhp }
+            if (amount.compareTo(checkoutTotal) != 0) {
+                throw checkoutConflict(
+                    "PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead.",
+                )
+            }
+        }
         dispute.resolution = resolution
         dispute.refundAmountPhp = amount
-        dispute.refundStatus = REQUESTING
+        dispute.refundStatus = if (qrph) MANUAL_REVIEW else REQUESTING
         dispute.refundRequestedAt = now
         dispute.refundRequestedBy = adminId
         dispute.refundReason = reason?.trim()?.takeIf { it.isNotEmpty() }
         dispute.providerRefundId = null
+        if (qrph) dispute.status = DisputeStatus.ESCALATED
         disputeRepository.save(dispute)
+        if (qrph) {
+            val decision = logManualReviewHandoff(adminId, dispute)
+            dispute.runnerId?.let { runnerId ->
+                runnerMessagesService.pushMessage(
+                    runnerId = runnerId,
+                    kind = RunnerMessageKind.ADMIN_MESSAGE,
+                    title = "Refund approved",
+                    body = "Your refund of PHP ${amount.toPlainString()} was approved. " +
+                        "We will send you a PayMongo link to claim it.",
+                    sourceAdminId = adminId,
+                    sourceDecisionId = decision.id,
+                    orderId = dispute.orderId,
+                )
+            }
+        }
         return PreparedRefund(
             disputeId = dispute.id,
             paymentId = payment.providerPaymentId,
@@ -148,6 +337,7 @@ class PaymongoRefundService(
             amount = amount,
             requestedAt = now,
             providerRefundId = null,
+            parked = qrph,
         )
     }
 
@@ -207,7 +397,7 @@ class PaymongoRefundService(
             val status = response.data.attributes.status.lowercase()
             transactionTemplate.executeWithoutResult {
                 val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId) ?: return@executeWithoutResult
-                if (isCompletedRefund(dispute) || dispute.refundRequestedAt != prepared.requestedAt) {
+                if (isCompletedRefund(dispute) || dispute.refundRequestedAt?.isEqual(prepared.requestedAt) != true) {
                     return@executeWithoutResult
                 }
                 if (dispute.providerRefundId != null &&
@@ -252,30 +442,31 @@ class PaymongoRefundService(
         transactionTemplate.executeWithoutResult {
             val dispute = disputeRepository.findByIdForUpdate(prepared.disputeId) ?: return@executeWithoutResult
             if (!isCompletedRefund(dispute) &&
-                dispute.refundRequestedAt == prepared.requestedAt &&
+                dispute.refundRequestedAt?.isEqual(prepared.requestedAt) == true &&
                 dispute.providerRefundId == prepared.providerRefundId &&
                 dispute.refundStatus in IN_FLIGHT_STATUSES
             ) {
                 dispute.refundStatus = MANUAL_REVIEW
                 dispute.status = DisputeStatus.ESCALATED
                 disputeRepository.save(dispute)
-                // Reason stays null: no money has moved yet, and the admin's dispute history shows a reason as a note.
-                // The meta key is not "resolution" (the admin history reads that as a final outcome).
-                dispute.refundRequestedBy?.let { adminId ->
-                    adminDecisionLogService.logDisputeDecision(
-                        adminId = adminId,
-                        targetDisputeId = dispute.id,
-                        decision = REFUND_SENT_TO_MANUAL_REVIEW,
-                        reason = null,
-                        meta = mapOf(
-                            "requestedResolution" to dispute.resolution?.wire,
-                            "refundAmount" to dispute.refundAmountPhp?.toPlainString(),
-                        ),
-                    )
-                }
+                dispute.refundRequestedBy?.let { logManualReviewHandoff(it, dispute) }
             }
         }
     }
+
+    // Reason stays null: no money has moved yet, and the admin's dispute history shows a reason as a note.
+    // The meta key is not "resolution" (the admin history reads that as a final outcome).
+    private fun logManualReviewHandoff(adminId: UUID, dispute: Dispute) =
+        adminDecisionLogService.logDisputeDecision(
+            adminId = adminId,
+            targetDisputeId = dispute.id,
+            decision = REFUND_SENT_TO_MANUAL_REVIEW,
+            reason = null,
+            meta = mapOf(
+                "requestedResolution" to dispute.resolution?.wire,
+                "refundAmount" to dispute.refundAmountPhp?.toPlainString(),
+            ),
+        )
 
     private fun recoverPaymentId(prepared: PreparedRefund): String {
         val paymentId = if (prepared.providerRef.startsWith("pi_")) {
@@ -298,7 +489,7 @@ class PaymongoRefundService(
         return paidPaymentId
     }
 
-    private fun completeSucceededRefund(dispute: Dispute) {
+    private fun completeSucceededRefund(dispute: Dispute, adminId: UUID? = dispute.refundRequestedBy) {
         if (dispute.status == DisputeStatus.RESOLVED && dispute.refundedAt != null) return
         val resolution = dispute.resolution ?: return
         val refundAmount = dispute.refundAmountPhp ?: return
@@ -317,7 +508,7 @@ class PaymongoRefundService(
             downloadGrantRepository.deleteById(DownloadGrantId(dispute.orderId, dispute.photoId))
         }
         updateOrderSettlementStatus(dispute.orderId)
-        publishOutcome(dispute, resolution, refundAmount, photo?.photographerId)
+        publishOutcome(dispute, resolution, refundAmount, photo?.photographerId, adminId)
     }
 
     private fun updateOrderSettlementStatus(orderId: UUID) {
@@ -342,8 +533,9 @@ class PaymongoRefundService(
         resolution: DisputeResolution,
         refundAmount: BigDecimal,
         photographerId: UUID?,
+        adminId: UUID?,
     ) {
-        val adminId = dispute.refundRequestedBy ?: return
+        if (adminId == null) return
         val decision = adminDecisionLogService.logDisputeDecision(
             adminId = adminId,
             targetDisputeId = dispute.id,
@@ -368,7 +560,7 @@ class PaymongoRefundService(
             runnerMessagesService.pushMessage(
                 runnerId = runnerId,
                 kind = RunnerMessageKind.DISPUTE_RESOLVED,
-                body = "Your refund has been approved - PHP ${refundAmount.toPlainString()} refunded.",
+                body = "Your refund of PHP ${refundAmount.toPlainString()} is complete.",
                 sourceAdminId = adminId,
                 sourceDecisionId = decision.id,
                 orderId = dispute.orderId,
@@ -398,6 +590,13 @@ class PaymongoRefundService(
         }
     }
 
+    // URI() rejects quotes, angle brackets, backslashes and control characters, which would break out of the e-mail href.
+    private fun isPlainHttpsUrl(link: String): Boolean = try {
+        URI(link).let { it.scheme == "https" && it.userInfo == null }
+    } catch (_: URISyntaxException) {
+        false
+    }
+
     private fun checkoutConflict(message: String): ConflictException =
         ConflictException(message = message, code = ErrorCodes.CONFLICT)
 
@@ -412,6 +611,8 @@ class PaymongoRefundService(
         val requestedAt: OffsetDateTime,
         val providerRefundId: String?,
         val completed: Boolean = false,
+        // Parked for a manual refund in PayMongo's dashboard: nothing to send to the API.
+        val parked: Boolean = false,
     )
 
     private companion object {
@@ -420,8 +621,29 @@ class PaymongoRefundService(
         const val SUCCEEDED = "succeeded"
         const val FAILED = "failed"
         const val MANUAL_REVIEW = "manual_review"
+        const val CANCELLED = "cancelled"
         val IN_FLIGHT_STATUSES = listOf(REQUESTING, "pending", "processing")
         val PROVIDER_RETRY_WINDOW: Duration = Duration.ofHours(23)
         const val BATCH_SIZE = 100
+        const val MAX_REFUND_LINK_LENGTH = 500
     }
 }
+
+// When PayMongo stops refunding this order's payment: paid time (or creation time, if unpaid) plus the window.
+internal fun PaymongoProperties.refundWindowClosesAt(order: Order): OffsetDateTime =
+    (order.paidAt ?: order.createdAt).plus(qrphRefundWindow)
+
+// When the link an admin sent stops working; null if none was sent.
+internal fun PaymongoProperties.refundLinkExpiresAt(dispute: Dispute): OffsetDateTime? =
+    dispute.refundLinkSentAt?.plus(refundLinkValidity)
+
+// When an unfinished QR Ph refund is cancelled: the later of the window closing and the link expiring.
+internal fun PaymongoProperties.refundCancelsAt(order: Order, dispute: Dispute): OffsetDateTime {
+    val windowCloses = refundWindowClosesAt(order)
+    val linkExpires = refundLinkExpiresAt(dispute)
+    return if (linkExpires != null && linkExpires.isAfter(windowCloses)) linkExpires else windowCloses
+}
+
+// The order's settled PayMongo payment: the one a refund targets.
+internal fun Iterable<Payment>.settledPaymongo(): Payment? =
+    firstOrNull { it.provider == "paymongo" && it.status == PaymentStatus.SUCCEEDED }

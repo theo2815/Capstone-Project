@@ -100,6 +100,8 @@ const DECISION_LABEL: Record<string, string> = {
   "force-edited": "Force-edited",
   reset: "Reset",
   messaged: "Messaged",
+  refund_sent_to_manual_review: "Refund approved, waiting for PayMongo",
+  refund_cancelled: "Refund cancelled: window closed",
 };
 
 // Known user decisions keep their label; other codes (PAYOUT_MARKED_PAID) read as a sentence.

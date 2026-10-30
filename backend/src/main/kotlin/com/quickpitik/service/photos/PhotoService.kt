@@ -224,10 +224,11 @@ class PhotoService(
         // same URL for the free public gallery.
         fun freeDownloadUrl(apiBaseUrl: String, photo: Photo): String =
             "${apiBaseUrl.trimEnd('/')}/events/${photo.eventId}/photos/${photo.id}/download"
-    }
 
-    private fun normalizeBib(raw: String?): String {
-        if (raw.isNullOrBlank()) return ""
-        return raw.removePrefix("B-").removePrefix("b-").trim().uppercase().filter { it.isLetterOrDigit() }
+        // Shared with the photographer gallery's bib search (INC-10).
+        fun normalizeBib(raw: String?): String {
+            if (raw.isNullOrBlank()) return ""
+            return raw.removePrefix("B-").removePrefix("b-").trim().uppercase().filter { it.isLetterOrDigit() }
+        }
     }
 }

@@ -1,5 +1,8 @@
 package com.quickpitik.mobile.ui.runner
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -44,8 +47,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -60,12 +65,14 @@ import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.GhostCta
 import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.InkSoft
 import com.quickpitik.mobile.ui.theme.Kicker
 import com.quickpitik.mobile.ui.theme.Line
 import com.quickpitik.mobile.ui.theme.PrimaryCta
 import com.quickpitik.mobile.ui.theme.QpCardShape
+import com.quickpitik.mobile.ui.theme.QuickPitikMobileTheme
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.SuccessGreen
@@ -98,9 +105,9 @@ val REFUND_POLICY_BULLETS: List<Pair<String, String>> = listOf(
     "Accepted reasons" to
         "Wrong runner in the photo, photo quality too low to use, order paid but never delivered, or you were charged twice for the same order. Anything else, pick Other and tell us what happened.",
     "Review time" to
-        "We review every request within $REFUND_PROCESSING_DAYS business days. You'll see the status update on this receipt — no email needed.",
+        "We review every request within $REFUND_PROCESSING_DAYS business days. You'll see the status update on this receipt.",
     "Where the money goes" to
-        "Approved refunds return to your original payment method. GCash and Maya land within 24 hours; cards take 5–7 business days depending on the bank.",
+        "Approved refunds come as a PayMongo refund link, shown on this receipt with its claim-by date and sent to your e-mail. Open it to choose where the money goes.",
     "What we don't refund" to
         "Photos you've already downloaded and kept past the eligibility window, change-of-mind after $REFUND_ELIGIBILITY_DAYS days, or photos that match your bib and selfie correctly.",
 )
@@ -178,6 +185,7 @@ data class RefundRollup(
     val rejectedCount: Int,
     val rejectedNote: String?,
     val totalDisputed: Int,
+    val label: String? = null,
 )
 
 fun computeRefundRollup(photoCount: Int, disputes: List<RunnerDisputeDto>): RefundRollup {
@@ -202,8 +210,31 @@ fun computeRefundRollup(photoCount: Int, disputes: List<RunnerDisputeDto>): Refu
         // when the chip says "declined" the runner cares why admin said no.
         rejectedNote = rejected.firstOrNull()?.let { it.resolutionNote ?: it.note },
         totalDisputed = visible.size,
+        label = visible.firstNotNullOfOrNull { refundStatusLabel(it) },
     )
 }
+
+// Port of website getRefundStatusLabel: the QR Ph manual-refund states. null = keep the usual label.
+fun refundStatusLabel(dispute: RunnerDisputeDto, nowMillis: Long = System.currentTimeMillis()): String? = when {
+    dispute.status == "escalated" && dispute.refundStatus == "manual_review" ->
+        if (dispute.refundLinkUrl.isNullOrBlank()) "Refund approved, waiting for PayMongo refund link"
+        else if (refundLinkExpired(dispute, nowMillis)) "Refund link expired"
+        else "Refund link sent"
+    dispute.status == "denied" && dispute.refundStatus == "cancelled" ->
+        "Refund cancelled: the refund window closed"
+    else -> null
+}
+
+// Port of website isRefundLinkExpired: true once the server's expiry instant has passed;
+// a missing or unreadable date is not expired.
+internal fun refundLinkExpired(dispute: RunnerDisputeDto, nowMillis: Long = System.currentTimeMillis()): Boolean =
+    dispute.refundLinkExpiresAt?.let(::parseInstantMillis)?.let { it <= nowMillis } == true
+
+// Port of website getRefundClaimLink: the link only matters while it can still be claimed.
+fun refundClaimLink(dispute: RunnerDisputeDto, nowMillis: Long = System.currentTimeMillis()): String? =
+    dispute.refundLinkUrl?.takeIf {
+        dispute.refundStatus == "manual_review" && it.isNotBlank() && !refundLinkExpired(dispute, nowMillis)
+    }
 
 // Rollup mirrors website getOrderRefundStatus.kind: none|pending|partial|approved|rejected.
 fun orderRefundKind(order: OrderDetailDto): String =
@@ -220,13 +251,15 @@ fun RefundStatusChip(rollup: RefundRollup, photoCount: Int) {
     // Slate for pending/in-review — web RefundStatusChip parity (its
     // pending/partial dot is slate; amber was mobile-only drift that made a
     // routine open request read as a warning).
-    val (tone, label) = when (rollup.kind) {
+    val (tone, kindLabel) = when (rollup.kind) {
         "pending" -> Slate to "Refund pending · ${rollup.totalDisputed} of $photoCount"
         "partial" -> Slate to "Refund in review · ${rollup.totalDisputed} of $photoCount"
         "approved" -> Fresh to "Refund approved · ${peso(rollup.refundAmount, 0)}"
         "rejected" -> ErrorRed to "Refund declined"
         else -> Slate to "Refund updated"
     }
+
+    val label = rollup.label ?: kindLabel
 
     Column(modifier = Modifier.padding(top = 8.dp)) {
         Box(
@@ -292,7 +325,12 @@ fun RefundActionsRow(
     val canRequest = canRequestRefund(order)
     val kind = orderRefundKind(order)
     val cancellable = cancellableDispute(order)
+    val rollupLabel = computeRefundRollup(order.photoIds.size, order.disputes).label
+    val claimDispute = order.disputes.firstOrNull { refundClaimLink(it) != null }
+    val claimUrl = claimDispute?.let { refundClaimLink(it) }
+    val context = LocalContext.current
     var showCancelConfirm by remember { mutableStateOf(false) }
+    var claimFailed by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (canRequest) {
@@ -308,9 +346,48 @@ fun RefundActionsRow(
             }
         } else if (kind != "none") {
             Text(
-                text = if (kind == "approved") "Refund issued · cannot resubmit" else "Refund pending review",
+                text = rollupLabel
+                    ?: if (kind == "approved") "Refund issued · cannot resubmit" else "Refund pending review",
                 style = Typography.bodySmall,
                 color = SlateSoft
+            )
+        }
+
+        if (claimDispute != null && claimUrl != null) {
+            GhostCta(
+                text = "Claim your refund",
+                onClick = {
+                    try {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(claimUrl)))
+                    } catch (_: ActivityNotFoundException) {
+                        claimFailed = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (claimFailed) {
+                Text(
+                    text = "No app on this phone can open the link. Use the link in your e-mail.",
+                    style = Typography.bodySmall,
+                    color = ErrorRed
+                )
+            }
+            val sent = formatManila(claimDispute.refundLinkSentAt, "MMM dd · yyyy")?.uppercase()
+            val claimBy = formatManila(claimDispute.refundLinkExpiresAt, "MMM dd · yyyy")?.uppercase()
+            val dates = listOfNotNull(sent?.let { "Sent $it." }, claimBy?.let { "Claim by $it." })
+            if (dates.isNotEmpty()) {
+                Text(text = dates.joinToString(" "), style = Typography.bodySmall, color = Slate)
+            }
+        }
+
+        val expiredDispute = if (claimDispute != null) null else order.disputes.firstOrNull {
+            it.refundStatus == "manual_review" && !it.refundLinkUrl.isNullOrBlank() && refundLinkExpired(it)
+        }
+        formatManila(expiredDispute?.refundLinkExpiresAt, "MMM dd · yyyy")?.uppercase()?.let { expiredOn ->
+            Text(
+                text = "Your refund link expired on $expiredOn. We will send a new link or contact you.",
+                style = Typography.bodySmall,
+                color = Slate
             )
         }
 
@@ -448,11 +525,14 @@ private fun RefundTimelineRow(dispute: RunnerDisputeDto) {
         // Lifecycle lines
         TimelineLine("Filed", formatDisputeTimestamp(dispute.openedAt))
         if (dispute.status == "escalated") {
-            TimelineLine("Escalated for review", null)
+            TimelineLine(
+                refundStatusLabel(dispute) ?: "Escalated for review",
+                dispute.refundLinkSentAt?.let { formatDisputeTimestamp(it) }
+            )
         }
         if (dispute.resolvedAt != null && (dispute.status == "resolved" || dispute.status == "denied")) {
             TimelineLine(
-                if (dispute.status == "resolved") "Resolved" else "Denied",
+                if (dispute.status == "resolved") "Resolved" else refundStatusLabel(dispute) ?: "Denied",
                 formatDisputeTimestamp(dispute.resolvedAt)
             )
         }
@@ -496,9 +576,10 @@ private fun TimelineLine(label: String, timestamp: String?) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(label, style = Typography.bodySmall, color = SlateSoft)
+        // A long label wraps in the space the time leaves; the time keeps one line.
+        Text(label, style = Typography.bodySmall, color = SlateSoft, modifier = Modifier.weight(1f, fill = false))
         if (timestamp != null) {
-            Text(timestamp, style = Typography.bodySmall, color = Slate)
+            Text(timestamp, style = Typography.bodySmall, color = Slate, maxLines = 1)
         }
     }
 }
@@ -605,13 +686,17 @@ fun RefundRequestDialog(
                                             text = "Photo ${index + 1}",
                                             style = Typography.bodyMedium,
                                             color = if (isLocked) SlateSoft else Ink,
-                                            modifier = Modifier.weight(1f),
+                                            maxLines = 1,
                                         )
                                         if (isLocked && lockedDispute != null) {
+                                            // A long refund label wraps in the space left, so "Photo N" stays readable.
                                             Text(
-                                                text = "Refund ${refundChipLabel(lockedDispute.status)}",
+                                                text = refundStatusLabel(lockedDispute)
+                                                    ?: "Refund ${refundChipLabel(lockedDispute.status)}",
                                                 style = Typography.labelSmall,
-                                                color = Slate
+                                                color = Slate,
+                                                textAlign = TextAlign.End,
+                                                modifier = Modifier.weight(1f),
                                             )
                                         }
                                     }
@@ -753,3 +838,58 @@ fun RefundRequestDialog(
         }
     }
 }
+
+// ── Previews ─────────────────────────────────────────────────────────────────
+
+private fun previewOrder(dispute: RunnerDisputeDto) = OrderDetailDto(
+    id = "o1", eventId = "e1", photoIds = listOf("p1"), total = 300.0, paymentMethod = "QRPH", paidAt = null,
+    eventName = null, eventSlug = null, status = "PAID", photos = emptyList(), disputes = listOf(dispute),
+)
+
+private fun previewDispute(
+    status: String,
+    refundStatus: String,
+    link: String? = null,
+    amount: Double? = null,
+    // Far future by default so the "sent" preview stays live on the real clock.
+    expires: String = "2099-10-31T02:00:00Z",
+) =
+    RunnerDisputeDto(
+        id = "d1", photoId = "p1", reason = "other", note = "", status = status, refundAmount = amount,
+        openedAt = "2026-10-26T02:00:00Z", refundStatus = refundStatus, refundLinkUrl = link,
+        refundLinkSentAt = link?.let { "2026-10-28T02:00:00Z" },
+        refundLinkExpiresAt = link?.let { expires },
+    )
+
+@Composable
+private fun RefundActionsPreview(dispute: RunnerDisputeDto) {
+    QuickPitikMobileTheme {
+        Surface(color = Bone) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                RefundActionsRow(order = previewOrder(dispute), submitting = false, onRequest = {}, onCancel = {})
+            }
+        }
+    }
+}
+
+@Preview(name = "Refund waiting for link", showBackground = true, backgroundColor = 0xFFF7F6F2)
+@Composable
+private fun RefundWaitingPreview() =
+    RefundActionsPreview(previewDispute("escalated", "manual_review"))
+
+@Preview(name = "Refund link sent", showBackground = true, backgroundColor = 0xFFF7F6F2)
+@Composable
+private fun RefundLinkSentPreview() =
+    RefundActionsPreview(previewDispute("escalated", "manual_review", link = "https://pm.link/example"))
+
+@Preview(name = "Refund link expired", showBackground = true, backgroundColor = 0xFFF7F6F2)
+@Composable
+private fun RefundLinkExpiredPreview() =
+    RefundActionsPreview(
+        previewDispute("escalated", "manual_review", link = "https://pm.link/example", expires = "2026-10-29T02:00:00Z")
+    )
+
+@Preview(name = "Refund refunded", showBackground = true, backgroundColor = 0xFFF7F6F2)
+@Composable
+private fun RefundRefundedPreview() =
+    RefundActionsPreview(previewDispute("resolved", "succeeded", amount = 100.0))

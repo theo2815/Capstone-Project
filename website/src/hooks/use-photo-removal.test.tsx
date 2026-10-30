@@ -83,7 +83,7 @@ it("waits for canonical results, invalidates related queries and preserves submi
 
 it("invalidates the photographer public gallery and cancels an older read after a removal decision", async () => {
   // Same viewer-scoped key used by usePublicPhotographerEventPhotos.
-  const galleryKey = ["photographer", "public", "owner-handle", "race", "photos", ...session()];
+  const galleryKey = ["photographer", "public", "owner-handle", "race", "photos", { bib: null }, ...session()];
   const current = { pages: [{ items: [], total: 0, offset: 0, limit: 50 }], pageParams: [0] };
   client.setQueryData(galleryKey, current);
   const old = deferred<typeof current>();
