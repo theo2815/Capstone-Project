@@ -49,13 +49,13 @@ it("does not show an unknown refund outcome as refunded on the dispute page", as
   render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
   expect(await screen.findByRole("heading", { name: "@runner vs @photographer" })).toBeInTheDocument();
   expect(screen.getByText("Escalated")).toBeInTheDocument();
-  expect(screen.getByText("Review the payment in PayMongo before another refund attempt.")).toBeInTheDocument();
-  expect(screen.queryByText(/refunded/i)).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Refund link")).toBeInTheDocument();
+  expect(screen.queryByText(/^refunded$/i)).not.toBeInTheDocument();
 });
 
-it("does not prescribe manual review for an escalated refund still in flight", async () => {
-  vi.spyOn(api, "get").mockResolvedValueOnce({ items: [{ ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "requesting" }], total: 1 });
+it.each(["requesting", "pending"])("shows no refund panel for an escalated refund still in flight (%s)", async (refundStatus) => {
+  vi.spyOn(api, "get").mockResolvedValueOnce({ items: [{ ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus }], total: 1 });
   render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
   expect(await screen.findByRole("heading", { name: "@runner vs @photographer" })).toBeInTheDocument();
-  expect(screen.queryByText("Review the payment in PayMongo before another refund attempt.")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Refund link")).not.toBeInTheDocument();
 });

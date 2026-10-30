@@ -1,5 +1,6 @@
 package com.quickpitik.service.orders
 
+import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.entity.Order
@@ -9,6 +10,7 @@ import com.quickpitik.entity.OrderStatus
 import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.REFUND_LINK_SENT
 import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.common.ErrorCodes
@@ -33,6 +35,7 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertFailsWith
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 // Free checkout (2026-09-05): a 100% giveaway charged nothing, so a refund
 // request on it is refused before a dispute row exists — the admin path
@@ -63,6 +66,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
 
         val error = assertFailsWith<ApiException> { service.withdraw(runnerId, dispute.id) }
@@ -75,6 +79,41 @@ class RefundServiceTest {
     }
 
     @Test
+    fun `a refund parked for the admin to make by hand cannot be withdrawn`() {
+        val runnerId = UUID.randomUUID()
+        val dispute = Dispute(
+            orderId = UUID.randomUUID(),
+            photoId = UUID.randomUUID(),
+            runnerId = runnerId,
+            reasonWire = "other",
+        ).apply {
+            status = DisputeStatus.ESCALATED
+            refundStatus = "manual_review"
+            refundAmountPhp = BigDecimal("125.00")
+        }
+        val disputes = Mockito.mock(DisputeRepository::class.java)
+        Mockito.`when`(disputes.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        val service = RefundService(
+            Mockito.mock(OrderRepository::class.java),
+            Mockito.mock(OrderItemRepository::class.java),
+            disputes,
+            Mockito.mock(AdminDecisionLogRepository::class.java),
+            Mockito.mock(ApplicationEventPublisher::class.java),
+            PlatformProperties(),
+            Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(UserRepository::class.java),
+            Clock.systemUTC(),
+            PaymongoProperties(),
+        )
+
+        val error = assertFailsWith<ApiException> { service.withdraw(runnerId, dispute.id) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.ESCALATED, dispute.status)
+        Mockito.verify(disputes, Mockito.never()).save(dispute)
+    }
+
+    @Test
     fun `a withdrawn dispute keeps the last real note, not the manual review hand-off`() {
         val runnerId = UUID.randomUUID()
         val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
@@ -83,6 +122,7 @@ class RefundServiceTest {
         val log = Mockito.mock(AdminDecisionLogRepository::class.java)
         Mockito.`when`(log.findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(dispute.id))).thenReturn(
             listOf(
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_LINK_SENT),
                 AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_SENT_TO_MANUAL_REVIEW),
                 AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = "escalated", reason = "X"),
             ),
@@ -97,9 +137,40 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
 
         assertEquals("X", service.withdraw(runnerId, dispute.id).resolutionNote)
+    }
+
+    @Test
+    fun `withdraw returns the refund status and no link once the refund left manual review`() {
+        val runnerId = UUID.randomUUID()
+        val sentAt = OffsetDateTime.parse("2026-10-29T10:15:30Z")
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        dispute.refundStatus = "failed"
+        dispute.refundLinkUrl = "https://transfer.paymongo.com/abc"
+        dispute.refundLinkSentAt = sentAt
+        val disputes = Mockito.mock(DisputeRepository::class.java)
+        Mockito.`when`(disputes.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        val service = RefundService(
+            Mockito.mock(OrderRepository::class.java),
+            Mockito.mock(OrderItemRepository::class.java),
+            disputes,
+            Mockito.mock(AdminDecisionLogRepository::class.java),
+            Mockito.mock(ApplicationEventPublisher::class.java),
+            PlatformProperties(),
+            Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(UserRepository::class.java),
+            Clock.systemUTC(),
+            PaymongoProperties(),
+        )
+
+        val dto = service.withdraw(runnerId, dispute.id)
+
+        assertEquals("failed", dto.refundStatus)
+        assertNull(dto.refundLinkUrl)
+        assertEquals(sentAt, dto.refundLinkSentAt)
     }
 
     @Test
@@ -131,6 +202,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
 
         assertFailsWith<ConflictException> {
@@ -247,6 +319,7 @@ class RefundServiceTest {
             Mockito.mock(PhotoRepository::class.java),
             Mockito.mock(UserRepository::class.java),
             Clock.systemUTC(),
+            PaymongoProperties(),
         )
         return Fixture(service, disputes, order, photoId, publisher)
     }

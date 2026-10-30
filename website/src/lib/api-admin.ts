@@ -50,6 +50,8 @@ const ADMIN_LIST_LIMIT = 200;
 //   POST   /api/v1/admin/disputes/{id}/resolve   { resolution, refundAmount?, reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/deny      { reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/escalate  { reason } → Dispute
+//   POST   /api/v1/admin/disputes/{id}/refund-link { url } → Dispute
+//   POST   /api/v1/admin/disputes/{id}/mark-refunded       → Dispute
 //
 //   GET    /api/v1/admin/payouts?status=&offset=&limit=    → PaginatedResponse<AdminPayoutCycle>
 //   POST   /api/v1/admin/payouts/{id}/approve              → AdminPayoutCycle
@@ -417,6 +419,14 @@ export async function escalateDispute(
     `/admin/disputes/${encodeURIComponent(disputeId)}/escalate`,
     { reason },
   );
+}
+
+export async function sendRefundLink(disputeId: string, url: string): Promise<Dispute> {
+  return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/refund-link`, { url });
+}
+
+export async function markRefunded(disputeId: string): Promise<Dispute> {
+  return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/mark-refunded`);
 }
 
 // ───────────────────────────────────────────── Flags

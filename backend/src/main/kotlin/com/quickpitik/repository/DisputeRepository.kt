@@ -30,6 +30,25 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
 
     fun findByProviderRefundId(providerRefundId: String): Dispute?
 
+    // Approved QR Ph refunds nobody finished: paid (or created) before windowCutoff and no link newer than linkCutoff.
+    @Query(
+        """
+        SELECT d FROM Dispute d, Order o
+        WHERE o.id = d.orderId
+          AND d.refundStatus = 'manual_review'
+          AND d.refundRequestedBy IS NOT NULL
+          AND o.paymentMethodWire = 'qrph'
+          AND COALESCE(o.paidAt, o.createdAt) < :windowCutoff
+          AND (d.refundLinkSentAt IS NULL OR d.refundLinkSentAt < :linkCutoff)
+        ORDER BY d.refundRequestedAt ASC
+        """,
+    )
+    fun findDueForAutoCancel(
+        @Param("windowCutoff") windowCutoff: OffsetDateTime,
+        @Param("linkCutoff") linkCutoff: OffsetDateTime,
+        pageable: Pageable,
+    ): List<Dispute>
+
     @Query(
         """
         SELECT d FROM Dispute d

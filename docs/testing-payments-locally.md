@@ -35,6 +35,18 @@ Start any run with photos in the cart, open checkout, and generate a QR.
 | Leave and come back | Close the drawer during a live QR, choose **Leave**. | Cart pill reads "Payment pending"; tapping it reopens the same QR. Authorizing in the simulator while the drawer is closed produces a "Payment confirmed" toast within about 5 s. |
 | Refresh mid-QR | Reload the page with a QR on screen. | The drawer reopens on the same QR with the test panel intact. |
 
+## Test a QR Ph refund by hand
+
+PayMongo cannot refund a QR Ph payment through its API, so an approved QR Ph dispute is parked for a manual refund. To see the whole flow without touching PayMongo:
+
+1. Pay an order with QR Ph as above, then open a dispute on it as the runner.
+2. As an admin, approve the dispute as a full refund of the whole payment. It becomes `manual_review` and the runner gets a "Refund approved" inbox message.
+3. By default only links that start with `https://transfer.paymongo.com/` are accepted. To use a harmless test link, set `PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES` (comma-separated) to include its prefix, for example `https://example.test/`, and restart the backend.
+4. POST `/api/v1/admin/disputes/{id}/refund-link` with an admin token and body `{ "url": "https://example.test/test-refund" }`. Never use a real or live PayMongo link here.
+5. Check the runner's inbox for "Your refund link is ready" and the backend log for the `[EMAIL STUB] refund link for ...` line. Posting a different link replaces it and sends both again; posting the same link again does nothing. A link is refused once the QR Ph refund window (default 30 days after payment) has closed.
+
+6. Only after PayMongo (test mode) shows the payment as refunded, POST `/api/v1/admin/disputes/{id}/mark-refunded` as the admin (no body). Check: the dispute is `resolved` with refund_status `succeeded`; `transactions` has one `is_refund` row; the order is `REFUNDED` when every photo in it is fully refunded; the runner's inbox says "Your refund of PHP ... is complete."; the photographer gets a "resolved" message. Posting again changes nothing.
+
 ## Where the pieces live
 
 - Backend: `OrderService.createQrPhPayment` (test URL passthrough), `OrderService.cancel*` + `PaymongoCheckoutReconciler` (cancel, verify, failed-intent detection), `PaymongoWebhookService` (webhook path when one is configured).

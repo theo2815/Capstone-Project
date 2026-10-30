@@ -321,6 +321,10 @@ app:
     photo-verify:
       capacity: 10
       refill-period: PT15M
+    # Refund-link sends per dispute (each one mails the runner), on top of the per-admin bucket.
+    refund-link-per-dispute:
+      capacity: 3
+      refill-period: PT1H
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
@@ -387,6 +391,9 @@ app:
       connect-timeout: PT5S
       read-timeout: PT15S
       checkout-ttl: ${PAYMONGO_CHECKOUT_TTL:PT30M}
+      refund-link-allowed-prefixes: ${PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES:https://transfer.paymongo.com/}
+      qrph-refund-window: ${PAYMONGO_QRPH_REFUND_WINDOW:P30D}
+      refund-link-validity: ${PAYMONGO_REFUND_LINK_VALIDITY:P3D}
   email:
     resend:
       # Resend transactional email wiring. Free-tier dev sender

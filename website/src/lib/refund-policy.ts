@@ -24,11 +24,11 @@ export const REFUND_POLICY_BULLETS: ReadonlyArray<RefundPolicyBullet> = [
   },
   {
     kicker: "Review time",
-    body: `We review every request within ${REFUND_PROCESSING_DAYS} business days. You'll see the status update on this receipt — no email needed.`,
+    body: `We review every request within ${REFUND_PROCESSING_DAYS} business days. You'll see the status update on this receipt.`,
   },
   {
     kicker: "Where the money goes",
-    body: "Approved refunds return to your original payment method. GCash and Maya land within 24 hours; cards take 5–7 business days depending on the bank.",
+    body: "Approved refunds come as a PayMongo refund link, shown on this receipt with its claim-by date and sent to your e-mail. Open it to choose where the money goes.",
   },
   {
     kicker: "What we don't refund",

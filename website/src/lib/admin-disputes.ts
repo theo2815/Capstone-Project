@@ -26,7 +26,13 @@ export interface DisputePhotoSnapshot {
 export interface DisputeActivityEntry {
   id: string;
   decidedAt: string;
-  decision: "resolved" | "denied" | "escalated" | "refund_sent_to_manual_review";
+  decision:
+    | "resolved"
+    | "denied"
+    | "escalated"
+    | "refund_sent_to_manual_review"
+    | "refund_link_sent"
+    | "refund_cancelled";
   resolution: DisputeResolution | null;
   refundAmount: number | null;
   reason: string | null;
@@ -50,6 +56,16 @@ export interface Dispute {
   resolvedAt: string | null;
   refundAmount: number | null;
   refundStatus?: string | null;
+  // The settled PayMongo payment (pay_ id, and its cs_/pi_ reference) to find it in the PayMongo dashboard.
+  paymentId?: string | null;
+  paymentRef?: string | null;
+  // Manual QR Ph refund: the transfer link sent to the runner, and when.
+  refundLinkUrl?: string | null;
+  refundLinkSentAt?: string | null;
+  refundLinkExpiresAt?: string | null;
+  // Parked QR Ph refund only: when PayMongo stops refunding, and when an unfinished refund is cancelled.
+  refundWindowClosesAt?: string | null;
+  refundCancelsAt?: string | null;
   itemChargeAmount?: number | null;
   resolution: DisputeResolution | null;
   orderSnapshot: DisputeOrderSnapshot;

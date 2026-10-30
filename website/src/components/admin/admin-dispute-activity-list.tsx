@@ -65,7 +65,9 @@ const DECISION_LABEL: Record<DisputeDecision, string> = {
   resolved: "Resolved",
   denied: "Denied",
   escalated: "Escalated",
-  refund_sent_to_manual_review: "Sent to manual review",
+  refund_sent_to_manual_review: "Refund approved, waiting for PayMongo",
+  refund_link_sent: "Refund link sent",
+  refund_cancelled: "Refund cancelled: window closed",
 };
 
 function decisionTone(decision: DisputeDecision): string {
@@ -73,9 +75,11 @@ function decisionTone(decision: DisputeDecision): string {
     case "resolved":
       return "text-fresh";
     case "denied":
+    case "refund_cancelled":
       return "text-ink";
     case "escalated":
     case "refund_sent_to_manual_review":
+    case "refund_link_sent":
       return "text-slate";
   }
 }

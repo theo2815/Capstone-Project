@@ -11,7 +11,7 @@ import {
   DropdownItem,
 } from "@/components/ui/dropdown";
 import { RefundPolicyContent } from "@/components/orders/refund-policy-content";
-import { getDisputableePhotoIds } from "@/lib/refund-helpers";
+import { getDisputableePhotoIds, getRefundStatusLabel } from "@/lib/refund-helpers";
 import {
   DISPUTE_REASON_LABEL,
   type DisputeReason,
@@ -260,7 +260,8 @@ function RefundRequestModal({
                       </span>
                       {isLocked && (
                         <Kicker tone="soft">
-                          Refund {refundChipLabel(lockedDispute.status)}
+                          {getRefundStatusLabel(lockedDispute) ??
+                            `Refund ${refundChipLabel(lockedDispute.status)}`}
                         </Kicker>
                       )}
                     </span>

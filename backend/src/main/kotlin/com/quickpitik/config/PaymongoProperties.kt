@@ -49,4 +49,10 @@ data class PaymongoProperties(
     val connectTimeout: Duration = Duration.ofSeconds(5),
     val readTimeout: Duration = Duration.ofSeconds(15),
     val checkoutTtl: Duration = Duration.ofMinutes(30),
+    // A QR Ph refund link an admin pastes in must start with one of these (anti-phishing). Env value is comma-separated.
+    val refundLinkAllowedPrefixes: List<String> = listOf("https://transfer.paymongo.com/"),
+    // PayMongo's dashboard only refunds a payment within this long of paying; an unfinished QR Ph refund is cancelled after it.
+    val qrphRefundWindow: Duration = Duration.ofDays(30),
+    // How long a PayMongo refund link works after an admin sends it.
+    val refundLinkValidity: Duration = Duration.ofDays(3),
 )

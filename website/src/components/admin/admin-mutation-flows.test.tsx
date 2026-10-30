@@ -87,17 +87,30 @@ it("does not show an unknown refund outcome as refunded in the dispute drawer", 
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
   const drawer = await screen.findByRole("dialog");
   expect(drawer).toHaveTextContent("Escalated");
-  expect(drawer).toHaveTextContent("Review the payment in PayMongo before another refund attempt.");
-  expect(within(drawer).queryByText(/refunded/i)).not.toBeInTheDocument();
+  expect(within(drawer).getByLabelText("Refund link")).toBeInTheDocument();
+  expect(within(drawer).queryByText(/^refunded$/i)).not.toBeInTheDocument();
 });
 
-it("does not prescribe manual review for an escalated refund still in flight", async () => {
-  const inFlight: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "requesting" };
+it("lets the refund panel span the drawer footer and scroll on its own", async () => {
+  const parked: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [] };
+  fixtures.search = `row=${parked.id}`;
+  client.setQueryData(adminDisputeKeys.list(admin.id), [parked]);
+  render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
+  const footer = (await screen.findByRole("dialog")).querySelector("footer")!;
+  const wrapper = footer.firstElementChild!.firstElementChild!;
+  expect(wrapper).toContainElement(within(footer).getByLabelText("Refund link"));
+  // p-1 leaves room for the 2px focus outline + 2px offset, which the scroll box would otherwise cut off.
+  expect(wrapper).toHaveClass("w-full", "overflow-y-auto", "p-1");
+  expect(wrapper.className).toMatch(/(^|\s)max-h-/);
+});
+
+it.each(["requesting", "pending"])("shows no refund panel for an escalated refund still in flight (%s)", async (refundStatus) => {
+  const inFlight: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus };
   fixtures.search = `row=${inFlight.id}`;
   client.setQueryData(adminDisputeKeys.list(admin.id), [inFlight]);
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
   const drawer = await screen.findByRole("dialog");
-  expect(drawer).not.toHaveTextContent("Review the payment in PayMongo before another refund attempt.");
+  expect(within(drawer).queryByLabelText("Refund link")).not.toBeInTheDocument();
 });
 
 it.each([false, true])("preserves the selected dispute while loading (stale cache: %s)", async (stale) => {

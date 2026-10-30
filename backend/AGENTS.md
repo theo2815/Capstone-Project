@@ -153,7 +153,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 
 | Variable | Default | Production behavior |
 |----------|---------|---------------------|
-| `SPRING_PROFILES_ACTIVE` | *(none)* | **Set `prod` in production.** Activates `ProductionSecretsGuard`, which refuses to boot while any secret below is still its `dev-only` placeholder, the bootstrap password is the default, or `STORAGE_BACKEND` is not `S3`; also disables the dev mock-photo seeder. Railway runs from `backend/Dockerfile` (JDK 21, fontconfig, honours `PORT`); the variable list lives in vault `backend/notes/production-deploy.md`. |
+| `SPRING_PROFILES_ACTIVE` | *(none)* | **Set `prod` in production.** Activates `ProductionSecretsGuard`, which refuses to boot while any secret below is still its `dev-only` placeholder, the bootstrap password is the default, `STORAGE_BACKEND` is not `S3`, or `PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES` is empty or holds an entry that is not an `https://` PayMongo address ending in `/` (host `paymongo.com` or `*.paymongo.com`, no user-info); also disables the dev mock-photo seeder. Railway runs from `backend/Dockerfile` (JDK 21, fontconfig, honours `PORT`); the variable list lives in vault `backend/notes/production-deploy.md`. |
 | `DB_HOST` | `localhost` | RDS endpoint |
 | `DB_PORT` | `5432` | — |
 | `DB_NAME` | `quickpitik` | — |

@@ -9,6 +9,7 @@ import { AdminResolveDisputeModal } from "./admin-resolve-dispute-modal";
 import { AdminRefundConfirmModal } from "./admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "./admin-deny-dispute-modal";
 import { AdminEscalateModal } from "./admin-escalate-modal";
+import { AdminRefundPanel } from "./admin-refund-panel";
 import { Kicker } from "@/components/ui/kicker";
 import {
   BTN_DANGER,
@@ -155,11 +156,10 @@ export function AdminDisputeActionAside({
             Escalate…
           </button>
         )}
-        {!isOpen && (
+        {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} />}
+        {!isOpen && dispute.refundStatus !== "manual_review" && (
           <p className="font-sans text-sm text-slate-soft">
-            {dispute.refundStatus === "manual_review"
-              ? "Review the payment in PayMongo before another refund attempt."
-              : "This dispute is closed. No further actions are available."}
+            This dispute is closed. No further actions are available.
           </p>
         )}
       </div>
@@ -188,6 +188,7 @@ export function AdminDisputeActionAside({
             amount={pendingResolve.refundAmount}
             runnerHandle={runnerHandle}
             isFull={pendingResolve.resolution === "refund_full"}
+            paymentMethod={dispute.orderSnapshot.paymentMethod}
           />
         )}
       <AdminDenyDisputeModal

@@ -18,5 +18,20 @@ it("labels a refund hand-off row instead of leaving it blank", () => {
     />,
   );
 
-  expect(screen.getByText("Sent to manual review")).toBeInTheDocument();
+  expect(screen.getByText("Refund approved, waiting for PayMongo")).toBeInTheDocument();
+});
+
+it("labels the manual refund link and auto-cancel rows", () => {
+  const row = { resolution: null, refundAmount: null, reason: null } as const;
+  render(
+    <AdminDisputeActivityList
+      activity={[
+        { ...row, id: "a2", decidedAt: "2026-10-28T03:00:00Z", decision: "refund_link_sent" },
+        { ...row, id: "a3", decidedAt: "2026-10-28T04:00:00Z", decision: "refund_cancelled" },
+      ]}
+    />,
+  );
+
+  expect(screen.getByText("Refund link sent")).toBeInTheDocument();
+  expect(screen.getByText("Refund cancelled: window closed")).toBeInTheDocument();
 });

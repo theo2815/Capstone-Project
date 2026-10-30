@@ -6,6 +6,7 @@ import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.dto.orders.RefundRequest
 import com.quickpitik.dto.orders.RefundResponse
 import com.quickpitik.entity.Dispute
+import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
@@ -31,6 +32,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.TransactionRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.admin.AdminPayoutService
+import com.quickpitik.service.orders.PaymongoRefundService
 import com.quickpitik.service.orders.RefundService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -72,6 +74,7 @@ class RefundPayoutCoverageIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var cycles: PayoutCycleRepository
     @Autowired lateinit var decisions: AdminDecisionLogRepository
     @Autowired lateinit var refunds: RefundService
+    @Autowired lateinit var paymongoRefunds: PaymongoRefundService
     @Autowired lateinit var payouts: AdminPayoutService
     @Autowired lateinit var clock: MutableClock
     @Autowired lateinit var dataSource: DataSource
@@ -186,6 +189,49 @@ class RefundPayoutCoverageIntegrationTest : PostgresIntegrationTest() {
 
         assertMoney("0", transactions.sumCleared(fixture.photographer.id, NOW.minusDays(7)))
     }
+
+    @Test
+    fun `marking a parked refund refunded keeps the photographer balance at zero and a second click adds nothing`() {
+        val fixture = sale(amount = "1000", paidAt = NOW.minusDays(8))
+        val approvingAdmin = admin()
+        val clickingAdmin = admin()
+        val dispute = disputes.saveAndFlush(
+            Dispute(
+                orderId = fixture.order.id,
+                photoId = fixture.photo.id,
+                runnerId = fixture.runner.id,
+                reasonWire = "other",
+                statusWire = DisputeStatus.ESCALATED.wire,
+                refundStatus = "manual_review",
+                refundAmountPhp = BigDecimal("1000"),
+                refundRequestedBy = approvingAdmin.id,
+                openedAt = NOW.minusDays(2),
+            ).apply { resolution = DisputeResolution.REFUND_FULL },
+        )
+        assertMoney("0", transactions.sumCleared(fixture.photographer.id, NOW.minusDays(7)))
+
+        paymongoRefunds.markRefunded(clickingAdmin.id, dispute.id)
+
+        assertMoney("0", transactions.sumCleared(fixture.photographer.id, NOW.minusDays(7)))
+        assertEquals(1, refundRowCount(fixture))
+        val done = disputes.findById(dispute.id).orElseThrow()
+        assertEquals(DisputeStatus.RESOLVED, done.status)
+        assertEquals("succeeded", done.refundStatus)
+        assertEquals(OrderStatus.REFUNDED, orders.findById(fixture.order.id).orElseThrow().status)
+
+        paymongoRefunds.markRefunded(clickingAdmin.id, dispute.id)
+
+        assertMoney("0", transactions.sumCleared(fixture.photographer.id, NOW.minusDays(7)))
+        assertEquals(1, refundRowCount(fixture))
+    }
+
+    private fun refundRowCount(fixture: SaleFixture): Int =
+        jdbc.queryForObject(
+            "select count(*) from transactions where order_id = ? and photo_id = ? and is_refund",
+            Int::class.java,
+            fixture.order.id,
+            fixture.photo.id,
+        )!!
 
     @Test
     fun `one photographer's dispute does not withhold another photographer's proceeds`() {

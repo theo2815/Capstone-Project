@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import {
-  fetchAdminDisputes, fetchAdminDispute, resolveDispute, denyDispute, escalateDispute,
+  fetchAdminDisputes, fetchAdminDispute, resolveDispute, denyDispute, escalateDispute, sendRefundLink, markRefunded,
   type AdminDisputeListArgs, type ResolveDisputeArgs,
 } from "@/lib/api-admin";
 import type { Dispute } from "@/lib/admin-disputes";
@@ -63,8 +63,10 @@ export function useDisputeActions() {
         if (isCurrent()) {
           console.error(`[admin/disputes] ${label} failed`, error);
           const conflict = error instanceof ApiError && error.status === 409;
+          // A 400 names what to fix (a refund link that is not PayMongo's); "try again" would not help.
+          const invalid = error instanceof ApiError && error.status === 400;
           useToastStore.getState().showToast({
-            kind: "error", message: conflict ? error.message : `Couldn't ${label} dispute — please try again.`,
+            kind: "error", message: conflict || invalid ? error.message : `Couldn't ${label} dispute — please try again.`,
           });
           if (conflict) await qc.invalidateQueries({ queryKey: adminDisputeKeys.owner(userId) });
         }
@@ -100,6 +102,10 @@ export function useDisputeActions() {
       resolve: (id: string, args: ResolveDisputeArgs) => run(id, "Resolving…", "resolve", () => resolveDispute(id, args)),
       deny: async (id: string, reason: string | null) => !!(await run(id, "Denying…", "deny", () => denyDispute(id, reason))),
       escalate: async (id: string, reason: string | null) => !!(await run(id, "Escalating…", "escalate", () => escalateDispute(id, reason))),
+      sendRefundLink: async (id: string, url: string) =>
+        !!(await run(id, "Sending link…", "send the refund link for this", () => sendRefundLink(id, url))),
+      markRefunded: async (id: string) =>
+        !!(await run(id, "Marking refunded…", "record the refund on this", () => markRefunded(id))),
     };
 }
 

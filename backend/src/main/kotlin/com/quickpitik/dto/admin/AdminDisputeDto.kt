@@ -51,6 +51,17 @@ data class AdminDisputeDto(
     val resolvedAt: String?,
     val refundAmount: BigDecimal?,
     val refundStatus: String?,
+    // The order's settled PayMongo payment: pay_ id and its cs_/pi_ reference,
+    // so an admin can find it in the PayMongo dashboard.
+    val paymentId: String?,
+    val paymentRef: String?,
+    val refundLinkUrl: String?,
+    val refundLinkSentAt: String?,
+    // Set only for a parked QR Ph refund: when the link stops working, when PayMongo stops refunding the payment,
+    // and when we cancel an unfinished refund.
+    val refundLinkExpiresAt: String?,
+    val refundWindowClosesAt: String?,
+    val refundCancelsAt: String?,
     val itemChargeAmount: BigDecimal?,
     val resolution: String?,
     val orderSnapshot: DisputeOrderSnapshotDto,
@@ -70,6 +81,13 @@ data class ResolveDisputeRequest(
     val refundAmount: BigDecimal? = null,
     @field:Size(max = 500)
     val reason: String? = null,
+)
+
+// POST /admin/disputes/{id}/refund-link — body { url }. The service checks the allowed prefix.
+data class SendRefundLinkRequest(
+    @field:NotBlank
+    @field:Size(max = 500)
+    val url: String,
 )
 
 // POST /admin/disputes/{id}/deny — body { reason }.

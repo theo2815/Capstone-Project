@@ -49,6 +49,9 @@ data class RateLimitProperties(
     // Public photo verification: a decode + pHash + full-table Hamming scan per
     // call, reachable by anyone. Same posture as face search.
     val photoVerify: Policy = Policy(capacity = 10, refillPeriod = Duration.ofMinutes(15)),
+    // Each refund-link send is an inbox message and an e-mail to one runner;
+    // keyed by dispute so no admin can flood one runner.
+    val refundLinkPerDispute: Policy = Policy(capacity = 3, refillPeriod = Duration.ofHours(1)),
 ) {
     data class Policy(
         val capacity: Long,
