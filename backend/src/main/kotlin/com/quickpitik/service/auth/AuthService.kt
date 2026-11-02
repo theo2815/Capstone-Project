@@ -1,6 +1,7 @@
 package com.quickpitik.service.auth
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.dto.auth.AuthResponse
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.RefreshRequest
@@ -24,6 +25,7 @@ import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import java.time.OffsetDateTime
 
 @Service
 @Transactional
@@ -36,6 +38,7 @@ class AuthService(
     private val loginAttemptService: LoginAttemptService,
     private val eventPublisher: ApplicationEventPublisher,
     private val adminMfaService: AdminMfaService,
+    private val legalProperties: LegalProperties,
 ) {
     // A BCrypt(12) hash of a throwaway constant, computed once on first use.
     // Matching against it costs the same as matching a real user's hash — see
@@ -57,6 +60,7 @@ class AuthService(
             name = req.name.trim(),
             role = req.role,
         )
+        recordTermsIfAccepted(user, req.termsAccepted)
         val saved = userRepository.save(user)
         // AFTER_COMMIT + @Async, via EmailVerificationListener: a rolled-back
         // registration must not mail a link, and a slow Resend call must not
@@ -180,6 +184,12 @@ class AuthService(
         if (!refreshToken.isNullOrBlank()) {
             refreshTokenService.revoke(refreshToken)
         }
+    }
+
+    // New sign-ups only (register, Google account creation). The server's own
+    // version is stamped; the client only says it agreed.
+    internal fun recordTermsIfAccepted(user: User, termsAccepted: Boolean?) {
+        if (termsAccepted == true) user.recordTermsAcceptance(legalProperties.currentVersion, OffsetDateTime.now())
     }
 
     // internal: GoogleAuthService reuses this so every sign-in path mints the

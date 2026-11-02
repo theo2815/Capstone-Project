@@ -2,6 +2,7 @@ package com.quickpitik.service.auth
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.JwtProperties
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.RefreshRequest
 import com.quickpitik.dto.auth.RegisterRequest
@@ -17,6 +18,7 @@ import com.quickpitik.service.admin.AdminMfaService
 import com.quickpitik.service.profile.UserDtoMapper
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
@@ -30,6 +32,8 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 // Four behaviours locked here. The first three are holes the 2026-05-27
 // runner-flow audit found in the auth surface; the fourth arrived with V29:
@@ -95,6 +99,7 @@ class AuthServiceTest {
         loginAttemptService,
         eventPublisher,
         adminMfaService,
+        LegalProperties(currentVersion = "9.9-test"),
     )
 
     private fun dtoFor(user: User) = UserDto(
@@ -188,6 +193,44 @@ class AuthServiceTest {
         assertEquals("INVALID_ROLE", ex.code)
         assertEquals("role", ex.field)
         Mockito.verifyNoInteractions(userRepository)
+    }
+
+    // ─── Terms acceptance (V91) ─────────────────────────────────────────────
+
+    private fun registerAndCapture(termsAccepted: Boolean?): User {
+        Mockito.`when`(userRepository.save(anyArg<User>())).thenAnswer { it.arguments[0] }
+        Mockito.`when`(userDtoMapper.toDto(anyArg())).thenAnswer { dtoFor(it.arguments[0] as User) }
+        Mockito.`when`(refreshTokenService.issue(anyArg())).thenReturn("refresh-plain")
+        service().register(
+            RegisterRequest(
+                name = "Test Runner",
+                email = "runner@example.com",
+                password = "correct-horse-battery-staple-42",
+                role = Role.RUNNER,
+                termsAccepted = termsAccepted,
+            ),
+        )
+        val captor = ArgumentCaptor.forClass(User::class.java)
+        Mockito.verify(userRepository).save(captor.capture())
+        return captor.value
+    }
+
+    // The server stamps its own version; the client only says "I agreed".
+    @Test
+    fun `register stores the terms version and time when termsAccepted is true`() {
+        val saved = registerAndCapture(termsAccepted = true)
+
+        assertEquals("9.9-test", saved.termsVersion)
+        assertNotNull(saved.termsAcceptedAt)
+    }
+
+    // Old app builds never send the field; they must keep signing up (C20).
+    @Test
+    fun `register stores nothing when termsAccepted is missing`() {
+        val saved = registerAndCapture(termsAccepted = null)
+
+        assertNull(saved.termsVersion)
+        assertNull(saved.termsAcceptedAt)
     }
 
     // ─── V29 lockout ──────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ package com.quickpitik.service.auth
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.GoogleAuthProperties
 import com.quickpitik.config.JwtProperties
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.dto.auth.GoogleLoginRequest
 import com.quickpitik.dto.auth.UserDto
 import com.quickpitik.entity.Role
@@ -99,6 +100,7 @@ class GoogleAuthServiceTest {
             loginAttemptService,
             eventPublisher,
             Mockito.mock(com.quickpitik.service.admin.AdminMfaService::class.java),
+            LegalProperties(currentVersion = "9.9-test"),
         ),
         googleJwtDecoder,
         GoogleAuthProperties(clientId = clientId),
@@ -233,6 +235,39 @@ class GoogleAuthServiceTest {
         // No verification mail — the address is already proven.
         Mockito.verify(eventPublisher, Mockito.never()).publishEvent(anyArg<Any>())
         assertEquals("refresh-plain", result.refreshToken)
+    }
+
+    // The tick lives on the role step, so it rides on the second POST (role + termsAccepted).
+    @Test
+    fun `new Google account stores terms acceptance from the role request`() {
+        Mockito.`when`(googleJwtDecoder.decode(anyArg())).thenReturn(googleJwt())
+
+        service().login(GoogleLoginRequest("google-id-token", Role.RUNNER, termsAccepted = true))
+
+        val captor = ArgumentCaptor.forClass(User::class.java)
+        Mockito.verify(userRepository).save(captor.capture())
+        assertEquals("9.9-test", captor.value.termsVersion)
+        assertNotNull(captor.value.termsAcceptedAt)
+    }
+
+    // Sign-in and auto-link are not sign-ups: no new agreement is recorded (no accept step for existing users).
+    @Test
+    fun `existing Google sign-in leaves terms fields alone`() {
+        val linked = newUser().apply { googleSub = "google-sub-1" }
+        val byEmail = newUser(email = "other@gmail.com")
+        Mockito.`when`(googleJwtDecoder.decode("google-id-token")).thenReturn(googleJwt())
+        Mockito.`when`(googleJwtDecoder.decode("link-token"))
+            .thenReturn(googleJwt(sub = "google-sub-2", email = "other@gmail.com"))
+        Mockito.`when`(userRepository.findByGoogleSub("google-sub-1")).thenReturn(linked)
+        Mockito.`when`(userRepository.findByEmail("other@gmail.com")).thenReturn(byEmail)
+
+        service().login(GoogleLoginRequest("google-id-token", termsAccepted = true))
+        service().login(GoogleLoginRequest("link-token", termsAccepted = true))
+
+        for (user in listOf(linked, byEmail)) {
+            assertNull(user.termsVersion)
+            assertNull(user.termsAcceptedAt)
+        }
     }
 
     @Test

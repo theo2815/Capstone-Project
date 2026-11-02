@@ -113,6 +113,7 @@ class GoogleAuthService(
             emailVerifiedAt = OffsetDateTime.now(),
             googleSub = sub,
         )
+        authService.recordTermsIfAccepted(user, req.termsAccepted)
         return authService.completeLogin(userRepository.save(user))
     }
 
