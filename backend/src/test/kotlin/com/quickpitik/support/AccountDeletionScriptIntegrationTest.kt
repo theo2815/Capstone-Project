@@ -188,7 +188,8 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
     // ─── DEL-1b: photographer accounts are anonymised and suspended, never deleted ───
 
     private class Studio(
-        val photographer: UUID, val handle: String, val soldPhoto: UUID, val r2Keys: List<String>, val snapshotQrKey: String,
+        val photographer: UUID, val handle: String, val soldPhoto: UUID, val event: UUID, val order: UUID,
+        val r2Keys: List<String>, val snapshotQrKey: String,
     )
 
     /**
@@ -215,7 +216,8 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
             "INSERT INTO events (slug, name, date, location, status) VALUES (?, 'Del Run', current_date, 'Cebu', 'ACTIVE')",
             "del-${UUID.randomUUID()}",
         )
-        jdbc.update("INSERT INTO event_photographer (event_id, photographer_id) VALUES (?, ?)", event, p)
+        jdbc.update("UPDATE events SET photo_count = 1 WHERE id = ?", event)
+        jdbc.update("INSERT INTO event_photographer (event_id, photographer_id, photo_count) VALUES (?, ?, 1)", event, p)
         val sold = id("INSERT INTO photos (event_id, photographer_id, s3_key, price_php) VALUES (?, ?, ?, 125)", event, p, "del/${UUID.randomUUID()}")
         jdbc.update(
             "INSERT INTO photos (event_id, photographer_id, s3_key, price_php, deleted_at, deletion_started_at, purged_at) " +
@@ -227,6 +229,7 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
             buyer, event,
         )
         jdbc.update("INSERT INTO order_items (order_id, photo_id, price_php_at_purchase) VALUES (?, ?, 125)", order, sold)
+        jdbc.update("INSERT INTO download_grants (order_id, photo_id, granted_until) VALUES (?, ?, now() + interval '30 days')", order, sold)
         jdbc.update(
             "INSERT INTO transactions (paid_at, photographer_id, event_id, photo_id, order_id, amount_kept_php, buyer_id, buyer_display_name) " +
                 "VALUES (now() - interval '30 days', ?, ?, ?, ?, 93.75, ?, 'Del T.')",
@@ -252,12 +255,13 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         jdbc.update("INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, now() + interval '1 day')", p, "del-${UUID.randomUUID()}")
         jdbc.update("INSERT INTO desktop_auth_codes (user_id, code_hash, code_challenge, expires_at) VALUES (?, ?, 'c', now() + interval '1 minute')", p, "del-${UUID.randomUUID()}")
         val staging = "staging/photo-uploads/$p/$event/$tag/original"
+        val leftoverOriginal = "events/$event/photos/$tag/original.jpg"
         jdbc.update(
             "INSERT INTO photo_upload_intents (photo_id, photographer_id, event_id, content_hash, content_type, size_bytes, staging_key, original_key, state, " +
                 "created_at, put_expires_at, expires_at, updated_at) VALUES (?, ?, ?, ?, 'image/jpeg', 10, ?, ?, 'EXPIRED', now(), now(), now(), now())",
-            UUID.randomUUID(), p, event, "a".repeat(64), staging, "events/$event/$tag/original.jpg",
+            UUID.randomUUID(), p, event, "a".repeat(64), staging, leftoverOriginal,
         )
-        return Studio(p, handle, sold, listOf(cover, watermark, avatar, liveQr, "staging/photo-uploads/$p/"), snapshotQr)
+        return Studio(p, handle, sold, event, order, listOf(cover, watermark, avatar, liveQr, "staging/photo-uploads/$p/", leftoverOriginal), snapshotQr)
     }
 
     private fun email(userId: UUID): String = jdbc.queryForObject("SELECT email FROM users WHERE id = ?", String::class.java, userId)!!
@@ -279,10 +283,25 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, count("SELECT count(*) FROM social_links WHERE user_id = ?", s.photographer))
     }
 
+    private val deletedHandle = { p: UUID -> "deleted-" + p.toString().replace("-", "") }
+
+    /** What another photographer's account looks like, to prove the run touched only one. */
+    private fun fingerprint(p: UUID): String = jdbc.queryForObject(
+        "SELECT u.email || u.name || u.password_hash || coalesce(u.suspended_at::text, '-') || s.handle || s.bio || " +
+            "(SELECT count(*) FROM social_links WHERE user_id = u.id) || (SELECT count(*) FROM photographer_payout_accounts WHERE user_id = u.id) || " +
+            "(SELECT count(*) FROM photographer_coupons WHERE photographer_id = u.id AND active) || " +
+            "(SELECT count(*) FROM photos WHERE photographer_id = u.id AND deleted_at IS NULL) || " +
+            "(SELECT count(*) FROM refresh_tokens WHERE user_id = u.id) " +
+            "FROM users u JOIN photographer_settings s ON s.user_id = u.id WHERE u.id = ?",
+        String::class.java, p,
+    )!!
+
     @Test
     fun `confirmed run anonymises and suspends the photographer and keeps every money row`() {
         val s = seedStudio()
         val p = s.photographer
+        val bystander = seedStudio().photographer
+        val bystanderBefore = fingerprint(bystander)
 
         val result = anonymise(p, confirm = "yes")
 
@@ -304,19 +323,25 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
             assertEquals(0, count("SELECT count(*) FROM $table WHERE $column = ?", p), table)
         }
         val settings = jdbc.queryForMap("SELECT * FROM photographer_settings WHERE user_id = ?", p)
-        assertEquals("deleted-${p.toString().take(8)}", settings["handle"])
+        assertEquals(deletedHandle(p), settings["handle"])
         assertEquals("", settings["bio"])
         listOf("brand_name", "city", "cover_s3_key", "watermark_s3_key", "watermark_label").forEach { assertEquals(null, settings[it], it) }
         // Money and sold photos stay: the ledger, the payout with its snapshot, the buyer's photo.
         assertEquals(1, count("SELECT count(*) FROM transactions WHERE photographer_id = ?", p))
         assertEquals(1, count("SELECT count(*) FROM payout_cycles WHERE photographer_id = ? AND account_snapshot_qr_key = ?", p, s.snapshotQrKey))
         assertEquals(1, count("SELECT count(*) FROM photos WHERE id = ? AND photographer_id = ?", s.soldPhoto, p))
+        // ...but binned, so nobody can buy it any more; the buyer keeps their download.
+        assertEquals(1, count("SELECT count(*) FROM photos WHERE id = ? AND deleted_at IS NOT NULL", s.soldPhoto))
+        assertEquals(1, count("SELECT count(*) FROM download_grants WHERE photo_id = ?", s.soldPhoto))
+        assertEquals(0, count("SELECT photo_count FROM events WHERE id = ?", s.event))
+        assertEquals(0, count("SELECT photo_count FROM event_photographer WHERE event_id = ? AND photographer_id = ?", s.event, p))
         // Coupons are switched off, not deleted: past orders keep the link to the coupon they used.
         assertEquals(0, count("SELECT count(*) FROM photographer_coupons WHERE photographer_id = ? AND active", p))
         assertEquals(1, count("SELECT count(*) FROM photographer_coupons WHERE photographer_id = ?", p))
         // The public profile is gone under the old handle and the new one.
         assertThrows<NotFoundException> { publicPhotographers.getProfile(s.handle) }
-        assertThrows<NotFoundException> { publicPhotographers.getProfile("deleted-${p.toString().take(8)}") }
+        assertThrows<NotFoundException> { publicPhotographers.getProfile(deletedHandle(p)) }
+        assertEquals(bystanderBefore, fingerprint(bystander))
     }
 
     @Test
@@ -325,6 +350,18 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         val event = jdbc.queryForObject("SELECT event_id FROM photos WHERE id = ?", UUID::class.java, s.soldPhoto)
         // Trashed but not deleted forever: its files and faces are still stored.
         jdbc.update("INSERT INTO photos (event_id, photographer_id, s3_key, price_php, deleted_at) VALUES (?, ?, 'del/x', 125, now())", event, s.photographer)
+        assertRefusedUnchanged(s.photographer)
+    }
+
+    @Test
+    fun `photographer with a photo in an unpaid order is refused`() {
+        // A payment still in flight would add a sale to the closed account.
+        val s = seedStudio()
+        val order = id(
+            "INSERT INTO orders (event_id, recipient_email, payment_method, status, total_php) VALUES (?, 'late@test.local', 'qrph', 'PENDING', 125)",
+            s.event,
+        )
+        jdbc.update("INSERT INTO order_items (order_id, photo_id, price_php_at_purchase) VALUES (?, ?, 125)", order, s.soldPhoto)
         assertRefusedUnchanged(s.photographer)
     }
 

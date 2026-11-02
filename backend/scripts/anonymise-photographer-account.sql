@@ -14,7 +14,8 @@
 --     files and the faces). Sold photos stay, because buyers keep their downloads.
 --   * been paid everything they are owed, even below the 500 peso minimum, with no payout
 --     still open (D20). Money still inside the 7-day clearing window counts as owed.
--- The script refuses (error, no change) until both are true, and while the id is not an
+-- The script refuses (error, no change) until both are true, while an unpaid order still
+-- holds one of their photos (a late payment would add a sale), and while the id is not an
 -- existing PHOTOGRAPHER. Read the counts in the error to tell the photographer what is left.
 --
 -- What the confirmed run does, in one transaction:
@@ -25,11 +26,14 @@
 --   Deleted: sign-in, reset, email-change and desktop tokens; social links; payout accounts
 --     and their audit rows; photographer messages; leftover upload intents; saved selfies,
 --     saved events, cart and photo alerts (if they used runner features).
---   photographer_settings: handle becomes deleted-<first 8 of id>; brand name, bio, place,
---     cover and watermark cleared.
+--   photographer_settings: handle becomes deleted-<id without dashes> (40 characters, longer
+--     than the app lets anyone choose); brand name, bio, place, cover and watermark cleared.
+--   Their remaining (sold) photos go to the bin, so nobody can buy them any more; buyers keep
+--     their downloads, as when a photographer bins a photo in the app.
 --   Coupons are switched off, not deleted: past orders keep the link to the coupon they used.
 --   Kept: sold photos, orders, the ledger (transactions), payout cycles with their account
---     snapshot (name, number, QR file), payout reports, admin decision records.
+--     snapshot (name, number, QR file), payout reports, admin decision records, the name on
+--     photo removal cases, and orders they placed as a buyer.
 --
 -- Steps for each request:
 --   0. Once, before the first real run: check that Railway has a backup of the production
@@ -38,6 +42,8 @@
 --      If it is refused, tell the photographer what is left (photos to delete, money to pay
 --      out by hand), then start again.
 --   b. Run again with confirm=yes.
+--   b2. Wait 15 minutes (a sign-in made before the run lasts that long), then do the dry run
+--      again: every "Deleted" count must be 0. If not, run with confirm=yes once more.
 --   c. R2 (photo bucket quickpitik-prod). From the monorepo checkout:
 --        cf auth whoami          -- must show account 277f145551e9715f57bc8e8f70182d5d; stop if not
 --        cf r2 objects delete <key> --bucket-name quickpitik-prod --force    -- each saved key
@@ -82,6 +88,7 @@ DECLARE
     user_role text;
     unsold int;
     open_payouts int;
+    unpaid_orders int;
     owed numeric;
 BEGIN
     IF uid_text = '' THEN
@@ -106,12 +113,15 @@ BEGIN
     -- Open = PayoutRequestService.OPEN_STATUS_WIRES.
     SELECT count(*) INTO open_payouts FROM payout_cycles
     WHERE photographer_id = uid AND status IN ('scheduled', 'pending', 'approved', 'processing', 'held');
+    SELECT count(DISTINCT o.id) INTO unpaid_orders FROM orders o
+    JOIN order_items oi ON oi.order_id = o.id JOIN photos p ON p.id = oi.photo_id
+    WHERE p.photographer_id = uid AND o.status = 'PENDING' AND o.paid_at IS NULL;
     SELECT (SELECT coalesce(sum(amount_kept_php), 0) FROM transactions WHERE photographer_id = uid)
          - (SELECT coalesce(sum(amount_php), 0) FROM payout_cycles WHERE photographer_id = uid AND status = 'paid')
       INTO owed;
-    IF unsold > 0 OR open_payouts > 0 OR owed > 0 THEN
-        RAISE EXCEPTION 'Refused: photographer % still has % unsold photos not deleted forever, % open payouts, and % pesos not paid out',
-            uid, unsold, open_payouts, owed;
+    IF unsold > 0 OR open_payouts > 0 OR owed > 0 OR unpaid_orders > 0 THEN
+        RAISE EXCEPTION 'Refused: photographer % still has % unsold photos not deleted forever, % open payouts, % pesos not paid out, and % unpaid orders holding their photos',
+            uid, unsold, open_payouts, owed, unpaid_orders;
     END IF;
 END
 $$;
@@ -137,14 +147,16 @@ UNION ALL SELECT 'cart_items', count(*) FROM cart_items WHERE user_id = :'qp_use
 UNION ALL SELECT 'event_photo_alerts', count(*) FROM event_photo_alerts WHERE user_id = :'qp_user_id';
 
 \echo '== Kept (rows), and the personal data that stays on them'
-SELECT 'photos (sold)' AS kept, count(*) AS rows, 'credit in already-made previews' AS personal_data_kept FROM photos WHERE photographer_id = :'qp_user_id' AND purged_at IS NULL
+SELECT 'photos (sold; binned by the run)' AS kept, count(*) AS rows, 'credit in already-made previews' AS personal_data_kept FROM photos WHERE photographer_id = :'qp_user_id' AND purged_at IS NULL
 UNION ALL SELECT 'transactions', count(*), '' FROM transactions WHERE photographer_id = :'qp_user_id'
 UNION ALL SELECT 'payout_cycles', count(*), 'account_snapshot_name, account_snapshot_number, account_snapshot_qr_key file' FROM payout_cycles WHERE photographer_id = :'qp_user_id'
 UNION ALL SELECT 'payout_reports', count(*), 'note' FROM payout_reports WHERE photographer_id = :'qp_user_id'
 UNION ALL SELECT 'photographer_coupons (switched off)', count(*), '' FROM photographer_coupons WHERE photographer_id = :'qp_user_id'
 UNION ALL SELECT 'event_photographer', count(*), '' FROM event_photographer WHERE photographer_id = :'qp_user_id'
 UNION ALL SELECT 'events created by them', count(*), 'event details they typed' FROM events WHERE created_by = :'qp_user_id'
-UNION ALL SELECT 'admin_decision_log.target_user_id', count(*), 'reason, meta (may name the person)' FROM admin_decision_log WHERE target_user_id = :'qp_user_id';
+UNION ALL SELECT 'admin_decision_log.target_user_id', count(*), 'reason, meta (may name the person)' FROM admin_decision_log WHERE target_user_id = :'qp_user_id'
+UNION ALL SELECT 'photo_removal_items', count(*), 'owner_name_snapshot (locked by a trigger)' FROM photo_removal_items WHERE owner_id_snapshot = :'qp_user_id'
+UNION ALL SELECT 'orders placed as a buyer', count(*), 'recipient_email' FROM orders WHERE user_id = :'qp_user_id';
 
 \echo '== R2 files to delete after the confirmed run (a key ending in / is a prefix: list it and delete what is there)'
 SELECT cover_s3_key AS r2_key FROM photographer_settings WHERE user_id = :'qp_user_id' AND cover_s3_key IS NOT NULL
@@ -154,6 +166,9 @@ UNION ALL SELECT s3_key FROM user_selfies WHERE user_id = :'qp_user_id'
 UNION ALL SELECT a.qr_s3_key FROM photographer_payout_accounts a
     WHERE a.user_id = :'qp_user_id' AND a.qr_s3_key IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM payout_cycles c WHERE c.account_snapshot_qr_key = a.qr_s3_key)
+UNION ALL SELECT i.original_key FROM photo_upload_intents i
+    WHERE i.photographer_id = :'qp_user_id' AND i.state <> 'COMMITTED' AND i.cleaned_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM photos p WHERE p.s3_key = i.original_key)
 UNION ALL SELECT 'staging/photo-uploads/' || :'qp_user_id' || '/';
 
 \echo '== Kept in R2: payout QR files named by a payout snapshot (do not delete)'
@@ -196,8 +211,18 @@ BEGIN
     DELETE FROM saved_events WHERE user_id = uid;
     DELETE FROM cart_items WHERE user_id = uid;
     UPDATE photographer_coupons SET active = false, updated_at = now() WHERE photographer_id = uid;
+    -- Bin what is left (only sold photos pass the checks) and lower the counts, as trash() does.
+    WITH binned AS (
+        UPDATE photos SET deleted_at = now() WHERE photographer_id = uid AND deleted_at IS NULL RETURNING event_id
+    ), per_event AS (
+        SELECT event_id, count(*) AS n FROM binned GROUP BY event_id
+    ), studio AS (
+        UPDATE event_photographer ep SET photo_count = GREATEST(0, ep.photo_count - pe.n)
+        FROM per_event pe WHERE ep.event_id = pe.event_id AND ep.photographer_id = uid
+    )
+    UPDATE events e SET photo_count = GREATEST(0, e.photo_count - pe.n) FROM per_event pe WHERE e.id = pe.event_id;
     UPDATE photographer_settings SET
-        handle = 'deleted-' || left(uid::text, 8),
+        handle = 'deleted-' || replace(uid::text, '-', ''),
         brand_name = NULL, bio = '', region_code = NULL, province_code = NULL, city = NULL,
         cover_s3_key = NULL, watermark_s3_key = NULL, watermark_label = NULL,
         updated_at = now()
