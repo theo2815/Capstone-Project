@@ -4,6 +4,13 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.quickpitik.mobile.ui.common.AvatarCropDialog
+import com.quickpitik.mobile.ui.common.DELETION_NOTICE
+import com.quickpitik.mobile.ui.common.PRIVACY_URL
+import com.quickpitik.mobile.ui.common.PolicyLinkRow
+import com.quickpitik.mobile.ui.common.SupportEmailRow
+import com.quickpitik.mobile.ui.common.TERMS_URL
+import com.quickpitik.mobile.ui.common.openInCustomTab
+import com.quickpitik.mobile.ui.common.requestAccountDeletion
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -52,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -86,6 +94,7 @@ fun AccountSettingsScreen(
     onLogout: () -> Unit,
     onOpenVerify: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     val name by viewModel.profileName.collectAsState()
     val email by viewModel.profileEmail.collectAsState()
 
@@ -740,16 +749,10 @@ fun AccountSettingsScreen(
                                 ArrowLabel("View →", color = Slate, style = Typography.labelMedium)
                             }
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Support Email", style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
-                                Text("support@quickpitik.com", style = Typography.bodyMedium, color = Slate)
-                            }
+                            PolicyLinkRow("Privacy Policy", "View →") { openInCustomTab(context, PRIVACY_URL) }
+                            PolicyLinkRow("Terms of Service", "View →") { openInCustomTab(context, TERMS_URL) }
+
+                            SupportEmailRow()
 
                             Row(
                                 modifier = Modifier
@@ -798,10 +801,11 @@ fun AccountSettingsScreen(
 
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Need to permanently delete your account? Contact support@quickpitik.com and our team will process your request within 7 business days.",
+                                text = DELETION_NOTICE,
                                 style = Typography.bodySmall,
                                 color = SlateSoft
                             )
+                            PolicyLinkRow("Request account deletion", "Email →") { requestAccountDeletion(context, email) }
                         }
                     }
                 }

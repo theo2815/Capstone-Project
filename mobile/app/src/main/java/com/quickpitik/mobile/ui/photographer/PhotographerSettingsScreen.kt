@@ -6,6 +6,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import com.quickpitik.mobile.ui.common.AvatarCropDialog
+import com.quickpitik.mobile.ui.common.DELETION_NOTICE
+import com.quickpitik.mobile.ui.common.PRIVACY_URL
+import com.quickpitik.mobile.ui.common.PolicyLinkRow
+import com.quickpitik.mobile.ui.common.SupportEmailRow
+import com.quickpitik.mobile.ui.common.TERMS_URL
+import com.quickpitik.mobile.ui.common.openInCustomTab
+import com.quickpitik.mobile.ui.common.requestAccountDeletion
+import com.quickpitik.mobile.data.local.SessionManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -590,6 +598,20 @@ fun PhotographerSettingsScreen(
                 },
                 onSignOut = onLogout,
             )
+        }
+        item("legal") {
+            HairlineDivider()
+            Column {
+                Kicker(text = "Policies & support", color = SlateSoft)
+                Spacer(modifier = Modifier.height(12.dp))
+                PolicyLinkRow("Privacy Policy", "View →") { openInCustomTab(context, PRIVACY_URL) }
+                PolicyLinkRow("Terms of Service", "View →") { openInCustomTab(context, TERMS_URL) }
+                SupportEmailRow()
+                PolicyLinkRow("Request account deletion", "Email →") {
+                    requestAccountDeletion(context, SessionManager.getInstance(context).getUserEmail())
+                }
+                Text(DELETION_NOTICE, style = Typography.bodySmall, color = SlateSoft)
+            }
         }
     }
 
