@@ -93,6 +93,7 @@ import com.quickpitik.mobile.ui.common.PhotoPreview
 import com.quickpitik.mobile.ui.common.PhotoPreviewMode
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.faceNoticeAccepted
 import com.quickpitik.mobile.ui.common.gridTileUrl
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.common.toPreviewData
@@ -664,10 +665,12 @@ fun RunnerGalleryScreen(
                     color = Slate,
                 )
                 Spacer(Modifier.height(16.dp))
+                val faceOk = faceNoticeAccepted()
                 PrimaryCta(
                     text = "Take a selfie",
                     onClick = { showAddSelfieSheet = false; selfieAddOnly = true; launchCamera() },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = faceOk,
                 )
                 Spacer(Modifier.height(8.dp))
                 GhostCta(
@@ -678,6 +681,7 @@ fun RunnerGalleryScreen(
                         selfieGalleryLauncher.launch("image/*")
                     },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = faceOk,
                 )
             }
         }
