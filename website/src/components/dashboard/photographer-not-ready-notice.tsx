@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { UploadGateState } from "@/hooks/use-can-upload";
 import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { Kicker } from "@/components/ui/kicker";
-import { ROUTES } from "@/lib/constants";
+import { ROUTES, SUPPORT_EMAIL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 // Shared friendly notice for a photographer who can't act yet. Used by the
@@ -33,7 +33,7 @@ export function PhotographerNotReadyNotice({
           paused until the suspension is lifted.
         </p>
         <a
-          href="mailto:support@quickpitik.com"
+          href={`mailto:${SUPPORT_EMAIL}`}
           className="mt-5 inline-flex w-fit items-center gap-2 font-sans text-base font-medium border border-ink text-ink hover:bg-ink hover:text-surface py-3 px-6 rounded-full transition-colors"
         >
           Contact support

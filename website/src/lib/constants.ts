@@ -50,7 +50,11 @@ export const ROUTES = {
   ADMIN_SALES: "/admin/sales",
   ADMIN_SECURITY: "/admin/security",
   ADMIN_PHOTO_REMOVAL_REQUESTS: "/admin/photo-removal-requests",
+  PRIVACY: "/privacy",
+  TERMS: "/terms",
 } as const;
+
+export const SUPPORT_EMAIL = "quickpitiksupport@gmail.com";
 
 export const ROLES = {
   ADMIN: "ADMIN",

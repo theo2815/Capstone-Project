@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BrandLogo } from "@/components/layout/brand-logo";
-import { ROUTES } from "@/lib/constants";
+import { LegalLinks } from "@/components/legal/legal-links";
+import { ROUTES, SUPPORT_EMAIL } from "@/lib/constants";
 
 export function Footer() {
   return (
@@ -42,10 +43,10 @@ export function Footer() {
             <FooterLink href={ROUTES.VERIFY}>Verify a photo</FooterLink>
             <li>
               <a
-                href="mailto:support@quickpitik.ph"
-                className="nav-link font-sans text-sm text-ink-soft hover:text-fresh transition-colors"
+                href={`mailto:${SUPPORT_EMAIL}`}
+                className="nav-link break-all font-sans text-sm text-ink-soft hover:text-fresh transition-colors"
               >
-                support@quickpitik.ph
+                {SUPPORT_EMAIL}
               </a>
             </li>
           </FooterColumn>
@@ -55,6 +56,7 @@ export function Footer() {
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             &copy; {new Date().getFullYear()} QuickPitik · All rights reserved
           </p>
+          <LegalLinks />
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
             Cebu · Philippines
           </p>

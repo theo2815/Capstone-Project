@@ -17,6 +17,7 @@ import {
   OAUTH_ENABLED,
 } from "@/components/auth/google-button";
 import { FieldError } from "@/components/ui/field-error";
+import { LegalLinks } from "@/components/legal/legal-links";
 import { Eye, EyeOff } from "lucide-react";
 
 interface FieldErrors {
@@ -316,6 +317,10 @@ export function LoginForm() {
             Create account →
           </Link>
         </p>
+      </div>
+
+      <div className="flex justify-center">
+        <LegalLinks />
       </div>
     </form>
   );

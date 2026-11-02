@@ -24,11 +24,11 @@ export const REFUND_POLICY_BULLETS: ReadonlyArray<RefundPolicyBullet> = [
   },
   {
     kicker: "Review time",
-    body: `We review every request within ${REFUND_PROCESSING_DAYS} business days. You'll see the status update on this receipt.`,
+    body: `We review every request within ${REFUND_PROCESSING_DAYS} business days. You'll see the status update on your receipt.`,
   },
   {
     kicker: "Where the money goes",
-    body: "Approved refunds come as a PayMongo refund link, shown on this receipt with its claim-by date and sent to your e-mail. Open it to choose where the money goes.",
+    body: "Approved refunds come as a PayMongo refund link, shown on your receipt with its claim-by date and sent to your e-mail. Open it to choose where the money goes.",
   },
   {
     kicker: "What we don't refund",
