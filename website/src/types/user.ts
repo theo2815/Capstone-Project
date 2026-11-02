@@ -50,4 +50,6 @@ export interface RegisterRequest {
   email: string;
   password: string;
   role: Role;
+  // Optional on /api/v1: old app builds omit it (plan C20).
+  termsAccepted?: boolean;
 }

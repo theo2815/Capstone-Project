@@ -9,8 +9,10 @@ const TEXT_LINK =
   "text-ink underline decoration-line-strong underline-offset-4 hover:decoration-fresh transition-colors";
 
 // Renders **bold** and [label](href). Site paths use next/link; anchors,
-// mailto and outside links use a plain <a>.
-export function LegalText({ text }: { text: string }) {
+// mailto and outside links use a plain <a>. `newTab` keeps a half-filled
+// form open (sign-up, onboarding) when the reader follows a link.
+export function LegalText({ text, newTab = false }: { text: string; newTab?: boolean }) {
+  const tab = newTab ? { target: "_blank", rel: "noopener noreferrer" } : {};
   return text.split(/(\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/).map((part, i) => {
     const bold = part.match(/^\*\*([^*]+)\*\*$/);
     if (bold) return <strong key={i} className="font-semibold text-ink">{bold[1]}</strong>;
@@ -18,9 +20,9 @@ export function LegalText({ text }: { text: string }) {
     if (!link) return <Fragment key={i}>{part}</Fragment>;
     const [, label, href] = link;
     return href.startsWith("/") ? (
-      <Link key={i} href={href} className={TEXT_LINK}>{label}</Link>
+      <Link key={i} href={href} className={TEXT_LINK} {...tab}>{label}</Link>
     ) : (
-      <a key={i} href={href} className={TEXT_LINK}>{label}</a>
+      <a key={i} href={href} className={TEXT_LINK} {...tab}>{label}</a>
     );
   });
 }

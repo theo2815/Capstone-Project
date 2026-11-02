@@ -14,6 +14,9 @@ import {
   OAUTH_ENABLED,
 } from "@/components/auth/google-button";
 import { FieldError } from "@/components/ui/field-error";
+import { LegalText } from "@/components/legal/legal-document";
+import { TermsTick } from "@/components/legal/terms-tick";
+import { LEGAL_COPY } from "@/lib/legal/copy";
 import { Eye, EyeOff } from "lucide-react";
 import {
   NAME_MAX,
@@ -46,6 +49,7 @@ interface FieldErrors {
   name?: string | null;
   email?: string | null;
   password?: string | null;
+  terms?: string | null;
 }
 
 // Backend field name → the local state key that has an input to render under.
@@ -73,6 +77,7 @@ export function RegisterForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [agreed, setAgreed] = useState(false);
   const [role, setRole] = useState<Role>(() =>
     resolveInitialRole(searchParams.get("role")),
   );
@@ -97,10 +102,11 @@ export function RegisterForm() {
       name: validateName(name),
       email: validateEmail(email),
       password: validateNewPassword(password),
+      terms: agreed ? null : LEGAL_COPY.signupTickError,
     };
     setErrors(next);
     setSubmitError(null);
-    if (next.name || next.email || next.password) return;
+    if (next.name || next.email || next.password || next.terms) return;
 
     submitting.current = true;
     setIsLoading(true);
@@ -110,6 +116,7 @@ export function RegisterForm() {
         email: email.trim(),
         password,
         role,
+        termsAccepted: true,
       });
       router.push(preservedRedirect ?? roleHome(user.role));
     } catch (err) {
@@ -142,6 +149,9 @@ export function RegisterForm() {
       {OAUTH_ENABLED && (
         <div className="space-y-5">
           <GoogleButton disabled={isLoading} />
+          <p className="font-sans text-sm text-slate leading-relaxed">
+            <LegalText text={LEGAL_COPY.googleLine} newTab />
+          </p>
           <AuthDivider label="or with email" />
         </div>
       )}
@@ -284,6 +294,15 @@ export function RegisterForm() {
           />
         </FieldBlock>
       </div>
+
+      <TermsTick
+        checked={agreed}
+        onChange={(checked) => {
+          setAgreed(checked);
+          clearFieldError("terms");
+        }}
+        error={errors.terms}
+      />
 
       <FieldError message={submitError} id="register-submit-error" />
 
