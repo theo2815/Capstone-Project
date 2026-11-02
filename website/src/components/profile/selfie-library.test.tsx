@@ -5,6 +5,7 @@ import { clearTokens, setTokens } from "@/lib/auth";
 import { shrinkSelfie } from "@/lib/image-utils";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
+import { useFaceConsentStore } from "@/store/face-consent-store";
 import { SelfieLibrary } from "./selfie-library";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -28,6 +29,7 @@ beforeEach(() => {
   useAuthStore.getState().startSession(runner);
   setTokens("access-a", "refresh-a");
   useToastStore.getState().clear();
+  useFaceConsentStore.getState().accept();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 });
 afterEach(() => {
@@ -104,4 +106,17 @@ it("uploads each picked file shrunk", async () => {
   expect(shrinkSelfie).toHaveBeenCalledTimes(2);
   expect(((fetch.mock.calls[0][1] as RequestInit).body as FormData).get("file")).toBe(shrunk[0]);
   expect(((fetch.mock.calls[1][1] as RequestInit).body as FormData).get("file")).toBe(shrunk[1]);
+});
+
+it("keeps adding selfies off until the face-matching box is ticked", async () => {
+  useFaceConsentStore.setState({ acceptedVersion: null });
+  const fetch = vi.fn().mockResolvedValue(ok());
+  vi.stubGlobal("fetch", fetch);
+  render(<QueryClientProvider client={client}><SelfieLibrary /></QueryClientProvider>);
+  expect(screen.getByLabelText(/Upload selfies/)).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/Upload selfies/), { target: { files } });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(fetch).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByLabelText(/I agree to face matching/));
+  expect(screen.getByLabelText(/Upload selfies/)).not.toBeDisabled();
 });

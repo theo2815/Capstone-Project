@@ -29,6 +29,8 @@ import {
   BTN_SIZE,
 } from "@/components/ui/button-styles";
 import { FieldError } from "@/components/ui/field-error";
+import { LegalText } from "@/components/legal/legal-document";
+import { LEGAL_COPY } from "@/lib/legal/copy";
 import type { CartItem } from "@/types/order";
 
 const MANUAL_COOLDOWN_MS = 20_000;
@@ -800,6 +802,10 @@ function PaymentStep({
         </div>
       </section>
       )}
+
+      <p className="font-sans text-sm leading-relaxed text-slate">
+        <LegalText text={LEGAL_COPY.checkoutLine} newTab />
+      </p>
 
       <button
         type="button"
