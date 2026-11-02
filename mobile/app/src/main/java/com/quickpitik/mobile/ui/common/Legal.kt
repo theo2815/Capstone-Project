@@ -10,7 +10,9 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
@@ -18,6 +20,10 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -32,9 +38,13 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.quickpitik.mobile.data.local.FaceConsentPrefs
+import com.quickpitik.mobile.data.local.faceNoticeNeeded
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.Ink
+import com.quickpitik.mobile.ui.theme.InkSoft
+import com.quickpitik.mobile.ui.theme.QpCard
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.Typography
 
@@ -49,6 +59,67 @@ const val DELETION_NOTICE =
 
 // Sign-up copy, same words as the website's LEGAL_COPY (PT-0a deck).
 const val SIGNUP_TICK_ERROR = "Please tick the box to agree before you continue."
+const val FACE_NOTICE =
+    "To find your photos, we send your selfie to Amazon Rekognition to compare it with faces in this event's photos. " +
+        "If you only search, we don't keep your selfie; selfies you save to your profile stay until you delete them. "
+const val FACE_TICK_LABEL = "I agree to face matching with my selfie."
+
+/** Above the pay button, for everyone (website checkoutLine). */
+@Composable
+internal fun CheckoutTermsLine(modifier: Modifier = Modifier) {
+    Text(
+        oneLink("By paying, you agree to the ", "Terms of Service (including refunds)", "$TERMS_URL#refunds", "."),
+        style = Typography.bodySmall,
+        color = Slate,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Privacy plan D2: shows the face-matching notice until it is ticked once on
+ * this device. Returns true once ticked; selfie actions stay disabled until then.
+ */
+@Composable
+internal fun faceNoticeAccepted(): Boolean {
+    val context = LocalContext.current
+    // shortcut: each surface reads the tick when it opens, so a notice already on screen elsewhere stays until redrawn; share one state if that confuses testers.
+    var needed by remember { mutableStateOf(faceNoticeNeeded(FaceConsentPrefs(context).acceptedVersion)) }
+    if (needed) {
+        QpCard(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                oneLink(FACE_NOTICE, "How face matching works", "$PRIVACY_URL#face-matching", ""),
+                style = Typography.bodySmall,
+                color = InkSoft,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .toggleable(value = false, role = Role.Checkbox) {
+                        FaceConsentPrefs(context).accept()
+                        needed = false
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(checked = false, onCheckedChange = null, colors = CheckboxDefaults.colors(checkedColor = Ink, checkmarkColor = Bone))
+                Text(FACE_TICK_LABEL, style = Typography.bodySmall, color = Ink)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+    return !needed
+}
+
+@Composable
+private fun oneLink(before: String, label: String, url: String, after: String): AnnotatedString {
+    val context = LocalContext.current
+    val style = TextLinkStyles(SpanStyle(color = Ink, textDecoration = TextDecoration.Underline))
+    return buildAnnotatedString {
+        append(before)
+        withLink(LinkAnnotation.Clickable(label, style) { openInCustomTab(context, url) }) { append(label) }
+        append(after)
+    }
+}
 
 // "<before>Terms of Service<middle>Privacy Policy<after>", both links open in a Custom Tab.
 @Composable

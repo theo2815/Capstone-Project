@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.download.PhotoDownloader
 import com.quickpitik.mobile.ui.auth.validateEmail
+import com.quickpitik.mobile.ui.common.CheckoutTermsLine
 import com.quickpitik.mobile.ui.common.formatManila
 import com.quickpitik.mobile.ui.common.formatOrderRef
 import com.quickpitik.mobile.ui.common.openInCustomTab
@@ -500,6 +501,8 @@ private fun PayStep(
             Text(text = peso(net), style = NumeralStyle.copy(fontSize = 28.sp), color = Ink)
         }
         Spacer(modifier = Modifier.height(16.dp))
+        CheckoutTermsLine()
+        Spacer(modifier = Modifier.height(10.dp))
         PrimaryCta(
             text = when {
                 net == 0.0 -> "Complete order →"

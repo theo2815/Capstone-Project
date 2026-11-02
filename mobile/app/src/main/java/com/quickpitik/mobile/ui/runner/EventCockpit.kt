@@ -84,6 +84,7 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.eventDateLabel
+import com.quickpitik.mobile.ui.common.faceNoticeAccepted
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
@@ -411,11 +412,11 @@ private fun BibField(value: String, onValueChange: (String) -> Unit, onSubmit: (
 private fun SelfiePanel(state: SelfiePanelState, cb: SearchPanelCallbacks) {
     var libraryOpen by remember { mutableStateOf(false) }
     val hasLibrary = state.selfies.isNotEmpty()
-    val enabled = !state.matching
     Column(modifier = Modifier.fillMaxWidth()) {
         Spacer(Modifier.height(28.dp))
         Kicker("Selfie match")
         Spacer(Modifier.height(12.dp))
+        val enabled = faceNoticeAccepted() && !state.matching
         SelfieActionRow(
             label = "Take a selfie",
             caption = "Use your camera to snap one now.",

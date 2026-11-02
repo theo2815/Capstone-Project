@@ -85,6 +85,17 @@ class CheckoutSheetTest {
         assertTrue(vm.checkoutState.value is CheckoutState.AwaitingQr)
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `pay step says paying means agreeing to the Terms`() {
+        val vm = CartViewModel(application)
+        vm.cartItems.awaitFirst { it.isNotEmpty() }
+        runComposeUiTest {
+            setContent { CheckoutSheet(cartViewModel = vm, onDismiss = {}) }
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Review & pay").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("By paying, you agree to the Terms of Service (including refunds).").assertExists()
+        }
+    }
+
     @Test fun `pure QR helpers`() {
         assertEquals(QrOutcome.EXPIRED, qrEndOutcome(expiresAtMillis = 10_000, now = 6_000))
         assertEquals(QrOutcome.FAILED, qrEndOutcome(expiresAtMillis = 10_000, now = 4_999))
