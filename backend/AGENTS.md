@@ -242,9 +242,9 @@ All responses come wrapped in `{ success, data, errors? }`. Match the website `A
 
 | Endpoint | Method | Auth | Body |
 |----------|--------|------|------|
-| `/api/v1/auth/register` | POST | Public | `{ name, email, password, role: "RUNNER"\|"PHOTOGRAPHER" }` |
+| `/api/v1/auth/register` | POST | Public | `{ name, email, password, role: "RUNNER"\|"PHOTOGRAPHER", termsAccepted?: true }` — `termsAccepted` stamps `users.terms_version` (`app.legal.current-version`) + `terms_accepted_at` (V91); optional, old builds omit it |
 | `/api/v1/auth/login` | POST | Public | `{ email, password }` |
-| `/api/v1/auth/google` | POST | Public | `{ idToken, role?: "RUNNER"\|"PHOTOGRAPHER" }` — Google ID-token exchange; answers **422 `ROLE_REQUIRED`** for a brand-new Google account until `role` is supplied |
+| `/api/v1/auth/google` | POST | Public | `{ idToken, role?: "RUNNER"\|"PHOTOGRAPHER", termsAccepted?: true }` — Google ID-token exchange; answers **422 `ROLE_REQUIRED`** for a brand-new Google account until `role` is supplied; `termsAccepted` counts only on the call that creates the account |
 | `/api/v1/auth/refresh` | POST | Public | `{ refreshToken }` |
 | `/api/v1/auth/forgot-password` | POST | Public | `{ email }` — mails a 6-digit OTP |
 | `/api/v1/auth/verify-reset-otp` | POST | Public | `{ email, code }` → `{ resetToken }` |

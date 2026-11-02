@@ -82,6 +82,14 @@ class User(
     @Column(name = "locked_until")
     var lockedUntil: OffsetDateTime? = null,
 
+    // Legal version agreed at sign-up and when (V91). NULL for accounts that
+    // predate the tick or came from an old app build; nothing gates on it.
+    @Column(name = "terms_version", length = 32)
+    var termsVersion: String? = null,
+
+    @Column(name = "terms_accepted_at")
+    var termsAcceptedAt: OffsetDateTime? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 
@@ -91,5 +99,10 @@ class User(
     @PreUpdate
     fun onUpdate() {
         updatedAt = OffsetDateTime.now()
+    }
+
+    fun recordTermsAcceptance(version: String, at: OffsetDateTime) {
+        termsVersion = version
+        termsAcceptedAt = at
     }
 }

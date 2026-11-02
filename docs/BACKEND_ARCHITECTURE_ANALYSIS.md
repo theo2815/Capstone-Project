@@ -263,9 +263,9 @@ Implemented in [GoogleAuthService.kt](file:///c:/Users/USER/Documents/School/4th
 
 ### 7.1. Authentication & Identity Management
 Managed by [AuthController.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/controller/AuthController.kt) and [AuthService.kt](file:///c:/Users/USER/Documents/School/4th%20Year%201st%20Semester/Capstone%20and%20Research%202/CAPSTONE%20PROJECT/Capstone-Project/backend/src/main/kotlin/com/quickpitik/service/AuthService.kt):
-- `POST /auth/register`: Signs up `RUNNER` or `PHOTOGRAPHER`. Mails an advisory verification link asynchronously.
+- `POST /auth/register`: Signs up `RUNNER` or `PHOTOGRAPHER`. Mails an advisory verification link asynchronously. Optional `termsAccepted: true` stamps `users.terms_version` (from `app.legal.current-version`) and `terms_accepted_at` (V91); never required.
 - `POST /auth/login`: Validates credentials, checks account lockout state, resets attempt counters on success.
-- `POST /auth/google`: Exchanges Google ID Token for QuickPitik access/refresh pair.
+- `POST /auth/google`: Exchanges Google ID Token for QuickPitik access/refresh pair. Optional `termsAccepted: true` is read only when the call creates the account (the role step) and stamps the same two columns; sign-in and auto-link ignore it.
 - `POST /auth/forgot-password`: Mails a 6-digit OTP code (10-minute validity).
 - `POST /auth/verify-reset-otp`: Validates the 6-digit OTP and returns an opaque 15-minute `resetToken`.
 - `POST /auth/reset-password`: Uses the `resetToken` to set a new password, revoking all existing sessions.

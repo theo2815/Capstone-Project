@@ -10,4 +10,7 @@ data class GoogleLoginRequest(
     @field:NotBlank
     val idToken: String,
     val role: Role? = null,
+    // Optional and never required: old app builds omit it (C20). Read only
+    // when this request creates the account.
+    val termsAccepted: Boolean? = null,
 )

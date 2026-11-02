@@ -118,6 +118,11 @@ app:
     # their copy of the ID is unset, so the endpoint going dark is symmetric.
     google:
       client-id: ${GOOGLE_CLIENT_ID:}
+  # Privacy Policy / Terms version stamped on new sign-ups that tick the box
+  # (V91). No env var on purpose: it changes with the text, in code. The
+  # website's LEGAL_VERSION must equal it; "-draft" until the owner approves.
+  legal:
+    current-version: "1.0-draft"
   admin:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
