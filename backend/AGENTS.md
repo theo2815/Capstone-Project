@@ -140,6 +140,10 @@ plus Hikari/JVM/HTTP-server metrics for free. Each face search also logs one INF
 
 Run `backend/scripts/nuke-test-event-photos.sql` with your event IDs swapped in (for example `docker exec -i quickpitik-postgres psql -U quickpitik -d quickpitik < backend/scripts/nuke-test-event-photos.sql`). It deletes the dependent rows (orders, payments, downloads, disputes, transactions, photo_bibs, photo_face_persons) in dependency order. Then delete the photo files: `Remove-Item -Recurse -Force backend\.storage\events\<event-id>`.
 
+### Delete an account on request
+
+Runner (buyer) accounts: the owner runs `backend/scripts/delete-runner-account.sql` (a dry run unless `-v confirm=yes`). Its header comment is the procedure: what it deletes and keeps, the R2 clean-up, and how to open `psql` on production. Never use the `nuke-*` scripts for this: they delete money rows. The request log is the owner's private sheet, never in git or the vault.
+
 ### Stop Postgres
 
 ```powershell
