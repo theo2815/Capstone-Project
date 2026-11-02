@@ -18,7 +18,8 @@ data class RegisterRequest(
     val name: String,
     val email: String,
     val password: String,
-    val role: String // "ADMIN", "PHOTOGRAPHER", or "RUNNER"
+    val role: String, // "ADMIN", "PHOTOGRAPHER", or "RUNNER"
+    val termsAccepted: Boolean? = null // backend stamps its own terms version and time
 )
 
 data class AuthResponse(
@@ -34,7 +35,8 @@ data class AuthResponse(
 // with the picked role. Existing accounts ignore `role` entirely.
 data class GoogleLoginRequest(
     val idToken: String,
-    val role: String? = null
+    val role: String? = null,
+    val termsAccepted: Boolean? = null // only on the second (role) call; Gson omits null
 )
 
 // Body for POST /auth/refresh. Mirrors backend dto/auth/RefreshRequest.

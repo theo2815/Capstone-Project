@@ -134,6 +134,8 @@ class AuthViewModelTest {
         vm.register("Juan", "juan@x.com", "secret123", isPhotographer = true)
         assertTrue(vm.awaitAuth() is AuthState.Success)
         assertTrue(bodies("/api/v1/auth/register").single().contains(""""role":"PHOTOGRAPHER""""))
+        // The screen only calls register after the agreement tick (PT-4b).
+        assertTrue(bodies("/api/v1/auth/register").single().contains(""""termsAccepted":true"""))
         assertEquals("PHOTOGRAPHER", session.getUserRole())
 
         vm.register("Ana", "ana@x.com", "secret123", isPhotographer = false)
