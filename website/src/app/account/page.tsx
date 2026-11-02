@@ -20,6 +20,8 @@ import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
 import { useToast } from "@/hooks/use-toast";
 import { FieldError } from "@/components/ui/field-error";
+import { LegalText } from "@/components/legal/legal-document";
+import { LEGAL_COPY } from "@/lib/legal/copy";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { Eye, EyeOff } from "lucide-react";
 import { ApiError } from "@/lib/api";
@@ -645,14 +647,7 @@ function DangerSlab({ number }: { number: string }) {
         </div>
 
         <p className="font-sans text-sm text-slate max-w-md">
-          Need to delete your account? Contact{" "}
-          <a
-            href="mailto:support@quickpitik.com"
-            className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
-          >
-            support@quickpitik.com
-          </a>{" "}
-          and we&apos;ll handle it within 7 days.
+          <LegalText text={LEGAL_COPY.deletionText} />
         </p>
       </div>
     </Slab>

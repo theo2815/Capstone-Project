@@ -1,3 +1,5 @@
+import { LegalLinks } from "@/components/legal/legal-links";
+
 // Mono kicker pair shared across profile-shell pages. Mounted at the bottom
 // of /profile, /account, /orders, /dashboard.
 export function ProfileShellFooter() {
@@ -6,6 +8,7 @@ export function ProfileShellFooter() {
       <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
         QuickPitik &middot; Cebu, Philippines
       </p>
+      <LegalLinks />
       <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
         © 2026
       </p>

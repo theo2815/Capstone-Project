@@ -42,6 +42,7 @@ import { useSelfiesList } from "@/hooks/use-selfies";
 import { ApiError, searchRateLimitMessage } from "@/lib/api";
 import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
+import { LegalLinks } from "@/components/legal/legal-links";
 
 type Mode = "cockpit" | "browse";
 
@@ -1142,6 +1143,7 @@ function Footer() {
       <Kicker as="p" tone="soft">
         QuickPitik · Cebu, Philippines
       </Kicker>
+      <LegalLinks />
       <Kicker as="p" tone="soft">
         © 2026
       </Kicker>
