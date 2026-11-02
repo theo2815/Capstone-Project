@@ -152,6 +152,27 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `a runner who still has a photographer payout account is refused`() {
+        val former = user("RUNNER")
+        jdbc.update(
+            "INSERT INTO photographer_payout_accounts (id, user_id, method, account_number, account_name) VALUES (?, ?, 'GCASH', '09170000000', 'Del T')",
+            UUID.randomUUID(), former,
+        )
+
+        val result = run(former, confirm = "yes")
+
+        assertNotEquals(0, result.exitCode, result.stdout)
+        assertEquals(1, count("SELECT count(*) FROM photographer_payout_accounts WHERE user_id = ?", former))
+    }
+
+    @Test
+    fun `a confirm value other than yes changes nothing`() {
+        val seed = seedRunner()
+        run(seed.runner, confirm = "maybe")
+        assertEquals(7, ownedRows(seed.runner))
+    }
+
+    @Test
     fun `missing user_id stops before anything runs`() {
         assertNotEquals(0, run(null, confirm = "yes").exitCode)
     }

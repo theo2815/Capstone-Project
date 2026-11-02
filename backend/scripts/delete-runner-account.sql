@@ -18,6 +18,8 @@
 --      never indexed at Rekognition.
 --
 -- Steps for each request:
+--   0. Once, before the first real run: check that Railway has a backup of the production
+--      database. After COMMIT only a backup can undo this.
 --   a. Dry run. Check the account is the requester's; save the output (it lists the R2 keys).
 --   b. Run again with confirm=yes.
 --   c. R2 (photo bucket quickpitik-prod). From the monorepo checkout:
@@ -29,8 +31,9 @@
 --      avatars no row points at). Without --force, cf prints "Aborted." and still exits 0.
 --   d. Reply to the requester, then fill the private request log (Google Drive of
 --      quickpitiksupport@gmail.com; never in git or the vault).
---   Before the first real run, check that Railway has a backup of the production database:
---   after COMMIT only a backup can undo this.
+--   If the confirmed run fails on uq_orders_guest_idempotency_key_event, a guest order
+--   already uses the same email, key and event as one of the runner's orders. Nothing was
+--   deleted (it rolled back); ask a developer before going further.
 --
 -- Run it on the local Docker database (PowerShell, from the repo root):
 --   Get-Content backend/scripts/delete-runner-account.sql | docker exec -i quickpitik-postgres psql -X -U quickpitik -d quickpitik -v user_id=<uuid>
@@ -41,10 +44,11 @@
 --                        railway connect            -- pick the Postgres service; opens psql,
 --                                                   -- no password is printed
 --   Then, inside psql:   \set user_id <uuid>
---                        \i <path to this file>
+--                        \i 'C:/full/path/to/backend/scripts/delete-runner-account.sql'
 --                        \set user_id <uuid>
 --                        \set confirm yes
---                        \i <path to this file>
+--                        \i 'C:/full/path/to/backend/scripts/delete-runner-account.sql'
+--   Quote the path and use forward slashes (the checkout path has spaces).
 --   The script clears user_id and confirm as it starts, so each run must set them again.
 --   If it stops with an error inside psql, type ROLLBACK before anything else.
 
@@ -88,8 +92,9 @@ BEGIN
         OR EXISTS (SELECT 1 FROM payout_cycles WHERE photographer_id = uid)
         OR EXISTS (SELECT 1 FROM payout_reports WHERE photographer_id = uid)
         OR EXISTS (SELECT 1 FROM photos WHERE photographer_id = uid)
-        OR EXISTS (SELECT 1 FROM photographer_settings WHERE user_id = uid) THEN
-        RAISE EXCEPTION 'Refused: user % is a RUNNER but still owns photographer sales, payouts, photos or settings', uid;
+        OR EXISTS (SELECT 1 FROM photographer_settings WHERE user_id = uid)
+        OR EXISTS (SELECT 1 FROM photographer_payout_accounts WHERE user_id = uid) THEN
+        RAISE EXCEPTION 'Refused: user % is a RUNNER but still owns photographer sales, payouts, photos, settings or payout accounts', uid;
     END IF;
 END
 $$;
@@ -112,11 +117,11 @@ UNION ALL SELECT 'runner_messages', count(*) FROM runner_messages WHERE runner_i
 \echo '== Kept, with the link to the account cleared (rows), and the personal data that stays on them'
 SELECT 'orders.user_id' AS link_cleared, count(*) AS rows, 'recipient_email' AS personal_data_kept FROM orders WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'transactions.buyer_id', count(*), 'buyer_display_name' FROM transactions WHERE buyer_id = :'qp_user_id'
-UNION ALL SELECT 'disputes.runner_id', count(*), 'note' FROM disputes WHERE runner_id = :'qp_user_id'
+UNION ALL SELECT 'disputes.runner_id', count(*), 'note, refund_reason, refund_link_url' FROM disputes WHERE runner_id = :'qp_user_id'
 UNION ALL SELECT 'disputes.refund_requested_by', count(*), '' FROM disputes WHERE refund_requested_by = :'qp_user_id'
 UNION ALL SELECT 'flags.reporter_id', count(*), 'note' FROM flags WHERE reporter_id = :'qp_user_id'
-UNION ALL SELECT 'photo_removal_requests.requester_user_id', count(*), 'requester_contact' FROM photo_removal_requests WHERE requester_user_id = :'qp_user_id'
-UNION ALL SELECT 'admin_decision_log.target_user_id', count(*), '' FROM admin_decision_log WHERE target_user_id = :'qp_user_id';
+UNION ALL SELECT 'photo_removal_requests.requester_user_id', count(*), 'requester_contact, requester_reason, evidence file in R2 (kept with the case)' FROM photo_removal_requests WHERE requester_user_id = :'qp_user_id'
+UNION ALL SELECT 'admin_decision_log.target_user_id', count(*), 'reason, meta (may name the person)' FROM admin_decision_log WHERE target_user_id = :'qp_user_id';
 
 \echo '== R2 files to delete after the confirmed run (then list selfies/<id>/ and avatars/<id>/: both must be empty)'
 SELECT s3_key AS r2_key FROM user_selfies WHERE user_id = :'qp_user_id'
