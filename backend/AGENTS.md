@@ -142,7 +142,7 @@ Run `backend/scripts/nuke-test-event-photos.sql` with your event IDs swapped in 
 
 ### Delete an account on request
 
-Runner (buyer) accounts: the owner runs `backend/scripts/delete-runner-account.sql` (a dry run unless `-v confirm=yes`). Its header comment is the procedure: what it deletes and keeps, the R2 clean-up, and how to open `psql` on production. Never use the `nuke-*` scripts for this: they delete money rows. The request log is the owner's private sheet, never in git or the vault.
+Runner (buyer) accounts: the owner runs `backend/scripts/delete-runner-account.sql` (a dry run unless `-v confirm=yes`). Its header comment is the procedure: what it deletes and keeps, the R2 clean-up, and how to open `psql` on production. Photographer accounts are never deleted (the sales ledger and payouts would cascade away): `backend/scripts/anonymise-photographer-account.sql` scrubs and suspends the account and keeps every money row; it refuses while unsold photos remain or money is still owed. Never use the `nuke-*` scripts for this: they delete money rows. The request log is the owner's private sheet, never in git or the vault.
 
 ### Stop Postgres
 
