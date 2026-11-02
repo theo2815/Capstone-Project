@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as publicFaceSearchApi from "@/lib/api-photos";
 import * as personalSelfieApi from "@/lib/api-selfies";
 import { useAuthStore } from "@/store/auth-store";
+import { useFaceConsentStore } from "@/store/face-consent-store";
 import { FindPhotosControls } from "./find-photos-controls";
 import { FindPhotosModal } from "./find-photos-modal";
 
@@ -16,7 +17,7 @@ const runner = { id: "runner", role: "RUNNER" as const, name: "Runner", email: "
 const file = new File(["private selfie"], "selfie.png", { type: "image/png" });
 const found = { items: [], total: 0, offset: 0, limit: 200 };
 let client: QueryClient;
-beforeEach(() => { client = new QueryClient(); useAuthStore.getState().startSession(runner); });
+beforeEach(() => { client = new QueryClient(); useAuthStore.getState().startSession(runner); useFaceConsentStore.getState().accept(); });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
 
 it("removalSearchCannotSaveToPersonalLibrary", () => {

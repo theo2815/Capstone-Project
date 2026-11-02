@@ -5,6 +5,7 @@ import { clearTokens, setTokens } from "@/lib/auth";
 import type { EventPhotosResult } from "@/lib/api-photos";
 import { shrinkSelfie } from "@/lib/image-utils";
 import { useAuthStore } from "@/store/auth-store";
+import { useFaceConsentStore } from "@/store/face-consent-store";
 import { SelfieSearchPanel } from "./bib-search-panels";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/events/race" }));
@@ -25,6 +26,7 @@ const found = () => new Response(JSON.stringify({ success: true, data: searchRes
 let client: QueryClient;
 beforeEach(() => {
   library.selfies = [];
+  useFaceConsentStore.getState().accept();
   vi.mocked(shrinkSelfie).mockReset().mockImplementation(async (picked) => picked);
   useAuthStore.getState().startSession(runner);
   setTokens("access-a", "refresh-a");
@@ -158,4 +160,40 @@ it("tells the runner how long to wait when the search is refused with a 429", as
   vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => refused()));
   mountAndPick(vi.fn());
   expect(await screen.findByText("Too many searches. Try again in about 19 seconds.")).toBeInTheDocument();
+});
+
+const mountPanel = (onSearchSuccess = vi.fn()) =>
+  render(<QueryClientProvider client={client}><SelfieSearchPanel eventSlug="race" onSwitchToBib={() => {}} onSearchSuccess={onSearchSuccess} /></QueryClientProvider>);
+
+it("keeps every selfie action off until the face-matching box is ticked", async () => {
+  useFaceConsentStore.setState({ acceptedVersion: null });
+  library.selfies = [selfie];
+  const fetch = vi.fn().mockImplementation(async () => found());
+  vi.stubGlobal("fetch", fetch);
+  const onSearchSuccess = vi.fn();
+  mountPanel(onSearchSuccess);
+  expect(screen.getByLabelText(/Take a selfie/)).toBeDisabled();
+  expect(screen.getByLabelText(/Upload a selfie/)).toBeDisabled();
+  expect(screen.getByRole("button", { name: /Use saved selfie/ })).toBeDisabled();
+  expect(screen.getByRole("link", { name: /How face matching works/ })).toHaveAttribute("href", "/privacy#face-matching");
+  // A change event that slips past the disabled input still sends nothing.
+  fireEvent.change(screen.getByLabelText(/Upload a selfie/), { target: { files: [file] } });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(fetch).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByLabelText(/I agree to face matching/));
+  expect(screen.getByLabelText(/Upload a selfie/)).not.toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/Upload a selfie/), { target: { files: [file] } });
+  await waitFor(() => expect(onSearchSuccess).toHaveBeenCalledWith(searchResult));
+});
+
+it("remembers the tick on this device after a remount", () => {
+  useFaceConsentStore.setState({ acceptedVersion: null });
+  const { unmount } = mountPanel();
+  fireEvent.click(screen.getByLabelText(/I agree to face matching/));
+  unmount();
+  mountPanel();
+  expect(screen.queryByLabelText(/I agree to face matching/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/Upload a selfie/)).not.toBeDisabled();
+  expect(JSON.parse(localStorage.getItem("quickpitik-face-consent")!).state.acceptedVersion).toBe(1);
 });
