@@ -33,4 +33,11 @@ describe("LegalDocument", () => {
     const { container } = render(<LegalDocument doc={TERMS_OF_SERVICE} />);
     expect(container.querySelector("section#refunds")?.textContent).toContain("Accepted reasons");
   });
+
+  it("words the refund rules for a standalone page, not a receipt", () => {
+    const { container } = render(<LegalDocument doc={TERMS_OF_SERVICE} />);
+    const text = container.querySelector("section#refunds")?.textContent ?? "";
+    expect(text).toContain("your receipt");
+    expect(text).not.toContain("this receipt");
+  });
 });
