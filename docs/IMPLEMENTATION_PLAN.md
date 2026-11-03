@@ -22,4 +22,4 @@
 
 ## Capstone track
 
-SRS active this semester, SDD next — workspace + protocol in the vault (`Documentation for capstone paper/`, governed by the Document Skill).
+The four papers (SRS, SDD, SPMP, STD) are Google Docs; their status, tasks and workflow live in the vault's `capstone-papers/` module, governed by the Document Skill.

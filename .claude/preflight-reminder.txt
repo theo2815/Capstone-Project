@@ -1,7 +1,7 @@
 Pre-flight before responding (full rules are in CLAUDE.md, already loaded - consult them):
 1. Alignment: if the request is unclear, ask to confirm before acting (rule 1).
 2. Discipline: simplicity / surgical changes / goal-driven (rules 2-5).
-3. Skills: if this is web-or-desktop UI, mobile UI, or capstone-paper work, READ the matching Custom Skill in full before producing anything.
+3. Skills: if this is web-or-desktop UI, mobile UI, or capstone-paper work, READ the matching Custom Skill in full before producing anything; after a code change that alters user-visible behaviour, a requirement, a test case's steps or result, a URL, a version or a payment flow, add a #paper-sync line to the vault capstone-papers/tasks.md § Paper sync before you close (vault AGENTS.md § When You're Done).
 4. Vault: for non-trivial module work, follow the session ritual + module boundaries.
 5. Cloud: before backend integrationTest, any AWS/R2/Railway/Vercel test, or a dev-main push, READ docs/testing-cloud-services.md in full.
 Re-read CLAUDE.md if its rules may have changed this session.
