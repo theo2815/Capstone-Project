@@ -81,7 +81,7 @@ class AdminEventServiceReviewTest {
             decisions,
             EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), photoRepository),
             covers,
-            provider,
+            com.quickpitik.service.events.EventFaceExpiry(eventRepository, provider, aiProperties, java.time.Clock.systemUTC(), transactions),
             aiProperties,
             Mockito.mock(PhotographerSettingsRepository::class.java),
             Mockito.mock(UserRepository::class.java),
@@ -388,9 +388,21 @@ class AdminEventServiceReviewTest {
         assertEquals(false, providerWasTransactional)
         assertTrue(providerSawCommit)
         assertNotNull(event.deletedAt)
+        assertNull(event.facesDeletedAt) // failed erasure: the daily face-expiry sweep retries it
         assertFalse(service.delete(adminId, event.id).removed)
         assertFalse(service.delete(adminId, UUID.randomUUID()).removed)
         Mockito.verify(provider).deleteFacesByEvent(event.id)
+    }
+
+    @Test
+    fun `delete stamps faces_deleted_at when the provider erasure succeeds`() {
+        val event = live()
+        Mockito.`when`(aiProperties.enabled).thenReturn(true)
+
+        assertTrue(service.delete(adminId, event.id).removed)
+
+        Mockito.verify(provider).deleteFacesByEvent(event.id)
+        assertNotNull(event.facesDeletedAt)
     }
 
     @Test

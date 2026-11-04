@@ -96,7 +96,7 @@ class AdminEventCommandTest {
             Mockito.mock(AdminDecisionLogService::class.java),
             com.quickpitik.service.events.EventDtoMapper(Mockito.mock(com.quickpitik.service.storage.StorageService::class.java),
                 com.quickpitik.config.StorageProperties(), photos),
-            covers, Mockito.mock(com.quickpitik.service.ai.FaceBibProvider::class.java),
+            covers, Mockito.mock(com.quickpitik.service.events.EventFaceExpiry::class.java),
             Mockito.mock(com.quickpitik.config.AiApiProperties::class.java),
             Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java), users,
             testTransactionTemplate(), service,
@@ -110,6 +110,50 @@ class AdminEventCommandTest {
 
         assertEquals("date", error.field)
         Mockito.verify(covers, Mockito.never()).prepare(anyArg(), anyArg())
+    }
+
+    // PT-MF-F: face data goes 6 months after the event date, so the date cannot
+    // cross that line. The check runs in the claim's validate step, whose
+    // transaction rolls back: no receipt is kept (a refusal in the final step
+    // would leave a FAILED one) and the event is untouched.
+    @Test fun `keyed update moving the date past face retention is refused before the claim is kept`() {
+        var claimed: AdminActionCommand? = null
+        Mockito.`when`(receipts.insertEventClaim(anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),anyArg(),Mockito.isNull(),Mockito.isNull()))
+            .thenAnswer {
+                claimed = AdminActionCommand(commandId=UUID.fromString(key.value),actorId=actor,
+                    operation=AdminActionOperation.EVENT_UPDATE,targetId=id,inputHash=it.getArgument(4),
+                    claimOwner=it.getArgument(5),leaseExpiresAt=now.plusSeconds(300),intendedEventId=id,
+                    claimedAt=now,updatedAt=now)
+                1
+            }
+        Mockito.`when`(receipts.findForUpdate(UUID.fromString(key.value))).thenAnswer { claimed }
+        val event = Event(id = id, slug = "cebu-run", name = "Cebu Run", date = java.time.LocalDate.of(2026, 10, 1),
+            location = "Cebu", status = EventStatus.ACTIVE)
+        val eventRepository = Mockito.mock(com.quickpitik.repository.EventRepository::class.java)
+        Mockito.`when`(eventRepository.findByIdForReview(id)).thenReturn(event)
+        val users = Mockito.mock(com.quickpitik.repository.UserRepository::class.java)
+        Mockito.`when`(users.findById(actor)).thenReturn(java.util.Optional.of(
+            User(id = actor, email = "admin@test.local", passwordHash = "test-only", name = "Admin", role = Role.ADMIN)))
+        val photos = Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java)
+        val expiry = com.quickpitik.service.events.EventFaceExpiry(eventRepository,
+            Mockito.mock(com.quickpitik.service.ai.FaceBibProvider::class.java), com.quickpitik.config.AiApiProperties(),
+            Clock.fixed(now, ZoneOffset.UTC), testTransactionTemplate())
+        val events = AdminEventService(eventRepository, photos, Mockito.mock(AdminDecisionLogService::class.java),
+            com.quickpitik.service.events.EventDtoMapper(Mockito.mock(com.quickpitik.service.storage.StorageService::class.java),
+                com.quickpitik.config.StorageProperties(), photos),
+            Mockito.mock(com.quickpitik.service.events.EventCoverService::class.java), expiry,
+            Mockito.mock(com.quickpitik.config.AiApiProperties::class.java),
+            Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java), users,
+            testTransactionTemplate(), service,
+            com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() })
+
+        val error = assertFailsWith<com.quickpitik.exception.ValidationException> {
+            events.update(actor, id, com.quickpitik.dto.admin.UpdateAdminEventRequest(date = "2025-10-01"), key = key)
+        }
+
+        assertEquals("date", error.field)
+        assertEquals(AdminActionCommandState.PENDING, claimed!!.state)
+        assertEquals(java.time.LocalDate.of(2026, 10, 1), event.date)
     }
 
     @Test fun `failed final event validation preserves its domain error and unresolved receipt`() {

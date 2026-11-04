@@ -12,7 +12,9 @@ import com.quickpitik.dto.ai.FaceMatch
 import com.quickpitik.dto.ai.FacesSearchResult
 import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.entity.UserSelfie
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
+import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.storage.StorageService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -88,6 +90,7 @@ class PhotoSearchServiceTest {
     private lateinit var userSelfieRepository: UserSelfieRepository
     private lateinit var storageService: StorageService
     private lateinit var registry: SimpleMeterRegistry
+    private lateinit var faceExpiry: EventFaceExpiry
 
     private val eventId: UUID = UUID.randomUUID()
     private val userId: UUID = UUID.randomUUID()
@@ -101,6 +104,61 @@ class PhotoSearchServiceTest {
         userSelfieRepository = Mockito.mock(UserSelfieRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
         registry = SimpleMeterRegistry()
+        faceExpiry = Mockito.mock(EventFaceExpiry::class.java)
+    }
+
+    // ─── Face search ended (legal review M2: templates deleted 6 months after the event) ───
+
+    @Test
+    fun `selfie search on an event whose face search ended answers 410 FACE_SEARCH_ENDED, never the demo grid`() {
+        Mockito.`when`(faceExpiry.ended(eventId)).thenReturn(true)
+
+        val ex = assertFailsWith<ApiException> {
+            service(fallback = true).searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination)
+        }
+
+        assertEquals(HttpStatus.GONE, ex.status)
+        assertEquals(ErrorCodes.FACE_SEARCH_ENDED, ex.code)
+        assertEquals("Face search has ended for this event. Search by bib number instead.", ex.message)
+        Mockito.verifyNoInteractions(aiApiClient, photoService)
+    }
+
+    @Test
+    fun `face search checks the end once, before the provider call, so it can never turn into the fallback grid`() {
+        stubSearch(FaceMatch(person_id = "p", similarity = 0.9))
+        stubPhotoLookup()
+
+        service(fallback = true).searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination)
+
+        Mockito.verify(faceExpiry, Mockito.times(1)).ended(eventId)
+    }
+
+    @Test
+    fun `saved-selfie library search on an ended event answers FACE_SEARCH_ENDED`() {
+        Mockito.`when`(faceExpiry.ended(eventId)).thenReturn(true)
+        val row = selfieRow()
+        Mockito.`when`(userSelfieRepository.findByUserIdOrderByUploadedAtDesc(userId)).thenReturn(listOf(row))
+        Mockito.`when`(storageService.getBytes(row.s3Key)).thenReturn(selfie)
+
+        val ex = assertFailsWith<ApiException> {
+            service().searchWithStoredSelfie(userId, eventId, null, allSelfies = true, pagination = pagination)
+        }
+
+        assertEquals(ErrorCodes.FACE_SEARCH_ENDED, ex.code)
+        Mockito.verifyNoInteractions(aiApiClient)
+    }
+
+    @Test
+    fun `admin removal face matching on an ended event answers 410 FACE_SEARCH_ENDED`() {
+        Mockito.`when`(faceExpiry.ended(eventId)).thenReturn(true)
+
+        val ex = assertFailsWith<ApiException> {
+            service().findFaceCandidates(eventId, com.quickpitik.dto.removal.SearchImage(selfie, "image/jpeg", "s.jpg"))
+        }
+
+        assertEquals(HttpStatus.GONE, ex.status)
+        assertEquals(ErrorCodes.FACE_SEARCH_ENDED, ex.code)
+        Mockito.verifyNoInteractions(aiApiClient)
     }
 
     // ─── E2: threshold is re-checked server-side ──────────────────────────
@@ -462,6 +520,7 @@ class PhotoSearchServiceTest {
             userSelfieRepository,
             storageService,
             registry,
+            faceExpiry,
         )
 
     /**

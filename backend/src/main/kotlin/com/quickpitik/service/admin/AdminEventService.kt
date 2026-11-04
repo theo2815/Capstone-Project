@@ -28,9 +28,9 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.service.events.EventInputs
 import com.quickpitik.service.photographer.PricingTrio
 import com.quickpitik.service.reference.RegionsService
@@ -52,7 +52,7 @@ class AdminEventService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val eventDtoMapper: EventDtoMapper,
     private val eventCoverService: EventCoverService,
-    private val aiApiClient: FaceBibProvider,
+    private val eventFaceExpiry: EventFaceExpiry,
     private val aiApiProperties: AiApiProperties,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
@@ -349,7 +349,7 @@ class AdminEventService(
         val coverKey = cover?.let {
             val event = loadForUpdate(eventId)
             event.requireReviewRevision(req.expectedRevision)
-            req.date?.takeIf { date -> date.isNotBlank() }?.let(::parseDate)
+            req.date?.takeIf { date -> date.isNotBlank() }?.let { date -> parseEditDate(event, date) }
             req.pricePerPhoto?.let { price -> validatedUpdatePrice(price, event.isFree) }
             eventCoverService.upload(eventId, it.bytes, it.contentType)
         }
@@ -423,7 +423,7 @@ class AdminEventService(
             eventId, commands.inputHash(fields), { authorizeCommand(adminId) }, {
                 val event = loadForReview(eventId)
                 event.requireReviewRevision(req.expectedRevision)
-                req.date?.takeIf(String::isNotBlank)?.let(::parseDate)
+                req.date?.takeIf(String::isNotBlank)?.let { parseEditDate(event, it) }
                 req.pricePerPhoto?.let { validatedUpdatePrice(it, event.isFree) }
             }, {
                 processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
@@ -477,7 +477,7 @@ class AdminEventService(
             }
         }
         req.date?.takeIf { it.isNotBlank() }?.let {
-            val parsed = parseDate(it)
+            val parsed = parseEditDate(event, it)
             if (event.date != parsed) {
                 changes["date"] = mapOf("from" to event.date.toString(), "to" to parsed.toString())
                 before["date"] = event.date.toString()
@@ -605,13 +605,14 @@ class AdminEventService(
             true
         } == true
         if (!removed) return AdminEventDeleteResponseDto(removed = false)
-        // GDPR: erase the biometric face embeddings ai-api holds for this event's
-        // photos. One event-scoped bulk call — not a per-photo loop — so deleting
-        // an event with thousands of photos doesn't fan out into thousands of HTTP
-        // calls. Best-effort: a failure must not block the delete (the
-        // orphan-person reaper is the backstop). Skipped when ai-api is disabled.
+        // GDPR: erase the biometric face embeddings the provider holds for this
+        // event's photos. One event-scoped bulk call — not a per-photo loop — so
+        // deleting an event with thousands of photos doesn't fan out into
+        // thousands of HTTP calls. Best-effort: a failure must not block the
+        // delete; EventFaceExpiry's daily sweep retries deleted events until
+        // faces_deleted_at is set. Skipped when ai-api is disabled.
         if (aiApiProperties.enabled) {
-            runCatching { aiApiClient.deleteFacesByEvent(eventId) }
+            runCatching { eventFaceExpiry.deleteFaces(eventId) }
                 .onFailure { log.warn("ai-api face erasure failed for deleted event {}: {}", eventId, it.message) }
         }
         return AdminEventDeleteResponseDto(removed = true)
@@ -650,6 +651,11 @@ class AdminEventService(
     }
 
     private fun parseDate(raw: String): LocalDate = EventInputs.parseDate(raw)
+
+    // Checked wherever an edit's date is parsed, so a refusal comes before the
+    // cover upload and inside the command claim (which then rolls back).
+    private fun parseEditDate(event: Event, raw: String): LocalDate =
+        parseDate(raw).also { eventFaceExpiry.checkDateChange(event, it) }
 
     // Admin-set per-photo price must be a non-negative peso amount. We
     // strip trailing zeros and clamp to scale 2 so the audit log entries
