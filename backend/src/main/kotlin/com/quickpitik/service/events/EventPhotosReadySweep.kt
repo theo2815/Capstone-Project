@@ -28,6 +28,7 @@ class EventPhotosReadySweep(
     private val notifier: EventPhotosReadyNotifier,
     private val aiApiProperties: AiApiProperties,
     private val clock: Clock,
+    private val eventFaceExpiry: EventFaceExpiry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -45,6 +46,7 @@ class EventPhotosReadySweep(
         if (pending.isEmpty()) return
         log.info("Photos-ready sweep: {} pending opt-in(s)", pending.size)
         pending.forEach { alert ->
+            if (eventFaceExpiry.ended(alert.eventId)) return@forEach // face search ended: no match possible
             try {
                 notifier.notifyIfMatched(alert.id)
             } catch (ex: Exception) {

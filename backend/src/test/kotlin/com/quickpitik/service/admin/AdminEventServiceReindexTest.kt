@@ -7,7 +7,6 @@ import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.support.testTransactionTemplate
@@ -34,7 +33,7 @@ class AdminEventServiceReindexTest {
         Mockito.mock(AdminDecisionLogService::class.java),
         Mockito.mock(EventDtoMapper::class.java),
         Mockito.mock(EventCoverService::class.java),
-        Mockito.mock(FaceBibProvider::class.java),
+        Mockito.mock(com.quickpitik.service.events.EventFaceExpiry::class.java),
         AiApiProperties(),
         Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java),
         Mockito.mock(com.quickpitik.repository.UserRepository::class.java),

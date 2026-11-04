@@ -91,6 +91,10 @@ class Event(
     @Column(name = "deleted_at")
     var deletedAt: OffsetDateTime? = null,
 
+    // V92: face templates deleted (EventFaceExpiry); face search has ended.
+    @Column(name = "faces_deleted_at")
+    var facesDeletedAt: OffsetDateTime? = null,
+
     @Column(name = "admin_overrides", nullable = false, columnDefinition = "jsonb")
     @JdbcTypeCode(SqlTypes.JSON)
     var adminOverrides: List<Map<String, Any?>> = emptyList(),

@@ -223,17 +223,18 @@ class RekognitionAiClient(
         return ids.toList()
     }
 
-    override fun deleteFacesByEvent(eventId: UUID) {
+    // Throws on failure (EventFaceExpiry retries until it succeeds); a missing
+    // collection counts as deleted.
+    override fun deleteFacesByEvent(eventId: UUID) = guarded("deleteCollection") {
         val collectionId = collectionFor(eventId)
         try {
             rekognition.deleteCollection(DeleteCollectionRequest.builder().collectionId(collectionId).build())
-            knownCollections.remove(collectionId)
             log.info("Deleted Rekognition collection {}", collectionId)
         } catch (ex: ResourceNotFoundException) {
-            // Never created (no photos enrolled for this event) → nothing to do.
-        } catch (ex: RekognitionException) {
-            log.warn("Failed to delete Rekognition collection {}: {}", collectionId, ex.awsErrorDetails()?.errorMessage())
+            // Never created (no photos enrolled for this event), or already deleted → nothing to do.
         }
+        knownCollections.remove(collectionId)
+        Unit
     }
 
     override fun listPersonsForEvent(eventId: UUID): List<AiPersonRef> {

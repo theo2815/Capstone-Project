@@ -34,6 +34,8 @@ object ErrorCodes {
     const val SELFIE_REQUIRED = "SELFIE_REQUIRED"
     const val SELFIE_REJECTED = "SELFIE_REJECTED"
     const val SELFIE_NOT_FOUND = "SELFIE_NOT_FOUND"
+    // 410: the event's face templates were deleted (6 months after the event, V92).
+    const val FACE_SEARCH_ENDED = "FACE_SEARCH_ENDED"
     const val SELFIE_LIMIT_REACHED = "SELFIE_LIMIT_REACHED"
     const val SAME_PASSWORD = "SAME_PASSWORD"
     const val WEAK_PASSWORD = "WEAK_PASSWORD"

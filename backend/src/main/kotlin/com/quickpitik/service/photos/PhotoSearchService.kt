@@ -8,11 +8,13 @@ import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.dto.photos.FaceCandidate
 import com.quickpitik.dto.photos.FaceCandidateResult
 import com.quickpitik.dto.removal.SearchImage
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserSelfieRepository
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
+import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.service.storage.contentTypeForKey
 import io.micrometer.core.instrument.MeterRegistry
@@ -31,6 +33,7 @@ class PhotoSearchService(
     private val userSelfieRepository: UserSelfieRepository,
     private val storageService: StorageService,
     private val meterRegistry: MeterRegistry,
+    private val eventFaceExpiry: EventFaceExpiry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -74,7 +77,7 @@ class PhotoSearchService(
     ): PaginatedResponse<PhotoDto> {
         trace.selfies = 1
         validateSelfie(selfieBytes)
-        ensureEnabled()
+        ensureEnabled(eventId)
         val candidates = try {
             timed(null, { trace.aiNanos += it }) {
                 findFaceCandidates(eventId, SearchImage(selfieBytes, contentType, filename))
@@ -101,7 +104,7 @@ class PhotoSearchService(
 
     fun findFaceCandidates(eventId: UUID, image: SearchImage): FaceCandidateResult {
         validateSelfie(image.bytes)
-        ensureEnabled()
+        ensureEnabled(eventId)
         val threshold = aiApiProperties.faceMatchThresholdDefault
         val result = try {
             meterRegistry.timer("qp.ai.call", "op", "search").recordCallable {
@@ -126,8 +129,13 @@ class PhotoSearchService(
         if (bytes.isEmpty()) throw ValidationException(ErrorCodes.SELFIE_REQUIRED, "selfie file is required", "selfie")
     }
 
-    private fun ensureEnabled() {
+    // Called before any provider call or demo fallback, so an ended event never
+    // falls back to the full grid.
+    private fun ensureEnabled(eventId: UUID) {
         if (!aiApiProperties.enabled) throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "ai-api is disabled — face search unavailable")
+        if (eventFaceExpiry.ended(eventId)) {
+            throw ApiException(HttpStatus.GONE, ErrorCodes.FACE_SEARCH_ENDED, "Face search has ended for this event. Search by bib number instead.")
+        }
     }
 
     /** One stored selfie's bytes, as read back from storage. */
@@ -164,7 +172,7 @@ class PhotoSearchService(
                 field = "selfieId",
             )
         }
-        ensureEnabled()
+        ensureEnabled(eventId)
         val personIds = LinkedHashSet<String>()
         var accepted = 0
         var lastRejection: AiApiException? = null

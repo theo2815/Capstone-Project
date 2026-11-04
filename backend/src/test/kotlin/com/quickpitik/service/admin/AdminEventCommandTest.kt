@@ -96,7 +96,7 @@ class AdminEventCommandTest {
             Mockito.mock(AdminDecisionLogService::class.java),
             com.quickpitik.service.events.EventDtoMapper(Mockito.mock(com.quickpitik.service.storage.StorageService::class.java),
                 com.quickpitik.config.StorageProperties(), photos),
-            covers, Mockito.mock(com.quickpitik.service.ai.FaceBibProvider::class.java),
+            covers, Mockito.mock(com.quickpitik.service.events.EventFaceExpiry::class.java),
             Mockito.mock(com.quickpitik.config.AiApiProperties::class.java),
             Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java), users,
             testTransactionTemplate(), service,

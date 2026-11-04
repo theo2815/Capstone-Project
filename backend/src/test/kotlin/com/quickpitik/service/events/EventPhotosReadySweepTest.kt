@@ -24,14 +24,30 @@ class EventPhotosReadySweepTest {
 
     private lateinit var alertRepository: EventPhotoAlertRepository
     private lateinit var notifier: EventPhotosReadyNotifier
+    private lateinit var faceExpiry: EventFaceExpiry
 
     @BeforeEach
     fun setUp() {
         alertRepository = Mockito.mock(EventPhotoAlertRepository::class.java)
         notifier = Mockito.mock(EventPhotosReadyNotifier::class.java)
+        faceExpiry = Mockito.mock(EventFaceExpiry::class.java)
     }
 
-    private fun sweep(props: AiApiProperties) = EventPhotosReadySweep(alertRepository, notifier, props, FIXED_CLOCK)
+    private fun sweep(props: AiApiProperties) = EventPhotosReadySweep(alertRepository, notifier, props, FIXED_CLOCK, faceExpiry)
+
+    @Test
+    fun `sweep skips opt-ins on an event whose face search ended`() {
+        val ended = alert()
+        val open = alert()
+        Mockito.`when`(alertRepository.findPendingInWindow(anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(listOf(ended, open))
+        Mockito.`when`(faceExpiry.ended(ended.eventId)).thenReturn(true)
+
+        sweep(AiApiProperties(enabled = true)).sweep()
+
+        Mockito.verify(notifier, Mockito.never()).notifyIfMatched(ended.id)
+        Mockito.verify(notifier).notifyIfMatched(open.id)
+    }
 
     private fun alert() = EventPhotoAlert(eventId = UUID.randomUUID(), userId = UUID.randomUUID())
 

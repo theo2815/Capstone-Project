@@ -214,6 +214,11 @@ app:
     max-indexing-attempts: ${AI_MAX_INDEXING_ATTEMPTS:5}
     reconcile-interval-ms: ${AI_RECONCILE_INTERVAL_MS:60000}
     photos-ready-claim-ttl: ${AI_PHOTOS_READY_CLAIM_TTL:PT10M}
+    # Face templates (an event's Rekognition collection) are deleted this long
+    # after the event date, and face search on the event then answers 410
+    # FACE_SEARCH_ENDED; bib search keeps working (legal review M2, 2026-11-04).
+    face-retention: P6M
+    face-expiry-sweep-interval-ms: 86400000   # daily
     # Phase C bulk indexing. PER_PHOTO (default) = Phase-B behaviour (one enroll
     # + one bib HTTP call per photo, off the upload request). BATCH stands that
     # down and drains PENDING photos per event into mega jobs + webhook/poll

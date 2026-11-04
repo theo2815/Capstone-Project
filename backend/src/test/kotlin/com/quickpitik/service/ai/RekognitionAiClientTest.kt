@@ -271,6 +271,20 @@ class RekognitionAiClientTest {
         assertEquals("qp-event-$eventId", cap.value.collectionId())
     }
 
+    @Test
+    fun `delete-by-event treats a missing collection as already deleted`() {
+        `when`(rek.deleteCollection(any(DeleteCollectionRequest::class.java)))
+            .thenThrow(ResourceNotFoundException.builder().message("gone").build())
+        client.deleteFacesByEvent(eventId) // no throw: nothing left to delete
+    }
+
+    @Test
+    fun `delete-by-event throws on an AWS error so the face-expiry sweep retries`() {
+        `when`(rek.deleteCollection(any(DeleteCollectionRequest::class.java)))
+            .thenThrow(ThrottlingException.builder().message("slow down").build())
+        kotlin.test.assertFailsWith<AiApiException> { client.deleteFacesByEvent(eventId) }
+    }
+
     private fun noisyJpeg(width: Int, height: Int): ByteArray {
         val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
         var state = 7

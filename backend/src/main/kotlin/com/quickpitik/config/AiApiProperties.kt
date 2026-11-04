@@ -2,6 +2,7 @@ package com.quickpitik.config
 
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
+import java.time.Period
 
 @ConfigurationProperties(prefix = "app.ai-api")
 data class AiApiProperties(
@@ -32,6 +33,10 @@ data class AiApiProperties(
     val reconcileIntervalMs: Long = 60_000L,
     val maxIndexingAttempts: Int = 5,
     val photosReadyClaimTtl: Duration = Duration.ofMinutes(10),
+    // EventFaceExpiry: an event's face templates are deleted this long after
+    // the event date (legal review M2), checked once per interval.
+    val faceRetention: Period = Period.ofMonths(6),
+    val faceExpirySweepIntervalMs: Long = 86_400_000L,
     // Orphan-person reaper (PhotoOrphanReaper.reap): deletes ai-api person rows
     // no live photo references anymore (left when a photo is re-indexed or a
     // batch is rolled back). Gated additionally by `enabled`. Runs slowly — it

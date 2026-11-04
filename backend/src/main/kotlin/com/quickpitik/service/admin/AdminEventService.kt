@@ -28,9 +28,9 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.service.events.EventInputs
 import com.quickpitik.service.photographer.PricingTrio
 import com.quickpitik.service.reference.RegionsService
@@ -52,7 +52,7 @@ class AdminEventService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val eventDtoMapper: EventDtoMapper,
     private val eventCoverService: EventCoverService,
-    private val aiApiClient: FaceBibProvider,
+    private val eventFaceExpiry: EventFaceExpiry,
     private val aiApiProperties: AiApiProperties,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
@@ -605,13 +605,14 @@ class AdminEventService(
             true
         } == true
         if (!removed) return AdminEventDeleteResponseDto(removed = false)
-        // GDPR: erase the biometric face embeddings ai-api holds for this event's
-        // photos. One event-scoped bulk call — not a per-photo loop — so deleting
-        // an event with thousands of photos doesn't fan out into thousands of HTTP
-        // calls. Best-effort: a failure must not block the delete (the
-        // orphan-person reaper is the backstop). Skipped when ai-api is disabled.
+        // GDPR: erase the biometric face embeddings the provider holds for this
+        // event's photos. One event-scoped bulk call — not a per-photo loop — so
+        // deleting an event with thousands of photos doesn't fan out into
+        // thousands of HTTP calls. Best-effort: a failure must not block the
+        // delete; EventFaceExpiry's daily sweep retries deleted events until
+        // faces_deleted_at is set. Skipped when ai-api is disabled.
         if (aiApiProperties.enabled) {
-            runCatching { aiApiClient.deleteFacesByEvent(eventId) }
+            runCatching { eventFaceExpiry.deleteFaces(eventId) }
                 .onFailure { log.warn("ai-api face erasure failed for deleted event {}: {}", eventId, it.message) }
         }
         return AdminEventDeleteResponseDto(removed = true)

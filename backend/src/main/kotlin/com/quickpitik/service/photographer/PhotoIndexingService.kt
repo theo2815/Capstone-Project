@@ -9,6 +9,7 @@ import com.quickpitik.entity.PhotoFacePersonEmbed
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
+import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.service.photos.PhotoWorkFence
 import com.quickpitik.service.photos.PhotoWorkClaim
@@ -47,6 +48,7 @@ class PhotoIndexingService(
     private val meterRegistry: MeterRegistry,
     private val workFence: PhotoWorkFence,
     private val faceErasure: PhotoFaceErasureService,
+    private val eventFaceExpiry: EventFaceExpiry,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -97,7 +99,11 @@ class PhotoIndexingService(
     )
 
     private fun runInference(photo: Photo, claim: PhotoWorkClaim): InferenceOutcome {
-        try {
+        // Face templates deleted or past retention (EventFaceExpiry): no face
+        // cleanup or enroll (an enroll would re-create the deleted collection);
+        // bibs are still read so bib search keeps working.
+        val facesEnded = eventFaceExpiry.ended(photo.eventId)
+        if (!facesEnded) try {
             faceErasure.erasePrior(photo)
         } catch (ex: AiApiException) {
             // No new writer was submitted. Keep prior IDs and retry budget;
@@ -135,11 +141,12 @@ class PhotoIndexingService(
         var facesTransport = false
         var facesUnresolved = false
         // A face write may start only while the claim is current, so its call deadline bounds when it ended.
-        if (!workFence.isCurrent(claim)) {
+        if (!facesEnded && !workFence.isCurrent(claim)) {
             log.warn("Indexing {}: work claim ended before enrollment; nothing written, left for the sweep", photo.id)
             return InferenceOutcome(error = "Indexing claim ended before enrollment", facesTransport = true, bibsTransport = true)
         }
-        try {
+        if (facesEnded) facesOk = true // nothing to enroll, like NO_FACES
+        else try {
             val enroll = meterRegistry.timer("qp.ai.call", "op", "enroll").recordCallable {
                 aiApiClient.facesEnroll(
                     file = inline,

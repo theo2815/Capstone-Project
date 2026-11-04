@@ -102,6 +102,7 @@ class PhotoIndexingServiceTest {
     private lateinit var service: PhotoIndexingService
     private lateinit var workFence: com.quickpitik.service.photos.PhotoWorkFence
     private lateinit var faceErasure: com.quickpitik.service.photos.PhotoFaceErasureService
+    private lateinit var faceExpiry: com.quickpitik.service.events.EventFaceExpiry
     private fun <T> anyArg(): T = Mockito.any()
 
     // FF D8 FF → sniffed as image/jpeg by PhotoIndexingService.sniffContentType.
@@ -136,9 +137,29 @@ class PhotoIndexingServiceTest {
         faceErasure = com.quickpitik.service.photos.PhotoFaceErasureService(photoRepo, aiClient,
             org.springframework.beans.factory.support.StaticListableBeanFactory().getBeanProvider(com.quickpitik.service.ai.RekognitionAiClient::class.java),
             props(), workFence, com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), template(), java.time.Clock.systemUTC())
+        faceExpiry = Mockito.mock(com.quickpitik.service.events.EventFaceExpiry::class.java)
         service = PhotoIndexingService(
             photoRepo, storage, aiClient, props(), AiProperties(AiProvider.AI_API), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
+            faceExpiry,
         )
+    }
+
+    @Test
+    fun `face search ended - no face cleanup or enroll, bibs still read so bib search keeps working`() {
+        val p = photo()
+        p.facePersons.add(PhotoFacePersonEmbed(0, "old-person"))
+        expectPhoto(p)
+        Mockito.`when`(faceExpiry.ended(p.eventId)).thenReturn(true)
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("1234", 0.92))))
+
+        service.index(p.id)
+
+        Mockito.verify(aiClient, Mockito.never()).facesEnroll(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), anyArg())
+        Mockito.verify(aiClient, Mockito.never()).erasePhotoFaces(anyArg(), anyArg())
+        Mockito.verify(aiClient, Mockito.never()).deleteFacesPerson(anyArg())
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        assertEquals(listOf("1234"), p.bibs.map { it.bibNumber })
+        assertTrue(p.facePersons.isEmpty())
     }
 
     private fun photo(status: IndexingStatus = IndexingStatus.PENDING): Photo =
@@ -390,6 +411,7 @@ class PhotoIndexingServiceTest {
         Mockito.`when`(photoRepo.findById(p.id)).thenReturn(Optional.of(p))
         val disabled = PhotoIndexingService(
             photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
+            faceExpiry,
         )
 
         disabled.index(p.id)

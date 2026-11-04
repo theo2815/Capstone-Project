@@ -51,6 +51,7 @@ interface FaceBibProvider {
 
     fun erasePhotoFaces(eventId: UUID, personId: String): FaceErasureResult
 
+    /** Deletes every face template of one event; throws if that failed. Nothing to delete is success. */
     fun deleteFacesByEvent(eventId: UUID)
 
     fun listPersonsForEvent(eventId: UUID): List<AiPersonRef>

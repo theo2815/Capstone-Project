@@ -17,6 +17,11 @@ import java.util.UUID
 interface EventRepository : JpaRepository<Event, UUID> {
     fun findBySlugAndDeletedAtIsNull(slug: String): Event?
 
+    // EventFaceExpiry: events whose face templates are still held and are due
+    // for deletion (dated on or before the cutoff, or deleted).
+    fun findByFacesDeletedAtIsNullAndDateLessThanEqual(cutoff: LocalDate): List<Event>
+    fun findByFacesDeletedAtIsNullAndDeletedAtIsNotNull(): List<Event>
+
     // Public read of one event (V46): a DRAFT — a pending or rejected
     // photographer submission — is not a public page. An UNLISTED live event
     // still is: that is what "link-only" means.
