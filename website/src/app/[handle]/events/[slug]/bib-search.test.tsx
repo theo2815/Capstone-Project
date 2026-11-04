@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi, type MockInstance } from "vitest";
 import { ApiError } from "@/lib/api";
 import * as eventsApi from "@/lib/api-events";
@@ -7,6 +7,7 @@ import * as photographerApi from "@/lib/api-photographer-public";
 import type { PhotographerProfile } from "@/lib/photographer-registry";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
+import { useBibConsentStore } from "@/store/face-consent-store";
 import HandleEventPage from "./page";
 
 // INC-10 (STD v3): the photographer's event page searched a bib only among
@@ -42,6 +43,7 @@ beforeEach(() => {
     events: [{ eventSlug: "nrw", photoCount: 3026, state: "open" }],
   } as unknown as PhotographerProfile);
   listSpy = vi.spyOn(photographerApi, "fetchPublicPhotographerEventPhotos");
+  useBibConsentStore.getState().accept();
 });
 
 function renderPage(query: string) {
@@ -88,4 +90,23 @@ it("a bib typed as B-10342 asks the server for 10342", async () => {
   await waitFor(() =>
     expect(listSpy).toHaveBeenCalledWith("shooter", "nrw", expect.objectContaining({ bib: "10342" }), expect.anything()),
   );
+});
+
+// BT-1b: opening a shared or saved ?bib= link is a bib search, so this device
+// must tick the bib box before the bib request goes out. (Already ticked: the
+// tests above, where beforeEach gives the tick.)
+it("a bib link sends no bib request until the bib box is ticked", async () => {
+  useBibConsentStore.setState({ acceptedVersion: null });
+  listSpy.mockImplementation(async (_h, _s, args) => (args?.bib ? page([photo("m1", "10342"), photo("m2", "10342")]) : galleryPage));
+  renderPage("bib=10342");
+
+  const box = await screen.findByLabelText(/This is my bib number/);
+  await waitFor(() => expect(listSpy).toHaveBeenCalled()); // the plain gallery still loads
+  await new Promise((r) => setTimeout(r, 50));
+  expect(listSpy).not.toHaveBeenCalledWith("shooter", "nrw", expect.objectContaining({ bib: "10342" }), expect.anything());
+  expect(screen.queryByText(/No matches yet/)).not.toBeInTheDocument();
+
+  fireEvent.click(box);
+  expect(await screen.findByRole("heading", { name: /We found\s*2\s*photos/ })).toBeInTheDocument();
+  expect(listSpy).toHaveBeenCalledWith("shooter", "nrw", expect.objectContaining({ bib: "10342" }), expect.anything());
 });

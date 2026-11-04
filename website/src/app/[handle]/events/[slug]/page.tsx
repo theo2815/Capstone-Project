@@ -10,6 +10,8 @@ import { PhotoMosaicTile } from "@/components/events/photo-mosaic-tile";
 import { FindPhotosModal } from "@/components/events/find-photos-modal";
 import { BuyAllBar } from "@/components/events/buy-all-bar";
 import { BibEmptyResult } from "@/components/events/bib-empty-result";
+import { BibNotice } from "@/components/legal/face-notice";
+import { useBibConsent } from "@/store/face-consent-store";
 import { FaceEmptyResult } from "@/components/events/face-empty-result";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -156,13 +158,16 @@ function Gallery({
   const isBibFiltered = cleanedQuery.length > 0;
   const isFaceFiltered = faceResult !== null;
   const isFiltered = isBibFiltered || isFaceFiltered;
+  // BT-1b: a ?bib= link is a bib search, so no request before the bib tick.
+  const bibOk = useBibConsent();
   const bibList = usePublicPhotographerEventPhotos(profile.handle, event.slug, {
     bib: cleanedQuery,
-    enabled: isBibFiltered,
+    enabled: isBibFiltered && bibOk,
   });
   // The list the grid pages through: the bib search while a bib is set.
   // A selfie result wins over a bib left in the URL.
   const isBibSearch = isBibFiltered && !isFaceFiltered;
+  const needsBibTick = isBibSearch && !bibOk;
   const shown = isBibSearch ? bibList : list;
 
   const visible = useMemo(() => {
@@ -215,7 +220,9 @@ function Gallery({
           <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight leading-[0.95] text-ink mt-4">
             {isFiltered ? (
               visible.length === 0 ? (
-                isBibSearch && bibList.isFetching ? (
+                needsBibTick ? (
+                  "Tick the box to search."
+                ) : isBibSearch && bibList.isFetching ? (
                   "Searching…"
                 ) : isBibSearch && bibList.error ? (
                   "Search didn't finish."
@@ -378,6 +385,8 @@ function Gallery({
             </div>
           ) : photos.length === 0 && !isBibFiltered ? (
             <EmptyGalleryPanel displayName={profile.displayName} />
+          ) : needsBibTick ? (
+            <BibNotice className="max-w-xl" />
           ) : isBibSearch && visible.length === 0 && !bibList.hasNextPage ? (
             <BibEmptyResult
               event={event}
