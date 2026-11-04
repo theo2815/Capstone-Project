@@ -4,14 +4,15 @@ import { ROUTES, SUPPORT_EMAIL } from "@/lib/constants";
 // [label](href) and **bold** marks as the documents (rendered by LegalText).
 export const DELETION_WINDOW = "7 business days";
 export const DELETION_MAIL_SUBJECT = "Account deletion request";
-export const FACE_NOTICE_VERSION = 1;
+// 2 since 2026-11-05: the notice now names Singapore and covers a child's selfie (review S10).
+export const FACE_NOTICE_VERSION = 2;
 
 export const LEGAL_COPY = {
   signupTickLabel: `I am 18 or older, I agree to the [Terms of Service](${ROUTES.TERMS}) and I have read the [Privacy Policy](${ROUTES.PRIVACY}).`,
   signupTickError: "Please tick the box to agree before you continue.",
   googleLine: `By continuing with Google, you agree to the [Terms of Service](${ROUTES.TERMS}) and [Privacy Policy](${ROUTES.PRIVACY}). You'll confirm this on the next step.`,
-  faceNotice: `To find your photos, we send your selfie to Amazon Rekognition to compare it with faces in this event's photos. If you only search, we don't keep your selfie; selfies you save to your profile stay until you delete them. [How face matching works](${ROUTES.PRIVACY}#face-matching)`,
-  faceTickLabel: "I agree to face matching with my selfie.",
+  faceNotice: `To find your photos, we send this selfie to Amazon Rekognition (run by AWS in Singapore) to compare the face in it with faces in this event's photos. If you only search, we don't keep the selfie; selfies you save to your profile stay until you delete them. [How face matching works](${ROUTES.PRIVACY}#face-matching)`,
+  faceTickLabel: "I agree to face matching with this selfie. If it shows my child, I am their parent or guardian.",
   checkoutLine: `By paying, you agree to the [Terms of Service (including refunds)](${ROUTES.TERMS}#refunds).`,
   deletionText: `To delete your account, email [${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(DELETION_MAIL_SUBJECT)}) from your account's email address. We'll do it within ${DELETION_WINDOW}. Some purchase records are kept, as the [Privacy Policy](${ROUTES.PRIVACY}#deletion) explains.`,
 } as const;

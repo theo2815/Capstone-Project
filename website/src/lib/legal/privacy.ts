@@ -1,7 +1,8 @@
 import { EMAIL_LINK, OPERATOR, type LegalDoc } from "./types";
 
-// Draft text from the vault's PT-0a draft (2026-11-02). Not approved: PT-0b
-// puts the final wording in. Section ids are linked from other pages and apps.
+// Text approved by the owner on 2026-11-04 (PT-0b): the PT-0a draft with the
+// 2026-11-04 legal review's wording applied. Section ids are linked from other
+// pages and apps.
 export const PRIVACY_POLICY: LegalDoc = {
   title: "Privacy Policy",
   sections: [
@@ -46,6 +47,7 @@ export const PRIVACY_POLICY: LegalDoc = {
           list: [
             "Profile: handle, brand name, bio, region, province and city, social links, verification status, and whether photo details are shown publicly.",
             "Payout details: account name and number for GCash, Maya or GoTyme, and the payout QR image. A copy of these details is saved with each payout.",
+            "Seller checks we may ask for: your full name, a valid government ID, your address, phone number and BIR Certificate of Registration (Form 2303). We do not show your ID or phone number publicly.",
           ],
         },
         "**Orders and payments**",
@@ -68,7 +70,7 @@ export const PRIVACY_POLICY: LegalDoc = {
             "Sign-in tokens and one-time codes (password reset, email verification, email change). We store them hashed.",
           ],
         },
-        "**What we do not collect:** your phone number, date of birth, home address, government ID, location, or bank or e-wallet login. We use your internet (IP) address for a moment to limit repeated requests, but we do not store it. We have no analytics, advertising or tracking tools.",
+        "**What we do not collect:** from runners and buyers, phone number, date of birth, home address, government ID or location; from anyone, bank or e-wallet logins. We use your internet (IP) address to limit repeated requests. We do not save it in our database, but our hosting providers' technical logs may record it (see [How long we keep it](#how-long-we-keep-it)). We have no analytics, advertising or tracking tools.",
       ],
     },
     {
@@ -88,14 +90,15 @@ export const PRIVACY_POLICY: LegalDoc = {
           ],
         },
         "We do not use your data for advertising, and we do not give it to advertisers or data brokers.",
-        "[ASK OWNER/lawyer: review the suggested wording below (G8)]",
-        "**Why we are allowed to use it** (Data Privacy Act, Section 12):",
+        "**Why we are allowed to use it** (Data Privacy Act, Sections 12 and 13):",
         {
           list: [
-            "Accounts, selling photos, paying photographers, and emails about your account and orders: to carry out our agreement with you (these Terms).",
-            "Keeping orders, payments and sales records: to meet our legal duties, such as tax and accounting rules.",
-            "Safety and security: our legitimate interest in protecting users and the service.",
-            'Face matching with your selfie and "photos ready" alerts: your consent (the face-matching tick, and turning alerts on). You can withdraw it by deleting your saved selfies and turning alerts off.',
+            "Accounts, buying and selling photos, paying photographers, and emails about your account and orders: to carry out our agreement with you (the [Terms](/terms)).",
+            "Orders, payments, sales and payout records: to meet our legal duties, such as tax and bookkeeping rules, and to handle refunds, disputes and legal claims.",
+            "Seller checks (a photographer's government ID and BIR registration): because the Internet Transactions Act and BIR rules require them. We treat ID numbers as sensitive personal information.",
+            "Safety, security and photo removal requests: our legitimate interest in protecting users, photographers and the service. A legitimate interest is a real need of ours that does not override your rights.",
+            'Face matching with your selfie, saved selfies and "photos ready" alerts: your consent, given with the tick before you search or save a selfie, and by turning alerts on. A parent or guardian gives it for their child. You can withdraw it at any time by deleting your saved selfies and turning alerts off; searches already made are not undone.',
+            "Faces and bib numbers of people in event photos who have not searched: our legitimate interest in helping runners find their own race photos (see [People without an account](#face-matching)).",
           ],
         },
       ],
@@ -109,10 +112,9 @@ export const PRIVACY_POLICY: LegalDoc = {
         "**Searching with a selfie.** When you search an event with a selfie, we send the selfie to Amazon Rekognition to compare it with that event's face templates. Guests can search without an account. **If you do not save the selfie, we do not store it:** it is used for that search and then dropped.",
         '**Saved selfies.** Runners can save up to 5 selfies to their profile. We keep them in our cloud storage until you delete them (you can delete them yourself at any time in your profile). Saved selfies are not added to any event\'s face collection; we send a saved selfie to Amazon Rekognition each time you use it to search. If you turn on "photos ready" alerts for an event, we use the saved selfie you choose to look for you in that event\'s new photos.',
         "**Before your first search** the website and app show a short notice and ask you to tick that you agree. Your tick is remembered on that device.",
-        "**How long.** An event's face templates are kept until the event is deleted, or until a photo is removed after a removal request (see [Photos of you](#photos-of-you)). Archived events keep their face templates.",
+        "**How long.** An event's face templates are deleted 6 months after the event date, or earlier if the event is deleted or a photo is removed after a request (see [Photos of you](#photos-of-you)). After that, the event's photos can still be found by bib number.",
         "**Admins.** When someone asks us to remove photos of them, an admin may use the selfie they send to find those photos. That selfie is kept only for the request and deleted when it closes.",
-        "[ASK OWNER/lawyer: review the suggested wording below (G9)]",
-        "**People without an account.** For people in event photos who do not have a QuickPitik account, we rely on our legitimate interest in helping runners find their own race photos at events where photography is expected. Face templates stay inside one event and are compared only when someone searches that event. Anyone can ask us to remove their photos and face templates (see [Photos of you](#photos-of-you)).",
+        "**People without an account.** Most people in event photos have never used QuickPitik. For them we rely on our legitimate interest in helping runners find their own race photos at events where photography is expected. To protect them, face templates stay inside one event's collection, are never shown to anyone, are compared only when someone searches that event after ticking the notice, and are deleted 6 months after the event date. You can object, or ask us to remove your photos and face templates, at any time (see [Photos of you](#photos-of-you)). A parent or guardian can do this for a child.",
       ],
     },
     {
@@ -131,7 +133,7 @@ export const PRIVACY_POLICY: LegalDoc = {
             ["Railway and Vercel", "everything we store or show", "hosting the server, database and website"],
           ],
         },
-        "Some of these companies may store or process data outside the Philippines.",
+        "Amazon Rekognition processes event photos and selfies in Singapore. The other companies above may also store or process data outside the Philippines. Wherever your data is, QuickPitik stays responsible for it, and we use these companies' data-protection terms to keep it protected to a level comparable with Philippine law.",
         "**Other users see:**",
         {
           list: [
@@ -149,20 +151,21 @@ export const PRIVACY_POLICY: LegalDoc = {
       id: "how-long-we-keep-it",
       heading: "How long we keep it",
       blocks: [
-        "We do not yet delete data automatically after a set time. Data is kept until you or QuickPitik delete it, as below.",
+        "Apart from face templates, which are deleted 6 months after the event, we do not yet delete data automatically after a set time. Data is kept until you or QuickPitik delete it, as below.",
         {
           table: [
             ["Data", "How long"],
             ["Your account", "until it is deleted (see [Deleting your account](#deletion))"],
             ["Saved selfies", "until you delete them or your account is deleted"],
             ["Selfies used only for a search", "not stored"],
-            ["Face templates from event photos", "until the event is deleted or the photo is removed"],
+            ["Face templates from event photos", "6 months after the event date, or earlier if the event is deleted or the photo is removed"],
             ["Event photos", "until the photographer deletes them or they are removed after a request. Sold photos cannot be deleted by the photographer, because buyers keep their downloads"],
-            ["Orders, payments and sales records", "kept for accounting for at least 5 years after the tax-return deadline for the year they belong to, as Philippine tax law requires, and longer while a tax case or claim about them is open. This applies after an account is deleted too"],
+            ["Orders, payments and sales records", "kept for at least 5 years after the tax-return deadline for the last year recorded in our books, as Philippine tax law requires (Tax Code Section 235, as amended by RA 11976), and longer while a tax audit, case or claim about them is open. This applies after an account is deleted too"],
+            ["Photographer seller-check documents", "while you sell on QuickPitik, then for at least 5 years like other money records"],
             ["Download links for bought photos", "downloads work for one year after payment"],
             ["Photo removal evidence", "deleted after the request is closed"],
             ["Sign-in tokens and codes (hashed)", "not yet cleaned up automatically"],
-            ["Server logs (technical records our server writes; they can include your email address when we send you an email)", "kept by our hosting provider, Railway, for the time its settings allow"],
+            ["Server logs (technical records our server and hosting providers write; they can include your IP address, and your email address when we send you an email)", "kept by our hosting provider, Railway, for the time its settings allow"],
             ["Backups", "our hosting and storage providers may keep backup copies for the time their settings allow"],
           ],
         },
@@ -203,6 +206,7 @@ export const PRIVACY_POLICY: LegalDoc = {
             `**Object, or ask us to block data:** email ${EMAIL_LINK}.`,
           ],
         },
+        "We reply within 15 days. Before we act, we may ask you to show the request is yours, for example by writing from your account's email address. A copy of your data comes in a common electronic format. After a person's death, their lawful heirs can use these rights.",
         "If you are not happy with our answer, you can complain to the National Privacy Commission (privacy.gov.ph).",
       ],
     },
@@ -220,7 +224,7 @@ export const PRIVACY_POLICY: LegalDoc = {
             "Make sure no payout is waiting. We pay out any unpaid balance by hand first, even below the usual minimum.",
           ],
         },
-        "We then remove your name, email, profile picture, bio, social links, saved payout details and sign-in records, hide your public page, and mark the account as closed. Photos you sold stay, so buyers keep their downloads. The payout details copied into each past payout stay with that payout record.",
+        "We then remove your name, email, profile picture, bio, social links, saved payout details and sign-in records, hide your public page, and mark the account as closed. Photos you sold stay, so buyers keep their downloads. The payout details copied into each past payout stay with that payout record. Seller-check documents, if we asked for them, are kept as legal records.",
         '**What we keep for every account:** orders, payments and sales records (including the email on each order and the "first name, last initial" shown on sales), and the notes in reports, disputes and removal requests. We keep them for accounting and to handle refunds and disputes (see [How long we keep it](#how-long-we-keep-it)).',
         "**Your face in event photos** is not linked to your account, so deleting the account does not remove it. To remove photos of you, see [Photos of you](#photos-of-you).",
       ],
@@ -230,7 +234,7 @@ export const PRIVACY_POLICY: LegalDoc = {
       heading: "Photos of you",
       blocks: [
         `If you appear in an event photo and want it removed, email ${EMAIL_LINK} with the event and the photos (a link or a description), and why. A parent or guardian can ask for a child.`,
-        "The photographer gets a set time to respond, then QuickPitik decides. If we remove a photo, we delete its files and its face templates; a minimal record of the removal is kept. We cannot recall copies that buyers already downloaded, screenshots, or copies shared elsewhere.",
+        "The photographer gets 72 hours to respond, then QuickPitik decides. If we remove a photo, we delete its files and its face templates; a minimal record of the removal is kept. We cannot recall copies that buyers already downloaded, screenshots, or copies shared elsewhere.",
       ],
     },
     {

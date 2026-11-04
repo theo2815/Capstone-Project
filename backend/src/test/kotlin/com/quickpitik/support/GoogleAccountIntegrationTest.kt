@@ -1,6 +1,7 @@
 package com.quickpitik.support
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.dto.auth.GoogleLoginRequest
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.RegisterRequest
@@ -37,6 +38,7 @@ class GoogleAccountIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var passwords: PasswordResetService
     @Autowired private lateinit var profile: ProfileService
     @Autowired private lateinit var jdbc: JdbcTemplate
+    @Autowired private lateinit var legal: LegalProperties
     @MockitoBean private lateinit var googleJwtDecoder: JwtDecoder
     @MockitoBean private lateinit var emailService: EmailService
 
@@ -98,7 +100,7 @@ class GoogleAccountIntegrationTest : PostgresIntegrationTest() {
         val id = googleAuth.login(GoogleLoginRequest("terms-token", Role.RUNNER, termsAccepted = true)).user.id
 
         val row = jdbc.queryForMap("SELECT terms_version, terms_accepted_at FROM users WHERE id = ?", id)
-        assertEquals("1.0-draft", row["terms_version"])
+        assertEquals(legal.currentVersion, row["terms_version"])
         assertNotNull(row["terms_accepted_at"])
     }
 }

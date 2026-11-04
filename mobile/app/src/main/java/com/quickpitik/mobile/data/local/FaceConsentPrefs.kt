@@ -2,8 +2,11 @@ package com.quickpitik.mobile.data.local
 
 import android.content.Context
 
-/** Raise to ask everyone again after the face-matching notice changes (website: FACE_NOTICE_VERSION). */
-const val FACE_NOTICE_VERSION = 1
+/**
+ * Raise to ask everyone again after the face-matching notice changes (website: FACE_NOTICE_VERSION).
+ * 2 since 2026-11-05: the notice names Singapore and covers a child's selfie (review S10).
+ */
+const val FACE_NOTICE_VERSION = 2
 
 internal fun faceNoticeNeeded(accepted: Int?, current: Int = FACE_NOTICE_VERSION): Boolean = accepted != current
 

@@ -32,5 +32,6 @@ class FaceConsentPrefsTest {
         assertTrue(faceNoticeNeeded(null))
         assertFalse(faceNoticeNeeded(FACE_NOTICE_VERSION))
         assertTrue(faceNoticeNeeded(accepted = 1, current = 2))
+        assertTrue(faceNoticeNeeded(accepted = 1)) // the notice was reworded (PT-0b): version-1 ticks are asked again
     }
 }

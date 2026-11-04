@@ -60,9 +60,9 @@ const val DELETION_NOTICE =
 // Sign-up copy, same words as the website's LEGAL_COPY (PT-0a deck).
 const val SIGNUP_TICK_ERROR = "Please tick the box to agree before you continue."
 const val FACE_NOTICE =
-    "To find your photos, we send your selfie to Amazon Rekognition to compare it with faces in this event's photos. " +
-        "If you only search, we don't keep your selfie; selfies you save to your profile stay until you delete them. "
-const val FACE_TICK_LABEL = "I agree to face matching with my selfie."
+    "To find your photos, we send this selfie to Amazon Rekognition (run by AWS in Singapore) to compare the face in it with faces in this event's photos. " +
+        "If you only search, we don't keep the selfie; selfies you save to your profile stay until you delete them. "
+const val FACE_TICK_LABEL = "I agree to face matching with this selfie. If it shows my child, I am their parent or guardian."
 
 /** Above the pay button, for everyone (website checkoutLine). */
 @Composable

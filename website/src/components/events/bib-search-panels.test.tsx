@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearTokens, setTokens } from "@/lib/auth";
 import type { EventPhotosResult } from "@/lib/api-photos";
 import { shrinkSelfie } from "@/lib/image-utils";
+import { FACE_NOTICE_VERSION } from "@/lib/legal/copy";
 import { useAuthStore } from "@/store/auth-store";
 import { useFaceConsentStore } from "@/store/face-consent-store";
 import { SelfieSearchPanel } from "./bib-search-panels";
@@ -195,5 +196,5 @@ it("remembers the tick on this device after a remount", () => {
   mountPanel();
   expect(screen.queryByLabelText(/I agree to face matching/)).not.toBeInTheDocument();
   expect(screen.getByLabelText(/Upload a selfie/)).not.toBeDisabled();
-  expect(JSON.parse(localStorage.getItem("quickpitik-face-consent")!).state.acceptedVersion).toBe(1);
+  expect(JSON.parse(localStorage.getItem("quickpitik-face-consent")!).state.acceptedVersion).toBe(FACE_NOTICE_VERSION);
 });
