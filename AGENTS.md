@@ -157,7 +157,7 @@ Session memory, tasks, decisions, the live work board, and working notes that do
 
 **Session start (MANDATORY):**
 1. Read the vault `AGENTS.md` + `VAULT-INDEX.md` (current state) **and `ACTIVE.md`** (what's in flight right now, by whom).
-2. Ask which module(s) to work on: `ai-api` · `backend` · `website` · `mobile` · `desktop`.
+2. Ask which module(s) to work on: `ai-api` · `backend` · `website` · `mobile` · `desktop` · `capstone-papers` (the vault module; Document Skill).
 3. Read that module's `tasks.md` from the vault and show its tasks. Begin implementation only after the user confirms a task.
 4. Before non-trivial feature work, **claim it on `ACTIVE.md`** (add your block: agent label, branch, status). This is how agents avoid colliding.
 
