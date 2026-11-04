@@ -128,23 +128,25 @@ export const TERMS_OF_SERVICE: LegalDoc = {
       blocks: [
         {
           list: [
-            "For photos uploaded after a photographer agrees to these Terms, **the photographer and QuickPitik share the copyright.**",
-            "For photos uploaded before the photographer agreed to these Terms, the photographer keeps the copyright and gives QuickPitik a licence to store, watermark, show, face-match and sell them on QuickPitik.",
+            "For photos a photographer uploads after agreeing to these Terms, the photographer transfers to QuickPitik an equal, undivided half share of the copyright, so **the photographer and QuickPitik share the copyright** in equal parts. The photographer's tick at sign-up is their written agreement to this.",
+            "For photos uploaded before the photographer agreed to these Terms, the photographer keeps the whole copyright and gives QuickPitik a licence to store, watermark, show, face-match and sell them on QuickPitik.",
             "Either way, the photographer lets QuickPitik store, watermark, show, face-match and sell the photos on QuickPitik.",
+            "The photographer stays the author. Their moral rights (to be named as the author and to object to changes that harm their reputation) stay with them, and QuickPitik credits them.",
           ],
         },
-        "[ASK OWNER/lawyer: review the suggested wording below (G10)]",
-        "Each co-owner may use a shared-copyright photo without asking the other:",
+        "**How the two owners share a photo.** Instead of the Civil Code's default rules for co-owners, we agree that:",
         {
           list: [
-            "the photographer may sell, license and show it anywhere, including outside QuickPitik, and use it in their portfolio;",
-            "QuickPitik may store, watermark, show, face-match and sell it on QuickPitik, and use it to promote QuickPitik with the photographer credited.",
+            "the photographer may sell the photo, give non-exclusive licences for it and show it anywhere, including outside QuickPitik, and use it in their portfolio;",
+            "QuickPitik may store, watermark, show, face-match and sell it on QuickPitik. QuickPitik may use it to promote QuickPitik, with the photographer credited, only if no one in it can be recognised or the people who can be recognised agreed;",
+            "neither owner may, without the other's written agreement, give anyone exclusive rights to the photo, transfer its share, or change the photo itself (making previews, thumbnails and watermarked copies is not a change);",
+            "for 10 years after upload, the longest such an agreement may last under the Civil Code, neither owner will ask for the shared copyright to be divided or for the photo to be sold to end the sharing;",
+            "if someone uses a shared photo without permission, either owner may act against them and must tell the other.",
           ],
         },
         {
           list: [
-            "Neither may give anyone exclusive rights to the photo without the other's written agreement.",
-            "Money from sales on QuickPitik is shared as set out in [Photographers](#photographers). Neither owes the other a share of money earned outside QuickPitik.",
+            "Money from sales on QuickPitik is shared as set out in [Photographers](#photographers). Neither owner owes the other a share of money it earns from the photo outside QuickPitik.",
             'Previews carry this notice: "All rights reserved. Do not remove, alter or obscure the watermark or attribution."',
           ],
         },
