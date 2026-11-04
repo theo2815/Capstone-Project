@@ -43,6 +43,8 @@ import { ApiError, searchRateLimitMessage } from "@/lib/api";
 import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 import { LegalLinks } from "@/components/legal/legal-links";
+import { BibNotice } from "@/components/legal/face-notice";
+import { useBibConsent } from "@/store/face-consent-store";
 
 type Mode = "cockpit" | "browse";
 
@@ -81,11 +83,13 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const [myPhotosError, setMyPhotosError] = useState<string | null>(null);
 
   // Q-011: bib-keyed cache. Active in cockpit (no filter) and bib-mode browse.
+  // BT-1b: a ?bib= link is a bib search, so no request before the bib tick.
+  const bibOk = useBibConsent();
   const bibPhotos = useEventPhotos({
     slug: event.slug,
     bib: bibFilter || undefined,
     initialPage: initialPhotos,
-    enabled: !isFaceMode,
+    enabled: !isFaceMode && (!bibFilter || bibOk),
   });
 
   // 2026-05-19 PM: face search is now one-shot, not cached. The selfie panel
@@ -674,6 +678,8 @@ function BrowseMode({
 
   const isBibFilter = bibFilter.trim().length > 0;
   const isAnyFilter = isBibFilter || isFaceMode;
+  const bibOk = useBibConsent();
+  const needsBibTick = isBibFilter && !bibOk;
   // Server-filtered by bib (Q-011) or face (Q-005/006) and server-paginated —
   // `photos` is the flattened set loaded so far; Load-more fetches the next page.
   const visible = photos;
@@ -730,7 +736,9 @@ function BrowseMode({
           <h2 className="font-hero text-ink text-4xl md:text-6xl">
             {isAnyFilter ? (
               visible.length === 0 ? (
-                isLoadingPhotos ? (
+                needsBibTick ? (
+                  "Tick the box to search."
+                ) : isLoadingPhotos ? (
                   "Searching…"
                 ) : bibSearchError ? (
                   "Search paused."
@@ -891,7 +899,13 @@ function BrowseMode({
       </div>
 
       <div className="flex-1 flex flex-col">
-        {isBibFilter && visible.length === 0 && isLoadingPhotos ? (
+        {needsBibTick ? (
+          <div className="px-6 md:px-10 py-10 md:py-14 pb-20">
+            <div className="max-w-7xl mx-auto">
+              <BibNotice className="max-w-xl" />
+            </div>
+          </div>
+        ) : isBibFilter && visible.length === 0 && isLoadingPhotos ? (
           // Bib queries cache under their own key with no SSR seed, so the
           // first page loads client-side — don't flash "No matches yet"
           // while the search is still in flight.

@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { EventCockpit } from "@/app/events/[slug]/event-cockpit";
 import { ApiError } from "@/lib/api";
+import { fetchEventPhotos } from "@/lib/api-photos";
 import { useAuthStore } from "@/store/auth-store";
+import { useBibConsentStore } from "@/store/face-consent-store";
 
 // FS-7 (2026-10-27): a face search can return up to 200 matches. They render a
 // page at a time like the bib gallery, instead of every tile and image at once.
@@ -17,8 +19,8 @@ const fixtures = vi.hoisted(() => {
   const matches = Array.from({ length: 130 }, (_, i) => ({
     id: `match-${i}`, bib: null, km: null, time: "06:30", tone: 0, span: "default" as const, price: 100,
   }));
-  // Per-test url flags and bib-search error (the default is the ?mine=1 landing).
-  const state = { url: { browse: "1", face: "1", mine: "1" } as Record<string, string>, bibError: null as unknown };
+  // Per-test url flags (the default is the ?mine=1 landing).
+  const state = { url: { browse: "1", face: "1", mine: "1" } as Record<string, string> };
   return { event, matches, state };
 });
 
@@ -27,15 +29,13 @@ vi.mock("@/hooks/use-url-state", () => ({
   useUrlState: (key: string) => [fixtures.state.url[key] ?? "", vi.fn()],
   useUrlStateBatch: () => vi.fn(),
 }));
-vi.mock("@/hooks/use-event-photos", () => ({
-  useEventPhotos: () => ({ photos: [], total: 0, isLoading: false, isFetching: false, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn(), error: fixtures.state.bibError }),
-}));
 vi.mock("@/hooks/use-event-live-photos", () => ({ useEventLivePhotos: () => ({ newCount: 0, reconnectFailed: false, refresh: vi.fn() }) }));
 vi.mock("@/hooks/use-selfies", () => ({ useSelfiesList: () => ({ selfies: [{ id: "s1", isPrimary: true }], isLoading: false }) }));
 vi.mock("@/lib/api-photo-alert", () => ({ fetchPhotoAlertStatus: vi.fn(async () => ({ registered: true, selfieId: "s1" })) }));
 vi.mock("@/lib/api-photos", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api-photos")>()),
   searchEventByFace: vi.fn(async () => ({ items: fixtures.matches, total: 130, offset: 0, limit: 200 })),
+  fetchEventPhotos: vi.fn(),
 }));
 vi.mock("@/components/events/photo-mosaic-tile", () => ({ PhotoMosaicTile: () => <div data-testid="tile" /> }));
 vi.mock("@/components/layout/site-header", () => ({ SiteHeader: () => null }));
@@ -46,11 +46,12 @@ beforeEach(() => {
     isAuthenticated: true,
     isLoading: false,
   });
+  useBibConsentStore.getState().accept();
+  vi.mocked(fetchEventPhotos).mockReset();
 });
 
 afterEach(() => {
   fixtures.state.url = { browse: "1", face: "1", mine: "1" };
-  fixtures.state.bibError = null;
   useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false });
   vi.restoreAllMocks();
 });
@@ -77,13 +78,50 @@ it("shows face matches a page at a time, while Buy all still covers every match"
 
 it("says how long to wait when a bib search is refused with a 429, not 'No matches yet'", async () => {
   fixtures.state.url = { bib: "123" };
-  fixtures.state.bibError = new ApiError([{ code: "RATE_LIMITED", message: "Too many requests. Please slow down and try again." }], 429, 19);
+  vi.mocked(fetchEventPhotos).mockRejectedValue(
+    new ApiError([{ code: "RATE_LIMITED", message: "Too many requests. Please slow down and try again." }], 429, 19),
+  );
+  renderCockpit();
+
+  expect(await screen.findByText("Too many searches. Try again in about 19 seconds.")).toBeInTheDocument();
+  expect(screen.queryByText(/No matches yet|Still uploading/)).not.toBeInTheDocument();
+});
+
+// BT-1b: opening a shared or saved ?bib= link is a bib search, so this device
+// must tick the bib box before the photo request goes out.
+const bibPage = { items: fixtures.matches.slice(0, 3), total: 3, offset: 0, limit: 60 };
+const bibBox = () => screen.queryByLabelText(/This is my bib number/);
+
+it("a bib link sends no photo request until the bib box is ticked", async () => {
+  useBibConsentStore.setState({ acceptedVersion: null });
+  fixtures.state.url = { bib: "1234" };
+  vi.mocked(fetchEventPhotos).mockResolvedValue(bibPage);
+  renderCockpit();
+
+  expect(bibBox()).toBeInTheDocument();
+  await new Promise((r) => setTimeout(r, 50));
+  expect(fetchEventPhotos).not.toHaveBeenCalled();
+  expect(screen.queryByText(/No matches yet/)).not.toBeInTheDocument();
+
+  fireEvent.click(bibBox()!);
+  expect(await screen.findByRole("heading", { name: /We found\s*3\s*photos/ })).toBeInTheDocument();
+  expect(fetchEventPhotos).toHaveBeenCalledWith("cebu-run", expect.objectContaining({ bib: "1234" }), expect.anything());
+  expect(screen.getAllByTestId("tile")).toHaveLength(3);
+});
+
+it("a bib link shows the photos at once when this device already ticked", async () => {
+  fixtures.state.url = { bib: "1234" };
+  vi.mocked(fetchEventPhotos).mockResolvedValue(bibPage);
+  renderCockpit();
+
+  expect(await screen.findByRole("heading", { name: /We found\s*3\s*photos/ })).toBeInTheDocument();
+  expect(bibBox()).not.toBeInTheDocument();
+});
+
+function renderCockpit() {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <EventCockpit event={fixtures.event} initialPhotos={{ items: [], total: 0, offset: 0, limit: 60 }} />
     </QueryClientProvider>,
   );
-
-  expect(await screen.findByText("Too many searches. Try again in about 19 seconds.")).toBeInTheDocument();
-  expect(screen.queryByText(/No matches yet|Still uploading/)).not.toBeInTheDocument();
-});
+}
