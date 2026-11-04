@@ -4,10 +4,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearTokens, setTokens } from "@/lib/auth";
 import type { EventPhotosResult } from "@/lib/api-photos";
 import { shrinkSelfie } from "@/lib/image-utils";
-import { FACE_NOTICE_VERSION } from "@/lib/legal/copy";
+import { BIB_NOTICE_VERSION, FACE_NOTICE_VERSION } from "@/lib/legal/copy";
 import { useAuthStore } from "@/store/auth-store";
-import { useFaceConsentStore } from "@/store/face-consent-store";
-import { SelfieSearchPanel } from "./bib-search-panels";
+import { useBibConsentStore, useFaceConsentStore } from "@/store/face-consent-store";
+import { BibPanel, SelfieSearchPanel } from "./bib-search-panels";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/events/race" }));
 vi.mock("@/lib/image-utils", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/image-utils")>()), shrinkSelfie: vi.fn() }));
@@ -197,4 +197,34 @@ it("remembers the tick on this device after a remount", () => {
   expect(screen.queryByLabelText(/I agree to face matching/)).not.toBeInTheDocument();
   expect(screen.getByLabelText(/Upload a selfie/)).not.toBeDisabled();
   expect(JSON.parse(localStorage.getItem("quickpitik-face-consent")!).state.acceptedVersion).toBe(FACE_NOTICE_VERSION);
+});
+
+// Review S10 (task BT-1): a bib search looks for a person's photos too.
+const mountBib = (onSubmit = vi.fn()) =>
+  render(<BibPanel bibInput="1234" onBibChange={() => {}} onSubmit={onSubmit} onSwitchToSelfie={() => {}} />);
+
+it("sends no bib search until the bib box is ticked", () => {
+  useBibConsentStore.setState({ acceptedVersion: null });
+  const onSubmit = vi.fn();
+  mountBib(onSubmit);
+  expect(screen.getByRole("link", { name: /How search works/ })).toHaveAttribute("href", "/privacy#face-matching");
+  expect(screen.getByRole("button", { name: /Search by bib/ })).toBeDisabled();
+  // Enter in the field submits the form even with the button off.
+  fireEvent.submit(screen.getByRole("button", { name: /Search by bib/ }).closest("form")!);
+  expect(onSubmit).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByLabelText(/This is my bib number/));
+  fireEvent.click(screen.getByRole("button", { name: /Search by bib/ }));
+  expect(onSubmit).toHaveBeenCalledTimes(1);
+});
+
+it("remembers the bib tick on this device after a remount", () => {
+  useBibConsentStore.setState({ acceptedVersion: null });
+  const { unmount } = mountBib();
+  fireEvent.click(screen.getByLabelText(/This is my bib number/));
+  unmount();
+  mountBib();
+  expect(screen.queryByLabelText(/This is my bib number/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Search by bib/ })).not.toBeDisabled();
+  expect(JSON.parse(localStorage.getItem("quickpitik-bib-consent")!).state.acceptedVersion).toBe(BIB_NOTICE_VERSION);
 });
