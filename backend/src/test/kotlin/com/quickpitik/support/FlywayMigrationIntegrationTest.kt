@@ -3,7 +3,10 @@ package com.quickpitik.support
 import jakarta.persistence.EntityManager
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.photographer.HandlePatchRequest
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventStatus
 import com.quickpitik.exception.ApiException
+import com.quickpitik.repository.EventRepository
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Test
@@ -14,9 +17,11 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.init.ScriptUtils
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 import javax.sql.DataSource
@@ -50,6 +55,9 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var dataSource: DataSource
+
+    @Autowired
+    private lateinit var events: EventRepository
 
     @Value("\${app.admin.bootstrap-email}")
     private lateinit var bootstrapEmail: String
@@ -312,6 +320,69 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
         }
     }
+
+    // Upgrade rehearsal: staging was on V91 and production on V90 when V92 was written.
+    @Test
+    fun `V92 upgrades V91 with events and leaves every row unstamped`() {
+        val schema = "face_expiry_v92_${UUID.randomUUID().toString().replace("-", "")}"
+        val ids = mutableListOf<UUID>()
+        try {
+            flywayFor(schema, "91").migrate()
+            val v91Columns = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'events' " +
+                    "ORDER BY ordinal_position",
+                String::class.java, schema,
+            )
+            assertFalse("faces_deleted_at" in v91Columns, "faces_deleted_at must not exist at V91")
+            assertEquals("91", latestVersion(schema))
+
+            // One old event and one deleted event, copied in from rows the V92 entity wrote.
+            val old = events.save(Event(slug = "v92-old-${UUID.randomUUID().toString().take(8)}", name = "Old run",
+                date = LocalDate.of(2025, 11, 1), location = "Cebu City", status = EventStatus.COMPLETED))
+            val gone = events.save(Event(slug = "v92-del-${UUID.randomUUID().toString().take(8)}", name = "Deleted run",
+                date = LocalDate.of(2026, 10, 30), location = "Cebu City", status = EventStatus.ACTIVE)
+                .apply { deletedAt = OffsetDateTime.now() })
+            ids += listOf(old.id, gone.id)
+            val cols = v91Columns.joinToString(", ") { "\"$it\"" }
+            assertEquals(2, jdbcTemplate.update(
+                "INSERT INTO $schema.events ($cols) SELECT $cols FROM public.events WHERE id IN (?, ?)", old.id, gone.id,
+            ))
+
+            flywayFor(schema, "92").migrate()
+
+            assertEquals("92", latestVersion(schema))
+            val column = jdbcTemplate.queryForMap(
+                "SELECT data_type, is_nullable, column_default FROM information_schema.columns " +
+                    "WHERE table_schema = ? AND table_name = 'events' AND column_name = 'faces_deleted_at'",
+                schema,
+            )
+            assertEquals("timestamp with time zone", column["data_type"])
+            assertEquals("YES", column["is_nullable"])
+            assertNull(column["column_default"])
+            assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM $schema.events WHERE id IN (?, ?) AND faces_deleted_at IS NULL",
+                Int::class.java, old.id, gone.id,
+            ))
+            // Nothing else moved: every V91 column of the copied rows is unchanged.
+            assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM (SELECT $cols FROM public.events WHERE id IN (?, ?) " +
+                    "EXCEPT SELECT $cols FROM $schema.events) d",
+                Int::class.java, old.id, gone.id,
+            ))
+            assertEquals(true, jdbcTemplate.queryForObject(
+                "SELECT bool_and(success) FROM $schema.flyway_schema_history WHERE version = '92'", Boolean::class.java,
+            ))
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+            ids.forEach { jdbcTemplate.update("DELETE FROM public.events WHERE id = ?", it) }
+        }
+    }
+
+    private fun latestVersion(schema: String): String = jdbcTemplate.queryForObject(
+        "SELECT version FROM $schema.flyway_schema_history WHERE success AND version IS NOT NULL " +
+            "ORDER BY installed_rank DESC LIMIT 1",
+        String::class.java,
+    )!!
 
     private fun flywayFor(schema: String, target: String): Flyway = Flyway.configure()
         .dataSource(dataSource)

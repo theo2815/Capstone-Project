@@ -349,7 +349,7 @@ class AdminEventService(
         val coverKey = cover?.let {
             val event = loadForUpdate(eventId)
             event.requireReviewRevision(req.expectedRevision)
-            req.date?.takeIf { date -> date.isNotBlank() }?.let(::parseDate)
+            req.date?.takeIf { date -> date.isNotBlank() }?.let { date -> parseEditDate(event, date) }
             req.pricePerPhoto?.let { price -> validatedUpdatePrice(price, event.isFree) }
             eventCoverService.upload(eventId, it.bytes, it.contentType)
         }
@@ -423,7 +423,7 @@ class AdminEventService(
             eventId, commands.inputHash(fields), { authorizeCommand(adminId) }, {
                 val event = loadForReview(eventId)
                 event.requireReviewRevision(req.expectedRevision)
-                req.date?.takeIf(String::isNotBlank)?.let(::parseDate)
+                req.date?.takeIf(String::isNotBlank)?.let { parseEditDate(event, it) }
                 req.pricePerPhoto?.let { validatedUpdatePrice(it, event.isFree) }
             }, {
                 processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
@@ -477,7 +477,7 @@ class AdminEventService(
             }
         }
         req.date?.takeIf { it.isNotBlank() }?.let {
-            val parsed = parseDate(it)
+            val parsed = parseEditDate(event, it)
             if (event.date != parsed) {
                 changes["date"] = mapOf("from" to event.date.toString(), "to" to parsed.toString())
                 before["date"] = event.date.toString()
@@ -651,6 +651,11 @@ class AdminEventService(
     }
 
     private fun parseDate(raw: String): LocalDate = EventInputs.parseDate(raw)
+
+    // Checked wherever an edit's date is parsed, so a refusal comes before the
+    // cover upload and inside the command claim (which then rolls back).
+    private fun parseEditDate(event: Event, raw: String): LocalDate =
+        parseDate(raw).also { eventFaceExpiry.checkDateChange(event, it) }
 
     // Admin-set per-photo price must be a non-negative peso amount. We
     // strip trailing zeros and clamp to scale 2 so the audit log entries

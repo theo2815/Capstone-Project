@@ -2,6 +2,7 @@ package com.quickpitik.service.events
 
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.entity.Event
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.service.ai.FaceBibProvider
 import org.slf4j.LoggerFactory
@@ -10,7 +11,6 @@ import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.LocalDate
-import java.time.ZoneId
 import java.util.UUID
 
 // Legal review M2 (2026-11-04): face templates may be kept only as long as
@@ -36,6 +36,24 @@ class EventFaceExpiry(
         event.facesDeletedAt != null || event.deletedAt != null || !event.date.isAfter(cutoff())
 
     fun ended(eventId: UUID): Boolean = eventRepository.findById(eventId).map(::ended).orElse(false)
+
+    // A date moved across the line would end face search by mistake (and the
+    // sweep's stamp is permanent) or revive it past the promise. Edit forms
+    // re-send the date on every save, so an unchanged date always passes.
+    fun checkDateChange(event: Event, newDate: LocalDate) {
+        if (newDate != event.date && (ended(event) || !newDate.isAfter(cutoff()))) {
+            val retention = aiApiProperties.faceRetention
+            val message = if (retention.days == 0) {
+                val months = retention.toTotalMonths().let { if (it == 1L) "1 month" else "$it months" }
+                "This event's date can't be moved to or from a date more than $months ago, " +
+                    "because its face data is deleted $months after the event."
+            } else {
+                "This event's date can't be moved to or from a date past its face data's retention period, " +
+                    "because its face data is deleted when that period ends."
+            }
+            throw ValidationException(message, field = "date")
+        }
+    }
 
     /** Deletes the event's face templates, then stamps faces_deleted_at. Throws if the delete failed. */
     fun deleteFaces(eventId: UUID) {
@@ -66,9 +84,6 @@ class EventFaceExpiry(
     }
 
     // Events dated on or before this have passed retention.
-    private fun cutoff(): LocalDate = LocalDate.now(clock.withZone(PH_ZONE)).minus(aiApiProperties.faceRetention)
-
-    private companion object {
-        val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
-    }
+    private fun cutoff(): LocalDate =
+        LocalDate.now(clock.withZone(EventDtoMapper.PH_ZONE)).minus(aiApiProperties.faceRetention)
 }

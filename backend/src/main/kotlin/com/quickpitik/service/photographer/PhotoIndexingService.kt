@@ -102,6 +102,10 @@ class PhotoIndexingService(
         // Face templates deleted or past retention (EventFaceExpiry): no face
         // cleanup or enroll (an enroll would re-create the deleted collection);
         // bibs are still read so bib search keeps working.
+        // shortcut: an enroll that passed this check just before an admin deletes the event can
+        // re-create its collection seconds after the delete (faces_deleted_at is already set, so
+        // nothing deletes it again); re-check ended() after a successful enroll if admin deletes
+        // during uploads become common.
         val facesEnded = eventFaceExpiry.ended(photo.eventId)
         if (!facesEnded) try {
             faceErasure.erasePrior(photo)

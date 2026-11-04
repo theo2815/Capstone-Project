@@ -148,6 +148,19 @@ class PhotoSearchServiceTest {
         Mockito.verifyNoInteractions(aiApiClient)
     }
 
+    @Test
+    fun `admin removal face matching on an ended event answers 410 FACE_SEARCH_ENDED`() {
+        Mockito.`when`(faceExpiry.ended(eventId)).thenReturn(true)
+
+        val ex = assertFailsWith<ApiException> {
+            service().findFaceCandidates(eventId, com.quickpitik.dto.removal.SearchImage(selfie, "image/jpeg", "s.jpg"))
+        }
+
+        assertEquals(HttpStatus.GONE, ex.status)
+        assertEquals(ErrorCodes.FACE_SEARCH_ENDED, ex.code)
+        Mockito.verifyNoInteractions(aiApiClient)
+    }
+
     // ─── E2: threshold is re-checked server-side ──────────────────────────
 
     @Test

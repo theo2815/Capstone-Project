@@ -21,8 +21,11 @@ import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.config.AiApiProperties
+import com.quickpitik.service.ai.FaceBibProvider
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.support.testTransactionTemplate
 import org.springframework.aop.framework.ProxyFactory
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
@@ -35,7 +38,10 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -87,6 +93,8 @@ class PhotographerOwnedEventServiceTest {
             mapper,
             eventPublisher,
             transactions,
+            EventFaceExpiry(eventRepository, Mockito.mock(FaceBibProvider::class.java), AiApiProperties(),
+                Clock.fixed(Instant.parse("2026-11-04T04:00:00Z"), ZoneOffset.UTC), transactions),
         )
         service = ProxyFactory(target).apply {
             addAdvice(TransactionInterceptor().apply {
@@ -302,6 +310,31 @@ class PhotographerOwnedEventServiceTest {
         }
 
         Mockito.verifyNoInteractions(covers)
+    }
+
+    // PT-MF-F: face data goes 6 months after the event date, so the date cannot
+    // cross that line (clock: 2026-11-04 in Manila, cutoff 2026-05-04).
+    @Test
+    fun `moving the date past face retention is refused and stores nothing`() {
+        val event = liveEvent()
+
+        val ex = assertFailsWith<ValidationException> {
+            service.update(photographerId, event.id, UpdateMyEventRequest(date = "2025-10-10"),
+                com.quickpitik.service.admin.AdminEventService.CoverUpload(byteArrayOf(1), "image/jpeg"))
+        }
+
+        assertEquals("date", ex.field)
+        assertEquals(LocalDate.of(2026, 10, 10), event.date)
+        Mockito.verifyNoInteractions(covers)
+    }
+
+    @Test
+    fun `re-sending the same date keeps title edits working`() {
+        val event = liveEvent()
+
+        service.update(photographerId, event.id, UpdateMyEventRequest(title = "Renamed", date = "2026-10-10"), null)
+
+        assertEquals("Renamed", event.name)
     }
 
     private fun liveEvent(): Event {

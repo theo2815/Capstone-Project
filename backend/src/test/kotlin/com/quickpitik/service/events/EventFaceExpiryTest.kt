@@ -1,8 +1,10 @@
 package com.quickpitik.service.events
 
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
@@ -15,9 +17,12 @@ import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.Period
 import java.time.ZoneOffset
 import java.util.Optional
 import java.util.UUID
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -169,6 +174,52 @@ class EventFaceExpiryTest {
         expiry().sweep()
 
         Mockito.verify(provider, Mockito.times(1)).deleteFacesByEvent(both.id)
+    }
+
+    @Test
+    fun `an unchanged date passes even on an ended event`() {
+        val old = event(TODAY.minusYears(1))
+
+        expiry().checkDateChange(old, old.date)
+    }
+
+    @Test
+    fun `a new date on or before the cutoff is refused`() {
+        val recent = event(TODAY.minusMonths(1))
+
+        val ex = assertFailsWith<ValidationException> { expiry().checkDateChange(recent, TODAY.minusMonths(6)) }
+
+        assertEquals("date", ex.field)
+        assertEquals(ErrorCodes.VALIDATION_ERROR, ex.code)
+    }
+
+    @Test
+    fun `any date change on an ended or stamped event is refused`() {
+        val old = event(TODAY.minusMonths(7))
+        val stamped = event(TODAY.minusMonths(1)).apply { facesDeletedAt = OffsetDateTime.now(CLOCK) }
+
+        assertFailsWith<ValidationException> { expiry().checkDateChange(old, TODAY) }
+        assertFailsWith<ValidationException> { expiry().checkDateChange(stamped, TODAY) }
+    }
+
+    @Test
+    fun `the refusal names the configured retention, not a fixed 6 months`() {
+        val recent = event(TODAY.minusMonths(1))
+        fun refusal(retention: Period) = assertFailsWith<ValidationException> {
+            EventFaceExpiry(eventRepository, provider, AiApiProperties(enabled = true, faceRetention = retention), CLOCK,
+                testTransactionTemplate()).checkDateChange(recent, TODAY.minusYears(2))
+        }.message!!
+
+        assertTrue("6 months ago" in refusal(Period.ofMonths(6)))
+        assertTrue("12 months ago" in refusal(Period.ofMonths(12)))
+        assertFalse("month" in refusal(Period.ofDays(200)))
+    }
+
+    @Test
+    fun `a date change inside retention passes`() {
+        val recent = event(TODAY.minusMonths(1))
+
+        expiry().checkDateChange(recent, TODAY.plusDays(10))
     }
 
     private fun <T> anyArg(): T = Mockito.any()
