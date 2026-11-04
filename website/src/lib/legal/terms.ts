@@ -1,7 +1,8 @@
 import { EMAIL_LINK, OPERATOR, REFUND_POLICY_MARKER, type LegalDoc } from "./types";
 
-// Draft text from the vault's PT-0a draft (2026-11-02). Not approved: PT-0b
-// puts the final wording in. Section ids are linked from other pages and apps.
+// Text approved by the owner on 2026-11-04 (PT-0b): the PT-0a draft with the
+// 2026-11-04 legal review's wording applied. Section ids are linked from other
+// pages and apps.
 export const TERMS_OF_SERVICE: LegalDoc = {
   title: "Terms of Service",
   sections: [
@@ -93,13 +94,14 @@ export const TERMS_OF_SERVICE: LegalDoc = {
       blocks: [
         "Our full refund policy is below. QuickPitik decides refund requests and disputes.",
         REFUND_POLICY_MARKER,
+        "These refund rules do not take away your rights under Philippine consumer law, for example if a photo you bought is defective or is not the photo you were shown.",
       ],
     },
     {
       id: "photographers",
       heading: "Photographers",
       blocks: [
-        "**Verification and approval.** An admin verifies each photographer account. A photographer's public page is hidden until the account is verified, and while it is suspended. Photographer events need an admin's approval before they go live.",
+        "**Verification and approval.** An admin verifies each photographer account. Before you sell or receive payouts, we may ask for your full name, a valid government ID, your address, a phone number and your BIR Certificate of Registration (Form 2303), as the Internet Transactions Act (RA 11967) and BIR rules require of online marketplaces. We may show buyers your name or brand and your city or province, and we give your details to the authorities when the law requires. A photographer's public page is hidden until the account is verified, and while it is suspended. Photographer events need an admin's approval before they go live.",
         "**Fees.** QuickPitik keeps 25% of the price of each photo sold; the photographer gets the rest. The 25% is worked out on the full price.",
         "**Coupons.** Photographers can offer coupons, up to the limit shown in the app. A coupon comes out of the photographer's share only.",
         "**Payouts.**",
@@ -109,6 +111,7 @@ export const TERMS_OF_SERVICE: LegalDoc = {
             "You can request a payout when your available balance is at least ₱500, one request at a time.",
             "Payouts go to the GCash, Maya or GoTyme account and QR code you saved in the app.",
             "Refunded sales are taken out of your balance, and money from a disputed sale is held until the dispute is decided.",
+            "Taxes: you are responsible for your own taxes and BIR registration. When BIR rules require it (for sellers whose payouts pass ₱500,000 in a year), we withhold 1% tax on half of your payouts and give you the tax certificate the law requires.",
           ],
         },
         "**Your promises.** By uploading, you promise that:",
@@ -204,31 +207,31 @@ export const TERMS_OF_SERVICE: LegalDoc = {
       id: "appeals",
       heading: "Appeals",
       blocks: [
-        `To appeal a decision (for example a suspension, a photo removal or a refund decision), email ${EMAIL_LINK} within 14 days of the decision. We answer within 14 days. Our answer on the appeal is final.`,
+        `To appeal a decision (for example a suspension, a photo removal or a refund decision), email ${EMAIL_LINK} within 14 days of the decision. We answer within 14 days. Our answer on the appeal is QuickPitik's final decision; it does not stop you from complaining to the National Privacy Commission or the Department of Trade and Industry, or from going to court.`,
       ],
     },
     {
       id: "photo-removal",
       heading: "Photo removal",
       blocks: [
-        "Anyone can ask us to remove a photo of them by email (see the [Privacy Policy](/privacy#photos-of-you)). The photographer gets a set time to respond, then QuickPitik makes the final decision. Photographers must follow removal decisions. Copies already downloaded by buyers cannot be recalled.",
+        "Anyone can ask us to remove a photo of them by email (see the [Privacy Policy](/privacy#photos-of-you)). The photographer gets 72 hours to respond, then QuickPitik makes the final decision. Photographers must follow removal decisions. Copies already downloaded by buyers cannot be recalled.",
       ],
     },
     {
       id: "liability",
       heading: "Liability",
       blocks: [
-        "[ASK OWNER/lawyer: review the suggested wording below (G11)]",
         "QuickPitik is provided as it is. We work to keep it running and accurate, but we do not promise that it will always be available, that face or bib search will find every photo of you, or that it will never show you a photo of someone else.",
-        "QuickPitik is not responsible for indirect losses, such as lost profits or lost opportunities. Our total liability to you for any claim is limited to the amount you paid us (or, for photographers, the fees we kept from your sales) in the 12 months before the claim. Nothing in these Terms limits liability that Philippine law does not allow us to limit, such as liability for fraud or gross negligence.",
-        "You are responsible for what you upload and how you use photos. If your breach of these Terms leads to a claim against QuickPitik, you will cover QuickPitik's resulting costs.",
+        "As far as Philippine law allows, QuickPitik is not responsible for indirect losses, such as lost profits or lost opportunities, and our total liability to you for any claim is limited to the amount you paid us (or, for photographers, the fees we kept from your sales) in the 12 months before the claim.",
+        "These limits do not apply to, and nothing in these Terms reduces: liability for fraud, bad faith, gross negligence (serious carelessness) or deliberate wrongdoing; your rights under the Consumer Act (RA 7394), the Data Privacy Act (RA 10173) or the Internet Transactions Act (RA 11967); or any other liability that Philippine law does not allow a contract to limit.",
+        "You are responsible for what you upload and how you use photos. If your breach of these Terms leads to a claim against QuickPitik, you will pay QuickPitik's reasonable costs that result, including reasonable lawyer's fees.",
       ],
     },
     {
       id: "governing-law",
       heading: "Governing law",
       blocks: [
-        "These Terms are governed by the laws of the Philippines. Disputes go to the courts of Cebu City.",
+        "These Terms are governed by the laws of the Philippines. A claim may be filed in the courts of Cebu City, or in any other court where Philippine law allows, such as where you live. You can also complain to the Department of Trade and Industry or, about personal data, to the National Privacy Commission.",
       ],
     },
     {

@@ -47,15 +47,16 @@ class SelfiePanelFaceNoticeTest {
 
     @Test fun `selfie actions stay off until the face-matching box is ticked`() {
         compose.onNodeWithText("Amazon Rekognition", substring = true).assertExists()
+        compose.onNodeWithText("Singapore", substring = true).assertExists()
         compose.onNodeWithText("How face matching works", substring = true).assertExists()
         compose.waitForIdle()
         compose.onNode(hasClickAction() and hasText("Take a selfie", substring = true)).assertIsNotEnabled().performClick()
         compose.onNode(hasClickAction() and hasText("Upload a selfie", substring = true)).assertIsNotEnabled().performClick()
         assertEquals(emptyList<String>(), calls)
 
-        compose.onNodeWithText("I agree to face matching with my selfie.").performClick()
+        compose.onNodeWithText("I agree to face matching with this selfie. If it shows my child, I am their parent or guardian.").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("I agree to face matching with my selfie.").assertDoesNotExist()
+        compose.onNodeWithText("I agree to face matching with this selfie. If it shows my child, I am their parent or guardian.").assertDoesNotExist()
         compose.onNode(hasClickAction() and hasText("Take a selfie", substring = true)).assertIsEnabled().performClick()
         compose.onNode(hasClickAction() and hasText("Upload a selfie", substring = true)).performClick()
         assertEquals(listOf("take", "upload"), calls)
