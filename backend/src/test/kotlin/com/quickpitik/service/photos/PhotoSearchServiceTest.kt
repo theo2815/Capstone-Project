@@ -124,6 +124,16 @@ class PhotoSearchServiceTest {
     }
 
     @Test
+    fun `face search checks the end once, before the provider call, so it can never turn into the fallback grid`() {
+        stubSearch(FaceMatch(person_id = "p", similarity = 0.9))
+        stubPhotoLookup()
+
+        service(fallback = true).searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination)
+
+        Mockito.verify(faceExpiry, Mockito.times(1)).ended(eventId)
+    }
+
+    @Test
     fun `saved-selfie library search on an ended event answers FACE_SEARCH_ENDED`() {
         Mockito.`when`(faceExpiry.ended(eventId)).thenReturn(true)
         val row = selfieRow()

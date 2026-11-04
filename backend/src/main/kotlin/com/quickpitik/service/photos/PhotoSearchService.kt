@@ -80,7 +80,7 @@ class PhotoSearchService(
         ensureEnabled(eventId)
         val candidates = try {
             timed(null, { trace.aiNanos += it }) {
-                findFaceCandidates(eventId, SearchImage(selfieBytes, contentType, filename))
+                checkedCandidates(eventId, SearchImage(selfieBytes, contentType, filename))
             }
         } catch (ex: Exception) {
             if (allowFallbackOnError && aiApiProperties.searchFallbackOnError && (ex !is AiApiException || ex.isRetryable)) {
@@ -105,6 +105,12 @@ class PhotoSearchService(
     fun findFaceCandidates(eventId: UUID, image: SearchImage): FaceCandidateResult {
         validateSelfie(image.bytes)
         ensureEnabled(eventId)
+        return checkedCandidates(eventId, image)
+    }
+
+    // The provider call; callers ran ensureEnabled(eventId) first, outside any fallback try.
+    private fun checkedCandidates(eventId: UUID, image: SearchImage): FaceCandidateResult {
+        validateSelfie(image.bytes)
         val threshold = aiApiProperties.faceMatchThresholdDefault
         val result = try {
             meterRegistry.timer("qp.ai.call", "op", "search").recordCallable {
@@ -179,7 +185,7 @@ class PhotoSearchService(
         for (sample in samples) {
             val matches = try {
                 timed(null, { trace.aiNanos += it }) {
-                    findFaceCandidates(eventId, SearchImage(sample.bytes, sample.contentType, sample.filename))
+                    checkedCandidates(eventId, SearchImage(sample.bytes, sample.contentType, sample.filename))
                 }
             } catch (ex: AiApiException) {
                 if (ex.status.is4xxClientError) {

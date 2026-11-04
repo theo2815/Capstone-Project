@@ -141,6 +141,36 @@ class EventFaceExpiryTest {
         assertFalse(expiry().ended(UUID.randomUUID())) // unknown event: other checks answer 404
     }
 
+    @Test
+    fun `a deleted event counts as ended at once so no new enroll re-creates its collection`() {
+        assertTrue(expiry().ended(event(TODAY, deleted = true)))
+    }
+
+    @Test
+    fun `search ends on the same day the sweep deletes, even at month end`() {
+        val endOfAugust = event(LocalDate.of(2026, 8, 31))
+        val feb28 = Clock.fixed(Instant.parse("2027-02-28T04:00:00Z"), ZoneOffset.UTC)
+        val mar1 = Clock.fixed(Instant.parse("2027-03-01T04:00:00Z"), ZoneOffset.UTC)
+        fun at(clock: Clock) = EventFaceExpiry(eventRepository, provider, AiApiProperties(enabled = true), clock, testTransactionTemplate())
+
+        assertFalse(at(feb28).ended(endOfAugust))
+        at(feb28).sweep()
+        assertNull(endOfAugust.facesDeletedAt)
+
+        assertTrue(at(mar1).ended(endOfAugust))
+        at(mar1).sweep()
+        assertNotNull(endOfAugust.facesDeletedAt)
+    }
+
+    @Test
+    fun `an old deleted event is deleted once`() {
+        val both = event(TODAY.minusYears(1), deleted = true)
+
+        expiry().sweep()
+
+        Mockito.verify(provider, Mockito.times(1)).deleteFacesByEvent(both.id)
+    }
+
     private fun <T> anyArg(): T = Mockito.any()
 
     private companion object {

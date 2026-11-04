@@ -30,8 +30,10 @@ class EventFaceExpiry(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    // Same cutoff as the sweep, so search ends the day the templates go. A
+    // deleted event ends at once, so no enroll re-creates its collection.
     fun ended(event: Event): Boolean =
-        event.facesDeletedAt != null || !event.date.plus(aiApiProperties.faceRetention).isAfter(today())
+        event.facesDeletedAt != null || event.deletedAt != null || !event.date.isAfter(cutoff())
 
     fun ended(eventId: UUID): Boolean = eventRepository.findById(eventId).map(::ended).orElse(false)
 
@@ -50,7 +52,7 @@ class EventFaceExpiry(
     fun sweep() {
         if (!aiApiProperties.enabled) return // same switch AdminEventService.delete uses
         // shortcut: loads every due event in one list; page it if one run ever has thousands.
-        val due = (eventRepository.findByFacesDeletedAtIsNullAndDateLessThanEqual(today().minus(aiApiProperties.faceRetention)) +
+        val due = (eventRepository.findByFacesDeletedAtIsNullAndDateLessThanEqual(cutoff()) +
             eventRepository.findByFacesDeletedAtIsNullAndDeletedAtIsNotNull()).distinctBy { it.id }
         if (due.isEmpty()) return
         log.info("Face expiry sweep: deleting face templates of {} event(s)", due.size)
@@ -63,7 +65,8 @@ class EventFaceExpiry(
         }
     }
 
-    private fun today(): LocalDate = LocalDate.now(clock.withZone(PH_ZONE))
+    // Events dated on or before this have passed retention.
+    private fun cutoff(): LocalDate = LocalDate.now(clock.withZone(PH_ZONE)).minus(aiApiProperties.faceRetention)
 
     private companion object {
         val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
