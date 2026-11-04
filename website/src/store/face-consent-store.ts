@@ -1,27 +1,33 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { FACE_NOTICE_VERSION } from "@/lib/legal/copy";
+import { BIB_NOTICE_VERSION, FACE_NOTICE_VERSION } from "@/lib/legal/copy";
 
-// The face-matching agreement ticked before the first selfie search or save
-// (privacy plan D2: remembered on the device, no server record).
+// The agreements ticked before a selfie search or save (privacy plan D2) and
+// before a bib search (task BT-1): remembered on the device, no server record.
 //   Owner:   the device, so guests are covered too.
-//   Key:     quickpitik-face-consent (localStorage).
-//   Version: FACE_NOTICE_VERSION; raising it asks everyone again.
-//   Reset:   never on sign-out, so it is NOT in resetUserScopedStores().
-interface FaceConsentState {
+//   Keys:    quickpitik-face-consent, quickpitik-bib-consent (localStorage).
+//   Version: FACE_NOTICE_VERSION, BIB_NOTICE_VERSION; raising one asks everyone again.
+//   Reset:   never on sign-out, so they are NOT in resetUserScopedStores().
+interface ConsentState {
   acceptedVersion: number | null;
   accept: () => void;
 }
 
-export const useFaceConsentStore = create<FaceConsentState>()(
-  persist(
-    (set) => ({
-      acceptedVersion: null,
-      accept: () => set({ acceptedVersion: FACE_NOTICE_VERSION }),
-    }),
-    { name: "quickpitik-face-consent" },
-  ),
-);
+const consentStore = (name: string, version: number) =>
+  create<ConsentState>()(
+    persist(
+      (set) => ({
+        acceptedVersion: null,
+        accept: () => set({ acceptedVersion: version }),
+      }),
+      { name },
+    ),
+  );
+
+export const useFaceConsentStore = consentStore("quickpitik-face-consent", FACE_NOTICE_VERSION);
+export const useBibConsentStore = consentStore("quickpitik-bib-consent", BIB_NOTICE_VERSION);
 
 export const useFaceConsent = () =>
   useFaceConsentStore((s) => s.acceptedVersion === FACE_NOTICE_VERSION);
+export const useBibConsent = () =>
+  useBibConsentStore((s) => s.acceptedVersion === BIB_NOTICE_VERSION);

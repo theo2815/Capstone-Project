@@ -6,6 +6,8 @@ export const DELETION_WINDOW = "7 business days";
 export const DELETION_MAIL_SUBJECT = "Account deletion request";
 // 2 since 2026-11-05: the notice now names Singapore and covers a child's selfie (review S10).
 export const FACE_NOTICE_VERSION = 2;
+// The bib-search notice (task BT-1, review S10); raising it asks everyone again.
+export const BIB_NOTICE_VERSION = 1;
 
 export const LEGAL_COPY = {
   signupTickLabel: `I am 18 or older, I agree to the [Terms of Service](${ROUTES.TERMS}) and I have read the [Privacy Policy](${ROUTES.PRIVACY}).`,
@@ -13,6 +15,8 @@ export const LEGAL_COPY = {
   googleLine: `By continuing with Google, you agree to the [Terms of Service](${ROUTES.TERMS}) and [Privacy Policy](${ROUTES.PRIVACY}). You'll confirm this on the next step.`,
   faceNotice: `To find your photos, we send this selfie to Amazon Rekognition (run by AWS in Singapore) to compare the face in it with faces in this event's photos. If you only search, we don't keep the selfie; selfies you save to your profile stay until you delete them. [How face matching works](${ROUTES.PRIVACY}#face-matching)`,
   faceTickLabel: "I agree to face matching with this selfie. If it shows my child, I am their parent or guardian.",
+  bibNotice: `To find your photos, we look for this bib number in this event's photos. Search only for your own photos, your child's, or those of someone who agreed. [How search works](${ROUTES.PRIVACY}#face-matching)`,
+  bibTickLabel: "I agree. This is my bib number, my child's, or I have the runner's permission.",
   checkoutLine: `By paying, you agree to the [Terms of Service (including refunds)](${ROUTES.TERMS}#refunds).`,
   deletionText: `To delete your account, email [${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(DELETION_MAIL_SUBJECT)}) from your account's email address. We'll do it within ${DELETION_WINDOW}. Some purchase records are kept, as the [Privacy Policy](${ROUTES.PRIVACY}#deletion) explains.`,
 } as const;

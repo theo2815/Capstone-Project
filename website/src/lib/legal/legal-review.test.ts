@@ -31,10 +31,10 @@ describe("legal review must-fix text", () => {
   });
 });
 
-// PT-0b (owner's answers 2026-11-04): version 1.0 with the review's should-fix
-// wording applied, so a Vercel production build passes the guard.
+// PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
+// so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  it("passes the production guard with version 1.0", () => {
+  it("passes the production guard with version 1.1", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
@@ -42,7 +42,12 @@ describe("approved text (PT-0b)", () => {
         "production",
       ),
     ).not.toThrow();
-    expect(LEGAL_VERSION).toBe("1.0");
+    expect(LEGAL_VERSION).toBe("1.1");
+  });
+
+  it("says both selfie and bib searches ask for a tick first (BT-1, S10)", () => {
+    expect(section(PRIVACY_POLICY, "face-matching")).toContain("**Before you search** by selfie or by bib number");
+    expect(section(PRIVACY_POLICY, "face-matching")).not.toContain("Before your first search");
   });
 
   it("says face templates are deleted 6 months after the event (M2)", () => {

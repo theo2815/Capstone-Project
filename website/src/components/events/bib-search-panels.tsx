@@ -25,8 +25,8 @@ import {
 } from "@/lib/image-utils";
 import type { SelfieRef } from "@/store/user-media-store";
 import { cn } from "@/lib/utils";
-import { FaceNotice } from "@/components/legal/face-notice";
-import { useFaceConsent } from "@/store/face-consent-store";
+import { BibNotice, FaceNotice } from "@/components/legal/face-notice";
+import { useBibConsent, useFaceConsent } from "@/store/face-consent-store";
 
 export type { SearchPanelMode } from "./find-photos-controls";
 import { BibInput, SelfieActionCard, CameraGlyph, UploadGlyph } from "./find-photos-controls";
@@ -44,12 +44,16 @@ export function BibPanel({
   onSwitchToSelfie: () => void;
   inputRef?: RefObject<HTMLInputElement | null>;
 }) {
+  // Review S10: no bib search before the tick, whatever submits the form.
+  const bibOk = useBibConsent();
   return (
-    <form onSubmit={onSubmit} className="mt-8">
+    <form onSubmit={(e) => (bibOk ? onSubmit(e) : e.preventDefault())} className="mt-8">
+      <BibNotice className="mb-3" />
       <BibInput bib={bibInput} onChange={onBibChange} inputRef={inputRef} />
       <button
         type="submit"
-        className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors"
+        disabled={!bibOk}
+        className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Search by bib →
       </button>
