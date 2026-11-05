@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { EventCockpit } from "@/app/events/[slug]/event-cockpit";
 import { ApiError } from "@/lib/api";
@@ -118,10 +120,36 @@ it("a bib link shows the photos at once when this device already ticked", async 
   expect(bibBox()).not.toBeInTheDocument();
 });
 
+// BT-1c: the server cannot read this device's saved tick, so a server-drawn bib
+// link says "Searching…" instead of asking for a tick the device may already have.
+it("a server-drawn bib link shows the loading state, not the tick notice", () => {
+  fixtures.state.url = { bib: "1234" };
+  const html = renderToString(cockpit());
+  expect(html).toContain("Searching…");
+  expect(html).not.toMatch(/Tick the box to search|This is my bib number/);
+});
+
+it("hydrating a server-drawn bib link on a ticked device loads the photos with no mismatch", async () => {
+  fixtures.state.url = { bib: "1234" };
+  vi.mocked(fetchEventPhotos).mockResolvedValue(bibPage);
+  const container = document.body.appendChild(document.createElement("div"));
+  container.innerHTML = renderToString(cockpit());
+  const onRecoverableError = vi.fn();
+  await act(async () => {
+    hydrateRoot(container, cockpit(), { onRecoverableError });
+  });
+
+  expect(await screen.findByRole("heading", { name: /We found\s*3\s*photos/ })).toBeInTheDocument();
+  expect(bibBox()).not.toBeInTheDocument();
+  expect(onRecoverableError).not.toHaveBeenCalled();
+});
+
+const cockpit = () => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <EventCockpit event={fixtures.event} initialPhotos={{ items: [], total: 0, offset: 0, limit: 60 }} />
+  </QueryClientProvider>
+);
+
 function renderCockpit() {
-  render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <EventCockpit event={fixtures.event} initialPhotos={{ items: [], total: 0, offset: 0, limit: 60 }} />
-    </QueryClientProvider>,
-  );
+  render(cockpit());
 }
