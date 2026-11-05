@@ -84,6 +84,7 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.eventDateLabel
+import com.quickpitik.mobile.ui.common.bibNoticeAccepted
 import com.quickpitik.mobile.ui.common.faceNoticeAccepted
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
@@ -334,15 +335,17 @@ fun SearchPanel(
 private fun BibPanel(bib: String, photoCount: Int, cb: SearchPanelCallbacks) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Spacer(Modifier.height(28.dp))
+        // Review S10: no bib search before the tick, from the button or the keyboard.
+        val bibOk = bibNoticeAccepted()
         Kicker("Your bib number")
         Spacer(Modifier.height(4.dp))
-        BibField(value = bib, onValueChange = cb.onBibChange, onSubmit = cb.onSubmitBib)
+        BibField(value = bib, onValueChange = cb.onBibChange, onSubmit = { if (bibOk) cb.onSubmitBib() })
         Spacer(Modifier.height(20.dp))
-        // Always enabled, like the website's submit: it is the card's one Fresh
-        // accent, and submitting an empty bib simply does nothing.
+        // Enabled once ticked, like the website's submit: submitting an empty bib simply does nothing.
         PrimaryCta(
             text = "Search by bib →",
             onClick = cb.onSubmitBib,
+            enabled = bibOk,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(24.dp))
