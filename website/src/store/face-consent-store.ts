@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BIB_NOTICE_VERSION, FACE_NOTICE_VERSION } from "@/lib/legal/copy";
@@ -27,7 +28,16 @@ const consentStore = (name: string, version: number) =>
 export const useFaceConsentStore = consentStore("quickpitik-face-consent", FACE_NOTICE_VERSION);
 export const useBibConsentStore = consentStore("quickpitik-bib-consent", BIB_NOTICE_VERSION);
 
-export const useFaceConsent = () =>
-  useFaceConsentStore((s) => s.acceptedVersion === FACE_NOTICE_VERSION);
-export const useBibConsent = () =>
-  useBibConsentStore((s) => s.acceptedVersion === BIB_NOTICE_VERSION);
+// BT-1c: the server and the hydrating browser can't know the saved tick yet.
+// false = "not read yet": draw no notice, and count it as not ticked for requests.
+const noSubscribe = () => () => {};
+export const useTickRead = () => useSyncExternalStore(noSubscribe, () => true, () => false);
+
+export const useFaceConsent = () => {
+  const read = useTickRead();
+  return useFaceConsentStore((s) => s.acceptedVersion === FACE_NOTICE_VERSION) && read;
+};
+export const useBibConsent = () => {
+  const read = useTickRead();
+  return useBibConsentStore((s) => s.acceptedVersion === BIB_NOTICE_VERSION) && read;
+};

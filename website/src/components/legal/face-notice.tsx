@@ -3,19 +3,24 @@
 import { LegalText } from "@/components/legal/legal-document";
 import { LEGAL_COPY } from "@/lib/legal/copy";
 import { cn } from "@/lib/utils";
-import { useBibConsent, useBibConsentStore, useFaceConsent, useFaceConsentStore } from "@/store/face-consent-store";
+import { useBibConsent, useBibConsentStore, useFaceConsent, useFaceConsentStore, useTickRead } from "@/store/face-consent-store";
 
 // Shown above every selfie search or save until ticked once on this device.
+// Not drawn until the saved tick is read (BT-1c), so a device that ticked sees no flash.
 export function FaceNotice({ className }: { className?: string }) {
   const accept = useFaceConsentStore((s) => s.accept);
-  if (useFaceConsent()) return null;
+  const ok = useFaceConsent();
+  const read = useTickRead();
+  if (ok || !read) return null;
   return <Notice text={LEGAL_COPY.faceNotice} label={LEGAL_COPY.faceTickLabel} onAccept={accept} className={className} />;
 }
 
 // The same, above every bib search (task BT-1).
 export function BibNotice({ className }: { className?: string }) {
   const accept = useBibConsentStore((s) => s.accept);
-  if (useBibConsent()) return null;
+  const ok = useBibConsent();
+  const read = useTickRead();
+  if (ok || !read) return null;
   return <Notice text={LEGAL_COPY.bibNotice} label={LEGAL_COPY.bibTickLabel} onAccept={accept} className={className} />;
 }
 

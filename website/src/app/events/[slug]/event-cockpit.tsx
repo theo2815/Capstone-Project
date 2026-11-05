@@ -44,7 +44,7 @@ import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 import { LegalLinks } from "@/components/legal/legal-links";
 import { BibNotice } from "@/components/legal/face-notice";
-import { useBibConsent } from "@/store/face-consent-store";
+import { useBibConsent, useTickRead } from "@/store/face-consent-store";
 
 type Mode = "cockpit" | "browse";
 
@@ -679,7 +679,10 @@ function BrowseMode({
   const isBibFilter = bibFilter.trim().length > 0;
   const isAnyFilter = isBibFilter || isFaceMode;
   const bibOk = useBibConsent();
-  const needsBibTick = isBibFilter && !bibOk;
+  // BT-1c: until the saved tick is read, a bib link shows "Searching…", not the notice.
+  const tickRead = useTickRead();
+  const needsBibTick = isBibFilter && tickRead && !bibOk;
+  const bibLoading = isLoadingPhotos || (isBibFilter && !tickRead);
   // Server-filtered by bib (Q-011) or face (Q-005/006) and server-paginated —
   // `photos` is the flattened set loaded so far; Load-more fetches the next page.
   const visible = photos;
@@ -738,7 +741,7 @@ function BrowseMode({
               visible.length === 0 ? (
                 needsBibTick ? (
                   "Tick the box to search."
-                ) : isLoadingPhotos ? (
+                ) : bibLoading ? (
                   "Searching…"
                 ) : bibSearchError ? (
                   "Search paused."
@@ -905,7 +908,7 @@ function BrowseMode({
               <BibNotice className="max-w-xl" />
             </div>
           </div>
-        ) : isBibFilter && visible.length === 0 && isLoadingPhotos ? (
+        ) : isBibFilter && visible.length === 0 && bibLoading ? (
           // Bib queries cache under their own key with no SSR seed, so the
           // first page loads client-side — don't flash "No matches yet"
           // while the search is still in flight.
