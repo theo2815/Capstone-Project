@@ -28,6 +28,15 @@ class FaceConsentPrefsTest {
         assertEquals(FACE_NOTICE_VERSION, FaceConsentPrefs(context).acceptedVersion)
     }
 
+    @Test fun `the bib tick is stored on its own and survives sign-out`() {
+        val prefs = FaceConsentPrefs(context)
+        assertNull(prefs.bibAcceptedVersion)
+        prefs.acceptBib()
+        SessionManager.getInstance(context).clearSession()
+        assertEquals(BIB_NOTICE_VERSION, FaceConsentPrefs(context).bibAcceptedVersion)
+        assertNull(FaceConsentPrefs(context).acceptedVersion)
+    }
+
     @Test fun `notice is needed until the current version is ticked`() {
         assertTrue(faceNoticeNeeded(null))
         assertFalse(faceNoticeNeeded(FACE_NOTICE_VERSION))

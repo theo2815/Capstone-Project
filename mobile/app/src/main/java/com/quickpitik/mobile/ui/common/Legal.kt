@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.quickpitik.mobile.data.local.BIB_NOTICE_VERSION
 import com.quickpitik.mobile.data.local.FaceConsentPrefs
 import com.quickpitik.mobile.data.local.faceNoticeNeeded
 import com.quickpitik.mobile.ui.theme.ArrowLabel
@@ -63,6 +64,11 @@ const val FACE_NOTICE =
     "To find your photos, we send this selfie to Amazon Rekognition (run by AWS in Singapore) to compare the face in it with faces in this event's photos. " +
         "If you only search, we don't keep the selfie; selfies you save to your profile stay until you delete them. "
 const val FACE_TICK_LABEL = "I agree to face matching with this selfie. If it shows my child, I am their parent or guardian."
+// Bib-search copy, same words as the website's LEGAL_COPY.bibNotice / bibTickLabel (BT-1).
+const val BIB_NOTICE =
+    "To find your photos, we look for this bib number in this event's photos. " +
+        "Search only for your own photos, your child's, or those of someone who agreed. "
+const val BIB_TICK_LABEL = "I agree. This is my bib number, my child's, or I have the runner's permission."
 
 /** Above the pay button, for everyone (website checkoutLine). */
 @Composable
@@ -80,14 +86,33 @@ internal fun CheckoutTermsLine(modifier: Modifier = Modifier) {
  * this device. Returns true once ticked; selfie actions stay disabled until then.
  */
 @Composable
-internal fun faceNoticeAccepted(): Boolean {
+internal fun faceNoticeAccepted(): Boolean = noticeAccepted(
+    FACE_NOTICE, "How face matching works", FACE_TICK_LABEL,
+    { faceNoticeNeeded(it.acceptedVersion) }, FaceConsentPrefs::accept,
+)
+
+/** Review S10 (BT-2): the same notice and tick before a bib search; bib search stays disabled until ticked. */
+@Composable
+internal fun bibNoticeAccepted(): Boolean = noticeAccepted(
+    BIB_NOTICE, "How search works", BIB_TICK_LABEL,
+    { faceNoticeNeeded(it.bibAcceptedVersion, BIB_NOTICE_VERSION) }, FaceConsentPrefs::acceptBib,
+)
+
+@Composable
+private fun noticeAccepted(
+    notice: String,
+    linkLabel: String,
+    tickLabel: String,
+    isNeeded: (FaceConsentPrefs) -> Boolean,
+    accept: (FaceConsentPrefs) -> Unit,
+): Boolean {
     val context = LocalContext.current
     // shortcut: each surface reads the tick when it opens, so a notice already on screen elsewhere stays until redrawn; share one state if that confuses testers.
-    var needed by remember { mutableStateOf(faceNoticeNeeded(FaceConsentPrefs(context).acceptedVersion)) }
+    var needed by remember { mutableStateOf(isNeeded(FaceConsentPrefs(context))) }
     if (needed) {
         QpCard(modifier = Modifier.fillMaxWidth()) {
             Text(
-                oneLink(FACE_NOTICE, "How face matching works", "$PRIVACY_URL#face-matching", ""),
+                oneLink(notice, linkLabel, "$PRIVACY_URL#face-matching", ""),
                 style = Typography.bodySmall,
                 color = InkSoft,
             )
@@ -96,13 +121,13 @@ internal fun faceNoticeAccepted(): Boolean {
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
                     .toggleable(value = false, role = Role.Checkbox) {
-                        FaceConsentPrefs(context).accept()
+                        accept(FaceConsentPrefs(context))
                         needed = false
                     },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Checkbox(checked = false, onCheckedChange = null, colors = CheckboxDefaults.colors(checkedColor = Ink, checkmarkColor = Bone))
-                Text(FACE_TICK_LABEL, style = Typography.bodySmall, color = Ink)
+                Text(tickLabel, style = Typography.bodySmall, color = Ink)
             }
         }
         Spacer(Modifier.height(12.dp))
