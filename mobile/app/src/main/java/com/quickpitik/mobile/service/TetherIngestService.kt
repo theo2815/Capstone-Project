@@ -15,6 +15,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import com.quickpitik.mobile.MainActivity
 import com.quickpitik.mobile.data.local.TetherEvents
+import com.quickpitik.mobile.data.local.AppDatabase
+import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.local.UploadSpool
 import com.quickpitik.mobile.data.usb.CameraIngestCoordinator
 import com.quickpitik.mobile.data.usb.CameraConnectionState
@@ -30,15 +32,22 @@ class TetherIngestService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val coordinator by lazy { CameraIngestCoordinator.get(this) }
     private var foreground = false
+    private var started = false
+    // Room must emit once before an empty queue can stop the service.
+    private var openCount: Int? = null
     private var lastNotice: String? = null
     private var storageAlert: UploadSpool.Level? = null
 
     override fun onCreate() {
         super.onCreate()
         coordinator.attach()
+        val owner = SessionManager.getInstance(this).getUserEmail().orEmpty()
         scope.launch {
             combine(coordinator.watch, coordinator.cardBusy, coordinator.cameraManager.state,
-                UploadSpool.observeSpace(this@TetherIngestService)) { state, busy, connection, space ->
+                UploadSpool.observeSpace(this@TetherIngestService),
+                AppDatabase.getDatabase(this@TetherIngestService).uploadQueueDao().getStatusCounts(owner)
+            ) { state, busy, connection, space, counts ->
+                openCount = counts.filter { it.status == "QUEUED" || it.status == "UPLOADING" }.sumOf { it.count }
                 Triple(state, busy, connection) to space
             }.collect { (capture, space) ->
                 val (state, busy, connection) = capture
@@ -51,11 +60,11 @@ class TetherIngestService : Service() {
                             "Reconnecting to camera..." else "${state.captureCount} photos saved on phone"
                         ShutterWatchState.Starting -> "Starting camera..."
                         ShutterWatchState.Stopping -> "Finishing camera transfer..."
-                        else -> null
+                        else -> if (openCount!! > 0) "$openCount photos waiting to upload" else null
                     }
                     if (notice != null) showNotice(notice)
-                    else if (!busy) stopSelf()
                 }
+                if (started && !coordinator.isWatching && !busy && openCount == 0) stopSelf()
             }
         }
     }
@@ -63,11 +72,12 @@ class TetherIngestService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        started = true
         when (intent?.action) {
             ACTION_STOP -> {
                 coordinator.stopWatch()
                 TetherEvents.raiseStopRequested()
-                if (!coordinator.isWatching && !coordinator.cardBusy.value) stopSelf()
+                if (!coordinator.isWatching && !coordinator.cardBusy.value && openCount == 0) stopSelf()
             }
             ACTION_START, ACTION_UPDATE, ACTION_WATCH -> {
                 val notice = intent.getStringExtra(EXTRA_NOTICE) ?: DEFAULT_NOTICE
@@ -81,7 +91,7 @@ class TetherIngestService : Service() {
                         val event = intent.getStringExtra("event") ?: return START_NOT_STICKY
                         coordinator.beginWatch(scope, owner, event, intent.getLongExtra("generation", -1))
                     }
-                    if (!coordinator.isWatching && !coordinator.cardBusy.value) stopSelf()
+                    if (!coordinator.isWatching && !coordinator.cardBusy.value && openCount == 0) stopSelf()
                 } catch (e: RuntimeException) {
                     coordinator.startFailed()
                     stopSelf()

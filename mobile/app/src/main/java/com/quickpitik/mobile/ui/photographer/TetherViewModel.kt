@@ -70,6 +70,7 @@ data class QueueStats(
      * already delivered these — they were previously reduced to counts only.
      */
     val recentRecords: List<com.quickpitik.mobile.data.local.UploadRecord> = emptyList(),
+    val busyUntil: Long = 0,
 )
 
 private val DUPLICATE_IN_EVENT = Regex("""^This photo already exists in your event '(.*)'\.$""")
@@ -368,9 +369,12 @@ class TetherViewModel(
                 dao.getRecentRecords(RECENT_RECORDS_LIMIT, sessionManager.getUserEmail().orEmpty()),
                 dao.getLatestFailedMessage(sessionManager.getUserEmail().orEmpty()),
                 dao.countFailedDuplicates(sessionManager.getUserEmail().orEmpty()),
-            ) { counts, recent, latestError, duplicates -> Triple(counts, recent, latestError) to duplicates }
-                .collectLatest { (inputs, duplicates) ->
+                dao.observeBusyUntil(sessionManager.getUserEmail().orEmpty()),
+            ) { counts, recent, latestError, duplicates, busyUntil ->
+                Triple(counts, recent, latestError) to (duplicates to busyUntil)
+            }.collectLatest { (inputs, wait) ->
                 val (counts, recent, latestError) = inputs
+                val (duplicates, busyUntil) = wait
                 if (counts.isEmpty()) {
                     _queueStats.value = QueueStats()
                     return@collectLatest
@@ -390,12 +394,13 @@ class TetherViewModel(
                     progress = stats.progress,
                     lastError = latestError?.takeIf { it.isNotBlank() }?.let(::friendlyUploadError),
                     recentRecords = recent, // already newest-first
+                    busyUntil = busyUntil,
                 )
             }
         }
     }
 
-    fun runSyncEngine() = PhotoUploadScheduler.enqueue(getApplication())
+    fun runSyncEngine() = PhotoUploadScheduler.restart(getApplication())
 
     /**
      * Flips every FAILED row back to QUEUED with a fresh retry budget and kicks
