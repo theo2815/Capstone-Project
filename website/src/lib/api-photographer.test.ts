@@ -287,6 +287,54 @@ it("waits out commit verification backpressure without spending the retry budget
   expect(Math.max(...delays)).toBeLessThanOrEqual(15_000);
 });
 
+it("waits on a commit 503 that carries Retry-After instead of failing", async () => {
+  vi.useFakeTimers();
+  const busy = new ApiError([{ code: "UPLOAD_STORAGE_UNAVAILABLE", message: "Storage unavailable" }], 503, 5);
+  const receipt = { id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" };
+  for (let i = 0; i < 4; i++) post.mockRejectedValueOnce(busy);
+  post.mockResolvedValueOnce(receipt);
+  try {
+    const result = uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+      contentHash: "a".repeat(64), checkpoint: { requestId: "request", photoId: "saved", key: "slot" },
+    });
+    await Promise.all([vi.runAllTimersAsync(), expect(result).resolves.toEqual(receipt)]);
+    expect(post).toHaveBeenCalledTimes(5);
+  } finally { vi.useRealTimers(); }
+});
+
+it("still fails a commit 503 without Retry-After after three tries", async () => {
+  vi.useFakeTimers();
+  const unavailable = new ApiError([{ code: "UPLOAD_STORAGE_UNAVAILABLE", message: "Storage unavailable" }], 503);
+  for (let i = 0; i < 4; i++) post.mockRejectedValueOnce(unavailable);
+  post.mockResolvedValueOnce({ id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" });
+  try {
+    const result = uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+      contentHash: "a".repeat(64), checkpoint: { requestId: "request", photoId: "saved", key: "slot" },
+    });
+    await Promise.all([vi.runAllTimersAsync(), expect(result).rejects.toBe(unavailable)]);
+    expect(post).toHaveBeenCalledTimes(4);
+  } finally { vi.useRealTimers(); }
+});
+
+it("surfaces a commit 503 once the ten-minute busy window has passed", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_000_000);
+  const busy = new ApiError([{ code: "UPLOAD_STORAGE_UNAVAILABLE", message: "Storage unavailable" }], 503, 5);
+  for (let i = 0; i < 6; i++) post.mockRejectedValueOnce(busy);
+  post.mockResolvedValueOnce({ id: "saved", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" });
+  try {
+    const result = uploadPhotographerPhoto("event", new File(["a"], "a.jpg", { type: "image/jpeg" }), undefined, {
+      contentHash: "a".repeat(64), checkpoint: { requestId: "request", photoId: "saved", key: "slot" },
+    });
+    await Promise.all([(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+      vi.setSystemTime(1_600_001);
+      await vi.runAllTimersAsync();
+    })(), expect(result).rejects.toBe(busy)]);
+    expect(post).toHaveBeenCalledTimes(6);
+  } finally { vi.useRealTimers(); }
+});
+
 it("surfaces commit backpressure once the ten-minute busy window has passed", async () => {
   vi.spyOn(Math, "random").mockReturnValue(0.5);
   const nativeTimer = globalThis.setTimeout;
