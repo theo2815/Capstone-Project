@@ -16,14 +16,23 @@ object PhotoUploadScheduler {
     private val scheduling = Mutex()
     internal const val WORK_NAME = "photo-upload-sync"
 
-    fun enqueue(context: Context): Job = scope.launch {
+    fun enqueue(context: Context): Job = schedule(context, restart = false)
+
+    fun restart(context: Context): Job = schedule(context, restart = true)
+
+    private fun schedule(context: Context, restart: Boolean): Job = scope.launch {
         scheduling.withLock {
             val manager = WorkManager.getInstance(context.applicationContext)
-            val pending = manager.getWorkInfos(WorkQuery.Builder.fromUniqueWorkNames(listOf(WORK_NAME))
-                .addStates(listOf(WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED)).build()).get()
+            var pending = manager.getWorkInfos(WorkQuery.Builder.fromUniqueWorkNames(listOf(WORK_NAME))
+                .addStates(listOf(WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED, WorkInfo.State.RUNNING)).build()).get()
+            if (restart && pending.none { it.state == WorkInfo.State.RUNNING } &&
+                pending.any { it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0 }) {
+                manager.cancelUniqueWork(WORK_NAME).result.get()
+                pending = emptyList()
+            }
             // A not-yet-started drain will see this durable row. A RUNNING drain needs one
             // successor: it may already have observed an empty queue. Never append per frame.
-            if (pending.any { it.runAttemptCount == 0 }) return@withLock
+            if (pending.any { it.state != WorkInfo.State.RUNNING && it.runAttemptCount == 0 }) return@withLock
             val request = OneTimeWorkRequestBuilder<PhotoUploadWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)

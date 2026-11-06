@@ -71,11 +71,14 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -671,8 +674,22 @@ private fun PhotographerTopBar(
  * tab's PrimaryCta keeps the single Fresh allowance). Slide + fade enter/exit
  * — never fade alone per the Mobile Design motion rule.
  */
+internal fun uploadBannerTitle(uploadingCount: Int, queuedCount: Int, busyUntil: Long, now: Long): String = when {
+    uploadingCount + queuedCount > 0 && busyUntil > now -> "Server busy, retrying in ${(busyUntil - now) / 1_000} s"
+    uploadingCount > 0 -> "Uploading photos"
+    else -> "Photos queued"
+}
+
 @Composable
 private fun GlobalUploadBanner(queueStats: QueueStats) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(queueStats.busyUntil) {
+        now = System.currentTimeMillis()
+        while (now < queueStats.busyUntil) {
+            delay(1_000)
+            now = System.currentTimeMillis()
+        }
+    }
     val inFlight = queueStats.uploadingCount + queueStats.queuedCount
     AnimatedVisibility(
         visible = inFlight > 0,
@@ -695,7 +712,7 @@ private fun GlobalUploadBanner(queueStats: QueueStats) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (queueStats.uploadingCount > 0) "Uploading photos" else "Photos queued",
+                        text = uploadBannerTitle(queueStats.uploadingCount, queueStats.queuedCount, queueStats.busyUntil, now),
                         color = Ink,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
