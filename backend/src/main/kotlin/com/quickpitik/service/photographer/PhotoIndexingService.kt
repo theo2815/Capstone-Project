@@ -29,7 +29,7 @@ import java.util.UUID
 // Async AI indexing of an uploaded photo: one face enroll + one bib OCR.
 // Runs in three phases so no DB connection is held across storage/AI network
 // I/O — the old single @Transactional pinned one for the full inference
-// duration (~37s+ per photo against a down provider, times the 8-thread
+// duration (~37s+ per photo against a down provider, times the 6-thread
 // imageProcessing pool plus the reconcile sweep):
 //   A. gate + snapshot (plain reads),
 //   B. I/O — prior-person cleanup, S3 GET, enroll + bib calls, no tx,
