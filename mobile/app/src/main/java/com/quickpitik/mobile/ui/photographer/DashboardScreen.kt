@@ -329,6 +329,7 @@ private fun TetherConsoleView(
                 productId = cam.productId,
                 watchState = watchState,
                 latestCaptureFile = recentForEvent.firstNotNullOfOrNull { File(it.filePath).takeIf(File::isFile) },
+                nextAttemptAt = queueStats.nextAttemptAt,
                 canStartWatch = activeEvent?.let { canUploadToEvent(it) } == true,
                 onStartWatch = {
                     ensureNotificationPermission()
@@ -669,6 +670,7 @@ private fun CameraConnectedCard(
     onSimulate: () -> Unit,
     onBrowseCard: () -> Unit,
     latestCaptureFile: File? = null,
+    nextAttemptAt: Long = 0,
 ) {
     val watchBusy = watchState is ShutterWatchState.Starting ||
         watchState is ShutterWatchState.Watching || watchState is ShutterWatchState.Stopping
@@ -709,6 +711,7 @@ private fun CameraConnectedCard(
                     state = state,
                     onStop = onStopWatch,
                     latestCaptureFile = latestCaptureFile,
+                    nextAttemptAt = nextAttemptAt,
                 )
                 else -> Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -788,7 +791,9 @@ private fun ShutterWatchLiveCard(
     state: ShutterWatchState.Watching,
     onStop: () -> Unit,
     latestCaptureFile: File? = null,
+    nextAttemptAt: Long = 0,
 ) {
+    val nextAttempt = nextAttemptLabel(nextAttemptAt, System.currentTimeMillis())
     QpCard(modifier = Modifier.fillMaxWidth()) {
         // A dropped cable is a pause, not a failure — the count keeps standing
         // and the controller is already reopening the session, so this reads as
@@ -848,11 +853,11 @@ private fun ShutterWatchLiveCard(
         }
         // Field-diagnostics tail — the controller's own log lines, so the first
         // on-device run reveals which detector fires without needing adb.
-        if (state.recentLog.isNotEmpty()) {
+        if (state.recentLog.isNotEmpty() || nextAttempt != null) {
             Spacer(modifier = Modifier.height(12.dp))
             Divider(color = Line)
             Spacer(modifier = Modifier.height(12.dp))
-            state.recentLog.forEach { line ->
+            (state.recentLog + listOfNotNull(nextAttempt)).forEach { line ->
                 Text(
                     text = line,
                     style = MaterialTheme.typography.bodySmall,

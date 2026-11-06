@@ -8,6 +8,8 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.CameraRecoverySummary
 import com.quickpitik.mobile.data.local.SessionManager
@@ -48,6 +50,11 @@ import java.util.Date
 import java.util.Locale
 
 
+internal fun nextAttemptLabel(nextMillis: Long, now: Long): String? {
+    if (nextMillis <= now || nextMillis == Long.MAX_VALUE) return null
+    return "Next attempt at ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(nextMillis))}"
+}
+
 data class QueueStats(
     val syncedCount: Int = 0,
     val queuedCount: Int = 0,
@@ -71,6 +78,7 @@ data class QueueStats(
      */
     val recentRecords: List<com.quickpitik.mobile.data.local.UploadRecord> = emptyList(),
     val busyUntil: Long = 0,
+    val nextAttemptAt: Long = 0,
 )
 
 private val DUPLICATE_IN_EVENT = Regex("""^This photo already exists in your event '(.*)'\.$""")
@@ -372,7 +380,10 @@ class TetherViewModel(
                 dao.observeBusyUntil(sessionManager.getUserEmail().orEmpty()),
             ) { counts, recent, latestError, duplicates, busyUntil ->
                 Triple(counts, recent, latestError) to (duplicates to busyUntil)
-            }.collectLatest { (inputs, wait) ->
+            }.combine(WorkManager.getInstance(getApplication()).getWorkInfosForUniqueWorkFlow(PhotoUploadScheduler.WORK_NAME)) { (inputs, wait), work ->
+                Triple(inputs, wait, work.filter { it.state == WorkInfo.State.ENQUEUED }
+                    .minOfOrNull { it.nextScheduleTimeMillis } ?: 0L)
+            }.collectLatest { (inputs, wait, nextAttemptAt) ->
                 val (counts, recent, latestError) = inputs
                 val (duplicates, busyUntil) = wait
                 if (counts.isEmpty()) {
@@ -395,6 +406,7 @@ class TetherViewModel(
                     lastError = latestError?.takeIf { it.isNotBlank() }?.let(::friendlyUploadError),
                     recentRecords = recent, // already newest-first
                     busyUntil = busyUntil,
+                    nextAttemptAt = nextAttemptAt,
                 )
             }
         }

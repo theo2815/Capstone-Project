@@ -24,6 +24,20 @@ import kotlinx.coroutines.withTimeout
 
 @RunWith(RobolectricTestRunner::class)
 class PhotoUploadSchedulerTest {
+    @Test fun `a queued upload backs off linearly in fifteen second steps`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
+        val manager = WorkManager.getInstance(context) as androidx.work.impl.WorkManagerImpl
+        try {
+            PhotoUploadScheduler.enqueue(context).join()
+            val work = manager.getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get().single()
+            val spec = requireNotNull(manager.workDatabase.workSpecDao().getWorkSpec(work.id.toString()))
+            assertEquals(androidx.work.BackoffPolicy.LINEAR, spec.backoffPolicy)
+            assertEquals(15_000L, spec.backoffDelayDuration)
+        } finally { WorkManagerTestInitHelper.closeWorkDatabase() }
+    }
+
     @Test fun `restart replaces a backed-off request with a fresh one`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val factory = object : WorkerFactory() {

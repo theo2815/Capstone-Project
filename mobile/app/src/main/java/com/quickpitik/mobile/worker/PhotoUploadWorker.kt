@@ -1,6 +1,7 @@
 package com.quickpitik.mobile.worker
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.quickpitik.mobile.data.local.AppDatabase
@@ -23,6 +24,16 @@ import kotlin.coroutines.resumeWithException
 
 class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
+        val started = System.nanoTime()
+        var outcome = "interrupted"
+        try {
+            return drainQueue().also { outcome = it.javaClass.simpleName }
+        } finally {
+            Log.i("QP/UPLOAD", "run attempt=$runAttemptCount result=$outcome ms=${(System.nanoTime() - started) / 1_000_000}")
+        }
+    }
+
+    private suspend fun drainQueue(): Result {
         val database = AppDatabase.getDatabase(applicationContext)
         val session = SessionManager.getInstance(applicationContext)
         session.getAccessToken() ?: return Result.success()
@@ -35,6 +46,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
 
         val failures = AtomicBoolean(false)
         val offline = AtomicBoolean(false)
+        val unauthorized = AtomicBoolean(false)
         val completed = AtomicInteger(0)
         val pacer = Pacer()
         val started = System.nanoTime()
@@ -51,9 +63,10 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
                     return endRun(owner, dao, completed, Result.retry())
                 coroutineScope {
                     group.forEach { record -> launch(Dispatchers.IO) {
-                        uploadOne(record, session, database, failures, offline, pacer, completed)
+                        uploadOne(record, session, database, failures, offline, unauthorized, pacer, completed)
                     } }
                 }
+                if (unauthorized.get()) return Result.success()
                 if (offline.get()) return endRun(owner, dao, completed, Result.retry())
             }
         }
@@ -70,10 +83,11 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
 
     private suspend fun uploadOne(
         record: UploadRecord, session: SessionManager, database: AppDatabase,
-        failures: AtomicBoolean, offline: AtomicBoolean, pacer: Pacer, completed: AtomicInteger,
+        failures: AtomicBoolean, offline: AtomicBoolean, unauthorized: AtomicBoolean, pacer: Pacer, completed: AtomicInteger,
     ) {
         currentCoroutineContext().ensureActive()
         if (session.getUserEmail() != record.photographerId) return
+        if (unauthorized.get()) return
         if (offline.get() || record.retryAfter > System.currentTimeMillis()) { failures.set(true); return }
         val dao = database.uploadQueueDao()
         dao.updateStatus(record.id, "UPLOADING", null)
@@ -86,7 +100,11 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
             val response = tryDirectUpload(file, record, database) ?: run {
                 val body = MultipartBody.Part.createFormData("file", record.originalFilename ?: file.name,
                     file.asRequestBody("image/jpeg".toMediaTypeOrNull()))
-                RetrofitClient.apiService.uploadPhoto(bearer(record.photographerId), record.eventId, body)
+                retryRequest(record.photographerId) {
+                    logApiStep("multipart") {
+                        RetrofitClient.apiService.uploadPhoto(bearer(record.photographerId), record.eventId, body)
+                    }
+                }
             }
             if (!response.success || response.data == null) {
                 settleFailure(record, response.errors?.any { it.code in TERMINAL_UPLOAD_ERROR_CODES } == true,
@@ -107,9 +125,13 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         catch (e: Exception) {
             val error = RetrofitClient.parseHttpError(e)
             val code = (e as? HttpException)?.code() ?: (e as? StorageUploadException)?.status
-            val transport = e is IOException || code == 401 || code == 408 || code == 429 || (code != null && code >= 500)
-            // A 429 is a busy server: requeue free of the retry budget, but let the run go on.
-            if (transport && code != 429) offline.set(true)
+            if (code == 401) {
+                dao.updateStatus(record.id, "QUEUED", "Sign in to resume uploads.")
+                unauthorized.set(true)
+                return
+            }
+            val transport = e is IOException || code == 408 || code == 429 || (code != null && code >= 500)
+            if (e is IOException) offline.set(true)
             val retryAt = when (e) {
                 is HttpException -> retryAfter(e.response()?.headers()?.get("Retry-After"))
                 is StorageUploadException -> e.retryAt
@@ -120,6 +142,43 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
             settleFailure(record, error?.code in TERMINAL_UPLOAD_ERROR_CODES || code in setOf(400, 404, 413, 415, 422),
                 error?.message ?: e.message ?: "Upload interrupted.", database, failures, transport)
         }
+    }
+
+    private suspend fun <T> retryRequest(owner: String, call: suspend () -> T): T {
+        val session = SessionManager.getInstance(applicationContext)
+        var serverAttempts = 0
+        var retriedAuth = false
+        while (true) {
+            requireOwner(owner)
+            try { return call() }
+            catch (e: Exception) {
+                val code = (e as? HttpException)?.code() ?: (e as? StorageUploadException)?.status
+                if (code == 401 && !retriedAuth && session.getUserEmail() == owner && session.getAccessToken() != null) {
+                    retriedAuth = true
+                    continue // The API call rereads bearer; OkHttp owns token refresh.
+                }
+                if ((code == 408 || (code != null && code in 500..599)) && ++serverAttempts < 3) {
+                    delay(1_000L shl (serverAttempts - 1))
+                    continue
+                }
+                throw e
+            }
+        }
+    }
+
+    private suspend fun <T> logApiStep(step: String, call: suspend () -> T): T {
+        val started = System.nanoTime()
+        var status = 0
+        try {
+            return call().also { status = 200 }
+        } catch (e: HttpException) {
+            status = e.code()
+            throw e
+        } finally { logStep(step, started, status) }
+    }
+
+    private fun logStep(step: String, started: Long, status: Int) {
+        Log.i("QP/UPLOAD", "$step ms=${(System.nanoTime() - started) / 1_000_000} status=$status")
     }
 
     /**
@@ -150,8 +209,12 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         val hash = record.contentHash ?: sha256Hex(file).also { dao.setContentHash(record.id, it) }
         val backend = RetrofitClient.BASE_URL
         suspend fun commit(photo: String, key: String) = waitOutBusy(record.id, database) {
-            RetrofitClient.apiService.commitDirectUpload(
-                bearer(owner), record.eventId, DirectUploadCommitRequest(photo, key, hash, "image/jpeg", file.length()))
+            retryRequest(owner) {
+                logApiStep("commit") {
+                    RetrofitClient.apiService.commitDirectUpload(
+                        bearer(owner), record.eventId, DirectUploadCommitRequest(photo, key, hash, "image/jpeg", file.length()))
+                }
+            }
         }
 
         // Check the saved slot first, even after an ambiguous PUT or lost commit response.
@@ -164,8 +227,14 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
             }
         }
         val begin = try {
-            RetrofitClient.apiService.beginDirectUpload(bearer(owner), record.eventId,
-                DirectUploadBeginRequest(hash, "image/jpeg", file.length(), record.originalFilename ?: file.name))
+            waitOutBusy(record.id, database) {
+                retryRequest(owner) {
+                    logApiStep("begin") {
+                        RetrofitClient.apiService.beginDirectUpload(bearer(owner), record.eventId,
+                            DirectUploadBeginRequest(hash, "image/jpeg", file.length(), record.originalFilename ?: file.name))
+                    }
+                }
+            }
         } catch (e: HttpException) {
             if (e.code() == 404) return null
             throw e
@@ -183,7 +252,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
                 requireOwner(owner)
                 dao.checkpointDirectUpload(record.id, photo, key, backend)
                 val put = Request.Builder().url(url).put(file.asRequestBody("image/jpeg".toMediaTypeOrNull())).build()
-                putToStorage(put)
+                retryRequest(owner) { putToStorage(put) }
                 commit(photo, key)
             }
             else -> throw IOException("The server returned an unsupported upload plan.")
@@ -192,19 +261,24 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun putToStorage(request: Request) {
-        val response = suspendCancellableCoroutine<Response> { continuation ->
-            val call = RetrofitClient.rawClient.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) { continuation.resumeWithException(e) }
-                override fun onResponse(call: Call, response: Response) {
-                    continuation.resume(response) { response.close() }
-                }
-            })
-        }
-        response.use {
-            if (!it.isSuccessful) throw StorageUploadException(it.code, retryAfter(it.header("Retry-After")))
-        }
+        val started = System.nanoTime()
+        var status = 0
+        try {
+            val response = suspendCancellableCoroutine<Response> { continuation ->
+                val call = RetrofitClient.rawClient.newCall(request)
+                continuation.invokeOnCancellation { call.cancel() }
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) { continuation.resumeWithException(e) }
+                    override fun onResponse(call: Call, response: Response) {
+                        continuation.resume(response) { response.close() }
+                    }
+                })
+            }
+            response.use {
+                status = it.code
+                if (!it.isSuccessful) throw StorageUploadException(it.code, retryAfter(it.header("Retry-After")))
+            }
+        } finally { logStep("PUT", started, status) }
     }
 
     private class StorageUploadException(val status: Int, val retryAt: Long) : Exception("Storage upload returned HTTP $status.")

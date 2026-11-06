@@ -35,7 +35,7 @@ object PhotoUploadScheduler {
             if (pending.any { it.state != WorkInfo.State.RUNNING && it.runAttemptCount == 0 }) return@withLock
             val request = OneTimeWorkRequestBuilder<PhotoUploadWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
+                .setBackoffCriteria(BackoffPolicy.LINEAR, 15, TimeUnit.SECONDS)
                 .build()
             manager.enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request).result.get()
         }
