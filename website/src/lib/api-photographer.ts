@@ -367,8 +367,8 @@ function retryDelay(error: unknown, attempt: number): number {
 const COMMIT_BUSY_WINDOW_MS = 10 * 60_000;
 
 function verificationBusy(error: unknown): boolean {
-  return error instanceof ApiError && error.errors.some((item) =>
-    item.code === "UPLOAD_IN_PROGRESS" || (item.code === "RATE_LIMITED" && error.status === 429));
+  return error instanceof ApiError && ((error.status === 503 && error.retryAfterSeconds != null) ||
+    error.errors.some((item) => item.code === "UPLOAD_IN_PROGRESS" || (item.code === "RATE_LIMITED" && error.status === 429)));
 }
 
 function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
