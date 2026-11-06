@@ -4,6 +4,9 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
@@ -43,12 +46,15 @@ class TetherViewModelResumeTest {
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
+        WorkManagerTestInitHelper.initializeTestWorkManager(application,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
         signInAs("PHOTOGRAPHER")
         tether.edit().clear().commit()
     }
 
     @After fun tearDown() {
         viewModels.clear()
+        WorkManagerTestInitHelper.closeWorkDatabase()
         // These tests finish within milliseconds of constructing the ViewModel,
         // so its startup Room queries are still on the executor.
         closeRoom(application)
@@ -65,6 +71,22 @@ class TetherViewModelResumeTest {
     }
 
     private fun model() = TetherViewModel(application, MutableStateFlow(EventsState.Loading)).also { viewModels.put("tether", it) }
+
+    @Test fun `a future upload attempt shows the phones local clock time`() {
+        val previous = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Manila"))
+            val next = java.time.Instant.parse("2026-11-06T06:05:30Z").toEpochMilli()
+            assertEquals("Next attempt at 14:05:30", nextAttemptLabel(next, next - 15_000))
+        } finally { java.util.TimeZone.setDefault(previous) }
+    }
+
+    @Test fun `no waiting upload has no next attempt label`() {
+        assertNull(nextAttemptLabel(0, 1_000))
+        assertNull(nextAttemptLabel(1_000, 1_000))
+        assertNull(nextAttemptLabel(999, 1_000))
+        assertNull(nextAttemptLabel(Long.MAX_VALUE, 1_000))
+    }
 
     @Test fun `the saved event comes back for the account that started the watch`() {
         persistWatch(eventId = "ev-1", owner = "juan@x.com", snapshotId = "ev-1")
