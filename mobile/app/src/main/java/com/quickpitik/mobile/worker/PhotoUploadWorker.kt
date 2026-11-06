@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.local.UploadQueueDao
 import com.quickpitik.mobile.data.local.UploadRecord
 import com.quickpitik.mobile.data.remote.*
 import kotlinx.coroutines.*
@@ -17,6 +18,7 @@ import java.io.IOException
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resumeWithException
 
 class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -33,6 +35,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
 
         val failures = AtomicBoolean(false)
         val offline = AtomicBoolean(false)
+        val completed = AtomicInteger(0)
         val pacer = Pacer()
         val started = System.nanoTime()
         var afterId = 0L
@@ -44,21 +47,30 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
             afterId = batch.last().id
             // Bounded groups need no polling of an in-flight counter. Camera transfer is independent.
             for (group in batch.chunked(pacer.level.get())) {
-                if ((System.nanoTime() - started) / 1_000_000 >= 8 * 60_000L) return Result.retry()
+                if ((System.nanoTime() - started) / 1_000_000 >= runBudgetMs)
+                    return endRun(owner, dao, completed, Result.retry())
                 coroutineScope {
                     group.forEach { record -> launch(Dispatchers.IO) {
-                        uploadOne(record, session, database, failures, offline, pacer)
+                        uploadOne(record, session, database, failures, offline, pacer, completed)
                     } }
                 }
-                if (offline.get()) return Result.retry()
+                if (offline.get()) return endRun(owner, dao, completed, Result.retry())
             }
         }
-        return if (failures.get()) Result.retry() else Result.success()
+        return endRun(owner, dao, completed, if (failures.get()) Result.retry() else Result.success())
+    }
+
+    private suspend fun endRun(owner: String, dao: UploadQueueDao, completed: AtomicInteger, otherwise: Result): Result {
+        if (completed.get() > 0 && dao.getOwnedRecords(owner, "QUEUED", 0).isNotEmpty()) {
+            PhotoUploadScheduler.enqueue(applicationContext).join()
+            return Result.success()
+        }
+        return otherwise
     }
 
     private suspend fun uploadOne(
         record: UploadRecord, session: SessionManager, database: AppDatabase,
-        failures: AtomicBoolean, offline: AtomicBoolean, pacer: Pacer,
+        failures: AtomicBoolean, offline: AtomicBoolean, pacer: Pacer, completed: AtomicInteger,
     ) {
         currentCoroutineContext().ensureActive()
         if (session.getUserEmail() != record.photographerId) return
@@ -89,6 +101,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
             // Upload acknowledgement is a receipt, not a byte-integrity proof. Cleanup re-reads
             // the owner-only cloud original before deleting; never shrink or expire this file.
             dao.completeUpload(record.id, response.data.id, backend)
+            completed.incrementAndGet()
             pacer.observe((System.nanoTime() - started) / 1_000_000, failed = false)
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
@@ -312,5 +325,6 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
 
         // Longest a photo waits out "verification is busy" (429) inside one run; var so a test can shorten it.
         @Volatile internal var busyWindowMs = 90_000L
+        @Volatile internal var runBudgetMs = 8 * 60_000L
     }
 }

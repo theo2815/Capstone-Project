@@ -3,7 +3,12 @@ package com.quickpitik.mobile.worker
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
+import androidx.work.Configuration
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.TestListenableWorkerBuilder
+import androidx.work.testing.WorkManagerTestInitHelper
 import com.quickpitik.mobile.data.local.AppDatabase
 import com.quickpitik.mobile.data.local.AppDatabase.Companion.DB_NAME
 import com.quickpitik.mobile.data.local.SessionManager
@@ -61,10 +66,15 @@ class PhotoUploadWorkerTest {
         db = AppDatabase.getDatabase(context)
         session = SessionManager.getInstance(context)
         session.clearSession()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
     }
 
     @After
     fun tearDown() {
+        PhotoUploadWorker.runBudgetMs = 8 * 60_000L
+        WorkManager.getInstance(context).cancelAllWork().result.get()
+        WorkManagerTestInitHelper.closeWorkDatabase()
         db.close()
         forgetRoomSingleton()
         server?.shutdown()
@@ -176,6 +186,15 @@ class PhotoUploadWorkerTest {
 
     private suspend fun runWorker(): ListenableWorker.Result =
         TestListenableWorkerBuilder<PhotoUploadWorker>(context).build().doWork()
+
+    private fun scheduledWork() = WorkManager.getInstance(context)
+        .getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get()
+
+    private fun assertFreshSuccessor() {
+        val successor = scheduledWork().single()
+        assertEquals(WorkInfo.State.ENQUEUED, successor.state)
+        assertEquals(0, successor.runAttemptCount)
+    }
 
     private fun signIn() =
         session.saveSession(
@@ -439,6 +458,79 @@ class PhotoUploadWorkerTest {
     }
 
     @Test
+    fun `a run that made progress re-enqueues instead of backing off`() = runTest {
+        signIn()
+        startDirectServer(commitResponse = { if (isBusyPhoto(it)) MockResponse().setResponseCode(503) else ok() })
+        val completed = List(2) { enqueue(filePath = realJpeg().absolutePath) }
+        val failed = enqueue(filePath = realJpeg(BUSY_SIZE).absolutePath)
+        val remaining = enqueue(filePath = realJpeg(BUSY_SIZE).absolutePath)
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+
+        completed.forEach { assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(it)?.uploadStatus) }
+        assertEquals("QUEUED", db.uploadQueueDao().getRecordById(failed)?.uploadStatus)
+        assertEquals("QUEUED", db.uploadQueueDao().getRecordById(remaining)?.uploadStatus)
+        assertFreshSuccessor()
+    }
+
+    @Test
+    fun `a run that reaches its time budget after progress re-enqueues`() = runTest {
+        signIn()
+        PhotoUploadWorker.runBudgetMs = 300
+        startDirectServer(commitResponse = { ok().setHeadersDelay(400, java.util.concurrent.TimeUnit.MILLISECONDS) })
+        val completed = List(2) { enqueue(filePath = realJpeg().absolutePath) }
+        val remaining = enqueue(filePath = realJpeg().absolutePath)
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+
+        completed.forEach { assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(it)?.uploadStatus) }
+        assertEquals("QUEUED", db.uploadQueueDao().getRecordById(remaining)?.uploadStatus)
+        assertFreshSuccessor()
+    }
+
+    @Test
+    fun `an offline run after progress re-enqueues`() = runTest {
+        signIn()
+        startDirectServer(commitResponse = {
+            if (isBusyPhoto(it)) MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST)
+            else ok()
+        })
+        val completed = List(2) { enqueue(filePath = realJpeg().absolutePath) }
+        val remaining = List(2) { enqueue(filePath = realJpeg(BUSY_SIZE).absolutePath) }
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+
+        completed.forEach { assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(it)?.uploadStatus) }
+        remaining.forEach { assertEquals("QUEUED", db.uploadQueueDao().getRecordById(it)?.uploadStatus) }
+        assertFreshSuccessor()
+    }
+
+    @Test
+    fun `a run that finished nothing still returns retry`() = runTest {
+        signIn()
+        enqueue(filePath = realJpeg().absolutePath, status = "COMPLETED")
+        startDirectServer(commitResponse = { MockResponse().setResponseCode(503) })
+        val failed = enqueue(filePath = realJpeg().absolutePath)
+
+        assertTrue(runWorker() is ListenableWorker.Result.Retry)
+
+        assertEquals("QUEUED", db.uploadQueueDao().getRecordById(failed)?.uploadStatus)
+        assertTrue(scheduledWork().isEmpty())
+    }
+
+    @Test
+    fun `a run that made progress with an empty queue returns success without a successor`() = runTest {
+        signIn()
+        startDirectServer()
+        val completed = List(2) { enqueue(filePath = realJpeg().absolutePath) }
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+
+        completed.forEach { assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(it)?.uploadStatus) }
+        assertTrue(scheduledWork().isEmpty())
+    }
+
+    @Test
     fun `a busy 429 on commit is retried inside the run and does not end it`() = runTest {
         signIn()
         var commits = 0
@@ -485,7 +577,8 @@ class PhotoUploadWorkerTest {
             // Three behind it, so at least one sits in a later upload group than the busy photo.
             val others = List(3) { enqueue(filePath = realJpeg().absolutePath) }
 
-            assertTrue(runWorker() is ListenableWorker.Result.Retry)
+            assertTrue(runWorker() is ListenableWorker.Result.Success)
+            assertFreshSuccessor()
 
             val stored = requireNotNull(db.uploadQueueDao().getRecordById(busyId))
             assertEquals("QUEUED", stored.uploadStatus)
