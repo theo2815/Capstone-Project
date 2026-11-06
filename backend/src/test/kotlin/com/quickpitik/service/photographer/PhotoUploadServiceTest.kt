@@ -40,6 +40,7 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.HttpStatus
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.SimpleTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
@@ -52,6 +53,7 @@ import java.sql.SQLException
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -59,6 +61,10 @@ import java.time.ZoneOffset
 import java.util.Optional
 import java.util.HexFormat
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import javax.imageio.ImageIO
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -135,9 +141,10 @@ class PhotoUploadServiceTest {
         aiApiProperties: AiApiProperties,
         meterRegistry: SimpleMeterRegistry = SimpleMeterRegistry(),
         clock: Clock = Clock.systemUTC(),
+        directUpload: StorageProperties.DirectUpload = storageProperties.directUpload,
     ) = PhotoUploadService(
         storageService,
-        storageProperties,
+        storageProperties.copy(directUpload = directUpload),
         photoRepository,
         photoUploadIntentRepository,
         eventPhotographerRepository,
@@ -956,6 +963,134 @@ class PhotoUploadServiceTest {
         assertEquals(1.0, registry.counter("qp.upload.direct", "outcome", "begun").count())
         assertEquals(1.0, registry.counter("qp.upload.direct", "outcome", "committed").count())
         assertEquals(1L, registry.timer("qp.upload.validation.duration").count())
+    }
+
+    private fun stubBlockedCommits(
+        intents: List<PhotoUploadIntent>,
+        entered: CountDownLatch,
+        release: CountDownLatch,
+    ) {
+        stubValidationsPass()
+        Mockito.`when`(photoUploadIntentRepository.acquireVerification(anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.complete(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        for (intent in intents) {
+            Mockito.`when`(photoUploadIntentRepository.findOwned(intent.photoId, photographerId, eventId))
+                .thenReturn(intent)
+            Mockito.`when`(storageService.metadata(intent.originalKey)).thenAnswer {
+                if (intent === intents.first()) {
+                    entered.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                }
+                StoredObject(intent.originalKey, intent.sizeBytes, intent.contentType)
+            }
+            Mockito.`when`(storageService.open(intent.originalKey)).thenAnswer { ByteArrayInputStream(helloBytes) }
+        }
+    }
+
+    private fun commitTask(service: PhotoUploadService, intent: PhotoUploadIntent) = FutureTask {
+        service.commitDirectUpload(photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash)
+    }
+
+    private fun singleSlot() = storageProperties.directUpload.copy(
+        verificationConcurrency = 1,
+        verificationWait = Duration.ofMillis(300),
+        verificationWaiters = 1,
+    )
+
+    @Test
+    fun `a commit waits for a busy slot instead of refusing at once`() {
+        val intents = List(2) { intent(helloBytes.size.toLong()) }
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        stubBlockedCommits(intents, entered, release)
+        val registry = SimpleMeterRegistry()
+        val svc = service(AiApiProperties(enabled = false), registry, directUpload = singleSlot())
+        val first = commitTask(svc, intents[0])
+        Thread(first).start()
+        try {
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            val second = commitTask(svc, intents[1])
+            Thread(second).start()
+            assertFailsWith<TimeoutException> { second.get(50, TimeUnit.MILLISECONDS) }
+            release.countDown()
+            assertEquals(intents[0].photoId, first.get(2, TimeUnit.SECONDS).id)
+            assertEquals(intents[1].photoId, second.get(2, TimeUnit.SECONDS).id)
+            assertEquals(2L, registry.timer("qp.upload.validation.duration").count())
+            assertEquals(2L, registry.timer("qp.upload.duration").count())
+        } finally {
+            release.countDown()
+            first.get(2, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun `a commit beyond the wait is refused with Retry-After`() {
+        val intents = List(2) { intent(helloBytes.size.toLong()) }
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        stubBlockedCommits(intents, entered, release)
+        val svc = service(AiApiProperties(enabled = false), directUpload = singleSlot())
+        val first = commitTask(svc, intents[0])
+        Thread(first).start()
+        try {
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            val started = System.nanoTime()
+            val error = assertFailsWith<ApiException> {
+                svc.commitDirectUpload(photographerId, eventId, intents[1].photoId,
+                    intents[1].stagingKey, intents[1].contentHash)
+            }
+            assertEquals(HttpStatus.TOO_MANY_REQUESTS, error.status)
+            assertEquals(ErrorCodes.RATE_LIMITED, error.code)
+            assertEquals(2L, error.retryAfterSeconds)
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) >= 250)
+            release.countDown()
+            first.get(2, TimeUnit.SECONDS)
+            assertEquals(intents[1].photoId, svc.commitDirectUpload(photographerId, eventId,
+                intents[1].photoId, intents[1].stagingKey, intents[1].contentHash).id)
+        } finally {
+            release.countDown()
+            first.get(2, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun `a full waiting room refuses at once`() {
+        val intents = List(3) { intent(helloBytes.size.toLong()) }
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        stubBlockedCommits(intents, entered, release)
+        val svc = service(AiApiProperties(enabled = false), directUpload = singleSlot())
+        val first = commitTask(svc, intents[0])
+        Thread(first).start()
+        val second = commitTask(svc, intents[1])
+        val waiter = Thread(second)
+        try {
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            waiter.start()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1)
+            while (waiter.state != Thread.State.TIMED_WAITING && !second.isDone && System.nanoTime() < deadline) {
+                Thread.sleep(1)
+            }
+            assertEquals(Thread.State.TIMED_WAITING, waiter.state)
+            val started = System.nanoTime()
+            val error = assertFailsWith<ApiException> {
+                svc.commitDirectUpload(photographerId, eventId, intents[2].photoId,
+                    intents[2].stagingKey, intents[2].contentHash)
+            }
+            assertEquals(HttpStatus.TOO_MANY_REQUESTS, error.status)
+            assertEquals(ErrorCodes.RATE_LIMITED, error.code)
+            assertEquals(2L, error.retryAfterSeconds)
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 150)
+            release.countDown()
+            assertEquals(intents[0].photoId, first.get(2, TimeUnit.SECONDS).id)
+            assertEquals(intents[1].photoId, second.get(2, TimeUnit.SECONDS).id)
+        } finally {
+            release.countDown()
+            first.get(2, TimeUnit.SECONDS)
+            waiter.join(2_000)
+        }
     }
 
     @Test
