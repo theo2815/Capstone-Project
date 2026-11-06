@@ -101,7 +101,7 @@ class PhotoUploadWorkerTest {
      */
     private fun startDirectServer(
         putResponse: () -> MockResponse = { MockResponse().setResponseCode(200) },
-        commitResponse: () -> MockResponse = { ok() },
+        commitResponse: (okhttp3.mockwebserver.RecordedRequest) -> MockResponse = { ok() },
     ): MockWebServer =
         MockWebServer().apply {
             dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
@@ -116,7 +116,7 @@ class PhotoUploadWorkerTest {
                         )
                     request.method == "PUT" && request.path?.startsWith("/r2/") == true ->
                         putResponse()
-                    request.path?.endsWith("/photos/direct/commit") == true -> commitResponse()
+                    request.path?.endsWith("/photos/direct/commit") == true -> commitResponse(request)
                     else -> MockResponse().setResponseCode(500)
                 }
             }
@@ -126,9 +126,9 @@ class PhotoUploadWorkerTest {
         }
 
     /** A real file on disk — the worker bails before the network without one. */
-    private fun realJpeg(): File =
+    private fun realJpeg(size: Long = 64): File =
         File.createTempFile("upload", ".jpg").apply {
-            writeBytes(ByteArray(64) { 0xFF.toByte() })
+            writeBytes(ByteArray(size.toInt()) { 0xFF.toByte() })
             deleteOnExit()
         }
 
@@ -147,6 +147,15 @@ class PhotoUploadWorkerTest {
         .setResponseCode(500)
         .setHeader("Content-Type", "application/json")
         .setBody("""{"success":false,"errors":[{"code":"INTERNAL_ERROR","message":"Boom."}]}""")
+
+    /** The server's "verification is busy" answer on commit. */
+    private fun busy(retryAfter: String? = null) = MockResponse().setResponseCode(429).apply {
+        if (retryAfter != null) setHeader("Retry-After", retryAfter)
+    }
+
+    /** The busy photo is told apart from the others by its file size in the commit body. */
+    private fun isBusyPhoto(request: okhttp3.mockwebserver.RecordedRequest) =
+        JSONObject(request.body.peek().readUtf8()).getLong("sizeBytes") == BUSY_SIZE
 
     private suspend fun enqueue(
         filePath: String = "/definitely/not/a/real/file.jpg",
@@ -430,6 +439,63 @@ class PhotoUploadWorkerTest {
     }
 
     @Test
+    fun `a busy 429 on commit is retried inside the run and does not end it`() = runTest {
+        signIn()
+        var commits = 0
+        val http = startDirectServer(commitResponse = { if (commits++ < 2) busy("1") else ok() })
+        val id = enqueue(filePath = realJpeg().absolutePath)
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+
+        val stored = requireNotNull(db.uploadQueueDao().getRecordById(id))
+        assertEquals("COMPLETED", stored.uploadStatus)
+        assertEquals(0, stored.retryCount)
+        val requests = (1..http.requestCount).map { http.takeRequest() }
+        assertEquals(1, requests.count { it.method == "PUT" })
+        assertEquals(3, requests.count { it.path?.endsWith("/direct/commit") == true })
+    }
+
+    @Test
+    fun `a busy photo does not stop the photos behind it`() = runTest {
+        signIn()
+        var busyCommits = 0
+        startDirectServer(commitResponse = { if (isBusyPhoto(it) && busyCommits++ < 2) busy() else ok() })
+        val busyId = enqueue(filePath = realJpeg(BUSY_SIZE).absolutePath)
+        val nextId = enqueue(filePath = realJpeg().absolutePath)
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+
+        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(busyId)?.uploadStatus)
+        assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(nextId)?.uploadStatus)
+    }
+
+    @Test
+    fun `a busy wait that outlives its window puts the photo back in the queue without an offline sleep`() = runTest {
+        signIn()
+        val window = PhotoUploadWorker.busyWindowMs
+        PhotoUploadWorker.busyWindowMs = 4_000
+        try {
+            var busyCommits = 0
+            // The server holds a busy commit 1 s before refusing (UP-2a's wait), and the window counts that time:
+            // 1 s call + ~1 s wait + 1 s call + ~2 s wait passes 4 s, so a third commit must not be sent.
+            startDirectServer(commitResponse = {
+                if (isBusyPhoto(it)) { busyCommits++; busy().setHeadersDelay(1, java.util.concurrent.TimeUnit.SECONDS) } else ok()
+            })
+            val busyId = enqueue(filePath = realJpeg(BUSY_SIZE).absolutePath)
+            // Three behind it, so at least one sits in a later upload group than the busy photo.
+            val others = List(3) { enqueue(filePath = realJpeg().absolutePath) }
+
+            assertTrue(runWorker() is ListenableWorker.Result.Retry)
+
+            val stored = requireNotNull(db.uploadQueueDao().getRecordById(busyId))
+            assertEquals("QUEUED", stored.uploadStatus)
+            assertEquals(0, stored.retryCount)
+            assertEquals(2, busyCommits)
+            others.forEach { assertEquals("COMPLETED", db.uploadQueueDao().getRecordById(it)?.uploadStatus) }
+        } finally { PhotoUploadWorker.busyWindowMs = window }
+    }
+
+    @Test
     fun `a 409 same-event duplicate is terminal and does not drive a retry`() = runTest {
         signIn()
         val http = startServer(duplicate("PHOTO_DUPLICATE_SAME_EVENT"))
@@ -584,5 +650,6 @@ class PhotoUploadWorkerTest {
 
     private companion object {
         const val EVENT = "11111111-1111-1111-1111-111111111111"
+        const val BUSY_SIZE = 128L
     }
 }

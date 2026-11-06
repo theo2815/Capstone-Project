@@ -95,7 +95,8 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
             val error = RetrofitClient.parseHttpError(e)
             val code = (e as? HttpException)?.code() ?: (e as? StorageUploadException)?.status
             val transport = e is IOException || code == 401 || code == 408 || code == 429 || (code != null && code >= 500)
-            if (transport) offline.set(true)
+            // A 429 is a busy server: requeue free of the retry budget, but let the run go on.
+            if (transport && code != 429) offline.set(true)
             val retryAt = when (e) {
                 is HttpException -> retryAfter(e.response()?.headers()?.get("Retry-After"))
                 is StorageUploadException -> e.retryAt
@@ -108,13 +109,37 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         }
     }
 
+    /**
+     * A 429 on commit means the server's verification slots are full, not that the phone is
+     * offline: wait (Retry-After as the floor, else 1, 2, 4, 8, 15 s with 20 % jitter) and commit
+     * again, for at most [busyWindowMs] of clock time (calls included); then the last 429 goes to the caller's catch.
+     */
+    private suspend fun <T> waitOutBusy(recordId: Long, database: AppDatabase, call: suspend () -> T): T {
+        val start = System.currentTimeMillis()
+        var step = 0
+        while (true) {
+            try { return call() }
+            catch (e: HttpException) {
+                if (e.code() != 429) throw e
+                val ladder = minOf((1_000L shl minOf(step++, 4)) * (0.8 + Math.random() * 0.4), 15_000.0).toLong()
+                val floor = retryAfter(e.response()?.headers()?.get("Retry-After")) - System.currentTimeMillis()
+                val wait = maxOf(floor, ladder)
+                if (System.currentTimeMillis() - start + wait > busyWindowMs) throw e
+                database.uploadQueueDao().defer(recordId, System.currentTimeMillis() + wait)
+                delay(wait)
+            }
+        }
+    }
+
     private suspend fun tryDirectUpload(file: File, record: UploadRecord, database: AppDatabase): ApiResponseEnvelope<UploadedPhotoDto>? {
         val dao = database.uploadQueueDao()
         val owner = record.photographerId
         val hash = record.contentHash ?: sha256Hex(file).also { dao.setContentHash(record.id, it) }
         val backend = RetrofitClient.BASE_URL
-        suspend fun commit(photo: String, key: String) = RetrofitClient.apiService.commitDirectUpload(
-            bearer(owner), record.eventId, DirectUploadCommitRequest(photo, key, hash, "image/jpeg", file.length()))
+        suspend fun commit(photo: String, key: String) = waitOutBusy(record.id, database) {
+            RetrofitClient.apiService.commitDirectUpload(
+                bearer(owner), record.eventId, DirectUploadCommitRequest(photo, key, hash, "image/jpeg", file.length()))
+        }
 
         // Check the saved slot first, even after an ambiguous PUT or lost commit response.
         // No presigned URL is persisted. A confirmed missing object permits a fresh begin/PUT.
@@ -244,8 +269,9 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
 
         companion object {
             const val MIN_CONCURRENCY = 2
-            const val INITIAL_CONCURRENCY = 3
-            const val MAX_CONCURRENCY = 6
+            // shortcut: held at 2, production's verification slot count; when UP-3 raises the slots to 4, raise MAX to 4 or add a server slot hint.
+            const val INITIAL_CONCURRENCY = 2
+            const val MAX_CONCURRENCY = 2
             const val FAST_MS = 4_000L
             const val SLOW_MS = 15_000L
             const val FAST_STREAK = 3
@@ -284,5 +310,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         // before a non-terminal failure is declared permanent.
         const val MAX_RETRIES = 5
 
+        // Longest a photo waits out "verification is busy" (429) inside one run; var so a test can shorten it.
+        @Volatile internal var busyWindowMs = 90_000L
     }
 }
