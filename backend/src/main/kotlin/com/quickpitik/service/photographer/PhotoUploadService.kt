@@ -47,6 +47,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.util.UUID
 import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
@@ -70,7 +71,8 @@ class PhotoUploadService(
     private val erasure: com.quickpitik.service.photos.PhotoErasureService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency)
+    private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency, true)
+    private val verificationWaiters = Semaphore(storageProperties.directUpload.verificationWaiters)
     private val pendingCount = meterRegistry.gauge("qp.upload.direct.pending.count", AtomicLong())!!
     private val pendingBytes = meterRegistry.gauge("qp.upload.direct.pending.bytes", AtomicLong())!!
     private val oldestPendingAge = meterRegistry.gauge("qp.upload.direct.pending.oldest.age", AtomicLong())!!
@@ -537,9 +539,17 @@ class PhotoUploadService(
         }
         val (event, settings) = gate(intent.photographerId, intent.eventId)
         requireWatermark(settings, event)
-        if (!verificationSlots.tryAcquire()) {
+        val slotAcquired = if (!verificationWaiters.tryAcquire()) false else try {
+            verificationSlots.tryAcquire(storageProperties.directUpload.verificationWait.toMillis(), TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        } finally {
+            verificationWaiters.release()
+        }
+        if (!slotAcquired) {
             throw ApiException(HttpStatus.TOO_MANY_REQUESTS, ErrorCodes.RATE_LIMITED,
-                "Upload verification is busy. Try again shortly.", retryAfterSeconds = 1)
+                "Upload verification is busy. Try again shortly.", retryAfterSeconds = 2)
         }
 
         val token = UUID.randomUUID()
