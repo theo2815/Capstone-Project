@@ -9,6 +9,7 @@ import com.quickpitik.service.photographer.PayoutAccountChangedEvent
 import org.junit.jupiter.api.Test
 import org.springframework.context.annotation.Bean
 import org.springframework.scheduling.annotation.Async
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -44,11 +45,22 @@ class AsyncConfigTest {
     }
 
     @Test
-    fun `watermarking runs on four workers`() {
+    fun `watermarking runs on six workers`() {
         val pool = AsyncConfig().watermarkProcessingExecutor()
         try {
-            assertEquals(4, pool.corePoolSize)
-            assertEquals(4, pool.maxPoolSize)
+            assertEquals(6, pool.corePoolSize)
+            assertEquals(6, pool.maxPoolSize)
+        } finally {
+            pool.shutdown()
+        }
+    }
+
+    @Test
+    fun `image indexing runs on six workers`() {
+        val pool = AsyncConfig().imageProcessingExecutor() as ThreadPoolTaskExecutor
+        try {
+            assertEquals(6, pool.corePoolSize)
+            assertEquals(6, pool.maxPoolSize)
         } finally {
             pool.shutdown()
         }
