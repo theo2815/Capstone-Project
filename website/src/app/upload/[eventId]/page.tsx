@@ -439,7 +439,7 @@ function UploadForm({
 }) {
   const { showToast } = useToast();
   const [entries, setEntries] = useState<UploadEntry[]>([]);
-  const [gateError, setGateError] = useState<string | null>(null);
+  const [gateError, setGateError] = useState<{ message: string; code?: string } | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
@@ -743,7 +743,7 @@ function UploadForm({
             (err.status === 401 && !codes.includes("UPLOAD_TRANSFER_FAILED")) || codes.some((code) => [
               "EVENT_NOT_FOUND", "EVENT_NOT_UPLOADABLE", "PHOTOGRAPHER_NOT_VERIFIED",
               "ACCOUNT_SUSPENDED", "ACCOUNT_LOCKED", "USER_NOT_FOUND",
-              "WATERMARK_MISSING", "FORBIDDEN",
+              "WATERMARK_MISSING", "FORBIDDEN", "SELLER_DETAILS_REQUIRED",
             ].includes(code))
           );
           if (batchGate) {
@@ -752,7 +752,7 @@ function UploadForm({
             batch.active.forEach((active) => active.abort());
             batch.active.clear();
             setEntries((prev) => prev.map((p) => activeIds.has(p.id) ? { ...p, status: "queued", progress: 0 } : p));
-            setGateError(err.message || "Upload access changed.");
+            setGateError({ message: err.message || "Upload access changed.", code: codes[0] });
             return;
           }
           const terminal = err instanceof ApiError && (
@@ -994,7 +994,12 @@ function UploadForm({
 
       {entries.length > 0 && gateError && (
         <div role="alert" className="mb-6 rounded-xl border border-error/40 bg-error/5 px-5 py-4 text-sm text-ink">
-          <p>{gateError} Resolve access to this event or account, then resume uploads.</p>
+          <p>{gateError.message} Resolve access to this event or account, then resume uploads.</p>
+          {gateError.code === "SELLER_DETAILS_REQUIRED" && (
+            <Link href={`${ROUTES.DASHBOARD_SETTINGS}#seller-details`} className="mt-2 mr-4 inline-block underline underline-offset-4">
+              Add your seller details
+            </Link>
+          )}
           <button type="button" onClick={() => { paused.current = false; setGateError(null); setRetryNonce((n) => n + 1); }} className="mt-2 underline underline-offset-4">
             Resume uploads
           </button>

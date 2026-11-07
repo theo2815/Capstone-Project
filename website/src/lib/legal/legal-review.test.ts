@@ -34,7 +34,7 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  it("passes the production guard with version 1.1", () => {
+  it("passes the production guard with version 1.2", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
@@ -42,7 +42,7 @@ describe("approved text (PT-0b)", () => {
         "production",
       ),
     ).not.toThrow();
-    expect(LEGAL_VERSION).toBe("1.1");
+    expect(LEGAL_VERSION).toBe("1.2");
   });
 
   it("says both selfie and bib searches ask for a tick first (BT-1, S10)", () => {
@@ -79,5 +79,26 @@ describe("approved text (PT-0b)", () => {
     ["terms", "governing-law", "any other court"],
   ])("%s %s carries the review wording: %s", (doc, id, phrase) => {
     expect(section(doc === "privacy" ? PRIVACY_POLICY : TERMS_OF_SERVICE, id)).toContain(phrase);
+  });
+});
+
+// SC-2a (owner, 2026-11-05): seller checks are required before uploading, version 1.2.
+describe("seller checks text (SC-2a)", () => {
+  it("says the seller checks are required before uploading", () => {
+    expect(section(TERMS_OF_SERVICE, "photographers")).toContain("Before you can upload photos, you must give us your full legal name");
+    expect(section(PRIVACY_POLICY, "what-we-collect")).toContain("Seller checks, required before you can upload");
+  });
+
+  it("says admins compare by eye and names the seller-check photos in storage", () => {
+    const privacy = text(PRIVACY_POLICY.sections);
+    expect(privacy).toContain("we never run face recognition on them");
+    expect(privacy).toContain("seller-check photos");
+    expect(privacy).toContain("Photographer seller-check details and photos");
+    expect(privacy).toContain("Seller-check details and photos you gave us are kept as legal records.");
+  });
+
+  it("no seller passage still says the checks are optional", () => {
+    const all = [text(PRIVACY_POLICY.sections), text(TERMS_OF_SERVICE.sections)].join("\n");
+    expect(all).not.toMatch(/Seller checks we may ask for|we may ask for your full name|if we asked for them/);
   });
 });
