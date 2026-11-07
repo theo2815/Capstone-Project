@@ -182,6 +182,7 @@ it.each(["brand", "socials", "payouts"] as const)("keeps editing blocked and ret
   let recovered = false;
   const get = vi.spyOn(api, "get").mockImplementation((path) => {
     if (path.endsWith("/metadata-settings")) return Promise.resolve({ metadataPublicByDefault: false });
+    if (path.endsWith("/seller-details")) return Promise.resolve({ status: "missing" });
     const key = path.endsWith("/brand") ? "brand" : path.endsWith("/socials") ? "socials" : "payouts";
     if (key === failedRead && !recovered) return Promise.reject(new Error("Offline"));
     return Promise.resolve(key === "brand" ? {

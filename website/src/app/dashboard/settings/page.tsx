@@ -21,6 +21,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
+import { SellerDetailsSlab } from "@/components/dashboard/seller-details-slab";
 import { CharCounter } from "@/components/ui/char-counter";
 import { RegionProvinceFields } from "@/components/ui/region-province-fields";
 import { FieldError } from "@/components/ui/field-error";
@@ -1043,6 +1044,7 @@ export default function SettingsPage() {
       <PayoutSlab />
       <EventCouponsSlab />
       <MetadataDefaultSlab />
+      <SellerDetailsSlab />
       <ReadyToSubmitNudge />
       <EditModePill />
     </EditModeProvider>

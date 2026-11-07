@@ -335,6 +335,20 @@ it.each(["EVENT_NOT_UPLOADABLE", "PHOTOGRAPHER_NOT_VERIFIED", "ACCOUNT_SUSPENDED
   },
 );
 
+it("pauses the batch on SELLER_DETAILS_REQUIRED and links to the seller details form", async () => {
+  const pending = new Map<string, (error: Error) => void>();
+  upload.mockImplementation((_event, file: File) => new Promise((_resolve, reject) => { pending.set(file.name, reject); }));
+  render(<FocusedUploadPage />);
+  const files = Array.from({ length: 5 }, (_, index) => new File([`${index}`], `seller-${index}.jpg`, { type: "image/jpeg" }));
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(4));
+  await act(async () => { pending.get("seller-0.jpg")!(new ApiError([{ code: "SELLER_DETAILS_REQUIRED", message: "Before you can upload, add your ID." }], 403)); });
+  expect(upload).toHaveBeenCalledTimes(4);
+  expect(screen.getByRole("alert")).toHaveTextContent("Before you can upload, add your ID.");
+  expect(screen.getByText("seller-4.jpg")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Add your seller details" })).toHaveAttribute("href", "/dashboard/settings#seller-details");
+});
+
 it.each([
   ["UPLOAD_CHECKSUM_MISMATCH", 422],
   ["UPLOAD_TRANSFER_FAILED", 401],
