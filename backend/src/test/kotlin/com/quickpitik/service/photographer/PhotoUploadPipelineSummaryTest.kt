@@ -26,7 +26,7 @@ class PhotoUploadPipelineSummaryTest {
 
     private fun summary() = PhotoUploadPipelineSummary(uploads, photos, registry, indexing, watermark, clock)
     private fun minute(commits: Long = 0) = UploadMinute(
-        commits = commits, waited = 2, refused = 3, roomPeak = 7, slotsPeak = 4,
+        commits = commits, waited = 2, refused = 6, roomPeak = 7, slotsPeak = 4,
         roomCapacity = 16, slotCapacity = 4, meanCommitSeconds = 1.25,
         topEvents = listOf(UUID.fromString("12345678-1234-1234-1234-123456789abc") to 5L),
     )
@@ -47,7 +47,7 @@ class PhotoUploadPipelineSummaryTest {
     fun `pipeline line has the exact text for a sample minute`() {
         val pool = UploadPool(active = 3, size = 6, queued = 2)
         assertEquals(
-            "Upload pipeline, last 60 s: commits 5 (waited 2, refused 3), slot mean 1250 ms, " +
+            "Upload pipeline, last 60 s: commits 5 (waited 2, refused 6), slot mean 1250 ms, " +
                 "room peak 7/16, slots peak 4/4; watermark active 3/6 queued 2 oldest PROCESSING 40s; " +
                 "indexing active 3/6 queued 2 oldest PENDING 20s; rekognition errors 8 (throttled 5); " +
                 "top events 12345678 5",
