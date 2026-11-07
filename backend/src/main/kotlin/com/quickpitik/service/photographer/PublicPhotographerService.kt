@@ -136,7 +136,8 @@ class PublicPhotographerService(
         if (user.suspendedAt != null || settings.verificationStatus != VerificationStatus.APPROVED) {
             throw NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
         }
-        val event = eventRepository.findBySlugAndDeletedAtIsNull(eventSlug)
+        // Same rule as the event page: a DRAFT event is not public, whatever photos it holds.
+        val event = eventRepository.findPublicBySlug(eventSlug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
 
         // Public gallery shows LIVE photos only; HIDDEN / PROCESSING stay

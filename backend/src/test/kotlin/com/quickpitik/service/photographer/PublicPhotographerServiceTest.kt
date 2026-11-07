@@ -92,7 +92,7 @@ class PublicPhotographerServiceTest {
         photographer("shooter", VerificationStatus.APPROVED, suspended = false)
         val ownerId = photographerSettingsRepository.findByHandleIgnoreCase("shooter")!!.userId
         val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(eventRepository.findPublicBySlug("race")).thenReturn(event)
         val photos = listOf(
             Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN),
             Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN, thumbnailS3Key = "thumbnail.jpg"),
@@ -117,7 +117,7 @@ class PublicPhotographerServiceTest {
         photographer("shooter", VerificationStatus.APPROVED, suspended = false)
         val ownerId = photographerSettingsRepository.findByHandleIgnoreCase("shooter")!!.userId
         val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(eventRepository.findPublicBySlug("race")).thenReturn(event)
         val match = Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN)
         Mockito.`when`(photoRepository.searchPhotographerLibraryByBib(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             // A full page of 1 so PageImpl keeps the database total (12).
@@ -137,7 +137,7 @@ class PublicPhotographerServiceTest {
     fun `a blank bib keeps the plain gallery`() {
         photographer("shooter", VerificationStatus.APPROVED, suspended = false)
         val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(eventRepository.findPublicBySlug("race")).thenReturn(event)
         Mockito.`when`(photoRepository.findPhotographerLibraryByStatus(anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(PageImpl(emptyList()))
 
@@ -150,7 +150,7 @@ class PublicPhotographerServiceTest {
     fun `a bib with no letters or digits finds nothing`() {
         photographer("shooter", VerificationStatus.APPROVED, suspended = false)
         val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(eventRepository.findPublicBySlug("race")).thenReturn(event)
 
         val page = service().listEventPhotos("shooter", "race", PaginationParams.of(0, 20), bib = "#")
 
@@ -158,6 +158,22 @@ class PublicPhotographerServiceTest {
         assertTrue(page.items.isEmpty())
         Mockito.verify(photoRepository, Mockito.never()).findPhotographerLibraryByStatus(anyArg(), anyArg(), anyArg(), anyArg())
         Mockito.verify(photoRepository, Mockito.never()).searchPhotographerLibraryByBib(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    // A DRAFT (pending or rejected) event is not a public page, so its gallery
+    // answers 404 like EventService's public routes, even if it holds LIVE photos.
+    @Test
+    fun `a draft event's gallery is not found`() {
+        photographer("shooter", VerificationStatus.APPROVED, suspended = false)
+        val draft = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.DRAFT)
+        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(draft)
+        Mockito.`when`(photoRepository.findPhotographerLibraryByStatus(anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(PageImpl(listOf(Photo(eventId = draft.id, photographerId = UUID.randomUUID(), s3Key = "o.jpg", pricePhp = BigDecimal.TEN))))
+        // findPublicBySlug excludes DRAFT in its query, so it finds nothing here.
+
+        val error = assertFailsWith<NotFoundException> { service().listEventPhotos("shooter", "race", PaginationParams.of(0, 20)) }
+
+        assertEquals(ErrorCodes.EVENT_NOT_FOUND, error.code)
     }
 
     private fun <T> anyArg(): T = Mockito.any()
