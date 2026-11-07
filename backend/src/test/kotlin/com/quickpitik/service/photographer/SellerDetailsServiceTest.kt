@@ -224,6 +224,25 @@ class SellerDetailsServiceTest {
         assertNothingStored()
     }
 
+    @Test
+    fun `an empty file part, as a browser sends for a blank file input, counts as not sent`() {
+        fun blank(name: String) = MockMultipartFile(name, "", "application/octet-stream", ByteArray(0))
+
+        service().submit(userId, form(idBack = blank("idBack"), birForm = blank("birForm")))
+        assertNull(saved().birFormKey)
+        assertNull(saved().idBackKey)
+
+        for (field in listOf("idFront", "selfie")) {
+            val error = assertFailsWith<ValidationException>(field) {
+                service().submit(userId, if (field == "idFront") form(idFront = blank(field)) else form(selfie = blank(field)))
+            }
+            assertEquals(ErrorCodes.VALIDATION_ERROR, error.code)
+            assertEquals(field, error.field)
+        }
+        val back = assertFailsWith<ValidationException> { service().submit(userId, form(idType = "philsys", idBack = blank("idBack"))) }
+        assertEquals("idBack", back.field)
+    }
+
     // 3
     @Test
     fun `a PhilSys ID without a back is refused, other ID types pass without one`() {

@@ -77,11 +77,11 @@ class SellerDetailsService(
         val address = text(form.address, "address", 500)
         val phone = validPhone(form.phone)
             ?: throw ValidationException("Enter a Philippine phone number starting with +63 or 0.", field = "phone")
-        val idFront = jpeg(required(form.idFront, "idFront"), "idFront")
-        val idBack = (if (idType == SellerIdType.PHILSYS) required(form.idBack, "idBack") else form.idBack)
+        val idFront = jpeg(required(sent(form.idFront), "idFront"), "idFront")
+        val idBack = (if (idType == SellerIdType.PHILSYS) required(sent(form.idBack), "idBack") else sent(form.idBack))
             ?.let { jpeg(it, "idBack") }
-        val selfie = jpeg(required(form.selfie, "selfie"), "selfie")
-        val birForm = form.birForm?.let { jpeg(it, "birForm") }
+        val selfie = jpeg(required(sent(form.selfie), "selfie"), "selfie")
+        val birForm = sent(form.birForm)?.let { jpeg(it, "birForm") }
 
         val newKeys = mutableListOf<String>()
         fun store(bytes: ByteArray): String = "$PREFIX$userId/${UUID.randomUUID()}.jpg".also {
@@ -235,6 +235,9 @@ class SellerDetailsService(
         return value
     }
 
+    // Spring binds a blank browser file input as an empty part, not null: treat it as not sent.
+    private fun sent(file: MultipartFile?): MultipartFile? = file?.takeUnless { it.isEmpty }
+
     private fun required(file: MultipartFile?, field: String): MultipartFile =
         file ?: throw ValidationException("$field is required.", field = field)
 
@@ -243,7 +246,6 @@ class SellerDetailsService(
         if ((file.contentType ?: "").lowercase() !in SUPPORTED_TYPES) {
             throw ValidationException("$field must be a JPEG, PNG or WebP image.", ErrorCodes.UNSUPPORTED_MEDIA_TYPE, field)
         }
-        if (file.isEmpty) throw ValidationException("$field is empty.", field = field)
         if (file.size > MAX_FILE_BYTES) {
             throw ApiException(HttpStatus.PAYLOAD_TOO_LARGE, ErrorCodes.PAYLOAD_TOO_LARGE, "$field must be 5 MB or smaller.", field)
         }
