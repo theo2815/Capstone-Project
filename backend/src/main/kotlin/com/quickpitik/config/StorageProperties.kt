@@ -73,6 +73,7 @@ data class StorageProperties(
         val maxPendingPerUser: Int = 32,
         val maxPendingBytesPerUser: Long = 800L * 1024 * 1024,
         val verificationConcurrency: Int = 2,
+        val summaryInterval: Duration = Duration.ofMinutes(1),
         val verificationWait: Duration = Duration.ofSeconds(10),
         val verificationWaiters: Int = 16,
         val verificationLease: Duration = Duration.ofMinutes(5),

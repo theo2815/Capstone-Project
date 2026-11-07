@@ -1000,6 +1000,38 @@ class PhotoUploadServiceTest {
     )
 
     @Test
+    fun `drainMinute reports commits by event and clears them`() {
+        val entered = CountDownLatch(0)
+        val release = CountDownLatch(0)
+        val intents = List(2) { intent(helloBytes.size.toLong()) }
+        stubBlockedCommits(intents, entered, release)
+        val registry = SimpleMeterRegistry()
+        val svc = service(AiApiProperties(enabled = false), registry)
+        for (intent in intents) commitTask(svc, intent).also { it.run(); it.get() }
+        registry.timer("qp.upload.duration").record(2, TimeUnit.SECONDS)
+        val minute = svc.drainMinute()
+        assertEquals(2L, minute.commits)
+        assertEquals(listOf(eventId to 2L), minute.topEvents)
+        assertEquals(1, minute.slotsPeak)
+        assertEquals(1, minute.roomPeak)
+        assertTrue(minute.meanCommitSeconds >= 2.0 / 3)
+        val next = svc.drainMinute()
+        assertEquals(0L, next.commits)
+        assertTrue(next.topEvents.isEmpty())
+        assertEquals(0, next.slotsPeak)
+        assertEquals(minute.meanCommitSeconds, next.meanCommitSeconds)
+    }
+
+    @Test
+    fun `refusal log is limited to one per 10 seconds`() {
+        val now = CLEANUP_CLOCK.millis()
+        assertTrue(shouldLogRefusal(Long.MIN_VALUE, now))
+        assertFalse(shouldLogRefusal(now, now + 9_999))
+        assertTrue(shouldLogRefusal(now, now + 10_000))
+        assertFalse(shouldLogRefusal(now, now - 1))
+    }
+
+    @Test
     fun `a commit waits for a busy slot instead of refusing at once`() {
         val intents = List(2) { intent(helloBytes.size.toLong()) }
         val entered = CountDownLatch(1)
@@ -1019,6 +1051,8 @@ class PhotoUploadServiceTest {
             assertEquals(intents[1].photoId, second.get(2, TimeUnit.SECONDS).id)
             assertEquals(2L, registry.timer("qp.upload.validation.duration").count())
             assertEquals(2L, registry.timer("qp.upload.duration").count())
+            assertEquals(1.0, registry.counter("qp.upload.verification", "outcome", "immediate").count())
+            assertEquals(1.0, registry.counter("qp.upload.verification", "outcome", "waited").count())
         } finally {
             release.countDown()
             first.get(2, TimeUnit.SECONDS)
@@ -1031,7 +1065,8 @@ class PhotoUploadServiceTest {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
         stubBlockedCommits(intents, entered, release)
-        val svc = service(AiApiProperties(enabled = false), directUpload = singleSlot())
+        val registry = SimpleMeterRegistry()
+        val svc = service(AiApiProperties(enabled = false), registry, directUpload = singleSlot())
         val first = commitTask(svc, intents[0])
         Thread(first).start()
         try {
@@ -1044,6 +1079,7 @@ class PhotoUploadServiceTest {
             assertEquals(HttpStatus.TOO_MANY_REQUESTS, error.status)
             assertEquals(ErrorCodes.RATE_LIMITED, error.code)
             assertEquals(2L, error.retryAfterSeconds)
+            assertEquals(1.0, registry.counter("qp.upload.verification", "outcome", "refused").count())
             assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) >= 250)
             release.countDown()
             first.get(2, TimeUnit.SECONDS)
