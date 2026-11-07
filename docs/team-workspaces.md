@@ -36,8 +36,8 @@ back to a different member's directory.
 
 - **Git identity:** `dillan@quickpitik.com` · `dillan.dillam@gmail.com` · `dillanycoy@Adubus-MacBook-Air.local`
 - **Second Brain (vault):** `/Users/dillanycoy/Capstone-Obsidian-Vault`
-- **BatchMyPhotos:** `TBD — ask Dillan, then record it here`
-- **Monorepo:** `TBD — ask Dillan, then record it here`
+- **BatchMyPhotos:** `/Users/dillanycoy/BatchMyPhotos` (cloned 2026-11-07)
+- **Monorepo:** `/Users/dillanycoy/Capstone-Project`
 
 **Windows machine** (identity `dillan.dillam@gmail.com`)
 
