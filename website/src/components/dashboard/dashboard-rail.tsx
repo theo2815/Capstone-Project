@@ -10,6 +10,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import { LegalLinks } from "@/components/legal/legal-links";
 import { RailTipPortal } from "@/components/ui/rail-tip-portal";
 import { useAuth } from "@/hooks/use-auth";
 import { useCanUpload } from "@/hooks/use-can-upload";
@@ -153,6 +154,10 @@ export function DashboardRail() {
           })}
         </ul>
       </nav>
+      {/* The studio has no footer (2026-05-06), so the legal links live here. */}
+      <div className="mt-10">
+        <LegalLinks />
+      </div>
     </aside>
   );
 }
