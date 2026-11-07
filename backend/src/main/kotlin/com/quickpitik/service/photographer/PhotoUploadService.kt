@@ -23,6 +23,8 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotoUploadIntentRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.SellerDetailsRepository
+import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.service.image.PhotoUploadValidator
 import com.quickpitik.service.storage.StorageService
 import io.micrometer.core.instrument.MeterRegistry
@@ -72,6 +74,7 @@ class PhotoUploadService(
     private val entityManager: EntityManager,
     private val clock: Clock,
     private val erasure: com.quickpitik.service.photos.PhotoErasureService,
+    private val sellerDetailsRepository: SellerDetailsRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency, true)
@@ -148,6 +151,7 @@ class PhotoUploadService(
         // for marathon-day capacity planning.
         val timerSample = Timer.start(meterRegistry)
         val (event, settings) = gate(photographerId, eventId)
+        requireSellerDetails(photographerId)
 
         val contentType = file.contentType?.lowercase()
         if (file.isEmpty || contentType == null || contentType !in ALLOWED_CONTENT_TYPES) {
@@ -468,6 +472,7 @@ class PhotoUploadService(
         photographerSettingsRepository.findByUserIdForUpdate(ownerId)
             ?: throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED,
                 "Submit your photographer verification before uploading.")
+        requireSellerDetails(ownerId)
         val now = OffsetDateTime.now(clock)
         val quota = photoUploadIntentRepository.activeQuota(ownerId, now)
         val direct = storageProperties.directUpload
@@ -495,6 +500,15 @@ class PhotoUploadService(
             ),
         )
     })
+
+    // New uploads only (multipart and a new direct reservation); commits and replays of a
+    // reservation made earlier never check it, so photos already in flight still finish.
+    private fun requireSellerDetails(photographerId: UUID) {
+        if (!sellerDetailsRepository.existsByUserIdAndStatusNot(photographerId, SellerDetailsStatus.REJECTED)) {
+            throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.SELLER_DETAILS_REQUIRED,
+                "Before you can upload, add your ID, address and phone number in your photographer settings on quickpitik.com.")
+        }
+    }
 
     private fun presign(intent: PhotoUploadIntent): DirectUploadBeginResponse {
         val now = OffsetDateTime.now(clock)
