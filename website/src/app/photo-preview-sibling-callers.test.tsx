@@ -25,7 +25,7 @@ vi.mock("@/hooks/use-orders", () => ({
 }));
 vi.mock("@/components/layout/site-header", () => ({ SiteHeader: () => null }));
 vi.mock("@/components/profile-shell", () => ({
-  IdentityRail: () => null, Slab: ({ children }: { children: React.ReactNode }) => <section>{children}</section>,
+  IdentityRail: () => null, ProfileShellFooter: () => null, Slab: ({ children }: { children: React.ReactNode }) => <section>{children}</section>,
 }));
 vi.mock("@/hooks/use-confirmation", () => ({ useConfirmation: () => ({ confirm: async () => true }) }));
 vi.mock("@/components/orders/refund-modal", () => ({ RefundModal: () => null }));

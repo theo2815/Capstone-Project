@@ -9,6 +9,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import {
   IdentityRail,
   Slab,
+  ProfileShellFooter,
   type JumpSection,
 } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
@@ -123,6 +124,7 @@ function AccountBody() {
           </div>
         </div>
       </div>
+      <ProfileShellFooter />
     </main>
   );
 }

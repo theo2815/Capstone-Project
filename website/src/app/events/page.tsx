@@ -6,7 +6,7 @@ import { EventsBrowser } from "./events-browser";
 import { LegalLinks } from "@/components/legal/legal-links";
 
 export const metadata: Metadata = {
-  title: "Events | QuickPitik",
+  title: "Events",
   description:
     "Browse marathon and running events in Cebu. Pick your race, find your photos.",
 };

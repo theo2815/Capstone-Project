@@ -5,7 +5,7 @@ import { LoginForm } from "@/components/auth/login-form";
 import { ROUTES } from "@/lib/constants";
 
 export const metadata: Metadata = {
-  title: "Log in | QuickPitik",
+  title: "Log in",
 };
 
 export default function LoginPage() {

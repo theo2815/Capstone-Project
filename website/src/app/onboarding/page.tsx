@@ -3,7 +3,7 @@ import { AuthShell } from "@/components/auth/auth-shell";
 import { OnboardingForm } from "@/components/onboarding/onboarding-form";
 
 export const metadata: Metadata = {
-  title: "Welcome | QuickPitik",
+  title: "Welcome",
 };
 
 export default function OnboardingPage() {
