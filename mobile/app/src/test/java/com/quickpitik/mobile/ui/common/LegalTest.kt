@@ -48,4 +48,12 @@ class LegalTest {
             name to Uri.decode(value)
         } + ("to" to Uri.decode(address))
     }
+
+    // Same words as the website: the notice also sits on the profile library,
+    // which serves every event (privacy browser pass finding 2, 2026-11-07).
+    @Test
+    fun `face notice names no single event`() {
+        assertTrue(FACE_NOTICE.contains("with faces in the photos of the event you search."))
+        assertTrue(!FACE_NOTICE.contains("this event's photos"))
+    }
 }
