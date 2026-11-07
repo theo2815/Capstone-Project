@@ -140,15 +140,22 @@ fun PhotographerCaptureScreen(
     tetherViewModel: TetherViewModel,
 ) {
     val activeEvent by tetherViewModel.activeEvent.collectAsState()
-    // No approval gate here: PublicEventPickerList already refuses to select an
-    // event unless verification is approved, so an active event implies approval.
-    if (activeEvent == null) {
-        PublicEventPickerList(
-            viewModel = viewModel,
-            onSelectEvent = { event -> tetherViewModel.selectEvent(event) }
-        )
-    } else {
-        TetherConsoleView(viewModel = tetherViewModel)
+    val sellerCard by viewModel.sellerDetailsState.collectAsState()
+    Column {
+        sellerCard?.let {
+            SellerDetailsCardView(it, onReturn = { viewModel.fetchSellerDetails() },
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp))
+        }
+        // No approval gate here: PublicEventPickerList already refuses to select an
+        // event unless verification is approved, so an active event implies approval.
+        if (activeEvent == null) {
+            PublicEventPickerList(
+                viewModel = viewModel,
+                onSelectEvent = { event -> tetherViewModel.selectEvent(event) }
+            )
+        } else {
+            TetherConsoleView(viewModel = tetherViewModel)
+        }
     }
 }
 

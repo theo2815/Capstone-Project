@@ -108,6 +108,7 @@ fun PhotographerOverviewScreen(
     modifier: Modifier = Modifier,
 ) {
     val verificationState by viewModel.verificationState.collectAsState()
+    val sellerCard by viewModel.sellerDetailsState.collectAsState()
     val eventsState by viewModel.eventsState.collectAsState()
     val earningsUiState by earningsViewModel.earningsUiState.collectAsState()
     val messages by viewModel.messages.collectAsState()
@@ -272,6 +273,11 @@ fun PhotographerOverviewScreen(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
+
+        sellerCard?.let {
+            SellerDetailsCardView(it, onReturn = { viewModel.fetchSellerDetails() })
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
         if (isApproved) {
             // The money cards must never render a FAILED (or still-loading)

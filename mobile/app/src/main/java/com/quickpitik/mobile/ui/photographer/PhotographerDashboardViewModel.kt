@@ -12,6 +12,8 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.apiCall
 import com.quickpitik.mobile.data.remote.uiMessage
 import com.quickpitik.mobile.data.remote.WsState
+import com.quickpitik.mobile.worker.PhotoUploadScheduler
+import com.quickpitik.mobile.worker.UploadPausedNotice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.map
@@ -191,6 +193,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
 
     private val _sharePhotosState = MutableStateFlow<SharePhotosState>(SharePhotosState.Loading)
     val sharePhotosState: StateFlow<SharePhotosState> = _sharePhotosState
+
+    private val _sellerDetailsState = MutableStateFlow<SellerDetailsCard?>(null)
+    val sellerDetailsState: StateFlow<SellerDetailsCard?> = _sellerDetailsState
 
     init {
         fetchEvents()
@@ -584,6 +589,7 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     }
 
     fun fetchVerificationStatus() {
+        fetchSellerDetails()
         viewModelScope.launch {
             _verificationState.value = VerificationUiState.Loading
             val token = sessionManager.getAccessToken()
@@ -600,6 +606,22 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                 }
             } catch (e: Exception) {
                 _verificationState.value = VerificationUiState.Error(e.localizedMessage ?: "Failed to load onboarding status.")
+            }
+        }
+    }
+
+    // SC-3: a failed read shows no card (the server still gates uploads). Once the details are
+    // sent, restart the photos a SELLER_DETAILS_REQUIRED refusal left waiting.
+    fun fetchSellerDetails() {
+        viewModelScope.launch {
+            val token = sessionManager.getAccessToken() ?: return@launch
+            val details = try {
+                RetrofitClient.apiService.getSellerDetails("Bearer $token").data
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+            _sellerDetailsState.value = sellerDetailsCard(details?.status, details?.rejectionReason)
+            if (details?.status == "submitted" || details?.status == "approved") {
+                UploadPausedNotice.cancel(getApplication())
+                PhotoUploadScheduler.enqueue(getApplication())
             }
         }
     }

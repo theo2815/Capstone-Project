@@ -757,6 +757,64 @@ class PhotoUploadWorkerTest {
      * window, missing watermark…) joined TERMINAL_UPLOAD_ERROR_CODES on
      * 2026-08-26 — before that, each burned all 5 backoff cycles per photo.
      */
+    private fun sellerRefusal() = MockResponse()
+        .setResponseCode(403)
+        .setHeader("Content-Type", "application/json")
+        .setBody("""{"success":false,"errors":[{"code":"SELLER_DETAILS_REQUIRED","message":"$SELLER_MESSAGE"}]}""")
+
+    private fun notifications() = org.robolectric.Shadows.shadowOf(
+        context.getSystemService(android.app.NotificationManager::class.java)).allNotifications
+
+    @Test
+    fun `a seller-details refusal on begin keeps photos queued, counts no retry, and ends the run with success`() = runTest {
+        signIn()
+        val http = startDirectServer(beginResponse = { sellerRefusal() })
+        val ids = List(5) { enqueue(filePath = realJpeg().absolutePath) }
+
+        val result = runWorker()
+
+        assertTrue(result is ListenableWorker.Result.Success)
+        ids.forEach {
+            val stored = requireNotNull(db.uploadQueueDao().getRecordById(it))
+            assertEquals("QUEUED", stored.uploadStatus)
+            assertEquals(0, stored.retryCount)
+            assertEquals(0L, stored.retryAfter)
+        }
+        assertEquals(SELLER_MESSAGE, db.uploadQueueDao().getRecordById(ids[0])?.errorMessage)
+        val begins = (1..http.requestCount).map { http.takeRequest() }.count { it.path?.endsWith("/photos/direct") == true }
+        assertTrue("begin requests: $begins", begins <= PhotoUploadWorker.Pacer.MAX_CONCURRENCY)
+        assertTrue(scheduledWork().isEmpty())
+        assertEquals(SELLER_MESSAGE, org.robolectric.Shadows.shadowOf(notifications().single())
+            .let { it.contentText.toString() })
+    }
+
+    @Test
+    fun `a seller-details refusal on the multipart route keeps photos queued too`() = runTest {
+        signIn()
+        val http = startServer(*Array(5) { sellerRefusal() })
+        val ids = List(5) { enqueue(filePath = realJpeg().absolutePath) }
+
+        assertTrue(runWorker() is ListenableWorker.Result.Success)
+        ids.forEach {
+            assertEquals("QUEUED", db.uploadQueueDao().getRecordById(it)?.uploadStatus)
+            assertEquals(0, db.uploadQueueDao().getRecordById(it)?.retryCount)
+        }
+        val posts = (1..http.requestCount).map { http.takeRequest() }.count { it.path?.endsWith("/photos") == true }
+        assertTrue("multipart posts: $posts", posts <= PhotoUploadWorker.Pacer.MAX_CONCURRENCY)
+    }
+
+    @Test
+    fun `two blocked runs leave exactly one notification`() = runTest {
+        signIn()
+        startDirectServer(beginResponse = { sellerRefusal() })
+        repeat(2) { enqueue(filePath = realJpeg().absolutePath) }
+
+        runWorker()
+        runWorker()
+
+        assertEquals(1, notifications().size)
+    }
+
     @Test
     fun `a 422 event-not-uploadable is terminal and does not drive a retry`() = runTest {
         signIn()
@@ -878,5 +936,6 @@ class PhotoUploadWorkerTest {
     private companion object {
         const val EVENT = "11111111-1111-1111-1111-111111111111"
         const val BUSY_SIZE = 128L
+        const val SELLER_MESSAGE = "Before you can upload, add your ID, address and phone number in your photographer settings on quickpitik.com."
     }
 }

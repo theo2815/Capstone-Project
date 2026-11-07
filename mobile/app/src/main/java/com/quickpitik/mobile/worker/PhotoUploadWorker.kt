@@ -20,6 +20,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resumeWithException
 
 class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -47,6 +48,7 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         val failures = AtomicBoolean(false)
         val offline = AtomicBoolean(false)
         val unauthorized = AtomicBoolean(false)
+        val sellerBlocked = AtomicReference<String?>(null)
         val completed = AtomicInteger(0)
         val pacer = Pacer()
         val started = System.nanoTime()
@@ -63,10 +65,12 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
                     return endRun(owner, dao, completed, Result.retry())
                 coroutineScope {
                     group.forEach { record -> launch(Dispatchers.IO) {
-                        uploadOne(record, session, database, failures, offline, unauthorized, pacer, completed)
+                        uploadOne(record, session, database, failures, offline, unauthorized, sellerBlocked, pacer, completed)
                     } }
                 }
                 if (unauthorized.get()) return Result.success()
+                // No retry: uploads restart when the dashboard sees the details were sent.
+                sellerBlocked.get()?.let { UploadPausedNotice.show(applicationContext, it); return Result.success() }
                 if (offline.get()) return endRun(owner, dao, completed, Result.retry())
             }
         }
@@ -83,11 +87,12 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
 
     private suspend fun uploadOne(
         record: UploadRecord, session: SessionManager, database: AppDatabase,
-        failures: AtomicBoolean, offline: AtomicBoolean, unauthorized: AtomicBoolean, pacer: Pacer, completed: AtomicInteger,
+        failures: AtomicBoolean, offline: AtomicBoolean, unauthorized: AtomicBoolean, sellerBlocked: AtomicReference<String?>,
+        pacer: Pacer, completed: AtomicInteger,
     ) {
         currentCoroutineContext().ensureActive()
         if (session.getUserEmail() != record.photographerId) return
-        if (unauthorized.get()) return
+        if (unauthorized.get() || sellerBlocked.get() != null) return
         if (offline.get() || record.retryAfter > System.currentTimeMillis()) { failures.set(true); return }
         val dao = database.uploadQueueDao()
         dao.updateStatus(record.id, "UPLOADING", null)
@@ -128,6 +133,12 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
             if (code == 401) {
                 dao.updateStatus(record.id, "QUEUED", "Sign in to resume uploads.")
                 unauthorized.set(true)
+                return
+            }
+            if (error?.code == SELLER_DETAILS_REQUIRED) {
+                val message = error.message.takeUnless { it.isNullOrBlank() } ?: "Add your seller details on quickpitik.com to resume uploads."
+                dao.updateStatus(record.id, "QUEUED", message)
+                sellerBlocked.set(message)
                 return
             }
             val transport = e is IOException || code == 408 || code == 429 || (code != null && code >= 500)
@@ -392,6 +403,9 @@ class PhotoUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
             "USER_NOT_FOUND",
             "EVENT_NOT_FOUND",
         )
+
+        // Not terminal: the photos wait (QUEUED) until the photographer sends their seller details.
+        const val SELLER_DETAILS_REQUIRED = "SELLER_DETAILS_REQUIRED"
 
         // Attempts per record across runs (tracked in UploadRecord.retryCount)
         // before a non-terminal failure is declared permanent.
