@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { PaginatedResponse } from "@/types/api";
 
 // Seller details (SC-1 backend, plan § 3.4): required before new uploads.
 // E1 GET / E2 POST /api/v1/me/photographer/seller-details. No links or storage
@@ -69,4 +70,50 @@ export function submitSellerDetails(input: SellerDetailsInput): Promise<SellerDe
   fd.append("selfie", input.selfie);
   if (input.birForm) fd.append("birForm", input.birForm);
   return api.post<SellerDetails>("/me/photographer/seller-details", fd);
+}
+
+// ─── Admin review (SC-1b backend: E3 to E6) ─────────────────────────────
+
+export interface AdminSellerDetailsRow {
+  userId: string;
+  email: string;
+  legalName: string;
+  idType: SellerIdType;
+  status: Exclude<SellerDetailsStatus, "missing">;
+  submittedAt: string;
+  reviewedAt: string | null;
+}
+
+export interface AdminSellerDetails extends AdminSellerDetailsRow {
+  address: string;
+  phone: string;
+  hasIdBack: boolean;
+  hasBirForm: boolean;
+  rejectionReason: string | null;
+  reviewedBy: string | null;
+  revision: number;
+  // Links that expire after five minutes; only on E4, and each fetch logs a view.
+  files: { idFront: string; idBack: string | null; selfie: string; birForm: string | null } | null;
+  linksExpireAt: string | null;
+}
+
+export function listSellerDetails(
+  status: "submitted" | null,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<AdminSellerDetailsRow>> {
+  const query = new URLSearchParams({ ...(status ? { status } : {}), offset: "0", limit: String(limit) });
+  return api.get(`/admin/seller-details?${query}`, { signal });
+}
+
+export function getSellerDetailsRecord(userId: string, signal?: AbortSignal): Promise<AdminSellerDetails> {
+  return api.get(`/admin/seller-details/${encodeURIComponent(userId)}`, { signal });
+}
+
+export function approveSellerDetails(userId: string, revision: number): Promise<AdminSellerDetails> {
+  return api.post(`/admin/seller-details/${encodeURIComponent(userId)}/approve`, { revision });
+}
+
+export function rejectSellerDetails(userId: string, revision: number, reason: string): Promise<AdminSellerDetails> {
+  return api.post(`/admin/seller-details/${encodeURIComponent(userId)}/reject`, { revision, reason });
 }

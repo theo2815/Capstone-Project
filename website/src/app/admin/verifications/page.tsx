@@ -5,6 +5,7 @@ import { usePendingVerificationsCount } from "@/hooks/use-admin-users";
 import {
   VerificationsQueue,
 } from "@/components/admin/verifications-queue";
+import { SellerDetailsQueue } from "@/components/admin/seller-details-queue";
 import { Kicker } from "@/components/ui/kicker";
 
 // Phase 1 admin redesign: /admin/verifications continues to exist as a
@@ -20,6 +21,7 @@ export default function AdminVerificationsPage() {
     <>
       <Header pendingCount={pendingCount} />
       <VerificationsQueue />
+      <SellerDetailsQueue />
     </>
   );
 }
