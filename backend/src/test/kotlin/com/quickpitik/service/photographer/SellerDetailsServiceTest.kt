@@ -33,8 +33,10 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.http.HttpStatus
 import org.springframework.mock.web.MockMultipartFile
-import org.springframework.transaction.PlatformTransactionManager
-import org.springframework.transaction.support.SimpleTransactionStatus
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.TransactionSystemException
+import org.springframework.transaction.support.AbstractPlatformTransactionManager
+import org.springframework.transaction.support.DefaultTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -56,10 +58,19 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SellerDetailsServiceTest {
+    /** A real Spring manager, so transaction synchronization runs; [commitFailure] makes the commit itself fail. */
+    class FakeTxManager : AbstractPlatformTransactionManager() {
+        var commitFailure: RuntimeException? = null
+        override fun doGetTransaction(): Any = Any()
+        override fun doBegin(transaction: Any, definition: TransactionDefinition) = Unit
+        override fun doCommit(status: DefaultTransactionStatus) { commitFailure?.let { throw it } }
+        override fun doRollback(status: DefaultTransactionStatus) = Unit
+    }
+
     private lateinit var repository: SellerDetailsRepository
     private lateinit var userRepository: UserRepository
     private lateinit var storage: StorageService
-    private lateinit var txManager: PlatformTransactionManager
+    private lateinit var txManager: FakeTxManager
     private lateinit var decisionRepository: AdminDecisionLogRepository
     private lateinit var messageRepository: PhotographerMessageRepository
     private val clock = Clock.fixed(Instant.parse("2026-11-07T02:00:00Z"), ZoneOffset.UTC)
@@ -74,9 +85,7 @@ class SellerDetailsServiceTest {
         repository = Mockito.mock(SellerDetailsRepository::class.java)
         userRepository = Mockito.mock(UserRepository::class.java)
         storage = Mockito.mock(StorageService::class.java)
-        txManager = Mockito.mock(PlatformTransactionManager::class.java).also {
-            Mockito.`when`(it.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
-        }
+        txManager = Mockito.spy(FakeTxManager()) // spied so tests can check the commit order
         Mockito.`when`(repository.findById(userId)).thenReturn(Optional.empty())
         Mockito.`when`(repository.save(anyArg<SellerDetails>())).thenAnswer { it.getArgument(0) }
         decisionRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
@@ -347,6 +356,30 @@ class SellerDetailsServiceTest {
         assertEquals(2, created.size)
         created.forEach { Mockito.verify(storage).delete(it) }
         oldKeys.forEach { Mockito.verify(storage, Mockito.never()).delete(it) }
+    }
+
+    @Test
+    fun `a storage failure before the save deletes the files already stored`() {
+        Mockito.`when`(storage.put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>()))
+            .thenAnswer { null }.thenThrow(IllegalStateException("r2 down"))
+
+        assertFailsWith<IllegalStateException> { service().submit(userId, form()) }
+
+        val (first, second) = storedKeys()
+        Mockito.verify(storage).delete(first)
+        Mockito.verify(storage).delete(second) // the failed put may have half-written it
+        Mockito.verify(repository, Mockito.never()).save(anyArg<SellerDetails>())
+    }
+
+    @Test
+    fun `a commit whose outcome is unknown keeps every file, because the saved row may point to the new ones`() {
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(existing()))
+        txManager.commitFailure = TransactionSystemException("connection reset during commit")
+
+        assertFailsWith<TransactionSystemException> { service().submit(userId, form()) }
+
+        assertEquals(2, storedKeys().size)
+        Mockito.verify(storage, Mockito.never()).delete(anyArg())
     }
 
     @Test
