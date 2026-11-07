@@ -392,6 +392,46 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // ─── SC-1: seller details are legal records, kept by both scripts ───
+
+    private fun sellerDetails(userId: UUID) = jdbc.update(
+        "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, status, revision, submitted_at) " +
+            "VALUES (?, 'Del Real Name', 'PASSPORT', ?, ?, 'Cebu', '09171234567', 'SUBMITTED', 1, now())",
+        userId, "seller-details/$userId/${UUID.randomUUID()}.jpg", "seller-details/$userId/${UUID.randomUUID()}.jpg",
+    )
+
+    @Test
+    fun `a runner with a seller-details row is refused`() {
+        val former = user("RUNNER")
+        sellerDetails(former)
+
+        val result = run(former, confirm = "yes")
+
+        assertNotEquals(0, result.exitCode, result.stdout)
+        assertTrue("Refused" in result.stderr && "seller details" in result.stderr, result.stderr)
+        assertEquals(1, count("SELECT count(*) FROM users WHERE id = ?", former))
+    }
+
+    @Test
+    fun `the photographer dry run lists the record and the prefix under Kept, and the confirmed run keeps the row`() {
+        val s = seedStudio()
+        sellerDetails(s.photographer)
+
+        val dry = anonymise(s.photographer)
+
+        assertEquals(0, dry.exitCode, dry.stderr)
+        val keptRows = dry.stdout.substringAfter("== Kept (rows)").substringBefore("== R2 files to delete")
+        assertTrue("photographer_seller_details" in keptRows, dry.stdout)
+        val toDelete = dry.stdout.substringAfter("R2 files to delete").substringBefore("Kept in R2")
+        assertTrue("seller-details/" !in toDelete, dry.stdout)
+        assertTrue("seller-details/${s.photographer}/" in dry.stdout.substringAfter("Kept in R2"), dry.stdout)
+
+        val result = anonymise(s.photographer, confirm = "yes")
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertEquals(1, count("SELECT count(*) FROM photographer_seller_details WHERE user_id = ? AND legal_name = 'Del Real Name'", s.photographer))
+    }
+
     private fun assertRefusedUnchanged(photographer: UUID) {
         val before = email(photographer)
         val result = anonymise(photographer, confirm = "yes")

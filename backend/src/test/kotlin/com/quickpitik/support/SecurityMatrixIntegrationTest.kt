@@ -402,6 +402,114 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(404, post("$root/$id/responses", body, photographer).statusCode())
     }
 
+    @Test
+    fun `seller details routes are photographer only and private to their owner`() {
+        val path = "/api/v1/me/photographer/seller-details"
+        val form = multipart(mapOf("legalName" to "Juan Dela Cruz"))
+        assertEquals(401, get(path).statusCode())
+        assertEquals(401, form(path, null).statusCode())
+        for (token in listOf(register(Role.RUNNER), adminToken())) {
+            assertEquals(403, get(path, token).statusCode())
+            assertEquals(403, form(path, token).statusCode())
+        }
+
+        val (ownerToken, ownerId) = registerPhotographerWithId()
+        val other = register(Role.PHOTOGRAPHER)
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', 'SUBMITTED', 1, now())",
+            ownerId, "seller-details/$ownerId/${UUID.randomUUID()}.jpg", "seller-details/$ownerId/${UUID.randomUUID()}.jpg",
+        )
+        val mine = get(path, ownerToken)
+        assertEquals(200, mine.statusCode())
+        assertTrue("no-store" in mine.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals("Juan Dela Cruz", json.readTree(mine.body()).path("data").path("legalName").asText())
+        assertFalse("seller-details/" in mine.body(), "E1 must never carry a storage key")
+        val theirs = get(path, other)
+        assertEquals(200, theirs.statusCode())
+        assertEquals("missing", json.readTree(theirs.body()).path("data").path("status").asText())
+        assertFalse("Juan" in theirs.body())
+
+        // A photographer's incomplete form reaches the service and names the missing part.
+        val incomplete = form(path, other)
+        assertEquals(400, incomplete.statusCode())
+        assertEquals("VALIDATION_ERROR", errorCode(incomplete))
+    }
+
+    @Test
+    fun `admin seller details routes are admin only`() {
+        val root = "/api/v1/admin/seller-details"
+        val (_, sellerId) = registerPhotographerWithId()
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', 'SUBMITTED', 1, now())",
+            sellerId, "seller-details/$sellerId/${UUID.randomUUID()}.jpg", "seller-details/$sellerId/${UUID.randomUUID()}.jpg",
+        )
+        val approve = """{"revision":1}"""
+        val reject = """{"revision":1,"reason":"blurry"}"""
+        for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+            val expected = if (token == null) 401 else 403
+            assertEquals(expected, get(root, token).statusCode())
+            assertEquals(expected, get("$root/$sellerId", token).statusCode())
+            assertEquals(expected, post("$root/$sellerId/approve", approve, token).statusCode())
+            assertEquals(expected, post("$root/$sellerId/reject", reject, token).statusCode())
+        }
+
+        val admin = adminToken()
+        val list = get("$root?status=submitted", admin)
+        assertEquals(200, list.statusCode())
+        assertTrue(sellerId.toString() in list.body())
+        assertFalse("seller-details/" in list.body(), "E3 must never carry a storage key")
+        val view = get("$root/$sellerId", admin)
+        assertEquals(200, view.statusCode())
+        assertTrue("no-store" in view.headers().firstValue("Cache-Control").orElse(""))
+        assertTrue(json.readTree(view.body()).path("data").path("files").path("idFront").asText().isNotBlank())
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM admin_decision_log WHERE target_user_id = ? AND decision = 'seller_details_viewed'", Int::class.java, sellerId,
+        ))
+        assertEquals(400, post("$root/$sellerId/reject", """{"revision":1,"reason":"  "}""", admin).statusCode())
+        assertEquals(404, get("$root/${UUID.randomUUID()}", admin).statusCode())
+    }
+
+    @Test
+    fun `a known seller-details storage key is never served from local storage`() {
+        val key = "seller-details/${UUID.randomUUID()}/${UUID.randomUUID()}.jpg"
+        val path = Path.of("build/test-storage", key)
+        Files.createDirectories(path.parent)
+        Files.writeString(path, "synthetic ID photo")
+        try {
+            for (token in listOf(null, register(Role.PHOTOGRAPHER), adminToken())) {
+                assertTrue(get("/storage/$key", token).statusCode() in setOf(401, 403, 404), "token=$token")
+            }
+            assertTrue(get("/storage/SELLER-DETAILS/${key.substringAfter('/')}").statusCode() in setOf(401, 403, 404))
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Autowired
+    private lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
+
+    private fun registerPhotographerWithId(): Pair<String, UUID> {
+        val email = "matrix-${UUID.randomUUID()}@test.local"
+        val token = authService.register(
+            RegisterRequest(name = "Matrix seller", email = email, password = "correct-horse-battery-staple-42", role = Role.PHOTOGRAPHER),
+        ).accessToken
+        return token to jdbc.queryForObject("SELECT id FROM users WHERE email = ?", UUID::class.java, email)!!
+    }
+
+    /** A real multipart body (text parts only): the role check must refuse it, not the binder. */
+    private fun multipart(fields: Map<String, String>): (String, String?) -> HttpResponse<String> = { path, token ->
+        val boundary = "matrix-${UUID.randomUUID()}"
+        val body = fields.entries.joinToString("") { (name, value) ->
+            "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n"
+        } + "--$boundary--\r\n"
+        send(
+            HttpRequest.newBuilder(uri(path))
+                .header("Content-Type", "multipart/form-data; boundary=$boundary")
+                .POST(HttpRequest.BodyPublishers.ofString(body)),
+            token,
+        )
+    }
+
     private fun adminToken(): String {
         val response = authService.login(LoginRequest(email = adminEmail, password = adminPassword))
         assertFalse(response.mfaRequired, "the bootstrap admin has no MFA enrolled")

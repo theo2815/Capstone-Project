@@ -33,7 +33,9 @@
 --   Coupons are switched off, not deleted: past orders keep the link to the coupon they used.
 --   Kept: sold photos, orders, the ledger (transactions), payout cycles with their account
 --     snapshot (name, number, QR file), payout reports, admin decision records, the name on
---     photo removal cases, and orders they placed as a buyer.
+--     photo removal cases, orders they placed as a buyer, and the seller-details record and
+--     its files under seller-details/<user_id>/ (legal records under RA 11967 and BIR rules;
+--     see the privacy policy's retention table).
 --
 -- Steps for each request:
 --   0. Once, before the first real run: check that Railway has a backup of the production
@@ -156,7 +158,8 @@ UNION ALL SELECT 'event_photographer', count(*), '' FROM event_photographer WHER
 UNION ALL SELECT 'events created by them', count(*), 'event details they typed' FROM events WHERE created_by = :'qp_user_id'
 UNION ALL SELECT 'admin_decision_log.target_user_id', count(*), 'reason, meta (may name the person)' FROM admin_decision_log WHERE target_user_id = :'qp_user_id'
 UNION ALL SELECT 'photo_removal_items', count(*), 'owner_name_snapshot (locked by a trigger)' FROM photo_removal_items WHERE owner_id_snapshot = :'qp_user_id'
-UNION ALL SELECT 'orders placed as a buyer', count(*), 'recipient_email' FROM orders WHERE user_id = :'qp_user_id';
+UNION ALL SELECT 'orders placed as a buyer', count(*), 'recipient_email' FROM orders WHERE user_id = :'qp_user_id'
+UNION ALL SELECT 'photographer_seller_details', count(*), 'legal name, address, phone, ID photos' FROM photographer_seller_details WHERE user_id = :'qp_user_id';
 
 \echo '== R2 files to delete after the confirmed run (a key ending in / is a prefix: list it and delete what is there)'
 SELECT cover_s3_key AS r2_key FROM photographer_settings WHERE user_id = :'qp_user_id' AND cover_s3_key IS NOT NULL
@@ -171,9 +174,11 @@ UNION ALL SELECT i.original_key FROM photo_upload_intents i
       AND NOT EXISTS (SELECT 1 FROM photos p WHERE p.s3_key = i.original_key)
 UNION ALL SELECT 'staging/photo-uploads/' || :'qp_user_id' || '/';
 
-\echo '== Kept in R2: payout QR files named by a payout snapshot (do not delete)'
+\echo '== Kept in R2: payout QR files named by a payout snapshot, and the seller-details files (do not delete)'
 SELECT DISTINCT account_snapshot_qr_key AS kept_r2_key FROM payout_cycles
-WHERE photographer_id = :'qp_user_id' AND account_snapshot_qr_key IS NOT NULL;
+WHERE photographer_id = :'qp_user_id' AND account_snapshot_qr_key IS NOT NULL
+UNION ALL SELECT 'seller-details/' || :'qp_user_id' || '/'
+WHERE EXISTS (SELECT 1 FROM photographer_seller_details WHERE user_id = :'qp_user_id');
 
 \if :qp_anonymise
 DO $$

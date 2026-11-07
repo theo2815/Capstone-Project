@@ -12,6 +12,8 @@ import com.quickpitik.dto.photographer.PatchPayoutRequest
 import com.quickpitik.dto.photographer.PatchSocialRequest
 import com.quickpitik.dto.photographer.PayoutAccountDto
 import com.quickpitik.dto.photographer.RegionPatchRequest
+import com.quickpitik.dto.photographer.SellerDetailsDto
+import com.quickpitik.dto.photographer.SellerDetailsForm
 import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
@@ -23,6 +25,7 @@ import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.photographer.PayoutAccountService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.photographer.PhotoMetadataSettingsService
+import com.quickpitik.service.photographer.SellerDetailsService
 import com.quickpitik.service.photographer.SocialLinkService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
@@ -34,6 +37,7 @@ import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.ModelAttribute
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -70,6 +74,7 @@ class MePhotographerSettingsController(
     private val couponService: CouponService,
     private val stepUpService: StepUpService,
     private val photoMetadataSettingsService: PhotoMetadataSettingsService,
+    private val sellerDetailsService: SellerDetailsService,
 ) {
     @GetMapping("/metadata-settings")
     fun getMetadataSettings(
@@ -310,6 +315,27 @@ class MePhotographerSettingsController(
     @PostMapping("/verification")
     fun submitVerification(@AuthenticationPrincipal principal: AuthPrincipal): VerificationSubmitResponseDto =
         photographerSettingsService.submitVerification(principal.userId)
+
+    // ─── Seller details (SC-1): required before new uploads ──────────────
+    @GetMapping("/seller-details")
+    fun getSellerDetails(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        response: HttpServletResponse,
+    ): SellerDetailsDto {
+        response.setHeader("Cache-Control", "private, no-store")
+        return sellerDetailsService.get(principal.userId)
+    }
+
+    @PostMapping("/seller-details", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+    fun submitSellerDetails(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
+        @ModelAttribute form: SellerDetailsForm,
+    ): SellerDetailsDto {
+        stepUpService.enforce(principal.userId, stepUp)
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+        return sellerDetailsService.submit(principal.userId, form)
+    }
 
     @PostMapping("/verification/withdraw")
     fun withdrawVerification(@AuthenticationPrincipal principal: AuthPrincipal): VerificationSubmitResponseDto =
