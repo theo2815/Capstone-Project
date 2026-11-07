@@ -93,8 +93,9 @@ BEGIN
         OR EXISTS (SELECT 1 FROM payout_reports WHERE photographer_id = uid)
         OR EXISTS (SELECT 1 FROM photos WHERE photographer_id = uid)
         OR EXISTS (SELECT 1 FROM photographer_settings WHERE user_id = uid)
-        OR EXISTS (SELECT 1 FROM photographer_payout_accounts WHERE user_id = uid) THEN
-        RAISE EXCEPTION 'Refused: user % is a RUNNER but still owns photographer sales, payouts, photos, settings or payout accounts', uid;
+        OR EXISTS (SELECT 1 FROM photographer_payout_accounts WHERE user_id = uid)
+        OR EXISTS (SELECT 1 FROM photographer_seller_details WHERE user_id = uid) THEN
+        RAISE EXCEPTION 'Refused: user % is a RUNNER but still owns photographer sales, payouts, photos, settings, payout accounts or seller details', uid;
     END IF;
 END
 $$;

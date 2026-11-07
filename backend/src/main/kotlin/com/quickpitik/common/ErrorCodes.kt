@@ -82,6 +82,8 @@ object ErrorCodes {
     const val COUPON_USAGE_LIMIT_REACHED = "COUPON_USAGE_LIMIT_REACHED"
 
     const val PHOTOGRAPHER_NOT_VERIFIED = "PHOTOGRAPHER_NOT_VERIFIED"
+    // A photographer with no seller details on file, or rejected ones, cannot start new uploads (SC-1, RA 11967).
+    const val SELLER_DETAILS_REQUIRED = "SELLER_DETAILS_REQUIRED"
     const val ACCOUNT_SUSPENDED = "ACCOUNT_SUSPENDED"
     // Temporary, self-clearing (V29) — unlike ACCOUNT_SUSPENDED, which is an
     // admin decision and only an admin can lift.
