@@ -193,6 +193,11 @@ data class VerificationSubmitResponseDto(
     val suspensionReason: String?
 )
 
+data class SellerDetailsDto(
+    val status: String, // "missing", "submitted", "approved", "rejected"
+    val rejectionReason: String?,
+)
+
 data class BrandPatchRequest(
     val brandName: String?,
     val brandColor: String?,

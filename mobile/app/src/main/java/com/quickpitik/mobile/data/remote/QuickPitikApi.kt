@@ -249,6 +249,12 @@ interface QuickPitikApi {
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<VerificationSubmitResponseDto>
 
+    // Seller details (SC-1 E1): status only; the form itself lives on quickpitik.com.
+    @GET("api/v1/me/photographer/seller-details")
+    suspend fun getSellerDetails(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<SellerDetailsDto>
+
     // Public reference data — no Authorization header. Backend owns the list;
     // see RegionDto for why neither client hardcodes it any more.
     @GET("api/v1/regions")
