@@ -52,6 +52,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.LongAdder
+import kotlin.math.ceil
 import kotlin.random.Random
 
 @Service
@@ -75,10 +76,15 @@ class PhotoUploadService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency, true)
-    private val verificationWaiters = Semaphore(storageProperties.directUpload.verificationWaiters)
+    private val verificationRoomSize = storageProperties.directUpload.let {
+        if (it.verificationWaiters > 0) it.verificationWaiters else 4 * it.verificationConcurrency
+    }
+    private val verificationWaiters = Semaphore(verificationRoomSize)
+    private val photographerPlaces = ConcurrentHashMap<UUID, AtomicInteger>()
     private val immediate = meterRegistry.counter("qp.upload.verification", "outcome", "immediate")
     private val waited = meterRegistry.counter("qp.upload.verification", "outcome", "waited")
     private val refused = meterRegistry.counter("qp.upload.verification", "outcome", "refused")
+    private val capped = meterRegistry.counter("qp.upload.verification", "outcome", "capped")
     private val commitsByEvent = ConcurrentHashMap<UUID, LongAdder>()
     private val roomPeak = AtomicInteger()
     private val slotsPeak = AtomicInteger()
@@ -89,7 +95,7 @@ class PhotoUploadService(
     private var previousRefused = 0.0
     private var previousDurationCount = 0L
     private var previousDurationTotal = 0.0
-    @Volatile final var meanCommitSeconds = 0.0
+    @Volatile final var meanCommitSeconds = 2.0
         private set
     private val pendingCount = meterRegistry.gauge("qp.upload.direct.pending.count", AtomicLong())!!
     private val pendingBytes = meterRegistry.gauge("qp.upload.direct.pending.bytes", AtomicLong())!!
@@ -108,11 +114,11 @@ class PhotoUploadService(
         previousDurationCount = count
         previousDurationTotal = total
         val waitedCount = waited.count()
-        val refusedCount = refused.count()
+        val refusedCount = refused.count() + capped.count()
         UploadMinute(
             events.sumOf { it.second }, (waitedCount - previousWaited).toLong(),
             (refusedCount - previousRefused).toLong(), roomPeak.getAndSet(0), slotsPeak.getAndSet(0),
-            storageProperties.directUpload.verificationWaiters,
+            verificationRoomSize,
             storageProperties.directUpload.verificationConcurrency, meanCommitSeconds,
             events.sortedWith(compareByDescending<Pair<UUID, Long>> { it.second }.thenBy { it.first }).take(8),
         ).also {
@@ -129,12 +135,21 @@ class PhotoUploadService(
             val start = if (last == Long.MIN_VALUE) refusalWindowStartMillis else last
             log.info("Upload verification refused: {} refusals in the last {} s, waiting room {}/{} in use, slots {}/{} busy",
                 refusalsSinceLog.sumThenReset(), (now - start).coerceAtLeast(0) / 1000,
-                storageProperties.directUpload.verificationWaiters - verificationWaiters.availablePermits(),
-                storageProperties.directUpload.verificationWaiters,
+                verificationRoomSize - verificationWaiters.availablePermits(),
+                verificationRoomSize,
                 storageProperties.directUpload.verificationConcurrency - verificationSlots.availablePermits(),
                 storageProperties.directUpload.verificationConcurrency)
         }
     }
+
+    private fun verificationBusy(): Nothing = throw ApiException(
+        HttpStatus.TOO_MANY_REQUESTS, ErrorCodes.RATE_LIMITED,
+        "Upload verification is busy. Try again shortly.",
+        retryAfterSeconds = retryAfterSeconds(
+            verificationRoomSize - verificationWaiters.availablePermits(),
+            meanCommitSeconds, storageProperties.directUpload.verificationConcurrency,
+        ),
+    )
 
     // Deliberately NOT @Transactional: the original-object storage PUT below
     // takes long enough that it would pin a Hikari connection (pool of 10) for
@@ -598,85 +613,105 @@ class PhotoUploadService(
         }
         val (event, settings) = gate(intent.photographerId, intent.eventId)
         requireWatermark(settings, event)
-        var neededWait = false
-        val slotAcquired = if (!verificationWaiters.tryAcquire()) false else try {
-            roomPeak.accumulateAndGet(storageProperties.directUpload.verificationWaiters - verificationWaiters.availablePermits(), ::maxOf)
-            // The timed zero probe respects the fair semaphore's queued callers.
-            if (verificationSlots.tryAcquire(0, TimeUnit.MILLISECONDS)) true else {
-                neededWait = true
-                verificationSlots.tryAcquire(storageProperties.directUpload.verificationWait.toMillis(), TimeUnit.MILLISECONDS)
+        var admitted = false
+        photographerPlaces.compute(intent.photographerId) { _, current ->
+            val count = current ?: AtomicInteger()
+            if (count.get() < storageProperties.directUpload.verificationPerPhotographer) {
+                count.incrementAndGet()
+                admitted = true
             }
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            false
-        } finally {
-            verificationWaiters.release()
+            count
         }
-        if (!slotAcquired) {
-            refused.increment()
+        if (!admitted) {
+            capped.increment()
             logVerificationRefusal()
-            throw ApiException(HttpStatus.TOO_MANY_REQUESTS, ErrorCodes.RATE_LIMITED,
-                "Upload verification is busy. Try again shortly.", retryAfterSeconds = 2)
+            verificationBusy()
         }
-
-        synchronized(commitsByEvent) {
-            commitsByEvent.computeIfAbsent(intent.eventId) { LongAdder() }.increment()
-            if (neededWait) waited.increment() else immediate.increment()
-            slotsPeak.accumulateAndGet(storageProperties.directUpload.verificationConcurrency - verificationSlots.availablePermits(), ::maxOf)
-        }
-
-        val token = UUID.randomUUID()
         try {
-            val acquired = transactionTemplate.execute {
-                photoUploadIntentRepository.acquireVerification(
-                    intent.photoId,
-                    token,
-                    OffsetDateTime.now(clock).plus(storageProperties.directUpload.verificationLease),
-                    OffsetDateTime.now(clock),
-                )
-            } ?: 0
-            if (acquired != 1) return resolveUnacquired(intent)
+            var neededWait = false
+            val slotAcquired = if (!verificationWaiters.tryAcquire()) false else try {
+                roomPeak.accumulateAndGet(verificationRoomSize - verificationWaiters.availablePermits(), ::maxOf)
+                // The timed zero probe respects the fair semaphore's queued callers.
+                if (verificationSlots.tryAcquire(0, TimeUnit.MILLISECONDS)) true else {
+                    neededWait = true
+                    verificationSlots.tryAcquire(storageProperties.directUpload.verificationWait.toMillis(), TimeUnit.MILLISECONDS)
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            } finally {
+                verificationWaiters.release()
+            }
+            if (!slotAcquired) {
+                refused.increment()
+                logVerificationRefusal()
+                verificationBusy()
+            }
 
+            synchronized(commitsByEvent) {
+                commitsByEvent.computeIfAbsent(intent.eventId) { LongAdder() }.increment()
+                if (neededWait) waited.increment() else immediate.increment()
+                slotsPeak.accumulateAndGet(storageProperties.directUpload.verificationConcurrency - verificationSlots.availablePermits(), ::maxOf)
+            }
+
+            val token = UUID.randomUUID()
             try {
-                val verifiedHash = validateCandidate(intent)
-                val refreshed = gate(intent.photographerId, intent.eventId)
-                requireWatermark(refreshed.settings, refreshed.event)
-                return persistNew(
-                    intent.photoId,
-                    intent.eventId,
-                    intent.photographerId,
-                    intent.originalKey,
-                    verifiedHash,
-                    refreshed.event,
-                    intent,
-                    token,
-                    intent.originalFilename,
-                    intent.sizeBytes,
-                )
-            } catch (error: ConflictException) {
-                if (!rejectIntent(intent, token, error.code)) return resolveUnacquired(intent)
-                throw error
-            } catch (error: ApiException) {
-                if (error.code in TERMINAL_VALIDATION_CODES) {
-                    if (!rejectIntent(intent, token, error.code)) return resolveUnacquired(intent)
-                } else if (!releaseIntent(
+                val acquired = transactionTemplate.execute {
+                    photoUploadIntentRepository.acquireVerification(
+                        intent.photoId,
+                        token,
+                        OffsetDateTime.now(clock).plus(storageProperties.directUpload.verificationLease),
+                        OffsetDateTime.now(clock),
+                    )
+                } ?: 0
+                if (acquired != 1) return resolveUnacquired(intent)
+
+                try {
+                    val verifiedHash = validateCandidate(intent)
+                    val refreshed = gate(intent.photographerId, intent.eventId)
+                    requireWatermark(refreshed.settings, refreshed.event)
+                    return persistNew(
+                        intent.photoId,
+                        intent.eventId,
+                        intent.photographerId,
+                        intent.originalKey,
+                        verifiedHash,
+                        refreshed.event,
                         intent,
                         token,
-                        expireIfPutEnded = error.code == ErrorCodes.UPLOAD_OBJECT_MISSING,
-                    )) {
+                        intent.originalFilename,
+                        intent.sizeBytes,
+                    )
+                } catch (error: ConflictException) {
+                    if (!rejectIntent(intent, token, error.code)) return resolveUnacquired(intent)
+                    throw error
+                } catch (error: ApiException) {
+                    if (error.code in TERMINAL_VALIDATION_CODES) {
+                        if (!rejectIntent(intent, token, error.code)) return resolveUnacquired(intent)
+                    } else if (!releaseIntent(
+                            intent,
+                            token,
+                            expireIfPutEnded = error.code == ErrorCodes.UPLOAD_OBJECT_MISSING,
+                        )) {
+                        return resolveUnacquired(intent)
+                    }
+                    throw error
+                } catch (_: LeaseLostException) {
                     return resolveUnacquired(intent)
+                } catch (error: Exception) {
+                    if (!releaseIntent(intent, token)) return resolveUnacquired(intent)
+                    log.warn("Direct upload storage operation failed for intent {}: {}", intent.photoId, error.javaClass.simpleName)
+                    throw ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE,
+                        "Upload storage is temporarily unavailable. Try again.", retryAfterSeconds = 5)
                 }
-                throw error
-            } catch (_: LeaseLostException) {
-                return resolveUnacquired(intent)
-            } catch (error: Exception) {
-                if (!releaseIntent(intent, token)) return resolveUnacquired(intent)
-                log.warn("Direct upload storage operation failed for intent {}: {}", intent.photoId, error.javaClass.simpleName)
-                throw ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE,
-                    "Upload storage is temporarily unavailable. Try again.", retryAfterSeconds = 5)
+            } finally {
+                verificationSlots.release()
             }
         } finally {
-            verificationSlots.release()
+            // Remove and decrement under the same key lock as admission.
+            photographerPlaces.computeIfPresent(intent.photographerId) { _, count ->
+                if (count.decrementAndGet() == 0) null else count
+            }
         }
     }
 
@@ -1194,3 +1229,6 @@ class PhotoUploadService(
 
 internal fun shouldLogRefusal(lastMillis: Long, nowMillis: Long): Boolean =
     lastMillis == Long.MIN_VALUE || nowMillis - lastMillis >= 10_000
+
+internal fun retryAfterSeconds(waiters: Int, slotSeconds: Double, slots: Int): Long =
+    ceil((waiters.toDouble() + 1) * slotSeconds / slots).toLong().coerceIn(1, 15)

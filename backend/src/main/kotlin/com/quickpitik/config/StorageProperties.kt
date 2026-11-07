@@ -35,6 +35,12 @@ data class StorageProperties(
         require(directUpload.verificationConcurrency > 0) {
             "directUpload.verificationConcurrency must be positive"
         }
+        require(directUpload.verificationPerPhotographer > 0) {
+            "directUpload.verificationPerPhotographer must be positive"
+        }
+        require(directUpload.verificationWaiters >= 0) {
+            "directUpload.verificationWaiters must be zero (automatic) or positive"
+        }
         require(directUpload.verificationLease > DIRECT_OPERATION_BUDGET) {
             "directUpload.verificationLease must exceed the direct-upload operation budget"
         }
@@ -73,9 +79,10 @@ data class StorageProperties(
         val maxPendingPerUser: Int = 32,
         val maxPendingBytesPerUser: Long = 800L * 1024 * 1024,
         val verificationConcurrency: Int = 2,
+        val verificationPerPhotographer: Int = 2,
         val summaryInterval: Duration = Duration.ofMinutes(1),
         val verificationWait: Duration = Duration.ofSeconds(10),
-        val verificationWaiters: Int = 16,
+        val verificationWaiters: Int = 0,
         val verificationLease: Duration = Duration.ofMinutes(5),
         val cleanupDelay: Duration = Duration.ofHours(1),
         val cleanupInterval: Duration = Duration.ofMinutes(1),
