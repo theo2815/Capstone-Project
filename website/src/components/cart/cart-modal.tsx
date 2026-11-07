@@ -214,6 +214,14 @@ export function CartModal({
 
   useScrollLock(renderState === "open");
 
+  // Move focus into the drawer once it renders, unless it is already inside
+  // (R8 review I3: keyboard users were left on the page behind it).
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (renderState === "open" && dialog && !dialog.contains(document.activeElement)) dialog.focus({ preventScroll: true });
+  }, [renderState]);
+
   const triggerRef = useRef<Element | null>(null);
   useEffect(() => {
     if (isOpen) {
@@ -254,12 +262,14 @@ export function CartModal({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Your cart"
       aria-hidden={isClosing || undefined}
+      tabIndex={-1}
       className={cn(
-        "fixed inset-0 z-50",
+        "fixed inset-0 z-50 outline-none",
         isClosing && "pointer-events-none",
       )}
     >

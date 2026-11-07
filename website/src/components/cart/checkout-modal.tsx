@@ -148,6 +148,29 @@ export function CheckoutModal({
     await cancelPayment();
   };
 
+  // Take focus when opened and give it back on close (R8 review I3). A field
+  // inside may autofocus before this effect runs, so the opener is the last
+  // element focused outside the dialog, tracked while the modal is mounted.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const lastOutsideRef = useRef<Element | null>(null);
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      // closest(), not the ref: an autofocused field fires focusin before the ref is attached.
+      if (e.target instanceof Element && !e.target.closest("[data-checkout-dialog]")) lastOutsideRef.current = e.target;
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
+  useEffect(() => {
+    if (!isOpen) return;
+    const dialog = dialogRef.current;
+    const trigger = dialog?.contains(document.activeElement) ? lastOutsideRef.current : document.activeElement;
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus({ preventScroll: true });
+    return () => {
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus({ preventScroll: true });
+    };
+  }, [isOpen]);
+
   const handleSuccessClose = () => {
     clearCart();
     onClose();
@@ -157,10 +180,13 @@ export function CheckoutModal({
 
   return (
     <div
+      ref={dialogRef}
+      data-checkout-dialog
       role="dialog"
       aria-modal="true"
       aria-label="Checkout"
-      className="fixed inset-0 z-50"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 outline-none"
     >
       <button
         type="button"
