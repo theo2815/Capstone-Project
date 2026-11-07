@@ -8,7 +8,23 @@ import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.SellerIdType
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.admin.SellerDetailsRejectRequest
+import com.quickpitik.entity.AdminDecisionLog
+import com.quickpitik.entity.PhotographerMessage
+import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.Role
+import com.quickpitik.entity.User
+import com.quickpitik.exception.NotFoundException
+import com.quickpitik.repository.AdminDecisionLogRepository
+import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.SellerDetailsRepository
+import com.quickpitik.service.admin.AdminDecisionLogService
+import jakarta.validation.Validation
+import org.springframework.context.ApplicationEventPublisher
+import org.springframework.data.domain.PageImpl
+import java.time.Duration
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
@@ -44,6 +60,8 @@ class SellerDetailsServiceTest {
     private lateinit var userRepository: UserRepository
     private lateinit var storage: StorageService
     private lateinit var txManager: PlatformTransactionManager
+    private lateinit var decisionRepository: AdminDecisionLogRepository
+    private lateinit var messageRepository: PhotographerMessageRepository
     private val clock = Clock.fixed(Instant.parse("2026-11-07T02:00:00Z"), ZoneOffset.UTC)
     private val userId = UUID.randomUUID()
 
@@ -61,9 +79,18 @@ class SellerDetailsServiceTest {
         }
         Mockito.`when`(repository.findById(userId)).thenReturn(Optional.empty())
         Mockito.`when`(repository.save(anyArg<SellerDetails>())).thenAnswer { it.getArgument(0) }
+        decisionRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
+        Mockito.`when`(decisionRepository.save(anyArg<AdminDecisionLog>())).thenAnswer { it.getArgument(0) }
+        messageRepository = Mockito.mock(PhotographerMessageRepository::class.java)
+        Mockito.`when`(messageRepository.save(anyArg<PhotographerMessage>())).thenAnswer { it.getArgument(0) }
     }
 
-    private fun service() = SellerDetailsService(repository, userRepository, storage, TransactionTemplate(txManager), clock)
+    // The real decision-log service over mocked repositories, so tests read the rows it would write.
+    private fun service() = SellerDetailsService(
+        repository, userRepository, storage, TransactionTemplate(txManager), clock,
+        AdminDecisionLogService(decisionRepository, messageRepository, Mockito.mock(ApplicationEventPublisher::class.java)),
+        StorageProperties(),
+    )
 
     private fun jpeg(width: Int = 64, height: Int = 48): ByteArray = ByteArrayOutputStream().use {
         check(ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "jpg", it))
@@ -341,5 +368,181 @@ class SellerDetailsServiceTest {
         assertEquals(setOf("SellerDetailsService.kt", "SecurityConfig.kt"), mentions.toSet())
         val service = main.resolve("com/quickpitik/service/photographer/SellerDetailsService.kt").readText()
         assertFalse("com.quickpitik.service.ai" in service)
+    }
+
+    // ─── SC-1b: admin review ─────────────────────────────────────────────
+
+    private val adminId = UUID.randomUUID()
+
+    private fun withRecord(status: SellerDetailsStatus = SellerDetailsStatus.SUBMITTED, birForm: Boolean = true): SellerDetails {
+        val row = existing(status).apply {
+            if (status != SellerDetailsStatus.REJECTED) rejectionReason = null
+            if (!birForm) birFormKey = null
+        }
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(row))
+        Mockito.`when`(userRepository.findById(userId)).thenReturn(
+            Optional.of(User(id = userId, email = "seller@test.local", passwordHash = "unused", name = "S", role = Role.PHOTOGRAPHER)),
+        )
+        // doAnswer: re-stubbing with when() would run the previous answer with null arguments.
+        Mockito.doAnswer {
+            "https://signed.example/${it.getArgument<String>(0)}?ttl=${it.getArgument<Duration>(1).seconds}&name=${it.getArgument<String>(2)}"
+        }.`when`(storage).presignedDownloadUrl(anyArg(), anyArg(), anyArg())
+        return row
+    }
+
+    private fun decisions(): List<AdminDecisionLog> = Mockito.mockingDetails(decisionRepository).invocations
+        .filter { it.method.name == "save" }.map { it.arguments[0] as AdminDecisionLog }
+
+    private fun messages(): List<PhotographerMessage> = Mockito.mockingDetails(messageRepository).invocations
+        .filter { it.method.name == "save" }.map { it.arguments[0] as PhotographerMessage }
+
+    // 1
+    @Test
+    fun `the admin view makes a 5-minute download link for each present file and writes one seller_details_viewed row naming the files, with no link or key in reason or meta`() {
+        val row = withRecord(birForm = false)
+
+        val dto = service().adminView(adminId, userId)
+
+        val files = checkNotNull(dto.files)
+        listOf(files.idFront, files.idBack, files.selfie).forEach { assertTrue("ttl=300&" in it!!, it) }
+        assertEquals("https://signed.example/${row.idFrontKey}?ttl=300&name=id_front.jpg", files.idFront)
+        assertEquals("https://signed.example/${row.selfieKey}?ttl=300&name=selfie.jpg", files.selfie)
+        assertNull(files.birForm)
+        assertEquals(OffsetDateTime.now(clock).plusMinutes(5), dto.linksExpireAt)
+        assertEquals("seller@test.local", dto.email)
+        assertEquals(4L, dto.revision)
+
+        val logged = decisions().single()
+        assertEquals("seller_details_viewed", logged.decision)
+        assertEquals(adminId, logged.adminId)
+        assertEquals(userId, logged.targetUserId)
+        assertNull(logged.reason)
+        assertEquals(mapOf("files" to listOf("id_front", "id_back", "selfie"), "revision" to 4L), logged.meta)
+        assertFalse("seller-details/" in logged.meta.toString() || "http" in logged.meta.toString())
+        assertTrue(messages().isEmpty())
+    }
+
+    @Test
+    fun `the admin view of a photographer with no record answers 404 and logs nothing`() {
+        assertFailsWith<NotFoundException> { service().adminView(adminId, userId) }
+        assertTrue(decisions().isEmpty())
+    }
+
+    // 2
+    @Test
+    fun `the admin list has no links, and puts submitted first, oldest first`() {
+        val row = withRecord()
+        Mockito.`when`(repository.findForAdmin(Mockito.eq(SellerDetailsStatus.SUBMITTED) ?: SellerDetailsStatus.SUBMITTED, anyArg()))
+            .thenReturn(PageImpl(listOf(row)))
+        val user = userRepository.findById(userId).get()
+        Mockito.`when`(userRepository.findAllById(listOf(userId))).thenReturn(listOf(user))
+
+        val page = service().adminList("submitted", PaginationParams.of(0, 20))
+
+        assertEquals(1L, page.total)
+        val item = page.items.single()
+        assertEquals("seller@test.local", item.email)
+        assertEquals("submitted", item.status)
+        assertEquals("philsys", item.idType)
+        assertFalse("seller-details/" in page.toString() || "http" in page.toString())
+        Mockito.verify(storage, Mockito.never()).presignedDownloadUrl(anyArg(), anyArg(), anyArg())
+        assertTrue(decisions().isEmpty())
+        val names = com.quickpitik.dto.admin.AdminSellerDetailsRowDto::class.java.declaredFields.map { it.name.lowercase() }
+        assertTrue(names.none { "key" in it || "url" in it || "link" in it || "file" in it }, names.toString())
+    }
+
+    @Test
+    fun `the admin list refuses an unknown status filter`() {
+        val error = assertFailsWith<ValidationException> { service().adminList("missing", PaginationParams.of(0, 20)) }
+        assertEquals("status", error.field)
+    }
+
+    // 3
+    @Test
+    fun `approve needs SUBMITTED and the current revision, a stale revision answers 409 and changes nothing`() {
+        val row = withRecord()
+        val stale = assertFailsWith<ApiException> { service().approve(adminId, userId, 3) }
+        assertEquals(HttpStatus.CONFLICT, stale.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, stale.code)
+        assertEquals("Seller details have changed. Reload before deciding.", stale.message)
+        assertEquals(SellerDetailsStatus.SUBMITTED, row.status)
+        Mockito.verify(repository, Mockito.never()).save(anyArg<SellerDetails>())
+        assertTrue(decisions().isEmpty())
+
+        val dto = service().approve(adminId, userId, 4)
+
+        Mockito.verify(userRepository, Mockito.times(2)).lockById(userId) // the stale try and this one
+        assertEquals("approved", dto.status)
+        assertNull(dto.files)
+        assertEquals(SellerDetailsStatus.APPROVED, row.status)
+        assertEquals(adminId, row.reviewedBy)
+        assertEquals(OffsetDateTime.now(clock), row.reviewedAt)
+        assertEquals(4L, row.revision)
+        val logged = decisions().single()
+        assertEquals("seller_details_approved", logged.decision)
+        assertEquals(mapOf("revision" to 4L), logged.meta)
+        assertTrue(messages().isEmpty())
+
+        for (status in listOf(SellerDetailsStatus.APPROVED, SellerDetailsStatus.REJECTED)) {
+            withRecord(status)
+            val wrong = assertFailsWith<ApiException> { service().approve(adminId, userId, 4) }
+            assertEquals(HttpStatus.CONFLICT, wrong.status)
+        }
+    }
+
+    // 4
+    @Test
+    fun `reject works from SUBMITTED or APPROVED, needs a reason and the current revision, stores the reason, and sends an ADMIN_MESSAGE with it`() {
+        for (from in listOf(SellerDetailsStatus.SUBMITTED, SellerDetailsStatus.APPROVED)) {
+            Mockito.clearInvocations(decisionRepository, messageRepository)
+            val row = withRecord(from)
+
+            val dto = service().reject(adminId, userId, 4, "  The selfie does not show the ID.  ")
+
+            assertEquals("rejected", dto.status)
+            assertEquals(SellerDetailsStatus.REJECTED, row.status)
+            assertEquals("The selfie does not show the ID.", row.rejectionReason)
+            assertEquals(adminId, row.reviewedBy)
+            val logged = decisions().single()
+            assertEquals("seller_details_rejected", logged.decision)
+            assertEquals("The selfie does not show the ID.", logged.reason)
+            assertEquals(mapOf("revision" to 4L), logged.meta)
+            val message = messages().single()
+            assertEquals(userId, message.photographerId)
+            assertEquals(PhotographerMessageKind.ADMIN_MESSAGE.wire, message.kindWire)
+            assertEquals("Seller details not accepted", message.title)
+            assertEquals(
+                "Your seller details were not accepted. Reason: The selfie does not show the ID. New uploads are paused " +
+                    "until you send them again in your photographer settings on quickpitik.com.",
+                message.body,
+            )
+            assertEquals(adminId, message.sourceAdminId)
+            assertEquals(logged.id, message.sourceDecisionId)
+        }
+
+        withRecord(SellerDetailsStatus.REJECTED)
+        assertEquals(HttpStatus.CONFLICT, assertFailsWith<ApiException> { service().reject(adminId, userId, 4, "again") }.status)
+        withRecord()
+        assertEquals(HttpStatus.CONFLICT, assertFailsWith<ApiException> { service().reject(adminId, userId, 5, "stale") }.status)
+
+        val validator = Validation.buildDefaultValidatorFactory().validator
+        assertFalse(validator.validate(SellerDetailsRejectRequest(revision = 4, reason = "   ")).isEmpty())
+        assertFalse(validator.validate(SellerDetailsRejectRequest(revision = 4, reason = "x".repeat(501))).isEmpty())
+        assertFalse(validator.validate(SellerDetailsRejectRequest(revision = null, reason = "ok")).isEmpty())
+        assertTrue(validator.validate(SellerDetailsRejectRequest(revision = 4, reason = "ok")).isEmpty())
+    }
+
+    // 5
+    @Test
+    fun `after a reject the upload gate refuses, after a resubmission it passes`() {
+        val row = withRecord()
+        service().reject(adminId, userId, 4, "blurry")
+        assertTrue(row.status == SellerDetailsStatus.REJECTED, "the gate (existsByUserIdAndStatusNot REJECTED) refuses this row")
+
+        service().submit(userId, form())
+
+        assertEquals(SellerDetailsStatus.SUBMITTED, row.status, "the gate passes a SUBMITTED row")
+        assertEquals(5L, row.revision)
+        assertNull(row.rejectionReason)
     }
 }

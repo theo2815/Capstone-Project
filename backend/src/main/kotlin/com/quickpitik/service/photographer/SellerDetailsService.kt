@@ -1,16 +1,28 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.admin.AdminSellerDetailsDto
+import com.quickpitik.dto.admin.AdminSellerDetailsRowDto
+import com.quickpitik.dto.admin.SellerDetailsFilesDto
+import com.quickpitik.dto.admin.toAdminDto
+import com.quickpitik.dto.admin.toAdminRowDto
 import com.quickpitik.dto.photographer.SellerDetailsDto
 import com.quickpitik.dto.photographer.SellerDetailsForm
 import com.quickpitik.dto.photographer.toDto
+import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.SellerDetails
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.SellerIdType
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.image.ExifOrientation
 import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
@@ -18,6 +30,7 @@ import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
 import java.awt.RenderingHints
@@ -43,6 +56,8 @@ class SellerDetailsService(
     private val storageService: StorageService,
     private val transactionTemplate: TransactionTemplate,
     private val clock: Clock,
+    private val adminDecisionLogService: AdminDecisionLogService,
+    private val storageProperties: StorageProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -112,6 +127,99 @@ class SellerDetailsService(
         }
         oldKeys.forEach(::deleteQuietly)
         return saved.toDto()
+    }
+
+    /** E3: the review queue, waiting records first. No links: an admin opens files one record at a time. */
+    @Transactional(readOnly = true)
+    fun adminList(status: String?, params: PaginationParams): PaginatedResponse<AdminSellerDetailsRowDto> {
+        val filter = status?.let { wire ->
+            SellerDetailsStatus.entries.firstOrNull { it.toWire() == wire }
+                ?: throw ValidationException("status must be submitted, approved or rejected.", field = "status")
+        }
+        val page = sellerDetailsRepository.findForAdmin(filter, OffsetLimitPageable(params))
+        val emails = userRepository.findAllById(page.content.map { it.userId }).associate { it.id to it.email }
+        return PaginatedResponse.of(page.content.map { it.toAdminRowDto(emails[it.userId].orEmpty()) }, page.totalElements, params)
+    }
+
+    /** E4: one record with 5-minute file links; every view is logged (which files, never the links). */
+    @Transactional
+    fun adminView(adminId: UUID, userId: UUID): AdminSellerDetailsDto {
+        val row = find(userId)
+        val ttl = storageProperties.presignedTtl.photographerDownload
+        // Presigning is local signing (no storage call), so it may run inside the transaction.
+        fun link(key: String?, part: String) = key?.let { storageService.presignedDownloadUrl(it, ttl, "$part.jpg") }
+        val files = SellerDetailsFilesDto(
+            idFront = link(row.idFrontKey, "id_front")!!,
+            idBack = link(row.idBackKey, "id_back"),
+            selfie = link(row.selfieKey, "selfie")!!,
+            birForm = link(row.birFormKey, "bir_form"),
+        )
+        val present = listOfNotNull("id_front", "id_back".takeIf { row.idBackKey != null }, "selfie", "bir_form".takeIf { row.birFormKey != null })
+        adminDecisionLogService.logUserDecision(
+            adminId = adminId, targetUserId = userId, decision = "seller_details_viewed",
+            meta = mapOf("files" to present, "revision" to row.revision),
+        )
+        return row.toAdminDto(email(userId), files, OffsetDateTime.now(clock).plus(ttl))
+    }
+
+    /** E5: only a SUBMITTED record at the revision the admin opened. */
+    @Transactional
+    fun approve(adminId: UUID, userId: UUID, revision: Long): AdminSellerDetailsDto {
+        val row = decide(userId, revision, SellerDetailsStatus.SUBMITTED)
+        row.status = SellerDetailsStatus.APPROVED
+        row.reviewedAt = OffsetDateTime.now(clock)
+        row.reviewedBy = adminId
+        sellerDetailsRepository.save(row)
+        adminDecisionLogService.logUserDecision(
+            adminId = adminId, targetUserId = userId, decision = "seller_details_approved", meta = mapOf("revision" to revision),
+        )
+        return row.toAdminDto(email(userId))
+    }
+
+    /** E6: from SUBMITTED, or APPROVED (a fake found later); pauses uploads and tells the photographer why. */
+    @Transactional
+    fun reject(adminId: UUID, userId: UUID, revision: Long, reason: String): AdminSellerDetailsDto {
+        val row = decide(userId, revision, SellerDetailsStatus.SUBMITTED, SellerDetailsStatus.APPROVED)
+        val trimmed = reason.trim()
+        row.status = SellerDetailsStatus.REJECTED
+        row.rejectionReason = trimmed
+        row.reviewedAt = OffsetDateTime.now(clock)
+        row.reviewedBy = adminId
+        sellerDetailsRepository.save(row)
+        val decision = adminDecisionLogService.logUserDecision(
+            adminId = adminId, targetUserId = userId, decision = "seller_details_rejected",
+            reason = trimmed, meta = mapOf("revision" to revision),
+        )
+        adminDecisionLogService.pushMessage(
+            photographerId = userId,
+            kind = PhotographerMessageKind.ADMIN_MESSAGE,
+            title = "Seller details not accepted",
+            body = "Your seller details were not accepted. Reason: ${trimmed.trimEnd('.')}. New uploads are paused until you send them " +
+                "again in your photographer settings on quickpitik.com.",
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+        )
+        return row.toAdminDto(email(userId))
+    }
+
+    private fun find(userId: UUID): SellerDetails = sellerDetailsRepository.findById(userId)
+        .orElseThrow { NotFoundException("Seller details not found", ErrorCodes.NOT_FOUND) }
+
+    private fun email(userId: UUID): String = userRepository.findById(userId).map { it.email }.orElse("")
+
+    /** Locks the user row (as submit does), so a resubmission and a decision never interleave. */
+    private fun decide(userId: UUID, revision: Long, vararg allowed: SellerDetailsStatus): SellerDetails {
+        userRepository.lockById(userId)
+        val row = find(userId)
+        if (row.status !in allowed) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "Seller details are ${row.status.toWire()} and cannot be decided this way.")
+        }
+        if (row.revision != revision) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "Seller details have changed. Reload before deciding.", field = "revision")
+        }
+        return row
     }
 
     private fun deleteQuietly(key: String) {
