@@ -94,6 +94,7 @@ class PhotoIndexingService(
         val bibs: Map<String, BigDecimal> = emptyMap(),
         val error: String? = null,
         val facesUnresolved: Boolean = false,
+        val facesThrottled: Boolean = false,
     )
 
     private fun runInference(photo: Photo, claim: PhotoWorkClaim): InferenceOutcome {
@@ -134,6 +135,7 @@ class PhotoIndexingService(
         var facesOk = false
         var facesTransport = false
         var facesUnresolved = false
+        var facesThrottled = false
         // A face write may start only while the claim is current, so its call deadline bounds when it ended.
         if (!workFence.isCurrent(claim)) {
             log.warn("Indexing {}: work claim ended before enrollment; nothing written, left for the sweep", photo.id)
@@ -160,7 +162,10 @@ class PhotoIndexingService(
                 log.warn("Face enroll failed for photo {}: {}", photo.id, ex.message)
                 error = "faces: ${ex.message}"
                 facesTransport = ex.isRetryable
-                facesUnresolved = ex.isRetryable
+                // AWS refused the call, so nothing was written: release the claim
+                // and let the sweep re-drive it instead of waiting out the settle window.
+                facesThrottled = ex.aiCode == "THROTTLED"
+                facesUnresolved = ex.isRetryable && !facesThrottled
             }
         } catch (ex: Exception) {
             log.warn("Face enroll failed for photo {}: {}", photo.id, ex.message)
@@ -200,6 +205,7 @@ class PhotoIndexingService(
             bibs = bibs,
             error = error,
             facesUnresolved = facesUnresolved,
+            facesThrottled = facesThrottled,
         )
     }
 
@@ -250,7 +256,13 @@ class PhotoIndexingService(
             return
         }
 
-        photo.indexingAttempts += 1
+        // A busy minute at AWS is not a bad photo: the PARTIAL (bibs kept) is re-driven by the sweep.
+        // (Throttled faces with transport-failed bibs already went back to PENDING above.)
+        if (outcome.facesThrottled && outcome.bibsOk) {
+            log.warn("Indexing {}: AWS throttled the face call; attempt not consumed", photoId)
+        } else {
+            photo.indexingAttempts += 1
+        }
         photo.facePersons.clear()
         photo.bibs.clear()
         outcome.personId?.let {
