@@ -46,9 +46,12 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.LongAdder
 import kotlin.random.Random
 
 @Service
@@ -73,9 +76,65 @@ class PhotoUploadService(
     private val log = LoggerFactory.getLogger(javaClass)
     private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency, true)
     private val verificationWaiters = Semaphore(storageProperties.directUpload.verificationWaiters)
+    private val immediate = meterRegistry.counter("qp.upload.verification", "outcome", "immediate")
+    private val waited = meterRegistry.counter("qp.upload.verification", "outcome", "waited")
+    private val refused = meterRegistry.counter("qp.upload.verification", "outcome", "refused")
+    private val commitsByEvent = ConcurrentHashMap<UUID, LongAdder>()
+    private val roomPeak = AtomicInteger()
+    private val slotsPeak = AtomicInteger()
+    private val lastRefusalLogMillis = AtomicLong(Long.MIN_VALUE)
+    private val refusalsSinceLog = LongAdder()
+    private val refusalWindowStartMillis = clock.millis()
+    private var previousWaited = 0.0
+    private var previousRefused = 0.0
+    private var previousDurationCount = 0L
+    private var previousDurationTotal = 0.0
+    @Volatile final var meanCommitSeconds = 0.0
+        private set
     private val pendingCount = meterRegistry.gauge("qp.upload.direct.pending.count", AtomicLong())!!
     private val pendingBytes = meterRegistry.gauge("qp.upload.direct.pending.bytes", AtomicLong())!!
     private val oldestPendingAge = meterRegistry.gauge("qp.upload.direct.pending.oldest.age", AtomicLong())!!
+
+    fun drainMinute(): UploadMinute = synchronized(commitsByEvent) {
+        val events = commitsByEvent.map { it.key to it.value.sum() }
+        commitsByEvent.clear()
+        // shortcut: this timer includes waits and multipart; isolate slot timing before capacity estimates.
+        val timer = meterRegistry.find("qp.upload.duration").timer()
+        val count = timer?.count() ?: 0L
+        val total = timer?.totalTime(TimeUnit.SECONDS) ?: 0.0
+        if (count > previousDurationCount) {
+            meanCommitSeconds = (total - previousDurationTotal) / (count - previousDurationCount)
+        }
+        previousDurationCount = count
+        previousDurationTotal = total
+        val waitedCount = waited.count()
+        val refusedCount = refused.count()
+        UploadMinute(
+            events.sumOf { it.second }, (waitedCount - previousWaited).toLong(),
+            (refusedCount - previousRefused).toLong(), roomPeak.getAndSet(0), slotsPeak.getAndSet(0),
+            storageProperties.directUpload.verificationWaiters,
+            storageProperties.directUpload.verificationConcurrency, meanCommitSeconds,
+            events.sortedWith(compareByDescending<Pair<UUID, Long>> { it.second }.thenBy { it.first }).take(8),
+        ).also {
+            previousWaited = waitedCount
+            previousRefused = refusedCount
+        }
+    }
+
+    private fun logVerificationRefusal() {
+        refusalsSinceLog.increment()
+        val now = clock.millis()
+        val last = lastRefusalLogMillis.get()
+        if (shouldLogRefusal(last, now) && lastRefusalLogMillis.compareAndSet(last, now)) {
+            val start = if (last == Long.MIN_VALUE) refusalWindowStartMillis else last
+            log.info("Upload verification refused: {} refusals in the last {} s, waiting room {}/{} in use, slots {}/{} busy",
+                refusalsSinceLog.sumThenReset(), (now - start).coerceAtLeast(0) / 1000,
+                storageProperties.directUpload.verificationWaiters - verificationWaiters.availablePermits(),
+                storageProperties.directUpload.verificationWaiters,
+                storageProperties.directUpload.verificationConcurrency - verificationSlots.availablePermits(),
+                storageProperties.directUpload.verificationConcurrency)
+        }
+    }
 
     // Deliberately NOT @Transactional: the original-object storage PUT below
     // takes long enough that it would pin a Hikari connection (pool of 10) for
@@ -539,8 +598,14 @@ class PhotoUploadService(
         }
         val (event, settings) = gate(intent.photographerId, intent.eventId)
         requireWatermark(settings, event)
+        var neededWait = false
         val slotAcquired = if (!verificationWaiters.tryAcquire()) false else try {
-            verificationSlots.tryAcquire(storageProperties.directUpload.verificationWait.toMillis(), TimeUnit.MILLISECONDS)
+            roomPeak.accumulateAndGet(storageProperties.directUpload.verificationWaiters - verificationWaiters.availablePermits(), ::maxOf)
+            // The timed zero probe respects the fair semaphore's queued callers.
+            if (verificationSlots.tryAcquire(0, TimeUnit.MILLISECONDS)) true else {
+                neededWait = true
+                verificationSlots.tryAcquire(storageProperties.directUpload.verificationWait.toMillis(), TimeUnit.MILLISECONDS)
+            }
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
             false
@@ -548,8 +613,16 @@ class PhotoUploadService(
             verificationWaiters.release()
         }
         if (!slotAcquired) {
+            refused.increment()
+            logVerificationRefusal()
             throw ApiException(HttpStatus.TOO_MANY_REQUESTS, ErrorCodes.RATE_LIMITED,
                 "Upload verification is busy. Try again shortly.", retryAfterSeconds = 2)
+        }
+
+        synchronized(commitsByEvent) {
+            commitsByEvent.computeIfAbsent(intent.eventId) { LongAdder() }.increment()
+            if (neededWait) waited.increment() else immediate.increment()
+            slotsPeak.accumulateAndGet(storageProperties.directUpload.verificationConcurrency - verificationSlots.availablePermits(), ::maxOf)
         }
 
         val token = UUID.randomUUID()
@@ -1118,3 +1191,6 @@ class PhotoUploadService(
 
     private class LeaseLostException : RuntimeException()
 }
+
+internal fun shouldLogRefusal(lastMillis: Long, nowMillis: Long): Boolean =
+    lastMillis == Long.MIN_VALUE || nowMillis - lastMillis >= 10_000

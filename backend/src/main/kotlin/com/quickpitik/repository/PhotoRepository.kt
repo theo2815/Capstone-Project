@@ -314,6 +314,18 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("statuses") statuses: Collection<IndexingStatus>,
     ): Int
 
+    @Query("SELECT MIN(p.uploadedAt) FROM Photo p " +
+        "WHERE p.status = com.quickpitik.entity.PhotoStatus.PROCESSING " +
+        "AND p.deletedAt IS NULL AND p.deletionStartedAt IS NULL " +
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE")
+    fun findOldestProcessingUpload(): OffsetDateTime?
+
+    @Query("SELECT MIN(p.uploadedAt) FROM Photo p " +
+        "WHERE p.indexingStatus = com.quickpitik.entity.IndexingStatus.PENDING " +
+        "AND p.deletedAt IS NULL AND p.deletionStartedAt IS NULL " +
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE")
+    fun findOldestPendingIndexingUpload(): OffsetDateTime?
+
     // Async-watermark reconcile sweep (V36): PROCESSING rows the AFTER_COMMIT
     // hot path missed (app crash, storage outage), oldest first. Mirrors
     // findIndexingBacklog.
