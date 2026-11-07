@@ -328,7 +328,7 @@ it.each(["EVENT_NOT_UPLOADABLE", "PHOTOGRAPHER_NOT_VERIFIED", "ACCOUNT_SUSPENDED
     await act(async () => { pending.get("gate-0.jpg")!.reject(new ApiError([{ code, message: "Upload access changed" }], code === "ACCOUNT_SUSPENDED" ? 403 : 422)); });
     expect(upload).toHaveBeenCalledTimes(4);
     expect([...pending.values()].slice(1).every(({ signal }) => signal.aborted)).toBe(true);
-    expect(screen.getByRole("alert")).toHaveTextContent("Upload access changed");
+    expect(screen.getByRole("alert")).toHaveTextContent("Upload access changed Resolve access to this event or account, then resume uploads.");
     expect(screen.getByText("gate-4.jpg")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /resume uploads/i }));
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(8));
@@ -342,9 +342,11 @@ it("pauses the batch on SELLER_DETAILS_REQUIRED and links to the seller details 
   const files = Array.from({ length: 5 }, (_, index) => new File([`${index}`], `seller-${index}.jpg`, { type: "image/jpeg" }));
   fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(4));
-  await act(async () => { pending.get("seller-0.jpg")!(new ApiError([{ code: "SELLER_DETAILS_REQUIRED", message: "Before you can upload, add your ID." }], 403)); });
+  const serverMessage = "Before you can upload, add your ID, address and phone number in your photographer settings on quickpitik.com.";
+  await act(async () => { pending.get("seller-0.jpg")!(new ApiError([{ code: "SELLER_DETAILS_REQUIRED", message: serverMessage }], 403)); });
   expect(upload).toHaveBeenCalledTimes(4);
-  expect(screen.getByRole("alert")).toHaveTextContent("Before you can upload, add your ID.");
+  expect(screen.getByText(serverMessage)).toBeInTheDocument();
+  expect(screen.getByRole("alert")).not.toHaveTextContent("Resolve access");
   expect(screen.getByText("seller-4.jpg")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Add your seller details" })).toHaveAttribute("href", "/dashboard/settings#seller-details");
 });

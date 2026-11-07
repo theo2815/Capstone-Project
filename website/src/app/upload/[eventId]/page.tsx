@@ -994,7 +994,11 @@ function UploadForm({
 
       {entries.length > 0 && gateError && (
         <div role="alert" className="mb-6 rounded-xl border border-error/40 bg-error/5 px-5 py-4 text-sm text-ink">
-          <p>{gateError.message} Resolve access to this event or account, then resume uploads.</p>
+          <p>
+            {gateError.message}
+            {/* The seller-details message already says what to do; the link below covers it. */}
+            {gateError.code !== "SELLER_DETAILS_REQUIRED" && " Resolve access to this event or account, then resume uploads."}
+          </p>
           {gateError.code === "SELLER_DETAILS_REQUIRED" && (
             <Link href={`${ROUTES.DASHBOARD_SETTINGS}#seller-details`} className="mt-2 mr-4 inline-block underline underline-offset-4">
               Add your seller details
