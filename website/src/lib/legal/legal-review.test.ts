@@ -61,6 +61,13 @@ describe("approved text (PT-0b)", () => {
     expect(FACE_NOTICE_VERSION).toBe(2);
   });
 
+  // The same notice sits on the profile library, which serves every event
+  // (privacy browser pass finding 2, 2026-11-07); a clarification, so still v2.
+  it("names no single event, so it reads right on the profile library too", () => {
+    expect(LEGAL_COPY.faceNotice).toContain("with faces in the photos of the event you search.");
+    expect(LEGAL_COPY.faceNotice).not.toContain("this event's photos");
+  });
+
   it.each([
     ["privacy", "how-we-use-it", "Sections 12 and 13"],
     ["privacy", "face-matching", "You can object"],
