@@ -2,16 +2,15 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell/slab";
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { FieldError } from "@/components/ui/field-error";
 import { Skeleton } from "@/components/ui/skeleton";
-import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import { useSellerDetails } from "@/hooks/use-seller-details";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import {
-  getSellerDetails,
   isValidPhone,
   SELLER_FILE_MAX_BYTES,
   SELLER_FILE_TYPES,
@@ -36,14 +35,8 @@ const idLabel = (value?: string | null) => SELLER_ID_TYPES.find((t) => t.value =
 // Settings section 09 (SC-2a): the photographer's seller details, which the
 // backend needs before new uploads (SELLER_DETAILS_REQUIRED).
 export function SellerDetailsSlab() {
-  const session = usePrivateQuerySession("PHOTOGRAPHER");
   const queryClient = useQueryClient();
-  const queryKey = ["photographer", "seller-details", ...session.key];
-  const query = useQuery({
-    queryKey,
-    queryFn: ({ signal }) => getSellerDetails(signal),
-    enabled: session.enabled,
-  });
+  const { query, queryKey } = useSellerDetails();
   const [resending, setResending] = useState(false);
   const details = query.data;
   const onFile = details?.status === "submitted" || details?.status === "approved";

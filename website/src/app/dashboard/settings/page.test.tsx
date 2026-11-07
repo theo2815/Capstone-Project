@@ -733,3 +733,27 @@ it("ignores an old verification withdrawal after account switching", async () =>
   expect(usePhotographerSettingsStore.getState().verificationStatus).toBe("approved");
   expect(mocks.toast).not.toHaveBeenCalled();
 });
+
+function mockSellerStatus(status: string) {
+  vi.spyOn(api, "get").mockImplementation((path) =>
+    path.endsWith("/seller-details") ? Promise.resolve({ status }) : new Promise(() => {}));
+}
+
+it.each([
+  ["missing", "Verified · uploads paused until you add your seller details"],
+  ["rejected", "Verified · uploads paused until you send your seller details again"],
+])("does not say uploads are enabled when verified but seller details are %s", async (status, text) => {
+  mockSellerStatus(status);
+  render(<SettingsPage />);
+  expect(await screen.findByRole("link", { name: text })).toHaveAttribute("href", "/dashboard/settings#seller-details");
+  expect(screen.queryByText("Verified · uploads enabled")).toBeNull();
+});
+
+it.each(["submitted", "approved"])("keeps 'uploads enabled' when verified and seller details are %s", async (status) => {
+  mockSellerStatus(status);
+  render(<SettingsPage />);
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith("/me/photographer/seller-details", expect.anything()));
+  await screen.findByText(status === "approved" ? "Approved" : "We're checking your details. You can upload meanwhile.");
+  expect(screen.getByText("Verified · uploads enabled")).toBeInTheDocument();
+  expect(screen.queryByText(/uploads paused/)).toBeNull();
+});

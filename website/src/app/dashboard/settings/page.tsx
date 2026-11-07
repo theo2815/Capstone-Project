@@ -22,6 +22,7 @@ import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
 import { SellerDetailsSlab } from "@/components/dashboard/seller-details-slab";
+import { useSellerDetails } from "@/hooks/use-seller-details";
 import { CharCounter } from "@/components/ui/char-counter";
 import { RegionProvinceFields } from "@/components/ui/region-province-fields";
 import { FieldError } from "@/components/ui/field-error";
@@ -1273,6 +1274,7 @@ function useAllRequiredFilled(): boolean {
 function VerificationStatusPanel() {
   const { editing, canEdit, beginEdit } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
+  const sellerStatus = useSellerDetails().query.data?.status;
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
   );
@@ -1333,14 +1335,23 @@ function VerificationStatusPanel() {
   }
 
   if (status === "approved") {
+    // The upload gate also refuses missing or rejected seller details (SELLER_DETAILS_REQUIRED).
+    const paused = sellerStatus === "missing" || sellerStatus === "rejected";
     return (
       <div className="border border-line rounded-2xl px-5 py-4 bg-bone-deep/30 flex items-center gap-3 mb-8">
         <span
           aria-hidden="true"
-          className="size-1.5 rounded-full bg-fresh shrink-0"
+          className={cn("size-1.5 rounded-full shrink-0", paused ? "bg-warning" : "bg-fresh")}
         />
         <Kicker as="p">
-          Verified · uploads enabled
+          {paused ? (
+            <Link href={`${ROUTES.DASHBOARD_SETTINGS}#seller-details`} className="underline underline-offset-4 hover:text-ink">
+              Verified · uploads paused until you{" "}
+              {sellerStatus === "missing" ? "add your seller details" : "send your seller details again"}
+            </Link>
+          ) : (
+            "Verified · uploads enabled"
+          )}
         </Kicker>
       </div>
     );
