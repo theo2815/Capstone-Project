@@ -27,7 +27,8 @@ sealed class SellerDetailsCard {
 
 internal fun sellerDetailsCard(status: String?, reason: String?): SellerDetailsCard? = when (status) {
     "missing" -> SellerDetailsCard.Missing
-    "rejected" -> SellerDetailsCard.Rejected(reason)
+    // The card adds its own ". " after the reason, so an admin's trailing period would double it.
+    "rejected" -> SellerDetailsCard.Rejected(reason?.trim()?.trimEnd('.')?.trim()?.ifEmpty { null })
     else -> null
 }
 
