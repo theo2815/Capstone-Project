@@ -437,6 +437,41 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `admin seller details routes are admin only`() {
+        val root = "/api/v1/admin/seller-details"
+        val (_, sellerId) = registerPhotographerWithId()
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', 'SUBMITTED', 1, now())",
+            sellerId, "seller-details/$sellerId/${UUID.randomUUID()}.jpg", "seller-details/$sellerId/${UUID.randomUUID()}.jpg",
+        )
+        val approve = """{"revision":1}"""
+        val reject = """{"revision":1,"reason":"blurry"}"""
+        for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+            val expected = if (token == null) 401 else 403
+            assertEquals(expected, get(root, token).statusCode())
+            assertEquals(expected, get("$root/$sellerId", token).statusCode())
+            assertEquals(expected, post("$root/$sellerId/approve", approve, token).statusCode())
+            assertEquals(expected, post("$root/$sellerId/reject", reject, token).statusCode())
+        }
+
+        val admin = adminToken()
+        val list = get("$root?status=submitted", admin)
+        assertEquals(200, list.statusCode())
+        assertTrue(sellerId.toString() in list.body())
+        assertFalse("seller-details/" in list.body(), "E3 must never carry a storage key")
+        val view = get("$root/$sellerId", admin)
+        assertEquals(200, view.statusCode())
+        assertTrue("no-store" in view.headers().firstValue("Cache-Control").orElse(""))
+        assertTrue(json.readTree(view.body()).path("data").path("files").path("idFront").asText().isNotBlank())
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM admin_decision_log WHERE target_user_id = ? AND decision = 'seller_details_viewed'", Int::class.java, sellerId,
+        ))
+        assertEquals(400, post("$root/$sellerId/reject", """{"revision":1,"reason":"  "}""", admin).statusCode())
+        assertEquals(404, get("$root/${UUID.randomUUID()}", admin).statusCode())
+    }
+
+    @Test
     fun `a known seller-details storage key is never served from local storage`() {
         val key = "seller-details/${UUID.randomUUID()}/${UUID.randomUUID()}.jpg"
         val path = Path.of("build/test-storage", key)

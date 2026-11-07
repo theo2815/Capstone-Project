@@ -1,5 +1,7 @@
 package com.quickpitik.support
 
+import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.repository.SellerDetailsRepository
 import org.junit.jupiter.api.Test
@@ -72,5 +74,30 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
         assertTrue(gate(approved))
         assertFalse(gate(rejected))
         assertFalse(gate(none))
+    }
+
+    @Test
+    fun `the admin queue lists submitted records first, oldest first, and filters by status`() {
+        fun record(status: String, submittedAt: String, reason: String? = null) = photographer().also {
+            jdbc.update(
+                "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, " +
+                    "status, rejection_reason, revision, submitted_at) VALUES (?, 'Q', 'PASSPORT', 'k/f', 'k/s', 'Cebu', '09171234567', ?, ?, 1, ?::timestamptz)",
+                it, status, reason, submittedAt,
+            )
+        }
+        val approvedOld = record("APPROVED", "2020-01-01T00:00:00Z")
+        val submittedNew = record("SUBMITTED", "2020-01-03T00:00:00Z")
+        val submittedOld = record("SUBMITTED", "2020-01-02T00:00:00Z")
+        val rejected = record("REJECTED", "2020-01-04T00:00:00Z", "blurry")
+        val mine = setOf(approvedOld, submittedNew, submittedOld, rejected)
+        val all = repository.findForAdmin(null, OffsetLimitPageable(PaginationParams.of(0, 200))).content.map { it.userId }.filter { it in mine }
+        assertEquals(listOf(submittedOld, submittedNew), all.take(2))
+        assertEquals(setOf(approvedOld, rejected), all.drop(2).toSet())
+        assertTrue(all.indexOf(approvedOld) < all.indexOf(rejected), "non-submitted rows stay oldest first")
+
+        val onlyRejected = repository.findForAdmin(SellerDetailsStatus.REJECTED, OffsetLimitPageable(PaginationParams.of(0, 200)))
+        assertTrue(onlyRejected.content.all { it.status == SellerDetailsStatus.REJECTED })
+        assertTrue(rejected in onlyRejected.content.map { it.userId })
+        assertEquals(onlyRejected.content.size.toLong(), onlyRejected.totalElements)
     }
 }
