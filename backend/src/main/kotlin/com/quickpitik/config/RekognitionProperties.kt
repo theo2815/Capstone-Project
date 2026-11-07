@@ -32,8 +32,12 @@ data class RekognitionProperties(
     // Downscale longest edge before the 5 MB inline call; only images already
     // over the inline-safe byte budget are decoded + re-encoded.
     val maxImageDimension: Int = 2048,
+    // Calls a second per operation (IndexFaces, DetectText, SearchFacesByImage),
+    // under AWS's default 5 per account. Raise only after all three quotas rise.
+    val maxCallsPerSecond: Double = 4.5,
 ) {
     init {
         require(operationTimeout > Duration.ZERO) { "operationTimeout must be positive" }
+        require(maxCallsPerSecond > 0.0) { "maxCallsPerSecond must be positive" }
     }
 }

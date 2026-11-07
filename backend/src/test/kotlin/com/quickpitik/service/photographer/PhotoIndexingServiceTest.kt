@@ -355,6 +355,52 @@ class PhotoIndexingServiceTest {
         assertTrue(p.indexingError!!.contains("faces"))
     }
 
+    // UP-7: AWS throttling is a busy minute, not a bad photo.
+    private fun throttledFaces(p: Photo) = Mockito.`when`(
+        aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId),
+    ).thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, "THROTTLED", "AWS Rekognition indexFaces throttled"))
+
+    @Test fun `a throttled face call with a good bib call keeps the attempt`() {
+        val p = photo()
+        expectPhoto(p)
+        throttledFaces(p)
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("1234", 0.9))))
+
+        service.index(p.id)
+
+        assertEquals(IndexingStatus.PARTIAL, p.indexingStatus)
+        assertEquals(0, p.indexingAttempts)
+        assertEquals(setOf("1234"), p.bibs.map { it.bibNumber }.toSet())
+        Mockito.verify(workFence).finish(anyArg())
+    }
+
+    @Test fun `a throttled face call with a bib call that fails for good still uses the attempt`() {
+        val p = photo()
+        expectPhoto(p)
+        throttledFaces(p)
+        Mockito.`when`(aiClient.bibsRecognize(jpegBytes, "image/jpeg", "${p.id}.jpg"))
+            .thenThrow(AiApiException(HttpStatus.UNPROCESSABLE_ENTITY, null, "bad image"))
+
+        service.index(p.id)
+
+        assertEquals(IndexingStatus.FAILED, p.indexingStatus)
+        assertEquals(1, p.indexingAttempts)
+    }
+
+    @Test fun `a face failure that is not a throttle still uses the attempt`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(
+            aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId),
+        ).thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "AWS Rekognition indexFaces failed"))
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("1234", 0.9))))
+
+        service.index(p.id)
+
+        assertEquals(IndexingStatus.PARTIAL, p.indexingStatus)
+        assertEquals(1, p.indexingAttempts)
+    }
+
     @Test
     fun `both halves transport-fail - back to PENDING, attempt not consumed`() {
         // Provider fully unreachable (both calls die retryably): the photo must
