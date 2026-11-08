@@ -46,6 +46,8 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.SimpleTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails
+import software.amazon.awssdk.services.s3.model.S3Exception
 import java.math.BigDecimal
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
@@ -1262,7 +1264,10 @@ class PhotoUploadServiceTest {
             .thenReturn(1)
         Mockito.`when`(photoUploadIntentRepository.releaseVerification(anyArg(), anyArg(), anyArg()))
             .thenReturn(1)
+        // Three faults use up the server's own attempts; the next commit then succeeds.
         Mockito.`when`(storageService.metadata(intent.originalKey))
+            .thenThrow(IllegalStateException("provider-secret"))
+            .thenThrow(IllegalStateException("provider-secret"))
             .thenThrow(IllegalStateException("provider-secret"))
             .thenReturn(StoredObject(intent.originalKey, intent.sizeBytes, intent.contentType))
         Mockito.`when`(storageService.open(intent.originalKey)).thenAnswer { ByteArrayInputStream(helloBytes) }
@@ -1278,6 +1283,7 @@ class PhotoUploadServiceTest {
 
         assertEquals(ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, error.code)
         assertTrue(error.message!!.contains("provider-secret").not())
+        Mockito.verify(storageService, Mockito.times(3)).metadata(intent.originalKey)
         Mockito.verify(photoUploadIntentRepository).releaseVerification(eqArg(intent.photoId), anyArg(), anyArg())
         Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
         Mockito.verify(storageService, Mockito.never()).delete(anyArg())
@@ -1319,6 +1325,108 @@ class PhotoUploadServiceTest {
             photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
         ).id)
         Mockito.verify(eventRepository).incrementPhotoCount(eventId)
+    }
+
+    private fun r2Fault(): S3Exception = S3Exception.builder()
+        .statusCode(500)
+        .awsErrorDetails(AwsErrorDetails.builder().errorCode("InternalError").build())
+        .message("provider-secret")
+        .build() as S3Exception
+
+    private fun stubAcquiredIntent(): PhotoUploadIntent {
+        stubValidationsPass()
+        val intent = intent(helloBytes.size.toLong())
+        Mockito.`when`(photoUploadIntentRepository.findOwned(intent.photoId, photographerId, eventId)).thenReturn(intent)
+        Mockito.`when`(photoUploadIntentRepository.acquireVerification(anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.releaseVerification(anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.`when`(storageService.open(intent.originalKey)).thenAnswer { ByteArrayInputStream(helloBytes) }
+        Mockito.`when`(photoUploadIntentRepository.complete(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        return intent
+    }
+
+    @Test
+    fun `direct commit retries a short storage fault itself before answering`() {
+        val intent = stubAcquiredIntent()
+        Mockito.`when`(storageService.metadata(intent.originalKey))
+            .thenThrow(r2Fault())
+            .thenThrow(r2Fault())
+            .thenReturn(StoredObject(intent.originalKey, intent.sizeBytes, intent.contentType))
+
+        val photo = service(AiApiProperties(enabled = false)).commitDirectUpload(
+            photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
+        )
+
+        assertEquals(intent.photoId, photo.id)
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).releaseVerification(anyArg(), anyArg(), anyArg())
+        Mockito.verify(eventRepository, Mockito.times(1)).incrementPhotoCount(eventId)
+    }
+
+    @Test
+    fun `direct commit answers 503 after three storage attempts and keeps the candidate`() {
+        val intent = stubAcquiredIntent()
+        Mockito.`when`(storageService.metadata(intent.originalKey)).thenThrow(r2Fault())
+
+        val error = assertFailsWith<ApiException> {
+            service(AiApiProperties(enabled = false)).commitDirectUpload(
+                photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
+            )
+        }
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, error.status)
+        assertEquals(ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, error.code)
+        assertEquals(5L, error.retryAfterSeconds)
+        assertTrue("provider-secret" !in error.message.orEmpty())
+        Mockito.verify(storageService, Mockito.times(3)).metadata(intent.originalKey)
+        Mockito.verify(photoUploadIntentRepository, Mockito.times(1))
+            .releaseVerification(eqArg(intent.photoId), anyArg(), anyArg())
+        Mockito.verify(storageService, Mockito.never()).delete(anyArg())
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg<Photo>())
+    }
+
+    private class SteppingClock(var now: Instant) : Clock() {
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+        override fun withZone(zone: ZoneId): Clock = this
+        override fun instant(): Instant = now
+    }
+
+    @Test
+    fun `direct commit does not retry a storage fault that took longer than the retry budget`() {
+        val intent = stubAcquiredIntent()
+        val clock = SteppingClock(Instant.now())
+        Mockito.`when`(storageService.metadata(intent.originalKey)).thenAnswer {
+            clock.now = clock.now.plusSeconds(11)
+            throw r2Fault()
+        }
+
+        val error = assertFailsWith<ApiException> {
+            service(AiApiProperties(enabled = false), clock = clock).commitDirectUpload(
+                photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
+            )
+        }
+
+        assertEquals(ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, error.code)
+        Mockito.verify(storageService, Mockito.times(1)).metadata(intent.originalKey)
+    }
+
+    @Test
+    fun `direct commit never retries a validation answer`() {
+        val intent = stubAcquiredIntent()
+        Mockito.`when`(photoUploadIntentRepository.reject(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(1)
+        Mockito.`when`(storageService.metadata(intent.originalKey))
+            .thenReturn(StoredObject(intent.originalKey, intent.sizeBytes + 1, intent.contentType))
+
+        val error = assertFailsWith<ApiException> {
+            service(AiApiProperties(enabled = false)).commitDirectUpload(
+                photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash,
+            )
+        }
+
+        assertEquals(ErrorCodes.PAYLOAD_TOO_LARGE, error.code)
+        Mockito.verify(storageService, Mockito.times(1)).metadata(intent.originalKey)
     }
 
     @Test
