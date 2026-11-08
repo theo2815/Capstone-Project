@@ -14,7 +14,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@aws-amplify/ui-react-liveness": "^3.7.0",
     "@tanstack/react-query": "^5.97.0",
+    "aws-amplify": "^6.22.2",
     "clsx": "^2.1.1",
     "lucide-react": "^1.8.0",
     "next": "^16.3.8",

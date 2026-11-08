@@ -45,11 +45,12 @@ if (R2_UPLOAD_ORIGIN) {
 // the button iframe — in production only, since dev ships no CSP.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/client",
+  // AA-0.3a spike: 'wasm-unsafe-eval' lets the liveness detector compile its self-hosted tfjs WASM.
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://accounts.google.com/gsi/client",
   "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
   "img-src 'self' data: blob: https: http://localhost:8080",
   "font-src 'self' data:",
-  `connect-src 'self' ${API_ORIGIN} ${WS_ORIGIN} https://accounts.google.com/gsi/${R2_UPLOAD_ORIGIN ? ` ${R2_UPLOAD_ORIGIN}` : ""}`,
+  `connect-src 'self' ${API_ORIGIN} ${WS_ORIGIN} https://accounts.google.com/gsi/ wss://streaming-rekognition.ap-southeast-5.amazonaws.com${R2_UPLOAD_ORIGIN ? ` ${R2_UPLOAD_ORIGIN}` : ""}`,
   "frame-src 'self' https://accounts.google.com/gsi/",
   "frame-ancestors 'none'",
   "object-src 'none'",
