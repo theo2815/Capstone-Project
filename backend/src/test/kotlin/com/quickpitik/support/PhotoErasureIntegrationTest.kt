@@ -44,6 +44,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var uploads: com.quickpitik.service.photographer.PhotoUploadService
     @Autowired lateinit var settings: PhotographerSettingsRepository
     @Autowired lateinit var registry: io.micrometer.core.instrument.MeterRegistry
+    @Autowired lateinit var dataSource: javax.sql.DataSource
     @MockBean lateinit var storage: StorageService
     lateinit var owner: User
     lateinit var admin: User
@@ -104,6 +105,23 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
             RemovalActorType.PHOTOGRAPHER, owner.id, "Photographer permanent deletion", commandId = UUID.randomUUID()))
         assertEquals(listOf(ordinary.id), manager.permanentDelete(owner.id, event.id, listOf(ordinary.id)).deleted)
         assertEquals(PhotoErasureOutcome.COMPLETE, eraser.attempt(job))
+    }
+
+    // UP-10 Session 8: parallel permanent deletes emptied the pool, each holding a connection through its R2 calls.
+    @Test fun storageCallsHoldNoDatabaseConnection() {
+        val pool = dataSource.unwrap(com.zaxxer.hikari.HikariDataSource::class.java).hikariPoolMXBean
+        val trashed = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id,
+            s3Key = "erasure/${UUID.randomUUID()}/trashed", thumbnailS3Key = "erasure/${UUID.randomUUID()}/trashed-thumb",
+            pricePhp = BigDecimal("125"), deletedAt = OffsetDateTime.now()))
+        val held = mutableListOf<Int>()
+        Mockito.`when`(storage.exists(Mockito.anyString())).thenAnswer { held += pool.activeConnections; false }
+        Mockito.doAnswer { held += pool.activeConnections; null }.`when`(storage).delete(Mockito.anyString())
+        val job = eraser.request(PhotoErasureCommand(trashed.id, PhotoErasurePurpose.PHOTOGRAPHER_DELETE,
+            RemovalActorType.PHOTOGRAPHER, owner.id, "Photographer permanent deletion", commandId = UUID.randomUUID()))
+
+        assertEquals(PhotoErasureOutcome.COMPLETE, eraser.attempt(job))
+        assertTrue(held.isNotEmpty())
+        assertEquals(List(held.size) { 0 }, held, "active pool connections during each storage call")
     }
 
     @Test fun soldPrivacyRemovalPreservesTombstoneAndLedger() {
