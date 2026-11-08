@@ -149,7 +149,9 @@ class AdminDisputeService(
                 message = "Refund is in progress or requires manual reconciliation",
             )
         }
-        if (dispute.status == DisputeStatus.RESOLVED || dispute.status == DisputeStatus.DENIED) {
+        if (dispute.status == DisputeStatus.RESOLVED || dispute.status == DisputeStatus.DENIED ||
+            dispute.status == DisputeStatus.WITHDRAWN
+        ) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,
                 code = ErrorCodes.INVALID_STATE_TRANSITION,
@@ -192,6 +194,13 @@ class AdminDisputeService(
     fun escalate(adminId: UUID, disputeId: UUID, reason: String?): AdminDisputeDto {
         val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: throw
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+        if (dispute.refundNeedsReconciliation()) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "Refund is in progress or requires manual reconciliation",
+            )
+        }
         if (dispute.status != DisputeStatus.OPEN) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,

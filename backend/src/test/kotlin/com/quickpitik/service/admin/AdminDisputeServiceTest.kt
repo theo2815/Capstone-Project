@@ -329,6 +329,37 @@ class AdminDisputeServiceTest {
         Mockito.verifyNoInteractions(decisionLogService)
     }
 
+    @Test
+    fun `a withdrawn dispute cannot be denied`() {
+        val admin = UUID.randomUUID()
+        val d = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+            statusWire = DisputeStatus.WITHDRAWN.wire)
+        Mockito.`when`(disputeRepository.findByIdForUpdate(d.id)).thenReturn(d)
+
+        val error = assertFailsWith<ApiException> { service.deny(admin, d.id, "too late") }
+
+        assertEquals(409, error.status.value())
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.WITHDRAWN, d.status)
+        Mockito.verify(disputeRepository, Mockito.never()).save(d)
+        Mockito.verifyNoInteractions(decisionLogService)
+    }
+
+    @Test
+    fun `an open dispute cannot be escalated while its refund is in progress`() {
+        val admin = UUID.randomUUID()
+        val d = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        d.refundStatus = "requesting"
+        Mockito.`when`(disputeRepository.findByIdForUpdate(d.id)).thenReturn(d)
+
+        val error = assertFailsWith<ApiException> { service.escalate(admin, d.id, null) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.OPEN, d.status)
+        Mockito.verify(disputeRepository, Mockito.never()).save(d)
+        Mockito.verifyNoInteractions(decisionLogService)
+    }
+
     private val paidOn = OffsetDateTime.parse("2026-10-01T00:00:00Z")
 
     private fun qrphOrder() = Order(
