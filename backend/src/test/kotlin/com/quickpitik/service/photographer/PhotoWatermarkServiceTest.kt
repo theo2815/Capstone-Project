@@ -108,6 +108,65 @@ class PhotoWatermarkServiceTest {
         Mockito.verify(photoRepository, Mockito.never()).publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong())
     }
 
+    // WM-1 (UP-10, 2026-11-07): one R2 500 on the watermark PUT left 40 committed photos PROCESSING for good.
+    @Test fun `a photo whose watermark PUT failed once goes LIVE after its claim has surely ended`() {
+        stubHappyPath()
+        val p = photo()
+        Mockito.`when`(photoRepository.findById(photoId)).thenReturn(Optional.of(p))
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(listOf(photoId))).thenReturn(listOf(p))
+        // The repository's claim columns and work-output rows, kept in memory.
+        val unfinished = mutableSetOf<UUID>()
+        Mockito.`when`(photoRepository.claimWork(anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer {
+            if (p.watermarkWorkToken != null) 0
+            else { p.watermarkWorkToken = it.getArgument(2); p.watermarkWorkExpiresAt = it.getArgument(3); 1 }
+        }
+        Mockito.`when`(photoRepository.recordWork(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), anyArg(), anyArg(),
+            anyArg(), anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer { unfinished += it.getArgument<UUID>(0); 1 }
+        Mockito.`when`(photoRepository.finishWorkOutput(anyArg(), anyArg())).thenAnswer { if (unfinished.remove(it.getArgument(0))) 1 else 0 }
+        Mockito.`when`(photoRepository.finishWork(anyArg(), anyArg())).thenAnswer {
+            if (p.watermarkWorkToken == it.getArgument(1)) { p.watermarkWorkToken = null; p.watermarkWorkExpiresAt = null }
+            1
+        }
+        Mockito.`when`(photoRepository.hasUnfinishedWork(photoId, "WATERMARK")).thenAnswer { unfinished.isNotEmpty() }
+        Mockito.`when`(photoRepository.publishWatermarked(anyArg(), anyArg(), anyArg(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong()))
+            .thenAnswer { p.status = PhotoStatus.LIVE; p.watermarkS3Key = it.getArgument(1); 1 }
+        var puts = 0
+        Mockito.doAnswer {
+            if (puts++ == 0) throw software.amazon.awssdk.services.s3.model.S3Exception.builder().statusCode(500)
+                .message("We encountered an internal error. Please try again.").build()
+            null
+        }.`when`(storageService).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+        val clock = MutableClock(java.time.Instant.parse("2026-11-07T13:30:00Z"))
+        // 7 s per storage operation: the claim lasts 21 s and is surely ended 14 s after that.
+        val fence = com.quickpitik.service.photos.PhotoWorkFence(photoRepository,
+            StorageProperties(operationTimeout = java.time.Duration.ofSeconds(7)), com.quickpitik.config.AiApiProperties(),
+            com.quickpitik.config.AiProperties(), com.quickpitik.config.RekognitionProperties(),
+            com.fasterxml.jackson.databind.ObjectMapper(), clock)
+        val service = service(fence = fence)
+
+        service.process(photoId)
+        assertEquals(PhotoStatus.PROCESSING, p.status)
+
+        clock.now = clock.now.plusSeconds(21 + 14)
+        service.process(photoId)
+        assertEquals(PhotoStatus.PROCESSING, p.status, "a PUT may still be in flight: the claim stays held")
+        assertEquals(1, puts)
+
+        clock.now = clock.now.plusSeconds(1)
+        service.process(photoId)
+        assertEquals(PhotoStatus.LIVE, p.status)
+        assertEquals("events/$eventId/photos/$photoId/watermark.jpg", p.watermarkS3Key)
+        assertNull(p.watermarkWorkToken)
+        assertTrue(unfinished.isEmpty())
+        Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
+    }
+
+    private class MutableClock(var now: java.time.Instant) : java.time.Clock() {
+        override fun getZone(): java.time.ZoneId = java.time.ZoneOffset.UTC
+        override fun withZone(zone: java.time.ZoneId?): java.time.Clock = this
+        override fun instant(): java.time.Instant = now
+    }
+
     private lateinit var storageService: StorageService
     private lateinit var photoRepository: PhotoRepository
     private lateinit var eventRepository: EventRepository
@@ -150,7 +209,11 @@ class PhotoWatermarkServiceTest {
         Mockito.`when`(workFence.isCurrent(anyArg())).thenReturn(true)
     }
 
-    private fun service(maxAttempts: Int = 5, metadata: PhotoMetadataService = metadataService) = PhotoWatermarkService(
+    private fun service(
+        maxAttempts: Int = 5,
+        metadata: PhotoMetadataService = metadataService,
+        fence: com.quickpitik.service.photos.PhotoWorkFence = workFence,
+    ) = PhotoWatermarkService(
         storageService,
         StorageProperties(),
         photoRepository,
@@ -165,7 +228,7 @@ class PhotoWatermarkServiceTest {
         SimpleMeterRegistry(),
         maxAttempts,
         metadata,
-        workFence,
+        fence,
     )
 
     private fun photo(
