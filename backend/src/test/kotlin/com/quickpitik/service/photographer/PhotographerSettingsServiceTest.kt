@@ -20,7 +20,14 @@ import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.image.ImagePixelGuardTest.Companion.overBudgetPngHeader
+import com.quickpitik.entity.FlagTargetKind
+import com.quickpitik.entity.SystemFlagReason
+import com.quickpitik.service.admin.SystemFlagService
+import com.quickpitik.service.moderation.ImageModerationResult
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.ImageModerationVerdict
 import com.quickpitik.service.moderation.WordListChecker
+import com.quickpitik.support.testTransactionTemplate
 import com.quickpitik.service.storage.StorageService
 import org.hibernate.exception.ConstraintViolationException
 import org.junit.jupiter.api.BeforeEach
@@ -58,6 +65,8 @@ class PhotographerSettingsServiceTest {
     private lateinit var eventPublisher: ApplicationEventPublisher
 
     private val userId = UUID.randomUUID()
+    private val moderation: ImageModerationService = Mockito.mock(ImageModerationService::class.java)
+    private val flags: SystemFlagService = Mockito.mock(SystemFlagService::class.java)
 
     private fun <T> anyArg(): T = Mockito.any()
 
@@ -84,6 +93,9 @@ class PhotographerSettingsServiceTest {
         payoutAccountRepository,
         eventPublisher,
         WordListChecker(),
+        moderation,
+        flags,
+        testTransactionTemplate(),
     )
 
     private fun stubExistingSettings() {
@@ -459,5 +471,73 @@ class PhotographerSettingsServiceTest {
         assertEquals(user.suspendedAt.toString(), result.suspendedAt)
         assertEquals("Original suspension", result.suspensionReason)
         assertEquals(1L, settings.verificationRevision)
+    }
+
+    // AA-I11: covers and watermarks are checked (on the processed bytes) before they are stored.
+    private fun imageBytes(format: String): ByteArray = java.io.ByteArrayOutputStream().also {
+        javax.imageio.ImageIO.write(java.awt.image.BufferedImage(8, 8, java.awt.image.BufferedImage.TYPE_INT_ARGB.takeIf { format == "png" } ?: java.awt.image.BufferedImage.TYPE_INT_RGB), format, it)
+    }.toByteArray()
+
+    private fun verdict(v: ImageModerationVerdict, vararg labels: String) =
+        Mockito.`when`(moderation.check(anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
+
+    @Test
+    fun `a flagged cover is refused with IMAGE_NOT_ALLOWED, nothing stored, PROFILE_IMAGE_FLAGGED raised`() {
+        verdict(ImageModerationVerdict.FLAGGED, "Hate Symbols")
+        Mockito.`when`(flags.raise(FlagTargetKind.USER, userId, SystemFlagReason.PROFILE_IMAGE_FLAGGED, "cover: Hate Symbols"))
+            .thenReturn(true)
+
+        val ex = assertFailsWith<ValidationException> { service().uploadCover(userId, imageBytes("jpg"), "image/jpeg") }
+
+        assertEquals(ErrorCodes.IMAGE_NOT_ALLOWED, ex.code)
+        assertEquals("file", ex.field)
+        Mockito.verify(flags).raise(FlagTargetKind.USER, userId, SystemFlagReason.PROFILE_IMAGE_FLAGGED, "cover: Hate Symbols")
+        Mockito.verifyNoInteractions(storageService, photographerSettingsRepository)
+    }
+
+    @Test
+    fun `a second flagged cover adds a line to the open flag`() {
+        verdict(ImageModerationVerdict.FLAGGED, "Violence")
+
+        assertFailsWith<ValidationException> { service().uploadCover(userId, imageBytes("jpg"), "image/jpeg") }
+
+        val note = org.mockito.ArgumentCaptor.forClass(String::class.java)
+        Mockito.verify(flags).appendNote(
+            Mockito.eq(FlagTargetKind.USER) ?: FlagTargetKind.USER,
+            Mockito.eq(userId) ?: userId,
+            Mockito.eq(SystemFlagReason.PROFILE_IMAGE_FLAGGED) ?: SystemFlagReason.PROFILE_IMAGE_FLAGGED,
+            note.capture() ?: "",
+        )
+        assertTrue(note.value.endsWith(" cover: Violence"), note.value)
+    }
+
+    @Test
+    fun `an unchecked cover is stored and PROFILE_IMAGE_UNCHECKED raised`() {
+        stubExistingSettings()
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cover.test/x")
+        verdict(ImageModerationVerdict.UNCHECKED)
+
+        service().uploadCover(userId, imageBytes("jpg"), "image/jpeg")
+
+        Mockito.verify(storageService).put(anyArg(), anyArg(), Mockito.eq("image/jpeg") ?: "")
+        Mockito.verify(photographerSettingsRepository).save(anyArg())
+        Mockito.verify(flags).raise(FlagTargetKind.USER, userId, SystemFlagReason.PROFILE_IMAGE_UNCHECKED, "cover")
+    }
+
+    @Test
+    fun `a PNG watermark is checked as PNG bytes`() {
+        stubExistingSettings()
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://wm.test/x")
+        verdict(ImageModerationVerdict.CLEAN)
+
+        service().uploadWatermark(userId, imageBytes("png"), "image/png")
+
+        val checked = org.mockito.ArgumentCaptor.forClass(ByteArray::class.java)
+        Mockito.verify(moderation).check(checked.capture() ?: byteArrayOf())
+        val stored = org.mockito.ArgumentCaptor.forClass(ByteArray::class.java)
+        Mockito.verify(storageService).put(anyArg(), stored.capture() ?: byteArrayOf(), Mockito.eq("image/png") ?: "")
+        assertEquals(listOf<Byte>(-119, 80, 78, 71), checked.value.take(4))
+        assertTrue(checked.value.contentEquals(stored.value))
+        Mockito.verifyNoInteractions(flags)
     }
 }

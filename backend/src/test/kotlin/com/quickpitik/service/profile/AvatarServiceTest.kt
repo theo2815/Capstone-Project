@@ -5,7 +5,15 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
+import com.quickpitik.entity.FlagTargetKind
+import com.quickpitik.entity.SystemFlagReason
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.admin.SystemFlagService
+import com.quickpitik.service.moderation.ImageModerationResult
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.ImageModerationVerdict
+import com.quickpitik.support.testTransactionTemplate
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
@@ -32,7 +40,11 @@ class AvatarServiceTest {
     private val storageService: StorageService = Mockito.mock(StorageService::class.java)
     private val userDtoMapper: UserDtoMapper = Mockito.mock(UserDtoMapper::class.java)
 
-    private fun service() = AvatarService(userRepository, storageService, userDtoMapper)
+    private val moderation: ImageModerationService = Mockito.mock(ImageModerationService::class.java)
+    private val flags: SystemFlagService = Mockito.mock(SystemFlagService::class.java)
+
+    private fun service(mapper: UserDtoMapper = userDtoMapper) =
+        AvatarService(userRepository, storageService, mapper, moderation, flags, testTransactionTemplate())
 
     @Test
     fun `valid WebP avatar is stored as a 512 pixel JPEG`() {
@@ -45,7 +57,7 @@ class AvatarServiceTest {
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://avatar.test/current")
         val mapper = UserDtoMapper(storageService, StorageProperties())
 
-        val result = AvatarService(userRepository, storageService, mapper).upload(user.id, webp, "image/webp")
+        val result = service(mapper).upload(user.id, webp, "image/webp")
 
         val key = ArgumentCaptor.forClass(String::class.java)
         val bytes = ArgumentCaptor.forClass(ByteArray::class.java)
@@ -103,6 +115,81 @@ class AvatarServiceTest {
         assertEquals(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, error.code)
         assertEquals("file", error.field)
         Mockito.verifyNoInteractions(userRepository, storageService)
+    }
+
+    // AA-I11: photographer avatars are checked before they are stored; runners' never are.
+    private fun pngBytes(): ByteArray = java.io.ByteArrayOutputStream().also {
+        ImageIO.write(java.awt.image.BufferedImage(8, 8, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", it)
+    }.toByteArray()
+
+    private fun photographer(): User {
+        val user = User(email = "pg@test.local", passwordHash = "unused", name = "Pg", role = Role.PHOTOGRAPHER)
+        Mockito.`when`(userRepository.findById(user.id)).thenReturn(Optional.of(user))
+        return user
+    }
+
+    private fun realMapper() = UserDtoMapper(storageService, StorageProperties())
+
+    private fun verdict(v: ImageModerationVerdict, vararg labels: String) =
+        Mockito.`when`(moderation.check(anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
+
+    @Test
+    fun `a flagged photographer avatar is refused with IMAGE_NOT_ALLOWED, nothing stored, PROFILE_IMAGE_FLAGGED raised`() {
+        val user = photographer()
+        verdict(ImageModerationVerdict.FLAGGED, "Explicit")
+        Mockito.`when`(flags.raise(FlagTargetKind.USER, user.id, SystemFlagReason.PROFILE_IMAGE_FLAGGED, "avatar: Explicit"))
+            .thenReturn(true)
+
+        val ex = assertFailsWith<ValidationException> { service().upload(user.id, pngBytes(), "image/png") }
+
+        assertEquals(ErrorCodes.IMAGE_NOT_ALLOWED, ex.code)
+        assertEquals("file", ex.field)
+        Mockito.verify(flags).raise(FlagTargetKind.USER, user.id, SystemFlagReason.PROFILE_IMAGE_FLAGGED, "avatar: Explicit")
+        Mockito.verify(flags, Mockito.never()).appendNote(anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verifyNoInteractions(storageService)
+        Mockito.verify(userRepository, Mockito.never()).save(anyArg())
+        assertEquals(null, user.avatarS3Key)
+    }
+
+    @Test
+    fun `a second flagged attempt adds a line to the open flag`() {
+        val user = photographer()
+        verdict(ImageModerationVerdict.FLAGGED, "Violence")
+        // raise answers false: a PROFILE_IMAGE_FLAGGED flag is already open for this user.
+
+        assertFailsWith<ValidationException> { service().upload(user.id, pngBytes(), "image/png") }
+
+        val note = ArgumentCaptor.forClass(String::class.java)
+        Mockito.verify(flags).appendNote(
+            Mockito.eq(FlagTargetKind.USER) ?: FlagTargetKind.USER,
+            Mockito.eq(user.id) ?: user.id,
+            Mockito.eq(SystemFlagReason.PROFILE_IMAGE_FLAGGED) ?: SystemFlagReason.PROFILE_IMAGE_FLAGGED,
+            note.capture() ?: "",
+        )
+        assertTrue(note.value.endsWith(" avatar: Violence"), note.value)
+    }
+
+    @Test
+    fun `an unchecked avatar is stored and PROFILE_IMAGE_UNCHECKED raised`() {
+        val user = photographer()
+        verdict(ImageModerationVerdict.UNCHECKED)
+
+        service(realMapper()).upload(user.id, pngBytes(), "image/png")
+
+        assertTrue(user.avatarS3Key!!.startsWith("avatars/${user.id}/"))
+        Mockito.verify(userRepository).save(user)
+        Mockito.verify(flags).raise(FlagTargetKind.USER, user.id, SystemFlagReason.PROFILE_IMAGE_UNCHECKED, "avatar")
+    }
+
+    @Test
+    fun `a runner avatar is never sent to moderation`() {
+        val user = User(email = "r@test.local", passwordHash = "unused", name = "R", role = Role.RUNNER)
+        Mockito.`when`(userRepository.findById(user.id)).thenReturn(Optional.of(user))
+
+        service(realMapper()).upload(user.id, pngBytes(), "image/png")
+
+        Mockito.verifyNoInteractions(moderation, flags)
+        Mockito.verify(userRepository).save(user)
     }
 
     private fun <T> anyArg(): T = Mockito.any()

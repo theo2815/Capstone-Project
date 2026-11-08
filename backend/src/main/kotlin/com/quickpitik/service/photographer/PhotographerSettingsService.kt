@@ -24,6 +24,9 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
+import com.quickpitik.service.admin.SystemFlagService
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.ProfileImageModeration
 import com.quickpitik.service.moderation.WordList
 import com.quickpitik.service.moderation.WordListChecker
 import com.quickpitik.service.storage.StorageService
@@ -34,7 +37,9 @@ import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.OffsetDateTime
 import java.util.UUID
 import javax.imageio.ImageIO
@@ -52,6 +57,9 @@ class PhotographerSettingsService(
     private val payoutAccountRepository: PayoutAccountRepository,
     private val eventPublisher: ApplicationEventPublisher,
     private val wordListChecker: WordListChecker,
+    private val imageModerationService: ImageModerationService,
+    private val systemFlagService: SystemFlagService,
+    private val transactionTemplate: TransactionTemplate,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -303,6 +311,8 @@ class PhotographerSettingsService(
     }
 
     // ─── Cover ────────────────────────────────────────────────────────────
+    // No transaction: the moderation call (AWS) runs first; the store runs in its own template.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun uploadCover(userId: UUID, bytes: ByteArray, contentType: String?): MediaUploadResponseDto {
         val mime = validateImageMime(contentType, field = "file")
         if (bytes.isEmpty()) {
@@ -319,19 +329,23 @@ class PhotographerSettingsService(
                 message = "image cannot be decoded",
                 field = "file",
             )
-        val settings = getOrCreate(userId)
-        val previousKey = settings.coverS3Key
+        val verdict = ProfileImageModeration.checkOrRefuse(imageModerationService, systemFlagService, userId, "cover", processed)
         val newKey = "photographers/$userId/cover/${UUID.randomUUID()}.jpg"
-        storageService.put(newKey, processed, "image/jpeg")
-        settings.coverS3Key = newKey
-        // Picking an explicit cover image clears the gradient fallback so
-        // public-facing renderers don't have to guess which one wins.
-        settings.coverGradientFrom = null
-        settings.coverGradientTo = null
-        photographerSettingsRepository.save(settings)
-        if (previousKey != null && previousKey != newKey) {
-            runCatching { storageService.delete(previousKey) }
-                .onFailure { log.warn("cover delete of {} failed: {}", previousKey, it.message) }
+        transactionTemplate.executeWithoutResult {
+            val settings = getOrCreate(userId)
+            val previousKey = settings.coverS3Key
+            storageService.put(newKey, processed, "image/jpeg")
+            settings.coverS3Key = newKey
+            // Picking an explicit cover image clears the gradient fallback so
+            // public-facing renderers don't have to guess which one wins.
+            settings.coverGradientFrom = null
+            settings.coverGradientTo = null
+            photographerSettingsRepository.save(settings)
+            ProfileImageModeration.flagIfUnchecked(systemFlagService, verdict, userId, "cover")
+            if (previousKey != null && previousKey != newKey) {
+                runCatching { storageService.delete(previousKey) }
+                    .onFailure { log.warn("cover delete of {} failed: {}", previousKey, it.message) }
+            }
         }
         // Suppress unused mime warning while keeping the validation eager.
         @Suppress("UNUSED_VARIABLE") val _mime = mime
@@ -342,6 +356,7 @@ class PhotographerSettingsService(
     }
 
     // ─── Watermark ────────────────────────────────────────────────────────
+    @Transactional(propagation = Propagation.NOT_SUPPORTED) // as uploadCover
     fun uploadWatermark(userId: UUID, bytes: ByteArray, contentType: String?): MediaUploadResponseDto {
         val mime = validateImageMime(contentType, field = "file")
         if (bytes.isEmpty()) {
@@ -368,17 +383,21 @@ class PhotographerSettingsService(
             message = "image cannot be decoded",
             field = "file",
         )
-        val settings = getOrCreate(userId)
-        val previousKey = settings.watermarkS3Key
+        val verdict = ProfileImageModeration.checkOrRefuse(imageModerationService, systemFlagService, userId, "watermark", processed)
         val ext = if (isPng) "png" else "jpg"
         val storedContentType = if (isPng) "image/png" else "image/jpeg"
         val newKey = "photographers/$userId/watermark/${UUID.randomUUID()}.$ext"
-        storageService.put(newKey, processed, storedContentType)
-        settings.watermarkS3Key = newKey
-        photographerSettingsRepository.save(settings)
-        if (previousKey != null && previousKey != newKey) {
-            runCatching { storageService.delete(previousKey) }
-                .onFailure { log.warn("watermark delete of {} failed: {}", previousKey, it.message) }
+        transactionTemplate.executeWithoutResult {
+            val settings = getOrCreate(userId)
+            val previousKey = settings.watermarkS3Key
+            storageService.put(newKey, processed, storedContentType)
+            settings.watermarkS3Key = newKey
+            photographerSettingsRepository.save(settings)
+            ProfileImageModeration.flagIfUnchecked(systemFlagService, verdict, userId, "watermark")
+            if (previousKey != null && previousKey != newKey) {
+                runCatching { storageService.delete(previousKey) }
+                    .onFailure { log.warn("watermark delete of {} failed: {}", previousKey, it.message) }
+            }
         }
         @Suppress("UNUSED_VARIABLE") val _mime = mime
         return MediaUploadResponseDto(

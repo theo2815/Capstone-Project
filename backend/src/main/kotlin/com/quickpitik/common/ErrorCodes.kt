@@ -134,4 +134,7 @@ object ErrorCodes {
 
     // A profile text field (brandName, handle, bio) holds a word on the bad-word lists.
     const val TEXT_NOT_ALLOWED = "TEXT_NOT_ALLOWED"
+
+    // A photographer profile image (avatar, cover, watermark) was flagged by image moderation.
+    const val IMAGE_NOT_ALLOWED = "IMAGE_NOT_ALLOWED"
 }
