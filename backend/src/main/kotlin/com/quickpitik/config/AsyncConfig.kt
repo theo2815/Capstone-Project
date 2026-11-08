@@ -16,10 +16,11 @@ class AsyncConfig {
     @Bean
     fun clock(): Clock = Clock.systemUTC()
 
-    // AI indexing (Rekognition / ai-api): ~9 s of pool time per photo.
+    // AI indexing: ~155 photos/min on 4 workers at race-day load. Six workers
+    // keep downstream capacity ahead of verification slots to avoid queueing.
     @Bean(name = ["imageProcessing"])
     fun imageProcessingExecutor(): TaskExecutor = ThreadPoolTaskExecutor().apply {
-        corePoolSize = 4
+        corePoolSize = 6
         maxPoolSize = corePoolSize
         // A race burst (1,000 frames in minutes) used to overflow 200 and fall
         // back to the 60 s sweep. Tasks are a photo id each — cheap to hold.
@@ -30,13 +31,12 @@ class AsyncConfig {
         initialize()
     }
 
-    // Watermarking (storage GET + composite + PUT, ~3-5 s) gets its own pool so
-    // the slow AI calls above can't sit between an upload and the photo going
-    // LIVE for runners (2026-09-02 scale review).
+    // Watermarking peaked at 228 photos/min on race day. A separate pool keeps
+    // AI calls from delaying previews going LIVE for runners.
     @Bean(name = ["watermarkProcessing"])
     fun watermarkProcessingExecutor(): ThreadPoolTaskExecutor = ThreadPoolTaskExecutor().apply {
-        // Back to 4 (2026-10-28): SubsampledDecode landed (2045aefd) and production has 8 GB RAM
-        corePoolSize = 4
+        // Keep downstream capacity ahead of verification slots to avoid queueing.
+        corePoolSize = 6
         maxPoolSize = corePoolSize
         queueCapacity = 2000
         setThreadNamePrefix("watermark-")

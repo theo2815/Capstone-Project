@@ -46,7 +46,10 @@ import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageRespo
 import software.amazon.awssdk.services.rekognition.model.TextDetection
 import software.amazon.awssdk.services.rekognition.model.TextTypes
 import software.amazon.awssdk.services.rekognition.model.ThrottlingException
+import software.amazon.awssdk.services.rekognition.model.ProvisionedThroughputExceededException
+import software.amazon.awssdk.services.rekognition.model.InternalServerErrorException
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails
+import org.springframework.http.HttpStatus
 import org.slf4j.LoggerFactory
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
@@ -61,7 +64,7 @@ import javax.imageio.ImageWriteParam
 class RekognitionAiClientTest {
     private lateinit var rek: RekognitionClient
     private lateinit var client: RekognitionAiClient
-    private val props = RekognitionProperties(maxImageDimension = 1024)
+    private val props = RekognitionProperties(maxImageDimension = 1024, maxCallsPerSecond = 1000.0)
     private val eventId: UUID = UUID.randomUUID()
     private val photoId: UUID = UUID.randomUUID()
     private val bytes = ByteArray(1024) { 1 }
@@ -131,6 +134,65 @@ class RekognitionAiClientTest {
         val warnings = appender.list.filter { it.level == Level.WARN }.map { it.formattedMessage }
         assertTrue(warnings.any { it.contains("detectText") && it.contains("ThrottlingException") }, warnings.toString())
         assertTrue(warnings.any { it.contains("detectFaces") && it.contains("IllegalStateException") }, warnings.toString())
+    }
+
+    // UP-7: a throttled call wrote nothing, so one quick retry is safe; a
+    // second throttle surfaces with the THROTTLED code the indexer reads.
+    private fun throttle(): ThrottlingException = ThrottlingException.builder()
+        .awsErrorDetails(AwsErrorDetails.builder().errorCode("ThrottlingException").errorMessage("Rate exceeded").build())
+        .statusCode(400).build() as ThrottlingException
+
+    private fun oneFace() = IndexFacesResponse.builder()
+        .faceRecords(FaceRecord.builder().face(Face.builder().faceId("f1").build()).build()).build()
+
+    @Test fun `a throttled IndexFaces is retried once and succeeds`() {
+        `when`(rek.indexFaces(any(IndexFacesRequest::class.java))).thenThrow(throttle()).thenReturn(oneFace())
+        val result = client.facesEnroll(bytes, "image/jpeg", "x.jpg", photoId.toString(), null, eventId)
+        assertEquals(1, result.faces_enrolled)
+        verify(rek, times(2)).indexFaces(any(IndexFacesRequest::class.java))
+        assertEquals(1.0, registry.counter("qp.ai.throttle.retry", "op", "indexFaces", "code", "ThrottlingException").count())
+    }
+
+    @Test fun `a throttled DetectText is retried once`() {
+        `when`(rek.detectText(any(DetectTextRequest::class.java))).thenThrow(throttle()).thenReturn(DetectTextResponse.builder().build())
+        client.bibsRecognize(bytes, "image/jpeg", "b.jpg")
+        verify(rek, times(2)).detectText(any(DetectTextRequest::class.java))
+    }
+
+    @Test fun `a second throttle surfaces as 503 with code THROTTLED`() {
+        `when`(rek.indexFaces(any(IndexFacesRequest::class.java))).thenThrow(
+            ProvisionedThroughputExceededException.builder().message("slow down").build())
+        val ex = assertThrows<AiApiException> { client.facesEnroll(bytes, "image/jpeg", "x.jpg", photoId.toString(), null, eventId) }
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.status)
+        assertEquals("THROTTLED", ex.aiCode)
+        verify(rek, times(2)).indexFaces(any(IndexFacesRequest::class.java))
+    }
+
+    @Test fun `a failure that is not a throttle is not retried`() {
+        `when`(rek.detectText(any(DetectTextRequest::class.java))).thenThrow(InternalServerErrorException.builder().message("boom").build())
+        val ex = assertThrows<AiApiException> { client.bibsRecognize(bytes, "image/jpeg", "b.jpg") }
+        assertEquals(null, ex.aiCode)
+        verify(rek, times(1)).detectText(any(DetectTextRequest::class.java))
+    }
+
+    @Test fun `calls to one operation are spaced by the rate guard`() {
+        `when`(rek.detectText(any(DetectTextRequest::class.java))).thenReturn(DetectTextResponse.builder().build())
+        val paced = RekognitionAiClient(rek, props.copy(maxCallsPerSecond = 20.0), registry)
+        val start = System.nanoTime()
+        repeat(10) { paced.bibsRecognize(bytes, "image/jpeg", "b.jpg") }
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+        assertTrue(elapsedMs >= 400, "ten calls at 20 a second must take at least 400 ms, took $elapsedMs")
+    }
+
+    @Test fun `each operation has its own bucket`() {
+        `when`(rek.indexFaces(any(IndexFacesRequest::class.java))).thenReturn(oneFace())
+        `when`(rek.detectText(any(DetectTextRequest::class.java))).thenReturn(DetectTextResponse.builder().build())
+        val paced = RekognitionAiClient(rek, props.copy(maxCallsPerSecond = 1.0), registry)
+        val start = System.nanoTime()
+        paced.facesEnroll(bytes, "image/jpeg", "x.jpg", photoId.toString(), null, eventId)
+        paced.bibsRecognize(bytes, "image/jpeg", "b.jpg")
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+        assertTrue(elapsedMs < 500, "the first call of each operation must not wait, took $elapsedMs")
     }
 
     @Test

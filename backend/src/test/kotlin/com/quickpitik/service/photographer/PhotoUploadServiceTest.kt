@@ -515,18 +515,19 @@ class PhotoUploadServiceTest {
         requestId: UUID? = UUID.randomUUID(),
         putExpiresAt: OffsetDateTime = OffsetDateTime.now().plusMinutes(15),
         expiresAt: OffsetDateTime = OffsetDateTime.now().plusHours(24),
+        ownerId: UUID = photographerId,
     ): PhotoUploadIntent {
         val id = UUID.randomUUID()
         val now = OffsetDateTime.now()
         return PhotoUploadIntent(
             photoId = id,
-            photographerId = photographerId,
+            photographerId = ownerId,
             eventId = eventId,
             requestId = requestId,
             contentHash = helloSha256,
             contentType = "image/jpeg",
             sizeBytes = sizeBytes,
-            stagingKey = "staging/photo-uploads/$photographerId/$eventId/$id/original",
+            stagingKey = "staging/photo-uploads/$ownerId/$eventId/$id/original",
             originalKey = "events/$eventId/photos/$id/original.jpg",
             putExpiresAt = putExpiresAt,
             expiresAt = expiresAt,
@@ -976,7 +977,7 @@ class PhotoUploadServiceTest {
         Mockito.`when`(photoUploadIntentRepository.complete(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(1)
         for (intent in intents) {
-            Mockito.`when`(photoUploadIntentRepository.findOwned(intent.photoId, photographerId, eventId))
+            Mockito.`when`(photoUploadIntentRepository.findOwned(intent.photoId, intent.photographerId, eventId))
                 .thenReturn(intent)
             Mockito.`when`(storageService.metadata(intent.originalKey)).thenAnswer {
                 if (intent === intents.first()) {
@@ -990,7 +991,7 @@ class PhotoUploadServiceTest {
     }
 
     private fun commitTask(service: PhotoUploadService, intent: PhotoUploadIntent) = FutureTask {
-        service.commitDirectUpload(photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash)
+        service.commitDirectUpload(intent.photographerId, eventId, intent.photoId, intent.stagingKey, intent.contentHash)
     }
 
     private fun singleSlot() = storageProperties.directUpload.copy(
@@ -998,6 +999,123 @@ class PhotoUploadServiceTest {
         verificationWait = Duration.ofMillis(300),
         verificationWaiters = 1,
     )
+
+    @Test
+    fun `a photographer at the cap is refused at once while another photographer still gets in`() {
+        val other = UUID.randomUUID()
+        val intents = List(3) { intent(helloBytes.size.toLong()) } + intent(helloBytes.size.toLong(), ownerId = other)
+        val entered = CountDownLatch(2)
+        val release = CountDownLatch(1)
+        stubBlockedCommits(intents, entered, release)
+        Mockito.`when`(userRepository.findById(other)).thenReturn(Optional.of(
+            User(id = other, email = "other@test.local", passwordHash = "x", name = "Other", role = Role.PHOTOGRAPHER),
+        ))
+        Mockito.`when`(photographerSettingsRepository.findById(other)).thenReturn(Optional.of(
+            PhotographerSettings(userId = other, watermarkS3Key = "watermarks/other.png", verificationStatus = VerificationStatus.APPROVED),
+        ))
+        for (intent in intents.take(2)) {
+            Mockito.doAnswer {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+                StoredObject(intent.originalKey, intent.sizeBytes, intent.contentType)
+            }.`when`(storageService).metadata(intent.originalKey)
+        }
+        val registry = SimpleMeterRegistry()
+        val svc = service(AiApiProperties(enabled = false), registry,
+            directUpload = storageProperties.directUpload.copy(verificationConcurrency = 4))
+        val held = intents.take(2).map { commitTask(svc, it).also { task -> Thread(task).start() } }
+        try {
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            val started = System.nanoTime()
+            val error = assertFailsWith<ApiException> {
+                svc.commitDirectUpload(photographerId, eventId, intents[2].photoId, intents[2].stagingKey, intents[2].contentHash)
+            }
+            assertEquals(HttpStatus.TOO_MANY_REQUESTS, error.status)
+            assertEquals(ErrorCodes.RATE_LIMITED, error.code)
+            assertEquals(1L, error.retryAfterSeconds)
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 150)
+            assertEquals(1.0, registry.counter("qp.upload.verification", "outcome", "capped").count())
+            assertEquals(intents[3].photoId, commitTask(svc, intents[3]).also { it.run() }.get().id)
+            assertEquals(1L, svc.drainMinute().refused)
+            assertEquals(0L, svc.drainMinute().refused)
+        } finally {
+            release.countDown()
+            held.forEach { it.get(2, TimeUnit.SECONDS) }
+        }
+    }
+
+    @Test
+    fun `the cap is released when a commit fails`() {
+        val intents = List(3) { intent(helloBytes.size.toLong()) }
+        val entered = CountDownLatch(2)
+        val release = CountDownLatch(1)
+        stubBlockedCommits(intents, entered, release)
+        Mockito.doThrow(IllegalStateException("storage down")).`when`(storageService).metadata(intents[0].originalKey)
+        Mockito.`when`(photoUploadIntentRepository.releaseVerification(anyArg(), anyArg(), anyArg())).thenReturn(1)
+        for (intent in intents.drop(1)) {
+            Mockito.`when`(storageService.metadata(intent.originalKey)).thenAnswer {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+                StoredObject(intent.originalKey, intent.sizeBytes, intent.contentType)
+            }
+        }
+        val svc = service(AiApiProperties(enabled = false),
+            directUpload = storageProperties.directUpload.copy(verificationConcurrency = 4))
+        val error = assertFailsWith<ApiException> {
+            svc.commitDirectUpload(photographerId, eventId, intents[0].photoId, intents[0].stagingKey, intents[0].contentHash)
+        }
+        assertEquals(ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, error.code)
+        val held = intents.drop(1).map { commitTask(svc, it).also { task -> Thread(task).start() } }
+        try {
+            assertTrue(entered.await(2, TimeUnit.SECONDS), "both places must be available after the failure")
+        } finally {
+            release.countDown()
+        }
+        held.forEachIndexed { i, task -> assertEquals(intents[i + 1].photoId, task.get(2, TimeUnit.SECONDS).id) }
+    }
+
+    @Test
+    fun `a zero waiters setting means four times the slots`() {
+        for ((slots, waiters, expected) in listOf(Triple(4, 0, 16), Triple(8, 0, 32), Triple(8, 5, 5))) {
+            val svc = service(AiApiProperties(enabled = false), directUpload = storageProperties.directUpload.copy(
+                verificationConcurrency = slots, verificationWaiters = waiters,
+            ))
+            assertEquals(expected, svc.drainMinute().roomCapacity)
+        }
+    }
+
+    @Test
+    fun `Retry-After uses two seconds until the first minute with commits`() {
+        val registry = SimpleMeterRegistry()
+        val svc = service(AiApiProperties(enabled = false), registry)
+        assertEquals(2.0, svc.meanCommitSeconds)
+        assertEquals(2.0, svc.drainMinute().meanCommitSeconds)
+        registry.timer("qp.upload.duration").record(6, TimeUnit.SECONDS)
+        assertEquals(6.0, svc.drainMinute().meanCommitSeconds)
+        assertEquals(6.0, svc.drainMinute().meanCommitSeconds)
+    }
+
+    @Test
+    fun `invalid verification cap and negative room size are rejected`() {
+        for (cap in listOf(0, -1)) {
+            assertFailsWith<IllegalArgumentException> {
+                storageProperties.copy(directUpload = storageProperties.directUpload.copy(verificationPerPhotographer = cap))
+            }
+        }
+        assertFailsWith<IllegalArgumentException> {
+            storageProperties.copy(directUpload = storageProperties.directUpload.copy(verificationWaiters = -1))
+        }
+    }
+
+    @Test
+    fun `Retry-After grows with the waiters`() {
+        assertEquals(1L, retryAfterSeconds(0, 2.0, 4))
+        assertEquals(9L, retryAfterSeconds(16, 2.0, 4))
+        assertEquals(15L, retryAfterSeconds(100, 2.0, 4))
+        assertEquals(1L, retryAfterSeconds(0, 0.1, 4))
+        assertEquals(1L, retryAfterSeconds(0, 0.0, 4))
+        assertEquals(15L, retryAfterSeconds(Int.MAX_VALUE, 2.0, 4))
+    }
 
     @Test
     fun `drainMinute reports commits by event and clears them`() {
@@ -1097,7 +1215,7 @@ class PhotoUploadServiceTest {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
         stubBlockedCommits(intents, entered, release)
-        val svc = service(AiApiProperties(enabled = false), directUpload = singleSlot())
+        val svc = service(AiApiProperties(enabled = false), directUpload = singleSlot().copy(verificationPerPhotographer = 3))
         val first = commitTask(svc, intents[0])
         Thread(first).start()
         val second = commitTask(svc, intents[1])
@@ -1117,7 +1235,7 @@ class PhotoUploadServiceTest {
             }
             assertEquals(HttpStatus.TOO_MANY_REQUESTS, error.status)
             assertEquals(ErrorCodes.RATE_LIMITED, error.code)
-            assertEquals(2L, error.retryAfterSeconds)
+            assertEquals(4L, error.retryAfterSeconds)
             assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 150)
             release.countDown()
             assertEquals(intents[0].photoId, first.get(2, TimeUnit.SECONDS).id)

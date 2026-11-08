@@ -13,6 +13,8 @@ import com.quickpitik.dto.ai.FaceErasureResult
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.image.ExifOrientation
 import com.quickpitik.service.image.SubsampledDecode
+import io.github.bucket4j.Bandwidth
+import io.github.bucket4j.Bucket
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
@@ -32,17 +34,21 @@ import software.amazon.awssdk.services.rekognition.model.ImageTooLargeException
 import software.amazon.awssdk.services.rekognition.model.IndexFacesRequest
 import software.amazon.awssdk.services.rekognition.model.InvalidImageFormatException
 import software.amazon.awssdk.services.rekognition.model.InvalidParameterException
+import software.amazon.awssdk.services.rekognition.model.ProvisionedThroughputExceededException
 import software.amazon.awssdk.services.rekognition.model.QualityFilter
 import software.amazon.awssdk.services.rekognition.model.RekognitionException
 import software.amazon.awssdk.services.rekognition.model.ResourceAlreadyExistsException
 import software.amazon.awssdk.services.rekognition.model.ResourceNotFoundException
 import software.amazon.awssdk.services.rekognition.model.SearchFacesByImageRequest
 import software.amazon.awssdk.services.rekognition.model.TextTypes
+import software.amazon.awssdk.services.rekognition.model.ThrottlingException
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ThreadLocalRandom
 import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 
@@ -67,6 +73,16 @@ class RekognitionAiClient(
     // hot enroll path. Correctness never depends on it: indexFaces re-creates on
     // ResourceNotFound, so a stale/missing entry self-heals.
     private val knownCollections = ConcurrentHashMap.newKeySet<String>()
+
+    // UP-7: one bucket per AWS operation, capacity 1, so calls are spaced evenly
+    // under the per-account quota. Per process: divide the rate by replicas later.
+    private val pace = listOf("indexFaces", "detectText", "searchFacesByImage").associateWith {
+        Bucket.builder().addLimit(
+            Bandwidth.builder().capacity(1)
+                .refillGreedy(1, Duration.ofNanos((1_000_000_000 / props.maxCallsPerSecond).toLong()))
+                .build(),
+        ).build()
+    }
 
     // Byte-identical to what imageOf() builds: an already-shrunk image is under
     // INLINE_SAFE_BYTES, so the second toInlineBytes passes it through untouched.
@@ -126,6 +142,7 @@ class RekognitionAiClient(
         // surface someone else's photos. The backend's server-side re-filter is
         // an additional (weaker) net on top of this.
         val effective = maxOf(threshold, props.faceMatchThreshold)
+        paced("searchFacesByImage")
         val resp = try {
             rekognition.searchFacesByImage(
                 SearchFacesByImageRequest.builder()
@@ -158,7 +175,8 @@ class RekognitionAiClient(
         minChars: Int?,
     ): BibsRecognizeResult = guarded("detectText") {
         val min = minChars ?: props.bibMinChars
-        val resp = rekognition.detectText(DetectTextRequest.builder().image(imageOf(file)).build())
+        val request = DetectTextRequest.builder().image(imageOf(file)).build()
+        val resp = throttleRetried("detectText") { rekognition.detectText(request) }
         val detections = resp.textDetections()
             // WORD granularity: a bib is a single token. LINE would merge a bib
             // with neighbouring sponsor text.
@@ -243,13 +261,49 @@ class RekognitionAiClient(
     private fun indexWithCollection(collectionId: String, externalId: String, file: ByteArray) =
         try {
             ensureCollection(collectionId)
-            rekognition.indexFaces(indexRequest(collectionId, externalId, file))
+            val request = indexRequest(collectionId, externalId, file)
+            throttleRetried("indexFaces") { rekognition.indexFaces(request) }
         } catch (ex: ResourceNotFoundException) {
             // Cache said known but the collection was gone (deleted externally, or
             // an ensure race) — create and retry once.
             createCollection(collectionId)
-            rekognition.indexFaces(indexRequest(collectionId, externalId, file))
+            val request = indexRequest(collectionId, externalId, file)
+            throttleRetried("indexFaces") { rekognition.indexFaces(request) }
         }
+
+    // A throttled request wrote nothing, so one more try cannot enroll twice
+    // (the maxAttempts(1) rule below is about uncertain writes, not refusals).
+    private fun <T> throttleRetried(op: String, call: () -> T): T {
+        paced(op)
+        return try {
+            call()
+        } catch (ex: RekognitionException) {
+            if (!isThrottle(ex)) throw ex
+            val code = ex.awsErrorDetails()?.errorCode() ?: ex.javaClass.simpleName
+            meterRegistry.counter("qp.ai.throttle.retry", "op", op, "code", code).increment()
+            log.warn("Rekognition {} throttled ({}); retrying once", op, code)
+            waitOrUnavailable(op) { Thread.sleep(ThreadLocalRandom.current().nextLong(200, 801)); true }
+            paced(op)
+            call()
+        }
+    }
+
+    private fun paced(op: String) =
+        waitOrUnavailable(op) { pace.getValue(op).asBlocking().tryConsume(1, PACE_MAX_WAIT) }
+
+    // A wait that runs out or is interrupted is a transport failure: the photo keeps its attempt.
+    private inline fun waitOrUnavailable(op: String, wait: () -> Boolean) {
+        val done = try {
+            wait()
+        } catch (ex: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!done) throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "AWS Rekognition $op rate guard wait ended")
+    }
+
+    private fun isThrottle(ex: RekognitionException) =
+        ex is ThrottlingException || ex is ProvisionedThroughputExceededException
 
     private fun indexRequest(collectionId: String, externalId: String, file: ByteArray) =
         IndexFacesRequest.builder()
@@ -333,6 +387,8 @@ class RekognitionAiClient(
             val code = ex.awsErrorDetails()?.errorCode() ?: ex.javaClass.simpleName
             countError(op, code)
             log.warn("Rekognition {} failed ({}): {}", op, code, ex.awsErrorDetails()?.errorMessage() ?: ex.message)
+            // "THROTTLED" is the marker PhotoIndexingService reads to keep the photo's attempt.
+            if (isThrottle(ex)) throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, "THROTTLED", "AWS Rekognition $op throttled", ex)
             throw AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "AWS Rekognition $op failed", ex)
         } catch (ex: Exception) {
             val code = ex.javaClass.simpleName
@@ -347,5 +403,8 @@ class RekognitionAiClient(
     private companion object {
         // Leaves margin under Rekognition's 5 MB inline cap before we downscale.
         const val INLINE_SAFE_BYTES = 4_500_000
+        // A call waits at most this long for its rate-guard token; a throttled
+        // call returns fast, so retry plus guard stays well inside the work-fence budget.
+        val PACE_MAX_WAIT: Duration = Duration.ofSeconds(10)
     }
 }
