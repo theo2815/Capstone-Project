@@ -27,6 +27,9 @@ import software.amazon.awssdk.services.rekognition.model.DeleteCollectionRequest
 import software.amazon.awssdk.services.rekognition.model.DeleteCollectionResponse
 import software.amazon.awssdk.services.rekognition.model.DetectFacesRequest
 import software.amazon.awssdk.services.rekognition.model.DetectFacesResponse
+import software.amazon.awssdk.services.rekognition.model.DetectModerationLabelsRequest
+import software.amazon.awssdk.services.rekognition.model.DetectModerationLabelsResponse
+import software.amazon.awssdk.services.rekognition.model.ModerationLabel
 import software.amazon.awssdk.services.rekognition.model.DetectTextRequest
 import software.amazon.awssdk.services.rekognition.model.DetectTextResponse
 import software.amazon.awssdk.services.rekognition.model.Face
@@ -428,5 +431,34 @@ class RekognitionAiClientTest {
 
     @Test fun `malformed composite target cannot silently succeed`() {
         assertFalse(runCatching { client.deleteFacesPerson("not-an-event.not-a-photo") }.isSuccess)
+    }
+
+    // AA-I11: profile-image moderation reuses the pacing, retry and error mapping.
+    @Test fun `moderationLabels sends MinConfidence on the 0-100 scale and maps names and parents`() {
+        `when`(rek.detectModerationLabels(any(DetectModerationLabelsRequest::class.java))).thenReturn(
+            DetectModerationLabelsResponse.builder().moderationLabels(
+                ModerationLabel.builder().name("Explicit").parentName("").confidence(97.5f).build(),
+                ModerationLabel.builder().name("Exposed Male Genitalia").parentName("Explicit").confidence(95f).build(),
+            ).build(),
+        )
+
+        val hits = client.moderationLabels(bytes, 0.8)
+
+        val req = ArgumentCaptor.forClass(DetectModerationLabelsRequest::class.java)
+        verify(rek).detectModerationLabels(req.capture())
+        assertEquals(80f, req.value.minConfidence())
+        assertArrayEquals(bytes, req.value.image().bytes().asByteArray())
+        assertEquals(
+            listOf(ModerationHit("Explicit", null, 0.975), ModerationHit("Exposed Male Genitalia", "Explicit", 0.95)),
+            hits,
+        )
+    }
+
+    @Test fun `moderationLabels retries once when throttled`() {
+        `when`(rek.detectModerationLabels(any(DetectModerationLabelsRequest::class.java)))
+            .thenThrow(throttle()).thenReturn(DetectModerationLabelsResponse.builder().build())
+
+        assertEquals(emptyList<ModerationHit>(), client.moderationLabels(bytes, 0.8))
+        verify(rek, times(2)).detectModerationLabels(any(DetectModerationLabelsRequest::class.java))
     }
 }

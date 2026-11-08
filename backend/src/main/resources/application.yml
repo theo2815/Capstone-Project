@@ -241,6 +241,16 @@ app:
       hmac-secret: ${AI_WEBHOOK_HMAC_SECRET:}
       poll-interval-ms: 30000
       poll-grace-seconds: 90
+  moderation:
+    # AA-I11: photographer avatar, cover and watermark go through AWS
+    # DetectModerationLabels (Rekognition, ap-southeast-1) before they are stored.
+    # AI off or an AWS error = accepted + an admin flag; a blocked label = refused.
+    # 0-1 like the other thresholds (sent as x100). [NOT MEASURED: set from AA-0.5]
+    image-min-confidence: ${MODERATION_IMAGE_MIN_CONFIDENCE:0.8}
+    # A label is blocked when its name or parent name is listed (taxonomy v6 + v7).
+    # Swimwear, Alcohol, Tobacco, Drugs, Gambling, Rude Gestures stay off on purpose
+    # (race kits, sponsor banners). Owner reviews this list.
+    image-blocked-labels: ${MODERATION_IMAGE_BLOCKED_LABELS:Explicit Nudity,Explicit,Non-Explicit Nudity of Intimate parts and Kissing,Violence,Visually Disturbing,Hate Symbols}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

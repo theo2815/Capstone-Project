@@ -28,6 +28,7 @@ import software.amazon.awssdk.services.rekognition.model.DeleteCollectionRequest
 import software.amazon.awssdk.services.rekognition.model.DeleteFacesRequest
 import software.amazon.awssdk.services.rekognition.model.ListFacesRequest
 import software.amazon.awssdk.services.rekognition.model.DetectFacesRequest
+import software.amazon.awssdk.services.rekognition.model.DetectModerationLabelsRequest
 import software.amazon.awssdk.services.rekognition.model.DetectTextRequest
 import software.amazon.awssdk.services.rekognition.model.Image
 import software.amazon.awssdk.services.rekognition.model.ImageTooLargeException
@@ -76,7 +77,7 @@ class RekognitionAiClient(
 
     // UP-7: one bucket per AWS operation, capacity 1, so calls are spaced evenly
     // under the per-account quota. Per process: divide the rate by replicas later.
-    private val pace = listOf("indexFaces", "detectText", "searchFacesByImage").associateWith {
+    private val pace = listOf("indexFaces", "detectText", "searchFacesByImage", "detectModerationLabels").associateWith {
         Bucket.builder().addLimit(
             Bandwidth.builder().capacity(1)
                 .refillGreedy(1, Duration.ofNanos((1_000_000_000 / props.maxCallsPerSecond).toLong()))
@@ -191,6 +192,18 @@ class RekognitionAiClient(
                 }
             }
         BibsRecognizeResult(detections = detections)
+    }
+
+    // AA-I11: profile-image moderation. Not on FaceBibProvider: Rekognition-only.
+    // minConfidence is 0-1 like the other thresholds; AWS takes 0-100.
+    fun moderationLabels(file: ByteArray, minConfidence: Double): List<ModerationHit> = guarded("detectModerationLabels") {
+        val request = DetectModerationLabelsRequest.builder()
+            .image(imageOf(file))
+            .minConfidence((minConfidence * 100).toFloat())
+            .build()
+        throttleRetried("detectModerationLabels") { rekognition.detectModerationLabels(request) }
+            .moderationLabels()
+            .map { ModerationHit(it.name(), it.parentName()?.ifBlank { null }, (it.confidence() ?: 0f).toDouble() / 100.0) }
     }
 
     override fun deleteFacesPerson(personId: String) {
@@ -409,3 +422,6 @@ class RekognitionAiClient(
         val PACE_MAX_WAIT: Duration = Duration.ofSeconds(10)
     }
 }
+
+/** One DetectModerationLabels label; confidence on the 0-1 scale, parentName null for a top-level label. */
+data class ModerationHit(val name: String, val parentName: String?, val confidence: Double)
