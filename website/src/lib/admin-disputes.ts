@@ -77,10 +77,10 @@ export interface Dispute {
 
 export const DISPUTE_REASON_LABEL: Record<DisputeReason, string> = {
   wrong_runner: "Wrong runner in photo",
-  low_quality: "Photo quality too low",
-  not_received: "Order paid but never delivered",
-  duplicate_charge: "Charged twice for same order",
-  other: "Other (see note)",
+  low_quality: "Too blurred to recognise",
+  not_received: "Won't download or file is broken",
+  duplicate_charge: "Charged more than once",
+  other: "Checkout error or something else",
 };
 
 export const DISPUTE_RESOLUTION_LABEL: Record<DisputeResolution, string> = {
