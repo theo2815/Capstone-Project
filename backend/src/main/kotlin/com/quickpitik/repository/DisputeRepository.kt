@@ -30,22 +30,21 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
 
     fun findByProviderRefundId(providerRefundId: String): Dispute?
 
-    // Approved QR Ph refunds nobody finished: paid (or created) before windowCutoff and no link newer than linkCutoff.
+    // Approved QR Ph refunds nobody sent a link for, paid (or created) before windowCutoff.
+    // A sent link may have been claimed, so those rows are never auto-cancelled.
     @Query(
         """
         SELECT d FROM Dispute d, Order o
         WHERE o.id = d.orderId
           AND d.refundStatus = 'manual_review'
-          AND d.refundRequestedBy IS NOT NULL
           AND o.paymentMethodWire = 'qrph'
           AND COALESCE(o.paidAt, o.createdAt) < :windowCutoff
-          AND (d.refundLinkSentAt IS NULL OR d.refundLinkSentAt < :linkCutoff)
+          AND d.refundLinkSentAt IS NULL
         ORDER BY d.refundRequestedAt ASC
         """,
     )
     fun findDueForAutoCancel(
         @Param("windowCutoff") windowCutoff: OffsetDateTime,
-        @Param("linkCutoff") linkCutoff: OffsetDateTime,
         pageable: Pageable,
     ): List<Dispute>
 

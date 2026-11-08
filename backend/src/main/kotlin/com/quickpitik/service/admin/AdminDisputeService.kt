@@ -52,6 +52,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -74,6 +75,7 @@ class AdminDisputeService(
     private val paymongoRefundService: PaymongoRefundService,
     private val transactionTemplate: TransactionTemplate,
     private val paymongoProperties: PaymongoProperties,
+    private val clock: Clock,
 ) {
 
     @Transactional(readOnly = true)
@@ -143,6 +145,11 @@ class AdminDisputeService(
         val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: throw
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
         if (dispute.refundNeedsReconciliation()) {
+            // A parked QR Ph refund whose link was sent: the refund service checks the time and needs a reason.
+            if (dispute.refundLinkSentAt != null) {
+                paymongoRefundService.cancelUnclaimedRefund(adminId, disputeId, reason)
+                return hydrateOne(dispute)
+            }
             throw ApiException(
                 status = HttpStatus.CONFLICT,
                 code = ErrorCodes.INVALID_STATE_TRANSITION,
@@ -161,7 +168,7 @@ class AdminDisputeService(
         dispute.status = DisputeStatus.DENIED
         dispute.resolution = DisputeResolution.DENY
         dispute.refundAmountPhp = null
-        dispute.resolvedAt = OffsetDateTime.now()
+        dispute.resolvedAt = OffsetDateTime.now(clock)
         disputeRepository.save(dispute)
 
         val photographerId = photoRepository.findById(dispute.photoId).map { it.photographerId }.orElse(null)

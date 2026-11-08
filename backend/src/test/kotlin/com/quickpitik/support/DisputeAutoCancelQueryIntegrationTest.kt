@@ -29,7 +29,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 // Pins DisputeRepository.findDueForAutoCancel: which parked QR Ph refunds the hourly auto-cancel job is shown.
-// The 30-day and 3-day cut-offs are computed by the service, so here they are plain timestamps.
+// The 30-day cut-off is computed by the service, so here it is a plain timestamp.
 class DisputeAutoCancelQueryIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var users: UserRepository
     @Autowired lateinit var events: EventRepository
@@ -40,11 +40,10 @@ class DisputeAutoCancelQueryIntegrationTest : PostgresIntegrationTest() {
 
     private val now = OffsetDateTime.parse("2026-11-30T00:00:00Z")
     private val windowCutoff = now.minusDays(30) // Oct 31
-    private val linkCutoff = now.minusDays(3) // Nov 27
     private val longAgo = OffsetDateTime.parse("2026-10-01T00:00:00Z")
 
     private fun dueIds(): Set<UUID> =
-        disputes.findDueForAutoCancel(windowCutoff, linkCutoff, PageRequest.of(0, 500)).map { it.id }.toSet()
+        disputes.findDueForAutoCancel(windowCutoff, PageRequest.of(0, 500)).map { it.id }.toSet()
 
     @Test
     fun `a parked QR Ph refund past the window with no link is due`() {
@@ -61,14 +60,14 @@ class DisputeAutoCancelQueryIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `a link sent less than three days ago keeps the refund out and an older link does not`() {
+    fun `a refund whose link was sent is never due, however old the link`() {
         val fresh = parked(paidAt = longAgo, linkSentAt = now.minusDays(1))
-        val stale = parked(paidAt = longAgo, linkSentAt = now.minusDays(4))
+        val stale = parked(paidAt = longAgo, linkSentAt = now.minusDays(40))
 
         val due = dueIds()
 
         assertFalse(fresh.id in due)
-        assertTrue(stale.id in due)
+        assertFalse(stale.id in due)
     }
 
     @Test
@@ -86,10 +85,10 @@ class DisputeAutoCancelQueryIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `a refund with no approving admin is not due`() {
+    fun `a refund whose approving admin was deleted is still due`() {
         val d = parked(paidAt = longAgo, approvedBy = false)
 
-        assertFalse(d.id in dueIds())
+        assertTrue(d.id in dueIds())
     }
 
     @Test
@@ -110,7 +109,7 @@ class DisputeAutoCancelQueryIntegrationTest : PostgresIntegrationTest() {
         val newer = parked(paidAt = longAgo, requestedAt = longAgo.plusDays(2))
         val older = parked(paidAt = longAgo, requestedAt = longAgo.plusDays(1))
 
-        val ids = disputes.findDueForAutoCancel(windowCutoff, linkCutoff, PageRequest.of(0, 500)).map { it.id }
+        val ids = disputes.findDueForAutoCancel(windowCutoff, PageRequest.of(0, 500)).map { it.id }
 
         assertTrue(ids.indexOf(older.id) in 0 until ids.indexOf(newer.id))
     }
