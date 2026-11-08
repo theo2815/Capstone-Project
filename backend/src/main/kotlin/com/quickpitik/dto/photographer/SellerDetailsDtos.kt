@@ -7,7 +7,10 @@ import java.time.OffsetDateTime
 // E1/E2 response. Deliberately no links and no storage keys: the photographer
 // never needs to see the files again, and only admins open them (SC-1b).
 data class SellerDetailsDto(
+    /** Today's values (missing / submitted / approved / rejected) for old clients; see SellerDetailsStatus.toWire. */
     val status: String,
+    /** The detailed state (missing / manual_review / auto_approved / approved / rejected); new clients read this. */
+    val reviewState: String,
     val legalName: String? = null,
     val idType: String? = null,
     val address: String? = null,
@@ -19,12 +22,13 @@ data class SellerDetailsDto(
     val reviewedAt: OffsetDateTime? = null,
 ) {
     companion object {
-        val MISSING = SellerDetailsDto(status = "missing")
+        val MISSING = SellerDetailsDto(status = "missing", reviewState = "missing")
     }
 }
 
 fun SellerDetails.toDto() = SellerDetailsDto(
     status = status.toWire(),
+    reviewState = status.reviewState(),
     legalName = legalName,
     idType = idType.toWire(),
     address = address,

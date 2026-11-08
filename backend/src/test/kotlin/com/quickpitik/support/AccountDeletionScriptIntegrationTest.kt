@@ -395,8 +395,8 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
     // ─── SC-1: seller details are legal records, kept by both scripts ───
 
     private fun sellerDetails(userId: UUID) = jdbc.update(
-        "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, status, revision, submitted_at) " +
-            "VALUES (?, 'Del Real Name', 'PASSPORT', ?, ?, 'Cebu', '09171234567', 'SUBMITTED', 1, now())",
+        "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
+            "VALUES (?, 'Del Real Name', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now())",
         userId, "seller-details/$userId/${UUID.randomUUID()}.jpg", "seller-details/$userId/${UUID.randomUUID()}.jpg",
     )
 
@@ -430,6 +430,31 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
 
         assertEquals(0, result.exitCode, result.stderr)
         assertEquals(1, count("SELECT count(*) FROM photographer_seller_details WHERE user_id = ? AND legal_name = 'Del Real Name'", s.photographer))
+    }
+
+    @Test
+    fun `the anonymise run deletes the liveness sessions of the account`() {
+        val s = seedStudio()
+        sellerDetails(s.photographer)
+        val other = user("PHOTOGRAPHER")
+        fun session(owner: UUID) = jdbc.update(
+            "INSERT INTO liveness_sessions (session_id, user_id, purpose, consent_version, created_at) " +
+                "VALUES (?, ?, 'PHOTOGRAPHER_IDENTITY', '1.2', now())",
+            "s-${UUID.randomUUID()}", owner,
+        )
+        session(s.photographer)
+        session(s.photographer)
+        session(other)
+
+        val dry = anonymise(s.photographer)
+        assertEquals(0, dry.exitCode, dry.stderr)
+        assertEquals(2, count("SELECT count(*) FROM liveness_sessions WHERE user_id = ?", s.photographer), "a dry run changes nothing")
+
+        val result = anonymise(s.photographer, confirm = "yes")
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertEquals(0, count("SELECT count(*) FROM liveness_sessions WHERE user_id = ?", s.photographer))
+        assertEquals(1, count("SELECT count(*) FROM liveness_sessions WHERE user_id = ?", other))
     }
 
     private fun assertRefusedUnchanged(photographer: UUID) {

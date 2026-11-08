@@ -6,6 +6,9 @@ import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
+import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -61,6 +64,46 @@ class SellerDetails(
 
     @Column(name = "reviewed_by")
     var reviewedBy: UUID? = null,
+
+    /** The phone's last 10 digits, for repeat-account matching (V94). */
+    @Column(name = "phone_key", nullable = false, length = 10)
+    var phoneKey: String,
+
+    // Automatic identity checks (V94; AA-I3 to AA-I5 fill them). Scores use AWS's 0-100 scale.
+    @Column(name = "liveness_session_id", length = 128)
+    var livenessSessionId: String? = null,
+
+    @Column(name = "liveness_confidence", precision = 5, scale = 2)
+    var livenessConfidence: BigDecimal? = null,
+
+    @Column(name = "face_similarity", precision = 5, scale = 2)
+    var faceSimilarity: BigDecimal? = null,
+
+    @Column(name = "auto_checked_at")
+    var autoCheckedAt: OffsetDateTime? = null,
+
+    @Column(name = "biometric_consent_at")
+    var biometricConsentAt: OffsetDateTime? = null,
+
+    @Column(name = "liveness_reference_key", length = 512)
+    var livenessReferenceKey: String? = null,
+
+    @Column(name = "id_number_hmac", length = 64)
+    var idNumberHmac: String? = null,
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "reason_codes", nullable = false, columnDefinition = "jsonb")
+    var reasonCodes: List<SellerReasonCode> = emptyList(),
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "repeat_matches", nullable = false, columnDefinition = "jsonb")
+    var repeatMatches: List<RepeatMatch> = emptyList(),
 ) {
-    fun fileKeys(): List<String> = listOfNotNull(idFrontKey, idBackKey, selfieKey, birFormKey)
+    fun fileKeys(): List<String> = listOfNotNull(idFrontKey, idBackKey, selfieKey, birFormKey, livenessReferenceKey)
 }
+
+/** What two seller accounts were found to share. */
+enum class RepeatMatchKind { ID_NUMBER, PAYOUT_NUMBER, PHONE }
+
+/** Another account that shares details with this one (stored as JSONB in repeat_matches). */
+data class RepeatMatch(val userId: UUID, val matchedOn: List<RepeatMatchKind>)

@@ -107,7 +107,8 @@ class SellerDetailsService(
                 val row = existing ?: SellerDetails(
                     userId = userId, legalName = legalName, idType = idType, idFrontKey = frontKey,
                     idBackKey = backKey, selfieKey = selfieKey, birFormKey = birKey, address = address,
-                    phone = phone, status = SellerDetailsStatus.SUBMITTED, revision = 0, submittedAt = now,
+                    phone = phone, phoneKey = phoneKey(phone), status = SellerDetailsStatus.MANUAL_REVIEW,
+                    revision = 0, submittedAt = now,
                 )
                 val old = existing?.fileKeys().orEmpty()
                 row.apply {
@@ -119,7 +120,9 @@ class SellerDetailsService(
                     birFormKey = birKey
                     this.address = address
                     this.phone = phone
-                    status = SellerDetailsStatus.SUBMITTED
+                    phoneKey = phoneKey(phone)
+                    status = SellerDetailsStatus.MANUAL_REVIEW
+                    reasonCodes = emptyList()
                     rejectionReason = null
                     reviewedAt = null
                     reviewedBy = null
@@ -146,8 +149,11 @@ class SellerDetailsService(
     @Transactional(readOnly = true)
     fun adminList(status: String?, params: PaginationParams): PaginatedResponse<AdminSellerDetailsRowDto> {
         val filter = status?.let { wire ->
-            SellerDetailsStatus.entries.firstOrNull { it.toWire() == wire }
-                ?: throw ValidationException("status must be submitted, approved or rejected.", field = "status")
+            SellerDetailsStatus.fromWire(wire)
+                ?: throw ValidationException(
+                    "status must be manual_review, auto_approved, approved or rejected (or the legacy submitted).",
+                    field = "status",
+                )
         }
         val page = sellerDetailsRepository.findForAdmin(filter, OffsetLimitPageable(params))
         val emails = userRepository.findAllById(page.content.map { it.userId }).associate { it.id to it.email }
@@ -175,10 +181,10 @@ class SellerDetailsService(
         return row.toAdminDto(email(userId), files, OffsetDateTime.now(clock).plus(ttl))
     }
 
-    /** E5: only a SUBMITTED record at the revision the admin opened. */
+    /** E5: only a MANUAL_REVIEW record at the revision the admin opened. */
     @Transactional
     fun approve(adminId: UUID, userId: UUID, revision: Long): AdminSellerDetailsDto {
-        val row = decide(userId, revision, SellerDetailsStatus.SUBMITTED)
+        val row = decide(userId, revision, SellerDetailsStatus.MANUAL_REVIEW)
         row.status = SellerDetailsStatus.APPROVED
         row.reviewedAt = OffsetDateTime.now(clock)
         row.reviewedBy = adminId
@@ -189,10 +195,13 @@ class SellerDetailsService(
         return row.toAdminDto(email(userId))
     }
 
-    /** E6: from SUBMITTED, or APPROVED (a fake found later); pauses uploads and tells the photographer why. */
+    /** E6: from MANUAL_REVIEW, or AUTO_APPROVED / APPROVED (a fake found later); pauses uploads and tells the photographer why. */
     @Transactional
     fun reject(adminId: UUID, userId: UUID, revision: Long, reason: String): AdminSellerDetailsDto {
-        val row = decide(userId, revision, SellerDetailsStatus.SUBMITTED, SellerDetailsStatus.APPROVED)
+        val row = decide(
+            userId, revision,
+            SellerDetailsStatus.MANUAL_REVIEW, SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.APPROVED,
+        )
         val trimmed = reason.trim()
         row.status = SellerDetailsStatus.REJECTED
         row.rejectionReason = trimmed
@@ -301,5 +310,8 @@ class SellerDetailsService(
                 (compact.startsWith("+63") || compact.startsWith("0")) && digits in 10..13
             return typed.takeIf { ok }
         }
+
+        /** The last 10 digits of a valid phone, for repeat-account matching (the same rule as V94's backfill). */
+        fun phoneKey(phone: String): String = phone.filter(Char::isDigit).takeLast(10)
     }
 }

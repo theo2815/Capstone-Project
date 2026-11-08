@@ -416,14 +416,17 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val (ownerToken, ownerId) = registerPhotographerWithId()
         val other = register(Role.PHOTOGRAPHER)
         jdbc.update(
-            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, status, revision, submitted_at) " +
-                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', 'SUBMITTED', 1, now())",
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now())",
             ownerId, "seller-details/$ownerId/${UUID.randomUUID()}.jpg", "seller-details/$ownerId/${UUID.randomUUID()}.jpg",
         )
         val mine = get(path, ownerToken)
         assertEquals(200, mine.statusCode())
         assertTrue("no-store" in mine.headers().firstValue("Cache-Control").orElse(""))
         assertEquals("Juan Dela Cruz", json.readTree(mine.body()).path("data").path("legalName").asText())
+        // Old clients keep reading "submitted"; new clients read the detailed reviewState.
+        assertEquals("submitted", json.readTree(mine.body()).path("data").path("status").asText())
+        assertEquals("manual_review", json.readTree(mine.body()).path("data").path("reviewState").asText())
         assertFalse("seller-details/" in mine.body(), "E1 must never carry a storage key")
         val theirs = get(path, other)
         assertEquals(200, theirs.statusCode())
@@ -441,8 +444,8 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val root = "/api/v1/admin/seller-details"
         val (_, sellerId) = registerPhotographerWithId()
         jdbc.update(
-            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, status, revision, submitted_at) " +
-                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', 'SUBMITTED', 1, now())",
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now())",
             sellerId, "seller-details/$sellerId/${UUID.randomUUID()}.jpg", "seller-details/$sellerId/${UUID.randomUUID()}.jpg",
         )
         val approve = """{"revision":1}"""

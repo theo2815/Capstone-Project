@@ -14,6 +14,7 @@ data class AdminSellerDetailsRowDto(
     val legalName: String,
     val idType: String,
     val status: String,
+    val reviewState: String,
     val submittedAt: OffsetDateTime,
     val reviewedAt: OffsetDateTime?,
 )
@@ -31,6 +32,7 @@ data class AdminSellerDetailsDto(
     val userId: UUID,
     val email: String,
     val status: String,
+    val reviewState: String,
     val legalName: String,
     val idType: String,
     val address: String,
@@ -52,6 +54,7 @@ fun SellerDetails.toAdminRowDto(email: String) = AdminSellerDetailsRowDto(
     legalName = legalName,
     idType = idType.toWire(),
     status = status.toWire(),
+    reviewState = status.reviewState(),
     submittedAt = submittedAt,
     reviewedAt = reviewedAt,
 )
@@ -61,6 +64,7 @@ fun SellerDetails.toAdminDto(email: String, files: SellerDetailsFilesDto? = null
         userId = userId,
         email = email,
         status = status.toWire(),
+        reviewState = status.reviewState(),
         legalName = legalName,
         idType = idType.toWire(),
         address = address,
