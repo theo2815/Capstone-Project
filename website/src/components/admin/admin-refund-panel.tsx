@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
-import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { AdminTextarea } from "@/components/admin/admin-form-fields";
+import { AdminConfirmModal, AdminFormModal } from "@/components/admin/admin-form-modal";
+import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
 import type { Dispute } from "@/lib/admin-disputes";
@@ -26,20 +27,25 @@ export function AdminRefundPanel({
   onConfirmOpenChange?: (open: boolean) => void;
 }) {
   const { showToast } = useToast();
-  const { sendRefundLink, markRefunded, isPending } = useDisputeActions();
+  const { sendRefundLink, markRefunded, deny, isPending } = useDisputeActions();
   const busy = isPending(dispute.id);
   const [url, setUrl] = useState("");
   const [replacing, setReplacing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  // The cleanup also clears the host flag if the panel unmounts with the confirm open.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  // The cleanup also clears the host flag if the panel unmounts with a dialog open.
   useEffect(() => {
-    onConfirmOpenChange?.(confirmOpen);
+    onConfirmOpenChange?.(confirmOpen || cancelOpen);
     return () => onConfirmOpenChange?.(false);
-  }, [confirmOpen, onConfirmOpenChange]);
+  }, [confirmOpen, cancelOpen, onConfirmOpenChange]);
 
   const savedLink = dispute.refundLinkUrl;
   const showField = !savedLink || replacing;
   const trimmed = url.trim();
+  // The server never auto-cancels once a link was sent (the runner may have claimed it): past this date an admin checks PayMongo.
+  const linkSent = !!dispute.refundLinkSentAt;
+  const checkPaymongo = linkSent && isRefundLinkExpired(dispute.refundCancelsAt);
 
   async function handleCopy(text: string) {
     const ok = await copyToClipboard(text);
@@ -67,6 +73,16 @@ export function AdminRefundPanel({
     showToast({ kind: "success", message: `Marked refunded · ${dispute.id}` });
   }
 
+  // Deny is the cancel route: the server allows it here only past the cancel date and needs a reason.
+  async function handleCancelRefund() {
+    const reason = cancelReason.trim();
+    if (busy || !reason) return;
+    if (!(await deny(dispute.id, reason))) return;
+    setCancelOpen(false);
+    setCancelReason("");
+    showToast({ kind: "success", message: `Refund cancelled · ${dispute.id}` });
+  }
+
   return (
     <div className="space-y-4 font-sans text-sm text-ink-soft">
       {dispute.paymentId ? (
@@ -91,10 +107,24 @@ export function AdminRefundPanel({
       )}
 
       {dispute.refundWindowClosesAt && dispute.refundCancelsAt && (
-        <p>
-          PayMongo window closes {formatLongDate(dispute.refundWindowClosesAt)}. QuickPitik cancels this
-          refund on {formatLongDate(dispute.refundCancelsAt)} if it is not done.
-        </p>
+        linkSent ? (
+          <p>
+            PayMongo window closes {formatLongDate(dispute.refundWindowClosesAt)}. A refund with a sent link is never
+            cancelled automatically: after {formatLongDate(dispute.refundCancelsAt)}, check PayMongo.
+          </p>
+        ) : (
+          <p>
+            PayMongo window closes {formatLongDate(dispute.refundWindowClosesAt)}. QuickPitik cancels this
+            refund on {formatLongDate(dispute.refundCancelsAt)} if it is not done.
+          </p>
+        )
+      )}
+
+      {checkPaymongo && (
+        <div className="space-y-1 rounded-2xl border border-line-strong bg-bone-deep px-4 py-3">
+          <p className="font-semibold text-ink">Check PayMongo</p>
+          <p>If the refund was claimed, mark it refunded. If the link is still unclaimed, cancel the refund.</p>
+        </div>
       )}
 
       {showField ? (
@@ -134,6 +164,33 @@ export function AdminRefundPanel({
       <button type="button" onClick={() => setConfirmOpen(true)} disabled={busy} className={`${BTN_SECONDARY} ${sm} w-full`}>
         Mark refunded
       </button>
+
+      {checkPaymongo && (
+        <button type="button" onClick={() => setCancelOpen(true)} disabled={busy} className={`${BTN_DANGER} ${sm} w-full`}>
+          Cancel refund…
+        </button>
+      )}
+
+      <AdminFormModal
+        open={cancelOpen}
+        submitting={busy}
+        pendingLabel="Cancelling…"
+        onClose={() => setCancelOpen(false)}
+        onSubmit={handleCancelRefund}
+        title="Cancel refund"
+        intro="Only do this after PayMongo shows the refund link unclaimed. The runner sees your reason."
+        submitLabel="Cancel refund"
+        submitDisabled={!cancelReason.trim()}
+        cancelLabel="Keep refund"
+      >
+        <AdminTextarea
+          id={`cancel-refund-reason-${dispute.id}`}
+          label="Reason (required, max 500)"
+          value={cancelReason}
+          onChange={setCancelReason}
+          maxLength={500}
+        />
+      </AdminFormModal>
 
       <AdminConfirmModal
         open={confirmOpen}

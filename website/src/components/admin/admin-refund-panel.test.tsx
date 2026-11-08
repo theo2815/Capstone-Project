@@ -172,6 +172,68 @@ describe("manual refund panel", () => {
     });
   });
 
+  // A1: a sent link may have been claimed, so the server never auto-cancels it; past the cancel date the admin checks PayMongo.
+  describe("once a link was sent", () => {
+    const sentLink = {
+      ...parked,
+      refundLinkUrl: "https://pay.example/r/1",
+      refundLinkSentAt: "2026-10-29T01:00:00Z",
+      refundLinkExpiresAt: "2026-11-01T01:00:00Z",
+      refundWindowClosesAt: "2026-10-31T00:00:00Z",
+      refundCancelsAt: "2026-11-01T01:00:00Z",
+    };
+    beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("says the refund is not cancelled automatically, with no cancel action before the date", () => {
+      vi.setSystemTime(new Date("2026-11-01T00:00:00Z"));
+      renderAside(sentLink);
+      const closes = formatLongDate(sentLink.refundWindowClosesAt);
+      const after = formatLongDate(sentLink.refundCancelsAt);
+      expect(screen.getByText(`PayMongo window closes ${closes}. A refund with a sent link is never cancelled automatically: after ${after}, check PayMongo.`)).toBeInTheDocument();
+      expect(screen.queryByText(/QuickPitik cancels this refund/)).not.toBeInTheDocument();
+      expect(screen.queryByText("Check PayMongo")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Cancel refund…" })).not.toBeInTheDocument();
+    });
+
+    it("asks the admin to check PayMongo once the date has passed and offers both ways out", () => {
+      vi.setSystemTime(new Date("2026-11-01T02:00:00Z"));
+      renderAside(sentLink);
+      expect(screen.getByText("Check PayMongo")).toBeInTheDocument();
+      expect(screen.getByText("If the refund was claimed, mark it refunded. If the link is still unclaimed, cancel the refund.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mark refunded" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Cancel refund…" })).toBeEnabled();
+    });
+
+    it("needs a reason, then cancels through deny and toasts success", async () => {
+      vi.setSystemTime(new Date("2026-11-01T02:00:00Z"));
+      const user = userEvent.setup();
+      const post = vi.spyOn(api, "post").mockResolvedValueOnce({ ...sentLink, status: "denied", refundStatus: "cancelled" });
+      renderAside(sentLink);
+      await user.click(screen.getByRole("button", { name: "Cancel refund…" }));
+      const dialog = screen.getByRole("dialog", { name: "Cancel refund" });
+      const submit = within(dialog).getByRole("button", { name: "Cancel refund" });
+      expect(submit).toBeDisabled();
+      await user.type(within(dialog).getByLabelText(/Reason/), "  PayMongo shows the link unclaimed  ");
+      await user.click(submit);
+      expect(post).toHaveBeenCalledWith(`/admin/disputes/${sentLink.id}/deny`, { reason: "PayMongo shows the link unclaimed" });
+      expect(lastToast()?.kind).toBe("success");
+    });
+
+    it("keeps the reason and the dialog open when the cancel fails", async () => {
+      vi.setSystemTime(new Date("2026-11-01T02:00:00Z"));
+      const user = userEvent.setup();
+      vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Backend unavailable"));
+      renderAside(sentLink);
+      await user.click(screen.getByRole("button", { name: "Cancel refund…" }));
+      const dialog = screen.getByRole("dialog", { name: "Cancel refund" });
+      await user.type(within(dialog).getByLabelText(/Reason/), "unclaimed");
+      await user.click(within(dialog).getByRole("button", { name: "Cancel refund" }));
+      expect(within(screen.getByRole("dialog", { name: "Cancel refund" })).getByLabelText(/Reason/)).toHaveValue("unclaimed");
+      expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["error"]);
+    });
+  });
+
   it("shows the saved link, its sent time and Send a new link after a successful send", async () => {
     const user = userEvent.setup();
     const sent = { ...parked, refundLinkUrl: "https://pay.example/r/1", refundLinkSentAt: "2026-10-29T01:00:00Z" };
