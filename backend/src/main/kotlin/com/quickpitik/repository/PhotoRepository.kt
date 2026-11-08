@@ -328,7 +328,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     // Async-watermark reconcile sweep (V36): PROCESSING rows the AFTER_COMMIT
     // hot path missed (app crash, storage outage), oldest first. Mirrors
-    // findIndexingBacklog.
+    // findIndexingBacklog. A claim that expired before endedClaimCutoff is one
+    // PhotoWorkFence.claim releases (a failed PUT never finishes it, WM-1).
     @Query(
         """
         SELECT p FROM Photo p
@@ -336,7 +337,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.deletionStartedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
-          AND p.watermarkWorkToken IS NULL
+          AND (p.watermarkWorkToken IS NULL OR p.watermarkWorkExpiresAt < :endedClaimCutoff)
           AND p.processingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -345,6 +346,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     fun findWatermarkBacklog(
         @Param("maxAttempts") maxAttempts: Int,
         @Param("cutoff") cutoff: OffsetDateTime,
+        @Param("endedClaimCutoff") endedClaimCutoff: OffsetDateTime,
         pageable: Pageable,
     ): List<Photo>
 

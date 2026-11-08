@@ -17,7 +17,8 @@ data class PhotoWorkClaim(val photoId: UUID, val generation: Long, val token: UU
     val expiresAt: Instant, val kind: PhotoWorkKind)
 
 /** A local expiry refuses settlement, but never proves a remote writer has ended.
- * Unfinished tokens cannot be stolen. TASK 9/10 must reconcile unknown operations.
+ * Unfinished tokens cannot be stolen, except a watermark claim past endedWatermarkCutoff (WM-1).
+ * TASK 9/10 must reconcile unknown operations.
  */
 @Service
 @Transactional
@@ -30,11 +31,19 @@ class PhotoWorkFence(
     private val json: ObjectMapper,
     private val clock: Clock,
 ) {
+    private val log = org.slf4j.LoggerFactory.getLogger(javaClass)
+
     fun claim(photoId: UUID, kind: PhotoWorkKind): PhotoWorkClaim? {
         val photo = photos.findAllByIdForUpdate(listOf(photoId)).singleOrNull() ?: return null
         if (photo.removalState != RemovalState.NONE || photo.deletedAt != null || photo.deletionStartedAt != null) return null
         val token = if (kind == PhotoWorkKind.WATERMARK) photo.watermarkWorkToken else photo.indexingWorkToken
-        if (token != null) return null
+        if (token != null) {
+            if (kind != PhotoWorkKind.WATERMARK || photo.watermarkWorkExpiresAt?.isBefore(endedWatermarkCutoff()) != true) return null
+            log.warn("Watermark {}: releasing a work claim whose uploads have ended (expired {})", photoId, photo.watermarkWorkExpiresAt)
+            photos.finishWorkOutput(token, OffsetDateTime.now(clock))
+            photos.finishWork(photo.id, token)
+            return claim(photoId, kind) // finishWork cleared the token under this lock, so this recurses once
+        }
         if (photos.hasUnfinishedWork(photoId, kind.name)) return null
         val expires = OffsetDateTime.now(clock).plus(budget(kind))
         val claim = PhotoWorkClaim(photo.id, photo.workGeneration, UUID.randomUUID(), expires.toInstant(), kind)
@@ -74,6 +83,11 @@ class PhotoWorkFence(
         finish(claim)
         return true
     }
+
+    // A watermark writer checks its claim once, before expiry, then makes two PUTs (preview, grid), each a single
+    // attempt ended by operationTimeout: a claim that expired before this cutoff has no writer left on our side.
+    // Both PUTs write fixed keys on the erasure manifest, so a late remote write is overwritten by the retry.
+    fun endedWatermarkCutoff(): OffsetDateTime = OffsetDateTime.now(clock).minus(storage.operationTimeout.multipliedBy(2))
 
     fun recordPerson(claim: PhotoWorkClaim, personId: String) {
         photos.findAllByIdForUpdate(listOf(claim.photoId))

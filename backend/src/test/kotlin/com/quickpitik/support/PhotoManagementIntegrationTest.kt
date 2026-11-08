@@ -457,8 +457,27 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
         val restored = photos.findById(pending.id).get()
         assertEquals(PhotoStatus.PROCESSING, restored.status)
         assertEquals(0, restored.processingAttempts, "an exhausted budget would strand the row outside the sweep")
-        val backlog = photos.findWatermarkBacklog(3, OffsetDateTime.now(), PageRequest.of(0, 200)).map { it.id }
+        val backlog = photos.findWatermarkBacklog(3, OffsetDateTime.now(), OffsetDateTime.now(), PageRequest.of(0, 200)).map { it.id }
         assertTrue(pending.id in backlog, "the sweep is what re-renders the preview after a restore")
+    }
+
+    // WM-1: a failed watermark PUT never finishes its claim. Once the claim ended before the
+    // cutoff the sweep re-drives the photo; a claim that may still have an upload in flight keeps it out.
+    @Test fun `the watermark backlog returns a photo whose claim surely ended and skips one still inside the window`() {
+        fun processing() = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id,
+            s3Key = "review/${UUID.randomUUID()}/original.jpg", pricePhp = BigDecimal("125"),
+            status = PhotoStatus.PROCESSING, uploadedAt = OffsetDateTime.now().minusMinutes(30)))
+        val now = OffsetDateTime.now()
+        val ended = processing()
+        val inFlight = processing()
+        assertEquals(1, inTx { photos.claimWork(ended.id, "WATERMARK", UUID.randomUUID(), now.minusMinutes(10)) })
+        assertEquals(1, inTx { photos.claimWork(inFlight.id, "WATERMARK", UUID.randomUUID(), now.minusMinutes(2)) })
+
+        val backlog = photos.findWatermarkBacklog(5, now, now.minusMinutes(4),
+            org.springframework.data.domain.Pageable.unpaged()).map { it.id }
+
+        assertTrue(ended.id in backlog, "a claim that ended before the cutoff must not hide the photo from the sweep")
+        assertFalse(inFlight.id in backlog, "a claim inside the window may still have an upload in flight")
     }
 
     // FS-10: the grid backfill picks only LIVE, untouched rows whose tile is still the

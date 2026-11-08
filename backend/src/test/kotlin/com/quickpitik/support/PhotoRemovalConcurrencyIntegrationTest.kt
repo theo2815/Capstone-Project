@@ -306,7 +306,7 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
         val cutoff = java.time.OffsetDateTime.now().plusMinutes(1)
         val page = org.springframework.data.domain.Pageable.unpaged()
         fun assertExcluded() = assertAll(
-            { assertFalse(photos.findWatermarkBacklog(5, cutoff, page).any { it.id == photo.id }) },
+            { assertFalse(photos.findWatermarkBacklog(5, cutoff, fence.endedWatermarkCutoff(), page).any { it.id == photo.id }) },
             { assertFalse(photos.findIndexingBacklog(listOf(IndexingStatus.PENDING), 5, cutoff, page).any { it.id == photo.id }) },
             { assertFalse(event.id in photos.findEventsWithIndexingBacklog(listOf(IndexingStatus.PENDING), 5, cutoff, page)) },
             { assertTrue(photos.findIndexingBacklogForEvent(event.id, listOf(IndexingStatus.PENDING), 5, cutoff, page).isEmpty()) },

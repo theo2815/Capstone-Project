@@ -95,6 +95,39 @@ class PhotoWorkFenceTest {
         verify(photos).finishWork(photo.id, token)
     }
 
+    // WM-1: a failed watermark PUT keeps its claim; once both PUTs (7 s each) must have ended, the claim is released.
+    @Test fun `a watermark claim two storage timeouts past expiry is released and a new claim granted`() {
+        val stale = UUID.randomUUID()
+        photo.watermarkWorkToken = stale
+        photo.watermarkWorkExpiresAt = OffsetDateTime.ofInstant(now.minusSeconds(15), ZoneOffset.UTC)
+        `when`(photos.findAllByIdForUpdate(listOf(photo.id))).thenReturn(listOf(photo))
+        `when`(photos.finishWork(photo.id, stale)).thenAnswer {
+            photo.watermarkWorkToken = null; photo.watermarkWorkExpiresAt = null; 1
+        }
+        `when`(photos.claimWork(anyArg(), anyArg(), anyArg(), anyArg())).thenReturn(1)
+
+        val claim = assertNotNull(fence().claim(photo.id, PhotoWorkKind.WATERMARK))
+
+        assertNotEquals(stale, claim.token)
+        assertEquals(OffsetDateTime.ofInstant(now.minusSeconds(14), ZoneOffset.UTC), fence().endedWatermarkCutoff())
+        verify(photos).finishWorkOutput(stale, OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
+        verify(photos).finishWork(photo.id, stale)
+    }
+
+    @Test fun `a watermark claim within two storage timeouts of expiry stays held, and indexing claims are never released`() {
+        photo.watermarkWorkToken = UUID.randomUUID()
+        photo.watermarkWorkExpiresAt = OffsetDateTime.ofInstant(now.minusSeconds(14), ZoneOffset.UTC)
+        photo.indexingWorkToken = UUID.randomUUID()
+        photo.indexingWorkExpiresAt = OffsetDateTime.ofInstant(now.minusSeconds(3600), ZoneOffset.UTC)
+        `when`(photos.findAllByIdForUpdate(listOf(photo.id))).thenReturn(listOf(photo))
+
+        assertNull(fence().claim(photo.id, PhotoWorkKind.WATERMARK))
+        assertNull(fence().claim(photo.id, PhotoWorkKind.INDEXING))
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
+        verify(photos, never()).finishWork(anyArg(), anyArg())
+        verify(photos, never()).claimWork(anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
     @Test fun `Rekognition write settles only four call deadlines after its claim expired`() {
         val early = PhotoWorkClaim(photo.id, 0, UUID.randomUUID(), now.minusSeconds(43), PhotoWorkKind.INDEXING)
         assertFalse(fence().finishEndedRekognitionWrite(early))

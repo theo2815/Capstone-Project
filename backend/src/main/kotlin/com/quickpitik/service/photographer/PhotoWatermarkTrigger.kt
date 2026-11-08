@@ -1,6 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.photos.PhotoWorkFence
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
@@ -25,6 +26,7 @@ class PhotoWatermarkTrigger(
     private val photoRepository: PhotoRepository,
     @Value("\${app.watermark.max-attempts:5}") private val maxAttempts: Int,
     private val meterRegistry: MeterRegistry,
+    private val workFence: PhotoWorkFence,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -47,6 +49,8 @@ class PhotoWatermarkTrigger(
         val backlog = photoRepository.findWatermarkBacklog(
             maxAttempts = maxAttempts,
             cutoff = cutoff,
+            // A claim whose uploads failed is never finished; past this cutoff the fence releases it (WM-1).
+            endedClaimCutoff = workFence.endedWatermarkCutoff(),
             pageable = PageRequest.of(0, RECONCILE_BATCH_SIZE),
         )
         if (backlog.isEmpty()) return
@@ -64,7 +68,7 @@ class PhotoWatermarkTrigger(
 
     private companion object {
         // 30, not 120 (FS-3): same reason and safety as PhotoIndexingTrigger; process()
-        // returns unless the row is still PROCESSING, and the backlog skips token-held rows.
+        // returns unless the row is still PROCESSING, and the backlog skips rows with a live claim.
         const val RECONCILE_GRACE_SECONDS = 30L
         // 25 capped recovery at 25 photos/min — a 1,000-frame backlog took 40
         // minutes to surface. 200/min covers a burst; the pool bounds the rest.
