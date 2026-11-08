@@ -143,7 +143,8 @@ class PhotoErasureService(
         }
     }
 
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    // No @Transactional: even NOT_SUPPORTED opens a scope whose shared EntityManager holds one pooled
+    // connection from the first read to the return, i.e. through every storage call (UP-10 pool exhaustion).
     fun attempt(jobId: UUID): PhotoErasureOutcome {
         val target = jobs.findById(jobId).orElseThrow { NotFoundException(message = "Erasure job not found") }
         val claim = tx.execute {
