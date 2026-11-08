@@ -4,11 +4,16 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Flag
 import com.quickpitik.entity.FlagStatus
 import com.quickpitik.entity.FlagTargetKind
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.Role
+import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.EventRepository
@@ -23,6 +28,7 @@ import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito
 import org.springframework.http.HttpStatus
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -184,5 +190,52 @@ class AdminFlagServiceTest {
         assertEquals("system", dto.reportedBy)
         assertNull(dto.reviewedBy)
         Mockito.verify(storageService, Mockito.never()).presignedGetUrl(anyString(), anyArg())
+    }
+
+    // A system or report flag on an event or a photographer, as SystemFlagService writes it.
+    private fun targetFlag(kind: FlagTargetKind, targetId: UUID): Flag {
+        val f = Flag(targetKindWire = kind.wire, targetId = targetId, reason = "possible_duplicate", note = "pair: Cebu Marathon")
+        Mockito.`when`(flagRepository.findByIdForUpdate(f.id)).thenReturn(f)
+        return f
+    }
+
+    private fun photographer(handle: String, name: String): Pair<User, PhotographerSettings> {
+        val user = User(id = UUID.randomUUID(), email = "$handle@example.com", passwordHash = "x", name = name, role = Role.PHOTOGRAPHER)
+        val settings = PhotographerSettings(userId = user.id, handle = handle)
+        Mockito.`when`(userRepository.findAllById(anyArg())).thenReturn(listOf(user))
+        Mockito.`when`(photographerSettingsRepository.findAllById(anyArg())).thenReturn(listOf(settings))
+        return user to settings
+    }
+
+    @Test
+    fun `an event flag shows the event name and its creator`() {
+        val (creator, _) = photographer("juanshots", "Juan Dela Cruz")
+        val event = Event(slug = "cebu-marathon-2027", name = "Cebu Marathon 2027", date = LocalDate.of(2027, 1, 10), location = "Cebu City", status = EventStatus.ACTIVE, createdBy = creator.id)
+        Mockito.`when`(eventRepository.findAllById(anyArg())).thenReturn(listOf(event))
+        val f = targetFlag(FlagTargetKind.EVENT, event.id)
+
+        val dto = service().escalate(adminId, f.id, null)
+
+        assertEquals(event.id, dto.eventId)
+        assertEquals("Cebu Marathon 2027", dto.eventName)
+        assertEquals("juanshots", dto.photographerHandle)
+        assertEquals("Juan Dela Cruz", dto.photographerName)
+        assertNull(dto.photoId)
+        assertEquals("event", dto.targetKind)
+        assertEquals("pair: Cebu Marathon", dto.note)
+    }
+
+    @Test
+    fun `a user flag shows the photographer handle`() {
+        val (user, _) = photographer("juanshots", "Juan Dela Cruz")
+        val f = targetFlag(FlagTargetKind.USER, user.id)
+
+        val dto = service().escalate(adminId, f.id, null)
+
+        assertEquals("juanshots", dto.photographerHandle)
+        assertEquals("Juan Dela Cruz", dto.photographerName)
+        assertNull(dto.eventId)
+        assertNull(dto.photoId)
+        assertEquals("user", dto.targetKind)
     }
 }

@@ -29,6 +29,16 @@ enum class FlagTargetKind(val wire: String) {
     }
 }
 
+// Reasons the backend itself (or a signed-in user's report) writes through
+// SystemFlagService; stored lowercase in flags.reason (VARCHAR(40), no CHECK).
+enum class SystemFlagReason {
+    PROFILE_IMAGE_FLAGGED, PROFILE_IMAGE_UNCHECKED, PAYOUT_NAME_CHANGED, REPEAT_ACCOUNT_MATCH,
+    RACE_CHECK_MISS, RACE_EDIT_HELD, POSSIBLE_DUPLICATE, SAME_BIB_DUPLICATE,
+    NO_PROOF_HIDDEN, NO_PROOF_UNINDEXED, REPORT_THRESHOLD_HIDDEN, USER_REPORT;
+
+    val wire: String get() = name.lowercase()
+}
+
 // Minimal flagging surface. Phase G ships the env-gated read + state-transition
 // endpoints so the queue exists; richer triage workflow (assignee, severity,
 // auto-cull thresholds) lands when v1 actually starts ingesting flags

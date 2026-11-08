@@ -168,10 +168,18 @@ class AdminFlagService(
         val photoIds = flags.filter { it.targetKind == FlagTargetKind.PHOTO }.map { it.targetId }.distinct()
         val photosById = if (photoIds.isNotEmpty()) photoRepository.findAllById(photoIds).associateBy { it.id } else emptyMap()
 
-        val eventIds = photosById.values.map { it.eventId }.distinct()
+        val targetEventIds = flags.filter { it.targetKind == FlagTargetKind.EVENT }.map { it.targetId }
+        val eventIds = (photosById.values.map { it.eventId } + targetEventIds).distinct()
         val eventsById = if (eventIds.isNotEmpty()) eventRepository.findAllById(eventIds).associateBy { it.id } else emptyMap()
 
-        val photographerIds = photosById.values.mapNotNull { it.photographerId }.distinct()
+        // The photographer behind each flag: the photo's owner, the event's creator, or the flagged user.
+        fun ownerOf(flag: Flag): UUID? = when (flag.targetKind) {
+            FlagTargetKind.PHOTO -> photosById[flag.targetId]?.photographerId
+            FlagTargetKind.EVENT -> eventsById[flag.targetId]?.createdBy
+            FlagTargetKind.USER -> flag.targetId
+        }
+
+        val photographerIds = flags.mapNotNull { ownerOf(it) }.distinct()
         val photographerSettingsById = if (photographerIds.isNotEmpty()) {
             photographerSettingsRepository.findAllById(photographerIds).associateBy { it.userId }
         } else emptyMap()
@@ -181,9 +189,10 @@ class AdminFlagService(
 
         return flags.map { flag ->
             val photo = if (flag.targetKind == FlagTargetKind.PHOTO) photosById[flag.targetId] else null
-            val event = photo?.let { eventsById[it.eventId] }
-            val photographerUser = photo?.photographerId?.let { usersById[it] }
-            val photographerSettings = photo?.photographerId?.let { photographerSettingsById[it] }
+            val event = if (flag.targetKind == FlagTargetKind.EVENT) eventsById[flag.targetId] else photo?.let { eventsById[it.eventId] }
+            val ownerId = ownerOf(flag)
+            val photographerUser = ownerId?.let { usersById[it] }
+            val photographerSettings = ownerId?.let { photographerSettingsById[it] }
             val reporterUser = flag.reporterId?.let { usersById[it] }
             val reviewerUser = flag.resolvedBy?.let { usersById[it] }
 
