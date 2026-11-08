@@ -58,6 +58,7 @@ import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.OrderDetailDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.RunnerDisputeDto
+import com.quickpitik.mobile.ui.common.SUPPORT_EMAIL
 import com.quickpitik.mobile.ui.common.formatManila
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.BadgeShape
@@ -81,16 +82,19 @@ import com.quickpitik.mobile.ui.theme.Typography
 // ── Refund domain helpers (port of website src/lib/refund-helpers.ts) ────────
 
 // Reason codes + labels — mirror website admin-disputes.ts DISPUTE_REASON_LABEL.
+// The reasons a runner can pick. wrong_runner is no longer offered (policy v2).
 val REFUND_REASONS: List<Pair<String, String>> = listOf(
-    "wrong_runner" to "Wrong runner",
-    "low_quality" to "Low quality",
-    "not_received" to "Not received",
-    "duplicate_charge" to "Duplicate charge",
-    "other" to "Other reason"
+    "low_quality" to "Too blurred to recognise",
+    "not_received" to "Won't download or file is broken",
+    "duplicate_charge" to "Charged more than once",
+    "other" to "Checkout error or something else"
 )
 
+// Old requests filed as wrong_runner still show their label.
+private val REFUND_REASON_LABELS = REFUND_REASONS + ("wrong_runner" to "Wrong runner")
+
 fun refundReasonLabel(code: String): String =
-    REFUND_REASONS.firstOrNull { it.first == code }?.second ?: code
+    REFUND_REASON_LABELS.firstOrNull { it.first == code }?.second ?: code
 
 // ── Refund policy copy (verbatim port of website src/lib/refund-policy.ts) ───
 // One source of truth for the words. Surfaced pre-purchase from the event
@@ -100,16 +104,26 @@ private const val REFUND_PROCESSING_DAYS = 3
 private const val REFUND_ELIGIBILITY_DAYS = 7
 
 val REFUND_POLICY_BULLETS: List<Pair<String, String>> = listOf(
-    "Eligibility" to
-        "Request a refund within $REFUND_ELIGIBILITY_DAYS days of your purchase. After that the order is final.",
-    "Accepted reasons" to
-        "Wrong runner in the photo, photo quality too low to use, order paid but never delivered, or you were charged twice for the same order. Anything else, pick Other and tell us what happened.",
-    "Review time" to
-        "We review every request within $REFUND_PROCESSING_DAYS business days. You'll see the status update on this receipt.",
-    "Where the money goes" to
-        "Approved refunds come as a PayMongo refund link, shown on this receipt with its claim-by date and sent to your e-mail. Open it to choose where the money goes.",
+    "Our promise" to
+        "If something goes wrong on our side, we'll make it right. You get a refund when a photo you paid for won't download or the file is broken, a photo is too blurred to recognise anyone in it, you were charged more than once, or checkout failed or charged you the wrong amount.",
+    "Download problems" to
+        "If a photo won't download or the file is broken because of a fault on our side, we'll fix it so you can download it. If we can't, we refund you in full.",
+    "Blurred photos" to
+        "Some motion blur and grain is normal at a live race, and we don't refund for it. If a photo is so blurred that nobody in it can be recognised, ask for a refund. Our team checks every request the same way and makes the final call.",
+    "Charged more than once" to
+        "A double tap, a dropped connection, a slow payment screen or buying the same photo again by mistake can charge you twice. Once our records confirm the extra charge, we refund it.",
+    "Checkout errors" to
+        "If you were charged but your purchase failed or went wrong because of an error on our side, we refund you in full. We may ask for your transaction ID, your e-mail or a screenshot so we can find it.",
     "What we don't refund" to
-        "Photos you've already downloaded and kept past the eligibility window, change-of-mind after $REFUND_ELIGIBILITY_DAYS days, or photos that match your bib and selfie correctly.",
+        "Picking the wrong photo, not liking how a photo looks (the angle, the light, your expression), changing your mind about a photo that arrived fine, and the normal imperfections of race-day photos when you can still tell who is in them. After $REFUND_ELIGIBILITY_DAYS days, every order is final.",
+    "How to ask" to
+        "Within $REFUND_ELIGIBILITY_DAYS days of buying, open Orders, choose the receipt and tap Request a refund. Pick the photos and the reason, and add a note if it helps. Charged but no order showed up? E-mail $SUPPORT_EMAIL with your transaction ID, the e-mail you used and a screenshot if you have one.",
+    "How long it takes" to
+        "We review every request within $REFUND_PROCESSING_DAYS business days and show the status on this receipt. Once we approve it, we send your refund within 24–48 hours as a PayMongo refund link, shown on this receipt with a claim-by date and sent to your e-mail. Open it before that date and choose where the money goes. Your bank or e-wallet (GCash, for example) may then take 3–10 business days to show it.",
+    "How much comes back" to
+        "We refund what you paid. If your bank, e-wallet or a currency conversion kept a fee that can't be returned, you may get slightly less back.",
+    "Photos bought together" to
+        "Refunds go back through PayMongo, which can only return a whole payment. So we can refund a photo only when it was the only photo in that payment.",
 )
 
 // Read-only policy disclosure — port of the website's RefundModal mode="policy",
