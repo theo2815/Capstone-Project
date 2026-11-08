@@ -42,6 +42,7 @@ class PhotoService(
     private val eventRepository: EventRepository,
     private val publicProperties: PublicProperties,
     private val photoMetadataService: PhotoMetadataService,
+    private val photographerSuspension: PhotographerSuspension,
 ) {
     fun listForEvent(
         eventId: UUID,
@@ -203,7 +204,9 @@ class PhotoService(
             throw photoNotFound()
         }
         val photo = photoRepository.findById(photoId).orElse(null)
-        if (photo == null || photo.eventId != eventId || !photo.isSellable) {
+        if (photo == null || photo.eventId != eventId || !photo.isSellable ||
+            photographerSuspension.suspendedOwnerIds(listOf(photo)).isNotEmpty()
+        ) {
             throw photoNotFound()
         }
         return FreeDownload(s3Key = photo.s3Key, filename = PhotoFilenames.downloadFilenameOf(photo))

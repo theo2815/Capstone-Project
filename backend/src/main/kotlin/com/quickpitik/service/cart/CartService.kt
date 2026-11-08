@@ -14,6 +14,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -29,12 +30,17 @@ class CartService(
     private val eventRepository: EventRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
+    private val photographerSuspension: PhotographerSuspension,
 ) {
+    /**
+     * A suspended photographer's photo drops out of the list (its row is kept, so it comes back on
+     * unsuspend), or shows with `available = false` when the client asks (AA-I12b, C13).
+     */
     @Transactional(readOnly = true)
-    fun list(userId: UUID): List<CartItemDto> {
+    fun list(userId: UUID, includeUnavailable: Boolean = false): List<CartItemDto> {
         val rows = cartItemRepository.findByUserId(userId)
         if (rows.isEmpty()) return emptyList()
-        return hydrate(rows)
+        return hydrate(rows, includeUnavailable)
     }
 
     fun add(userId: UUID, photoId: UUID, eventId: UUID): CartItemDto {
@@ -44,7 +50,7 @@ class CartService(
         // PROCESSING / HIDDEN photos are not sellable. 404 rather than a
         // dedicated code — a hidden photo must not be distinguishable from a
         // missing one.
-        if (!photo.isSellable) {
+        if (!photo.isSellable || photographerSuspension.suspendedOwnerIds(listOf(photo)).isNotEmpty()) {
             throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         }
         // Free events (V46): a ₱0 photo is downloaded from the gallery, never
@@ -121,10 +127,11 @@ class CartService(
         val photoLookup = photoRepository.findAllById(incomingIds).associateBy { it.id }
         val eventLookup = eventRepository.findAllById(incoming.map { it.second }.toSet())
             .associateBy { it.id }
+        val suspended = photographerSuspension.suspendedOwnerIds(photoLookup.values)
         for ((photoId, eventId) in incoming) {
             val photo = photoLookup[photoId] ?: continue
             if (photo.eventId != eventId) continue
-            if (!photo.isSellable) continue
+            if (!photo.isSellable || photo.photographerId in suspended) continue
             // A free photo (V46) would 409 every checkout after login — skip.
             if (photo.pricePhp.signum() <= 0) continue
             val event = eventLookup[eventId] ?: continue
@@ -149,17 +156,20 @@ class CartService(
         return list(userId)
     }
 
-    private fun hydrate(rows: List<CartItemEntity>): List<CartItemDto> {
+    private fun hydrate(rows: List<CartItemEntity>, includeUnavailable: Boolean = false): List<CartItemDto> {
         if (rows.isEmpty()) return emptyList()
         val photoIds = rows.map { it.id.photoId }.toSet()
         val eventIds = rows.map { it.eventId }.toSet()
         val photos = photoRepository.findAllById(photoIds).associateBy { it.id }
         val events = eventRepository.findAllById(eventIds).associateBy { it.id }
+        val suspended = photographerSuspension.suspendedOwnerIds(photos.values.filter { it.isSellable })
         return rows.mapNotNull { row ->
             val photo = photos[row.id.photoId] ?: return@mapNotNull null
             if (!photo.isSellable) return@mapNotNull null
+            val available = photo.photographerId !in suspended
+            if (!available && !includeUnavailable) return@mapNotNull null
             val event = events[row.eventId]
-            row.toDto(photo, event)
+            row.toDto(photo, event, available)
         }
     }
 
@@ -168,7 +178,7 @@ class CartService(
     // charges `photos.price_php` — so rendering the snapshot here meant an
     // admin re-price (AdminEventService → PhotoRepository.updatePriceByEventId)
     // left the runner looking at ₱125 and paying ₱150.
-    private fun CartItemEntity.toDto(photo: Photo, event: Event?): CartItemDto = CartItemDto(
+    private fun CartItemEntity.toDto(photo: Photo, event: Event?, available: Boolean): CartItemDto = CartItemDto(
         photoId = id.photoId,
         eventId = eventId,
         thumbnailUrl = thumbnailUrlOf(photo),
@@ -181,6 +191,7 @@ class CartService(
             .atZoneSameInstant(DISPLAY_ZONE)
             .toLocalTime()
             .format(TIME_FORMATTER),
+        available = available,
     )
 
     private fun thumbnailUrlOf(photo: Photo): String {

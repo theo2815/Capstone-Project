@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
 
@@ -27,8 +28,11 @@ class CartController(
     private val cartService: CartService,
 ) {
     @GetMapping
-    fun list(@AuthenticationPrincipal principal: AuthPrincipal): List<CartItemDto> =
-        cartService.list(principal.userId)
+    fun list(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @RequestParam(required = false) includeUnavailable: Boolean?,
+    ): List<CartItemDto> =
+        cartService.list(principal.userId, includeUnavailable == true)
 
     @PostMapping("/items")
     fun add(

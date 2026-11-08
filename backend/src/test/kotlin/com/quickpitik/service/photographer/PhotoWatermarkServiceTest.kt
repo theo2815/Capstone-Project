@@ -421,7 +421,8 @@ class PhotoWatermarkServiceTest {
         val metadataWorkers = com.quickpitik.config.AsyncConfig().metadataProcessingExecutor()
         val extraction = PhotoMetadataService(metadata, photoRepository,
             Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java), extractor, storageService,
-            workers, com.quickpitik.config.PhotoMetadataProperties(), TransactionTemplate(transactionManager), java.time.Clock.systemUTC(), metadataWorkers)
+            workers, com.quickpitik.config.PhotoMetadataProperties(), TransactionTemplate(transactionManager), java.time.Clock.systemUTC(), metadataWorkers,
+            Mockito.mock(com.quickpitik.service.photos.PhotographerSuspension::class.java))
         try {
             repeat(2) { workers.execute { service(metadata = extraction).process(photoId); returned.countDown() } }
             assertTrue(parsing.await(5, java.util.concurrent.TimeUnit.SECONDS))
@@ -461,6 +462,7 @@ class PhotoWatermarkServiceTest {
             Mockito.mock(org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor::class.java).also { pool ->
                 Mockito.doAnswer { it.getArgument<Runnable>(0).run(); null }.`when`(pool).execute(Mockito.any(Runnable::class.java))
             },
+            Mockito.mock(com.quickpitik.service.photos.PhotographerSuspension::class.java),
         )
 
         service(metadata = extraction).process(photoId)
