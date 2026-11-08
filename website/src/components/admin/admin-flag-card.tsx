@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import {
   type Flag,
@@ -17,6 +18,7 @@ import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
 import { AdminFlagHideModal } from "./admin-flag-hide-modal";
 import { AdminEscalateModal } from "./admin-escalate-modal";
 import { formatLongDate } from "@/lib/format";
+import { ROUTES } from "@/lib/constants";
 import {
   BTN_DANGER,
   BTN_GHOST,
@@ -182,10 +184,25 @@ export function AdminFlagCard({
             ? "System"
             : `@${flag.reportedBy}`}
           <span className="text-slate-soft"> · </span>
-          @{flag.photographerHandle}
+          {flag.targetKind === "user" ? (
+            <Link
+              href={`${ROUTES.ADMIN_PHOTOGRAPHERS}/${encodeURIComponent(flag.photographerHandle)}`}
+              onClick={(e) => e.stopPropagation()}
+              className="underline underline-offset-2 hover:text-ink"
+            >
+              @{flag.photographerHandle}
+            </Link>
+          ) : (
+            <>@{flag.photographerHandle}</>
+          )}
           <span className="text-slate-soft"> · </span>
-          {eventName}
-          <span className="text-slate-soft"> · </span>
+          {/* A photographer flag has no event; photo and event flags always name one. */}
+          {(flag.targetKind !== "user" || flag.eventName) && (
+            <>
+              {eventName}
+              <span className="text-slate-soft"> · </span>
+            </>
+          )}
           {formatLongDate(flag.reportedAt)}
         </p>
 

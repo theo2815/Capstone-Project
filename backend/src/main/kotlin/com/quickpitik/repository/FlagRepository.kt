@@ -40,6 +40,14 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
 
     fun countByStatusWire(statusWire: String): Long
 
+    // SystemFlagService's duplicate lookup. Derived (no @Query): no null bind can hit the PG 18 typing trap.
+    fun findByTargetKindWireAndTargetIdAndReasonAndStatusWireIn(
+        targetKindWire: String,
+        targetId: UUID,
+        reason: String,
+        statusWires: Collection<String>,
+    ): List<Flag>
+
     fun existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
         targetKindWire: String,
         targetId: UUID,

@@ -10,7 +10,23 @@ export type FlagReason =
   | "inappropriate"
   | "watermark_bypass"
   | "duplicate"
-  | "other";
+  | "other"
+  // Written by the backend's SystemFlagService (SystemFlagReason, lowercase).
+  | "profile_image_flagged"
+  | "profile_image_unchecked"
+  | "payout_name_changed"
+  | "repeat_account_match"
+  | "race_check_miss"
+  | "race_edit_held"
+  | "possible_duplicate"
+  | "same_bib_duplicate"
+  | "no_proof_hidden"
+  | "no_proof_unindexed"
+  | "report_threshold_hidden"
+  | "user_report";
+
+/** What a flag points at (flags.target_kind). Only photo flags can be hidden. */
+export type FlagTargetKind = "photo" | "user" | "event";
 
 export interface FlagPhotoSnapshot {
   alt: string;
@@ -35,6 +51,8 @@ export interface Flag {
   reviewedBy: string | null;
   reviewerNote: string | null;
   photoSnapshot: FlagPhotoSnapshot;
+  targetKind: FlagTargetKind;
+  targetId: string;
 }
 
 export const FLAG_REASON_LABEL: Record<FlagReason, string> = {
@@ -44,6 +62,18 @@ export const FLAG_REASON_LABEL: Record<FlagReason, string> = {
   watermark_bypass: "Watermark removed or bypassed",
   duplicate: "Duplicate of another listing",
   other: "Other (see note)",
+  profile_image_flagged: "Profile image failed the automatic check",
+  profile_image_unchecked: "Profile image could not be checked",
+  payout_name_changed: "Payout name changed",
+  repeat_account_match: "Details match another account",
+  race_check_miss: "Race failed an automatic check",
+  race_edit_held: "Race edit waiting for review",
+  possible_duplicate: "Possible duplicate of another race",
+  same_bib_duplicate: "Possible duplicate: same bibs as another race",
+  no_proof_hidden: "Race hidden: no proof it took place",
+  no_proof_unindexed: "Race has no indexed photos yet",
+  report_threshold_hidden: "Race hidden after several reports",
+  user_report: "Reported by a user",
 };
 
 export function flagReasonLabel(reason: string): string {
@@ -57,12 +87,16 @@ export function flagEventName(flag: Flag): string {
 // Transition table mirrors AdminFlagService: hide from open/escalated,
 // escalate from open, dismiss from open/escalated/hidden (dismissing a
 // hidden flag restores the photo unless another hidden flag still targets it).
-export function canHide(flag: Flag): boolean {
+// Hide hides a photo, so it exists only for photo flags (AdminFlagService.hide).
+function isOpenOrEscalated(flag: Flag): boolean {
   return flag.status === "open" || flag.status === "escalated";
+}
+export function canHide(flag: Flag): boolean {
+  return flag.targetKind === "photo" && isOpenOrEscalated(flag);
 }
 export function canEscalate(flag: Flag): boolean {
   return flag.status === "open";
 }
 export function canDismiss(flag: Flag): boolean {
-  return canHide(flag) || flag.status === "hidden";
+  return isOpenOrEscalated(flag) || flag.status === "hidden";
 }
