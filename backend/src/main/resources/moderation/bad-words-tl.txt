@@ -1,6 +1,6 @@
 # Tagalog / Filipino words refused in a photographer's brand name, handle or bio
 # (WordList.BAD_WORDS). Same rules as bad-words-en.txt. Left out on purpose: words with
-# an innocent common meaning ("leche", "hayop", "boto", "bakla", "puke", "titi").
+# an innocent common meaning ("leche", "hayop", "boto", "bakla", "puke", "titi", "gaga").
 # Starter list: a Tagalog speaker on the team skims it before the race switch-on.
 puta
 putangina
@@ -14,7 +14,6 @@ punyeta
 punyemas
 pucha
 gago
-gaga
 ulol
 ulul
 tarantado

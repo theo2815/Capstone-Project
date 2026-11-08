@@ -46,6 +46,8 @@ class WordListCheckerTest {
     @Test
     fun `clean text has no hits in any list`() {
         assertTrue(checker.hits("Juan Dela Cruz Photography", WordList.entries.toSet()).isEmpty())
+        // Names that look like listed words must stay clean.
+        assertTrue(checker.hits("Dick Reyes, Lady Gaga fan", setOf(WordList.BAD_WORDS)).isEmpty())
     }
 
     @Test
