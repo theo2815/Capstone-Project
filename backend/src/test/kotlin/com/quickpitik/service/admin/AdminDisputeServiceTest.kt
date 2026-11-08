@@ -33,7 +33,9 @@ import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.Pageable
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.UUID
 import java.util.Optional
 import kotlin.test.assertEquals
@@ -51,6 +53,8 @@ class AdminDisputeServiceTest {
     private val settingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
     private val decisionLogRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
     private val decisionLogService = Mockito.mock(AdminDecisionLogService::class.java)
+    private val refundService = Mockito.mock(PaymongoRefundService::class.java)
+    private val now = OffsetDateTime.parse("2026-11-08T03:00:00Z")
     private val service = AdminDisputeService(
         disputeRepository,
         orderRepository,
@@ -65,9 +69,10 @@ class AdminDisputeServiceTest {
         decisionLogService,
         decisionLogRepository,
         Mockito.mock(RunnerMessagesService::class.java),
-        Mockito.mock(PaymongoRefundService::class.java),
+        refundService,
         Mockito.mock(TransactionTemplate::class.java),
         PaymongoProperties(),
+        Clock.fixed(now.toInstant(), ZoneOffset.UTC),
     )
 
     @Test
@@ -90,6 +95,7 @@ class AdminDisputeServiceTest {
             refunds,
             testTransactionTemplate(),
             PaymongoProperties(),
+            Clock.systemUTC(),
         )
         val adminId = UUID.randomUUID()
         val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
@@ -123,6 +129,7 @@ class AdminDisputeServiceTest {
             refunds,
             testTransactionTemplate(),
             PaymongoProperties(),
+            Clock.systemUTC(),
         )
         val adminId = UUID.randomUUID()
         val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
@@ -171,6 +178,36 @@ class AdminDisputeServiceTest {
         assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
         assertEquals(DisputeStatus.ESCALATED, dispute.status)
         Mockito.verify(disputeRepository, Mockito.never()).save(dispute)
+    }
+
+    // A1: once a link was sent, deny is how an admin cancels it; the refund service checks time and PayMongo's state.
+    @Test
+    fun `deny of a parked refund whose link was sent hands it to the refund service`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.status = DisputeStatus.ESCALATED
+        dispute.refundStatus = "manual_review"
+        dispute.refundLinkSentAt = now.minusDays(5)
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+
+        service.deny(adminId, dispute.id, "PayMongo shows the link unclaimed")
+
+        Mockito.verify(refundService).cancelUnclaimedRefund(adminId, dispute.id, "PayMongo shows the link unclaimed")
+        Mockito.verify(decisionLogService, Mockito.never()).logDisputeDecision(adminId, dispute.id, "denied", "PayMongo shows the link unclaimed")
+        Mockito.verify(disputeRepository, Mockito.never()).save(dispute)
+    }
+
+    @Test
+    fun `deny stamps the decision time from the clock`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "denied", null))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "denied"))
+
+        service.deny(adminId, dispute.id, null)
+
+        assertEquals(now.toInstant(), dispute.resolvedAt!!.toInstant())
     }
 
     @Test
@@ -326,6 +363,37 @@ class AdminDisputeServiceTest {
         val error = assertFailsWith<ApiException> { service.escalate(admin, d.id, null) }
         assertEquals(409, error.status.value())
         assertEquals(DisputeStatus.WITHDRAWN, d.status)
+        Mockito.verifyNoInteractions(decisionLogService)
+    }
+
+    @Test
+    fun `a withdrawn dispute cannot be denied`() {
+        val admin = UUID.randomUUID()
+        val d = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+            statusWire = DisputeStatus.WITHDRAWN.wire)
+        Mockito.`when`(disputeRepository.findByIdForUpdate(d.id)).thenReturn(d)
+
+        val error = assertFailsWith<ApiException> { service.deny(admin, d.id, "too late") }
+
+        assertEquals(409, error.status.value())
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.WITHDRAWN, d.status)
+        Mockito.verify(disputeRepository, Mockito.never()).save(d)
+        Mockito.verifyNoInteractions(decisionLogService)
+    }
+
+    @Test
+    fun `an open dispute cannot be escalated while its refund is in progress`() {
+        val admin = UUID.randomUUID()
+        val d = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        d.refundStatus = "requesting"
+        Mockito.`when`(disputeRepository.findByIdForUpdate(d.id)).thenReturn(d)
+
+        val error = assertFailsWith<ApiException> { service.escalate(admin, d.id, null) }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(DisputeStatus.OPEN, d.status)
+        Mockito.verify(disputeRepository, Mockito.never()).save(d)
         Mockito.verifyNoInteractions(decisionLogService)
     }
 
