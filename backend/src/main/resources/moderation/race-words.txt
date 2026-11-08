@@ -1,0 +1,34 @@
+# Words that mark a name as a race (WordList.RACE_WORDS; used by Plan 2's race-name rules).
+# One entry per line; whole words, any case; a multi-word entry matches those words in a row.
+run
+race
+marathon
+half marathon
+fun run
+3k
+5k
+10k
+16k
+21k
+32k
+42k
+50k
+100k
+3km
+5km
+10km
+16km
+21km
+32km
+42km
+50km
+100km
+trail
+ultra
+ultramarathon
+obstacle
+ride
+bike
+cycling
+gran fondo
+criterium
