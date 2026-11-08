@@ -176,8 +176,12 @@ class PaymongoRefundService(
             IN_FLIGHT_STATUSES,
             PageRequest.of(0, BATCH_SIZE),
         ).forEach { dispute ->
-            val prepared = transactionTemplate.execute { snapshot(dispute.id) } ?: return@forEach
-            process(prepared, reportFailure = false)
+            try {
+                val prepared = transactionTemplate.execute { snapshot(dispute.id) } ?: return@forEach
+                process(prepared, reportFailure = false)
+            } catch (ex: Exception) {
+                log.warn("Reconcile of refund {} failed: {}", dispute.id, ex.message)
+            }
         }
     }
 

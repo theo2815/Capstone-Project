@@ -1044,6 +1044,30 @@ class PaymongoRefundServiceTest {
         Mockito.verifyNoInteractions(h.minting)
     }
 
+    @Test
+    fun `one refund that cannot be reconciled does not stop the next one`() {
+        val h = couponHarness()
+        h.dispute.refundStatus = "requesting"
+        h.dispute.resolution = DisputeResolution.REFUND_FULL
+        h.dispute.refundAmountPhp = BigDecimal("127.50")
+        h.dispute.refundRequestedAt = OffsetDateTime.now()
+        h.dispute.refundRequestedBy = h.adminId
+        // No PayMongo payment exists for this order, so its snapshot throws.
+        val broken = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other").apply {
+            refundStatus = "requesting"
+            refundAmountPhp = BigDecimal("10.00")
+        }
+        Mockito.`when`(h.disputes.findByIdForUpdate(broken.id)).thenReturn(broken)
+        Mockito.`when`(h.disputes.findByRefundStatusInOrderByRefundRequestedAtAsc(anyArg(), anyArg()))
+            .thenReturn(listOf(broken, h.dispute))
+
+        h.service.reconcile()
+
+        Mockito.verify(h.client, Mockito.times(1)).createRefund(anyArg(), anyArg())
+        assertEquals("succeeded", h.dispute.refundStatus)
+        assertEquals("requesting", broken.refundStatus)
+    }
+
     // --- B8: an unfinished QR Ph refund is cancelled when PayMongo's window closes ---
 
     private val paidOn = OffsetDateTime.parse("2026-10-01T00:00:00Z")
