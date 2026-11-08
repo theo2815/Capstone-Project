@@ -31,7 +31,7 @@ describe("LegalDocument", () => {
 
   it("renders the refund policy inside the terms' refunds section", () => {
     const { container } = render(<LegalDocument doc={TERMS_OF_SERVICE} />);
-    expect(container.querySelector("section#refunds")?.textContent).toContain("Accepted reasons");
+    expect(container.querySelector("section#refunds")?.textContent).toContain("Photos bought together");
   });
 
   it("words the refund rules for a standalone page, not a receipt", () => {

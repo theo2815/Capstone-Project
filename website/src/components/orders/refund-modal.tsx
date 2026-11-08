@@ -26,8 +26,8 @@ import { submitOrderRefund } from "@/lib/api-orders";
 import { ApiError } from "@/lib/api";
 
 const NOTE_MAX = 500;
+// wrong_runner is no longer offered (policy v2); old requests keep its label.
 const REASON_ORDER: ReadonlyArray<DisputeReason> = [
-  "wrong_runner",
   "low_quality",
   "not_received",
   "duplicate_charge",
