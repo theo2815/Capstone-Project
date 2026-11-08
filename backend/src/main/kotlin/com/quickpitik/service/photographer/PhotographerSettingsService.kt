@@ -24,6 +24,8 @@ import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
+import com.quickpitik.service.moderation.WordList
+import com.quickpitik.service.moderation.WordListChecker
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.AdminInboxEvent
 import org.hibernate.exception.ConstraintViolationException
@@ -49,6 +51,7 @@ class PhotographerSettingsService(
     private val socialLinkRepository: SocialLinkRepository,
     private val payoutAccountRepository: PayoutAccountRepository,
     private val eventPublisher: ApplicationEventPublisher,
+    private val wordListChecker: WordListChecker,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -136,6 +139,7 @@ class PhotographerSettingsService(
                     field = "brandName",
                 )
             }
+            requireAllowedText(trimmed, field = "brandName", label = "brand name")
             settings.brandName = trimmed.ifBlank { null }
         }
         req.brandColor?.let { color ->
@@ -156,9 +160,21 @@ class PhotographerSettingsService(
                     field = "bio",
                 )
             }
+            requireAllowedText(bio, field = "bio", label = "bio")
             settings.bio = bio
         }
         return photographerSettingsRepository.save(settings)
+    }
+
+    // A listed bad word refuses the whole save; the message never repeats the word.
+    private fun requireAllowedText(text: String, field: String, label: String) {
+        if (wordListChecker.hits(text, setOf(WordList.BAD_WORDS)).isNotEmpty()) {
+            throw ValidationException(
+                code = ErrorCodes.TEXT_NOT_ALLOWED,
+                message = "Your $label has a word we don't allow. Please change it.",
+                field = field,
+            )
+        }
     }
 
     // ─── Handle ───────────────────────────────────────────────────────────
@@ -171,6 +187,7 @@ class PhotographerSettingsService(
                 field = "handle",
             )
         }
+        requireAllowedText(normalized, field = "handle", label = "handle")
         if (reservedHandleRepository.existsByHandle(normalized)) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,

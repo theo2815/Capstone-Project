@@ -1,0 +1,21 @@
+# Cebuano / Bisaya words refused in a photographer's brand name, handle or bio
+# (WordList.BAD_WORDS). Same rules as bad-words-en.txt. Left out on purpose: words with
+# an innocent common meaning ("atay", "buang", "animal", "boto", "tae").
+# Starter list: a Cebuano speaker on the team skims it before the race switch-on.
+yawa
+yawaa
+pisti
+piste
+pisting yawa
+giatay
+yati
+bilat
+oten
+iyot
+iyota
+lubot
+bigaon
+bayot
+peste
+inatay
+amaw

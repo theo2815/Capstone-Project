@@ -131,4 +131,7 @@ object ErrorCodes {
     const val UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
 
     const val AI_API_UNAVAILABLE = "AI_API_UNAVAILABLE"
+
+    // A profile text field (brandName, handle, bio) holds a word on the bad-word lists.
+    const val TEXT_NOT_ALLOWED = "TEXT_NOT_ALLOWED"
 }

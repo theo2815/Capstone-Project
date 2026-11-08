@@ -1,0 +1,18 @@
+# Words that mark a name as not a race: these events stay "Other" (owner answer 3)
+# (WordList.NON_RACE_WORDS; used by Plan 2's race-name rules). Same format as race-words.txt.
+wedding
+debut
+birthday
+concert
+prom
+graduation
+pageant
+basketball
+christening
+baptism
+reunion
+prenup
+seminar
+triathlon
+duathlon
+aquathlon

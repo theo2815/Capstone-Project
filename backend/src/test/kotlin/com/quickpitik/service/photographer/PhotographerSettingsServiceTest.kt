@@ -2,6 +2,7 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.photographer.BrandPatchRequest
 import com.quickpitik.dto.photographer.HandlePatchRequest
 import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
@@ -19,6 +20,7 @@ import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.image.ImagePixelGuardTest.Companion.overBudgetPngHeader
+import com.quickpitik.service.moderation.WordListChecker
 import com.quickpitik.service.storage.StorageService
 import org.hibernate.exception.ConstraintViolationException
 import org.junit.jupiter.api.BeforeEach
@@ -81,7 +83,66 @@ class PhotographerSettingsServiceTest {
         socialLinkRepository,
         payoutAccountRepository,
         eventPublisher,
+        WordListChecker(),
     )
+
+    private fun stubExistingSettings() {
+        Mockito.`when`(photographerSettingsRepository.findById(userId))
+            .thenReturn(Optional.of(PhotographerSettings(userId = userId)))
+    }
+
+    @Test
+    fun `putBrand refuses a bad brand name with TEXT_NOT_ALLOWED on brandName and saves nothing`() {
+        stubExistingSettings()
+
+        val ex = assertFailsWith<ValidationException> {
+            service().putBrand(userId, BrandPatchRequest(brandName = "Gago Shots"))
+        }
+
+        assertEquals(ErrorCodes.TEXT_NOT_ALLOWED, ex.code)
+        assertEquals("brandName", ex.field)
+        assertTrue("gago" !in ex.message!!.lowercase(), "the message must not repeat the word")
+        Mockito.verify(photographerSettingsRepository, Mockito.never()).save(anyArg<PhotographerSettings>())
+    }
+
+    @Test
+    fun `putBrand refuses a bad bio with TEXT_NOT_ALLOWED on bio and saves nothing`() {
+        stubExistingSettings()
+
+        val ex = assertFailsWith<ValidationException> {
+            service().putBrand(userId, BrandPatchRequest(bio = "Race photos, no bullshit."))
+        }
+
+        assertEquals(ErrorCodes.TEXT_NOT_ALLOWED, ex.code)
+        assertEquals("bio", ex.field)
+        Mockito.verify(photographerSettingsRepository, Mockito.never()).save(anyArg<PhotographerSettings>())
+    }
+
+    @Test
+    fun `putHandle refuses a bad handle before the reserved check`() {
+        val ex = assertFailsWith<ValidationException> {
+            service().putHandle(userId, HandlePatchRequest(handle = "yawa-shots"))
+        }
+
+        assertEquals(ErrorCodes.TEXT_NOT_ALLOWED, ex.code)
+        assertEquals("handle", ex.field)
+        Mockito.verifyNoInteractions(reservedHandleRepository)
+        Mockito.verify(photographerSettingsRepository, Mockito.never()).saveAndFlush(anyArg<PhotographerSettings>())
+    }
+
+    @Test
+    fun `clean brand name, bio and handle save as before`() {
+        stubFreeHandle()
+        Mockito.`when`(photographerSettingsRepository.save(anyArg<PhotographerSettings>())).thenAnswer { it.arguments[0] }
+        Mockito.`when`(photographerSettingsRepository.saveAndFlush(anyArg<PhotographerSettings>())).thenAnswer { it.arguments[0] }
+
+        val brand = service().putBrand(userId, BrandPatchRequest(brandName = "Juan Shots", bio = "Cebu race photos"))
+        val handled = service().putHandle(userId, HandlePatchRequest(handle = "juan-shots"))
+
+        assertEquals("Juan Shots", brand.brandName)
+        assertEquals("Cebu race photos", brand.bio)
+        assertEquals("juan-shots", handled.handle)
+    }
 
     // A Spring DataIntegrityViolationException wrapping a Hibernate
     // ConstraintViolationException that names the given constraint — the shape a
