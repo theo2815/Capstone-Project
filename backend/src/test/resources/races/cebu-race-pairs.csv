@@ -1,0 +1,31 @@
+# AA-R2 fixture: pairs of race names a photographer might type, labelled same|different.
+# Names are real ones from this repo only: V2 seeds, code fixtures, vault staging names. No production names.
+# Dates and provinces are test values, except the V2 seed rows (their real seed date and organizer).
+# Labels follow the owner's rule (decision 11, 2026-11-08): same name and same date (+/-1 day) = same race;
+# same name in a different year = different race. Judgement calls the owner should confirm:
+#   Cebu City Marathon vs Cebu Marathon (the plan's example of two real races) -> different
+#   Bohol Trail Classic in two provinces on one day -> different
+#   Cebu Run vs Cebu Fun Run, Talisay Trail vs Talisay Trail Run -> different
+# A false join is the worse error: "different" may never score strong; "same" must score at least medium.
+name_a,date_a,province_a,organizer_a,name_b,date_b,province_b,organizer_b,label
+Cebu City Marathon 2026,2026-05-17,cebu,CCM Organizing Committee,Cebu City Marathon,2026-05-17,cebu,,same
+Cebu City Marathon 2026,2026-05-17,cebu,CCM Organizing Committee,CEBU CITY MARATHON 42K,2026-05-18,cebu,,same
+Cebu City Marathon 2026,2026-05-17,cebu,CCM Organizing Committee,Cebu City Marathon 2027,2027-05-16,cebu,,different
+Cebu City Marathon,2026-05-17,cebu,,Cebu Marathon,2026-05-17,cebu,,different
+Mactan Bridge Run 2026,2026-06-07,cebu,CCLEX Sports Club,Mactan Bridge Run,2026-06-07,cebu,CCLEX Sports Club,same
+Mactan Bridge Run 2026,2026-06-07,cebu,CCLEX Sports Club,Cebu Bay Run,2026-06-07,cebu,,different
+Queen City Night Run 2026,2026-04-28,cebu,Queen City Runners,Queen City Night Run,2026-04-29,cebu,,same
+Queen City Night Run 2026,2026-04-28,cebu,Queen City Runners,Cebu Night Run,2026-04-28,cebu,,different
+Bohol Trail Classic 2025,2025-11-08,bohol,Bohol Trail Society,Bohol Trail Classic,2025-11-08,bohol,,same
+Bohol Trail Classic,2025-11-08,bohol,,Bohol Trail Classic,2025-11-08,cebu,,different
+Cebu Fun Run,2026-03-15,cebu,,NRW Fun Run 2026,2026-03-15,cebu,,different
+Cebu Run,2026-03-15,cebu,,Cebu Fun Run,2026-03-15,cebu,,different
+Sinulog Run,2027-01-17,cebu,,Sinulog Run 2027,2027-01-17,cebu,,same
+Sun Run Cebu,2026-08-02,cebu,,Cebu Sun Run,2026-08-02,cebu,,same
+SRP Half-Marathon,2026-09-06,cebu,,SRP Half Marathon 21K,2026-09-06,cebu,,same
+Talisay Trail,2026-10-04,cebu,,Talisay Trail Run,2026-10-04,cebu,,different
+Paksit Sunrise Run,2026-11-15,cebu,,Mingla Trail Run,2026-11-15,cebu,,different
+PumpKin Run,2026-10-31,cebu,,Pumpkin Run,2026-11-01,cebu,,same
+Pokemon Go Fun Run,2026-07-26,cebu,,Pokémon GO Fun Run 5K,2026-07-26,cebu,,same
+Cebu Bay Run,2026-05-03,cebu,,Cebu Bay Run,2026-05-06,cebu,,different
+Cebu Marathon 2026,2026-01-11,cebu,,Cebu Marathon 2027,2027-01-10,cebu,,different
