@@ -1882,6 +1882,31 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `after a rejection, a begin replay and a reuse of an earlier reservation still answer without the gate`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        noSellerDetails()
+        val requestId = UUID.randomUUID()
+        val replayed = intent(helloBytes.size.toLong(), requestId = requestId)
+        Mockito.`when`(photoUploadIntentRepository.findByPhotographerIdAndRequestId(photographerId, requestId)).thenReturn(replayed)
+        val open = intent(helloBytes.size.toLong(), requestId = null)
+        Mockito.`when`(photoUploadIntentRepository.findReusablePending(
+            eqArg(photographerId), eqArg(eventId), eqArg(helloSha256), eqArg("image/jpeg"),
+            eqArg(helloBytes.size.toLong()), anyArg(), anyArg(),
+        )).thenReturn(open)
+        Mockito.`when`(storageService.presignedUpload(anyArg(), anyArg(), anyArg(), Mockito.anyLong()))
+            .thenReturn(PresignedUpload("https://test-account.r2.cloudflarestorage.com/put", emptyMap()))
+        val svc = service(AiApiProperties(enabled = false))
+
+        val replay = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(), requestId, "website")
+        val reuse = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong())
+
+        assertEquals(replayed.photoId, replay.photoId)
+        assertEquals(open.photoId, reuse.photoId)
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).saveAndFlush(anyArg())
+    }
+
+    @Test
     fun `a reservation made before a rejection still commits`() {
         stubValidationsPass()
         stubIntentAdmission()

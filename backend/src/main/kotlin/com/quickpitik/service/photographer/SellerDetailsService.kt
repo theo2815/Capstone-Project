@@ -31,6 +31,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
 import java.awt.RenderingHints
@@ -68,7 +70,8 @@ class SellerDetailsService(
      * Validates and re-encodes every file before storing any, stores them, then
      * saves the record in a short transaction (no DB transaction is held while
      * decoding or talking to storage). Replaced files are deleted after the commit;
-     * this request's files are deleted if anything after the first store fails.
+     * this request's files are deleted if anything fails before the commit or the
+     * transaction rolls back, and kept when the commit's outcome is unknown.
      */
     fun submit(userId: UUID, form: SellerDetailsForm): SellerDetailsDto {
         val legalName = text(form.legalName, "legalName", 200)
@@ -88,12 +91,16 @@ class SellerDetailsService(
             newKeys += it
             storageService.put(it, bytes, "image/jpeg")
         }
+        var outcome: Int? = null // how the transaction ended; null while it has not run
         val (saved, oldKeys) = try {
             val frontKey = store(idFront)
             val backKey = idBack?.let(::store)
             val selfieKey = store(selfie)
             val birKey = birForm?.let(::store)
             checkNotNull(transactionTemplate.execute {
+                TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                    override fun afterCompletion(status: Int) { outcome = status }
+                })
                 userRepository.lockById(userId)
                 val existing = sellerDetailsRepository.findById(userId).orElse(null)
                 val now = OffsetDateTime.now(clock)
@@ -122,7 +129,13 @@ class SellerDetailsService(
                 sellerDetailsRepository.save(row) to old
             })
         } catch (error: Exception) {
-            newKeys.forEach(::deleteQuietly)
+            if (outcome == null || outcome == TransactionSynchronization.STATUS_ROLLED_BACK) {
+                newKeys.forEach(::deleteQuietly)
+            } else {
+                // The commit may have landed (a lost acknowledgement), so the row may point to the new
+                // files: keep them. shortcut: no sweep removes them if it did not; add one if this log appears.
+                log.warn("seller details commit outcome unknown; kept new files {}", newKeys)
+            }
             throw error
         }
         oldKeys.forEach(::deleteQuietly)
