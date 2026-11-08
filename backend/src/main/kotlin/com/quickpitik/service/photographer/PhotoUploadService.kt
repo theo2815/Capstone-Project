@@ -38,6 +38,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.multipart.MultipartFile
+import software.amazon.awssdk.awscore.exception.AwsServiceException
 import java.io.ByteArrayInputStream
 import java.text.Normalizer
 import java.time.Clock
@@ -667,7 +668,7 @@ class PhotoUploadService(
                 if (acquired != 1) return resolveUnacquired(intent)
 
                 try {
-                    val verifiedHash = validateCandidate(intent)
+                    val verifiedHash = validateCandidateWithRetry(intent)
                     val refreshed = gate(intent.photographerId, intent.eventId)
                     requireWatermark(refreshed.settings, refreshed.event)
                     return persistNew(
@@ -711,6 +712,41 @@ class PhotoUploadService(
             // Remove and decrement under the same key lock as admission.
             photographerPlaces.computeIfPresent(intent.photographerId) { _, count ->
                 if (count.decrementAndGet() == 0) null else count
+            }
+        }
+    }
+
+    // A short R2 fault is retried here so old apps (BatchMyPhotos 1.0.8 allows
+    // three storage 503s) never see it; a second pass is safe because a landed
+    // copy is found by the first metadata read. Validation answers stay final.
+    private fun validateCandidateWithRetry(intent: PhotoUploadIntent): String {
+        val started = clock.instant()
+        var attempt = 1
+        while (true) {
+            try {
+                return validateCandidate(intent)
+            } catch (error: Exception) {
+                if (error is ApiException || error is LeaseLostException || error is InterruptedException ||
+                    Thread.currentThread().isInterrupted) {
+                    throw error
+                }
+                // A hung call (up to the 2-minute operation timeout) is not retried: the app has given up by then.
+                val last = attempt > STORAGE_RETRY_WAITS.size ||
+                    Duration.between(started, clock.instant()) > STORAGE_RETRY_BUDGET
+                val aws = error as? AwsServiceException
+                log.warn(
+                    "Direct upload storage check failed for intent {} (attempt {} of {}{}): {} status={} code={}",
+                    intent.photoId, attempt, STORAGE_RETRY_WAITS.size + 1, if (last) ", giving up" else ", retrying",
+                    error.javaClass.simpleName, aws?.statusCode(), aws?.awsErrorDetails()?.errorCode(),
+                )
+                if (last) throw error
+                try {
+                    Thread.sleep(STORAGE_RETRY_WAITS[attempt - 1].toMillis())
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw error
+                }
+                attempt++
             }
         }
     }
@@ -1208,6 +1244,10 @@ class PhotoUploadService(
         const val OWNER_UPLOAD_GRACE_MONTHS = 1L
         const val WEBSITE_CLIENT = "website"
         val MIN_REUSABLE_PUT_LIFETIME: Duration = Duration.ofMinutes(5)
+        // Waits between the commit's storage-check attempts (3 in all, about 1.25 s added at most).
+        val STORAGE_RETRY_WAITS: List<Duration> = listOf(Duration.ofMillis(250), Duration.ofSeconds(1))
+        // No further attempt once the check has run this long, so a commit stays far under the apps' 120 s timeout.
+        val STORAGE_RETRY_BUDGET: Duration = Duration.ofSeconds(10)
         val TERMINAL_VALIDATION_CODES = setOf(
             ErrorCodes.PAYLOAD_TOO_LARGE,
             ErrorCodes.UNSUPPORTED_MEDIA_TYPE,
