@@ -30,6 +30,10 @@ interface UserRepository : JpaRepository<User, UUID> {
 
     fun countByRole(role: Role): Long
 
+    // AA-I12a: which of these users are suspended (PhotographerSuspension).
+    @Query("SELECT u.id FROM User u WHERE u.id IN :ids AND u.suspendedAt IS NOT NULL")
+    fun findSuspendedIdsIn(@Param("ids") ids: Collection<UUID>): List<UUID>
+
     // Admin user list with optional role / search filters. Status filtering
     // (pending / approved / incomplete / suspended) is applied service-side
     // because it spans users + photographer_settings — keeping the JPQL flat

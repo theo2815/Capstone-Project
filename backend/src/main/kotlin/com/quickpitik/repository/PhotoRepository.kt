@@ -46,6 +46,14 @@ interface PhotoFaceTarget {
 }
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
+    companion object {
+        // = PhotographerSuspension: a suspended photographer's photos leave the public read
+        // paths (AA-I12a). Photos alias `p`; a photo with no photographer stays visible.
+        const val OWNER_NOT_SUSPENDED_JPQL =
+            "NOT EXISTS (SELECT su.id FROM User su WHERE su.id = p.photographerId AND su.suspendedAt IS NOT NULL)"
+        const val OWNER_NOT_SUSPENDED_SQL =
+            "NOT EXISTS (SELECT 1 FROM users su WHERE su.id = p.photographer_id AND su.suspended_at IS NOT NULL)"
+    }
 
     @Query(value = """SELECT EXISTS (SELECT 1 FROM photos WHERE id <> :photoId
         AND (s3_key = :key OR thumbnail_s3_key = :key OR watermark_s3_key = :key))""", nativeQuery = true)
@@ -85,7 +93,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
             WHERE p.id = :photoId AND p.event_id = :eventId AND p.status = 'LIVE'
             AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
             AND p.deletion_started_at IS NULL AND p.purged_at IS NULL
-            AND e.pricing_mode = 'FREE' AND e.status NOT IN ('DRAFT', 'ARCHIVED'))
+            AND e.pricing_mode = 'FREE' AND e.status NOT IN ('DRAFT', 'ARCHIVED')
+            AND $OWNER_NOT_SUSPENDED_SQL)
     """, nativeQuery = true)
     fun isFreeDeliveryAvailable(eventId: UUID, photoId: UUID): Boolean
 
@@ -472,6 +481,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
               AND p.deleted_at IS NULL
               AND p.removal_state = 'NONE'
               AND p.published_at <= :snapshotAt
+              AND $OWNER_NOT_SUSPENDED_SQL
         )
         SELECT p.*
         FROM ranked r
@@ -491,6 +501,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deleted_at IS NULL
           AND p.removal_state = 'NONE'
           AND p.published_at <= :snapshotAt
+          AND $OWNER_NOT_SUSPENDED_SQL
         """,
         nativeQuery = true,
     )
@@ -515,6 +526,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
+          AND $OWNER_NOT_SUSPENDED_JPQL
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
         countQuery = """
@@ -525,6 +537,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
+          AND $OWNER_NOT_SUSPENDED_JPQL
         """,
     )
     fun searchForEvent(
@@ -543,6 +556,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND fp.aiPersonId IN :aiPersonIds
+          AND $OWNER_NOT_SUSPENDED_JPQL
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
         countQuery = """
@@ -553,6 +567,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND fp.aiPersonId IN :aiPersonIds
+          AND $OWNER_NOT_SUSPENDED_JPQL
         """,
     )
     fun findByEventAndPersonIds(
@@ -676,12 +691,13 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // upload/owner/admin counters retain their existing meaning.
     @Query("SELECT COUNT(p) FROM Photo p WHERE p.eventId = :eventId " +
         "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
-        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE")
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE AND " + OWNER_NOT_SUSPENDED_JPQL)
     fun countPublicForEvent(@Param("eventId") eventId: UUID): Long
 
     @Query("SELECT p.eventId AS eventId, COUNT(p) AS photoCount FROM Photo p WHERE p.eventId IN :eventIds " +
         "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
-        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE GROUP BY p.eventId")
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE AND " + OWNER_NOT_SUSPENDED_JPQL +
+        " GROUP BY p.eventId")
     fun countPublicByEventIds(@Param("eventIds") eventIds: Collection<UUID>): List<PublicEventPhotoCount>
 
     @Query("SELECT p.eventId AS eventId, COUNT(p) AS photoCount FROM Photo p WHERE p.eventId IN :eventIds " +

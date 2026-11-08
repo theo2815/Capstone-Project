@@ -63,14 +63,16 @@ interface EventRepository : JpaRepository<Event, UUID> {
     // pickers (website, mobile, desktop) use this same query and rely on that,
     // so a foreign photographer never sees another's event there.
     // includeListed=true (sent only by the /events catalog and mobile runner
-    // discovery) also returns photographer events an admin listed (V89).
+    // discovery) also returns photographer events an admin listed (V89), unless
+    // that photographer is suspended (AA-I12a, = PhotographerSuspension).
     // Sentinel values keep every named parameter typed (Postgres rejects nullable
     // unknown-typed parameters with "function lower(bytea) does not exist").
     @Query(
         """
         SELECT e FROM Event e
         WHERE e.deletedAt IS NULL
-          AND (e.createdBy IS NULL OR (:includeListed = TRUE AND e.listedOnEvents = TRUE))
+          AND (e.createdBy IS NULL OR (:includeListed = TRUE AND e.listedOnEvents = TRUE
+               AND NOT EXISTS (SELECT su.id FROM User su WHERE su.id = e.createdBy AND su.suspendedAt IS NOT NULL)))
           AND e.status IN :statuses
           AND e.visibility = com.quickpitik.entity.EventVisibility.PUBLIC
           AND (:search = '' OR

@@ -113,6 +113,47 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
         assertEquals(setOf(adminPublic), search(marker, includeListed = false))
     }
 
+    // AA-I12a: suspension takes a photographer's listed events off /events; no row changes.
+    @Test
+    fun `a suspended photographer's listed event leaves events and returns on unsuspend`() {
+        val marker = "susp-${UUID.randomUUID()}"
+        val owner = photographer()
+        val listed = save(marker, createdBy = owner.id, visibility = EventVisibility.PUBLIC, listed = true)
+
+        setSuspended(owner, OffsetDateTime.now())
+        assertFalse(listed in search(marker, includeListed = true), "a suspended owner's listed event must leave /events")
+
+        setSuspended(owner, null)
+        assertTrue(listed in search(marker, includeListed = true), "unsuspend must restore the listed event")
+    }
+
+    // Admin events (and Plan 2 shared races) have createdBy NULL: a suspension never filters them.
+    @Test
+    fun `an admin event with a suspended uploader stays listed and pickers are unchanged`() {
+        val marker = "susp-admin-${UUID.randomUUID()}"
+        val owner = photographer()
+        val adminPublic = save(marker, createdBy = null, visibility = EventVisibility.PUBLIC)
+        save(marker, createdBy = owner.id, visibility = EventVisibility.PUBLIC, listed = true)
+        setSuspended(owner, OffsetDateTime.now())
+
+        assertEquals(setOf(adminPublic), search(marker, includeListed = true))
+        assertEquals(setOf(adminPublic), search(marker, includeListed = false))
+    }
+
+    private fun photographer(): User = userRepository.save(
+        User(
+            email = "owner-${UUID.randomUUID()}@test.local",
+            passwordHash = "stub",
+            name = "Owner",
+            role = Role.PHOTOGRAPHER,
+        ),
+    )
+
+    private fun setSuspended(user: User, at: OffsetDateTime?) {
+        user.suspendedAt = at
+        userRepository.save(user)
+    }
+
     private fun search(marker: String, includeListed: Boolean): Set<UUID> =
         eventRepository.search(
             statuses = listOf(EventStatus.ACTIVE, EventStatus.COMPLETED, EventStatus.ARCHIVED),
