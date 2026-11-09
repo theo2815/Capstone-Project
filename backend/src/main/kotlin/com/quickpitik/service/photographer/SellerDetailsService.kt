@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.IdentityProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminSellerDetailsDto
 import com.quickpitik.dto.admin.AdminSellerDetailsRowDto
@@ -67,11 +68,17 @@ class SellerDetailsService(
     private val storageProperties: StorageProperties,
     private val identityCheckService: IdentityCheckService,
     private val payoutAccountRepository: PayoutAccountRepository,
+    private val identityProperties: IdentityProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun get(userId: UUID): SellerDetailsDto =
-        sellerDetailsRepository.findById(userId).map { it.toDto() }.orElse(SellerDetailsDto.MISSING)
+    fun get(userId: UUID): SellerDetailsDto = response(sellerDetailsRepository.findById(userId).orElse(null))
+
+    // The one C3 mapper: the GET, submit and live check carry the same upload answer (AA-I6, review F14).
+    private fun response(row: SellerDetails?): SellerDetailsDto = (row?.toDto() ?: SellerDetailsDto.MISSING).copy(
+        uploadsAllowed = row != null && row.status in SellerDetailsStatus.uploadGateSet(identityProperties.gateEnabled),
+        identityGateStartsOn = identityProperties.gateStartsOn,
+    )
 
     /**
      * Validates and re-encodes every file, runs the identity checks (AA-I3), stores the
@@ -221,7 +228,7 @@ class SellerDetailsService(
             throw error
         }
         (oldKeys - saved.fileKeys().toSet()).forEach(::deleteQuietly)
-        return saved.toDto()
+        return response(saved)
     }
 
     /** E3: the review queue, waiting records first. No links: an admin opens files one record at a time. */

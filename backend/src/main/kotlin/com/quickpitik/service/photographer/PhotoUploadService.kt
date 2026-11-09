@@ -2,6 +2,7 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.IdentityProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.DirectUploadBeginResponse
 import com.quickpitik.dto.photographer.PhotoExistsResponse
@@ -77,6 +78,7 @@ class PhotoUploadService(
     private val clock: Clock,
     private val erasure: com.quickpitik.service.photos.PhotoErasureService,
     private val sellerDetailsRepository: SellerDetailsRepository,
+    private val identityProperties: IdentityProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val verificationSlots = Semaphore(storageProperties.directUpload.verificationConcurrency, true)
@@ -520,9 +522,13 @@ class PhotoUploadService(
     // New uploads only (multipart and a new direct reservation); commits and replays of a
     // reservation made earlier never check it, so photos already in flight still finish.
     private fun requireSellerDetails(photographerId: UUID) {
-        if (!sellerDetailsRepository.existsByUserIdAndStatusNot(photographerId, SellerDetailsStatus.REJECTED)) {
+        val allowed = SellerDetailsStatus.uploadGateSet(identityProperties.gateEnabled)
+        if (!sellerDetailsRepository.existsByUserIdAndStatusIn(photographerId, allowed)) {
+            // Only a refusal reads the row, to pick the message (C10); the code stays the same for old clients.
+            val inReview = sellerDetailsRepository.findById(photographerId).orElse(null)?.status == SellerDetailsStatus.MANUAL_REVIEW
             throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.SELLER_DETAILS_REQUIRED,
-                "Before you can upload, add your ID, address and phone number in your photographer settings on quickpitik.com.")
+                if (inReview) "An admin is checking your seller details. New uploads open once they are approved."
+                else "Before you can upload, add your ID, address and phone number in your photographer settings on quickpitik.com.")
         }
     }
 

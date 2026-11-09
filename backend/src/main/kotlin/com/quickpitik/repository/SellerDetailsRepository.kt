@@ -10,7 +10,7 @@ import org.springframework.data.repository.query.Param
 import java.util.UUID
 
 interface SellerDetailsRepository : JpaRepository<SellerDetails, UUID> {
-    fun existsByUserIdAndStatusNot(userId: UUID, status: SellerDetailsStatus): Boolean
+    fun existsByUserIdAndStatusIn(userId: UUID, statuses: Collection<SellerDetailsStatus>): Boolean
 
     // Admin queue: records waiting for review first, then oldest submission first.
     @Query(
