@@ -91,14 +91,15 @@ class LivenessSessionService(
         val untilMidnight = Duration.between(OffsetDateTime.now(clock), dayStart.plusDays(1)).seconds
         return ApiException(
             HttpStatus.TOO_MANY_REQUESTS, ErrorCodes.LIVENESS_ATTEMPTS_EXHAUSTED,
-            "You have used today's live checks. Try again tomorrow, or have an admin check your ID instead.",
+            "You have used today's live checks. Try again tomorrow.",
             retryAfterSeconds = untilMidnight.coerceAtLeast(1),
         )
     }
 
     private fun unavailable() = ApiException(
         HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.LIVENESS_UNAVAILABLE,
-        "The live check is not available right now. You can have an admin check your ID instead.",
+        // Shared with runner removals: the client offers its own fallback (C1: "Have an admin check instead").
+        "The live check is not available right now.",
     )
 
     companion object {
