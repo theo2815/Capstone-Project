@@ -80,6 +80,23 @@ class PhotoSearchServiceTest {
         assertTrue(service().searchByFace(eventId, selfie, "image/jpeg", "s.jpg", pagination).items.isEmpty())
     }
 
+    @Test fun `findFaceCandidates passes the given topK to the provider`() {
+        stubSearch()
+        val result = service().findFaceCandidates(eventId, com.quickpitik.dto.removal.SearchImage(selfie, "image/jpeg", "s.jpg"), 7)
+        Mockito.verify(aiApiClient).facesSearch(
+            anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyDouble(), Mockito.eq(7),
+        )
+        assertEquals(7, result.candidateLimit)
+    }
+
+    @Test fun `the default candidate limit stays 50`() {
+        stubSearch()
+        candidates(service())
+        Mockito.verify(aiApiClient).facesSearch(
+            anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyDouble(), Mockito.eq(50),
+        )
+    }
+
     private fun candidates(service: PhotoSearchService, bytes: ByteArray = selfie): com.fasterxml.jackson.databind.JsonNode {
         return com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().valueToTree(
             service.findFaceCandidates(eventId, com.quickpitik.dto.removal.SearchImage(bytes, "image/jpeg", "s.jpg")))

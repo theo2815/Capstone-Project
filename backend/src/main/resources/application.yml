@@ -87,6 +87,14 @@ app:
     cleanup-interval: ${PHOTO_REMOVAL_CLEANUP_INTERVAL:PT1M}
     cleanup-backoff: ${PHOTO_REMOVAL_CLEANUP_BACKOFF:PT5M}
     in-request-cleanup-jobs: ${PHOTO_REMOVAL_IN_REQUEST_CLEANUP_JOBS:5}
+    runner:
+      liveness-pass-min: ${RUNNER_REMOVAL_LIVENESS_PASS:90}
+      liveness-uncertain-min: ${RUNNER_REMOVAL_LIVENESS_UNCERTAIN:50}
+      auto-hide-min-similarity: ${RUNNER_REMOVAL_AUTO_HIDE_SIMILARITY:0.99}
+      auto-hide-max-per-request: ${RUNNER_REMOVAL_AUTO_HIDE_MAX:30}
+      photographer-daily-auto-hides: ${RUNNER_REMOVAL_PHOTOGRAPHER_DAILY:50}
+      candidate-limit: ${RUNNER_REMOVAL_CANDIDATE_LIMIT:50}
+      email-claim-stale-after: ${RUNNER_REMOVAL_EMAIL_CLAIM_STALE_AFTER:PT10M}
   security:
     origin-secret: ${ORIGIN_SECRET:}
   # Externally-reachable URLs the BE needs to embed in artifacts whose request

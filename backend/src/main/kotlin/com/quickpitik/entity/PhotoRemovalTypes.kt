@@ -8,3 +8,12 @@ enum class RemovalState { NONE, REVIEW, REMOVED }
 enum class RemovalMatchSource { SELFIE, BIB, MANUAL }
 enum class RemovalActorType { ADMIN, PHOTOGRAPHER, SYSTEM, SUPPORT }
 enum class RemovalEvidenceCleanupState { NONE, PRESENT, PENDING, DELETED, RETRY_REQUIRED }
+
+// A runner's live-check result for a deletion request; a fail is never stored.
+enum class RunnerLivenessBand { PASS, UNCERTAIN }
+
+// Why a runner request's matches were held back or need a closer look; stored by name in risk_flags.
+enum class RunnerRiskFlag {
+    LIVENESS_UNCERTAIN, UNVERIFIED_EMAIL, PRIOR_REJECTION, POSSIBLY_TRUNCATED, OVER_REQUEST_CAP,
+    PHOTOGRAPHER_BUDGET, AUTO_HIDE_OFF, GROUP_PHOTOS, MATCHING_UNAVAILABLE,
+}
