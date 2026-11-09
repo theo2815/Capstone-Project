@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.io.ClassPathResource
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.init.ScriptUtils
 import kotlin.test.assertEquals
@@ -375,6 +376,65 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         } finally {
             jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
             ids.forEach { jdbcTemplate.update("DELETE FROM public.events WHERE id = ?", it) }
+        }
+    }
+
+    // Upgrade rehearsal: V93 seller details may already hold rows (staging, and production after the
+    // release that carries V93) when V94 arrives.
+    @Test
+    fun `V94 upgrades V93 turning submitted seller details into manual review`() {
+        val schema = "seller_v94_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "93").migrate()
+            fun seller(status: String): UUID {
+                val id = jdbcTemplate.queryForObject(
+                    "INSERT INTO $schema.users (email, password_hash, name, role) VALUES (?, 'x', 'V94 seller', 'PHOTOGRAPHER') RETURNING id",
+                    UUID::class.java, "v94-${UUID.randomUUID()}@test.local",
+                )!!
+                jdbcTemplate.update(
+                    "INSERT INTO $schema.photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, " +
+                        "address, phone, status, rejection_reason, revision, submitted_at) " +
+                        "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', 'k/front', 'k/selfie', 'Cebu', '+63 917 123 4567', ?, ?, 1, now())",
+                    id, status, if (status == "REJECTED") "Blurry ID" else null,
+                )
+                return id
+            }
+            val submitted = seller("SUBMITTED")
+            val approved = seller("APPROVED")
+            val rejected = seller("REJECTED")
+
+            flywayFor(schema, "94").migrate()
+
+            assertEquals("94", latestVersion(schema))
+            fun row(id: UUID) = jdbcTemplate.queryForMap(
+                "SELECT status, reason_codes::text AS reasons, repeat_matches::text AS matches, phone_key " +
+                    "FROM $schema.photographer_seller_details WHERE user_id = ?", id,
+            )
+            assertEquals("MANUAL_REVIEW", row(submitted)["status"])
+            assertEquals("APPROVED", row(approved)["status"])
+            assertEquals("REJECTED", row(rejected)["status"])
+            for (id in listOf(submitted, approved, rejected)) {
+                assertEquals("[]", row(id)["reasons"])
+                assertEquals("[]", row(id)["matches"])
+                assertEquals("9171234567", row(id)["phone_key"])
+            }
+            // The old value is refused now; the new ones are accepted.
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.photographer_seller_details SET status = 'SUBMITTED' WHERE user_id = ?", submitted)
+            }
+            jdbcTemplate.update("UPDATE $schema.photographer_seller_details SET status = 'AUTO_APPROVED' WHERE user_id = ?", submitted)
+
+            // The liveness table is shared with the runner photo-removal plan (RD-0.1).
+            val liveness = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'liveness_sessions'",
+                String::class.java, schema,
+            ).toSet()
+            assertEquals(
+                setOf("session_id", "user_id", "purpose", "event_id", "consent_version", "created_at", "consumed_at"),
+                liveness,
+            )
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
         }
     }
 

@@ -1,7 +1,10 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.dto.admin.toAdminDto
 import com.quickpitik.dto.photographer.SellerDetailsDto
+import com.quickpitik.dto.photographer.toDto
+import com.quickpitik.entity.SellerReasonCode
 import com.quickpitik.dto.photographer.SellerDetailsForm
 import com.quickpitik.entity.SellerDetails
 import com.quickpitik.entity.SellerDetailsStatus
@@ -151,6 +154,7 @@ class SellerDetailsServiceTest {
         birFormKey = "seller-details/$userId/old-bir.jpg",
         address = "Old address",
         phone = "09170000000",
+        phoneKey = "9170000000",
         status = status,
         rejectionReason = "blurry",
         revision = 4,
@@ -161,7 +165,7 @@ class SellerDetailsServiceTest {
 
     // 1
     @Test
-    fun `submit stores upright JPEGs under seller-details with random names and saves SUBMITTED`() {
+    fun `submit stores upright JPEGs under seller-details with random names and saves MANUAL_REVIEW`() {
         val dto = service().submit(userId, form(idFront = part("idFront", jpeg(4000, 3000))))
 
         val keys = storedKeys()
@@ -175,7 +179,7 @@ class SellerDetailsServiceTest {
         assertTrue(maxOf(front.width, front.height) <= 2400, "${front.width}x${front.height}")
         storedBytes().forEach { assertFalse(hasExifSegment(it), "re-encoded JPEG must carry no EXIF") }
         val row = saved()
-        assertEquals(SellerDetailsStatus.SUBMITTED, row.status)
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
         assertEquals("Juan Dela Cruz", row.legalName)
         assertEquals(1L, row.revision)
         assertEquals(OffsetDateTime.now(clock), row.submittedAt)
@@ -328,7 +332,7 @@ class SellerDetailsServiceTest {
 
         val row = saved()
         assertEquals(5L, row.revision)
-        assertEquals(SellerDetailsStatus.SUBMITTED, row.status)
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
         assertEquals(SellerIdType.DRIVERS_LICENSE, row.idType)
         assertNull(row.rejectionReason)
         assertNull(row.reviewedAt)
@@ -426,7 +430,7 @@ class SellerDetailsServiceTest {
 
     private val adminId = UUID.randomUUID()
 
-    private fun withRecord(status: SellerDetailsStatus = SellerDetailsStatus.SUBMITTED, birForm: Boolean = true): SellerDetails {
+    private fun withRecord(status: SellerDetailsStatus = SellerDetailsStatus.MANUAL_REVIEW, birForm: Boolean = true): SellerDetails {
         val row = existing(status).apply {
             if (status != SellerDetailsStatus.REJECTED) rejectionReason = null
             if (!birForm) birFormKey = null
@@ -482,19 +486,22 @@ class SellerDetailsServiceTest {
 
     // 2
     @Test
-    fun `the admin list has no links, and puts submitted first, oldest first`() {
+    fun `admin list reads submitted as manual review, has no links, and puts manual review first`() {
         val row = withRecord()
-        Mockito.`when`(repository.findForAdmin(Mockito.eq(SellerDetailsStatus.SUBMITTED) ?: SellerDetailsStatus.SUBMITTED, anyArg()))
+        Mockito.`when`(repository.findForAdmin(Mockito.eq(SellerDetailsStatus.MANUAL_REVIEW) ?: SellerDetailsStatus.MANUAL_REVIEW, anyArg()))
             .thenReturn(PageImpl(listOf(row)))
         val user = userRepository.findById(userId).get()
         Mockito.`when`(userRepository.findAllById(listOf(userId))).thenReturn(listOf(user))
 
+        // The legacy "submitted" filter (today's admin website) and the new "manual_review" read the same queue.
+        assertEquals(1L, service().adminList("manual_review", PaginationParams.of(0, 20)).total)
         val page = service().adminList("submitted", PaginationParams.of(0, 20))
 
         assertEquals(1L, page.total)
         val item = page.items.single()
         assertEquals("seller@test.local", item.email)
         assertEquals("submitted", item.status)
+        assertEquals("manual_review", item.reviewState)
         assertEquals("philsys", item.idType)
         assertFalse("seller-details/" in page.toString() || "http" in page.toString())
         Mockito.verify(storage, Mockito.never()).presignedDownloadUrl(anyArg(), anyArg(), anyArg())
@@ -511,13 +518,13 @@ class SellerDetailsServiceTest {
 
     // 3
     @Test
-    fun `approve needs SUBMITTED and the current revision, a stale revision answers 409 and changes nothing`() {
+    fun `approve accepts only manual review at the current revision, a stale revision answers 409 and changes nothing`() {
         val row = withRecord()
         val stale = assertFailsWith<ApiException> { service().approve(adminId, userId, 3) }
         assertEquals(HttpStatus.CONFLICT, stale.status)
         assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, stale.code)
         assertEquals("Seller details have changed. Reload before deciding.", stale.message)
-        assertEquals(SellerDetailsStatus.SUBMITTED, row.status)
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
         Mockito.verify(repository, Mockito.never()).save(anyArg<SellerDetails>())
         assertTrue(decisions().isEmpty())
 
@@ -535,7 +542,7 @@ class SellerDetailsServiceTest {
         assertEquals(mapOf("revision" to 4L), logged.meta)
         assertTrue(messages().isEmpty())
 
-        for (status in listOf(SellerDetailsStatus.APPROVED, SellerDetailsStatus.REJECTED)) {
+        for (status in listOf(SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.APPROVED, SellerDetailsStatus.REJECTED)) {
             withRecord(status)
             val wrong = assertFailsWith<ApiException> { service().approve(adminId, userId, 4) }
             assertEquals(HttpStatus.CONFLICT, wrong.status)
@@ -544,8 +551,8 @@ class SellerDetailsServiceTest {
 
     // 4
     @Test
-    fun `reject works from SUBMITTED or APPROVED, needs a reason and the current revision, stores the reason, and sends an ADMIN_MESSAGE with it`() {
-        for (from in listOf(SellerDetailsStatus.SUBMITTED, SellerDetailsStatus.APPROVED)) {
+    fun `reject accepts manual review auto approved and approved, needs a reason and the current revision, stores the reason, and sends an ADMIN_MESSAGE with it`() {
+        for (from in listOf(SellerDetailsStatus.MANUAL_REVIEW, SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.APPROVED)) {
             Mockito.clearInvocations(decisionRepository, messageRepository)
             val row = withRecord(from)
 
@@ -593,8 +600,65 @@ class SellerDetailsServiceTest {
 
         service().submit(userId, form())
 
-        assertEquals(SellerDetailsStatus.SUBMITTED, row.status, "the gate passes a SUBMITTED row")
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status, "the gate passes a MANUAL_REVIEW row")
         assertEquals(5L, row.revision)
         assertNull(row.rejectionReason)
+    }
+
+    // ─── AA-I1: review states ────────────────────────────────────────────
+
+    @Test
+    fun `submit saves manual review with no reason codes`() {
+        service().submit(userId, form(phone = "+63 917 123 4567"))
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(emptyList(), row.reasonCodes)
+        assertEquals("9171234567", row.phoneKey)
+    }
+
+    @Test
+    fun `a resubmission refreshes the phone key and clears stale reason codes`() {
+        val old = existing().apply {
+            reasonCodes = listOf(SellerReasonCode.FACE_MISMATCH)
+            phoneKey = "9170000000"
+        }
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+
+        service().submit(userId, form(phone = "0918 765 4321"))
+
+        assertEquals(emptyList(), saved().reasonCodes)
+        assertEquals("9187654321", old.phoneKey)
+    }
+
+    @Test
+    fun `status stays submitted for manual review and approved for auto approved while reviewState carries the detailed state`() {
+        val wire = SellerDetailsStatus.entries.associateWith { it.toWire() to it.reviewState() }
+        assertEquals(
+            mapOf(
+                SellerDetailsStatus.MANUAL_REVIEW to ("submitted" to "manual_review"),
+                SellerDetailsStatus.AUTO_APPROVED to ("approved" to "auto_approved"),
+                SellerDetailsStatus.APPROVED to ("approved" to "approved"),
+                SellerDetailsStatus.REJECTED to ("rejected" to "rejected"),
+            ),
+            wire,
+        )
+        assertEquals(setOf(SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.APPROVED),
+            SellerDetailsStatus.entries.filter { it.passesIdentity() }.toSet())
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, SellerDetailsStatus.fromWire("submitted"))
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.fromWire("auto_approved"))
+        assertNull(SellerDetailsStatus.fromWire("missing"))
+
+        val row = withRecord(SellerDetailsStatus.AUTO_APPROVED)
+        assertEquals("approved", row.toDto().status)
+        assertEquals("auto_approved", row.toDto().reviewState)
+        assertEquals("missing", SellerDetailsDto.MISSING.reviewState)
+        assertEquals("auto_approved", row.toAdminDto("a@b.c").reviewState)
+    }
+
+    @Test
+    fun `phone key is the last ten digits`() {
+        assertEquals("9171234567", SellerDetailsService.phoneKey("+63 917 123 4567"))
+        assertEquals("9171234567", SellerDetailsService.phoneKey("09171234567"))
     }
 }

@@ -17,7 +17,7 @@ interface SellerDetailsRepository : JpaRepository<SellerDetails, UUID> {
         value = """
         SELECT s FROM SellerDetails s
         WHERE (:status IS NULL OR s.status = :status)
-        ORDER BY CASE WHEN s.status = com.quickpitik.entity.SellerDetailsStatus.SUBMITTED THEN 0 ELSE 1 END,
+        ORDER BY CASE WHEN s.status = com.quickpitik.entity.SellerDetailsStatus.MANUAL_REVIEW THEN 0 ELSE 1 END,
                  s.submittedAt ASC, s.userId ASC
         """,
         countQuery = "SELECT COUNT(s) FROM SellerDetails s WHERE (:status IS NULL OR s.status = :status)",

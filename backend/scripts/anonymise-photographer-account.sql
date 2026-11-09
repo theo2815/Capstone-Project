@@ -25,7 +25,8 @@
 --     suspended now with reason "account deleted on request" (the public page then 404s).
 --   Deleted: sign-in, reset, email-change and desktop tokens; social links; payout accounts
 --     and their audit rows; photographer messages; leftover upload intents; saved selfies,
---     saved events, cart and photo alerts (if they used runner features).
+--     saved events, cart and photo alerts (if they used runner features); live-selfie
+--     sessions (liveness_sessions).
 --   photographer_settings: handle becomes deleted-<id without dashes> (40 characters, longer
 --     than the app lets anyone choose); brand name, bio, place, cover and watermark cleared.
 --   Their remaining (sold) photos go to the bin, so nobody can buy them any more; buyers keep
@@ -33,8 +34,9 @@
 --   Coupons are switched off, not deleted: past orders keep the link to the coupon they used.
 --   Kept: sold photos, orders, the ledger (transactions), payout cycles with their account
 --     snapshot (name, number, QR file), payout reports, admin decision records, the name on
---     photo removal cases, orders they placed as a buyer, and the seller-details record and
---     its files under seller-details/<user_id>/ (legal records under RA 11967 and BIR rules;
+--     photo removal cases, orders they placed as a buyer, and the seller-details record (with
+--     its ID-number fingerprint) and its files under seller-details/<user_id>/, including the
+--     live-selfie reference image (legal records under RA 11967 and BIR rules;
 --     see the privacy policy's retention table).
 --
 -- Steps for each request:
@@ -146,7 +148,8 @@ UNION ALL SELECT 'photo_upload_intents', count(*) FROM photo_upload_intents WHER
 UNION ALL SELECT 'user_selfies', count(*) FROM user_selfies WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'saved_events', count(*) FROM saved_events WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'cart_items', count(*) FROM cart_items WHERE user_id = :'qp_user_id'
-UNION ALL SELECT 'event_photo_alerts', count(*) FROM event_photo_alerts WHERE user_id = :'qp_user_id';
+UNION ALL SELECT 'event_photo_alerts', count(*) FROM event_photo_alerts WHERE user_id = :'qp_user_id'
+UNION ALL SELECT 'liveness_sessions', count(*) FROM liveness_sessions WHERE user_id = :'qp_user_id';
 
 \echo '== Kept (rows), and the personal data that stays on them'
 SELECT 'photos (sold; binned by the run)' AS kept, count(*) AS rows, 'credit in already-made previews' AS personal_data_kept FROM photos WHERE photographer_id = :'qp_user_id' AND purged_at IS NULL
@@ -159,7 +162,7 @@ UNION ALL SELECT 'events created by them', count(*), 'event details they typed' 
 UNION ALL SELECT 'admin_decision_log.target_user_id', count(*), 'reason, meta (may name the person)' FROM admin_decision_log WHERE target_user_id = :'qp_user_id'
 UNION ALL SELECT 'photo_removal_items', count(*), 'owner_name_snapshot (locked by a trigger)' FROM photo_removal_items WHERE owner_id_snapshot = :'qp_user_id'
 UNION ALL SELECT 'orders placed as a buyer', count(*), 'recipient_email' FROM orders WHERE user_id = :'qp_user_id'
-UNION ALL SELECT 'photographer_seller_details', count(*), 'legal name, address, phone, ID photos' FROM photographer_seller_details WHERE user_id = :'qp_user_id';
+UNION ALL SELECT 'photographer_seller_details', count(*), 'legal name, address, phone, ID photos, live-selfie reference image, ID-number fingerprint' FROM photographer_seller_details WHERE user_id = :'qp_user_id';
 
 \echo '== R2 files to delete after the confirmed run (a key ending in / is a prefix: list it and delete what is there)'
 SELECT cover_s3_key AS r2_key FROM photographer_settings WHERE user_id = :'qp_user_id' AND cover_s3_key IS NOT NULL
@@ -174,7 +177,7 @@ UNION ALL SELECT i.original_key FROM photo_upload_intents i
       AND NOT EXISTS (SELECT 1 FROM photos p WHERE p.s3_key = i.original_key)
 UNION ALL SELECT 'staging/photo-uploads/' || :'qp_user_id' || '/';
 
-\echo '== Kept in R2: payout QR files named by a payout snapshot, and the seller-details files (do not delete)'
+\echo '== Kept in R2: payout QR files named by a payout snapshot, and the seller-details files incl. the live-selfie reference image (do not delete)'
 SELECT DISTINCT account_snapshot_qr_key AS kept_r2_key FROM payout_cycles
 WHERE photographer_id = :'qp_user_id' AND account_snapshot_qr_key IS NOT NULL
 UNION ALL SELECT 'seller-details/' || :'qp_user_id' || '/'
@@ -215,6 +218,7 @@ BEGIN
     DELETE FROM user_selfies WHERE user_id = uid;
     DELETE FROM saved_events WHERE user_id = uid;
     DELETE FROM cart_items WHERE user_id = uid;
+    DELETE FROM liveness_sessions WHERE user_id = uid;
     UPDATE photographer_coupons SET active = false, updated_at = now() WHERE photographer_id = uid;
     -- Bin what is left (only sold photos pass the checks) and lower the counts, as trash() does.
     WITH binned AS (
