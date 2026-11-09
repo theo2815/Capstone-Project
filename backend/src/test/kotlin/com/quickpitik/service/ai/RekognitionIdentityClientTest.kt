@@ -5,11 +5,16 @@ import com.quickpitik.config.IdentityProperties
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
+import org.mockito.Mockito
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
 import software.amazon.awssdk.core.SdkBytes
 import software.amazon.awssdk.services.rekognition.RekognitionClient
 import software.amazon.awssdk.services.rekognition.model.AuditImage
+import software.amazon.awssdk.services.rekognition.model.CompareFacesMatch
+import software.amazon.awssdk.services.rekognition.model.CompareFacesRequest
+import software.amazon.awssdk.services.rekognition.model.CompareFacesResponse
+import software.amazon.awssdk.services.rekognition.model.ComparedFace
 import software.amazon.awssdk.services.rekognition.model.CreateFaceLivenessSessionRequest
 import software.amazon.awssdk.services.rekognition.model.CreateFaceLivenessSessionResponse
 import software.amazon.awssdk.services.rekognition.model.GetFaceLivenessSessionResultsRequest
@@ -25,9 +30,41 @@ import kotlin.test.assertNull
 
 class RekognitionIdentityClientTest {
     private val rekognition = mock(RekognitionClient::class.java)
+    private val primary = mock(RekognitionClient::class.java)
     private val sts = mock(StsClient::class.java)
     private val props = IdentityProperties(livenessRoleArn = "arn:aws:iam::000000000000:role/quickpitik-liveness-browser")
-    private val client = RekognitionIdentityClient(rekognition, sts, props)
+    private val client = RekognitionIdentityClient(rekognition, primary, sts, props)
+
+    @Test
+    fun `compare sends similarity threshold 0 and returns the best face from matches and unmatched faces`() {
+        val captor = ArgumentCaptor.forClass(CompareFacesRequest::class.java)
+        `when`(primary.compareFaces(captor.capture())).thenReturn(
+            CompareFacesResponse.builder()
+                .faceMatches(CompareFacesMatch.builder().similarity(41.5f).build(), CompareFacesMatch.builder().similarity(99.2f).build())
+                .unmatchedFaces(ComparedFace.builder().build())
+                .build(),
+        )
+
+        val result = client.compareFaces(byteArrayOf(1), byteArrayOf(2))
+
+        assertEquals(3, result.facesOnTarget)
+        assertEquals(99.2f, result.bestSimilarity)
+        val req = captor.value
+        assertEquals(0f, req.similarityThreshold())
+        assertContentEquals(byteArrayOf(1), req.sourceImage().bytes().asByteArray())
+        assertContentEquals(byteArrayOf(2), req.targetImage().bytes().asByteArray())
+        Mockito.verifyNoInteractions(rekognition) // CompareFaces runs in ap-southeast-1, not the liveness region
+    }
+
+    @Test
+    fun `compare with no face on the target has no similarity`() {
+        `when`(primary.compareFaces(any(CompareFacesRequest::class.java))).thenReturn(CompareFacesResponse.builder().build())
+
+        val result = client.compareFaces(byteArrayOf(1), byteArrayOf(2))
+
+        assertEquals(0, result.facesOnTarget)
+        assertNull(result.bestSimilarity)
+    }
 
     @Test
     fun `the liveness session asks for no audit images and no output bucket`() {

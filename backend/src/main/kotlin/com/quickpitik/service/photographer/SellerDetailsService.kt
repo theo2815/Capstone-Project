@@ -10,6 +10,7 @@ import com.quickpitik.dto.admin.AdminSellerDetailsRowDto
 import com.quickpitik.dto.admin.SellerDetailsFilesDto
 import com.quickpitik.dto.admin.toAdminDto
 import com.quickpitik.dto.admin.toAdminRowDto
+import com.quickpitik.dto.photographer.LiveCheckRequest
 import com.quickpitik.dto.photographer.SellerDetailsDto
 import com.quickpitik.dto.photographer.SellerDetailsForm
 import com.quickpitik.dto.photographer.toDto
@@ -17,6 +18,7 @@ import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.SellerDetails
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.SellerIdType
+import com.quickpitik.entity.SellerReasonCode
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -60,6 +62,7 @@ class SellerDetailsService(
     private val clock: Clock,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val storageProperties: StorageProperties,
+    private val identityCheckService: IdentityCheckService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -67,11 +70,9 @@ class SellerDetailsService(
         sellerDetailsRepository.findById(userId).map { it.toDto() }.orElse(SellerDetailsDto.MISSING)
 
     /**
-     * Validates and re-encodes every file before storing any, stores them, then
-     * saves the record in a short transaction (no DB transaction is held while
-     * decoding or talking to storage). Replaced files are deleted after the commit;
-     * this request's files are deleted if anything fails before the commit or the
-     * transaction rolls back, and kept when the commit's outcome is unknown.
+     * Validates and re-encodes every file, runs the identity checks (AA-I3), stores the
+     * files, then saves the record in a short transaction. No DB transaction is held while
+     * decoding, calling AWS or talking to storage.
      */
     fun submit(userId: UUID, form: SellerDetailsForm): SellerDetailsDto {
         val legalName = text(form.legalName, "legalName", 200)
@@ -86,50 +87,103 @@ class SellerDetailsService(
         val selfie = jpeg(required(sent(form.selfie), "selfie"), "selfie")
         val birForm = sent(form.birForm)?.let { jpeg(it, "birForm") }
 
-        val newKeys = mutableListOf<String>()
-        fun store(bytes: ByteArray): String = "$PREFIX$userId/${UUID.randomUUID()}.jpg".also {
-            newKeys += it
-            storageService.put(it, bytes, "image/jpeg")
+        val checks = identityCheckService.run(userId, form.livenessSessionId?.trim()?.ifEmpty { null }) { idFront }
+        return persist(userId, listOf(idFront, idBack, selfie, birForm, checks.referenceImage)) { existing, keys, now ->
+            val (frontKey, backKey, selfieKey, birKey, referenceKey) = keys
+            val row = existing ?: SellerDetails(
+                userId = userId, legalName = legalName, idType = idType, idFrontKey = frontKey!!,
+                idBackKey = backKey, selfieKey = selfieKey!!, birFormKey = birKey, address = address,
+                phone = phone, phoneKey = phoneKey(phone), status = SellerDetailsStatus.MANUAL_REVIEW,
+                revision = 0, submittedAt = now,
+            )
+            row.apply {
+                this.legalName = legalName
+                this.idType = idType
+                idFrontKey = frontKey!!
+                idBackKey = backKey
+                this.selfieKey = selfieKey!!
+                birFormKey = birKey
+                this.address = address
+                this.phone = phone
+                phoneKey = phoneKey(phone)
+                rejectionReason = null
+                reviewedAt = null
+                reviewedBy = null
+                submittedAt = now
+            }.applyChecks(checks, referenceKey, previouslyRejected(existing), now)
         }
+    }
+
+    /**
+     * C2b: a new live check for a MANUAL_REVIEW record, on its stored ID front. Keeps every
+     * stored file and replaces only the reference image.
+     */
+    fun liveCheck(userId: UUID, request: LiveCheckRequest): SellerDetailsDto {
+        val current = sellerDetailsRepository.findById(userId).orElse(null)
+        if (current?.status != SellerDetailsStatus.MANUAL_REVIEW) throw notInReview()
+        val revision = current.revision
+        val checks = identityCheckService.run(userId, request.livenessSessionId!!.trim()) { storageService.getBytes(current.idFrontKey) }
+        return persist(userId, listOf(checks.referenceImage)) { existing, (referenceKey), now ->
+            // An admin decided, or a resubmission landed, while the checks ran (review F2).
+            if (existing?.status != SellerDetailsStatus.MANUAL_REVIEW || existing.revision != revision) throw notInReview()
+            existing.applyChecks(checks, referenceKey, previouslyRejected(existing), now)
+        }
+    }
+
+    private fun SellerDetails.applyChecks(
+        checks: IdentityChecks, referenceKey: String?, previouslyRejected: Boolean, now: OffsetDateTime,
+    ): SellerDetails = apply {
+        val reasons = checks.reasons + listOfNotNull(SellerReasonCode.PREVIOUSLY_REJECTED.takeIf { previouslyRejected })
+        status = IdentityCheckService.statusFor(reasons)
+        reasonCodes = reasons.ifEmpty { listOf(SellerReasonCode.PASSED) }
+        livenessSessionId = checks.sessionId
+        livenessConfidence = checks.livenessConfidence
+        faceSimilarity = checks.faceSimilarity
+        biometricConsentAt = checks.consentAt
+        livenessReferenceKey = referenceKey
+        autoCheckedAt = now
+        revision += 1
+    }
+
+    /** After an admin rejection, only an admin approval clears the way to an automatic pass (review F7, P1-N12). */
+    private fun previouslyRejected(existing: SellerDetails?): Boolean = existing != null &&
+        (existing.status == SellerDetailsStatus.REJECTED ||
+            (existing.status != SellerDetailsStatus.APPROVED && SellerReasonCode.PREVIOUSLY_REJECTED in existing.reasonCodes))
+
+    private fun notInReview() = ApiException(
+        HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+        "Only seller details waiting for an admin can take a new live check. Reload the page.",
+    )
+
+    /**
+     * Stores [files] (null = none sent), then runs [write] on the locked row in a short
+     * transaction. After the commit, deletes the old files the saved row no longer names:
+     * every old file on a submit, only a previous reference image on a live check (review F1).
+     * This request's files are deleted if anything fails before the commit or the transaction
+     * rolls back, and kept when the commit's outcome is unknown.
+     */
+    private fun persist(
+        userId: UUID, files: List<ByteArray?>, write: (SellerDetails?, List<String?>, OffsetDateTime) -> SellerDetails,
+    ): SellerDetailsDto {
+        val newKeys = mutableListOf<String>()
         var outcome: Int? = null // how the transaction ended; null while it has not run
         val (saved, oldKeys) = try {
-            val frontKey = store(idFront)
-            val backKey = idBack?.let(::store)
-            val selfieKey = store(selfie)
-            val birKey = birForm?.let(::store)
+            val keys = files.map { bytes ->
+                bytes?.let {
+                    "$PREFIX$userId/${UUID.randomUUID()}.jpg".also { key ->
+                        newKeys += key
+                        storageService.put(key, it, "image/jpeg")
+                    }
+                }
+            }
             checkNotNull(transactionTemplate.execute {
                 TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
                     override fun afterCompletion(status: Int) { outcome = status }
                 })
                 userRepository.lockById(userId)
                 val existing = sellerDetailsRepository.findById(userId).orElse(null)
-                val now = OffsetDateTime.now(clock)
-                val row = existing ?: SellerDetails(
-                    userId = userId, legalName = legalName, idType = idType, idFrontKey = frontKey,
-                    idBackKey = backKey, selfieKey = selfieKey, birFormKey = birKey, address = address,
-                    phone = phone, phoneKey = phoneKey(phone), status = SellerDetailsStatus.MANUAL_REVIEW,
-                    revision = 0, submittedAt = now,
-                )
-                val old = existing?.fileKeys().orEmpty()
-                row.apply {
-                    this.legalName = legalName
-                    this.idType = idType
-                    idFrontKey = frontKey
-                    idBackKey = backKey
-                    this.selfieKey = selfieKey
-                    birFormKey = birKey
-                    this.address = address
-                    this.phone = phone
-                    phoneKey = phoneKey(phone)
-                    status = SellerDetailsStatus.MANUAL_REVIEW
-                    reasonCodes = emptyList()
-                    rejectionReason = null
-                    reviewedAt = null
-                    reviewedBy = null
-                    submittedAt = now
-                    revision += 1
-                }
-                sellerDetailsRepository.save(row) to old
+                val old = existing?.fileKeys().orEmpty() // before write() changes the row
+                sellerDetailsRepository.save(write(existing, keys, OffsetDateTime.now(clock))) to old
             })
         } catch (error: Exception) {
             if (outcome == null || outcome == TransactionSynchronization.STATUS_ROLLED_BACK) {
@@ -141,7 +195,7 @@ class SellerDetailsService(
             }
             throw error
         }
-        oldKeys.forEach(::deleteQuietly)
+        (oldKeys - saved.fileKeys().toSet()).forEach(::deleteQuietly)
         return saved.toDto()
     }
 
