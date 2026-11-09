@@ -1,6 +1,12 @@
 package com.quickpitik.controller
 
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.IdentityProperties
+import com.quickpitik.config.LegalProperties
+import com.quickpitik.dto.photographer.LivenessSessionDto
+import com.quickpitik.dto.photographer.LivenessStartRequest
+import com.quickpitik.entity.LivenessPurpose
+import com.quickpitik.service.liveness.LivenessSessionService
 import com.quickpitik.dto.orders.CouponDto
 import com.quickpitik.dto.orders.UpsertCouponRequest
 import com.quickpitik.dto.photographer.BrandPatchRequest
@@ -75,6 +81,9 @@ class MePhotographerSettingsController(
     private val stepUpService: StepUpService,
     private val photoMetadataSettingsService: PhotoMetadataSettingsService,
     private val sellerDetailsService: SellerDetailsService,
+    private val livenessSessionService: LivenessSessionService,
+    private val identityProperties: IdentityProperties,
+    private val legalProperties: LegalProperties,
 ) {
     @GetMapping("/metadata-settings")
     fun getMetadataSettings(
@@ -335,6 +344,20 @@ class MePhotographerSettingsController(
         stepUpService.enforce(principal.userId, stepUp)
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
         return sellerDetailsService.submit(principal.userId, form)
+    }
+
+    // C1 (AA-I2): one single-use live-selfie session. The durable 3-a-Manila-day cap is the rate limit.
+    @PostMapping("/seller-details/liveness-session")
+    fun startLivenessSession(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @Valid @RequestBody request: LivenessStartRequest,
+        response: HttpServletResponse,
+    ): LivenessSessionDto {
+        response.setHeader("Cache-Control", "private, no-store") // carries live AWS keys
+        return livenessSessionService.start(
+            principal.userId, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null,
+            identityProperties.livenessAttemptsPerDay, legalProperties.currentVersion,
+        )
     }
 
     @PostMapping("/verification/withdraw")

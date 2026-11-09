@@ -251,6 +251,19 @@ app:
     # Swimwear, Alcohol, Tobacco, Drugs, Gambling, Rude Gestures stay off on purpose
     # (race kits, sponsor banners). Owner reviews this list.
     image-blocked-labels: ${MODERATION_IMAGE_BLOCKED_LABELS:Explicit Nudity,Explicit,Non-Explicit Nudity of Intimate parts and Kissing,Violence,Visually Disturbing,Hate Symbols}
+  identity:
+    # Auto-approval Plan 1. Off = today's upload rule (AA-I6 reads it).
+    gate-enabled: ${IDENTITY_GATE_ENABLED:false}
+    # AWS Face Liveness sessions (create + read results) run here; CompareFaces stays in ap-southeast-1.
+    liveness-region: ${LIVENESS_REGION:ap-southeast-5}
+    # 0-100 (AWS's scale). Strict until measured. [NOT MEASURED: set from AA-0.4]
+    liveness-min-confidence: ${LIVENESS_MIN_CONFIDENCE:95}
+    face-min-similarity: ${FACE_MIN_SIMILARITY:99}
+    # Live checks per photographer per Manila day (the durable rate limit for C1).
+    liveness-attempts-per-day: ${LIVENESS_ATTEMPTS_PER_DAY:3}
+    # IAM role quickpitik-liveness-browser (AA-0.2). Blank = the live check answers 503.
+    liveness-role-arn: ${LIVENESS_ROLE_ARN:}
+    liveness-credential-seconds: ${LIVENESS_CREDENTIAL_SECONDS:900}
   races:
     # AA-R1 (auto-approval Plan 2): shared race events. Off = today's flow; on lets
     # photographers create, join and edit races and set a race price.

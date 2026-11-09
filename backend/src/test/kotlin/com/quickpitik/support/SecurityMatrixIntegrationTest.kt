@@ -441,6 +441,27 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the live selfie session route is photographer only, needs consent and answers 503 with AI off`() {
+        val path = "/api/v1/me/photographer/seller-details/liveness-session"
+        val consent = """{"biometricConsent":true}"""
+        assertEquals(401, post(path, consent).statusCode())
+        assertEquals(403, post(path, consent, register(Role.RUNNER)).statusCode())
+
+        val photographer = register(Role.PHOTOGRAPHER)
+        for (body in listOf("""{"biometricConsent":false}""", "{}")) {
+            val refused = post(path, body, photographer)
+            assertEquals(400, refused.statusCode(), body)
+            assertEquals("VALIDATION_ERROR", errorCode(refused))
+            assertEquals("biometricConsent", json.readTree(refused.body()).path("errors").path(0).path("field").asText())
+        }
+        // The test profile runs AI off: the client offers "Have an admin check instead".
+        val off = post(path, consent, photographer)
+        assertEquals(503, off.statusCode())
+        assertEquals("LIVENESS_UNAVAILABLE", errorCode(off))
+        assertTrue("no-store" in off.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
     fun `admin seller details routes are admin only`() {
         val root = "/api/v1/admin/seller-details"
         val (_, sellerId) = registerPhotographerWithId()

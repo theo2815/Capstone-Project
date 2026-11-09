@@ -137,4 +137,9 @@ object ErrorCodes {
 
     // A photographer profile image (avatar, cover, watermark) was flagged by image moderation.
     const val IMAGE_NOT_ALLOWED = "IMAGE_NOT_ALLOWED"
+
+    // AA-I2 live selfie: AI off or an AWS error; the daily cap; an unknown, foreign or used session.
+    const val LIVENESS_UNAVAILABLE = "LIVENESS_UNAVAILABLE"
+    const val LIVENESS_ATTEMPTS_EXHAUSTED = "LIVENESS_ATTEMPTS_EXHAUSTED"
+    const val LIVENESS_SESSION_INVALID = "LIVENESS_SESSION_INVALID"
 }

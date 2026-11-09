@@ -51,6 +51,8 @@ dependencies {
 	// app.ai.provider=rekognition (the AWS-managed alternative to self-hosted
 	// ai-api for web/mobile face + bib). Same SDK version as s3 above.
 	implementation("software.amazon.awssdk:rekognition:2.30.21")
+	// AA-I2: 15-minute browser keys for the live selfie (AssumeRole, AA-0.2).
+	implementation("software.amazon.awssdk:sts:2.30.21")
 
 	// Pooled HTTP client for the ai-api RestClient (RestClientConfig). Async
 	// photo indexing fans out concurrent face + bib calls; the default

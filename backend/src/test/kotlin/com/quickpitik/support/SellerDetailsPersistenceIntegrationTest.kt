@@ -9,6 +9,7 @@ import com.quickpitik.entity.RepeatMatchKind
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.SellerReasonCode
 import com.quickpitik.repository.SellerDetailsRepository
+import com.quickpitik.service.liveness.LivenessSessionService
 import jakarta.persistence.EntityManager
 import java.math.BigDecimal
 import org.junit.jupiter.api.Test
@@ -26,6 +27,7 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired private lateinit var repository: SellerDetailsRepository
     @Autowired private lateinit var entityManager: EntityManager
+    @Autowired private lateinit var livenessSessions: LivenessSessionService
 
     private fun photographer(): UUID = jdbc.queryForObject(
         "INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Seller Test', 'PHOTOGRAPHER') RETURNING id",
@@ -103,6 +105,52 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
         assertEquals(event, saved.single { it.purpose == LivenessPurpose.RUNNER_PHOTO_REMOVAL }.eventId)
         assertTrue(saved.all { it.consentVersion == "1.3" && it.consumedAt == null })
         // The account's sessions go with the account (ON DELETE CASCADE).
+        jdbc.update("DELETE FROM liveness_sessions WHERE user_id = ?", user)
+    }
+
+    private fun livenessRow(user: UUID, purpose: String = "PHOTOGRAPHER_IDENTITY", eventId: UUID? = null): String {
+        val id = "s-${UUID.randomUUID()}"
+        jdbc.update(
+            "INSERT INTO liveness_sessions (session_id, user_id, purpose, event_id, consent_version, created_at) VALUES (?, ?, ?, ?, '1.2', now())",
+            id, user, purpose, eventId,
+        )
+        return id
+    }
+
+    private fun consumed(sessionId: String): Boolean =
+        jdbc.queryForObject("SELECT consumed_at IS NOT NULL FROM liveness_sessions WHERE session_id = ?", Boolean::class.java, sessionId)!!
+
+    @Test
+    fun `a liveness session is claimed once`() {
+        val user = photographer()
+        val id = livenessRow(user)
+        assertTrue(livenessSessions.claim(user, id, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null))
+        assertTrue(consumed(id))
+        assertFalse(livenessSessions.claim(user, id, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null), "a second submit finds it used")
+        assertFalse(livenessSessions.claim(user, "s-unknown-${UUID.randomUUID()}", LivenessPurpose.PHOTOGRAPHER_IDENTITY, null))
+    }
+
+    @Test
+    fun `a claim with another purpose or event changes nothing`() {
+        val user = photographer()
+        val other = photographer()
+        val event = jdbc.queryForObject(
+            "INSERT INTO events (slug, name, date, location, status) VALUES (?, 'Claim run', DATE '2026-12-01', 'Cebu', 'ACTIVE') RETURNING id",
+            UUID::class.java, "claim-${UUID.randomUUID()}",
+        )!!
+        val photographerSession = livenessRow(user)
+        val runnerSession = livenessRow(user, "RUNNER_PHOTO_REMOVAL", event)
+
+        assertFalse(livenessSessions.claim(other, photographerSession, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null), "another account's")
+        assertFalse(livenessSessions.claim(user, photographerSession, LivenessPurpose.RUNNER_PHOTO_REMOVAL, event), "another purpose")
+        assertFalse(livenessSessions.claim(user, runnerSession, LivenessPurpose.RUNNER_PHOTO_REMOVAL, UUID.randomUUID()), "another event")
+        assertFalse(livenessSessions.claim(user, runnerSession, LivenessPurpose.RUNNER_PHOTO_REMOVAL, null), "no event")
+        assertFalse(consumed(photographerSession))
+        assertFalse(consumed(runnerSession))
+
+        // The matching event (IS NOT DISTINCT FROM) and the matching null both claim.
+        assertTrue(livenessSessions.claim(user, runnerSession, LivenessPurpose.RUNNER_PHOTO_REMOVAL, event))
+        assertTrue(livenessSessions.claim(user, photographerSession, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null))
         jdbc.update("DELETE FROM liveness_sessions WHERE user_id = ?", user)
     }
 
