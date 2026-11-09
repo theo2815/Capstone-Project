@@ -14,6 +14,6 @@ Detailed enforcement of the module boundaries. The one-line invariants live in t
 - **Blur is desktop-only.** No blur endpoint call, no `BLUR_REJECTED` gate, no `blurScore` write in any web/mobile/backend upload path. `AiApiClient` has no `blurDetect()` — do not add one. (Note: `blur_score` survives as an unused column in `backend/.../db/migration/V3__photos.sql`; nothing writes it — leave it unless asked to clean it up.)
 - **`AI_API_ENABLED=false` is the dev default** (`backend/.../application.yml`). Master switch for every server-side face/bib call, whichever provider; off → `aiDetectionStatus="none"`, face-search returns 503.
 - **Event isolation:** every face enroll / search is scoped to one event (Rekognition: one collection per event).
-- **Confidence thresholds are the backend's**, defined once in `AiApiProperties.kt` / `RekognitionProperties.kt` / `application.yml` (face + bib defaults). Read the values there — do not copy them into other docs.
+- **Confidence thresholds are the backend's**, defined once in `AiApiProperties.kt` / `RekognitionProperties.kt` / `PhotoRemovalProperties.kt` / `application.yml` (face + bib defaults, runner deletion bands). Read the values there — do not copy them into other docs.
 
 Full contract: `ai-api/docs/integration-contracts.md`. Rationale for these decisions: vault `backend/decisions.md`.

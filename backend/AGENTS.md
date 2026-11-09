@@ -211,6 +211,13 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `WATERMARK_VERIFY_MAX_DISTANCE` | `12` | Max Hamming distance (of 64 pHash bits) for `POST /public/photos/verify` to report a match; ≤ 6 reports `strong`, 7–12 `weak`. Compared against the marked, clean and centre-crop hashes (V43). |
 | `WATERMARK_SEED_SECRET` | dev-only placeholder | **MUST OVERRIDE.** Seeds each preview's stripe geometry via HMAC(secret, photoId). Keep stable: a change re-seeds every future render; existing previews are unaffected. |
 | `PHOTO_REMOVAL_IN_REQUEST_CLEANUP_JOBS` | `5` | Photo-removal erasures a decision or cleanup retry attempts before answering (0–100); the cleanup sweep finishes the rest. Keeps a large authorization inside the proxy timeout. |
+| `RUNNER_REMOVAL_LIVENESS_PASS` | `90` | Runner deletion request: live-check confidence (AWS 0-100) at or above which the check passes. Must be at least the uncertain value and at most 100. |
+| `RUNNER_REMOVAL_LIVENESS_UNCERTAIN` | `50` | Confidence from here up to the pass value is held for an admin (nothing auto-hides); below it the check fails. |
+| `RUNNER_REMOVAL_AUTO_HIDE_SIMILARITY` | `0.99` | Face-match similarity (0-1) at or above which a runner's match hides at once; must be at least the provider floor `app.ai.rekognition.face-match-threshold`. Lower matches are suggestions. |
+| `RUNNER_REMOVAL_AUTO_HIDE_MAX` | `30` | Most photos one runner request may auto-hide; more holds them all as suggestions. `0` stops all auto-hides (kill switch). |
+| `RUNNER_REMOVAL_PHOTOGRAPHER_DAILY` | `50` | Most auto-hides per photographer per event per day across runner requests; past it that photographer's matches become suggestions. |
+| `RUNNER_REMOVAL_CANDIDATE_LIMIT` | `50` | Most face matches a runner request asks the provider for (1-4096). |
+| `RUNNER_REMOVAL_EMAIL_CLAIM_STALE_AFTER` | `PT10M` | How long an email send claim may sit before the runner/photographer email sweeps retry it. |
 | `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |
 | `LOG_LEVEL_APP` | `INFO` | `com.quickpitik` log level (set `DEBUG` for local debugging). |
 | `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |

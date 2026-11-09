@@ -102,19 +102,19 @@ class PhotoSearchService(
         }
     }
 
-    fun findFaceCandidates(eventId: UUID, image: SearchImage): FaceCandidateResult {
+    fun findFaceCandidates(eventId: UUID, image: SearchImage, topK: Int = CANDIDATE_LIMIT): FaceCandidateResult {
         validateSelfie(image.bytes)
         ensureEnabled(eventId)
-        return checkedCandidates(eventId, image)
+        return checkedCandidates(eventId, image, topK)
     }
 
     // The provider call; callers ran ensureEnabled(eventId) first, outside any fallback try.
-    private fun checkedCandidates(eventId: UUID, image: SearchImage): FaceCandidateResult {
+    private fun checkedCandidates(eventId: UUID, image: SearchImage, topK: Int = CANDIDATE_LIMIT): FaceCandidateResult {
         validateSelfie(image.bytes)
         val threshold = aiApiProperties.faceMatchThresholdDefault
         val result = try {
             meterRegistry.timer("qp.ai.call", "op", "search").recordCallable {
-                aiApiClient.facesSearch(image.bytes, image.contentType, image.filename, eventId, threshold, CANDIDATE_LIMIT)
+                aiApiClient.facesSearch(image.bytes, image.contentType, image.filename, eventId, threshold, topK)
             }!!
         } catch (error: Exception) {
             log.warn("ai-api faces/search failed for event {}: {}", eventId, error.message)
@@ -127,8 +127,8 @@ class PhotoSearchService(
             log.warn("ai-api returned {} sub-threshold match(es) for event {} (threshold {}); dropped server-side",
                 result.matches.size - matches.size, eventId, threshold)
         }
-        return FaceCandidateResult(matches, CANDIDATE_LIMIT,
-            result.possiblyTruncated ?: (result.matches.size >= CANDIDATE_LIMIT), result.noFaces)
+        return FaceCandidateResult(matches, topK,
+            result.possiblyTruncated ?: (result.matches.size >= topK), result.noFaces)
     }
 
     private fun validateSelfie(bytes: ByteArray) {
