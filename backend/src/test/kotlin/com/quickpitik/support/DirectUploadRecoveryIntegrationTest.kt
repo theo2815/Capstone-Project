@@ -31,6 +31,7 @@ import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Import
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.transaction.event.TransactionPhase
 import org.springframework.transaction.event.TransactionalEventListener
@@ -71,6 +72,7 @@ class DirectUploadRecoveryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var intents: PhotoUploadIntentRepository
     @Autowired private lateinit var eventPhotographers: EventPhotographerRepository
     @Autowired private lateinit var registrationEvents: RegistrationEvents
+    @Autowired private lateinit var jdbc: JdbcTemplate
     @LocalServerPort private var port: Int = 0
 
     @BeforeEach
@@ -271,6 +273,14 @@ class DirectUploadRecoveryIntegrationTest : PostgresIntegrationTest() {
         ).id
         settings.saveAndFlush(
             PhotographerSettings(userId = owner, verificationStatus = VerificationStatus.APPROVED),
+        )
+        // Uploads need seller details (SC-1); own phone because the database is shared (AA-I5).
+        val phoneKey = "9${(100_000_000..999_999_999).random()}"
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', ?, ?, 'APPROVED', 1, now())",
+            owner, "seller-details/$owner/${UUID.randomUUID()}.jpg", "seller-details/$owner/${UUID.randomUUID()}.jpg",
+            "0$phoneKey", phoneKey,
         )
         val event = events.saveAndFlush(
             Event(
