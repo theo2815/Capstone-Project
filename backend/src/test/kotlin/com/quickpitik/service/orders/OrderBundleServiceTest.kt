@@ -28,8 +28,11 @@ import java.io.IOException
 import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertFalse
@@ -55,6 +58,7 @@ class OrderBundleServiceTest {
     private lateinit var accessTokens: OrderAccessTokenService
 
     private val token = "a".repeat(64)
+    private val clock = Clock.fixed(Instant.now(), ZoneOffset.UTC)
 
     @BeforeEach
     fun setUp() {
@@ -73,7 +77,37 @@ class OrderBundleServiceTest {
             downloadGrantRepository,
             storageService,
             accessTokens,
+            clock,
         )
+    }
+
+    // DW-5: a started download is recorded once per photo in the bundle, so admins
+    // deciding a refund request can see whether the runner downloaded the photo.
+    @Test
+    fun `preparing a bundle records one download for each photo in it`() {
+        val order = order(tokenExpiresAt = OffsetDateTime.now().plusDays(30))
+        val photos = stub(order, photoCount = 2)
+
+        service.prepare(order.id, token)
+
+        Mockito.verify(downloadGrantRepository)
+            .recordDownloads(order.id, photos.map { it.id }, OffsetDateTime.now(clock))
+    }
+
+    @Test
+    fun `an expired or refused bundle records nothing`() {
+        val refused = order(tokenExpiresAt = OffsetDateTime.now().minusDays(1))
+        stub(refused)
+        assertFailsWith<NotFoundException> { service.prepare(refused.id, token) }
+
+        val expiredGrant = order(tokenExpiresAt = OffsetDateTime.now().plusDays(30))
+        val expiredGrants = stub(expiredGrant).map { photo ->
+            DownloadGrant(id = DownloadGrantId(expiredGrant.id, photo.id), grantedUntil = OffsetDateTime.now().minusDays(1))
+        }
+        Mockito.`when`(downloadGrantRepository.findByIdOrderId(expiredGrant.id)).thenReturn(expiredGrants)
+        assertFailsWith<NotFoundException> { service.prepare(expiredGrant.id, token) }
+
+        Mockito.verify(downloadGrantRepository, Mockito.never()).recordDownloads(anyArg(), anyArg(), anyArg())
     }
 
     @Test
