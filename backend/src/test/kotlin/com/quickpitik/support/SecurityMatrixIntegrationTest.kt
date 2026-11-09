@@ -466,7 +466,10 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     fun `the live check route is photographer only, needs a manual review record, and shows no score or reason`() {
         val path = "/api/v1/me/photographer/seller-details/live-check"
         val session = "lv-${UUID.randomUUID()}"
-        val body = """{"livenessSessionId":"$session","idNumber":"N01-12-345678"}"""
+        // Own number and phone: the database is shared, and another test's would add REPEAT_ACCOUNT_MATCH (AA-I5).
+        val idNumber = "N01-12-${(100_000..999_999).random()}"
+        val phoneKey = "9${(100_000_000..999_999_999).random()}"
+        val body = """{"livenessSessionId":"$session","idNumber":"$idNumber"}"""
         assertEquals(401, post(path, body).statusCode())
         assertEquals(403, post(path, body, register(Role.RUNNER)).statusCode())
 
@@ -479,8 +482,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
 
         jdbc.update(
             "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
-                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now())",
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', ?, ?, 'MANUAL_REVIEW', 1, now())",
             userId, "seller-details/$userId/${UUID.randomUUID()}.jpg", "seller-details/$userId/${UUID.randomUUID()}.jpg",
+            "0$phoneKey", phoneKey,
         )
         jdbc.update(
             "INSERT INTO liveness_sessions (session_id, user_id, purpose, consent_version, created_at) VALUES (?, ?, 'PHOTOGRAPHER_IDENTITY', '1.2', now())",
@@ -497,7 +501,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         // The typed number is stored only as its keyed hash, and neither ever goes back on the wire.
         val hash = jdbc.queryForObject("SELECT id_number_hmac FROM photographer_seller_details WHERE user_id = ?", String::class.java, userId)
         assertTrue(Regex("[0-9a-f]{64}").matches(hash.orEmpty()), hash)
-        assertFalse("N01-12-345678" in checked.body() || "N0112345678" in checked.body() || hash!! in checked.body())
+        assertFalse(idNumber in checked.body() || idNumber.replace("-", "") in checked.body() || hash!! in checked.body())
         assertEquals("[\"AI_DISABLED\"]", jdbc.queryForObject(
             "SELECT reason_codes::text FROM photographer_seller_details WHERE user_id = ?", String::class.java, userId,
         )?.replace(" ", ""))
