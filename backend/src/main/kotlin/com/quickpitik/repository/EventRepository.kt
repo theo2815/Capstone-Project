@@ -167,4 +167,47 @@ interface EventRepository : JpaRepository<Event, UUID> {
         """,
     )
     fun hideUnprovenRace(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // AA-R3: every race create (and R5's edit) runs "lock, re-check, insert" under this one
+    // transaction-scoped lock, so two simultaneous creates cannot both miss each other.
+    @Query(value = "SELECT CAST(pg_advisory_xact_lock($RACE_CREATION_LOCK_KEY) AS text)", nativeQuery = true)
+    fun lockRaceCreation(): String?
+
+    // Duplicate candidates: live shared events in a date range, legacy admin events included.
+    @Query(
+        """
+        SELECT e FROM Event e
+        WHERE e.date BETWEEN :from AND :to AND e.deletedAt IS NULL AND e.createdBy IS NULL
+          AND e.reviewStatus <> com.quickpitik.entity.EventReviewStatus.REJECTED
+        """,
+    )
+    fun findRaceCandidates(@Param("from") from: LocalDate, @Param("to") to: LocalDate): List<Event>
+
+    @Query(
+        value = "SELECT event_id AS eventId, name_key AS nameKey FROM event_name_aliases WHERE event_id IN (:eventIds)",
+        nativeQuery = true,
+    )
+    fun findAliasKeys(@Param("eventIds") eventIds: Collection<UUID>): List<AliasKeyRow>
+
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_name_aliases (event_id, name_key, added_by) VALUES (:eventId, :nameKey, :addedBy)
+        ON CONFLICT (event_id, name_key) DO NOTHING
+        """,
+        nativeQuery = true,
+    )
+    fun insertAlias(@Param("eventId") eventId: UUID, @Param("nameKey") nameKey: String, @Param("addedBy") addedBy: UUID): Int
+
+    // AA-R4's daily create cap reads this.
+    @Query("SELECT COUNT(e) FROM Event e WHERE e.submittedBy = :submittedBy AND e.createdAt >= :since")
+    fun countRacesSubmittedSince(@Param("submittedBy") submittedBy: UUID, @Param("since") since: OffsetDateTime): Long
+}
+
+// Not 78202: AdminTransitionConcurrencyIntegrationTest uses that key.
+const val RACE_CREATION_LOCK_KEY = 78301L
+
+interface AliasKeyRow {
+    fun getEventId(): UUID
+    fun getNameKey(): String
 }

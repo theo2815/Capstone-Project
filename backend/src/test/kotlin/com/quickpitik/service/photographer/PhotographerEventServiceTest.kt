@@ -2,7 +2,9 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.dto.photographer.PhotographerEventDetailDto
 import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventPhotographerId
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.RaceType
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
@@ -20,7 +22,9 @@ import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class PhotographerEventServiceTest {
     private val events = Mockito.mock(EventRepository::class.java)
@@ -59,6 +63,42 @@ class PhotographerEventServiceTest {
             Mockito.`when`(events.findById(event.id)).thenReturn(Optional.of(event))
             assertEquals(event.id, service.getEventDetail(seller, event.id).id)
         }
+    }
+
+    // ─── AA-R3: a typed race opens its detail for a joiner or its submitter before any upload ───
+
+    @Test
+    fun `a joined race with no uploads opens its detail`() {
+        val race = event(status = EventStatus.ACTIVE).apply { eventType = RaceType.ROAD_RACE }
+        Mockito.`when`(events.findById(race.id)).thenReturn(Optional.of(race))
+        Mockito.`when`(coverage.existsById(EventPhotographerId(race.id, seller))).thenReturn(true)
+
+        val detail = service.getEventDetail(seller, race.id)
+
+        assertEquals(race.id, detail.id)
+        assertEquals("ROAD_RACE", detail.eventType)
+        assertFalse(detail.submittedByMe)
+        assertFalse(detail.ownedByMe)
+    }
+
+    @Test
+    fun `the submitter's race with no uploads opens its detail`() {
+        val race = event(status = EventStatus.ACTIVE).apply { eventType = RaceType.TRAIL_RUN; submittedBy = seller }
+        Mockito.`when`(events.findById(race.id)).thenReturn(Optional.of(race))
+
+        val detail = service.getEventDetail(seller, race.id)
+
+        assertTrue(detail.submittedByMe)
+        assertFalse(detail.ownedByMe, "a race is shared: ownedByMe stays createdBy == viewer")
+    }
+
+    @Test
+    fun `an untyped event with no coverage still answers not found`() {
+        val adminEvent = event(status = EventStatus.ACTIVE)
+        Mockito.`when`(events.findById(adminEvent.id)).thenReturn(Optional.of(adminEvent))
+        Mockito.`when`(coverage.existsById(EventPhotographerId(adminEvent.id, seller))).thenReturn(true)
+
+        assertFailsWith<NotFoundException> { service.getEventDetail(seller, adminEvent.id) }
     }
 
     private fun historyDetail(photographerId: UUID, eventId: UUID): PhotographerEventDetailDto {

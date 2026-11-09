@@ -80,8 +80,11 @@ class PhotographerEventService(
         // Hide events the photographer has never touched — anti-leak per Q-014.
         // An event they created (V46) is theirs before the first upload.
         val owned = event.createdBy != null && event.createdBy == photographerId
+        // A shared race (AA-R3) is theirs once they submitted or joined it, before the first upload.
+        val raceCovered = event.eventType != null && (event.submittedBy == photographerId ||
+            eventPhotographerRepository.existsById(com.quickpitik.entity.EventPhotographerId(eventId, photographerId)))
         val historicalRevenue = includeRemoved && ep.revenueKeptPhp.signum() > 0
-        if (!owned && ep.photoCount == 0 && ep.firstUploadAt == null && !historicalRevenue &&
+        if (!owned && !raceCovered && ep.photoCount == 0 && ep.firstUploadAt == null && !historicalRevenue &&
             !orderItemRepository.existsSettledPurchaseForEvent(photographerId, eventId)) {
             throw NotFoundException(
                 code = ErrorCodes.EVENT_NOT_FOUND,

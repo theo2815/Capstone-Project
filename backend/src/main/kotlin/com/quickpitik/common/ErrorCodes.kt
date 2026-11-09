@@ -142,4 +142,9 @@ object ErrorCodes {
     const val LIVENESS_UNAVAILABLE = "LIVENESS_UNAVAILABLE"
     const val LIVENESS_ATTEMPTS_EXHAUSTED = "LIVENESS_ATTEMPTS_EXHAUSTED"
     const val LIVENESS_SESSION_INVALID = "LIVENESS_SESSION_INVALID"
+
+    // AA-R3 shared races: the rollout switch is off; the event cannot be joined; the V98 backstop fired.
+    const val SELF_SERVE_RACES_DISABLED = "SELF_SERVE_RACES_DISABLED"
+    const val EVENT_NOT_JOINABLE = "EVENT_NOT_JOINABLE"
+    const val RACE_DUPLICATE = "RACE_DUPLICATE"
 }
