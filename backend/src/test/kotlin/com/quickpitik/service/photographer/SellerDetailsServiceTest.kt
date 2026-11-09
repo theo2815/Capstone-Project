@@ -565,6 +565,65 @@ class SellerDetailsServiceTest {
     }
 
     @Test
+    fun `admin view links the reference image and logs that it was opened`() {
+        val row = withRecord(birForm = false).apply { livenessReferenceKey = "seller-details/$userId/ref.jpg" }
+
+        val dto = service().adminView(adminId, userId)
+
+        assertEquals("https://signed.example/${row.livenessReferenceKey}?ttl=300&name=liveness_reference.jpg", dto.files!!.livenessReference)
+        assertEquals(listOf("id_front", "id_back", "selfie", "liveness_reference"), decisions().single().meta!!["files"])
+    }
+
+    @Test
+    fun `repeat matches carry email and the live suspended state`() {
+        val otherId = UUID.randomUUID()
+        val consent = OffsetDateTime.parse("2026-11-03T00:00:00Z")
+        withRecord().apply {
+            reasonCodes = listOf(SellerReasonCode.REPEAT_ACCOUNT_MATCH)
+            livenessConfidence = BigDecimal("97.50")
+            faceSimilarity = BigDecimal("99.20")
+            autoCheckedAt = consent
+            biometricConsentAt = consent
+            idNumberHmac = "ab".repeat(32)
+            repeatMatches = listOf(RepeatMatch(otherId, listOf(RepeatMatchKind.PHONE, RepeatMatchKind.ID_NUMBER)))
+        }
+        val other = User(id = otherId, email = "other@test.local", passwordHash = "unused", name = "O", role = Role.PHOTOGRAPHER)
+            .apply { suspendedAt = consent }
+        Mockito.`when`(userRepository.findAllById(listOf(otherId))).thenReturn(listOf(other))
+
+        val dto = service().adminView(adminId, userId)
+
+        assertEquals(listOf(com.quickpitik.dto.admin.RepeatMatchDto(otherId, "other@test.local", listOf("PHONE", "ID_NUMBER"), true)), dto.repeatMatches)
+        assertEquals(listOf("REPEAT_ACCOUNT_MATCH"), dto.reasonCodes)
+        assertEquals(BigDecimal("97.50"), dto.livenessConfidence)
+        assertEquals(BigDecimal("99.20"), dto.faceSimilarity)
+        assertEquals(consent, dto.autoCheckedAt)
+        assertEquals(consent, dto.biometricConsentAt)
+        assertTrue(dto.hasIdNumber)
+        assertFalse("ab".repeat(32) in dto.toString(), "the ID-number hash never leaves the server")
+    }
+
+    @Test
+    fun `admin list filters auto approved`() {
+        val row = withRecord(SellerDetailsStatus.AUTO_APPROVED).apply {
+            reasonCodes = listOf(SellerReasonCode.PASSED)
+            livenessConfidence = BigDecimal("98.00")
+            faceSimilarity = BigDecimal("99.90")
+            autoCheckedAt = OffsetDateTime.parse("2026-11-03T00:00:00Z")
+        }
+        Mockito.`when`(repository.findForAdmin(Mockito.eq(SellerDetailsStatus.AUTO_APPROVED) ?: SellerDetailsStatus.AUTO_APPROVED, anyArg()))
+            .thenReturn(PageImpl(listOf(row)))
+
+        val item = service().adminList("auto_approved", PaginationParams.of(0, 20)).items.single()
+
+        assertEquals("auto_approved", item.reviewState)
+        assertEquals(listOf("PASSED"), item.reasonCodes)
+        assertEquals(BigDecimal("98.00"), item.livenessConfidence)
+        assertEquals(BigDecimal("99.90"), item.faceSimilarity)
+        assertEquals(row.autoCheckedAt, item.autoCheckedAt)
+    }
+
+    @Test
     fun `the admin view of a photographer with no record answers 404 and logs nothing`() {
         assertFailsWith<NotFoundException> { service().adminView(adminId, userId) }
         assertTrue(decisions().isEmpty())
