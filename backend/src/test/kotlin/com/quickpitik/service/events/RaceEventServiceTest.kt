@@ -93,7 +93,10 @@ class RaceEventServiceTest {
         Mockito.`when`(regions.isValidPair("07", "CEB")).thenReturn(true)
         seller(SellerDetailsStatus.AUTO_APPROVED)
         Mockito.`when`(covers.upload(anyLike(UUID.randomUUID()), anyLike(ByteArray(0)), anyArg())).thenReturn(coverKey)
-        Mockito.`when`(words.hits(Mockito.anyString(), anyLike(emptySet()))).thenReturn(emptyList())
+        // Every test race name passes the AA-R4 checks: it has a race word and nothing else is hit.
+        Mockito.`when`(words.hits(Mockito.anyString(), anyLike(emptySet()))).thenAnswer {
+            if (com.quickpitik.service.moderation.WordList.RACE_WORDS in it.getArgument<Set<*>>(1)) listOf("marathon") else emptyList()
+        }
         Mockito.`when`(events.findRaceCandidates(anyArg(), anyArg())).thenReturn(emptyList())
         Mockito.`when`(events.findAliasKeys(anyArg())).thenReturn(emptyList())
         Mockito.`when`(events.saveAndFlush(anyArg<Event>())).thenAnswer { it.getArgument<Event>(0).also { e -> saved = e } }
@@ -118,6 +121,12 @@ class RaceEventServiceTest {
             Mockito.`when`(it.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
         }),
         publisher,
+        Mockito.mock(com.quickpitik.service.moderation.ImageModerationService::class.java).also {
+            Mockito.`when`(it.check(anyLike(ByteArray(0))))
+                .thenReturn(com.quickpitik.service.moderation.ImageModerationResult(com.quickpitik.service.moderation.ImageModerationVerdict.CLEAN))
+        },
+        // Fixed "today", so the December race dates stay inside the AA-R4 date window.
+        java.time.Clock.fixed(java.time.Instant.parse("2026-11-09T02:00:00Z"), java.time.ZoneOffset.UTC),
     )
 
     private fun request(title: String = "Cebu City Marathon 2026", confirmDifferentFrom: UUID? = null) = CreateRaceRequest(

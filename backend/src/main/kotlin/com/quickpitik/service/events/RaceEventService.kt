@@ -31,6 +31,8 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.service.admin.AdminEventService
 import com.quickpitik.service.admin.SystemFlagService
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.ImageModerationVerdict
 import com.quickpitik.service.moderation.WordList
 import com.quickpitik.service.moderation.WordListChecker
 import com.quickpitik.service.photographer.PhotographerAccessGuard
@@ -44,6 +46,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Clock
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -71,6 +74,8 @@ class RaceEventService(
     private val wordListChecker: WordListChecker,
     private val transactionTemplate: TransactionTemplate,
     private val eventPublisher: ApplicationEventPublisher,
+    private val imageModerationService: ImageModerationService,
+    private val clock: Clock,
 ) {
     private val matcher = raceProperties.duplicate.let { DuplicateMatcher(it.strongScore, it.mediumScore, it.dateToleranceDays) }
 
@@ -89,7 +94,11 @@ class RaceEventService(
         }
         val draft = validate(req)
         val declared = req.confirmDifferentFrom
+        // AA-R4: the text and date checks, and the daily cap counted before moderation.
+        val reasons = checksFor(draft.input, null, photographerId, req.description).toMutableSet()
         stopOutcome(scan(draft.input, null), declared)?.let { return it }
+        // Past the cap the cover is not sent to moderation (review F34); the admin still sees it.
+        if (cover != null && RaceCheckReason.DAILY_CAP !in reasons) reasons += coverReasons(cover.bytes)
 
         val eventId = UUID.randomUUID()
         val coverKey = cover?.let { eventCoverService.upload(eventId, it.bytes, it.contentType) }
@@ -99,8 +108,10 @@ class RaceEventService(
                 eventRepository.lockRaceCreation()
                 val found = scan(draft.input, null)
                 stopOutcome(found, declared)?.let { return@execute it }
+                // Re-counted under the lock: a race that tips over the cap keeps its cover result too.
+                if (overDailyCap(photographerId)) reasons += RaceCheckReason.DAILY_CAP
                 insert(photographerId, eventId, draft, coverKey, settings.metadataPublicByDefault,
-                    found.result.strong.plus(found.result.medium).firstOrNull { it.candidate.id == declared })
+                    found.result.strong.plus(found.result.medium).firstOrNull { it.candidate.id == declared }, reasons.sorted())
             }!!
             stored = result.event != null
             return result
@@ -187,11 +198,44 @@ class RaceEventService(
         return RaceCreateResultDto(outcome = outcome, candidates = found.map { candidateDto(scan.events.getValue(it.candidate.id), strength) })
     }
 
+    /**
+     * AA-R4 (R5 reuses it): each check passes quietly or names why an admin must look; nothing
+     * here refuses. [cover] null skips moderation. The daily cap counts this photographer's races
+     * since Manila midnight.
+     */
+    fun checksFor(input: RaceInput, cover: ByteArray?, photographerId: UUID, description: String? = null): List<RaceCheckReason> {
+        val reasons = mutableListOf<RaceCheckReason>()
+        val texts = listOfNotNull(input.name, input.organizerName, description)
+        if (texts.any { wordListChecker.hits(it, setOf(WordList.BAD_WORDS)).isNotEmpty() }) reasons += RaceCheckReason.BAD_WORDS
+        if (wordListChecker.hits(input.name, setOf(WordList.RACE_WORDS)).isEmpty()) reasons += RaceCheckReason.NO_RACE_WORD
+        if (wordListChecker.hits(input.name, setOf(WordList.NON_RACE_WORDS)).isNotEmpty()) reasons += RaceCheckReason.NON_RACE_WORD
+        val today = LocalDate.now(clock.withZone(EventDtoMapper.PH_ZONE))
+        if (input.date < today.minusDays(raceProperties.dateWindowPastDays) ||
+            input.date > today.plusDays(raceProperties.dateWindowAheadDays)) reasons += RaceCheckReason.DATE_OUT_OF_WINDOW
+        if (overDailyCap(photographerId)) reasons += RaceCheckReason.DAILY_CAP
+        if (cover != null && RaceCheckReason.DAILY_CAP !in reasons) reasons += coverReasons(cover)
+        return reasons
+    }
+
+    private fun coverReasons(cover: ByteArray): List<RaceCheckReason> = when (imageModerationService.check(cover).verdict) {
+        ImageModerationVerdict.CLEAN -> emptyList()
+        ImageModerationVerdict.FLAGGED -> listOf(RaceCheckReason.COVER_FLAGGED)
+        ImageModerationVerdict.UNCHECKED -> listOf(RaceCheckReason.COVER_UNCHECKED)
+    }
+
+    private fun overDailyCap(photographerId: UUID): Boolean {
+        val midnight = LocalDate.now(clock.withZone(EventDtoMapper.PH_ZONE)).atStartOfDay(EventDtoMapper.PH_ZONE).toOffsetDateTime()
+        return eventRepository.countRacesSubmittedSince(photographerId, midnight) >= raceProperties.dailyCreateCap
+    }
+
     private fun insert(
         photographerId: UUID, eventId: UUID, draft: Draft, coverKey: String?, metadataPublic: Boolean, declared: Scored?,
+        checkMiss: List<RaceCheckReason>,
     ): RaceCreateResultDto {
         val req = draft.req
-        val now = OffsetDateTime.now()
+        val now = OffsetDateTime.now(clock)
+        val reasons = (checkMiss + listOfNotNull(declared?.let { RaceCheckReason.POSSIBLE_DUPLICATE })).sorted()
+        val live = reasons.isEmpty()
         val event = eventRepository.saveAndFlush(
             Event(
                 id = eventId,
@@ -199,7 +243,7 @@ class RaceEventService(
                 name = req.title.trim(),
                 date = draft.input.date,
                 location = req.location.trim(),
-                status = if (declared == null) EventStatus.ACTIVE else EventStatus.DRAFT,
+                status = if (live) EventStatus.ACTIVE else EventStatus.DRAFT,
                 description = req.description?.trim().orEmpty(),
                 organizerName = req.organizerName?.trim().orEmpty(),
                 pricePerPhoto = platformProperties.photoPricePhp,
@@ -211,22 +255,37 @@ class RaceEventService(
                 visibility = EventVisibility.PUBLIC,
                 pricingMode = EventPricingMode.PAID,
                 watermarkPolicy = WatermarkPolicy.PLATFORM,
-                reviewStatus = if (declared == null) EventReviewStatus.APPROVED else EventReviewStatus.PENDING,
+                reviewStatus = if (live) EventReviewStatus.APPROVED else EventReviewStatus.PENDING,
             ).apply {
                 eventType = draft.type
                 submittedBy = photographerId
                 nameKey = matcher.nameKey(name)
-                if (declared != null) {
-                    possibleDuplicateOf = declared.candidate.id
-                    checkReasons = listOf(RaceCheckReason.POSSIBLE_DUPLICATE)
-                }
+                possibleDuplicateOf = declared?.candidate?.id
+                if (!live) checkReasons = reasons
             },
         )
         eventPhotographerRepository.insertCoverageIfAbsent(event.id, photographerId, metadataPublic)
+        var pingAdmins = false
         if (declared != null) {
             val strength = if (declared.score >= raceProperties.duplicate.strongScore) "strong" else "medium"
             systemFlagService.raise(FlagTargetKind.EVENT, event.id, SystemFlagReason.POSSIBLE_DUPLICATE,
                 note = "Possible duplicate of ${declared.candidate.name} (${declared.candidate.id}), $strength")
+            pingAdmins = true
+        }
+        if (RaceCheckReason.DAILY_CAP in checkMiss) {
+            // Past the cap: one open USER flag per photographer, not one EVENT flag per race (review F34).
+            val race = "${event.name} ${event.date}"
+            if (systemFlagService.raise(FlagTargetKind.USER, photographerId, SystemFlagReason.RACE_CHECK_MISS, note = "daily race cap: $race")) {
+                pingAdmins = true
+            } else {
+                systemFlagService.appendNote(FlagTargetKind.USER, photographerId, SystemFlagReason.RACE_CHECK_MISS, "$now $race")
+            }
+        } else if (checkMiss.isNotEmpty()) {
+            systemFlagService.raise(FlagTargetKind.EVENT, event.id, SystemFlagReason.RACE_CHECK_MISS,
+                note = checkMiss.joinToString(", ") { it.name })
+            pingAdmins = true
+        }
+        if (pingAdmins) {
             eventPublisher.publishEvent(AdminInboxEvent(payload = mapOf(
                 "type" to "event_submitted",
                 "entityId" to event.id.toString(),
@@ -236,7 +295,7 @@ class RaceEventService(
         }
         val ep = EventPhotographer(id = EventPhotographerId(event.id, photographerId), metadataPublic = metadataPublic)
         return RaceCreateResultDto(
-            outcome = if (declared == null) "created" else "pending_review",
+            outcome = if (live) "created" else "pending_review",
             event = detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId),
             checkReasons = event.checkReasons.orEmpty().map { it.name },
         )
