@@ -200,7 +200,7 @@ class PhotoService(
     // paid event's originals can't be probed by id.
     fun freeDownload(eventId: UUID, photoId: UUID): FreeDownload {
         val event = eventRepository.findById(eventId).orElse(null)
-        if (event == null || !event.isFree || event.status == EventStatus.DRAFT || event.status == EventStatus.ARCHIVED) {
+        if (event == null || event.deletedAt != null || !event.isFree || event.status == EventStatus.DRAFT || event.status == EventStatus.ARCHIVED) {
             throw photoNotFound()
         }
         val photo = photoRepository.findById(photoId).orElse(null)
