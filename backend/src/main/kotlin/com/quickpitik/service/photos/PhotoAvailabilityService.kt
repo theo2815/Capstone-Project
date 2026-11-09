@@ -5,6 +5,9 @@ import com.quickpitik.repository.PhotoRemovalItemRepository
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.entity.RemovalDecision
 import com.quickpitik.entity.RemovalItemState
+import com.quickpitik.entity.RemovalState
+import com.quickpitik.websocket.PhotosHiddenEvent
+import org.springframework.context.ApplicationEventPublisher
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import org.springframework.stereotype.Service
@@ -17,6 +20,7 @@ import java.util.UUID
 class PhotoAvailabilityService(
     private val photos: PhotoRepository,
     private val items: PhotoRemovalItemRepository,
+    private val publisher: ApplicationEventPublisher,
 ) {
     fun refreshRemovalState(photoIds: Set<UUID>) {
         if (photoIds.isEmpty()) return
@@ -25,6 +29,11 @@ class PhotoAvailabilityService(
         // must be visible before checkout can insert its reservation rows.
         photos.findAllByIdForUpdate(ids)
         photos.refreshRemovalState(ids)
+        // Ask the database, not the entities locked above: the bulk UPDATE leaves those stale.
+        // A photo that was already in REVIEW is included; a repeat frame is harmless.
+        photos.findAllByIdInAndRemovalState(ids, RemovalState.REVIEW)
+            .groupBy({ it.eventId }, { it.id })
+            .forEach { (eventId, photoIds) -> publisher.publishEvent(PhotosHiddenEvent(eventId, photoIds)) }
     }
 
     fun authorizeRemoval(photoId: UUID, itemId: UUID, actorId: UUID) {
