@@ -6,8 +6,10 @@ import com.quickpitik.config.IdentityProperties
 import com.quickpitik.entity.LivenessPurpose
 import com.quickpitik.entity.LivenessSession
 import com.quickpitik.entity.SellerDetailsStatus
+import com.quickpitik.entity.SellerIdType
 import com.quickpitik.entity.SellerReasonCode
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.ValidationException
 import com.quickpitik.service.ai.FaceCompareResult
 import com.quickpitik.service.ai.LivenessResult
 import com.quickpitik.service.ai.RekognitionIdentityClient
@@ -29,7 +31,10 @@ import java.util.UUID
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class IdentityCheckServiceTest {
     private lateinit var sessions: LivenessSessionService
@@ -56,10 +61,15 @@ class IdentityCheckServiceTest {
         `when`(sessions.claim(userId, sessionId, purpose, null)).thenReturn(true)
         liveness(LivenessSessionStatus.SUCCEEDED, 99.5f)
         compare(FaceCompareResult(facesOnTarget = 1, bestSimilarity = 99.8f))
+        lines("REPUBLIC OF THE PHILIPPINES", "N01-12-345678")
     }
 
-    private fun service(aiEnabled: Boolean = true) =
-        IdentityCheckService(sessions, provider, AiApiProperties(enabled = aiEnabled), IdentityProperties())
+    private fun service(aiEnabled: Boolean = true, props: IdentityProperties = IdentityProperties()) =
+        IdentityCheckService(sessions, provider, AiApiProperties(enabled = aiEnabled), props)
+
+    private fun lines(vararg text: String) {
+        `when`(client.detectLines(anyArg())).thenReturn(text.toList())
+    }
 
     private fun liveness(status: LivenessSessionStatus, confidence: Float?, image: ByteArray? = reference) {
         `when`(client.livenessResult(sessionId)).thenReturn(LivenessResult(status, confidence, image))
@@ -69,7 +79,126 @@ class IdentityCheckServiceTest {
         `when`(client.compareFaces(anyArg(), anyArg())).thenReturn(result)
     }
 
-    private fun run(session: String? = sessionId) = service().run(userId, session) { idFront }
+    private fun run(session: String? = sessionId, idNumber: String? = "N01-12-345678", idType: SellerIdType = SellerIdType.DRIVERS_LICENSE) =
+        service().run(userId, session, idType, idNumber) { idFront }
+
+    private fun hmac(idType: SellerIdType, normalised: String) = service().idNumberHmac(idType, normalised)
+
+    @Test
+    fun `typed number found on the id front passes`() {
+        val checks = run(idNumber = "n01 12 345678")
+
+        assertEquals(emptyList(), checks.reasons)
+        verify(client).detectLines(idFront)
+        assertEquals(hmac(SellerIdType.DRIVERS_LICENSE, "N0112345678"), checks.idNumberHmac)
+    }
+
+    @Test
+    fun `a number not on the card is a mismatch`() {
+        assertEquals(listOf(SellerReasonCode.ID_NUMBER_MISMATCH), run(idNumber = "N01-12-999999").reasons)
+    }
+
+    @Test
+    fun `no text read is unreadable`() {
+        lines()
+
+        assertEquals(listOf(SellerReasonCode.ID_NUMBER_UNREADABLE), run().reasons)
+    }
+
+    @Test
+    fun `a missing number is unreadable and stores no hash`() {
+        for (missing in listOf(null, "  ")) {
+            val checks = run(idNumber = missing)
+
+            assertEquals(listOf(SellerReasonCode.ID_NUMBER_UNREADABLE), checks.reasons)
+            assertNull(checks.idNumberHmac)
+        }
+        verify(client, never()).detectLines(anyArg())
+    }
+
+    @Test
+    fun `the hash ignores case spaces and dashes and differs per id type`() {
+        val a = run(idNumber = "n01-12 345678").idNumberHmac!!
+        val b = run(idNumber = "N0112345678").idNumberHmac!!
+
+        assertEquals(a, b)
+        assertTrue(Regex("[0-9a-f]{64}").matches(a), a)
+        assertNotEquals(a, hmac(SellerIdType.PASSPORT, "N0112345678"))
+        assertNotEquals(a, IdentityCheckService(sessions, provider, AiApiProperties(), IdentityProperties(idNumberHmacSecret = "other"))
+            .idNumberHmac(SellerIdType.DRIVERS_LICENSE, "N0112345678"))
+    }
+
+    @Test
+    fun `the declined path skips DetectText and still stores the hash`() {
+        val checks = run(session = null)
+
+        assertEquals(listOf(SellerReasonCode.DECLINED), checks.reasons)
+        assertEquals(hmac(SellerIdType.DRIVERS_LICENSE, "N0112345678"), checks.idNumberHmac)
+        Mockito.verifyNoInteractions(sessions, client)
+    }
+
+    @Test
+    fun `a partial number is a mismatch`() {
+        lines("N01-12-345678")
+
+        assertEquals(listOf(SellerReasonCode.ID_NUMBER_MISMATCH), run(idNumber = "12345678").reasons)
+    }
+
+    @Test
+    fun `a number split across two lines is a mismatch`() {
+        lines("N01-12", "345678")
+
+        assertEquals(listOf(SellerReasonCode.ID_NUMBER_MISMATCH), run(idNumber = "N0112345678").reasons)
+    }
+
+    @Test
+    fun `a number spaced into tokens on one line matches`() {
+        lines("LICENSE NO. N01 12 345678 EXP")
+
+        assertEquals(emptyList(), run(idNumber = "N0112345678").reasons)
+    }
+
+    @Test
+    fun `a number that breaks the type's format is a validation error on idNumber`() {
+        val strict = service(props = IdentityProperties(idNumberFormats = mapOf(SellerIdType.DRIVERS_LICENSE to "[A-Z]\\d{10}")))
+        assertEquals(emptyList(), strict.run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, "N01-12-345678") { idFront }.reasons)
+
+        for (typed in listOf("N01-12-34567", "abc", "N0!12345678", "A".repeat(31))) {
+            val error = assertFailsWith<ValidationException>(typed) {
+                strict.run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, typed) { idFront }
+            }
+            assertEquals("idNumber", error.field)
+            assertFalse(typed in error.message.orEmpty())
+        }
+        verify(sessions, Mockito.times(1)).claim(userId, sessionId, purpose, null) // only the valid run used the session
+    }
+
+    @Test
+    fun `a type with no format skips the format check`() {
+        val strict = service(props = IdentityProperties(idNumberFormats = mapOf(SellerIdType.PASSPORT to "P\\d{7}[A-Z]")))
+        lines("1234")
+
+        assertEquals(emptyList(), strict.run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, "1234") { idFront }.reasons)
+    }
+
+    @Test
+    fun `aws error on DetectText gives one ai error and keeps the hash`() {
+        `when`(client.detectLines(anyArg())).thenThrow(SdkClientException.create("boom"))
+        `when`(client.compareFaces(anyArg(), anyArg())).thenThrow(SdkClientException.create("boom"))
+
+        val checks = run()
+
+        assertEquals(listOf(SellerReasonCode.AI_ERROR), checks.reasons)
+        assertEquals(hmac(SellerIdType.DRIVERS_LICENSE, "N0112345678"), checks.idNumberHmac)
+    }
+
+    @Test
+    fun `ai off adds no id number reason and still stores the hash`() {
+        val checks = service(aiEnabled = false).run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, "N0112345678") { idFront }
+
+        assertEquals(listOf(SellerReasonCode.AI_DISABLED), checks.reasons)
+        assertEquals(hmac(SellerIdType.DRIVERS_LICENSE, "N0112345678"), checks.idNumberHmac)
+    }
 
     @Test
     fun `compare uses the reference image as source and the id front as target never the holding-id selfie`() {
@@ -97,7 +226,7 @@ class IdentityCheckServiceTest {
 
     @Test
     fun `ai off is ai disabled`() {
-        val checks = service(aiEnabled = false).run(userId, sessionId) { idFront }
+        val checks = service(aiEnabled = false).run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, null) { idFront }
 
         assertEquals(listOf(SellerReasonCode.AI_DISABLED), checks.reasons)
         verify(sessions).claim(userId, sessionId, purpose, null) // already used up

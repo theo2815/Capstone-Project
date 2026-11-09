@@ -417,9 +417,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val (ownerToken, ownerId) = registerPhotographerWithId()
         val other = register(Role.PHOTOGRAPHER)
         jdbc.update(
-            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
-                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now())",
-            ownerId, "seller-details/$ownerId/${UUID.randomUUID()}.jpg", "seller-details/$ownerId/${UUID.randomUUID()}.jpg",
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at, id_number_hmac) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now(), ?)",
+            ownerId, "seller-details/$ownerId/${UUID.randomUUID()}.jpg", "seller-details/$ownerId/${UUID.randomUUID()}.jpg", "ab".repeat(32),
         )
         val mine = get(path, ownerToken)
         assertEquals(200, mine.statusCode())
@@ -429,6 +429,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals("submitted", json.readTree(mine.body()).path("data").path("status").asText())
         assertEquals("manual_review", json.readTree(mine.body()).path("data").path("reviewState").asText())
         assertFalse("seller-details/" in mine.body(), "E1 must never carry a storage key")
+        assertFalse("ab".repeat(32) in mine.body() || "idNumber" in mine.body(), "E1 must never carry the ID number or its hash")
         val theirs = get(path, other)
         assertEquals(200, theirs.statusCode())
         assertEquals("missing", json.readTree(theirs.body()).path("data").path("status").asText())
@@ -465,7 +466,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     fun `the live check route is photographer only, needs a manual review record, and shows no score or reason`() {
         val path = "/api/v1/me/photographer/seller-details/live-check"
         val session = "lv-${UUID.randomUUID()}"
-        val body = """{"livenessSessionId":"$session"}"""
+        val body = """{"livenessSessionId":"$session","idNumber":"N01-12-345678"}"""
         assertEquals(401, post(path, body).statusCode())
         assertEquals(403, post(path, body, register(Role.RUNNER)).statusCode())
 
@@ -473,7 +474,8 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val noRecord = post(path, body, token)
         assertEquals(409, noRecord.statusCode())
         assertEquals("INVALID_STATE_TRANSITION", errorCode(noRecord))
-        assertEquals(400, post(path, """{"livenessSessionId":" "}""", token).statusCode())
+        assertEquals(400, post(path, """{"livenessSessionId":" ","idNumber":"N01-12-345678"}""", token).statusCode())
+        assertEquals(400, post(path, """{"livenessSessionId":"$session"}""", token).statusCode())
 
         jdbc.update(
             "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
@@ -492,6 +494,10 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals("submitted", data.path("status").asText())
         val fields = data.fieldNames().asSequence().map { it.lowercase() }.toList()
         assertTrue(fields.none { "reason" in it && it != "rejectionreason" || "score" in it || "confidence" in it || "similarity" in it }, fields.toString())
+        // The typed number is stored only as its keyed hash, and neither ever goes back on the wire.
+        val hash = jdbc.queryForObject("SELECT id_number_hmac FROM photographer_seller_details WHERE user_id = ?", String::class.java, userId)
+        assertTrue(Regex("[0-9a-f]{64}").matches(hash.orEmpty()), hash)
+        assertFalse("N01-12-345678" in checked.body() || "N0112345678" in checked.body() || hash!! in checked.body())
         assertEquals("[\"AI_DISABLED\"]", jdbc.queryForObject(
             "SELECT reason_codes::text FROM photographer_seller_details WHERE user_id = ?", String::class.java, userId,
         )?.replace(" ", ""))

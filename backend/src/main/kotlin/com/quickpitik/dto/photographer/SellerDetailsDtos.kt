@@ -57,13 +57,19 @@ class SellerDetailsForm(
     var birForm: MultipartFile? = null,
     /** The finished live check (AA-I3). Left out = "Have an admin check instead" (DECLINED). */
     var livenessSessionId: String? = null,
+    /** The typed government ID number (AA-I4), optional here. Only its keyed hash is stored. */
+    var idNumber: String? = null,
 )
 
 // C2b request: a live check for a manual-review record; the stored ID front is reused.
 data class LiveCheckRequest(
     @field:NotBlank
     val livenessSessionId: String? = null,
-)
+    @field:NotBlank
+    val idNumber: String? = null,
+) {
+    override fun toString() = "LiveCheckRequest(livenessSessionId=$livenessSessionId)" // never the ID number
+}
 
 // C1 request: the consent tick comes before the camera, so it must be true.
 data class LivenessStartRequest(

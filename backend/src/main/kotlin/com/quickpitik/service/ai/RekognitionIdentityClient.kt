@@ -8,6 +8,8 @@ import software.amazon.awssdk.core.SdkBytes
 import software.amazon.awssdk.services.rekognition.RekognitionClient
 import software.amazon.awssdk.services.rekognition.model.CompareFacesRequest
 import software.amazon.awssdk.services.rekognition.model.CreateFaceLivenessSessionRequest
+import software.amazon.awssdk.services.rekognition.model.DetectTextRequest
+import software.amazon.awssdk.services.rekognition.model.TextTypes
 import software.amazon.awssdk.services.rekognition.model.Image
 import software.amazon.awssdk.services.rekognition.model.CreateFaceLivenessSessionRequestSettings
 import software.amazon.awssdk.services.rekognition.model.GetFaceLivenessSessionResultsRequest
@@ -22,7 +24,7 @@ class LivenessResult(val status: LivenessSessionStatus, val confidence: Float?, 
 /** Faces found on the target, and the best similarity (0-100) among them; null when there is none. */
 data class FaceCompareResult(val facesOnTarget: Int, val bestSimilarity: Float?)
 
-// AWS Face Liveness and CompareFaces for the identity checks (AA-I2, AA-I3). No face collection
+// AWS Face Liveness, CompareFaces and DetectText for the identity checks (AA-I2 to AA-I4). No face collection
 // is used and nothing is indexed. Callers keep every call outside a DB transaction and map SdkException.
 @Service
 @ConditionalOnProperty(prefix = "app.ai", name = ["provider"], havingValue = "rekognition")
@@ -47,6 +49,11 @@ class RekognitionIdentityClient(
         )
         return FaceCompareResult(r.faceMatches().size + r.unmatchedFaces().size, r.faceMatches().maxOfOrNull { it.similarity() })
     }
+
+    /** The text lines read off an ID front (AA-I4), in the primary region. LINE, so a number's pieces stay together. */
+    fun detectLines(image: ByteArray): List<String> = rekognition.detectText(
+        DetectTextRequest.builder().image(Image.builder().bytes(SdkBytes.fromByteArray(image)).build()).build(),
+    ).textDetections().filter { it.type() == TextTypes.LINE }.mapNotNull { it.detectedText() }
 
     /** No audit images and no S3 output (owner answer 7): AWS keeps nothing for us. */
     fun createLivenessSession(): String = liveness.createFaceLivenessSession(

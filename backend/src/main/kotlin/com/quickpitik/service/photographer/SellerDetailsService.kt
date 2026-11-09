@@ -87,7 +87,7 @@ class SellerDetailsService(
         val selfie = jpeg(required(sent(form.selfie), "selfie"), "selfie")
         val birForm = sent(form.birForm)?.let { jpeg(it, "birForm") }
 
-        val checks = identityCheckService.run(userId, form.livenessSessionId?.trim()?.ifEmpty { null }) { idFront }
+        val checks = identityCheckService.run(userId, form.livenessSessionId?.trim()?.ifEmpty { null }, idType, form.idNumber) { idFront }
         return persist(userId, listOf(idFront, idBack, selfie, birForm, checks.referenceImage)) { existing, keys, now ->
             val (frontKey, backKey, selfieKey, birKey, referenceKey) = keys
             val row = existing ?: SellerDetails(
@@ -122,7 +122,9 @@ class SellerDetailsService(
         val current = sellerDetailsRepository.findById(userId).orElse(null)
         if (current?.status != SellerDetailsStatus.MANUAL_REVIEW) throw notInReview()
         val revision = current.revision
-        val checks = identityCheckService.run(userId, request.livenessSessionId!!.trim()) { storageService.getBytes(current.idFrontKey) }
+        val checks = identityCheckService.run(userId, request.livenessSessionId!!.trim(), current.idType, request.idNumber) {
+            storageService.getBytes(current.idFrontKey)
+        }
         return persist(userId, listOf(checks.referenceImage)) { existing, (referenceKey), now ->
             // An admin decided, or a resubmission landed, while the checks ran (review F2).
             if (existing?.status != SellerDetailsStatus.MANUAL_REVIEW || existing.revision != revision) throw notInReview()
@@ -142,6 +144,7 @@ class SellerDetailsService(
         faceSimilarity = checks.faceSimilarity
         biometricConsentAt = checks.consentAt
         livenessReferenceKey = referenceKey
+        idNumberHmac = checks.idNumberHmac
         autoCheckedAt = now
         revision += 1
     }
