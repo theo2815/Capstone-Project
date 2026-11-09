@@ -553,7 +553,23 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(200, view.statusCode())
         assertTrue("no-store" in view.headers().firstValue("Cache-Control").orElse(""))
         assertTrue(json.readTree(view.body()).path("data").path("files").path("idFront").asText().isNotBlank())
-        assertEquals(1, jdbc.queryForObject(
+        // E4 (AA-I8): the scores, reasons, reference link and repeat matches; never a storage key outside the links or the ID-number hash.
+        val (_, otherId) = registerPhotographerWithId()
+        jdbc.update(
+            "UPDATE photographer_seller_details SET id_number_hmac = ?, liveness_reference_key = ?, reason_codes = '[\"REPEAT_ACCOUNT_MATCH\"]'::jsonb, " +
+                "repeat_matches = ?::jsonb WHERE user_id = ?",
+            "cd".repeat(32), "seller-details/$sellerId/${UUID.randomUUID()}.jpg",
+            """[{"userId":"$otherId","matchedOn":["PHONE"]}]""", sellerId,
+        )
+        val rich = json.readTree(get("$root/$sellerId", admin).body()).path("data")
+        assertTrue(rich.path("files").path("livenessReference").asText().isNotBlank())
+        assertEquals(otherId.toString(), rich.path("repeatMatches").path(0).path("userId").asText())
+        assertEquals("PHONE", rich.path("repeatMatches").path(0).path("matchedOn").path(0).asText())
+        assertTrue(rich.path("hasIdNumber").asBoolean())
+        val outsideLinks = (rich.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>()).apply { remove("files") }.toString()
+        assertFalse("seller-details/" in outsideLinks, "E4 must carry storage keys only inside its signed links")
+        assertFalse("cd".repeat(32) in rich.toString() || "idNumberHmac" in rich.toString(), "E4 must never carry the ID-number hash")
+        assertEquals(2, jdbc.queryForObject(
             "SELECT count(*) FROM admin_decision_log WHERE target_user_id = ? AND decision = 'seller_details_viewed'", Int::class.java, sellerId,
         ))
         assertEquals(400, post("$root/$sellerId/reject", """{"revision":1,"reason":"  "}""", admin).statusCode())
