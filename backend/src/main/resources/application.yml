@@ -480,6 +480,12 @@ app:
       refund-link-allowed-prefixes: ${PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES:https://transfer.paymongo.com/}
       qrph-refund-window: ${PAYMONGO_QRPH_REFUND_WINDOW:P30D}
       refund-link-validity: ${PAYMONGO_REFUND_LINK_VALIDITY:P3D}
+  disputes:
+    # Deadlines behind each admin dispute's due time (DisputeQueueProperties).
+    review-business-days: ${DISPUTE_REVIEW_BUSINESS_DAYS:3}
+    refund-send-within: ${DISPUTE_REFUND_SEND_WITHIN:PT48H}
+    link-expiring-soon: ${DISPUTE_LINK_EXPIRING_SOON:PT24H}
+    refund-stuck-after: ${DISPUTE_REFUND_STUCK_AFTER:PT24H}
   email:
     resend:
       # Resend transactional email wiring. Free-tier dev sender

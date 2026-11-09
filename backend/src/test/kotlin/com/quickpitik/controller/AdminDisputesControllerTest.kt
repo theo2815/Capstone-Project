@@ -7,6 +7,7 @@ import com.quickpitik.dto.admin.DisputePhotoSnapshotDto
 import com.quickpitik.entity.Role
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.GlobalExceptionHandler
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminDisputeService
@@ -24,6 +25,7 @@ import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActions
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -159,6 +161,33 @@ class AdminDisputesControllerTest {
         sendLink("{\"url\":\"  \"}").andExpect(status().isBadRequest)
 
         Mockito.verifyNoInteractions(service)
+    }
+
+    @Test
+    fun `GET a dispute by id is for admins only`() {
+        for (role in listOf(Role.RUNNER, Role.PHOTOGRAPHER)) {
+            signIn(role)
+            mvc.perform(get("/api/v1/admin/disputes/{id}", disputeId)).andExpect(status().isForbidden)
+        }
+        Mockito.verifyNoInteractions(service)
+
+        signIn(Role.ADMIN)
+        Mockito.`when`(service.get(disputeId)).thenReturn(dto())
+        mvc.perform(get("/api/v1/admin/disputes/{id}", disputeId))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.id").value(disputeId.toString()))
+    }
+
+    @Test
+    fun `GET an unknown dispute answers 404 in the envelope`() {
+        signIn(Role.ADMIN)
+        Mockito.`when`(service.get(disputeId))
+            .thenThrow(NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found"))
+
+        mvc.perform(get("/api/v1/admin/disputes/{id}", disputeId))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.success").value(false))
+            .andExpect(jsonPath("$.errors[0].code").value(ErrorCodes.DISPUTE_NOT_FOUND))
     }
 
     private fun markRefunded(): ResultActions =
