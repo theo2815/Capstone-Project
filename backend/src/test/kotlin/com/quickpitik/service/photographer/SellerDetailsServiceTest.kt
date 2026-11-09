@@ -34,6 +34,7 @@ import com.quickpitik.service.ai.LivenessResult
 import com.quickpitik.service.ai.RekognitionIdentityClient
 import com.quickpitik.service.liveness.LivenessSessionService
 import org.springframework.beans.factory.ObjectProvider
+import software.amazon.awssdk.core.exception.SdkClientException
 import software.amazon.awssdk.services.rekognition.model.LivenessSessionStatus
 import java.math.BigDecimal
 import jakarta.validation.Validation
@@ -724,6 +725,21 @@ class SellerDetailsServiceTest {
         assertEquals(newReference, row.livenessReferenceKey)
         Mockito.verify(storage).delete("seller-details/$userId/old-reference.jpg")
         (kept + newReference).forEach { Mockito.verify(storage, Mockito.never()).delete(it) }
+    }
+
+    @Test
+    fun `a live check that gets no new still keeps the earlier one`() {
+        val old = reviewRecord(SellerReasonCode.LIVENESS_LOW)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+        Mockito.`when`(identityClient.livenessResult(SESSION)).thenThrow(SdkClientException.create("aws down"))
+
+        service().liveCheck(userId, LiveCheckRequest(SESSION))
+
+        val row = saved()
+        assertEquals(listOf(SellerReasonCode.AI_ERROR), row.reasonCodes)
+        assertEquals("seller-details/$userId/old-reference.jpg", row.livenessReferenceKey)
+        assertTrue(storedKeys().isEmpty())
+        Mockito.verify(storage, Mockito.never()).delete(anyArg())
     }
 
     @Test

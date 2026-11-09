@@ -162,6 +162,17 @@ class IdentityCheckServiceTest {
     }
 
     @Test
+    fun `a finished session with no reference image gives ai error and no compare`() {
+        liveness(LivenessSessionStatus.SUCCEEDED, 99.5f, image = null)
+
+        val checks = run()
+
+        assertEquals(listOf(SellerReasonCode.AI_ERROR), checks.reasons)
+        assertNull(checks.referenceImage)
+        verify(client, never()).compareFaces(anyArg(), anyArg())
+    }
+
+    @Test
     fun `another account's session is refused before aws is called`() {
         `when`(sessions.requireOpen(userId, sessionId, purpose, null)).thenThrow(LivenessSessionService.invalidSession())
 

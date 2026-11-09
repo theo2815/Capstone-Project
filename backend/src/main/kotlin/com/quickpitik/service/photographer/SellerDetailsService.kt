@@ -126,7 +126,8 @@ class SellerDetailsService(
         return persist(userId, listOf(checks.referenceImage)) { existing, (referenceKey), now ->
             // An admin decided, or a resubmission landed, while the checks ran (review F2).
             if (existing?.status != SellerDetailsStatus.MANUAL_REVIEW || existing.revision != revision) throw notInReview()
-            existing.applyChecks(checks, referenceKey, previouslyRejected(existing), now)
+            // A run with no still (AWS error, AI off) keeps the earlier one, so the admin still has it.
+            existing.applyChecks(checks, referenceKey ?: existing.livenessReferenceKey, previouslyRejected(existing), now)
         }
     }
 
