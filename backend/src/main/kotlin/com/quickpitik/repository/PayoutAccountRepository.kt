@@ -2,6 +2,8 @@ package com.quickpitik.repository
 
 import com.quickpitik.entity.PayoutAccount
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
+import org.springframework.data.repository.query.Param
 import java.util.UUID
 
 interface PayoutAccountRepository : JpaRepository<PayoutAccount, UUID> {
@@ -14,4 +16,11 @@ interface PayoutAccountRepository : JpaRepository<PayoutAccount, UUID> {
     fun countByUserId(userId: UUID): Long
     fun countByUserIdAndQrS3KeyIsNotNull(userId: UUID): Long
     fun findByUserIdAndIsPrimaryTrue(userId: UUID): PayoutAccount?
+
+    // Repeat-account matching (AA-I5). Numbers are stored digits only (PayoutAccountService.sanitizeNumber).
+    @Query("SELECT DISTINCT p.userId FROM PayoutAccount p WHERE p.accountNumber IN :numbers AND p.userId <> :excludeUserId")
+    fun findUserIdsByAccountNumbers(
+        @Param("numbers") numbers: Collection<String>,
+        @Param("excludeUserId") excludeUserId: UUID,
+    ): List<UUID>
 }
