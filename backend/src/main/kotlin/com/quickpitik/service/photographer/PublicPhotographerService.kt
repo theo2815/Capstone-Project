@@ -14,6 +14,8 @@ import com.quickpitik.dto.photos.PhotoDto
 import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.EventVisibility
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.VerificationStatus
@@ -82,7 +84,8 @@ class PublicPhotographerService(
         } else {
             eventRepository
                 .findAllById(coverage.map { it.id.eventId })
-                .filter { it.deletedAt == null }
+                // A DRAFT or Private event is not a public page: link-only means the profile does not list it.
+                .filter { it.deletedAt == null && it.status != EventStatus.DRAFT && it.visibility == EventVisibility.PUBLIC }
                 .associateBy(Event::id)
         }
         val publicCounts = if (eventsById.isEmpty()) emptyMap() else photoRepository
@@ -136,7 +139,7 @@ class PublicPhotographerService(
         if (user.suspendedAt != null || settings.verificationStatus != VerificationStatus.APPROVED) {
             throw NotFoundException(code = ErrorCodes.NOT_FOUND, message = "Photographer not found")
         }
-        val event = eventRepository.findBySlugAndDeletedAtIsNull(eventSlug)
+        val event = eventRepository.findPublicBySlug(eventSlug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
 
         // Public gallery shows LIVE photos only; HIDDEN / PROCESSING stay

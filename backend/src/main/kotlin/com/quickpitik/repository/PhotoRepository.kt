@@ -94,7 +94,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
             WHERE p.id = :photoId AND p.event_id = :eventId AND p.status = 'LIVE'
             AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
             AND p.deletion_started_at IS NULL AND p.purged_at IS NULL
-            AND e.pricing_mode = 'FREE' AND e.status NOT IN ('DRAFT', 'ARCHIVED')
+            AND e.pricing_mode = 'FREE' AND e.status NOT IN ('DRAFT', 'ARCHIVED') AND e.deleted_at IS NULL
             AND $OWNER_NOT_SUSPENDED_SQL)
     """, nativeQuery = true)
     fun isFreeDeliveryAvailable(eventId: UUID, photoId: UUID): Boolean

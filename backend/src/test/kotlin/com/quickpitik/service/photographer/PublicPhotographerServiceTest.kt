@@ -5,7 +5,10 @@ import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.PublicProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventPhotographer
+import com.quickpitik.entity.EventPhotographerId
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.EventVisibility
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerSettings
@@ -92,7 +95,7 @@ class PublicPhotographerServiceTest {
         photographer("shooter", VerificationStatus.APPROVED, suspended = false)
         val ownerId = photographerSettingsRepository.findByHandleIgnoreCase("shooter")!!.userId
         val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(eventRepository.findPublicBySlug("race")).thenReturn(event)
         val photos = listOf(
             Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN),
             Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN, thumbnailS3Key = "thumbnail.jpg"),
@@ -117,7 +120,7 @@ class PublicPhotographerServiceTest {
         photographer("shooter", VerificationStatus.APPROVED, suspended = false)
         val ownerId = photographerSettingsRepository.findByHandleIgnoreCase("shooter")!!.userId
         val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(eventRepository.findPublicBySlug("race")).thenReturn(event)
         val match = Photo(eventId = event.id, photographerId = ownerId, s3Key = "original.jpg", pricePhp = BigDecimal.TEN)
         Mockito.`when`(photoRepository.searchPhotographerLibraryByBib(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             // A full page of 1 so PageImpl keeps the database total (12).
@@ -137,7 +140,7 @@ class PublicPhotographerServiceTest {
     fun `a blank bib keeps the plain gallery`() {
         photographer("shooter", VerificationStatus.APPROVED, suspended = false)
         val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(eventRepository.findPublicBySlug("race")).thenReturn(event)
         Mockito.`when`(photoRepository.findPhotographerLibraryByStatus(anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(PageImpl(emptyList()))
 
@@ -150,7 +153,7 @@ class PublicPhotographerServiceTest {
     fun `a bib with no letters or digits finds nothing`() {
         photographer("shooter", VerificationStatus.APPROVED, suspended = false)
         val event = Event(slug = "race", name = "Race", date = LocalDate.of(2026, 9, 1), location = "Cebu", status = EventStatus.ACTIVE)
-        Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull("race")).thenReturn(event)
+        Mockito.`when`(eventRepository.findPublicBySlug("race")).thenReturn(event)
 
         val page = service().listEventPhotos("shooter", "race", PaginationParams.of(0, 20), bib = "#")
 
@@ -162,6 +165,25 @@ class PublicPhotographerServiceTest {
 
     private fun <T> anyArg(): T = Mockito.any()
     private fun <T> eqArg(value: T): T = Mockito.eq(value) ?: value
+
+    @Test
+    fun `the profile counts only the kept event ids`() {
+        photographer("shooter", VerificationStatus.APPROVED, suspended = false)
+        val ownerId = photographerSettingsRepository.findByHandleIgnoreCase("shooter")!!.userId
+        fun event(slug: String, status: EventStatus, visibility: EventVisibility = EventVisibility.PUBLIC) =
+            Event(slug = slug, name = slug, date = LocalDate.of(2026, 9, 1), location = "Cebu", status = status, visibility = visibility)
+        val live = event("live", EventStatus.ACTIVE)
+        val draft = event("draft", EventStatus.DRAFT)
+        val hidden = event("private", EventStatus.ACTIVE, EventVisibility.UNLISTED)
+        val all = listOf(live, draft, hidden)
+        Mockito.`when`(eventPhotographerRepository.findAllByIdPhotographerId(anyArg(), anyArg()))
+            .thenReturn(all.map { EventPhotographer(id = EventPhotographerId(it.id, ownerId), photoCount = 1) })
+        Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(all)
+
+        service().getProfile("shooter")
+
+        Mockito.verify(photoRepository).countPublicForPhotographerByEventIds(eqArg(setOf(live.id)), eqArg(ownerId))
+    }
 
     @Test
     fun `a suspended photographer profile is not found`() {
