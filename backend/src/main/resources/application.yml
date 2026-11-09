@@ -262,6 +262,8 @@ app:
   identity:
     # Auto-approval Plan 1. Off = today's upload rule (AA-I6 reads it).
     gate-enabled: ${IDENTITY_GATE_ENABLED:false}
+    # The announced turn-on date (YYYY-MM-DD) shown to photographers; blank = none. An invalid date fails boot.
+    gate-starts-on: ${IDENTITY_GATE_STARTS_ON:}
     # AWS Face Liveness sessions (create + read results) run here; CompareFaces stays in ap-southeast-1.
     liveness-region: ${LIVENESS_REGION:ap-southeast-5}
     # 0-100 (AWS's scale). Strict until measured. [NOT MEASURED: set from AA-0.4]

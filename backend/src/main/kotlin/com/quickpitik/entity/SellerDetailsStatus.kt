@@ -24,6 +24,12 @@ enum class SellerDetailsStatus {
     fun passesIdentity(): Boolean = this == AUTO_APPROVED || this == APPROVED
 
     companion object {
+        /** The upload gate (AA-I6), its one home: IDENTITY_GATE_ENABLED on = strict, off = legacy (anything but REJECTED). */
+        val UPLOAD_GATE_STRICT: Set<SellerDetailsStatus> = setOf(AUTO_APPROVED, APPROVED)
+        val UPLOAD_GATE_LEGACY: Set<SellerDetailsStatus> = setOf(MANUAL_REVIEW, AUTO_APPROVED, APPROVED)
+
+        fun uploadGateSet(gateEnabled: Boolean): Set<SellerDetailsStatus> = if (gateEnabled) UPLOAD_GATE_STRICT else UPLOAD_GATE_LEGACY
+
         /** Parses a `reviewState` value, plus the legacy `"submitted"` (= MANUAL_REVIEW); null when unknown. */
         fun fromWire(value: String): SellerDetailsStatus? =
             if (value == "submitted") MANUAL_REVIEW else entries.firstOrNull { it.reviewState() == value }

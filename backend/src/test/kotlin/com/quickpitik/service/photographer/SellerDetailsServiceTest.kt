@@ -137,11 +137,52 @@ class SellerDetailsServiceTest {
     }
 
     // The real decision-log and identity-check services over mocks, so tests read what they would write.
-    private fun service() = SellerDetailsService(
+    private fun service(identity: IdentityProperties = IdentityProperties()) = SellerDetailsService(
         repository, userRepository, storage, TransactionTemplate(txManager), clock,
         AdminDecisionLogService(decisionRepository, messageRepository, Mockito.mock(ApplicationEventPublisher::class.java)),
-        StorageProperties(), identityChecks(), payoutRepository,
+        StorageProperties(), identityChecks(), payoutRepository, identity,
     )
+
+    // ─── AA-I6: uploadsAllowed and identityGateStartsOn ───
+
+    @Test
+    fun `uploadsAllowed follows the same gate set as the upload refusal`() {
+        val expected = mapOf(
+            false to mapOf(SellerDetailsStatus.MANUAL_REVIEW to true, SellerDetailsStatus.AUTO_APPROVED to true, SellerDetailsStatus.REJECTED to false, null to false),
+            true to mapOf(SellerDetailsStatus.MANUAL_REVIEW to false, SellerDetailsStatus.AUTO_APPROVED to true, SellerDetailsStatus.REJECTED to false, null to false),
+        )
+        for ((gate, byStatus) in expected) for ((status, allowed) in byStatus) {
+            Mockito.`when`(repository.findById(userId)).thenReturn(Optional.ofNullable(status?.let(::existing)))
+            val dto = service(IdentityProperties(gateEnabled = gate)).get(userId)
+            assertEquals(allowed, dto.uploadsAllowed, "gate=$gate status=$status")
+            assertEquals(allowed, status != null && status in SellerDetailsStatus.uploadGateSet(gate), "the upload refusal's set, gate=$gate status=$status")
+        }
+    }
+
+    @Test
+    fun `identityGateStartsOn comes from config and is null when blank`() {
+        val day = java.time.LocalDate.parse("2026-12-01")
+        assertEquals(day, service(IdentityProperties(gateStartsOn = day)).get(userId).identityGateStartsOn)
+        assertNull(service().get(userId).identityGateStartsOn)
+    }
+
+    @Test
+    fun `submit and live check responses carry uploadsAllowed and identityGateStartsOn`() {
+        val day = java.time.LocalDate.parse("2026-12-01")
+        val identity = IdentityProperties(gateEnabled = true, gateStartsOn = day)
+        val submitted = service(identity).submit(userId, form(livenessSessionId = SESSION))
+        assertEquals("auto_approved", submitted.reviewState)
+        assertTrue(submitted.uploadsAllowed)
+        assertEquals(day, submitted.identityGateStartsOn)
+
+        val old = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(storage.getBytes(old.idFrontKey)).thenReturn(jpeg(32, 32))
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+        val checked = service(identity).liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+        assertEquals("auto_approved", checked.reviewState)
+        assertTrue(checked.uploadsAllowed)
+        assertEquals(day, checked.identityGateStartsOn)
+    }
 
     private val payoutRepository: PayoutAccountRepository = Mockito.mock(PayoutAccountRepository::class.java)
 
@@ -641,7 +682,7 @@ class SellerDetailsServiceTest {
     fun `after a reject the upload gate refuses, after a resubmission it passes`() {
         val row = withRecord()
         service().reject(adminId, userId, 4, "blurry")
-        assertTrue(row.status == SellerDetailsStatus.REJECTED, "the gate (existsByUserIdAndStatusNot REJECTED) refuses this row")
+        assertTrue(row.status == SellerDetailsStatus.REJECTED, "the gate (existsByUserIdAndStatusIn uploadGateSet) refuses this row")
 
         service().submit(userId, form())
 

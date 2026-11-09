@@ -430,9 +430,21 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals("manual_review", json.readTree(mine.body()).path("data").path("reviewState").asText())
         assertFalse("seller-details/" in mine.body(), "E1 must never carry a storage key")
         assertFalse("ab".repeat(32) in mine.body() || "idNumber" in mine.body(), "E1 must never carry the ID number or its hash")
+        // AA-I6: the server's upload answer (gate off by default: manual review may upload), never the scores.
+        jdbc.update(
+            "UPDATE photographer_seller_details SET liveness_confidence = 71.40, face_similarity = 98.10, reason_codes = '[\"LIVENESS_LOW\"]'::jsonb WHERE user_id = ?",
+            ownerId,
+        )
+        val scored = get(path, ownerToken).body()
+        assertTrue(json.readTree(scored).path("data").path("uploadsAllowed").asBoolean())
+        assertTrue(json.readTree(scored).path("data").has("identityGateStartsOn"))
+        for (secret in listOf("reasonCodes", "livenessConfidence", "faceSimilarity", "LIVENESS_LOW", "71.4", "98.1")) {
+            assertFalse(secret in scored, "C3 must never carry $secret")
+        }
         val theirs = get(path, other)
         assertEquals(200, theirs.statusCode())
         assertEquals("missing", json.readTree(theirs.body()).path("data").path("status").asText())
+        assertFalse(json.readTree(theirs.body()).path("data").path("uploadsAllowed").asBoolean(true))
         assertFalse("Juan" in theirs.body())
 
         // A photographer's incomplete form reaches the service and names the missing part.

@@ -190,7 +190,8 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RACE_PROOF_BIB_FLAG_ONLY_TYPES` | `CYCLING` | Comma list of race types whose failed bib rule only flags the race for an admin, never hides it (plates are rarely read). Not yet measured (AA-0.5). |
 | `RACE_SAME_BIB_MIN_SHARED` | `30` | Bibs two races must share before they are flagged as one race. Not yet measured. |
 | `RACE_REPORT_HIDE_THRESHOLD` | `3` | Distinct accounts whose reports hide an unproven race. Not yet measured. |
-| `IDENTITY_GATE_ENABLED` | `false` | Off = today's upload rule. On = new uploads need seller details AUTO_APPROVED or APPROVED (auto-approval AA-I6). |
+| `IDENTITY_GATE_ENABLED` | `false` | Off = today's upload rule (any seller details not REJECTED). On = new uploads need seller details AUTO_APPROVED or APPROVED; MANUAL_REVIEW is refused too, still `403 SELLER_DETAILS_REQUIRED`; photos already reserved still finish (auto-approval AA-I6). |
+| `IDENTITY_GATE_STARTS_ON` | blank | The announced date the identity gate turns on (`YYYY-MM-DD`), sent as `identityGateStartsOn` on the photographer's seller-details responses. Blank = none; an invalid date fails boot. |
 | `LIVENESS_REGION` | `ap-southeast-5` | Region for AWS Face Liveness (session create, result read, the browser's STS keys). Needs IAM `rekognition:CreateFaceLivenessSession` + `GetFaceLivenessSessionResults` there. |
 | `LIVENESS_MIN_CONFIDENCE` | `95` | 0–100 liveness score an automatic identity pass needs. Strict until measured (AA-0.4). |
 | `FACE_MIN_SIMILARITY` | `99` | 0–100 CompareFaces similarity (live selfie vs ID front) an automatic pass needs. Strict until measured (AA-0.4). Not the runner face-search threshold. |
