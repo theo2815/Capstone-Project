@@ -133,6 +133,18 @@ class PhotographerOwnedEventServiceTest {
         assertTrue(dto.ownedByMe)
     }
 
+    // AA-R4: the race checks belong to RaceEventService only; an Other event keeps today's path.
+    @Test
+    fun `other events run no race checks`() {
+        service.create(photographerId, paidRequest().copy(title = "Lim Wedding Shoot"), null)
+
+        val event = saved.single()
+        assertEquals(null, event.eventType)
+        assertEquals(null, event.checkReasons)
+        assertEquals(EventReviewStatus.PENDING, event.reviewStatus)
+        assertEquals("event_submitted", published.filterIsInstance<AdminInboxEvent>().single().payload["type"])
+    }
+
     @Test
     fun `a free event has no price and never the platform mark`() {
         service.create(photographerId, CreateMyEventRequest(title = "Free Run", date = "2026-10-10", location = "Talisay, Cebu", pricingMode = "free", watermarkPolicy = "none"), null)
