@@ -148,6 +148,37 @@ class Event(
 
     @Column(name = "province_code", length = 40)
     var provinceCode: String? = null,
+
+    // ── Shared race events (V96, AA-R1) ──────────────────────────────────
+    // A race has eventType set and createdBy NULL. Every column below is NULL
+    // on an untyped (legacy or "Other") row: ck_events_race_only.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "event_type", length = 20)
+    var eventType: RaceType? = null,
+
+    @Column(name = "submitted_by")
+    var submittedBy: UUID? = null,
+
+    @Column(name = "name_key", length = 200)
+    var nameKey: String? = null,
+
+    @Column(name = "possible_duplicate_of")
+    var possibleDuplicateOf: UUID? = null,
+
+    // A real admin approval (reviewedAt also stamps pricing decisions).
+    @Column(name = "admin_approved_at")
+    var adminApprovedAt: OffsetDateTime? = null,
+
+    // Set = off /events and the upload pickers (search); the slug still resolves.
+    @Column(name = "hidden_at")
+    var hiddenAt: OffsetDateTime? = null,
+
+    @Column(name = "proof_checked_at")
+    var proofCheckedAt: OffsetDateTime? = null,
+
+    @Column(name = "check_reasons", columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    var checkReasons: List<RaceCheckReason>? = null,
 ) {
     fun requireReviewRevision(expected: Long?) {
         if (expected != null && expected != reviewRevision) {

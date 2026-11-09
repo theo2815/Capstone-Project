@@ -65,12 +65,14 @@ interface EventRepository : JpaRepository<Event, UUID> {
     // includeListed=true (sent only by the /events catalog and mobile runner
     // discovery) also returns photographer events an admin listed (V89), unless
     // that photographer is suspended (AA-I12a, = PhotographerSuspension).
+    // A hidden shared race (V96 hidden_at, AA-R1) leaves both; its slug still resolves.
     // Sentinel values keep every named parameter typed (Postgres rejects nullable
     // unknown-typed parameters with "function lower(bytea) does not exist").
     @Query(
         """
         SELECT e FROM Event e
         WHERE e.deletedAt IS NULL
+          AND e.hiddenAt IS NULL
           AND (e.createdBy IS NULL OR (:includeListed = TRUE AND e.listedOnEvents = TRUE
                AND NOT EXISTS (SELECT su.id FROM User su WHERE su.id = e.createdBy AND su.suspendedAt IS NOT NULL)))
           AND e.status IN :statuses

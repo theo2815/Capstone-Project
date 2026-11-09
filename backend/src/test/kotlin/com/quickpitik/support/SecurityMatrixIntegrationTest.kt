@@ -80,6 +80,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(200, get("/actuator/health").statusCode())
         assertEquals(200, get("/api/v1/events").statusCode())
         assertEquals(200, get("/api/v1/regions").statusCode())
+        assertEquals(200, get("/api/v1/race-types").statusCode())
         // Guest checkout is permitAll: an empty body reaches the controller and
         // fails validation — it is not bounced by the filter chain.
         assertEquals(400, post("/api/v1/orders", "{}").statusCode())
