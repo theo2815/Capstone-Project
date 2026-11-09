@@ -2,9 +2,11 @@ package com.quickpitik.repository
 
 import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.entity.EventPhotographerId
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -13,6 +15,10 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPhotographerId> {
+    // AA-R11: the race price row, locked after the photographer's photos in that race.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT ep FROM EventPhotographer ep WHERE ep.id = :id")
+    fun findByIdForUpdate(@Param("id") id: EventPhotographerId): EventPhotographer?
 
     @Query("""
         SELECT ep.id.photographerId FROM EventPhotographer ep

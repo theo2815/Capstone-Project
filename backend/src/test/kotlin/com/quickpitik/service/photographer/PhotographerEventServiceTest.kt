@@ -24,6 +24,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PhotographerEventServiceTest {
@@ -43,8 +44,18 @@ class PhotographerEventServiceTest {
         Mockito.mock(StorageProperties::class.java),
         Mockito.mock(EventDtoMapper::class.java),
         Mockito.mock(PhotographerSettingsRepository::class.java),
+        com.quickpitik.service.events.RacePriceService(
+            events, coverage, Mockito.mock(PhotoRepository::class.java),
+            Mockito.mock(com.quickpitik.repository.RacePriceChangeRepository::class.java),
+            Mockito.mock(com.quickpitik.service.photographer.PhotographerAccessGuard::class.java),
+            com.quickpitik.config.RaceProperties(selfServeEnabled = true), com.quickpitik.config.PlatformProperties(),
+            java.time.Clock.systemUTC(),
+        ),
     )
     private val seller = UUID.randomUUID()
+
+    private fun covering(event: Event) = Mockito.`when`(coverage.findById(EventPhotographerId(event.id, seller)))
+        .thenReturn(Optional.of(com.quickpitik.entity.EventPhotographer(id = EventPhotographerId(event.id, seller))))
     private val removedAt = OffsetDateTime.parse("2026-09-04T21:36:27Z")
 
     @Test
@@ -71,7 +82,7 @@ class PhotographerEventServiceTest {
     fun `a joined race with no uploads opens its detail`() {
         val race = event(status = EventStatus.ACTIVE).apply { eventType = RaceType.ROAD_RACE }
         Mockito.`when`(events.findById(race.id)).thenReturn(Optional.of(race))
-        Mockito.`when`(coverage.existsById(EventPhotographerId(race.id, seller))).thenReturn(true)
+        covering(race)
 
         val detail = service.getEventDetail(seller, race.id)
 
@@ -79,6 +90,18 @@ class PhotographerEventServiceTest {
         assertEquals("ROAD_RACE", detail.eventType)
         assertFalse(detail.submittedByMe)
         assertFalse(detail.ownedByMe)
+    }
+
+    // AA-R11: the detail carries the photographer's race price card only on a race they cover.
+    @Test
+    fun `a covered race's detail carries the race price and an uncovered one does not`() {
+        val race = event(status = EventStatus.ACTIVE).apply { eventType = RaceType.ROAD_RACE; submittedBy = seller }
+        Mockito.`when`(events.findById(race.id)).thenReturn(Optional.of(race))
+        assertNull(service.getEventDetail(seller, race.id).racePrice, "the submitter without a coverage row")
+
+        covering(race)
+        val price = assertNotNull(service.getEventDetail(seller, race.id).racePrice)
+        assertEquals(0, race.pricePerPhoto.compareTo(price.floorPhp))
     }
 
     @Test
@@ -96,7 +119,7 @@ class PhotographerEventServiceTest {
     fun `an untyped event with no coverage still answers not found`() {
         val adminEvent = event(status = EventStatus.ACTIVE)
         Mockito.`when`(events.findById(adminEvent.id)).thenReturn(Optional.of(adminEvent))
-        Mockito.`when`(coverage.existsById(EventPhotographerId(adminEvent.id, seller))).thenReturn(true)
+        covering(adminEvent)
 
         assertFailsWith<NotFoundException> { service.getEventDetail(seller, adminEvent.id) }
     }

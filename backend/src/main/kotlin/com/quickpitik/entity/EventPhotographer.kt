@@ -47,4 +47,11 @@ class EventPhotographer(
 
     @Column(name = "metadata_public", nullable = false)
     var metadataPublic: Boolean = false,
+
+    // AA-R11 (V97): the photographer's own price in a shared race; NULL = the race price.
+    @Column(name = "price_php", precision = 12, scale = 2)
+    var pricePhp: BigDecimal? = null,
+
+    @Column(name = "price_changed_at")
+    var priceChangedAt: OffsetDateTime? = null,
 )

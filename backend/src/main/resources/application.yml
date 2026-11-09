@@ -415,6 +415,10 @@ app:
       refill-period: PT1H
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
+    # AA-R11: a photographer's own race price is between the race price and this times it (owner D3).
+    race-price-ceiling-multiplier: ${RACE_PRICE_CEILING_MULTIPLIER:2.0}
+    # Wait between two race price changes. [NOT MEASURED]
+    race-price-cooldown: ${RACE_PRICE_COOLDOWN:PT24H}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
     # Largest photographer coupon (whole percent of the photographer's share).
     # The platform cut never moves, whatever this is set to.

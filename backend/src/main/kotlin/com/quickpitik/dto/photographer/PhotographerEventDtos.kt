@@ -88,6 +88,8 @@ data class PhotographerEventDetailDto(
     val canEditRace: Boolean = false,
     val checkReasons: List<String> = emptyList(),
     val hidden: Boolean = false,
+    // AA-R11: null unless a race, the caller has a coverage row and self-serve races are on.
+    val racePrice: RacePriceDto? = null,
 )
 
 // POST /me/photographer/events — bound off the multipart form as a `@Valid
