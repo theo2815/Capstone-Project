@@ -38,11 +38,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.remote.RunnerMessageDto
 import com.quickpitik.mobile.ui.common.formatInboxDate
+import com.quickpitik.mobile.ui.common.openInCustomTab
+import com.quickpitik.mobile.ui.common.photoDeletionStatusUrl
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.ErrorRed
@@ -82,6 +85,7 @@ fun RunnerInboxSheet(
     fetchError: String? = null,
     onRetry: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var removeTarget by remember { mutableStateOf<RunnerMessageDto?>(null) }
     val unreadCount = messages.count { it.readAt == null }
@@ -147,7 +151,8 @@ fun RunnerInboxSheet(
                             message = message,
                             onClick = {
                                 if (message.readAt == null) onMarkRead(message.id)
-                                message.orderId?.let(onOpenOrder)
+                                val url = runnerMessageWebUrl(message)
+                                if (url != null) openInCustomTab(context, url) else message.orderId?.let(onOpenOrder)
                             },
                             onRemove = { removeTarget = message },
                         )
@@ -342,16 +347,23 @@ private fun RunnerMessageRow(
     }
 }
 
-// All six backend RunnerMessageKind wire values (entity/RunnerMessage.kt).
+// A deletion update opens the runner's own request on the website. A buyer's
+// photo_removed row carries someone else's case id, so it keeps the order link.
+internal fun runnerMessageWebUrl(message: RunnerMessageDto): String? =
+    message.photoRemovalRequestId?.takeIf { message.kind == "photo_removal_update" }?.let(::photoDeletionStatusUrl)
+
+// The backend RunnerMessageKind wire values (entity/RunnerMessage.kt); anything else reads "Update".
 // Runner copy from the website's runner-messages.ts; the photographer inbox
 // (StudioShell) words the refund kinds differently on purpose, as the web does.
-private fun runnerMessageKindLabel(kind: String): String = when (kind) {
+internal fun runnerMessageKindLabel(kind: String): String = when (kind) {
     "dispute_resolved" -> "Refund approved"
     "dispute_denied" -> "Refund declined"
     "dispute_escalated" -> "Refund escalated"
     "admin_message" -> "Message from admin"
     "account_suspended" -> "Account suspended"
     "account_unsuspended" -> "Account reinstated"
+    "photo_removal_update" -> "Photo deletion"
+    "photo_removed" -> "Photo removed"
     else -> "Update"
 }
 
