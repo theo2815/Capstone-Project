@@ -438,6 +438,75 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // Upgrade rehearsal: staging is on V94 with events when V96 (AA-R1; V95 stays unused) arrives.
+    @Test
+    fun `V96 keeps existing events untyped and refuses race columns on untyped rows`() {
+        val schema = "race_v96_${UUID.randomUUID().toString().replace("-", "")}"
+        val ids = mutableListOf<UUID>()
+        try {
+            flywayFor(schema, "94").migrate()
+            val v94Columns = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'events' " +
+                    "ORDER BY ordinal_position",
+                String::class.java, schema,
+            )
+            assertFalse("event_type" in v94Columns, "event_type must not exist at V94")
+            val owner = jdbcTemplate.queryForObject(
+                "INSERT INTO $schema.users (email, password_hash, name, role) VALUES (?, 'x', 'V96 owner', 'PHOTOGRAPHER') RETURNING id",
+                UUID::class.java, "v96-${UUID.randomUUID()}@test.local",
+            )!!
+            // An admin event and a photographer-owned event, copied in from rows the V96 entity wrote.
+            val admin = events.save(Event(slug = "v96-admin-${UUID.randomUUID().toString().take(8)}", name = "Cebu Marathon",
+                date = LocalDate.of(2026, 1, 11), location = "Cebu City", status = EventStatus.COMPLETED))
+            val owned = events.save(Event(slug = "v96-own-${UUID.randomUUID().toString().take(8)}", name = "Wedding shoot",
+                date = LocalDate.of(2026, 10, 30), location = "Cebu City", status = EventStatus.ACTIVE))
+            ids += listOf(admin.id, owned.id)
+            val cols = v94Columns.joinToString(", ") { "\"$it\"" }
+            assertEquals(2, jdbcTemplate.update(
+                "INSERT INTO $schema.events ($cols) SELECT $cols FROM public.events WHERE id IN (?, ?)", admin.id, owned.id,
+            ))
+            jdbcTemplate.update("UPDATE $schema.events SET created_by = ? WHERE id = ?", owner, owned.id)
+
+            flywayFor(schema, "96").migrate()
+
+            assertEquals("96", latestVersion(schema))
+            assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM $schema.events WHERE id IN (?, ?) AND event_type IS NULL AND submitted_by IS NULL " +
+                    "AND name_key IS NULL AND possible_duplicate_of IS NULL AND admin_approved_at IS NULL " +
+                    "AND hidden_at IS NULL AND proof_checked_at IS NULL AND check_reasons IS NULL",
+                Int::class.java, admin.id, owned.id,
+            ))
+            // ck_events_race_only: an untyped row takes no race column.
+            for (set in listOf("hidden_at = now()", "submitted_by = '$owner'", "name_key = 'cebu marathon'",
+                "admin_approved_at = now()", "proof_checked_at = now()", "check_reasons = '[]'",
+                "possible_duplicate_of = '${owned.id}'")) {
+                assertFailsWith<DataIntegrityViolationException>(set) {
+                    jdbcTemplate.update("UPDATE $schema.events SET $set WHERE id = ?", admin.id)
+                }
+            }
+            // ck_events_race_shared: a photographer-owned event cannot become a race; an admin event can.
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.events SET event_type = 'ROAD_RACE' WHERE id = ?", owned.id)
+            }
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.events SET event_type = 'TRIATHLON' WHERE id = ?", admin.id)
+            }
+            assertEquals(1, jdbcTemplate.update(
+                "UPDATE $schema.events SET event_type = 'ROAD_RACE', hidden_at = now(), check_reasons = '[\"DAILY_CAP\"]' WHERE id = ?",
+                admin.id,
+            ))
+            jdbcTemplate.update("INSERT INTO $schema.event_name_aliases (event_id, name_key, added_by) VALUES (?, 'cebu marathon', ?)",
+                admin.id, owner)
+            jdbcTemplate.update("DELETE FROM $schema.events WHERE id = ?", admin.id)
+            assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM $schema.event_name_aliases", Int::class.java,
+            ), "aliases go with their event")
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+            ids.forEach { jdbcTemplate.update("DELETE FROM public.events WHERE id = ?", it) }
+        }
+    }
+
     private fun latestVersion(schema: String): String = jdbcTemplate.queryForObject(
         "SELECT version FROM $schema.flyway_schema_history WHERE success AND version IS NOT NULL " +
             "ORDER BY installed_rank DESC LIMIT 1",

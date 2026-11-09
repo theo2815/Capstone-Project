@@ -127,6 +127,7 @@ class SecurityConfig(
                     "/api/v1/events/*/photos/*/download",
                 ).permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
+                auth.requestMatchers(HttpMethod.GET, "/api/v1/race-types").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
                 // Photo verification is public by design — whoever holds a

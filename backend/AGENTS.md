@@ -175,6 +175,20 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `AI_PROVIDER` | `rekognition` | Which face/bib provider runs: `rekognition` (AWS; needs AWS keys or a role) or `ai-api`. ai-api lost its face/bib routes on 2026-10-16, so `ai-api` now gets 404s. Tests pin `ai-api` in `application-test.yml` so they keep their mocked client. `INDEXING_MODE=batch` is ai-api-only, so startup refuses it with `rekognition`. |
 | `MODERATION_IMAGE_MIN_CONFIDENCE` | `0.8` | 0–1 floor for AWS DetectModerationLabels on photographer avatar, cover and watermark uploads (sent ×100). Not yet measured (AA-0.5). Raise it if real images are refused wrongly; a restart, no deploy. |
 | `MODERATION_IMAGE_BLOCKED_LABELS` | `Explicit Nudity,Explicit,Non-Explicit Nudity of Intimate parts and Kissing,Violence,Visually Disturbing,Hate Symbols` | Comma list; an image is refused (`400 IMAGE_NOT_ALLOWED`) when a label's name or parent is listed. With `AI_API_ENABLED=false` or an AWS error the image is accepted and an admin flag (`profile_image_unchecked`) is raised. Needs IAM `rekognition:DetectModerationLabels`. |
+| `SELF_SERVE_RACES_ENABLED` | `false` | Shared race events (auto-approval Plan 2) rollout switch: photographers create, join and edit races and set a race price. Off = today's flow. `GET /race-types` reports it as `selfServeEnabled`. |
+| `RACE_DATE_WINDOW_PAST_DAYS` | `3` | A new race's date may be at most this many days ago, else it goes to admin review. Not yet measured. |
+| `RACE_DATE_WINDOW_AHEAD_DAYS` | `90` | A new race's date may be at most this many days ahead, else admin review. Not yet measured. |
+| `RACE_DAILY_CREATE_CAP` | `3` | Races one photographer creates per Manila day before the next goes to admin review. Not yet measured. |
+| `RACE_DUP_STRONG_SCORE` | `0.85` | Duplicate-race score (0–1) at which a new race is offered as a join (tuned on the AA-R2 fixture). |
+| `RACE_DUP_MEDIUM_SCORE` | `0.5` | Duplicate-race score (0–1) at which candidates are listed (tuned on the AA-R2 fixture). |
+| `RACE_DUP_DATE_TOLERANCE_DAYS` | `1` | Days apart two races may be and still count as the same race. |
+| `RACE_PROOF_MIN_PHOTOGRAPHERS` | `2` | Photographers with photos that prove a race is real when uploads close. |
+| `RACE_PROOF_MIN_INDEXED_PHOTOS` | `20` | Indexed photos a race needs for the proof check. Not yet measured (AA-0.6). |
+| `RACE_PROOF_MIN_BIB_SHARE` | `0.30` | Share (0–1) of indexed photos with a read bib that proves a race. Not yet measured (AA-0.6). |
+| `RACE_PROOF_MIN_INDEXED_SHARE` | `0.5` | Below this share (0–1) of indexed photos the proof check only flags, never hides. Not yet measured. |
+| `RACE_PROOF_SWEEP_INTERVAL_MS` | `3600000` | Cadence of the race proof sweep. |
+| `RACE_SAME_BIB_MIN_SHARED` | `30` | Bibs two races must share before they are flagged as one race. Not yet measured. |
+| `RACE_REPORT_HIDE_THRESHOLD` | `3` | Distinct accounts whose reports hide an unproven race. Not yet measured. |
 | `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Consecutive failed logins before an account locks (V29). Raise it if a demo needs more headroom — there is no separate on/off switch. |
 | `AUTH_LOCKOUT_DURATION` | `PT15M` | How long a lock holds. Auto-clears; a successful login also resets it. Unlike the rate-limit buckets this is **always on**, independent of `RATE_LIMIT_ENABLED`. |
 | `AUTH_LOCKOUT_WINDOW` | `PT15M` | NFR-S-14 (V34): failures only count toward a lock when within this window of the previous one; older streaks restart at 1. |
