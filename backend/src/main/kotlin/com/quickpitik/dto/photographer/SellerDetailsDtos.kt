@@ -2,6 +2,7 @@ package com.quickpitik.dto.photographer
 
 import com.quickpitik.entity.SellerDetails
 import jakarta.validation.constraints.AssertTrue
+import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotNull
 import org.springframework.web.multipart.MultipartFile
 import java.time.Instant
@@ -54,6 +55,14 @@ class SellerDetailsForm(
     var idBack: MultipartFile? = null,
     var selfie: MultipartFile? = null,
     var birForm: MultipartFile? = null,
+    /** The finished live check (AA-I3). Left out = "Have an admin check instead" (DECLINED). */
+    var livenessSessionId: String? = null,
+)
+
+// C2b request: a live check for a manual-review record; the stored ID front is reused.
+data class LiveCheckRequest(
+    @field:NotBlank
+    val livenessSessionId: String? = null,
 )
 
 // C1 request: the consent tick comes before the camera, so it must be true.

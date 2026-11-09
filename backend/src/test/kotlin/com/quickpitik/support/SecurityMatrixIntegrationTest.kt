@@ -462,6 +462,48 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the live check route is photographer only, needs a manual review record, and shows no score or reason`() {
+        val path = "/api/v1/me/photographer/seller-details/live-check"
+        val session = "lv-${UUID.randomUUID()}"
+        val body = """{"livenessSessionId":"$session"}"""
+        assertEquals(401, post(path, body).statusCode())
+        assertEquals(403, post(path, body, register(Role.RUNNER)).statusCode())
+
+        val (token, userId) = registerPhotographerWithId()
+        val noRecord = post(path, body, token)
+        assertEquals(409, noRecord.statusCode())
+        assertEquals("INVALID_STATE_TRANSITION", errorCode(noRecord))
+        assertEquals(400, post(path, """{"livenessSessionId":" "}""", token).statusCode())
+
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now())",
+            userId, "seller-details/$userId/${UUID.randomUUID()}.jpg", "seller-details/$userId/${UUID.randomUUID()}.jpg",
+        )
+        jdbc.update(
+            "INSERT INTO liveness_sessions (session_id, user_id, purpose, consent_version, created_at) VALUES (?, ?, 'PHOTOGRAPHER_IDENTITY', '1.2', now())",
+            session, userId,
+        )
+        // The test profile runs AI off: the session is used up and the record stays with an admin.
+        val checked = post(path, body, token)
+        assertEquals(200, checked.statusCode(), checked.body())
+        val data = json.readTree(checked.body()).path("data")
+        assertEquals("manual_review", data.path("reviewState").asText())
+        assertEquals("submitted", data.path("status").asText())
+        val fields = data.fieldNames().asSequence().map { it.lowercase() }.toList()
+        assertTrue(fields.none { "reason" in it && it != "rejectionreason" || "score" in it || "confidence" in it || "similarity" in it }, fields.toString())
+        assertEquals("[\"AI_DISABLED\"]", jdbc.queryForObject(
+            "SELECT reason_codes::text FROM photographer_seller_details WHERE user_id = ?", String::class.java, userId,
+        )?.replace(" ", ""))
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM liveness_sessions WHERE session_id = ? AND consumed_at IS NOT NULL", Int::class.java, session,
+        ))
+        val again = post(path, body, token)
+        assertEquals(409, again.statusCode())
+        assertEquals("LIVENESS_SESSION_INVALID", errorCode(again))
+    }
+
+    @Test
     fun `admin seller details routes are admin only`() {
         val root = "/api/v1/admin/seller-details"
         val (_, sellerId) = registerPhotographerWithId()

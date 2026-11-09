@@ -24,6 +24,19 @@ import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.service.admin.AdminDecisionLogService
+import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.IdentityProperties
+import com.quickpitik.dto.photographer.LiveCheckRequest
+import com.quickpitik.entity.LivenessPurpose
+import com.quickpitik.entity.LivenessSession
+import com.quickpitik.service.ai.FaceCompareResult
+import com.quickpitik.service.ai.LivenessResult
+import com.quickpitik.service.ai.RekognitionIdentityClient
+import com.quickpitik.service.liveness.LivenessSessionService
+import org.springframework.beans.factory.ObjectProvider
+import software.amazon.awssdk.core.exception.SdkClientException
+import software.amazon.awssdk.services.rekognition.model.LivenessSessionStatus
+import java.math.BigDecimal
 import jakarta.validation.Validation
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.data.domain.PageImpl
@@ -95,13 +108,32 @@ class SellerDetailsServiceTest {
         Mockito.`when`(decisionRepository.save(anyArg<AdminDecisionLog>())).thenAnswer { it.getArgument(0) }
         messageRepository = Mockito.mock(PhotographerMessageRepository::class.java)
         Mockito.`when`(messageRepository.save(anyArg<PhotographerMessage>())).thenAnswer { it.getArgument(0) }
+        sessions = Mockito.mock(LivenessSessionService::class.java)
+        identityClient = Mockito.mock(RekognitionIdentityClient::class.java)
+        Mockito.`when`(sessions.requireOpen(userId, SESSION, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null))
+            .thenReturn(LivenessSession(SESSION, userId, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null, "1.2", consentAt))
+        Mockito.`when`(sessions.claim(userId, SESSION, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null)).thenReturn(true)
+        Mockito.`when`(identityClient.livenessResult(SESSION)).thenReturn(LivenessResult(LivenessSessionStatus.SUCCEEDED, 99.5f, reference))
+        Mockito.`when`(identityClient.compareFaces(anyArg(), anyArg())).thenReturn(FaceCompareResult(1, 99.8f))
     }
 
-    // The real decision-log service over mocked repositories, so tests read the rows it would write.
+    private lateinit var sessions: LivenessSessionService
+    private lateinit var identityClient: RekognitionIdentityClient
+    private val consentAt = OffsetDateTime.parse("2026-11-07T01:58:00Z")
+    private val reference = byteArrayOf(9, 9, 9)
+
+    @Suppress("UNCHECKED_CAST")
+    private fun identityChecks(): IdentityCheckService {
+        val provider = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionIdentityClient>
+        Mockito.`when`(provider.getIfAvailable()).thenReturn(identityClient)
+        return IdentityCheckService(sessions, provider, AiApiProperties(enabled = true), IdentityProperties())
+    }
+
+    // The real decision-log and identity-check services over mocks, so tests read what they would write.
     private fun service() = SellerDetailsService(
         repository, userRepository, storage, TransactionTemplate(txManager), clock,
         AdminDecisionLogService(decisionRepository, messageRepository, Mockito.mock(ApplicationEventPublisher::class.java)),
-        StorageProperties(),
+        StorageProperties(), identityChecks(),
     )
 
     private fun jpeg(width: Int = 64, height: Int = 48): ByteArray = ByteArrayOutputStream().use {
@@ -119,7 +151,9 @@ class SellerDetailsServiceTest {
         idBack: MockMultipartFile? = null,
         selfie: MockMultipartFile? = part("selfie"),
         birForm: MockMultipartFile? = null,
+        livenessSessionId: String? = null,
     ) = SellerDetailsForm(
+        livenessSessionId = livenessSessionId,
         legalName = "  Juan Dela Cruz  ",
         idType = idType,
         address = "12 Osmeña Blvd, Cebu City",
@@ -608,18 +642,22 @@ class SellerDetailsServiceTest {
     // ─── AA-I1: review states ────────────────────────────────────────────
 
     @Test
-    fun `submit saves manual review with no reason codes`() {
+    fun `submit with no live check saves manual review declined`() {
         service().submit(userId, form(phone = "+63 917 123 4567"))
 
         val row = saved()
         assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
-        assertEquals(emptyList(), row.reasonCodes)
+        assertEquals(listOf(SellerReasonCode.DECLINED), row.reasonCodes) // AA-I3: "Have an admin check instead"
+        assertEquals(OffsetDateTime.now(clock), row.autoCheckedAt)
+        assertNull(row.biometricConsentAt)
+        assertNull(row.livenessReferenceKey)
         assertEquals("9171234567", row.phoneKey)
+        Mockito.verifyNoInteractions(sessions, identityClient)
     }
 
     @Test
-    fun `a resubmission refreshes the phone key and clears stale reason codes`() {
-        val old = existing().apply {
+    fun `a resubmission refreshes the phone key and replaces stale reason codes`() {
+        val old = existing(SellerDetailsStatus.MANUAL_REVIEW).apply {
             reasonCodes = listOf(SellerReasonCode.FACE_MISMATCH)
             phoneKey = "9170000000"
         }
@@ -627,7 +665,7 @@ class SellerDetailsServiceTest {
 
         service().submit(userId, form(phone = "0918 765 4321"))
 
-        assertEquals(emptyList(), saved().reasonCodes)
+        assertEquals(listOf(SellerReasonCode.DECLINED), saved().reasonCodes)
         assertEquals("9187654321", old.phoneKey)
     }
 
@@ -660,5 +698,193 @@ class SellerDetailsServiceTest {
     fun `phone key is the last ten digits`() {
         assertEquals("9171234567", SellerDetailsService.phoneKey("+63 917 123 4567"))
         assertEquals("9171234567", SellerDetailsService.phoneKey("09171234567"))
+    }
+
+    // ─── AA-I3: identity decided at submit, and the live-check-only route ─
+
+    private fun putBytes(key: String): ByteArray = puts().single { it.arguments[0] == key }.arguments[1] as ByteArray
+
+    /** A MANUAL_REVIEW record that already holds a reference image from an earlier live check. */
+    private fun reviewRecord(vararg reasons: SellerReasonCode) = existing(SellerDetailsStatus.MANUAL_REVIEW).apply {
+        livenessReferenceKey = "seller-details/$userId/old-reference.jpg"
+        reasonCodes = reasons.toList()
+        Mockito.`when`(storage.getBytes(idFrontKey)).thenReturn(jpeg())
+    }
+
+    @Test
+    fun `live check keeps the id front back selfie and bir files and deletes only the old reference`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED)
+        val kept = listOf(old.idFrontKey, old.idBackKey!!, old.selfieKey, old.birFormKey!!)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+
+        service().liveCheck(userId, LiveCheckRequest(SESSION))
+
+        val row = saved()
+        assertEquals(kept, listOf(row.idFrontKey, row.idBackKey, row.selfieKey, row.birFormKey))
+        val newReference = storedKeys().single()
+        assertEquals(newReference, row.livenessReferenceKey)
+        Mockito.verify(storage).delete("seller-details/$userId/old-reference.jpg")
+        (kept + newReference).forEach { Mockito.verify(storage, Mockito.never()).delete(it) }
+    }
+
+    @Test
+    fun `a live check that gets no new still keeps the earlier one`() {
+        val old = reviewRecord(SellerReasonCode.LIVENESS_LOW)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+        Mockito.`when`(identityClient.livenessResult(SESSION)).thenThrow(SdkClientException.create("aws down"))
+
+        service().liveCheck(userId, LiveCheckRequest(SESSION))
+
+        val row = saved()
+        assertEquals(listOf(SellerReasonCode.AI_ERROR), row.reasonCodes)
+        assertEquals("seller-details/$userId/old-reference.jpg", row.livenessReferenceKey)
+        assertTrue(storedKeys().isEmpty())
+        Mockito.verify(storage, Mockito.never()).delete(anyArg())
+    }
+
+    @Test
+    fun `passing checks save auto approved with PASSED`() {
+        val dto = service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+        assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
+        assertEquals(BigDecimal("99.50"), row.livenessConfidence)
+        assertEquals(BigDecimal("99.80"), row.faceSimilarity)
+        assertEquals(SESSION, row.livenessSessionId)
+        assertEquals(consentAt, row.biometricConsentAt)
+        assertEquals(OffsetDateTime.now(clock), row.autoCheckedAt)
+        assertTrue(row.livenessReferenceKey!!.startsWith("seller-details/$userId/"))
+        assertTrue(putBytes(row.livenessReferenceKey!!).contentEquals(reference))
+        // Compared against the stored (re-encoded) ID front, never the holding-ID selfie.
+        Mockito.verify(identityClient).compareFaces(reference, putBytes(row.idFrontKey))
+        assertEquals("approved", dto.status)
+        assertEquals("auto_approved", dto.reviewState)
+    }
+
+    @Test
+    fun `resubmission deletes the old reference image after commit and keeps the new one`() {
+        val old = reviewRecord(SellerReasonCode.FACE_MISMATCH)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        val order = Mockito.inOrder(txManager, storage)
+        order.verify(txManager).commit(anyArg())
+        order.verify(storage).delete("seller-details/$userId/old-reference.jpg")
+        Mockito.verify(storage, Mockito.never()).delete(row.livenessReferenceKey!!)
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+    }
+
+    @Test
+    fun `live check on a manual review record re-runs the checks on the stored id front without new files`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED)
+        val storedFront = jpeg(32, 32)
+        Mockito.`when`(storage.getBytes(old.idFrontKey)).thenReturn(storedFront)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+
+        val dto = service().liveCheck(userId, LiveCheckRequest(SESSION))
+
+        Mockito.verify(identityClient).compareFaces(reference, storedFront)
+        assertEquals(1, storedKeys().size, "only the new reference image is stored")
+        val row = saved()
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+        assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
+        assertEquals(5L, row.revision)
+        assertEquals("auto_approved", dto.reviewState)
+    }
+
+    @Test
+    fun `live check outside manual review answers invalid state transition`() {
+        for (status in listOf(null, SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.APPROVED, SellerDetailsStatus.REJECTED)) {
+            Mockito.`when`(repository.findById(userId)).thenReturn(Optional.ofNullable(status?.let(::existing)))
+
+            val error = assertFailsWith<ApiException>(status.toString()) { service().liveCheck(userId, LiveCheckRequest(SESSION)) }
+
+            assertEquals(HttpStatus.CONFLICT, error.status)
+            assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        }
+        Mockito.verifyNoInteractions(sessions, identityClient) // refused before the session is used up
+        Mockito.verify(repository, Mockito.never()).save(anyArg<SellerDetails>())
+    }
+
+    @Test
+    fun `an admin decision during the live check answers invalid state transition and keeps the admin's state`() {
+        val decided = listOf(
+            existing(SellerDetailsStatus.REJECTED),
+            existing(SellerDetailsStatus.APPROVED),
+            existing(SellerDetailsStatus.MANUAL_REVIEW).apply { revision = 5 }, // a resubmission from another tab
+        )
+        for (later in decided) {
+            Mockito.clearInvocations(storage, repository)
+            val first = reviewRecord()
+            Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(first), Optional.of(later))
+
+            val error = assertFailsWith<ApiException> { service().liveCheck(userId, LiveCheckRequest(SESSION)) }
+
+            assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+            Mockito.verify(repository, Mockito.never()).save(anyArg<SellerDetails>())
+            val created = storedKeys().single()
+            Mockito.verify(storage).delete(created) // this request's reference image
+            Mockito.verify(storage, Mockito.times(1)).delete(anyArg())
+        }
+    }
+
+    @Test
+    fun `a resubmission after an admin rejection lands in manual review with PREVIOUSLY_REJECTED even when every check passes`() {
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(existing(SellerDetailsStatus.REJECTED)))
+
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.PREVIOUSLY_REJECTED), row.reasonCodes)
+        assertEquals(BigDecimal("99.80"), row.faceSimilarity, "the checks still run, so the admin sees the scores")
+    }
+
+    @Test
+    fun `a live check on a previously rejected record keeps PREVIOUSLY_REJECTED`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED, SellerReasonCode.PREVIOUSLY_REJECTED)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+
+        service().liveCheck(userId, LiveCheckRequest(SESSION))
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.PREVIOUSLY_REJECTED), row.reasonCodes)
+    }
+
+    @Test
+    fun `an admin approval clears PREVIOUSLY_REJECTED for a later resubmission`() {
+        val approved = existing(SellerDetailsStatus.APPROVED).apply { reasonCodes = listOf(SellerReasonCode.PREVIOUSLY_REJECTED) }
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(approved))
+
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, saved().status)
+    }
+
+    @Test
+    fun `a second submit with the same session answers LIVENESS_SESSION_INVALID`() {
+        Mockito.`when`(sessions.claim(userId, SESSION, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null)).thenReturn(false)
+
+        val error = assertFailsWith<ApiException> { service().submit(userId, form(livenessSessionId = SESSION)) }
+
+        assertEquals(ErrorCodes.LIVENESS_SESSION_INVALID, error.code)
+        Mockito.verifyNoInteractions(identityClient)
+        assertNothingStored()
+    }
+
+    @Test
+    fun `a live check needs a session id`() {
+        val validator = Validation.buildDefaultValidatorFactory().validator
+        assertFalse(validator.validate(LiveCheckRequest(null)).isEmpty())
+        assertFalse(validator.validate(LiveCheckRequest("  ")).isEmpty())
+        assertTrue(validator.validate(LiveCheckRequest(SESSION)).isEmpty())
+    }
+
+    private companion object {
+        const val SESSION = "s-1"
     }
 }

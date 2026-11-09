@@ -3,6 +3,7 @@ package com.quickpitik.controller
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.IdentityProperties
 import com.quickpitik.config.LegalProperties
+import com.quickpitik.dto.photographer.LiveCheckRequest
 import com.quickpitik.dto.photographer.LivenessSessionDto
 import com.quickpitik.dto.photographer.LivenessStartRequest
 import com.quickpitik.entity.LivenessPurpose
@@ -344,6 +345,18 @@ class MePhotographerSettingsController(
         stepUpService.enforce(principal.userId, stepUp)
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
         return sellerDetailsService.submit(principal.userId, form)
+    }
+
+    // C2b (AA-I3): a new live check for a manual-review record; no files. Each call uses up a
+    // C1 session, so C1's 3-a-Manila-day cap bounds it.
+    @PostMapping("/seller-details/live-check")
+    fun liveCheckSellerDetails(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
+        @Valid @RequestBody request: LiveCheckRequest,
+    ): SellerDetailsDto {
+        stepUpService.enforce(principal.userId, stepUp)
+        return sellerDetailsService.liveCheck(principal.userId, request)
     }
 
     // C1 (AA-I2): one single-use live-selfie session. The durable 3-a-Manila-day cap is the rate limit.
