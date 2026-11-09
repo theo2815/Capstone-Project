@@ -60,6 +60,7 @@ import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.photographer.PhotographerAccessGuard
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.support.testTransactionTemplate
 import org.junit.jupiter.api.BeforeEach
@@ -129,6 +130,7 @@ class OrderServiceCheckoutTest {
     private var lastProviderRequest: PaymongoCheckoutSessionRequest? = null
     private val disputeRepository = Mockito.mock(DisputeRepository::class.java)
     private val decisionLogRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
+    private val suspension = Mockito.mock(PhotographerSuspension::class.java)
     private val savedOrders = mutableListOf<Order>()
     private val savedItems = mutableListOf<OrderItem>()
     private val savedPayments = mutableListOf<Payment>()
@@ -355,10 +357,12 @@ class OrderServiceCheckoutTest {
                     Mockito.mock(UserRepository::class.java),
                     Mockito.mock(PhotographerSettingsRepository::class.java),
                 ),
+                suspension,
             ),
             webhookService,
             checkoutReconciler,
             PublicProperties(apiBaseUrl = "https://api.test/api/v1"),
+            suspension,
         )
 
     // 2026-09-05: the per-photo download URL is our own bundle route (+ `photo=`),
@@ -783,6 +787,17 @@ class OrderServiceCheckoutTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `checkout refuses a suspended photographer's photo`() {
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenReturn(setOf(UUID.randomUUID()))
+
+        val error = assertFailsWith<ConflictException> { service.create(null, request(), key) }
+
+        assertEquals("Only live photos can be purchased.", error.message)
+        Mockito.verifyNoInteractions(paymongoClient)
+        assertTrue(savedOrders.isEmpty())
     }
 
     @Test

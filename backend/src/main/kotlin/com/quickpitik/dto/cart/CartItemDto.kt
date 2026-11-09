@@ -14,6 +14,8 @@ data class CartItemDto(
     val eventSlug: String? = null,
     val tone: Int? = null,
     val time: String? = null,
+    /** False only for a suspended photographer's photo, and only on `GET /me/cart?includeUnavailable=true`. */
+    val available: Boolean = true,
 )
 
 data class AddCartItemRequest(

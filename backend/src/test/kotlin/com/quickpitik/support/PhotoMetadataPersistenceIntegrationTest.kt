@@ -38,6 +38,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var metadata: PhotoMetadataRepository
     @Autowired private lateinit var photos: PhotoRepository
     @Autowired private lateinit var coverage: EventPhotographerRepository
+    @Autowired private lateinit var suspension: com.quickpitik.service.photos.PhotographerSuspension
     @Autowired private lateinit var properties: PhotoMetadataProperties
     @Autowired private lateinit var clock: Clock
     @Autowired private lateinit var events: EventRepository
@@ -96,7 +97,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     }
 
     private fun sweeper(photoRepository: PhotoRepository, executor: ThreadPoolTaskExecutor) =
-        PhotoMetadataService(metadata, photoRepository, coverage, extractor, storage, executor, properties, transactions, clock, executor)
+        PhotoMetadataService(metadata, photoRepository, coverage, extractor, storage, executor, properties, transactions, clock, executor, suspension)
 
     private fun settle(id: UUID, token: UUID, version: Int = 1, model: String = "R6") =
         transactions.execute { metadata.settle(id, token, version, PhotoMetadataState.READY, PhotoMetadataFields(cameraModel = model), OffsetDateTime.now()) }!!
@@ -326,7 +327,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         }
         val pool = com.quickpitik.config.AsyncConfig().metadataProcessingExecutor()
         fun worker(executor: ThreadPoolTaskExecutor) = PhotoMetadataService(metadata, photos, coverage, extractor, storage,
-            watermarkPool, properties, transactions, clock, executor)
+            watermarkPool, properties, transactions, clock, executor, suspension)
         val dispatch = worker(pool)
         try {
             dispatch.dispatchExtraction(ids[0], byteArrayOf(1))

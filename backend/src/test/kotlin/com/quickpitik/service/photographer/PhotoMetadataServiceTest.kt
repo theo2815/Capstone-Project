@@ -32,12 +32,13 @@ class PhotoMetadataServiceTest {
     private val storage = Mockito.mock(StorageService::class.java)
     private val watermarkPool = Mockito.mock(ThreadPoolTaskExecutor::class.java)
     private val manager = Mockito.mock(PlatformTransactionManager::class.java)
+    private val suspension = Mockito.mock(com.quickpitik.service.photos.PhotographerSuspension::class.java)
     private val clock = Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC)
     private fun <T> anyArg(): T = Mockito.any()
     private fun service(recoveryEnabled: Boolean = true): PhotoMetadataService {
         Mockito.`when`(manager.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
         return PhotoMetadataService(repository, photos, coverage, extractor, storage, watermarkPool,
-            PhotoMetadataProperties(recoveryEnabled = recoveryEnabled), TransactionTemplate(manager), clock, watermarkPool)
+            PhotoMetadataProperties(recoveryEnabled = recoveryEnabled), TransactionTemplate(manager), clock, watermarkPool, suspension)
     }
 
     @Test
@@ -152,5 +153,20 @@ class PhotoMetadataServiceTest {
         assertEquals("public", access.getValue(gallery[1].id))
         assertEquals("none", access.getValue(gallery[2].id))
         Mockito.verify(coverage, Mockito.times(1)).findPublicMetadataPhotographerIds(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `public metadata of a suspended photographer's photo is not found`() {
+        val eventId = UUID.randomUUID()
+        val ownerId = UUID.randomUUID()
+        val photo = Photo(eventId = eventId, photographerId = ownerId, s3Key = "p.jpg", pricePhp = BigDecimal.ONE)
+        Mockito.`when`(photos.findById(photo.id)).thenReturn(java.util.Optional.of(photo))
+        Mockito.`when`(coverage.findPublicMetadataPhotographerIds(anyArg(), anyArg())).thenReturn(listOf(ownerId))
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenReturn(setOf(ownerId))
+
+        assertFailsWith<com.quickpitik.exception.NotFoundException> { service().getPublic(photo.id) }
+        assertEquals("none", service().metadataAccess(eventId, listOf(photo), null).getValue(photo.id))
+        // The photographer still sees their own metadata.
+        assertEquals("owner", service().metadataAccess(eventId, listOf(photo), ownerId).getValue(photo.id))
     }
 }

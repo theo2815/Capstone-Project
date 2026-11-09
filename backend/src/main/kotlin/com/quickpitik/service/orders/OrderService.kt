@@ -66,6 +66,7 @@ import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
@@ -105,6 +106,7 @@ class OrderService(
     private val paymongoWebhookService: PaymongoWebhookService,
     private val checkoutReconciler: PaymongoCheckoutReconciler,
     private val publicProperties: PublicProperties,
+    private val photographerSuspension: PhotographerSuspension,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -733,6 +735,10 @@ class OrderService(
             if (photo.pricePhp <= BigDecimal.ZERO) {
                 throw checkoutConflict("Paid checkout requires a positive photo price.")
             }
+        }
+        // A suspended photographer's photos are off sale (AA-I12b); the rows are already locked above.
+        if (photographerSuspension.suspendedOwnerIds(photos.values).isNotEmpty()) {
+            throw checkoutConflict("Only live photos can be purchased.")
         }
         return photos
     }

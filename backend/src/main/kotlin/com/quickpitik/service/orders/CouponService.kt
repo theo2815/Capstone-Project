@@ -25,6 +25,7 @@ import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.photographer.PhotographerAccessGuard
+import com.quickpitik.service.photos.PhotographerSuspension
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -54,6 +55,7 @@ class CouponService(
     private val eventPhotographerRepository: EventPhotographerRepository,
     private val orderRepository: OrderRepository,
     private val accessGuard: PhotographerAccessGuard,
+    private val photographerSuspension: PhotographerSuspension,
 ) {
     @Transactional(readOnly = true)
     fun get(photographerId: UUID, eventId: UUID): CouponDto? {
@@ -215,8 +217,10 @@ class CouponService(
     @Transactional(readOnly = true)
     fun preview(req: CouponPreviewRequest): CouponPreviewDto {
         val manual = req.code?.takeIf { it.isNotBlank() }?.let(::resolveForCheckout)
-        val photos = photoRepository.findAllById(req.photoIds.distinct())
-            .filter { it.isSellable }
+        val sellable = photoRepository.findAllById(req.photoIds.distinct()).filter { it.isSellable }
+        // A suspended photographer's photos are off sale, so the quote never prices them (AA-I12b).
+        val suspended = photographerSuspension.suspendedOwnerIds(sellable)
+        val photos = sellable.filter { it.photographerId !in suspended }
         // Read-only quote: no lock, and findLiveForEvent already filters
         // active / expiry / usage-limit.
         val auto = autoFor(photos) { eventIds ->

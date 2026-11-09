@@ -13,6 +13,7 @@ import com.quickpitik.repository.PhotoMetadataRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.image.PhotoMetadataExtractor
 import com.quickpitik.service.image.hasRecordedTags
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
@@ -40,6 +41,7 @@ class PhotoMetadataService(
     private val transactions: TransactionTemplate,
     private val clock: Clock,
     @Qualifier("metadataProcessing") private val metadataPool: ThreadPoolTaskExecutor,
+    private val photographerSuspension: PhotographerSuspension,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -63,8 +65,11 @@ class PhotoMetadataService(
     @Transactional(readOnly = true)
     fun metadataAccess(eventId: UUID, photos: Collection<Photo>, requesterUserId: UUID?): Map<UUID, String> {
         val photographerIds = photos.mapNotNullTo(mutableSetOf()) { it.photographerId }
-        val publicIds = if (photographerIds.isEmpty()) emptySet()
+        val sharing = if (photographerIds.isEmpty()) emptySet()
         else coverage.findPublicMetadataPhotographerIds(eventId, photographerIds).toSet()
+        // A suspended photographer's photos are off sale, so their metadata is not public (AA-I12b).
+        val publicIds = if (sharing.isEmpty()) sharing
+        else sharing - photographerSuspension.suspendedOwnerIds(photos.filter { it.photographerId in sharing })
         return photos.associate { photo ->
             photo.id to when {
                 photo.removalState == RemovalState.REMOVED || photo.deletionStartedAt != null -> "none"

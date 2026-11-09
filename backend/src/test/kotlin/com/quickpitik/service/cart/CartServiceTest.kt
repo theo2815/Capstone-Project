@@ -13,6 +13,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -38,6 +39,7 @@ class CartServiceTest {
     private lateinit var photoRepository: PhotoRepository
     private lateinit var eventRepository: EventRepository
     private lateinit var storageService: StorageService
+    private lateinit var suspension: PhotographerSuspension
     private lateinit var service: CartService
 
     private val userId = UUID.randomUUID()
@@ -49,12 +51,14 @@ class CartServiceTest {
         photoRepository = Mockito.mock(PhotoRepository::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
+        suspension = Mockito.mock(PhotographerSuspension::class.java)
         service = CartService(
             cartItemRepository,
             photoRepository,
             eventRepository,
             storageService,
             StorageProperties(),
+            suspension,
         )
 
         written.clear()
@@ -177,6 +181,78 @@ class CartServiceTest {
         assertEquals(emptyList(), written)
     }
 
+    // ─── AA-I12b: a suspended photographer's photos are not for sale ─────
+
+    private val suspended = UUID.randomUUID()
+
+    private fun suspendOwner() {
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenAnswer { inv ->
+            (inv.arguments[0] as Collection<*>).filterIsInstance<Photo>()
+                .mapNotNullTo(mutableSetOf()) { it.photographerId }.filterTo(mutableSetOf()) { it == suspended }
+        }
+    }
+
+    private fun cartRows(vararg photos: Photo) {
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(
+            photos.map { CartItemEntity(id = CartItemId(userId, it.id), eventId = it.eventId, pricePhpAtAdd = it.pricePhp) },
+        )
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+    }
+
+    @Test
+    fun `add refuses a suspended photographer's photo as not found`() {
+        suspendOwner()
+        val event = event(EventStatus.ACTIVE)
+        val theirs = photo(event.id, photographer = suspended)
+        Mockito.`when`(photoRepository.findById(theirs.id)).thenReturn(Optional.of(theirs))
+
+        val ex = assertFailsWith<NotFoundException> { service.add(userId, theirs.id, event.id) }
+
+        assertEquals(ErrorCodes.PHOTO_NOT_FOUND, ex.code)
+        assertEquals(emptyList(), written)
+    }
+
+    @Test
+    fun `list drops a suspended photographer's photo by default and never deletes the row`() {
+        suspendOwner()
+        val event = event(EventStatus.ACTIVE)
+        val theirs = photo(event.id, photographer = suspended)
+        val other = photo(event.id, photographer = UUID.randomUUID())
+        cartRows(theirs, other)
+        stub(listOf(theirs, other), listOf(event))
+
+        assertEquals(listOf(other.id), service.list(userId).map { it.photoId })
+        Mockito.verify(cartItemRepository, Mockito.never()).deleteByUserIdAndPhotoId(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `list with includeUnavailable marks a suspended photographer's photo unavailable`() {
+        suspendOwner()
+        val event = event(EventStatus.ACTIVE)
+        val theirs = photo(event.id, photographer = suspended)
+        val other = photo(event.id, photographer = UUID.randomUUID())
+        cartRows(theirs, other)
+        stub(listOf(theirs, other), listOf(event))
+
+        val items = service.list(userId, includeUnavailable = true).associateBy { it.photoId }
+
+        assertEquals(false, items.getValue(theirs.id).available)
+        assertEquals(true, items.getValue(other.id).available)
+    }
+
+    @Test
+    fun `merge skips a suspended photographer's photo`() {
+        suspendOwner()
+        val event = event(EventStatus.ACTIVE)
+        val theirs = photo(event.id, photographer = suspended)
+        val other = photo(event.id, photographer = UUID.randomUUID())
+        stub(listOf(theirs, other), listOf(event))
+
+        service.merge(userId, listOf(theirs.id to event.id, other.id to event.id))
+
+        assertEquals(listOf(other.id), written.map { it.id.photoId })
+    }
+
     private fun stub(photos: List<Photo>, events: List<Event>) {
         Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(photos)
         Mockito.`when`(eventRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(events)
@@ -194,11 +270,13 @@ class CartServiceTest {
         eventId: UUID,
         status: PhotoStatus = PhotoStatus.LIVE,
         price: BigDecimal = BigDecimal("125.00"),
+        photographer: UUID? = null,
     ): Photo = Photo(
         eventId = eventId,
         s3Key = "photos/${UUID.randomUUID()}.jpg",
         status = status,
         pricePhp = price,
+        photographerId = photographer,
     )
 
     private fun <T> anyArg(): T = Mockito.any()
