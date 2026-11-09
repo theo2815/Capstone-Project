@@ -9,13 +9,21 @@ import com.quickpitik.dto.photographer.toDto
 import com.quickpitik.entity.PayoutAccount
 import com.quickpitik.entity.PayoutAccountAudit
 import com.quickpitik.entity.PayoutMethod
+import com.quickpitik.entity.FlagTargetKind
+import com.quickpitik.entity.RepeatMatchKind
+import com.quickpitik.entity.SellerDetails
+import com.quickpitik.entity.SellerDetailsStatus
+import com.quickpitik.entity.SellerReasonCode
+import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
+import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.admin.SystemFlagService
 import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
 import com.quickpitik.service.storage.StorageService
@@ -43,6 +51,8 @@ class PayoutAccountService(
     private val eventPublisher: ApplicationEventPublisher,
     private val payoutCycleRepository: PayoutCycleRepository,
     private val userRepository: UserRepository,
+    private val sellerDetailsRepository: SellerDetailsRepository,
+    private val systemFlagService: SystemFlagService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -74,6 +84,8 @@ class PayoutAccountService(
             ),
         )
         recordChange(userId, "create", method, newNumber = accountNumber)
+        flagIfNameDiffers(userId, saved)
+        matchPayoutNumber(userId, saved)
         return saved.toDto(qrUrl = null, qrUploadedAt = null)
     }
 
@@ -82,6 +94,7 @@ class PayoutAccountService(
         val account = payoutAccountRepository.findByIdAndUserId(id, userId)
             ?: throw NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout account not found")
         val oldNumber = account.accountNumber
+        val oldName = account.accountName
         req.accountNumber?.let {
             val sanitized = sanitizeNumber(it)
             validateAccountNumber(account.method, sanitized)
@@ -99,8 +112,50 @@ class PayoutAccountService(
         }
         val saved = payoutAccountRepository.save(account)
         recordChange(userId, "update", account.method, oldNumber = oldNumber, newNumber = saved.accountNumber)
+        if (saved.accountName != oldName) flagIfNameDiffers(userId, saved)
+        if (saved.accountNumber != oldNumber) matchPayoutNumber(userId, saved)
         return saved.toDto(qrUrl = qrUrlFor(saved), qrUploadedAt = saved.createdAt)
     }
+
+    // AA-I5: a payout account checked against the seller details after submit. Runs under the
+    // caller's user lock, never refuses the save, and leaves the 24 h cooldown to recordChange.
+    private fun flagIfNameDiffers(userId: UUID, account: PayoutAccount) {
+        val details = sellerDetailsToCheck(userId) ?: return
+        if (NameMatch.same(details.legalName, account.accountName)) return
+        systemFlagService.raise(
+            FlagTargetKind.USER, userId, SystemFlagReason.PAYOUT_NAME_CHANGED,
+            "${account.method.wire} ${maskNumber(account.accountNumber)}: holder name differs from the legal name",
+        )
+    }
+
+    // A number shared with another account sends the record to manual review (D5, P1-N11), even
+    // when it had passed; the revision bump makes a stale admin decision fail.
+    private fun matchPayoutNumber(userId: UUID, account: PayoutAccount) {
+        val details = sellerDetailsToCheck(userId) ?: return
+        val others = payoutAccountRepository.findUserIdsByAccountNumbers(listOf(account.accountNumber), userId)
+        if (others.isEmpty()) return
+        val matches = SellerDetailsService.mergeMatches(details.repeatMatches, others.map { it to RepeatMatchKind.PAYOUT_NUMBER })
+        val reasons = (details.reasonCodes - SellerReasonCode.PASSED).let {
+            if (SellerReasonCode.REPEAT_ACCOUNT_MATCH in it) it else it + SellerReasonCode.REPEAT_ACCOUNT_MATCH
+        }
+        if (matches == details.repeatMatches && reasons == details.reasonCodes) return
+        val moved = details.status != SellerDetailsStatus.MANUAL_REVIEW
+        details.repeatMatches = matches
+        details.reasonCodes = reasons
+        details.status = SellerDetailsStatus.MANUAL_REVIEW
+        details.revision += 1
+        sellerDetailsRepository.save(details)
+        if (moved) {
+            systemFlagService.raise(
+                FlagTargetKind.USER, userId, SystemFlagReason.REPEAT_ACCOUNT_MATCH,
+                "${account.method.wire} ${maskNumber(account.accountNumber)} is also on account ${others.joinToString()}",
+            )
+        }
+    }
+
+    // Read across to the photographer's SellerDetails (rule 3); a rejected or missing one is left alone.
+    private fun sellerDetailsToCheck(userId: UUID): SellerDetails? =
+        sellerDetailsRepository.findById(userId).orElse(null)?.takeUnless { it.status == SellerDetailsStatus.REJECTED }
 
     fun delete(userId: UUID, id: UUID) {
         userRepository.lockById(userId)

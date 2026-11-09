@@ -8,6 +8,7 @@ import com.quickpitik.entity.RepeatMatch
 import com.quickpitik.entity.RepeatMatchKind
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.SellerReasonCode
+import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.service.liveness.LivenessSessionService
 import jakarta.persistence.EntityManager
@@ -28,6 +29,7 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var repository: SellerDetailsRepository
     @Autowired private lateinit var entityManager: EntityManager
     @Autowired private lateinit var livenessSessions: LivenessSessionService
+    @Autowired private lateinit var payoutRepository: PayoutAccountRepository
 
     private fun photographer(): UUID = jdbc.queryForObject(
         "INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Seller Test', 'PHOTOGRAPHER') RETURNING id",
@@ -184,6 +186,42 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
         assertTrue(gate(approved))
         assertFalse(gate(rejected))
         assertFalse(gate(none))
+    }
+
+    // AA-I5: the three repeat-account lookups, each leaving out the caller.
+    @Test
+    fun `id number hash lookup finds the other accounts and leaves out the caller`() {
+        val hmac = UUID.randomUUID().toString().replace("-", "")
+        val (me, twin, stranger) = List(3) { photographer().also(::insert) }
+        jdbc.update("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id IN (?, ?)", hmac, me, twin)
+        jdbc.update("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id = ?", "x$hmac".take(64), stranger)
+
+        assertEquals(listOf(twin), repository.findUserIdsByIdNumberHmac(hmac, me))
+    }
+
+    @Test
+    fun `phone key lookup finds the other accounts and leaves out the caller`() {
+        val key = (1_000_000_000L + (Math.random() * 8_999_999_999L).toLong()).toString()
+        val (me, twin) = List(2) { photographer().also(::insert) }
+        jdbc.update("UPDATE photographer_seller_details SET phone_key = ? WHERE user_id IN (?, ?)", key, me, twin)
+
+        assertEquals(listOf(twin), repository.findUserIdsByPhoneKey(key, me))
+    }
+
+    @Test
+    fun `payout number lookup finds each other account once and leaves out the caller`() {
+        val number = "09" + (100_000_000L + (Math.random() * 899_999_999L).toLong())
+        val (me, twin, other) = List(3) { photographer() }
+        fun account(user: UUID, accountNumber: String) = jdbc.update(
+            "INSERT INTO photographer_payout_accounts (id, user_id, method, account_number, account_name) VALUES (?, ?, 'GCASH', ?, 'X')",
+            UUID.randomUUID(), user, accountNumber,
+        )
+        account(me, number)
+        account(twin, number)
+        account(twin, number) // two rows on one account still name it once
+        account(other, "09000000000")
+
+        assertEquals(listOf(twin), payoutRepository.findUserIdsByAccountNumbers(listOf(number, "09111111111"), me))
     }
 
     @Test

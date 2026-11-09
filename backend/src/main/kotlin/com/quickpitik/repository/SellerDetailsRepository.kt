@@ -23,4 +23,11 @@ interface SellerDetailsRepository : JpaRepository<SellerDetails, UUID> {
         countQuery = "SELECT COUNT(s) FROM SellerDetails s WHERE (:status IS NULL OR s.status = :status)",
     )
     fun findForAdmin(@Param("status") status: SellerDetailsStatus?, pageable: Pageable): Page<SellerDetails>
+
+    // Repeat-account matching (AA-I5): other accounts sharing a detail; V94 indexes both columns.
+    @Query("SELECT s.userId FROM SellerDetails s WHERE s.idNumberHmac = :hmac AND s.userId <> :excludeUserId")
+    fun findUserIdsByIdNumberHmac(@Param("hmac") hmac: String, @Param("excludeUserId") excludeUserId: UUID): List<UUID>
+
+    @Query("SELECT s.userId FROM SellerDetails s WHERE s.phoneKey = :phoneKey AND s.userId <> :excludeUserId")
+    fun findUserIdsByPhoneKey(@Param("phoneKey") phoneKey: String, @Param("excludeUserId") excludeUserId: UUID): List<UUID>
 }

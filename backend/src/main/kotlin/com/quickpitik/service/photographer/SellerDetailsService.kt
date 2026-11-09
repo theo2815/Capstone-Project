@@ -15,6 +15,8 @@ import com.quickpitik.dto.photographer.SellerDetailsDto
 import com.quickpitik.dto.photographer.SellerDetailsForm
 import com.quickpitik.dto.photographer.toDto
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.RepeatMatch
+import com.quickpitik.entity.RepeatMatchKind
 import com.quickpitik.entity.SellerDetails
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.SellerIdType
@@ -22,6 +24,7 @@ import com.quickpitik.entity.SellerReasonCode
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.admin.AdminDecisionLogService
@@ -63,6 +66,7 @@ class SellerDetailsService(
     private val adminDecisionLogService: AdminDecisionLogService,
     private val storageProperties: StorageProperties,
     private val identityCheckService: IdentityCheckService,
+    private val payoutAccountRepository: PayoutAccountRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -133,10 +137,27 @@ class SellerDetailsService(
         }
     }
 
+    /**
+     * Runs inside the save transaction, under the user lock. Repeat accounts and a payout holder name
+     * that differs from the legal name route to an admin, never refuse (AA-I5). Two accounts submitting
+     * the same ID at once can miss each other: each holds only its own lock (accepted).
+     */
     private fun SellerDetails.applyChecks(
         checks: IdentityChecks, referenceKey: String?, previouslyRejected: Boolean, now: OffsetDateTime,
     ): SellerDetails = apply {
-        val reasons = checks.reasons + listOfNotNull(SellerReasonCode.PREVIOUSLY_REJECTED.takeIf { previouslyRejected })
+        val payouts = payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(userId)
+        val hits = checks.idNumberHmac?.let { hmac ->
+            sellerDetailsRepository.findUserIdsByIdNumberHmac(hmac, userId).map { it to RepeatMatchKind.ID_NUMBER }
+        }.orEmpty() + (if (payouts.isEmpty()) emptyList() else {
+            payoutAccountRepository.findUserIdsByAccountNumbers(payouts.map { it.accountNumber }, userId)
+                .map { it to RepeatMatchKind.PAYOUT_NUMBER }
+        }) + sellerDetailsRepository.findUserIdsByPhoneKey(phoneKey, userId).map { it to RepeatMatchKind.PHONE }
+        repeatMatches = mergeMatches(emptyList(), hits)
+        val reasons = checks.reasons + listOfNotNull(
+            SellerReasonCode.REPEAT_ACCOUNT_MATCH.takeIf { repeatMatches.isNotEmpty() },
+            SellerReasonCode.PAYOUT_NAME_MISMATCH.takeIf { payouts.any { !NameMatch.same(legalName, it.accountName) } },
+            SellerReasonCode.PREVIOUSLY_REJECTED.takeIf { previouslyRejected },
+        )
         status = IdentityCheckService.statusFor(reasons)
         reasonCodes = reasons.ifEmpty { listOf(SellerReasonCode.PASSED) }
         livenessSessionId = checks.sessionId
@@ -371,5 +392,11 @@ class SellerDetailsService(
 
         /** The last 10 digits of a valid phone, for repeat-account matching (the same rule as V94's backfill). */
         fun phoneKey(phone: String): String = phone.filter(Char::isDigit).takeLast(10)
+
+        /** Adds [hits] to [matches]: one entry per other account, each kind once (AA-I5). */
+        fun mergeMatches(matches: List<RepeatMatch>, hits: List<Pair<UUID, RepeatMatchKind>>): List<RepeatMatch> =
+            (matches.flatMap { m -> m.matchedOn.map { m.userId to it } } + hits)
+                .groupBy({ it.first }, { it.second })
+                .map { (userId, kinds) -> RepeatMatch(userId, kinds.distinct().sorted()) }
     }
 }

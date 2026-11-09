@@ -23,6 +23,11 @@ import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.SellerDetailsRepository
+import com.quickpitik.repository.PayoutAccountRepository
+import com.quickpitik.entity.PayoutAccount
+import com.quickpitik.entity.PayoutMethod
+import com.quickpitik.entity.RepeatMatch
+import com.quickpitik.entity.RepeatMatchKind
 import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.IdentityProperties
@@ -135,8 +140,10 @@ class SellerDetailsServiceTest {
     private fun service() = SellerDetailsService(
         repository, userRepository, storage, TransactionTemplate(txManager), clock,
         AdminDecisionLogService(decisionRepository, messageRepository, Mockito.mock(ApplicationEventPublisher::class.java)),
-        StorageProperties(), identityChecks(),
+        StorageProperties(), identityChecks(), payoutRepository,
     )
+
+    private val payoutRepository: PayoutAccountRepository = Mockito.mock(PayoutAccountRepository::class.java)
 
     private fun jpeg(width: Int = 64, height: Int = 48): ByteArray = ByteArrayOutputStream().use {
         check(ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "jpg", it))
@@ -935,6 +942,94 @@ class SellerDetailsServiceTest {
         assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
         assertTrue(Regex("[0-9a-f]{64}").matches(row.idNumberHmac.orEmpty()))
         assertNotEquals("0".repeat(64), row.idNumberHmac)
+    }
+
+    // AA-I5: repeat accounts and payout names.
+    private val other = UUID.randomUUID()
+
+    private fun payout(name: String = "Juan Dela Cruz", number: String = "09171234567") =
+        PayoutAccount(userId = userId, method = PayoutMethod.GCASH, accountNumber = number, accountName = name)
+
+    @Test
+    fun `same id hash on another account goes to manual review naming it`() {
+        Mockito.`when`(repository.findUserIdsByIdNumberHmac(anyArg(), Mockito.eq(userId) ?: userId)).thenReturn(listOf(other))
+
+        val dto = service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.REPEAT_ACCOUNT_MATCH), row.reasonCodes)
+        assertEquals(listOf(RepeatMatch(other, listOf(RepeatMatchKind.ID_NUMBER))), row.repeatMatches)
+        // Matched on the hash being saved, and under the user lock.
+        val order = Mockito.inOrder(userRepository, repository)
+        order.verify(userRepository).lockById(userId)
+        order.verify(repository).findUserIdsByIdNumberHmac(row.idNumberHmac!!, userId)
+        assertEquals("manual_review", dto.reviewState)
+    }
+
+    @Test
+    fun `shared payout number and phone merge into one match`() {
+        Mockito.`when`(payoutRepository.findAllByUserIdOrderByCreatedAtAsc(userId)).thenReturn(listOf(payout()))
+        Mockito.`when`(payoutRepository.findUserIdsByAccountNumbers(listOf("09171234567"), userId)).thenReturn(listOf(other))
+        Mockito.`when`(repository.findUserIdsByPhoneKey("9171234567", userId)).thenReturn(listOf(other))
+
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        assertEquals(listOf(RepeatMatch(other, listOf(RepeatMatchKind.PAYOUT_NUMBER, RepeatMatchKind.PHONE))), row.repeatMatches)
+        assertEquals(listOf(SellerReasonCode.REPEAT_ACCOUNT_MATCH), row.reasonCodes)
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+    }
+
+    @Test
+    fun `payout holder name mismatch goes to manual review`() {
+        Mockito.`when`(payoutRepository.findAllByUserIdOrderByCreatedAtAsc(userId))
+            .thenReturn(listOf(payout(), payout(name = "Maria Santos", number = "09179999999")))
+
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.PAYOUT_NAME_MISMATCH), row.reasonCodes)
+        assertEquals(emptyList(), row.repeatMatches)
+    }
+
+    @Test
+    fun `no payout account skips the name check`() {
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+        assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
+        Mockito.verify(payoutRepository, Mockito.never()).findUserIdsByAccountNumbers(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a repeat match never refuses the submit`() {
+        Mockito.`when`(repository.findUserIdsByIdNumberHmac(anyArg(), Mockito.eq(userId) ?: userId)).thenReturn(listOf(other))
+        Mockito.`when`(repository.findUserIdsByPhoneKey("9171234567", userId)).thenReturn(listOf(other, UUID.randomUUID()))
+
+        val dto = service().submit(userId, form())
+
+        assertEquals("submitted", dto.status)
+        val row = saved()
+        assertEquals(listOf(SellerReasonCode.DECLINED, SellerReasonCode.REPEAT_ACCOUNT_MATCH), row.reasonCodes)
+        assertEquals(2, row.repeatMatches.size)
+        assertEquals(listOf(RepeatMatchKind.ID_NUMBER, RepeatMatchKind.PHONE), row.repeatMatches.first { it.userId == other }.matchedOn)
+    }
+
+    @Test
+    fun `a live check runs the repeat checks on the stored phone and name`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+        Mockito.`when`(repository.findUserIdsByPhoneKey("9170000000", userId)).thenReturn(listOf(other))
+        Mockito.`when`(payoutRepository.findAllByUserIdOrderByCreatedAtAsc(userId)).thenReturn(listOf(payout(name = "Old Name")))
+
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+
+        val row = saved()
+        assertEquals(listOf(SellerReasonCode.REPEAT_ACCOUNT_MATCH), row.reasonCodes)
+        assertEquals(listOf(RepeatMatch(other, listOf(RepeatMatchKind.PHONE))), row.repeatMatches)
     }
 
     private companion object {
