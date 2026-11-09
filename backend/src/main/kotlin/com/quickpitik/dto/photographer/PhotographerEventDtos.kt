@@ -46,6 +46,12 @@ data class PhotographerEventSummaryDto(
     val reviewStatus: String = "approved",
     val reviewNote: String? = null,
     val pendingChange: Map<String, Any?>? = null,
+    // Shared races (AA-R3, Plan 2 § 3.4). eventType null = legacy or Other; canEditRace is filled by AA-R5.
+    val eventType: String? = null,
+    val submittedByMe: Boolean = false,
+    val canEditRace: Boolean = false,
+    val checkReasons: List<String> = emptyList(),
+    val hidden: Boolean = false,
 )
 
 // Mirrors website/src/lib/api-photographer.ts PhotographerEventDetail
@@ -76,6 +82,12 @@ data class PhotographerEventDetailDto(
     val organizerName: String = "",
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
     val deletedAt: OffsetDateTime? = null,
+    // See PhotographerEventSummaryDto (AA-R3).
+    val eventType: String? = null,
+    val submittedByMe: Boolean = false,
+    val canEditRace: Boolean = false,
+    val checkReasons: List<String> = emptyList(),
+    val hidden: Boolean = false,
 )
 
 // POST /me/photographer/events — bound off the multipart form as a `@Valid
@@ -282,6 +294,10 @@ fun summaryDto(
         reviewStatus = event.reviewStatus.wire,
         reviewNote = event.reviewNote,
         pendingChange = event.pendingChange,
+        eventType = event.eventType?.name,
+        submittedByMe = event.submittedBy != null && event.submittedBy == viewerId,
+        checkReasons = event.checkReasons.orEmpty().map { it.name },
+        hidden = event.hiddenAt != null,
     )
 
 fun detailDto(
@@ -316,6 +332,10 @@ fun detailDto(
         organizerName = event.organizerName,
         pricePerPhoto = event.pricePerPhoto,
         deletedAt = event.deletedAt,
+        eventType = event.eventType?.name,
+        submittedByMe = event.submittedBy != null && event.submittedBy == viewerId,
+        checkReasons = event.checkReasons.orEmpty().map { it.name },
+        hidden = event.hiddenAt != null,
     )
 
 fun Photo.toLibraryDto(

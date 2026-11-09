@@ -174,6 +174,22 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         @Param("value") value: Boolean,
     ): Int
 
+    // AA-R3: a race's submitter and joiners get their coverage row before any upload; joining twice is a no-op.
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_photographer (event_id, photographer_id, metadata_public)
+        VALUES (:eventId, :photographerId, :metadataPublic)
+        ON CONFLICT (event_id, photographer_id) DO NOTHING
+        """,
+        nativeQuery = true,
+    )
+    fun insertCoverageIfAbsent(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("metadataPublic") metadataPublic: Boolean,
+    ): Int
+
     @Modifying
     @Query("UPDATE EventPhotographer ep SET ep.photoCount = GREATEST(0, ep.photoCount + :delta) " +
         "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId")

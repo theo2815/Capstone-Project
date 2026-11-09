@@ -454,6 +454,26 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `race create and join are photographer only and refused while self-serve races are off`() {
+        val create = "/api/v1/me/photographer/races"
+        val join = "/api/v1/me/photographer/races/${UUID.randomUUID()}/join"
+        val form = multipart(mapOf("title" to "Cebu City Marathon", "date" to "2026-12-06", "location" to "Cebu",
+            "regionCode" to "region-7", "provinceCode" to "cebu", "eventType" to "ROAD_RACE"))
+        assertEquals(401, form(create, null).statusCode())
+        assertEquals(401, post(join, "{}").statusCode())
+        val runner = register(Role.RUNNER)
+        assertEquals(403, form(create, runner).statusCode())
+        assertEquals(403, post(join, "{}", runner).statusCode())
+
+        // The test profile keeps SELF_SERVE_RACES_ENABLED off: a photographer reaches the service and is refused.
+        val photographer = register(Role.PHOTOGRAPHER)
+        for (response in listOf(form(create, photographer), post(join, "{}", photographer))) {
+            assertEquals(403, response.statusCode())
+            assertEquals("SELF_SERVE_RACES_DISABLED", errorCode(response))
+        }
+    }
+
+    @Test
     fun `the live selfie session route is photographer only, needs consent and answers 503 with AI off`() {
         val path = "/api/v1/me/photographer/seller-details/liveness-session"
         val consent = """{"biometricConsent":true}"""

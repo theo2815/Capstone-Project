@@ -280,7 +280,7 @@ class AdminEventService(
         key: IdempotencyKey? = null,
     ): AdminListEventDto {
         val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim())
-        validateLocation(normalized.regionCode, normalized.provinceCode)
+        EventInputs.validateLocation(regionsService, normalized.regionCode, normalized.provinceCode, required = false)
         if (key != null) return createCommand(adminId, normalized, cover, key)
         val date = parseDate(req.date)
         val price = validatedPrice(req.pricePerPhoto)
@@ -342,7 +342,7 @@ class AdminEventService(
         key: IdempotencyKey? = null,
     ): AdminListEventDto {
         val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim())
-        validateLocation(normalized.regionCode, normalized.provinceCode)
+        EventInputs.validateLocation(regionsService, normalized.regionCode, normalized.provinceCode, required = false)
         if (key != null) return updateCommand(adminId, eventId, normalized, cover, removeCover, key)
         // Preserve validation before the PUT, then reload in the write transaction
         // so edits made during the upload are not overwritten by a detached snapshot.
@@ -364,15 +364,6 @@ class AdminEventService(
         // Never delete the stored cover until its replacement/removal has committed.
         oldCoverKey?.let(eventCoverService::delete)
         return eventDtoMapper.toAdminListDto(result)
-    }
-
-    private fun validateLocation(region: String?, province: String?) {
-        if (region == null && province == null) return
-        if (region.isNullOrBlank() || province.isNullOrBlank() || region.length > 20 || province.length > 40 ||
-            !regionsService.isValidPair(region, province)) {
-            throw ValidationException(code = ErrorCodes.INVALID_REGION,
-                message = "Unknown regionCode/provinceCode pair", field = "regionCode")
-        }
     }
 
     private fun authorizeCommand(adminId: UUID) {

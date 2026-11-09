@@ -9,6 +9,9 @@ import com.quickpitik.dto.photographer.DirectUploadBeginRequest
 import com.quickpitik.dto.photographer.DirectUploadBeginResponse
 import com.quickpitik.dto.photographer.DirectUploadCommitRequest
 import com.quickpitik.dto.photographer.CreateMyEventRequest
+import com.quickpitik.dto.photographer.CreateRaceRequest
+import com.quickpitik.dto.photographer.JoinRaceRequest
+import com.quickpitik.dto.photographer.RaceCreateResultDto
 import com.quickpitik.dto.photographer.PhotoExistsRequest
 import com.quickpitik.dto.photographer.PhotoExistsResponse
 import com.quickpitik.dto.photographer.PermanentDeleteResponse
@@ -24,6 +27,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
+import com.quickpitik.service.events.RaceEventService
 import com.quickpitik.service.photographer.PhotoUploadService
 import com.quickpitik.service.photographer.PhotographerBundleService
 import com.quickpitik.service.photographer.PhotographerEventService
@@ -68,6 +72,7 @@ class MePhotographerController(
     private val rateLimiter: RateLimiter,
     private val photoMetadataSettingsService: PhotoMetadataSettingsService,
     private val photoMetadataService: PhotoMetadataService,
+    private val raceEventService: RaceEventService,
 ) {
     @GetMapping("/photos/{photoId}/metadata")
     fun getPhotoMetadata(
@@ -115,6 +120,27 @@ class MePhotographerController(
         )
         return photographerOwnedEventService.create(principal.userId, form, coverOf(cover))
     }
+
+    // ── Shared race events (AA-R3), behind SELF_SERVE_RACES_ENABLED ───────
+    @PostMapping(value = ["/races"], consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+    fun createRace(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @Valid @ModelAttribute("form") form: CreateRaceRequest,
+        @RequestPart("cover", required = false) cover: MultipartFile?,
+    ): RaceCreateResultDto {
+        rateLimiter.acquireOrThrow(
+            policy = Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD,
+            key = principal.userId.toString(),
+        )
+        return raceEventService.create(principal.userId, form, coverOf(cover))
+    }
+
+    @PostMapping("/races/{eventId}/join")
+    fun joinRace(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody(required = false) body: JoinRaceRequest?,
+    ): RaceCreateResultDto = raceEventService.join(principal.userId, eventId, body?.typedName)
 
     @PatchMapping(value = ["/events/{eventId}"], consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun updateEvent(
