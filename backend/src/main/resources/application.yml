@@ -273,6 +273,8 @@ app:
       # Below this share of indexed photos the proof sweep only flags. [NOT MEASURED]
       min-indexed-share: ${RACE_PROOF_MIN_INDEXED_SHARE:0.5}
       sweep-interval-ms: ${RACE_PROOF_SWEEP_INTERVAL_MS:3600000}
+      # Comma list; for these types a failed bib rule only flags. [NOT MEASURED: set from AA-0.5 cycling read rate]
+      bib-flag-only-types: ${RACE_PROOF_BIB_FLAG_ONLY_TYPES:CYCLING}
     same-bib:
       min-shared-bibs: ${RACE_SAME_BIB_MIN_SHARED:30} # [NOT MEASURED]
     reports:

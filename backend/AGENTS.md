@@ -187,6 +187,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RACE_PROOF_MIN_BIB_SHARE` | `0.30` | Share (0–1) of indexed photos with a read bib that proves a race. Not yet measured (AA-0.6). |
 | `RACE_PROOF_MIN_INDEXED_SHARE` | `0.5` | Below this share (0–1) of indexed photos the proof check only flags, never hides. Not yet measured. |
 | `RACE_PROOF_SWEEP_INTERVAL_MS` | `3600000` | Cadence of the race proof sweep. |
+| `RACE_PROOF_BIB_FLAG_ONLY_TYPES` | `CYCLING` | Comma list of race types whose failed bib rule only flags the race for an admin, never hides it (plates are rarely read). Not yet measured (AA-0.5). |
 | `RACE_SAME_BIB_MIN_SHARED` | `30` | Bibs two races must share before they are flagged as one race. Not yet measured. |
 | `RACE_REPORT_HIDE_THRESHOLD` | `3` | Distinct accounts whose reports hide an unproven race. Not yet measured. |
 | `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Consecutive failed logins before an account locks (V29). Raise it if a demo needs more headroom — there is no separate on/off switch. |

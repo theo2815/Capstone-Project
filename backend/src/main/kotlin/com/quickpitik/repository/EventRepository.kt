@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.UUID
 
 interface EventRepository : JpaRepository<Event, UUID> {
@@ -140,4 +141,30 @@ interface EventRepository : JpaRepository<Event, UUID> {
     @Modifying
     @Query("UPDATE Event e SET e.photoCount = GREATEST(0, e.photoCount + :delta) WHERE e.id = :id")
     fun adjustPhotoCount(@Param("id") id: UUID, @Param("delta") delta: Int): Int
+
+    // AA-R8 race proof sweep: typed races whose upload window closed and that were never checked.
+    @Query(
+        """
+        SELECT e FROM Event e
+        WHERE e.eventType IS NOT NULL AND e.deletedAt IS NULL
+          AND e.status <> com.quickpitik.entity.EventStatus.DRAFT
+          AND e.proofCheckedAt IS NULL AND e.date <= :closedOnOrBefore
+        ORDER BY e.date, e.id
+        """,
+    )
+    fun findRacesDueForProof(@Param("closedOnOrBefore") closedOnOrBefore: LocalDate, pageable: Pageable): List<Event>
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Event e SET e.proofCheckedAt = :now WHERE e.id = :id AND e.proofCheckedAt IS NULL")
+    fun claimProofCheck(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // An admin approval or relist (admin_approved_at) always wins over a hide.
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(
+        """
+        UPDATE Event e SET e.hiddenAt = :now
+        WHERE e.id = :id AND e.eventType IS NOT NULL AND e.hiddenAt IS NULL AND e.adminApprovedAt IS NULL
+        """,
+    )
+    fun hideUnprovenRace(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
 }

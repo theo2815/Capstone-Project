@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -861,6 +862,50 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("cutoff") cutoff: OffsetDateTime,
         pageable: Pageable,
     ): List<Photo>
+
+    // AA-R8 race proof: who and what a race's non-deleted photos show.
+    @Query(value = """
+        SELECT COUNT(DISTINCT p.photographer_id) AS "photographers", COUNT(*) AS "total",
+               COUNT(*) FILTER (WHERE p.indexing_status = 'INDEXED') AS "indexed",
+               COUNT(*) FILTER (WHERE p.indexing_status = 'INDEXED'
+                   AND EXISTS (SELECT 1 FROM photo_bibs b WHERE b.photo_id = p.id)) AS "withBib"
+        FROM photos p WHERE p.event_id = :eventId AND p.deleted_at IS NULL
+    """, nativeQuery = true)
+    fun raceProofCounts(@Param("eventId") eventId: UUID): RaceProofCounts
+
+    // AA-R8 same-bib check: other live events dated in [from, to] sharing at least :min bib numbers
+    // with this one, most shared first. Bib text only; no face data crosses events.
+    @Query(value = """
+        SELECT e.id AS "eventId", e.name AS "name", COUNT(DISTINCT mine.bib_number) AS "shared"
+        FROM photo_bibs mine
+        JOIN photos mp ON mp.id = mine.photo_id AND mp.event_id = :eventId AND mp.deleted_at IS NULL
+        JOIN photo_bibs theirs ON theirs.bib_number = mine.bib_number
+        JOIN photos tp ON tp.id = theirs.photo_id AND tp.event_id <> :eventId AND tp.deleted_at IS NULL
+        JOIN events e ON e.id = tp.event_id AND e.deleted_at IS NULL AND e.status <> 'DRAFT'
+            AND e.date BETWEEN :from AND :to
+        GROUP BY e.id, e.name
+        HAVING COUNT(DISTINCT mine.bib_number) >= :min
+        ORDER BY 3 DESC, e.id
+    """, nativeQuery = true)
+    fun eventsSharingBibs(
+        @Param("eventId") eventId: UUID,
+        @Param("from") from: LocalDate,
+        @Param("to") to: LocalDate,
+        @Param("min") min: Int,
+    ): List<SharedBibEvent>
+}
+
+interface RaceProofCounts {
+    val photographers: Long
+    val total: Long
+    val indexed: Long
+    val withBib: Long
+}
+
+interface SharedBibEvent {
+    val eventId: UUID
+    val name: String
+    val shared: Long
 }
 
 // Projection for the photographer "Download All" ZIP — see findActiveBundleRows.
