@@ -474,6 +474,21 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the race price route is photographer only and refused while self-serve races are off`() {
+        val path = "/api/v1/me/photographer/events/${UUID.randomUUID()}/price"
+        val put = { token: String? ->
+            send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString("""{"pricePhp":150}""")), token)
+        }
+        assertEquals(401, put(null).statusCode())
+        assertEquals(403, put(register(Role.RUNNER)).statusCode())
+
+        val refused = put(register(Role.PHOTOGRAPHER))
+        assertEquals(409, refused.statusCode())
+        assertEquals("RACE_PRICE_NOT_ALLOWED", errorCode(refused))
+    }
+
+    @Test
     fun `the live selfie session route is photographer only, needs consent and answers 503 with AI off`() {
         val path = "/api/v1/me/photographer/seller-details/liveness-session"
         val consent = """{"biometricConsent":true}"""

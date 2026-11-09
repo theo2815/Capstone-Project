@@ -309,6 +309,25 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("price") price: BigDecimal,
     ): Int
 
+    // AA-R11: one photographer's photos in a race, locked in id order before their coverage row
+    // (the price writers' one lock order: photos, then event_photographer, then events).
+    @Query(
+        value = "SELECT id FROM photos WHERE event_id = :eventId AND photographer_id = :photographerId ORDER BY id FOR NO KEY UPDATE",
+        nativeQuery = true,
+    )
+    fun lockIdsByEventIdAndPhotographerIdForUpdate(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+    ): List<UUID>
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.pricePhp = :price WHERE p.eventId = :eventId AND p.photographerId = :photographerId")
+    fun updatePriceByEventIdAndPhotographerId(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("price") price: BigDecimal,
+    ): Int
+
     // Bulk re-queue for AI indexing (admin reindex endpoint). Resets the
     // attempt budget so the reconcile sweep actually picks the rows up —
     // exhausted attempts are otherwise excluded forever.

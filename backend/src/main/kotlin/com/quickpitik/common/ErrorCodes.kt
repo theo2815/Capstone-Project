@@ -147,4 +147,8 @@ object ErrorCodes {
     const val SELF_SERVE_RACES_DISABLED = "SELF_SERVE_RACES_DISABLED"
     const val EVENT_NOT_JOINABLE = "EVENT_NOT_JOINABLE"
     const val RACE_DUPLICATE = "RACE_DUPLICATE"
+
+    // AA-R11 race price: not a priceable race (or the switch is off); a second change inside the cooldown.
+    const val RACE_PRICE_NOT_ALLOWED = "RACE_PRICE_NOT_ALLOWED"
+    const val RACE_PRICE_COOLDOWN = "RACE_PRICE_COOLDOWN"
 }

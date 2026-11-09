@@ -12,6 +12,8 @@ import com.quickpitik.dto.photographer.CreateMyEventRequest
 import com.quickpitik.dto.photographer.CreateRaceRequest
 import com.quickpitik.dto.photographer.JoinRaceRequest
 import com.quickpitik.dto.photographer.RaceCreateResultDto
+import com.quickpitik.dto.photographer.RacePriceDto
+import com.quickpitik.dto.photographer.SetRacePriceRequest
 import com.quickpitik.dto.photographer.PhotoExistsRequest
 import com.quickpitik.dto.photographer.PhotoExistsResponse
 import com.quickpitik.dto.photographer.PermanentDeleteResponse
@@ -28,6 +30,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
 import com.quickpitik.service.events.RaceEventService
+import com.quickpitik.service.events.RacePriceService
 import com.quickpitik.service.photographer.PhotoUploadService
 import com.quickpitik.service.photographer.PhotographerBundleService
 import com.quickpitik.service.photographer.PhotographerEventService
@@ -73,6 +76,7 @@ class MePhotographerController(
     private val photoMetadataSettingsService: PhotoMetadataSettingsService,
     private val photoMetadataService: PhotoMetadataService,
     private val raceEventService: RaceEventService,
+    private val racePriceService: RacePriceService,
 ) {
     @GetMapping("/photos/{photoId}/metadata")
     fun getPhotoMetadata(
@@ -141,6 +145,14 @@ class MePhotographerController(
         @PathVariable eventId: UUID,
         @Valid @RequestBody(required = false) body: JoinRaceRequest?,
     ): RaceCreateResultDto = raceEventService.join(principal.userId, eventId, body?.typedName)
+
+    // AA-R11: the photographer's own price in a race they cover. No rate bucket: the cooldown is the limit.
+    @PutMapping("/events/{eventId}/price")
+    fun setRacePrice(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody body: SetRacePriceRequest,
+    ): RacePriceDto = racePriceService.setMyPrice(principal.userId, eventId, body.pricePhp)
 
     @PatchMapping(value = ["/events/{eventId}"], consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun updateEvent(

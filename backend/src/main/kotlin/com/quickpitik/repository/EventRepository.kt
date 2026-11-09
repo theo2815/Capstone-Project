@@ -202,6 +202,10 @@ interface EventRepository : JpaRepository<Event, UUID> {
     // AA-R4's daily create cap reads this.
     @Query("SELECT COUNT(e) FROM Event e WHERE e.submittedBy = :submittedBy AND e.createdAt >= :since")
     fun countRacesSubmittedSince(@Param("submittedBy") submittedBy: UUID, @Param("since") since: OffsetDateTime): Long
+
+    // AA-R11: the race price read fresh after the price locks, never from an entity loaded earlier.
+    @Query("SELECT e.pricePerPhoto FROM Event e WHERE e.id = :id")
+    fun findPricePerPhoto(@Param("id") id: UUID): java.math.BigDecimal?
 }
 
 // Not 78202: AdminTransitionConcurrencyIntegrationTest uses that key.
