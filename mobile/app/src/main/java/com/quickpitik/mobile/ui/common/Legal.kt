@@ -53,6 +53,8 @@ import com.quickpitik.mobile.ui.theme.Typography
 const val WEBSITE_ORIGIN = "https://quickpitik.com"
 const val PRIVACY_URL = "$WEBSITE_ORIGIN/privacy"
 const val TERMS_URL = "$WEBSITE_ORIGIN/terms"
+const val PHOTO_DELETION_URL = "$WEBSITE_ORIGIN/account/photo-deletion/new"
+fun photoDeletionStatusUrl(id: String) = "$WEBSITE_ORIGIN/account/photo-deletion/$id"
 const val SUPPORT_EMAIL = "quickpitiksupport@gmail.com"
 
 const val DELETION_NOTICE =

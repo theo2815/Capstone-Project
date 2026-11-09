@@ -114,6 +114,8 @@ data class RunnerMessageDto(
     val sourceDecisionId: String?,
     val createdAt: String,
     val readAt: String?,
+    // Set on photo_removal_update messages: the runner's own deletion request.
+    val photoRemovalRequestId: String? = null,
 )
 
 // Push frame on /ws/me/runner/notifications. The backend builds `message` from

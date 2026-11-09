@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.quickpitik.mobile.ui.common.AvatarCropDialog
 import com.quickpitik.mobile.ui.common.DELETION_NOTICE
+import com.quickpitik.mobile.ui.common.PHOTO_DELETION_URL
 import com.quickpitik.mobile.ui.common.PRIVACY_URL
 import com.quickpitik.mobile.ui.common.PolicyLinkRow
 import com.quickpitik.mobile.ui.common.SupportEmailRow
@@ -735,6 +736,21 @@ fun AccountSettingsScreen(
                                     Text("Check which photographer shot a race photo", style = Typography.bodySmall, color = SlateSoft)
                                 }
                                 ArrowLabel("Check →", color = Slate, style = Typography.labelMedium)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { openInCustomTab(context, PHOTO_DELETION_URL) }
+                                    .padding(vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Request photo deletion", style = Typography.bodyMedium, color = Ink, fontWeight = FontWeight.Medium)
+                                    Text("Opens the website. Sign in there.", style = Typography.bodySmall, color = SlateSoft)
+                                }
+                                ArrowLabel("Open →", color = Slate, style = Typography.labelMedium)
                             }
 
                             Row(
