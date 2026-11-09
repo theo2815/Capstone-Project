@@ -1,5 +1,6 @@
 package com.quickpitik.config
 
+import com.quickpitik.entity.SellerIdType
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 // Auto-approval Plan 1: photographer identity (AWS Face Liveness + CompareFaces).
@@ -18,8 +19,18 @@ data class IdentityProperties(
     // Role the backend assumes for the browser's keys (AA-0.2). Blank = 503 LIVENESS_UNAVAILABLE.
     val livenessRoleArn: String = "",
     val livenessCredentialSeconds: Int = 900,
+    // Keys the stored ID-number hash (AA-I4). Never rotate it casually: older rows stop matching (AA-I5).
+    val idNumberHmacSecret: String = "dev-only-id-number-hmac-secret",
+    // A regex over the normalised number, per ID type. Blank = no format check. [NOT MEASURED: set from AA-0.5]
+    val idNumberFormats: Map<SellerIdType, String> = emptyMap(),
 ) {
+    /** Compiled once, so an invalid regex fails boot. */
+    val idNumberPatterns: Map<SellerIdType, Regex> = idNumberFormats.filterValues { it.isNotBlank() }.mapValues { (type, regex) ->
+        runCatching { Regex(regex) }.getOrElse { throw IllegalArgumentException("app.identity.id-number-formats.$type is not a valid regex") }
+    }
+
     init {
+        require(idNumberHmacSecret.isNotBlank()) { "app.identity.id-number-hmac-secret must not be blank" }
         require(livenessMinConfidence in 0.0..100.0) { "app.identity.liveness-min-confidence must be within 0..100" }
         require(faceMinSimilarity in 0.0..100.0) { "app.identity.face-min-similarity must be within 0..100" }
         require(livenessAttemptsPerDay >= 1) { "app.identity.liveness-attempts-per-day must be at least 1" }

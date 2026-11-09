@@ -70,6 +70,7 @@ import kotlin.io.path.readText
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -115,6 +116,7 @@ class SellerDetailsServiceTest {
         Mockito.`when`(sessions.claim(userId, SESSION, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null)).thenReturn(true)
         Mockito.`when`(identityClient.livenessResult(SESSION)).thenReturn(LivenessResult(LivenessSessionStatus.SUCCEEDED, 99.5f, reference))
         Mockito.`when`(identityClient.compareFaces(anyArg(), anyArg())).thenReturn(FaceCompareResult(1, 99.8f))
+        Mockito.`when`(identityClient.detectLines(anyArg())).thenReturn(listOf("REPUBLIC OF THE PHILIPPINES", ID_NUMBER))
     }
 
     private lateinit var sessions: LivenessSessionService
@@ -152,8 +154,10 @@ class SellerDetailsServiceTest {
         selfie: MockMultipartFile? = part("selfie"),
         birForm: MockMultipartFile? = null,
         livenessSessionId: String? = null,
+        idNumber: String? = ID_NUMBER,
     ) = SellerDetailsForm(
         livenessSessionId = livenessSessionId,
+        idNumber = idNumber,
         legalName = "  Juan Dela Cruz  ",
         idType = idType,
         address = "12 Osmeña Blvd, Cebu City",
@@ -717,7 +721,7 @@ class SellerDetailsServiceTest {
         val kept = listOf(old.idFrontKey, old.idBackKey!!, old.selfieKey, old.birFormKey!!)
         Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
 
-        service().liveCheck(userId, LiveCheckRequest(SESSION))
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
 
         val row = saved()
         assertEquals(kept, listOf(row.idFrontKey, row.idBackKey, row.selfieKey, row.birFormKey))
@@ -733,7 +737,7 @@ class SellerDetailsServiceTest {
         Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
         Mockito.`when`(identityClient.livenessResult(SESSION)).thenThrow(SdkClientException.create("aws down"))
 
-        service().liveCheck(userId, LiveCheckRequest(SESSION))
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
 
         val row = saved()
         assertEquals(listOf(SellerReasonCode.AI_ERROR), row.reasonCodes)
@@ -784,7 +788,7 @@ class SellerDetailsServiceTest {
         Mockito.`when`(storage.getBytes(old.idFrontKey)).thenReturn(storedFront)
         Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
 
-        val dto = service().liveCheck(userId, LiveCheckRequest(SESSION))
+        val dto = service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
 
         Mockito.verify(identityClient).compareFaces(reference, storedFront)
         assertEquals(1, storedKeys().size, "only the new reference image is stored")
@@ -800,7 +804,7 @@ class SellerDetailsServiceTest {
         for (status in listOf(null, SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.APPROVED, SellerDetailsStatus.REJECTED)) {
             Mockito.`when`(repository.findById(userId)).thenReturn(Optional.ofNullable(status?.let(::existing)))
 
-            val error = assertFailsWith<ApiException>(status.toString()) { service().liveCheck(userId, LiveCheckRequest(SESSION)) }
+            val error = assertFailsWith<ApiException>(status.toString()) { service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER)) }
 
             assertEquals(HttpStatus.CONFLICT, error.status)
             assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
@@ -821,7 +825,7 @@ class SellerDetailsServiceTest {
             val first = reviewRecord()
             Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(first), Optional.of(later))
 
-            val error = assertFailsWith<ApiException> { service().liveCheck(userId, LiveCheckRequest(SESSION)) }
+            val error = assertFailsWith<ApiException> { service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER)) }
 
             assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
             Mockito.verify(repository, Mockito.never()).save(anyArg<SellerDetails>())
@@ -848,7 +852,7 @@ class SellerDetailsServiceTest {
         val old = reviewRecord(SellerReasonCode.DECLINED, SellerReasonCode.PREVIOUSLY_REJECTED)
         Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
 
-        service().liveCheck(userId, LiveCheckRequest(SESSION))
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
 
         val row = saved()
         assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
@@ -881,10 +885,60 @@ class SellerDetailsServiceTest {
         val validator = Validation.buildDefaultValidatorFactory().validator
         assertFalse(validator.validate(LiveCheckRequest(null)).isEmpty())
         assertFalse(validator.validate(LiveCheckRequest("  ")).isEmpty())
-        assertTrue(validator.validate(LiveCheckRequest(SESSION)).isEmpty())
+        assertTrue(validator.validate(LiveCheckRequest(SESSION, ID_NUMBER)).isEmpty())
+    }
+
+    // ─── AA-I4: the typed ID number, kept only as a keyed hash ───────────
+
+    @Test
+    fun `a live check needs an id number`() {
+        val validator = Validation.buildDefaultValidatorFactory().validator
+        assertFalse(validator.validate(LiveCheckRequest(SESSION, null)).isEmpty())
+        assertFalse(validator.validate(LiveCheckRequest(SESSION, " ")).isEmpty())
+    }
+
+    @Test
+    fun `submit stores only the keyed hash of the typed number`() {
+        val dto = service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
+        assertTrue(Regex("[0-9a-f]{64}").matches(row.idNumberHmac.orEmpty()), row.idNumberHmac)
+        val raw = "N0112345678"
+        assertFalse(raw in row.toString() || raw in dto.toString() || ID_NUMBER in dto.toString())
+    }
+
+    @Test
+    fun `a declined submit still stores the hash`() {
+        service().submit(userId, form())
+
+        assertTrue(Regex("[0-9a-f]{64}").matches(saved().idNumberHmac.orEmpty()))
+    }
+
+    @Test
+    fun `a bad id number is refused before the session is used and nothing is stored`() {
+        val error = assertFailsWith<ValidationException> { service().submit(userId, form(livenessSessionId = SESSION, idNumber = "N0")) }
+
+        assertEquals("idNumber", error.field)
+        Mockito.verifyNoInteractions(sessions, identityClient)
+        assertNothingStored()
+    }
+
+    @Test
+    fun `a live check replaces the hash with the new typed number`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED).apply { idNumberHmac = "0".repeat(64) }
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+
+        val row = saved()
+        assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
+        assertTrue(Regex("[0-9a-f]{64}").matches(row.idNumberHmac.orEmpty()))
+        assertNotEquals("0".repeat(64), row.idNumberHmac)
     }
 
     private companion object {
         const val SESSION = "s-1"
+        const val ID_NUMBER = "N01-12-345678"
     }
 }

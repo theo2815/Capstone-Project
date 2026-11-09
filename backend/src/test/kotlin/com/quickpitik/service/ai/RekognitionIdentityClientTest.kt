@@ -17,6 +17,10 @@ import software.amazon.awssdk.services.rekognition.model.CompareFacesResponse
 import software.amazon.awssdk.services.rekognition.model.ComparedFace
 import software.amazon.awssdk.services.rekognition.model.CreateFaceLivenessSessionRequest
 import software.amazon.awssdk.services.rekognition.model.CreateFaceLivenessSessionResponse
+import software.amazon.awssdk.services.rekognition.model.DetectTextRequest
+import software.amazon.awssdk.services.rekognition.model.DetectTextResponse
+import software.amazon.awssdk.services.rekognition.model.TextDetection
+import software.amazon.awssdk.services.rekognition.model.TextTypes
 import software.amazon.awssdk.services.rekognition.model.GetFaceLivenessSessionResultsRequest
 import software.amazon.awssdk.services.rekognition.model.GetFaceLivenessSessionResultsResponse
 import software.amazon.awssdk.services.rekognition.model.LivenessSessionStatus
@@ -64,6 +68,21 @@ class RekognitionIdentityClientTest {
 
         assertEquals(0, result.facesOnTarget)
         assertNull(result.bestSimilarity)
+    }
+
+    @Test
+    fun `detect lines returns only LINE text from the primary client`() {
+        val captor = ArgumentCaptor.forClass(DetectTextRequest::class.java)
+        `when`(primary.detectText(captor.capture())).thenReturn(
+            DetectTextResponse.builder().textDetections(
+                TextDetection.builder().type(TextTypes.LINE).detectedText("N01-12-345678").build(),
+                TextDetection.builder().type(TextTypes.WORD).detectedText("N01-12").build(),
+            ).build(),
+        )
+
+        assertEquals(listOf("N01-12-345678"), client.detectLines(byteArrayOf(3)))
+        assertContentEquals(byteArrayOf(3), captor.value.image().bytes().asByteArray())
+        Mockito.verifyNoInteractions(rekognition)
     }
 
     @Test
