@@ -190,6 +190,13 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RACE_PROOF_BIB_FLAG_ONLY_TYPES` | `CYCLING` | Comma list of race types whose failed bib rule only flags the race for an admin, never hides it (plates are rarely read). Not yet measured (AA-0.5). |
 | `RACE_SAME_BIB_MIN_SHARED` | `30` | Bibs two races must share before they are flagged as one race. Not yet measured. |
 | `RACE_REPORT_HIDE_THRESHOLD` | `3` | Distinct accounts whose reports hide an unproven race. Not yet measured. |
+| `IDENTITY_GATE_ENABLED` | `false` | Off = today's upload rule. On = new uploads need seller details AUTO_APPROVED or APPROVED (auto-approval AA-I6). |
+| `LIVENESS_REGION` | `ap-southeast-5` | Region for AWS Face Liveness (session create, result read, the browser's STS keys). Needs IAM `rekognition:CreateFaceLivenessSession` + `GetFaceLivenessSessionResults` there. |
+| `LIVENESS_MIN_CONFIDENCE` | `95` | 0–100 liveness score an automatic identity pass needs. Strict until measured (AA-0.4). |
+| `FACE_MIN_SIMILARITY` | `99` | 0–100 CompareFaces similarity (live selfie vs ID front) an automatic pass needs. Strict until measured (AA-0.4). Not the runner face-search threshold. |
+| `LIVENESS_ATTEMPTS_PER_DAY` | `3` | Live-selfie sessions per account per Manila day; the 4th answers `429 LIVENESS_ATTEMPTS_EXHAUSTED` with `Retry-After` to the next Manila midnight. |
+| `LIVENESS_ROLE_ARN` | *(blank)* | ARN of IAM role `quickpitik-liveness-browser` (AA-0.2), assumed once per session for the browser's keys. Blank, `AI_API_ENABLED=false` or `AI_PROVIDER` not `rekognition` → `503 LIVENESS_UNAVAILABLE`. Not a secret, but keep the account id out of the vault. |
+| `LIVENESS_CREDENTIAL_SECONDS` | `900` | Life of the browser's keys (900–3600 s; STS minimum 900). |
 | `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Consecutive failed logins before an account locks (V29). Raise it if a demo needs more headroom — there is no separate on/off switch. |
 | `AUTH_LOCKOUT_DURATION` | `PT15M` | How long a lock holds. Auto-clears; a successful login also resets it. Unlike the rate-limit buckets this is **always on**, independent of `RATE_LIMIT_ENABLED`. |
 | `AUTH_LOCKOUT_WINDOW` | `PT15M` | NFR-S-14 (V34): failures only count toward a lock when within this window of the previous one; older streaks restart at 1. |
