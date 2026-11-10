@@ -18,7 +18,6 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.auth.RefreshTokenService
-import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.runner.RunnerMessagesService
@@ -50,7 +49,6 @@ class AdminUserServiceSuspendTest {
     private lateinit var storageService: StorageService
     private lateinit var userDtoMapper: UserDtoMapper
     private lateinit var runnerMessagesService: RunnerMessagesService
-    private lateinit var photographerSettingsService: PhotographerSettingsService
     private lateinit var refreshTokenService: RefreshTokenService
 
     private val adminId = UUID.randomUUID()
@@ -71,7 +69,6 @@ class AdminUserServiceSuspendTest {
         storageService = Mockito.mock(StorageService::class.java)
         userDtoMapper = Mockito.mock(UserDtoMapper::class.java)
         runnerMessagesService = Mockito.mock(RunnerMessagesService::class.java)
-        photographerSettingsService = Mockito.mock(PhotographerSettingsService::class.java)
         refreshTokenService = Mockito.mock(RefreshTokenService::class.java)
     }
 
@@ -87,7 +84,6 @@ class AdminUserServiceSuspendTest {
         StorageProperties(),
         userDtoMapper,
         runnerMessagesService,
-        photographerSettingsService,
         refreshTokenService,
         Mockito.mock(AdminActionCommandService::class.java),
         Mockito.mock(com.quickpitik.repository.PhotographerMessageRepository::class.java),

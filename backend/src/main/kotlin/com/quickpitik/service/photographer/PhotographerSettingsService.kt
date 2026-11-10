@@ -10,6 +10,7 @@ import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.dto.photographer.RegionPatchRequest
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
+import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.VerificationStatus
@@ -19,11 +20,13 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.ReservedHandleRepository
+import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
+import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.admin.SystemFlagService
 import com.quickpitik.service.moderation.ImageModerationService
 import com.quickpitik.service.moderation.ProfileImageModeration
@@ -60,6 +63,8 @@ class PhotographerSettingsService(
     private val imageModerationService: ImageModerationService,
     private val systemFlagService: SystemFlagService,
     private val transactionTemplate: TransactionTemplate,
+    private val sellerDetailsRepository: SellerDetailsRepository,
+    private val adminDecisionLogService: AdminDecisionLogService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -456,11 +461,16 @@ class PhotographerSettingsService(
             )
         }
         if (settings.verificationStatus == VerificationStatus.PENDING) {
+            approveIfReady(userId) // a repeat submit while PENDING re-checks (P1-N2)
             return buildVerificationResponse(userId, settings.verificationStatus)
         }
-        // PENDING is the post-submit state; admins move it to APPROVED/REJECTED
-        // in PR 10. APPROVED/REJECTED rows can be re-submitted (resets to
-        // PENDING) so admins see fresh evidence without an out-of-band reset.
+        // Approved with identity passed: a new round would only approve again, so nothing changes.
+        if (settings.verificationStatus == VerificationStatus.APPROVED && identityPassed(userId)) {
+            return buildVerificationResponse(userId, settings.verificationStatus)
+        }
+        // PENDING is the post-submit state; approveIfReady moves it to APPROVED once
+        // identity has passed (AA-I7). APPROVED/REJECTED rows can be re-submitted
+        // (resets to PENDING) so admins see fresh evidence without an out-of-band reset.
         settings.verificationStatus = VerificationStatus.PENDING
         settings.verificationRevision++
         photographerSettingsRepository.save(settings)
@@ -477,8 +487,33 @@ class PhotographerSettingsService(
                 ),
             ),
         )
+        approveIfReady(userId)
         return buildVerificationResponse(userId, settings.verificationStatus)
     }
+
+    /**
+     * AA-I7: a PENDING profile with all 8 items becomes APPROVED once identity has passed (AUTO_APPROVED
+     * or admin-APPROVED seller details), whatever IDENTITY_GATE_ENABLED says (P1-N4). Joins the caller's
+     * transaction: the verification submit, a seller details submit or live check, an admin identity approval.
+     */
+    fun approveIfReady(userId: UUID): Boolean {
+        val settings = lockVerificationSettings(userId)
+        if (settings.verificationStatus != VerificationStatus.PENDING) return false
+        if (!collectMissing(userId, settings).isComplete) return false
+        if (!identityPassed(userId)) return false
+        settings.verificationStatus = VerificationStatus.APPROVED
+        settings.verificationRevision++
+        photographerSettingsRepository.save(settings)
+        adminDecisionLogService.pushMessage(
+            photographerId = userId,
+            kind = PhotographerMessageKind.VERIFICATION_APPROVED,
+            body = "Your photographer profile is approved. You can now upload to events.",
+        )
+        return true
+    }
+
+    private fun identityPassed(userId: UUID): Boolean =
+        sellerDetailsRepository.findById(userId).orElse(null)?.status?.passesIdentity() == true
 
     // Hydrates verification responses with suspended fields so the FE can
     // render a suspended-state banner separately from verification status.
