@@ -290,8 +290,44 @@ class RaceEventService(
         return event
     }
 
-    /** Read-only, no lock (AA-R7's admin hint). */
-    fun findDuplicates(input: RaceInput, excludeId: UUID? = null): DuplicateResult = scan(input, excludeId).result
+    /** AA-R7: the admin create warning. Read-only, no lock; strong matches first, then medium ones. */
+    fun findDuplicates(input: RaceInput, excludeId: UUID? = null): List<RaceCandidateDto> {
+        val found = scan(input, excludeId)
+        return found.result.strong.map { candidateDto(found.events.getValue(it.candidate.id), "strong") } +
+            found.result.medium.map { candidateDto(found.events.getValue(it.candidate.id), "medium") }
+    }
+
+    /**
+     * AA-R7 (Q11): for each PENDING Other photographer event, the top strong or medium shared race
+     * within the date tolerance. One candidate read per distinct date; other rows are skipped.
+     */
+    fun lookalikes(rows: List<Event>): Map<UUID, RaceCandidateDto> = rows
+        .filter { it.eventType == null && it.createdBy != null && it.reviewStatus == EventReviewStatus.PENDING }
+        .groupBy { it.date }
+        .flatMap { (date, sameDay) ->
+            val near = candidatesNear(date)
+            val aliases = aliasesOf(near)
+            sameDay.mapNotNull { row -> top(scanAmong(inputOf(row), near, aliases))?.let { row.id to it } }
+        }.toMap()
+
+    /** AA-R7: each row's stored possible duplicate, scored against it now (aliases included). */
+    fun duplicatesOf(rows: List<Event>): Map<UUID, RaceCandidateDto> {
+        val pairs = rows.filter { it.possibleDuplicateOf != null }
+        if (pairs.isEmpty()) return emptyMap()
+        val targets = eventRepository.findAllById(pairs.mapNotNull { it.possibleDuplicateOf }.toSet()).associateBy { it.id }
+        val aliases = aliasesOf(targets.values.toList())
+        return pairs.mapNotNull { row ->
+            val target = targets[row.possibleDuplicateOf] ?: return@mapNotNull null
+            // The admin decides either way; a pair that no longer scores strong reads as medium.
+            row.id to (top(scanAmong(inputOf(row), listOf(target), aliases)) ?: candidateDto(target, "medium"))
+        }.toMap()
+    }
+
+    private fun top(scan: Scan): RaceCandidateDto? =
+        scan.result.strong.firstOrNull()?.let { candidateDto(scan.events.getValue(it.candidate.id), "strong") }
+            ?: scan.result.medium.firstOrNull()?.let { candidateDto(scan.events.getValue(it.candidate.id), "medium") }
+
+    private fun inputOf(e: Event) = RaceInput(e.name, e.date, e.provinceCode, e.organizerName)
 
     /** Takes the race-creation lock, then re-checks; must run in the caller's transaction (AA-R5's edit). */
     @Transactional(propagation = Propagation.MANDATORY)
@@ -303,11 +339,20 @@ class RaceEventService(
     private class Scan(val result: DuplicateResult, val events: Map<UUID, Event>)
 
     private fun scan(input: RaceInput, excludeId: UUID?): Scan {
+        val events = candidatesNear(input.date).filter { it.id != excludeId }
+        return scanAmong(input, events, aliasesOf(events))
+    }
+
+    private fun candidatesNear(date: LocalDate): List<Event> {
         val tolerance = raceProperties.duplicate.dateToleranceDays
-        val events = eventRepository.findRaceCandidates(input.date.minusDays(tolerance), input.date.plusDays(tolerance))
-            .filter { it.id != excludeId }
+        return eventRepository.findRaceCandidates(date.minusDays(tolerance), date.plusDays(tolerance))
+    }
+
+    private fun aliasesOf(events: List<Event>): Map<UUID, List<String>> = if (events.isEmpty()) emptyMap()
+        else eventRepository.findAliasKeys(events.map { it.id }).groupBy({ it.getEventId() }, { it.getNameKey() })
+
+    private fun scanAmong(input: RaceInput, events: List<Event>, aliases: Map<UUID, List<String>>): Scan {
         if (events.isEmpty()) return Scan(DuplicateResult(emptyList(), emptyList()), emptyMap())
-        val aliases = eventRepository.findAliasKeys(events.map { it.id }).groupBy({ it.getEventId() }, { it.getNameKey() })
         val result = matcher.classify(input, events.map {
             RaceCandidate(it.id, it.name, it.date, it.provinceCode, it.organizerName, aliases[it.id].orEmpty().toSet())
         })
@@ -444,10 +489,6 @@ class RaceEventService(
         e.regionCode, e.provinceCode, e.organizerName, e.eventType?.name, eventDtoMapper.resolveBannerUrl(e), e.reviewStatus.wire,
         strength)
 
-    private fun raceType(code: String): RaceType = RaceType.entries.firstOrNull { it.name == code.trim() }
-        ?: throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "Choose one of the listed race types.",
-            field = "eventType")
-
     private fun validate(req: CreateRaceRequest): Draft {
         val type = raceType(req.eventType)
         EventInputs.validateLocation(regionsService, req.regionCode.trim(), req.provinceCode.trim(), required = true)
@@ -467,6 +508,11 @@ class RaceEventService(
 
     companion object {
         const val RACE_UNIQUE_INDEX = "uq_events_race_date_name"
+
+        /** One of the six shared types; the admin create (AA-R7) parses its field the same way. */
+        fun raceType(code: String): RaceType = RaceType.entries.firstOrNull { it.name == code.trim() }
+            ?: throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "Choose one of the listed race types.",
+                field = "eventType")
 
         /** AA-R10's partial unique index on (date, name_key), the lock's last line of defence: 409, never a 500. */
         fun rethrowRaceDuplicate(ex: DataIntegrityViolationException, message: String): Nothing {

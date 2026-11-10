@@ -13,7 +13,9 @@ import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
+import com.quickpitik.dto.photographer.RaceCandidateDto
 import com.quickpitik.dto.photos.PhotographerRef
+import com.quickpitik.service.events.RaceInput
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
@@ -85,9 +87,14 @@ class AdminEventService(
             val rows = eventRepository.findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(
                 listOf(EventReviewStatus.PENDING, EventReviewStatus.CHANGE_PENDING),
             )
-            val owners = resolveOwners(rows)
-            val items = rows.drop(params.offset).take(params.limit)
-                .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy]) }
+            val page = rows.drop(params.offset).take(params.limit)
+            val owners = resolveOwners(page)
+            // AA-R7: why a race waits, the race it may repeat, and the race an Other event looks like.
+            val duplicates = raceEventService.duplicatesOf(page)
+            val lookalikes = raceEventService.lookalikes(page)
+            val items = page.map {
+                eventDtoMapper.toAdminListDto(it, owners[it.createdBy], owners[it.submittedBy], duplicates[it.id], lookalikes[it.id])
+            }
             return PaginatedResponse.of(items, rows.size.toLong(), params)
         }
         val pageable = OffsetLimitPageable(params)
@@ -99,12 +106,23 @@ class AdminEventService(
         )
         val owners = resolveOwners(page.content)
         val items = page.content
-            .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy]) }
+            .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy], owners[it.submittedBy]) }
             .let { rows ->
                 if (stateFilter.isNullOrBlank()) rows
                 else rows.filter { it.state == stateFilter.trim().lowercase() }
             }
         return PaginatedResponse.of(items, page.totalElements, params)
+    }
+
+    // AA-R7: the admin create form's duplicate warning. Read-only, no lock; a stale answer only
+    // means the admin sees one candidate too few or too many.
+    @Transactional(readOnly = true)
+    fun duplicateCandidates(name: String, date: String, provinceCode: String?, organizerName: String?,
+        excludeId: UUID?): List<RaceCandidateDto> {
+        val title = name.trim().takeIf { it.isNotEmpty() }
+            ?: throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "name is required", field = "name")
+        val input = RaceInput(title, parseDate(date), provinceCode?.trim()?.ifEmpty { null }, organizerName?.trim()?.ifEmpty { null })
+        return raceEventService.findDuplicates(input, excludeId)
     }
 
     // ── Photographer-owned event review (V46) ────────────────────────────
@@ -382,9 +400,9 @@ class AdminEventService(
     }
 
     // Owner attribution for the admin list, two IN queries per page — same
-    // batch shape as PhotoService.resolvePhotographers.
+    // batch shape as PhotoService.resolvePhotographers. AA-R7: race submitters too.
     private fun resolveOwners(events: List<Event>): Map<UUID?, PhotographerRef> {
-        val ids = events.mapNotNullTo(mutableSetOf()) { it.createdBy }
+        val ids = events.flatMapTo(mutableSetOf()) { listOfNotNull(it.createdBy, it.submittedBy) }
         if (ids.isEmpty()) return emptyMap()
         val handles = photographerSettingsRepository.findAllById(ids).associate { it.userId to it.handle }
         val names = userRepository.findAllById(ids).associate { it.id to it.name }
@@ -398,7 +416,8 @@ class AdminEventService(
         cover: CoverUpload? = null,
         key: IdempotencyKey? = null,
     ): AdminListEventDto {
-        val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim())
+        val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim(),
+            eventType = req.eventType?.trim()?.takeIf { it.isNotEmpty() }?.let { RaceEventService.raceType(it).name })
         EventInputs.validateLocation(regionsService, normalized.regionCode, normalized.provinceCode, required = false)
         if (key != null) return createCommand(adminId, normalized, cover, key)
         val date = parseDate(req.date)
@@ -412,6 +431,10 @@ class AdminEventService(
 
     private fun createEvent(adminId: UUID, req: CreateAdminEventRequest, eventId: UUID, coverKey: String?,
         date: LocalDate, price: BigDecimal): Pair<Event, UUID> {
+        // AA-R7: a typed admin race is inserted under the photographers' race-creation lock (both
+        // create paths call this inside their write transaction) and is proven at birth.
+        val type = req.eventType?.let(RaceEventService::raceType)
+        if (type != null) eventRepository.lockRaceCreation()
         val event = eventRepository.save(
             Event(
                 id = eventId,
@@ -430,7 +453,13 @@ class AdminEventService(
                 pricePerPhoto = price,
                 createdAt = OffsetDateTime.now(),
                 updatedAt = OffsetDateTime.now(),
-            ),
+            ).apply {
+                if (type != null) {
+                    eventType = type
+                    nameKey = matcher.nameKey(name)
+                    adminApprovedAt = createdAt
+                }
+            },
         )
         val decision = adminDecisionLogService.logEventDecision(
             adminId = adminId,
@@ -505,7 +534,7 @@ class AdminEventService(
         val fields = listOf(req.title.trim(), req.date.trim(), req.location.trim(),
             req.pricePerPhoto.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
             req.organizerName?.trim().orEmpty(), req.description?.trim().orEmpty(), cover?.let { eventCoverService.digest(it.bytes) }.orEmpty()) +
-            listOfNotNull(req.regionCode, req.provinceCode)
+            listOfNotNull(req.regionCode, req.provinceCode) + listOfNotNull(req.eventType)
         var processed: ByteArray? = null
         val result = commands.executeEvent(key, adminId, AdminActionOperation.EVENT_CREATE,
             null, commands.inputHash(fields), { authorizeCommand(adminId) }, {

@@ -622,6 +622,17 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the admin duplicate-candidates route is admin only`() {
+        // AA-R7: the admin create form warns about races that look the same before creating one.
+        val path = "/api/v1/admin/events/duplicate-candidates?name=Cebu%20City%20Marathon&date=2026-12-06"
+        assertEquals(401, get(path).statusCode())
+        assertEquals(403, get(path, register(Role.RUNNER)).statusCode())
+        assertEquals(403, get(path, register(Role.PHOTOGRAPHER)).statusCode())
+        val ok = get(path, adminToken())
+        assertEquals(200, ok.statusCode(), ok.body())
+    }
+
+    @Test
     fun `admin seller details routes are admin only`() {
         val root = "/api/v1/admin/seller-details"
         val (_, sellerId) = registerPhotographerWithId()

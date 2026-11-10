@@ -372,4 +372,63 @@ class RaceEventServiceTest {
         assertTrue(result.event!!.submittedByMe)
         assertEquals("ROAD_RACE", result.event!!.eventType)
     }
+
+    // ─── AA-R7: admin duplicate warning and queue hints ───
+
+    private fun otherSubmission(name: String, date: LocalDate = raceDate) = Event(
+        slug = "other-${UUID.randomUUID()}",
+        name = name,
+        date = date,
+        location = "Cebu City",
+        status = EventStatus.DRAFT,
+        provinceCode = "CEB",
+        createdBy = UUID.randomUUID(),
+        reviewStatus = EventReviewStatus.PENDING,
+    )
+
+    @Test
+    fun `admin duplicate candidates list strong matches before medium ones and take no lock`() {
+        val twin = existing("CEBU CITY MARATHON")
+        val near = existing("Cebu Marathon")
+        Mockito.`when`(events.findRaceCandidates(anyArg(), anyArg())).thenReturn(listOf(near, twin))
+
+        val found = service().findDuplicates(RaceInput("Cebu City Marathon 2026", raceDate, "CEB", null))
+
+        assertEquals(listOf(twin.id to "strong", near.id to "medium"), found.map { it.id to it.strength })
+        Mockito.verify(events, Mockito.never()).lockRaceCreation()
+    }
+
+    @Test
+    fun `lookalike is the top shared race near a pending Other event, one candidate read per date`() {
+        val twin = existing("CEBU CITY MARATHON")
+        Mockito.`when`(events.findRaceCandidates(anyArg(), anyArg())).thenReturn(listOf(existing("Cebu Marathon"), twin))
+        val a = otherSubmission("Cebu City Marathon")
+        val b = otherSubmission("Birthday party shoot")
+        val typed = otherSubmission("Cebu City Marathon").apply { eventType = RaceType.ROAD_RACE; createdBy = null }
+        val approved = otherSubmission("Cebu City Marathon").apply { reviewStatus = EventReviewStatus.APPROVED }
+        val adminRow = otherSubmission("Cebu City Marathon").apply { createdBy = null }
+
+        val hints = service().lookalikes(listOf(a, b, typed, approved, adminRow))
+
+        assertEquals(setOf(a.id), hints.keys, "only pending Other photographer events get a hint, and only on a match")
+        assertEquals(twin.id, hints.getValue(a.id).id)
+        assertEquals("strong", hints.getValue(a.id).strength)
+        Mockito.verify(events, Mockito.times(1)).findRaceCandidates(raceDate.minusDays(1), raceDate.plusDays(1))
+    }
+
+    @Test
+    fun `a stored possible duplicate is scored against its target`() {
+        val twin = existing("CEBU CITY MARATHON")
+        val near = existing("Cebu Marathon")
+        Mockito.`when`(events.findAllById(setOf(twin.id, near.id))).thenReturn(listOf(twin, near))
+        val strong = otherSubmission("Cebu City Marathon 2026").apply { eventType = RaceType.ROAD_RACE; createdBy = null; possibleDuplicateOf = twin.id }
+        val medium = otherSubmission("Cebu City Marathon 2026").apply { eventType = RaceType.ROAD_RACE; createdBy = null; possibleDuplicateOf = near.id }
+        val plain = otherSubmission("Cebu City Marathon 2026").apply { eventType = RaceType.ROAD_RACE; createdBy = null }
+
+        val found = service().duplicatesOf(listOf(strong, medium, plain))
+
+        assertEquals(setOf(strong.id, medium.id), found.keys)
+        assertEquals(twin.id to "strong", found.getValue(strong.id).let { it.id to it.strength })
+        assertEquals(near.id to "medium", found.getValue(medium.id).let { it.id to it.strength })
+    }
 }

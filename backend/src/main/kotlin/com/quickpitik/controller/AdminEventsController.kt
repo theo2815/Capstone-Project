@@ -13,6 +13,7 @@ import com.quickpitik.dto.admin.RejectEventRequest
 import com.quickpitik.dto.admin.SameRaceRequest
 import com.quickpitik.dto.admin.SetEventListingRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
+import com.quickpitik.dto.photographer.RaceCandidateDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
 import jakarta.validation.Valid
@@ -63,6 +64,16 @@ class AdminEventsController(
         @Suppress("UNUSED_VARIABLE") val _dateTo = dateTo
         return adminEventService.list(state, review, PaginationParams.of(offset, limit))
     }
+
+    // AA-R7: races that look like the one an admin is about to create (strong first). Read-only.
+    @GetMapping("/duplicate-candidates")
+    fun duplicateCandidates(
+        @RequestParam name: String,
+        @RequestParam date: String,
+        @RequestParam(required = false) provinceCode: String?,
+        @RequestParam(required = false) organizerName: String?,
+        @RequestParam(required = false) excludeId: UUID?,
+    ): List<RaceCandidateDto> = adminEventService.duplicateCandidates(name, date, provinceCode, organizerName, excludeId)
 
     // ── Photographer-owned event review (V46) ────────────────────────────
     @PostMapping("/{eventId}/approve")
