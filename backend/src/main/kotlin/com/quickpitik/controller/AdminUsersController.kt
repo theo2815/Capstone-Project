@@ -6,7 +6,6 @@ import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminPhotographerSettingsDto
 import com.quickpitik.dto.admin.AdminUserDetailDto
 import com.quickpitik.dto.admin.AdminUserRowDto
-import com.quickpitik.dto.admin.ApproveUserRequest
 import com.quickpitik.dto.admin.RejectUserRequest
 import com.quickpitik.dto.admin.ResetVerificationRequest
 import com.quickpitik.dto.admin.SuspendUserRequest
@@ -52,14 +51,6 @@ class AdminUsersController(
     @GetMapping("/{userId}/settings")
     fun photographerSettings(@PathVariable userId: UUID): AdminPhotographerSettingsDto =
         adminUserService.photographerSettings(userId)
-
-    @PostMapping("/{userId}/approve")
-    @Operation(description = "Approve a complete PENDING photographer. Optional expectedRevision rejects stale review generations with 409; omitting the body remains supported for v1 callers.")
-    fun approve(
-        @AuthenticationPrincipal principal: AuthPrincipal,
-        @PathVariable userId: UUID,
-        @Valid @RequestBody(required = false) body: ApproveUserRequest? = null,
-    ): AdminUserRowDto = adminUserService.approve(principal.userId, userId, body?.expectedRevision)
 
     @PostMapping("/{userId}/reject")
     @Operation(description = "Reject a PENDING photographer. Optional expectedRevision rejects stale review generations with 409.")

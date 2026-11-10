@@ -21,6 +21,7 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.events.isEditableRaceOf
 import com.quickpitik.service.storage.StorageService
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -41,6 +42,7 @@ class PhotographerEventService(
     private val eventDtoMapper: EventDtoMapper,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val racePriceService: com.quickpitik.service.events.RacePriceService,
+    private val raceProperties: com.quickpitik.config.RaceProperties,
 ) {
     // The caller's public handle is the same for every event they cover, so
     // resolve it once per request. null until they set one — the client then
@@ -99,7 +101,11 @@ class PhotographerEventService(
             eventDtoMapper.resolveBannerUrl(event),
             viewerId = photographerId,
             handle = resolveHandle(photographerId),
-        ).copy(racePrice = racePriceService.toDto(event, row))
+        ).copy(
+            racePrice = racePriceService.toDto(event, row),
+            canEditRace = raceProperties.selfServeEnabled && event.isEditableRaceOf(photographerId) &&
+                !eventPhotographerRepository.existsOtherUploader(eventId, photographerId),
+        )
     }
 
     fun listPhotos(

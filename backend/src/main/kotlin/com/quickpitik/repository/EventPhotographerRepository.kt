@@ -196,6 +196,11 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         @Param("metadataPublic") metadataPublic: Boolean,
     ): Int
 
+    // AA-R5: once another photographer has uploaded to a race, its submitter can no longer edit it.
+    @Query("SELECT COUNT(ep) > 0 FROM EventPhotographer ep WHERE ep.id.eventId = :eventId " +
+        "AND ep.id.photographerId <> :photographerId AND ep.firstUploadAt IS NOT NULL")
+    fun existsOtherUploader(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): Boolean
+
     @Modifying
     @Query("UPDATE EventPhotographer ep SET ep.photoCount = GREATEST(0, ep.photoCount + :delta) " +
         "WHERE ep.id.eventId = :eventId AND ep.id.photographerId = :photographerId")

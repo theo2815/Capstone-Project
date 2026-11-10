@@ -5,8 +5,10 @@ import com.quickpitik.config.IdentityProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.RaceProperties
 import com.quickpitik.dto.photographer.CreateRaceRequest
+import com.quickpitik.dto.photographer.PhotographerEventDetailDto
 import com.quickpitik.dto.photographer.RaceCandidateDto
 import com.quickpitik.dto.photographer.RaceCreateResultDto
+import com.quickpitik.dto.photographer.UpdateRaceRequest
 import com.quickpitik.dto.photographer.detailDto
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventPhotographer
@@ -76,6 +78,7 @@ class RaceEventService(
     private val eventPublisher: ApplicationEventPublisher,
     private val imageModerationService: ImageModerationService,
     private val clock: Clock,
+    private val eventFaceExpiry: EventFaceExpiry,
 ) {
     private val matcher = raceProperties.duplicate.let { DuplicateMatcher(it.strongScore, it.mediumScore, it.dateToleranceDays) }
 
@@ -116,17 +119,142 @@ class RaceEventService(
             stored = result.event != null
             return result
         } catch (ex: DataIntegrityViolationException) {
-            val violated = generateSequence<Throwable>(ex) { it.cause }
-                .filterIsInstance<ConstraintViolationException>().firstOrNull()?.constraintName
-            // AA-R10's partial unique index on (date, name_key): the lock's last line of defence.
-            if (violated == RACE_UNIQUE_INDEX) {
-                throw ConflictException(code = ErrorCodes.RACE_DUPLICATE, message = "This race already exists. Join it instead.")
-            }
-            throw ex
+            rethrowRaceDuplicate(ex, "This race already exists. Join it instead.")
         } finally {
             // Nothing stored (a race found inside the lock, a violation, any failure): drop the cover.
             if (!stored) coverKey?.let(eventCoverService::delete)
         }
+    }
+
+    /**
+     * AA-R5: the submitter edits their race until another photographer uploads. A live race checks
+     * only the changed fields; a failing edit is held in `pending_change` for an admin while the race
+     * keeps its live details. A PENDING race (not on sale yet) takes the edit at once and refreshes
+     * its reasons. No @Transactional, as [create]: moderation and the upload run outside one.
+     */
+    fun update(photographerId: UUID, eventId: UUID, req: UpdateRaceRequest, cover: AdminEventService.CoverUpload?): PhotographerEventDetailDto {
+        requireSwitchOn()
+        accessGuard.requireApproved(photographerId, "editing a race")
+        // Authority and field checks first, so a refused edit moderates and uploads nothing.
+        transactionTemplate.execute { editOf(lockForEdit(eventId, photographerId), req) }
+        val coverMiss = cover?.let { coverReasons(it.bytes) }.orEmpty()
+        val coverKey = cover?.let { eventCoverService.upload(eventId, it.bytes, it.contentType) }
+        val obsolete = mutableListOf<String>()
+        var stored = false
+        try {
+            val dto = transactionTemplate.execute {
+                val event = lockForEdit(eventId, photographerId)
+                val edit = editOf(event, req)
+                val now = OffsetDateTime.now(clock)
+                val live = event.reviewStatus != EventReviewStatus.PENDING
+                val held = event.pendingChange.takeIf(RaceEdit::isHeld)
+                val changed = edit != RaceEdit() || coverKey != null || held != null
+                val duplicate = if (edit.matchChanged) duplicateNote(event, edit) else null
+                val found = (editReasons(event, edit, live) + coverMiss +
+                    listOfNotNull(duplicate?.let { RaceCheckReason.POSSIBLE_DUPLICATE })).distinct().sorted()
+                val oldCover = event.coverS3Key
+                if (!live || found.isEmpty()) {
+                    if (!live) {
+                        val rechecked = recheckedBy(event, edit, coverKey != null)
+                        event.checkReasons = (event.checkReasons.orEmpty().filterNot { it in rechecked } + found).distinct().sorted()
+                    } else {
+                        event.pendingChange = null
+                        event.reviewStatus = EventReviewStatus.APPROVED
+                        event.checkReasons = null
+                    }
+                    edit.applyTo(event, matcher)
+                    if (coverKey != null) {
+                        event.coverS3Key = coverKey
+                        oldCover?.takeIf { it.isNotBlank() }?.let(obsolete::add)
+                    }
+                } else {
+                    // The race keeps selling on its live details; a later failing edit replaces this one.
+                    event.pendingChange = edit.toJson(coverKey, photographerId, now)
+                    event.reviewStatus = EventReviewStatus.CHANGE_PENDING
+                    event.checkReasons = found
+                    val note = (listOf("Held race edit: " + found.joinToString(", ") { it.name }) + listOfNotNull(duplicate))
+                        .joinToString("; ")
+                    if (!systemFlagService.raise(FlagTargetKind.EVENT, event.id, SystemFlagReason.RACE_EDIT_HELD, note = note)) {
+                        systemFlagService.appendNote(FlagTargetKind.EVENT, event.id, SystemFlagReason.RACE_EDIT_HELD, "$now $note")
+                    }
+                    pingAdmins("event_change_requested", event.id, photographerId, now)
+                }
+                RaceEdit.heldCover(held)?.takeIf { it != coverKey }?.let(obsolete::add)
+                if (changed) {
+                    event.reviewRevision++
+                    eventRepository.saveAndFlush(event)
+                }
+                val ep = eventPhotographerRepository.findById(EventPhotographerId(eventId, photographerId))
+                    .orElseGet { EventPhotographer(id = EventPhotographerId(eventId, photographerId)) }
+                detailDto(event, ep, eventDtoMapper.resolveBannerUrl(event), viewerId = photographerId).copy(canEditRace = true)
+            }!!
+            stored = true
+            obsolete.forEach(eventCoverService::delete)
+            return dto
+        } catch (ex: DataIntegrityViolationException) {
+            rethrowRaceDuplicate(ex, "Another race already has this name on this date.")
+        } finally {
+            if (!stored) coverKey?.let(eventCoverService::delete)
+        }
+    }
+
+    private fun lockForEdit(eventId: UUID, photographerId: UUID): Event {
+        val event = eventRepository.findRaceForSubmitterForUpdate(eventId, photographerId)
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Race not found")
+        if (eventPhotographerRepository.existsOtherUploader(eventId, photographerId)) {
+            throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.RACE_EDIT_LOCKED,
+                "Another photographer has uploaded to this race, so you can no longer change its details. Ask an admin instead.")
+        }
+        return event
+    }
+
+    // Only fields that differ from the live race count; blank means unchanged.
+    private fun editOf(event: Event, req: UpdateRaceRequest): RaceEdit {
+        fun changed(raw: String?, live: String?) = raw?.trim()?.takeIf { it.isNotEmpty() && it != live }
+        val date = changed(req.date, null)?.let(EventInputs::parseDate)?.takeIf { it != event.date }
+            ?.also { eventFaceExpiry.checkDateChange(event, it) }
+        val region = changed(req.regionCode, event.regionCode)
+        val province = changed(req.provinceCode, event.provinceCode)
+        if (region != null || province != null) {
+            EventInputs.validateLocation(regionsService, region ?: event.regionCode, province ?: event.provinceCode, required = true)
+        }
+        return RaceEdit(
+            title = changed(req.title, event.name),
+            date = date,
+            location = changed(req.location, event.location),
+            regionCode = region,
+            provinceCode = province,
+            eventType = changed(req.eventType, event.eventType?.name)?.let(::raceType),
+            organizerName = changed(req.organizerName, event.organizerName),
+            description = changed(req.description, event.description),
+        )
+    }
+
+    // A live race passed its checks once, so only the changed text is checked; a pending one re-checks all of it.
+    private fun editReasons(event: Event, edit: RaceEdit, live: Boolean): List<RaceCheckReason> = buildList {
+        if (edit.textChanged) {
+            addAll(if (live) textChecks(edit.title, edit.organizerName, edit.description)
+                else textChecks(edit.title ?: event.name, edit.organizerName ?: event.organizerName, edit.description ?: event.description))
+        }
+        if (edit.date != null && outOfWindow(edit.date)) add(RaceCheckReason.DATE_OUT_OF_WINDOW)
+    }
+
+    // The reasons this edit re-decides on a pending race; the others (daily cap, a declared duplicate) stay.
+    private fun recheckedBy(event: Event, edit: RaceEdit, newCover: Boolean): Set<RaceCheckReason> = buildSet {
+        if (edit.textChanged) addAll(listOf(RaceCheckReason.BAD_WORDS, RaceCheckReason.NO_RACE_WORD, RaceCheckReason.NON_RACE_WORD))
+        if (edit.date != null) add(RaceCheckReason.DATE_OUT_OF_WINDOW)
+        if (newCover) addAll(listOf(RaceCheckReason.COVER_FLAGGED, RaceCheckReason.COVER_UNCHECKED))
+        if (edit.matchChanged && event.possibleDuplicateOf == null) add(RaceCheckReason.POSSIBLE_DUPLICATE)
+    }
+
+    // Under the race lock, like create; a strong or medium match names the top candidate for the admin.
+    private fun duplicateNote(event: Event, edit: RaceEdit): String? {
+        val input = RaceInput(edit.title ?: event.name, edit.date ?: event.date, edit.provinceCode ?: event.provinceCode,
+            edit.organizerName ?: event.organizerName)
+        val found = lockAndFindDuplicates(input, excludeId = event.id)
+        val (top, strength) = found.strong.firstOrNull()?.let { it to "strong" }
+            ?: found.medium.firstOrNull()?.let { it to "medium" } ?: return null
+        return "Possible duplicate of ${top.candidate.name} (${top.candidate.id}), $strength"
     }
 
     @Transactional
@@ -204,17 +332,27 @@ class RaceEventService(
      * since Manila midnight.
      */
     fun checksFor(input: RaceInput, cover: ByteArray?, photographerId: UUID, description: String? = null): List<RaceCheckReason> {
-        val reasons = mutableListOf<RaceCheckReason>()
-        val texts = listOfNotNull(input.name, input.organizerName, description)
-        if (texts.any { wordListChecker.hits(it, setOf(WordList.BAD_WORDS)).isNotEmpty() }) reasons += RaceCheckReason.BAD_WORDS
-        if (wordListChecker.hits(input.name, setOf(WordList.RACE_WORDS)).isEmpty()) reasons += RaceCheckReason.NO_RACE_WORD
-        if (wordListChecker.hits(input.name, setOf(WordList.NON_RACE_WORDS)).isNotEmpty()) reasons += RaceCheckReason.NON_RACE_WORD
-        val today = LocalDate.now(clock.withZone(EventDtoMapper.PH_ZONE))
-        if (input.date < today.minusDays(raceProperties.dateWindowPastDays) ||
-            input.date > today.plusDays(raceProperties.dateWindowAheadDays)) reasons += RaceCheckReason.DATE_OUT_OF_WINDOW
+        val reasons = textChecks(input.name, input.organizerName, description).toMutableList()
+        if (outOfWindow(input.date)) reasons += RaceCheckReason.DATE_OUT_OF_WINDOW
         if (overDailyCap(photographerId)) reasons += RaceCheckReason.DAILY_CAP
         if (cover != null && RaceCheckReason.DAILY_CAP !in reasons) reasons += coverReasons(cover)
         return reasons
+    }
+
+    // A null text is not checked (an edit that leaves it unchanged); the race-word checks read the name only.
+    private fun textChecks(name: String?, organizer: String?, description: String?): List<RaceCheckReason> = buildList {
+        if (listOfNotNull(name, organizer, description).any { wordListChecker.hits(it, setOf(WordList.BAD_WORDS)).isNotEmpty() }) {
+            add(RaceCheckReason.BAD_WORDS)
+        }
+        if (name != null) {
+            if (wordListChecker.hits(name, setOf(WordList.RACE_WORDS)).isEmpty()) add(RaceCheckReason.NO_RACE_WORD)
+            if (wordListChecker.hits(name, setOf(WordList.NON_RACE_WORDS)).isNotEmpty()) add(RaceCheckReason.NON_RACE_WORD)
+        }
+    }
+
+    private fun outOfWindow(date: LocalDate): Boolean {
+        val today = LocalDate.now(clock.withZone(EventDtoMapper.PH_ZONE))
+        return date < today.minusDays(raceProperties.dateWindowPastDays) || date > today.plusDays(raceProperties.dateWindowAheadDays)
     }
 
     private fun coverReasons(cover: ByteArray): List<RaceCheckReason> = when (imageModerationService.check(cover).verdict) {
@@ -285,14 +423,7 @@ class RaceEventService(
                 note = checkMiss.joinToString(", ") { it.name })
             pingAdmins = true
         }
-        if (pingAdmins) {
-            eventPublisher.publishEvent(AdminInboxEvent(payload = mapOf(
-                "type" to "event_submitted",
-                "entityId" to event.id.toString(),
-                "actorId" to photographerId.toString(),
-                "occurredAt" to now.toString(),
-            )))
-        }
+        if (pingAdmins) pingAdmins("event_submitted", event.id, photographerId, now)
         val ep = EventPhotographer(id = EventPhotographerId(event.id, photographerId), metadataPublic = metadataPublic)
         return RaceCreateResultDto(
             outcome = if (live) "created" else "pending_review",
@@ -301,14 +432,24 @@ class RaceEventService(
         )
     }
 
+    private fun pingAdmins(type: String, eventId: UUID, photographerId: UUID, now: OffsetDateTime) =
+        eventPublisher.publishEvent(AdminInboxEvent(payload = mapOf(
+            "type" to type,
+            "entityId" to eventId.toString(),
+            "actorId" to photographerId.toString(),
+            "occurredAt" to now.toString(),
+        )))
+
     private fun candidateDto(e: Event, strength: String) = RaceCandidateDto(e.id, e.slug, e.name, e.date, e.location,
         e.regionCode, e.provinceCode, e.organizerName, e.eventType?.name, eventDtoMapper.resolveBannerUrl(e), e.reviewStatus.wire,
         strength)
 
+    private fun raceType(code: String): RaceType = RaceType.entries.firstOrNull { it.name == code.trim() }
+        ?: throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "Choose one of the listed race types.",
+            field = "eventType")
+
     private fun validate(req: CreateRaceRequest): Draft {
-        val type = RaceType.entries.firstOrNull { it.name == req.eventType.trim() }
-            ?: throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "Choose one of the listed race types.",
-                field = "eventType")
+        val type = raceType(req.eventType)
         EventInputs.validateLocation(regionsService, req.regionCode.trim(), req.provinceCode.trim(), required = true)
         val date: LocalDate = EventInputs.parseDate(req.date)
         return Draft(RaceInput(req.title.trim(), date, req.provinceCode.trim(), req.organizerName?.trim()), type, req)
@@ -326,5 +467,86 @@ class RaceEventService(
 
     companion object {
         const val RACE_UNIQUE_INDEX = "uq_events_race_date_name"
+
+        /** AA-R10's partial unique index on (date, name_key), the lock's last line of defence: 409, never a 500. */
+        fun rethrowRaceDuplicate(ex: DataIntegrityViolationException, message: String): Nothing {
+            val violated = generateSequence<Throwable>(ex) { it.cause }
+                .filterIsInstance<ConstraintViolationException>().firstOrNull()?.constraintName
+            if (violated == RACE_UNIQUE_INDEX) throw ConflictException(code = ErrorCodes.RACE_DUPLICATE, message = message)
+            throw ex
+        }
+    }
+}
+
+/** AA-R5: the rule [EventRepository.findRaceForSubmitterForUpdate] locks on, for reads that cannot lock. */
+fun Event.isEditableRaceOf(photographerId: UUID): Boolean =
+    eventType != null && submittedBy == photographerId && deletedAt == null && reviewStatus != EventReviewStatus.REJECTED
+
+/**
+ * AA-R5: the fields a race edit changes (null = unchanged). A held edit lives in `pending_change` as
+ * `{ kind: "race_edit", fields, coverS3Key?, requestedBy, requestedAt }`, with only the changed
+ * fields and never a price.
+ */
+data class RaceEdit(
+    val title: String? = null,
+    val date: LocalDate? = null,
+    val location: String? = null,
+    val regionCode: String? = null,
+    val provinceCode: String? = null,
+    val eventType: RaceType? = null,
+    val organizerName: String? = null,
+    val description: String? = null,
+) {
+    val textChanged: Boolean get() = title != null || organizerName != null || description != null
+
+    // The fields the duplicate check reads.
+    val matchChanged: Boolean get() = title != null || date != null || provinceCode != null
+
+    /** Writes the fields and keeps `name_key` in step with the name. */
+    fun applyTo(event: Event, matcher: DuplicateMatcher) {
+        title?.let { event.name = it; event.nameKey = matcher.nameKey(it) }
+        date?.let { event.date = it }
+        location?.let { event.location = it }
+        regionCode?.let { event.regionCode = it }
+        provinceCode?.let { event.provinceCode = it }
+        eventType?.let { event.eventType = it }
+        organizerName?.let { event.organizerName = it }
+        description?.let { event.description = it }
+    }
+
+    fun toJson(coverS3Key: String?, requestedBy: UUID, requestedAt: OffsetDateTime): Map<String, Any?> = mapOf(
+        "kind" to KIND,
+        "fields" to listOf(
+            "title" to title, "date" to date?.toString(), "location" to location, "regionCode" to regionCode,
+            "provinceCode" to provinceCode, "eventType" to eventType?.name, "organizerName" to organizerName,
+            "description" to description,
+        ).filter { it.second != null }.toMap(),
+        "coverS3Key" to coverS3Key,
+        "requestedBy" to requestedBy.toString(),
+        "requestedAt" to requestedAt.toString(),
+    )
+
+    companion object {
+        const val KIND = "race_edit"
+
+        fun isHeld(pendingChange: Map<String, Any?>?): Boolean = pendingChange?.get("kind") == KIND
+
+        fun heldCover(pendingChange: Map<String, Any?>?): String? =
+            pendingChange?.takeIf(::isHeld)?.get("coverS3Key") as? String
+
+        fun fromJson(json: Map<String, Any?>): RaceEdit {
+            val fields = json["fields"] as? Map<*, *> ?: emptyMap<String, Any?>()
+            fun text(key: String) = fields[key] as? String
+            return RaceEdit(
+                title = text("title"),
+                date = text("date")?.let(LocalDate::parse),
+                location = text("location"),
+                regionCode = text("regionCode"),
+                provinceCode = text("provinceCode"),
+                eventType = text("eventType")?.let(RaceType::valueOf),
+                organizerName = text("organizerName"),
+                description = text("description"),
+            )
+        }
     }
 }

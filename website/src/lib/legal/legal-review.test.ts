@@ -34,14 +34,16 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  it("passes the production guard with version 1.2", () => {
+  // AA-I14 adds the identity copy with ASK OWNER text; AA-I21's final commit turns
+  // this back into "passes the production guard with version 1.3".
+  it("the production guard refuses the legal text while the identity copy holds ASK OWNER text", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
         LEGAL_VERSION,
         "production",
       ),
-    ).not.toThrow();
+    ).toThrow(/ASK OWNER/);
     expect(LEGAL_VERSION).toBe("1.2");
   });
 

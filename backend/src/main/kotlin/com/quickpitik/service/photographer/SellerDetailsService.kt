@@ -70,6 +70,7 @@ class SellerDetailsService(
     private val identityCheckService: IdentityCheckService,
     private val payoutAccountRepository: PayoutAccountRepository,
     private val identityProperties: IdentityProperties,
+    private val photographerSettingsService: PhotographerSettingsService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -216,7 +217,10 @@ class SellerDetailsService(
                 userRepository.lockById(userId)
                 val existing = sellerDetailsRepository.findById(userId).orElse(null)
                 val old = existing?.fileKeys().orEmpty() // before write() changes the row
-                sellerDetailsRepository.save(write(existing, keys, OffsetDateTime.now(clock))) to old
+                val row = sellerDetailsRepository.save(write(existing, keys, OffsetDateTime.now(clock)))
+                // AA-I7: an automatic pass approves a waiting, complete profile in the same transaction.
+                if (row.status == SellerDetailsStatus.AUTO_APPROVED) photographerSettingsService.approveIfReady(userId)
+                row to old
             })
         } catch (error: Exception) {
             if (outcome == null || outcome == TransactionSynchronization.STATUS_ROLLED_BACK) {
@@ -293,6 +297,7 @@ class SellerDetailsService(
         adminDecisionLogService.logUserDecision(
             adminId = adminId, targetUserId = userId, decision = "seller_details_approved", meta = mapOf("revision" to revision),
         )
+        photographerSettingsService.approveIfReady(userId) // AA-I7
         return adminDto(row)
     }
 

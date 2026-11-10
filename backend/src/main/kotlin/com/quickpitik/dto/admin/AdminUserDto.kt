@@ -78,12 +78,6 @@ data class AdminUserDetailDto(
     val verificationRevision: Long = 0,
 )
 
-data class ApproveUserRequest(
-    @field:PositiveOrZero
-    @field:Schema(description = "Optional v1 precondition; a stale review generation returns 409")
-    val expectedRevision: Long? = null,
-)
-
 // POST /admin/users/{id}/reject — body { reason }.
 data class RejectUserRequest(
     @field:NotBlank

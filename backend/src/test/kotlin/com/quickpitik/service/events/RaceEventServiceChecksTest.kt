@@ -110,7 +110,7 @@ class RaceEventServiceChecksTest {
         TransactionTemplate(Mockito.mock(PlatformTransactionManager::class.java).also {
             Mockito.`when`(it.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
         }),
-        publisher, moderation, clock,
+        publisher, moderation, clock, Mockito.mock(EventFaceExpiry::class.java),
     )
 
     private fun request(
