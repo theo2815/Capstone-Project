@@ -416,6 +416,10 @@ app:
     refund-link-per-dispute:
       capacity: 3
       refill-period: PT1H
+    # Event and photographer reports per account (AA-R9).
+    report:
+      capacity: 10
+      refill-period: PT1H
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     # AA-R11: a photographer's own race price is between the race price and this times it (owner D3).

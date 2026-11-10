@@ -87,6 +87,10 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
 
         assertEquals(401, get("/actuator/metrics").statusCode())
         assertEquals(401, get("/api/v1/me/cart").statusCode())
+        // Reports need an account (AA-R9): one open report per account is the abuse limit.
+        val reportBody = """{"note":"This event never took place at all."}"""
+        assertEquals(401, post("/api/v1/me/reports/events/${UUID.randomUUID()}", reportBody).statusCode())
+        assertEquals(401, post("/api/v1/me/reports/photographers/some-handle", reportBody).statusCode())
         // Deliberately NOT in the permitAll list next to its /auth siblings.
         assertEquals(401, post("/api/v1/auth/resend-verification", "").statusCode())
         val me = get("/api/v1/auth/me")

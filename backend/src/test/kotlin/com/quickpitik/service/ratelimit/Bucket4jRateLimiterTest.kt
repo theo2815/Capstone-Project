@@ -49,6 +49,16 @@ class Bucket4jRateLimiterTest {
     }
 
     @Test
+    fun `report policy allows ten reports an hour per account`() {
+        val limiter = Bucket4jRateLimiter(RateLimitProperties(), SimpleMeterRegistry())
+        assertTrue(Bucket4jRateLimiter.POLICY_REPORT in Bucket4jRateLimiter.ALL_POLICIES)
+        repeat(10) { assertTrue(limiter.tryAcquire(Bucket4jRateLimiter.POLICY_REPORT, "user-1").allowed) }
+        val denied = limiter.tryAcquire(Bucket4jRateLimiter.POLICY_REPORT, "user-1")
+        assertFalse(denied.allowed)
+        assertTrue(denied.retryAfter > Duration.ofMinutes(5))
+    }
+
+    @Test
     fun `every declared policy resolves to a configured bucket`() {
         // A policy constant with no branch in policyFor() would throw here —
         // this is the net that catches a call-site/config mismatch.

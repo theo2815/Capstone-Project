@@ -48,6 +48,16 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
         statusWires: Collection<String>,
     ): List<Flag>
 
+    // AA-R9: accounts with a live report on one target (the hide threshold).
+    @Query(
+        """
+        SELECT COUNT(DISTINCT f.reporterId) FROM Flag f
+        WHERE f.targetKindWire = :targetKind AND f.targetId = :targetId
+          AND f.reason = 'user_report' AND f.statusWire IN ('open', 'escalated')
+        """,
+    )
+    fun countDistinctReporters(@Param("targetKind") targetKind: String, @Param("targetId") targetId: UUID): Long
+
     fun existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
         targetKindWire: String,
         targetId: UUID,
