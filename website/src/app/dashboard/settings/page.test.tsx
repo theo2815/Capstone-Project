@@ -736,7 +736,10 @@ it("ignores an old verification withdrawal after account switching", async () =>
 
 function mockSellerStatus(status: string) {
   vi.spyOn(api, "get").mockImplementation((path) =>
-    path.endsWith("/seller-details") ? Promise.resolve({ status }) : new Promise(() => {}));
+    // The backend sends reviewState beside status (AA-I1); the slab reads only reviewState.
+    path.endsWith("/seller-details")
+      ? Promise.resolve({ status, reviewState: status === "submitted" ? "manual_review" : status })
+      : new Promise(() => {}));
 }
 
 it.each([
