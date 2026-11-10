@@ -32,6 +32,13 @@ import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.service.events.EventInputs
+import com.quickpitik.service.events.DuplicateMatcher
+import com.quickpitik.service.events.RaceEdit
+import com.quickpitik.service.events.RaceEventService
+import com.quickpitik.config.RaceProperties
+import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.quickpitik.service.photographer.PricingTrio
 import com.quickpitik.service.reference.RegionsService
 import org.slf4j.LoggerFactory
@@ -59,8 +66,10 @@ class AdminEventService(
     private val transactionTemplate: TransactionTemplate,
     private val commands: AdminActionCommandService,
     private val regionsService: RegionsService,
+    raceProperties: RaceProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+    private val matcher = raceProperties.duplicate.let { DuplicateMatcher(it.strongScore, it.mediumScore, it.dateToleranceDays) }
 
     @Transactional(readOnly = true)
     fun list(
@@ -128,6 +137,7 @@ class AdminEventService(
                 )
             }
             EventReviewStatus.CHANGE_PENDING -> {
+                if (RaceEdit.isHeld(event.pendingChange)) return approveRaceEdit(adminId, event)
                 // Became a pricing change after the unlocked read. Locking photos now
                 // would invert the photos -> events order, so the admin retries.
                 if (!photosLocked) throw ConflictException(code = ErrorCodes.INVALID_STATE_TRANSITION,
@@ -186,7 +196,10 @@ class AdminEventService(
             }
             EventReviewStatus.CHANGE_PENDING -> {
                 // The live trio was never touched — just drop the request.
+                // AA-R5: a held race edit's cover was never shown; it goes once the rejection commits.
+                RaceEdit.heldCover(event.pendingChange)?.let(::deleteCoverAfterCommit)
                 event.pendingChange = null
+                event.checkReasons = null
                 markReviewed(event, adminId, EventReviewStatus.APPROVED)
                 event.reviewNote = note
                 val decision = adminDecisionLogService.logEventDecision(
@@ -245,8 +258,52 @@ class AdminEventService(
         event.reviewedBy = adminId
     }
 
+    // AA-R5: a held race edit changes the race's details only, never a price; the old cover goes after commit.
+    private fun approveRaceEdit(adminId: UUID, event: Event): AdminListEventDto {
+        val held = event.pendingChange.orEmpty()
+        val edit = RaceEdit.fromJson(held)
+        edit.date?.let { eventFaceExpiry.checkDateChange(event, it) }
+        edit.applyTo(event, matcher)
+        RaceEdit.heldCover(held)?.let { cover ->
+            event.coverS3Key?.takeIf { it.isNotBlank() }?.let(::deleteCoverAfterCommit)
+            event.coverS3Key = cover
+        }
+        event.pendingChange = null
+        event.checkReasons = null
+        markReviewed(event, adminId, EventReviewStatus.APPROVED)
+        val decision = adminDecisionLogService.logEventDecision(
+            adminId = adminId,
+            targetEventId = event.id,
+            decision = "event_change_approved",
+            meta = held,
+        )
+        notifyOwner(event, PhotographerMessageKind.EVENT_CHANGE_APPROVED, "Your change to ${event.name} is live.", adminId, decision.id)
+        saveRace(event)
+        return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
+    }
+
+    // A race's name_key feeds AA-R10's unique index, which fires at flush: answer RACE_DUPLICATE here, not a 500 at commit.
+    private fun saveRace(event: Event) {
+        try {
+            eventRepository.saveAndFlush(event)
+        } catch (ex: DataIntegrityViolationException) {
+            RaceEventService.rethrowRaceDuplicate(ex, "Another race already has this name on this date.")
+        }
+    }
+
+    private fun deleteCoverAfterCommit(key: String) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                override fun afterCommit() = eventCoverService.delete(key)
+            })
+        } else {
+            eventCoverService.delete(key)
+        }
+    }
+
     private fun notifyOwner(event: Event, kind: PhotographerMessageKind, body: String, adminId: UUID, decisionId: UUID) {
-        val owner = event.createdBy ?: return
+        // A shared race has no createdBy; its submitter hears instead (AA-R5, R6).
+        val owner = event.createdBy ?: event.submittedBy ?: return
         adminDecisionLogService.pushMessage(
             photographerId = owner,
             kind = kind,
@@ -465,6 +522,7 @@ class AdminEventService(
                 before["title"] = event.name
                 after["title"] = newName
                 event.name = newName
+                if (event.eventType != null) event.nameKey = matcher.nameKey(newName)
             }
         }
         req.date?.takeIf { it.isNotBlank() }?.let {
@@ -569,7 +627,7 @@ class AdminEventService(
         )
         event.reviewRevision++
         event.adminOverrides = event.adminOverrides + entry
-        eventRepository.save(event)
+        if (event.eventType != null) saveRace(event) else eventRepository.save(event)
         val decision = adminDecisionLogService.logEventDecision(
             adminId = adminId,
             targetEventId = event.id,

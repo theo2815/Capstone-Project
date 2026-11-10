@@ -127,6 +127,7 @@ class RaceEventServiceTest {
         },
         // Fixed "today", so the December race dates stay inside the AA-R4 date window.
         java.time.Clock.fixed(java.time.Instant.parse("2026-11-09T02:00:00Z"), java.time.ZoneOffset.UTC),
+        Mockito.mock(EventFaceExpiry::class.java),
     )
 
     private fun request(title: String = "Cebu City Marathon 2026", confirmDifferentFrom: UUID? = null) = CreateRaceRequest(

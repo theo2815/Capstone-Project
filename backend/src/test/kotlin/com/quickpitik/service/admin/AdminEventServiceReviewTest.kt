@@ -88,6 +88,7 @@ class AdminEventServiceReviewTest {
             transactions,
             Mockito.mock(AdminActionCommandService::class.java),
             com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
+            com.quickpitik.config.RaceProperties(),
         )
         service = ProxyFactory(target).apply {
             addAdvice(TransactionInterceptor().apply {
@@ -595,6 +596,93 @@ class AdminEventServiceReviewTest {
     )
 
     private fun cover() = AdminEventService.CoverUpload(byteArrayOf(1), "image/jpeg")
+
+    // AA-R5: a live shared race (createdBy NULL, submittedBy set) with a held race_edit, dated ahead so
+    // the held date move stays inside face retention.
+    private val raceDay: LocalDate = LocalDate.now().plusDays(30)
+
+    private fun heldRace(): Event = event(EventStatus.ACTIVE, EventReviewStatus.CHANGE_PENDING).apply {
+        Mockito.`when`(aiProperties.faceRetention).thenReturn(java.time.Period.ofMonths(6))
+        date = raceDay
+        createdBy = null
+        submittedBy = photographerId
+        eventType = com.quickpitik.entity.RaceType.ROAD_RACE
+        name = "Cebu City Marathon"
+        nameKey = "cebu city marathon"
+        coverS3Key = "events/covers/live.jpg"
+        checkReasons = listOf(com.quickpitik.entity.RaceCheckReason.NON_RACE_WORD)
+        pendingChange = mapOf(
+            "kind" to "race_edit",
+            "fields" to mapOf("title" to "Cebu South Marathon", "date" to raceDay.plusDays(1).toString()),
+            "coverS3Key" to "events/covers/held.jpg",
+            "requestedBy" to photographerId.toString(),
+            "requestedAt" to "2026-11-08T10:00:00Z",
+        )
+        Mockito.`when`(eventRepository.saveAndFlush(this)).thenReturn(this)
+    }
+
+    @Test
+    fun `approving a held race edit applies fields and name key without touching prices`() {
+        val event = heldRace()
+
+        service.approve(adminId, event.id)
+
+        assertEquals("Cebu South Marathon", event.name)
+        assertEquals("cebu marathon south", event.nameKey)
+        assertEquals(raceDay.plusDays(1), event.date)
+        assertEquals("events/covers/held.jpg", event.coverS3Key)
+        assertEquals(BigDecimal("150.00"), event.pricePerPhoto)
+        assertEquals(EventReviewStatus.APPROVED, event.reviewStatus)
+        assertNull(event.pendingChange)
+        assertNull(event.checkReasons)
+        Mockito.verify(photoRepository, Mockito.never()).updatePriceByEventId(anyArg(), anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).resetForRewatermark(anyArg())
+        Mockito.verify(covers).delete("events/covers/live.jpg")
+        // The race's submitter hears about it (createdBy is NULL on a race).
+        assertEquals(listOf(PhotographerMessageKind.EVENT_CHANGE_APPROVED), pushed)
+        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+    }
+
+    @Test
+    fun `rejecting a held race edit deletes the held cover`() {
+        val event = heldRace()
+
+        service.reject(adminId, event.id, "Not a race name")
+
+        assertEquals("Cebu City Marathon", event.name)
+        assertEquals("events/covers/live.jpg", event.coverS3Key)
+        assertEquals(EventReviewStatus.APPROVED, event.reviewStatus)
+        assertNull(event.pendingChange)
+        assertNull(event.checkReasons)
+        Mockito.verify(covers).delete("events/covers/held.jpg")
+        Mockito.verify(covers, Mockito.never()).delete("events/covers/live.jpg")
+        assertEquals(listOf(PhotographerMessageKind.EVENT_CHANGE_REJECTED), pushed)
+    }
+
+    @Test
+    fun `a unique violation on approving a held race edit answers RACE_DUPLICATE`() {
+        val event = heldRace()
+        Mockito.`when`(eventRepository.saveAndFlush(event)).thenThrow(
+            org.springframework.dao.DataIntegrityViolationException("dup", org.hibernate.exception.ConstraintViolationException(
+                "dup", java.sql.SQLException("dup"), "uq_events_race_date_name")),
+        )
+
+        val ex = assertFailsWith<ConflictException> { service.approve(adminId, event.id) }
+
+        assertEquals(com.quickpitik.common.ErrorCodes.RACE_DUPLICATE, ex.code)
+        Mockito.verify(covers, Mockito.never()).delete(anyArg())
+    }
+
+    @Test
+    fun `an admin rename of a race recomputes its name key`() {
+        val event = heldRace().apply { reviewStatus = EventReviewStatus.APPROVED; pendingChange = null }
+
+        service.update(adminId, event.id, UpdateAdminEventRequest(title = "Cebu North Marathon"))
+
+        assertEquals("Cebu North Marathon", event.name)
+        assertEquals("cebu marathon north", event.nameKey)
+        Mockito.verify(eventRepository).saveAndFlush(event)
+    }
 
     private fun submitted(): Event = event(EventStatus.DRAFT, EventReviewStatus.PENDING)
     private fun live(): Event = event(EventStatus.ACTIVE, EventReviewStatus.APPROVED)

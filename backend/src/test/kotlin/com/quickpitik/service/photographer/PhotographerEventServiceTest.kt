@@ -51,6 +51,7 @@ class PhotographerEventServiceTest {
             com.quickpitik.config.RaceProperties(selfServeEnabled = true), com.quickpitik.config.PlatformProperties(),
             java.time.Clock.systemUTC(),
         ),
+        com.quickpitik.config.RaceProperties(selfServeEnabled = true),
     )
     private val seller = UUID.randomUUID()
 
@@ -113,6 +114,21 @@ class PhotographerEventServiceTest {
 
         assertTrue(detail.submittedByMe)
         assertFalse(detail.ownedByMe, "a race is shared: ownedByMe stays createdBy == viewer")
+    }
+
+    @Test
+    fun `the submitter can edit their race until another photographer uploads`() {
+        val race = event(status = EventStatus.ACTIVE).apply { eventType = RaceType.TRAIL_RUN; submittedBy = seller }
+        Mockito.`when`(events.findById(race.id)).thenReturn(Optional.of(race))
+        val joiner = UUID.randomUUID()
+        Mockito.`when`(coverage.findById(EventPhotographerId(race.id, joiner)))
+            .thenReturn(Optional.of(com.quickpitik.entity.EventPhotographer(id = EventPhotographerId(race.id, joiner))))
+
+        assertTrue(service.getEventDetail(seller, race.id).canEditRace)
+        assertFalse(service.getEventDetail(joiner, race.id).canEditRace, "only the submitter edits")
+
+        Mockito.`when`(coverage.existsOtherUploader(race.id, seller)).thenReturn(true)
+        assertFalse(service.getEventDetail(seller, race.id).canEditRace)
     }
 
     @Test

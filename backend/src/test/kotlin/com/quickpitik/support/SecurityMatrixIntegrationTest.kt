@@ -454,20 +454,24 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `race create and join are photographer only and refused while self-serve races are off`() {
+    fun `race create, join and edit are photographer only and refused while self-serve races are off`() {
         val create = "/api/v1/me/photographer/races"
         val join = "/api/v1/me/photographer/races/${UUID.randomUUID()}/join"
+        val edit = "/api/v1/me/photographer/races/${UUID.randomUUID()}"
         val form = multipart(mapOf("title" to "Cebu City Marathon", "date" to "2026-12-06", "location" to "Cebu",
             "regionCode" to "region-7", "provinceCode" to "cebu", "eventType" to "ROAD_RACE"))
+        val patch = multipart(mapOf("title" to "Cebu South Marathon"), method = "PATCH")
         assertEquals(401, form(create, null).statusCode())
         assertEquals(401, post(join, "{}").statusCode())
+        assertEquals(401, patch(edit, null).statusCode())
         val runner = register(Role.RUNNER)
         assertEquals(403, form(create, runner).statusCode())
         assertEquals(403, post(join, "{}", runner).statusCode())
+        assertEquals(403, patch(edit, runner).statusCode())
 
         // The test profile keeps SELF_SERVE_RACES_ENABLED off: a photographer reaches the service and is refused.
         val photographer = register(Role.PHOTOGRAPHER)
-        for (response in listOf(form(create, photographer), post(join, "{}", photographer))) {
+        for (response in listOf(form(create, photographer), post(join, "{}", photographer), patch(edit, photographer))) {
             assertEquals(403, response.statusCode())
             assertEquals("SELF_SERVE_RACES_DISABLED", errorCode(response))
         }
@@ -646,7 +650,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     /** A real multipart body (text parts only): the role check must refuse it, not the binder. */
-    private fun multipart(fields: Map<String, String>): (String, String?) -> HttpResponse<String> = { path, token ->
+    private fun multipart(fields: Map<String, String>, method: String = "POST"): (String, String?) -> HttpResponse<String> = { path, token ->
         val boundary = "matrix-${UUID.randomUUID()}"
         val body = fields.entries.joinToString("") { (name, value) ->
             "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n"
@@ -654,7 +658,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         send(
             HttpRequest.newBuilder(uri(path))
                 .header("Content-Type", "multipart/form-data; boundary=$boundary")
-                .POST(HttpRequest.BodyPublishers.ofString(body)),
+                .method(method, HttpRequest.BodyPublishers.ofString(body)),
             token,
         )
     }
