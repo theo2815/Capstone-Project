@@ -7,6 +7,7 @@ vi.mock("next/navigation", () => ({ useParams: () => ({ eventId: "event-1" }), n
 vi.mock("@/components/layout/site-header", () => ({ SiteHeader: () => null }));
 vi.mock("@/components/dashboard/verification-banner", () => ({ VerificationBanner: () => null }));
 vi.mock("@/hooks/use-can-upload", () => ({ useCanUpload: () => ({ kind: "ok" }) }));
+vi.mock("@/hooks/use-seller-details", () => ({ useSellerDetails: () => ({ query: { data: undefined } }) }));
 vi.mock("@/lib/photographer-verification-sync", () => ({ usePhotographerVerificationSync: () => undefined }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 // Dated today: an owner may upload for one month after the event date, so a

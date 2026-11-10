@@ -72,7 +72,14 @@ export function SellerDetailsSlab() {
         ) : details && onFile && !resending ? (
           <div>
             <p className="font-sans text-base font-semibold text-ink">
-              {state === "manual_review" ? "We're checking your details. You can upload meanwhile." : "Approved"}
+              {state === "manual_review" ? "An admin is checking your details" : "Verified"}
+            </p>
+            <p className="mt-1 font-sans text-sm text-slate">
+              {state !== "manual_review"
+                ? "You can upload."
+                : details.uploadsAllowed === false
+                  ? "Uploads open when they approve."
+                  : "You can upload meanwhile."}
             </p>
             <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 font-sans text-sm">
               <dt className="text-slate">Legal name</dt><dd className="text-ink">{details.legalName}</dd>
@@ -89,6 +96,12 @@ export function SellerDetailsSlab() {
           </div>
         ) : (
           <>
+            {state === "missing" && (
+              <div className="mb-8 font-sans">
+                <p className="text-base font-semibold text-ink">Seller details needed</p>
+                <p className="mt-1 text-sm text-slate">Add your ID and take a live selfie before you upload.</p>
+              </div>
+            )}
             {state === "rejected" && (
               <div role="status" className="mb-8 rounded-xl border border-error/40 bg-error/5 px-5 py-4 font-sans text-sm text-ink">
                 <p className="font-semibold">Your seller details were not accepted.</p>

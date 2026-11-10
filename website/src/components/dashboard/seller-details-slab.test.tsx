@@ -88,7 +88,7 @@ it("live path sends the session id and no score", async () => {
   expect(form.get("livenessSessionId")).toBe("sess-1");
   expect(form.get("idNumber")).toBe("P1234567A");
   expect([...form.keys()].filter((k) => /score|confidence|similarity/i.test(k))).toEqual([]);
-  expect(await screen.findByText("Approved")).toBeInTheDocument();
+  expect(await screen.findByText("Verified")).toBeInTheDocument();
 });
 
 it("live path needs the tick; admin path does not and sends no livenessSessionId", async () => {
@@ -190,7 +190,7 @@ it("manual_review row offers the live check only and calls submitLiveCheck witho
   await waitFor(() => expect(calls(post, LIVE_CHECK)).toHaveLength(1));
   expect(calls(post, LIVE_CHECK)[0][1]).toEqual({ livenessSessionId: "sess-1", idNumber: "P1234567A" });
   expect(calls(post, SUBMIT)).toHaveLength(0);
-  expect(await screen.findByText("Approved")).toBeInTheDocument();
+  expect(await screen.findByText("Verified")).toBeInTheDocument();
 });
 
 it("a live check that stays in review clears the typed number and says an admin checks", async () => {
@@ -244,7 +244,7 @@ it("sends all nine parts of a complete form on the admin path", async () => {
   const form = post.mock.calls[0][1] as FormData;
   expect([...form.keys()].sort()).toEqual(["address", "birForm", "idBack", "idFront", "idNumber", "idType", "legalName", "phone", "selfie"]);
   expect(form.get("phone")).toBe("+63 917 123 4567");
-  expect(await screen.findByText("We're checking your details. You can upload meanwhile.")).toBeInTheDocument();
+  expect(await screen.findByText("An admin is checking your details")).toBeInTheDocument();
   expect(showToast).toHaveBeenCalled();
 });
 
@@ -256,7 +256,7 @@ it("shows the rejection reason first and the form", async () => {
 
 it("shows a summary and a way to send new details while checking", async () => {
   renderSlab(record({}));
-  expect(await screen.findByText("We're checking your details. You can upload meanwhile.")).toBeInTheDocument();
+  expect(await screen.findByText("An admin is checking your details")).toBeInTheDocument();
   expect(screen.getByText("Juan Dela Cruz")).toBeInTheDocument();
   expect(screen.getByText("Passport")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Take the live selfie and send" })).not.toBeInTheDocument();
@@ -264,9 +264,24 @@ it("shows a summary and a way to send new details while checking", async () => {
   expect(screen.getByRole("button", { name: "Take the live selfie and send" })).toBeInTheDocument();
 });
 
+it.each([
+  [true, "You can upload meanwhile."],
+  [false, "Uploads open when they approve."],
+])("manual review with uploadsAllowed %s says whether uploads wait", async (uploadsAllowed, line) => {
+  renderSlab(record({ uploadsAllowed }));
+  expect(await screen.findByText(line)).toBeInTheDocument();
+  expect(screen.queryByText(/score|confidence/i)).toBeNull();
+});
+
+it("a verified record says you can upload", async () => {
+  renderSlab(record({ status: "approved", reviewState: "auto_approved" }));
+  expect(await screen.findByText("Verified")).toBeInTheDocument();
+  expect(screen.getByText("You can upload.")).toBeInTheDocument();
+});
+
 it("reads reviewState, not status: an unknown state is shown like manual review", async () => {
   renderSlab(record({ status: "approved", reviewState: "something_new" }));
-  expect(await screen.findByText("We're checking your details. You can upload meanwhile.")).toBeInTheDocument();
+  expect(await screen.findByText("An admin is checking your details")).toBeInTheDocument();
 });
 
 it("puts a server error on the phone field under that field", async () => {

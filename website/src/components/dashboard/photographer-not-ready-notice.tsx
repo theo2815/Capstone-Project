@@ -7,6 +7,32 @@ import { Kicker } from "@/components/ui/kicker";
 import { ROUTES, SUPPORT_EMAIL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
+const SELLER_DETAILS_HREF = `${ROUTES.DASHBOARD_SETTINGS}#seller-details`;
+
+// The identity gate (AA-I15). Approved states never reach it (they pass both
+// upload sets); the map falls back to the manual-review copy for them.
+type IdentityCopy = { kicker: string; headline: string; line: string; cta: string };
+const IDENTITY_COPY: Record<"missing" | "manual_review" | "rejected", IdentityCopy> = {
+  missing: {
+    kicker: "Before you upload",
+    headline: "Seller details needed",
+    line: "Add your ID and take a live selfie before you upload.",
+    cta: "Add your seller details",
+  },
+  manual_review: {
+    kicker: "Identity check",
+    headline: "An admin is checking your details",
+    line: "Uploads open when they approve.",
+    cta: "See your seller-details status",
+  },
+  rejected: {
+    kicker: "Seller details",
+    headline: "Your seller details were not accepted.",
+    line: "New uploads are paused until you send them again.",
+    cta: "Send them again",
+  },
+};
+
 // Shared friendly notice for a photographer who can't act yet. Used by the
 // dashboard VerificationBanner (top strip) and the RequirePhotographerReady
 // railguard (blocked-feature panel), so the "you're not ready" experience is
@@ -44,16 +70,40 @@ export function PhotographerNotReadyNotice({
   }
 
   if (gate.kind === "pending") {
+    // Q7: no admin profile review; the profile goes live with the identity check.
     return (
       <div className="border border-line rounded-2xl px-5 py-5 bg-bone-deep/40">
-        <Kicker as="p">Awaiting review</Kicker>
+        <Kicker as="p">Awaiting identity check</Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
-          We&apos;re looking over your settings.
+          Your studio goes live when your identity check passes.
         </p>
-        <p className="font-sans text-sm text-slate mt-2 max-w-md">
-          Reviews take 1–2 business days. You&apos;ll be able to use the
-          dashboard as soon as we&apos;re done — we&apos;ll let you know.
+        <Link
+          href={SELLER_DETAILS_HREF}
+          className="font-sans text-sm text-ink underline decoration-line-strong underline-offset-4 hover:decoration-fresh mt-3 inline-block"
+        >
+          See your seller-details status
+        </Link>
+      </div>
+    );
+  }
+
+  if (gate.kind === "identity") {
+    const copy: IdentityCopy =
+      IDENTITY_COPY[gate.reviewState as keyof typeof IDENTITY_COPY] ?? IDENTITY_COPY.manual_review;
+    return (
+      <div className="border border-line rounded-2xl px-5 py-5 bg-bone-deep/40">
+        <Kicker as="p">{copy.kicker}</Kicker>
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
+          {copy.headline}
         </p>
+        <p className="font-sans text-sm text-slate mt-2 max-w-md">{copy.line}</p>
+        <Link
+          href={SELLER_DETAILS_HREF}
+          className={cn(BTN_PRIMARY, BTN_SIZE.md, "mt-5 inline-flex w-fit items-center gap-2")}
+        >
+          {copy.cta}
+          <span aria-hidden="true">→</span>
+        </Link>
       </div>
     );
   }
