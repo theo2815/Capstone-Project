@@ -46,7 +46,7 @@ data class PhotographerEventSummaryDto(
     val reviewStatus: String = "approved",
     val reviewNote: String? = null,
     val pendingChange: Map<String, Any?>? = null,
-    // Shared races (AA-R3, Plan 2 § 3.4). eventType null = legacy or Other; canEditRace is filled by AA-R5.
+    // Shared races (AA-R3, Plan 2 § 3.4). eventType null = legacy or Other; canEditRace (AA-R5) is set on the detail only, the list keeps false.
     val eventType: String? = null,
     val submittedByMe: Boolean = false,
     val canEditRace: Boolean = false,
@@ -270,6 +270,10 @@ internal fun deriveEventState(event: Event, today: LocalDate = LocalDate.now(phZ
         EventStatus.DRAFT -> "upcoming"
     }
 
+// AA-R5: a race's held edit (its cover key and requester) is the submitter's alone.
+private fun pendingChangeFor(event: Event, viewerId: UUID?): Map<String, Any?>? =
+    event.pendingChange.takeIf { event.eventType == null || event.submittedBy == viewerId }
+
 fun summaryDto(
     event: Event,
     ep: EventPhotographer,
@@ -295,7 +299,7 @@ fun summaryDto(
         watermarkPolicy = event.watermarkPolicy.wire,
         reviewStatus = event.reviewStatus.wire,
         reviewNote = event.reviewNote,
-        pendingChange = event.pendingChange,
+        pendingChange = pendingChangeFor(event, viewerId),
         eventType = event.eventType?.name,
         submittedByMe = event.submittedBy != null && event.submittedBy == viewerId,
         checkReasons = event.checkReasons.orEmpty().map { it.name },
@@ -329,7 +333,7 @@ fun detailDto(
         watermarkPolicy = event.watermarkPolicy.wire,
         reviewStatus = event.reviewStatus.wire,
         reviewNote = event.reviewNote,
-        pendingChange = event.pendingChange,
+        pendingChange = pendingChangeFor(event, viewerId),
         description = event.description,
         organizerName = event.organizerName,
         pricePerPhoto = event.pricePerPhoto,

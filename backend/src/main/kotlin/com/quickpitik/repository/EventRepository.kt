@@ -199,6 +199,14 @@ interface EventRepository : JpaRepository<Event, UUID> {
     )
     fun insertAlias(@Param("eventId") eventId: UUID, @Param("nameKey") nameKey: String, @Param("addedBy") addedBy: UUID): Int
 
+    // AA-R5: the submitter's race, locked for an edit. Rejected and deleted races are not editable.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+        "SELECT e FROM Event e WHERE e.id = :id AND e.submittedBy = :submittedBy AND e.eventType IS NOT NULL " +
+            "AND e.deletedAt IS NULL AND e.reviewStatus <> com.quickpitik.entity.EventReviewStatus.REJECTED",
+    )
+    fun findRaceForSubmitterForUpdate(@Param("id") id: UUID, @Param("submittedBy") submittedBy: UUID): Event?
+
     // AA-R4's daily create cap reads this.
     @Query("SELECT COUNT(e) FROM Event e WHERE e.submittedBy = :submittedBy AND e.createdAt >= :since")
     fun countRacesSubmittedSince(@Param("submittedBy") submittedBy: UUID, @Param("since") since: OffsetDateTime): Long

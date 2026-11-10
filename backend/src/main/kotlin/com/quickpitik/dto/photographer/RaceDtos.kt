@@ -37,6 +37,22 @@ data class JoinRaceRequest(
     val typedName: String? = null,
 )
 
+// PATCH /me/photographer/races/{eventId} (AA-R5): every field optional; blank or equal to the live value = unchanged.
+data class UpdateRaceRequest(
+    @field:Size(max = 200)
+    val title: String? = null,
+    val date: String? = null,
+    @field:Size(max = 200)
+    val location: String? = null,
+    val regionCode: String? = null,
+    val provinceCode: String? = null,
+    val eventType: String? = null,
+    @field:Size(max = 120)
+    val organizerName: String? = null,
+    @field:Size(max = 600)
+    val description: String? = null,
+)
+
 // outcome: created | pending_review | match | candidates | joined (Plan 2 § 3.3).
 data class RaceCreateResultDto(
     val outcome: String,

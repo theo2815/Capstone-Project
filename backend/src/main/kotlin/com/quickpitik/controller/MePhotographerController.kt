@@ -22,6 +22,7 @@ import com.quickpitik.dto.photographer.PhotoIdsRequest
 import com.quickpitik.dto.photographer.PhotographerBundleDto
 import com.quickpitik.dto.photographer.PhotographerLibraryPhotoDto
 import com.quickpitik.dto.photographer.UpdateMyEventRequest
+import com.quickpitik.dto.photographer.UpdateRaceRequest
 import com.quickpitik.dto.photographer.UploadedPhotoDto
 import com.quickpitik.dto.photographer.EventMetadataVisibilityDto
 import com.quickpitik.dto.photos.PhotoMetadataDto
@@ -146,6 +147,21 @@ class MePhotographerController(
         @Valid @RequestBody(required = false) body: JoinRaceRequest?,
     ): RaceCreateResultDto = raceEventService.join(principal.userId, eventId, body?.typedName)
 
+    // AA-R5: the submitter's race edit; a failing edit comes back held (change_pending).
+    @PatchMapping(value = ["/races/{eventId}"], consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+    fun updateRace(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @ModelAttribute("form") form: UpdateRaceRequest,
+        @RequestPart("cover", required = false) cover: MultipartFile?,
+    ): PhotographerEventDetailDto {
+        rateLimiter.acquireOrThrow(
+            policy = Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD,
+            key = principal.userId.toString(),
+        )
+        return raceEventService.update(principal.userId, eventId, form, coverOf(cover))
+    }
+
     // AA-R11: the photographer's own price in a race they cover. No rate bucket: the cooldown is the limit.
     @PutMapping("/events/{eventId}/price")
     fun setRacePrice(
@@ -166,7 +182,7 @@ class MePhotographerController(
     // FormData sends every field as a string and an untouched input as "", so
     // blank has to read as "absent": the trimmer nulls it, which puts a create
     // back on the DTO default and leaves a patch field unchanged. Scoped by the
-    // `form` attribute name to the two event forms. Numbers convert themselves
+    // `form` attribute name to the event and race forms. Numbers convert themselves
     // - a non-numeric price is a field error, not a 500.
     @InitBinder("form")
     fun trimEventForm(binder: WebDataBinder) {
