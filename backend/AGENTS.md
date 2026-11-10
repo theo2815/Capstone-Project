@@ -223,6 +223,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RUNNER_REMOVAL_PHOTOGRAPHER_DAILY` | `50` | Most auto-hides per photographer per event per day across runner requests; past it that photographer's matches become suggestions. |
 | `RUNNER_REMOVAL_CANDIDATE_LIMIT` | `50` | Most face matches a runner request asks the provider for (1-4096). |
 | `RUNNER_REMOVAL_EMAIL_CLAIM_STALE_AFTER` | `PT10M` | How long an email send claim may sit before the runner/photographer email sweeps retry it. |
+| `PHOTO_REMOVAL_EMAIL_SWEEP_INTERVAL` | `PT15M` | How often the sweep re-sends photographer removal emails whose send claim went stale and was never delivered (last 24 hours only). |
 | `RUNNER_REMOVAL_CHECKS_PER_DAY` | `3` | Live checks one account may start per Manila day (shared with the seller check). `0` closes runner deletion intake (kill switch). |
 | `RUNNER_REMOVAL_MAX_OPEN` | `3` | Open deletion requests one runner may have at once (1 or more). |
 | `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |

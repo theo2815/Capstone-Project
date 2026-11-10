@@ -87,6 +87,7 @@ app:
     cleanup-interval: ${PHOTO_REMOVAL_CLEANUP_INTERVAL:PT1M}
     cleanup-backoff: ${PHOTO_REMOVAL_CLEANUP_BACKOFF:PT5M}
     in-request-cleanup-jobs: ${PHOTO_REMOVAL_IN_REQUEST_CLEANUP_JOBS:5}
+    email-sweep-interval: ${PHOTO_REMOVAL_EMAIL_SWEEP_INTERVAL:PT15M}
     runner:
       liveness-pass-min: ${RUNNER_REMOVAL_LIVENESS_PASS:90}
       liveness-uncertain-min: ${RUNNER_REMOVAL_LIVENESS_UNCERTAIN:50}

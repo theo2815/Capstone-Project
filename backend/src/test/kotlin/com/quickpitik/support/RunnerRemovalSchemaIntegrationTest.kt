@@ -140,6 +140,29 @@ class RunnerRemovalSchemaIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    @Test fun `photographer claimEmailSend claims once`() {
+        val m = photographerMessages.saveAndFlush(PhotographerMessage(photographerId = photographer.id,
+            kindWire = PhotographerMessageKind.PHOTO_REMOVAL_REQUEST.wire, body = "Hello"))
+        val at = java.time.OffsetDateTime.now()
+        assertEquals(1, tx.execute { photographerMessages.claimEmailSend(m.id, at) })
+        assertEquals(0, tx.execute { photographerMessages.claimEmailSend(m.id, at) })
+        assertEquals(1, tx.execute { photographerMessages.stampEmailDelivered(m.id, at) })
+    }
+
+    @Test fun `the photographer stale-claim query skips delivered rows and rows older than 24 hours`() {
+        fun notice(kind: String = PhotographerMessageKind.PHOTO_REMOVAL_REQUEST.wire) = photographerMessages.saveAndFlush(
+            PhotographerMessage(photographerId = photographer.id, kindWire = kind, body = "Hello")).id
+        val claimedAt = java.time.OffsetDateTime.now().minusMinutes(30)
+        val stale = notice(); val delivered = notice(); val old = notice(); val unclaimed = notice(); val other = notice(PhotographerMessageKind.ADMIN_MESSAGE.wire)
+        for (id in listOf(stale, delivered, old, other)) jdbc.update("UPDATE photographer_messages SET email_sent_at = ? WHERE id = ?", claimedAt, id)
+        jdbc.update("UPDATE photographer_messages SET email_delivered_at = now() WHERE id = ?", delivered)
+        jdbc.update("UPDATE photographer_messages SET created_at = now() - interval '2 days' WHERE id = ?", old)
+        val found = photographerMessages.findStaleEmailClaimIds(java.time.OffsetDateTime.now().minusMinutes(10), java.time.OffsetDateTime.now().minusHours(24), 50)
+        assertEquals(listOf(stale), found.filter { it in setOf(stale, delivered, old, unclaimed, other) })
+        assertEquals(1, tx.execute { photographerMessages.releaseStaleEmailSend(stale, java.time.OffsetDateTime.now().minusMinutes(10)) })
+        assertEquals(0, tx.execute { photographerMessages.releaseStaleEmailSend(delivered, java.time.OffsetDateTime.now().minusMinutes(10)) })
+    }
+
     @Test fun `a RUNNER history row and a SUGGESTED action save`() {
         val case = request()
         historyRow(case, RemovalHistoryActions.SUGGESTED, RemovalActorType.RUNNER)

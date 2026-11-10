@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.UUID
 
 @Service
 class EmailService(
@@ -142,6 +143,49 @@ class EmailService(
         )
         log.info("Photos-ready email sent · to={} resendId={}", toEmail, response.id)
     }
+
+    // RD-10: a photographer is told a removal review started, or what was decided. The body is the stored inbox
+    // message (own photos only, photo references, no runner details). A failure MUST propagate: the caller keeps
+    // its dated claim and the sweep re-sends.
+    fun sendPhotographerRemovalReviewEmail(toEmail: String, eventName: String, body: String, requestId: UUID) =
+        sendPhotographerRemovalEmail(toEmail, "Photo removal review requested · $eventName", "A photo removal review needs your reply", eventName, body, requestId)
+
+    fun sendPhotographerRemovalOutcomeEmail(toEmail: String, eventName: String, body: String, requestId: UUID) =
+        sendPhotographerRemovalEmail(toEmail, "Photo removal outcome · $eventName", "A photo removal review has an outcome", eventName, body, requestId)
+
+    private fun sendPhotographerRemovalEmail(toEmail: String, subject: String, heading: String, eventName: String, body: String, requestId: UUID) {
+        val url = "$frontendOrigin/dashboard/photo-removal-requests/$requestId"
+        if (devMode) {
+            log.info("[EMAIL STUB] photo removal notice for {} — link: {}", toEmail, url)
+            return
+        }
+        val response = resendClient.send(
+            ResendSendEmailRequest(
+                from = "${resendProperties.fromName} <${resendProperties.fromAddress}>",
+                to = listOf(toEmail),
+                subject = subject,
+                html = renderPhotographerRemovalHtml(heading, eventName, body, url),
+            ),
+        )
+        log.info("Photo removal email sent · to={} resendId={}", toEmail, response.id)
+    }
+
+    private fun renderPhotographerRemovalHtml(heading: String, eventName: String, body: String, url: String): String = """
+<!doctype html>
+<html><body style="margin:0;background:#f6f6f4;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
+    <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:12px;padding:32px;">
+      <tr><td>
+        <h1 style="font-size:20px;margin:0 0 12px;color:#111;">${escapeHtml(heading)}</h1>
+        <p style="font-size:14px;color:#6b6b6b;margin:0 0 16px;">${escapeHtml(eventName)}</p>
+        <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 24px;">${escapeHtml(body)}</p>
+        <a href="${escapeUrl(url)}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px;">Open the request</a>
+        <p style="font-size:12px;color:#a8a8a8;margin:24px 0 0;">QuickPitik · Cebu, Philippines</p>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>
+""".trimIndent()
 
     // PayMongo refund transfer link for a parked QR Ph dispute. Sent AFTER_COMMIT + async via RefundLinkSentEmailListener.
     // A failure is logged and dropped: the runner's inbox message is the durable copy. Sending the same link
