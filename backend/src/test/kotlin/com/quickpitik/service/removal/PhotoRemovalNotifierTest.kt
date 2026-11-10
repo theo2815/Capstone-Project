@@ -28,6 +28,7 @@ class PhotoRemovalNotifierTest {
     private val history = mock(PhotoRemovalHistoryRecorder::class.java)
     private val historyReader = mock(PhotoRemovalHistoryRepository::class.java)
     private val publisher = mock(ApplicationEventPublisher::class.java)
+    private val photos = mock(PhotoRepository::class.java)
     private val manager = mock(PlatformTransactionManager::class.java)
     private val tx = TransactionTemplate(manager)
     private val now = Instant.parse("2026-10-05T00:00:00Z")
@@ -40,9 +41,10 @@ class PhotoRemovalNotifierTest {
         reviewId = review.id, state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.MANUAL)
     private val writer = AdminDecisionLogService(mock(AdminDecisionLogRepository::class.java), messages, publisher)
     private val notifier = PhotoRemovalNotifier(requests, reviews, items, users, messages, writer, history,
-        tx, Clock.fixed(now, ZoneOffset.UTC), PhotoRemovalProperties(), historyReader)
+        tx, Clock.fixed(now, ZoneOffset.UTC), PhotoRemovalProperties(), historyReader, publisher, photos)
     private val persisted = mutableListOf<PhotographerMessage>()
     private val events = mutableListOf<PhotographerMessageCreatedEvent>()
+    private val stored = mutableListOf<PhotographerRemovalNoticeStored>()
     private val audit = mutableListOf<RemovalHistoryEvent>()
 
     init {
@@ -54,7 +56,7 @@ class PhotoRemovalNotifierTest {
         `when`(users.findById(owner.id)).thenReturn(Optional.of(owner))
         `when`(items.findByRequestIdOrderByIdAsc(request.id)).thenReturn(listOf(selected))
         `when`(messages.save(org.mockito.ArgumentMatchers.any() ?: message())).thenAnswer { persisted += it.getArgument<PhotographerMessage>(0); persisted.last() }
-        doAnswer { events += it.getArgument<PhotographerMessageCreatedEvent>(0); null }.`when`(publisher).publishEvent(org.mockito.ArgumentMatchers.any(Object::class.java) ?: Object())
+        doAnswer { when (val e = it.getArgument<Any>(0)) { is PhotographerMessageCreatedEvent -> events += e; is PhotographerRemovalNoticeStored -> stored += e }; null }.`when`(publisher).publishEvent(org.mockito.ArgumentMatchers.any(Object::class.java) ?: Object())
         doAnswer { audit += it.getArgument<RemovalHistoryEvent>(0); null }.`when`(history).record(org.mockito.ArgumentMatchers.any() ?: historyEvent())
     }
 
@@ -64,7 +66,9 @@ class PhotoRemovalNotifierTest {
         assertEquals("photo_removal_request", notice.kindWire)
         assertEquals(request.id, notice.photoRemovalRequestId)
         assertEquals("removal:review:${review.id}:requested", notice.noticeKey)
-        assertTrue(notice.body.contains(selected.id.toString()))
+        assertFalse(notice.body.contains(selected.id.toString()), "a raw item id is never shown")
+        assertTrue(notice.body.contains("Photo ${selected.photoIdSnapshot.toString().take(8)}"))
+        assertEquals(notice.id, stored.single().messageId)
         assertFalse(notice.body.contains(request.requesterContact))
         assertFalse(notice.body.contains(request.requesterReason))
         assertEquals(now, review.notifiedAt)
@@ -161,7 +165,8 @@ class PhotoRemovalNotifierTest {
             org.mockito.ArgumentMatchers.any() ?: org.springframework.data.domain.PageRequest.of(0, 100))).thenReturn(listOf(pending))
         notifier.notifyOutcomes(review.id)
         val notice = persisted.single()
-        assertTrue(notice.body.contains(selected.id.toString()))
+        assertFalse(notice.body.contains(selected.id.toString()))
+        assertTrue(notice.body.contains("Photo ${selected.photoIdSnapshot.toString().take(8)}"))
         assertTrue(notice.body.contains("not erased")); assertFalse(notice.body.contains("private"))
         assertEquals("photo_removal_outcome", notice.kindWire)
         assertEquals("removal:review:${review.id}:outcome:2", audit.single().metadata["noticeKey"])
@@ -194,7 +199,7 @@ class PhotoRemovalNotifierTest {
         `when`(items.findPendingOwnerReviewItemIds(request.id)).thenReturn(listOf(selected.id))
         notifier.notifyReview(review.id)
         assertEquals(1, persisted.size)
-        assertTrue(persisted.single().body.contains(selected.id.toString()))
+        assertTrue(persisted.single().body.contains("Photo ${selected.photoIdSnapshot.toString().take(8)}"))
         assertEquals(now.plusSeconds(72 * 3600), review.deadline)
         assertEquals(RemovalDecision.RETAIN_RESTRICTED, selected.adminDecision)
     }
@@ -202,4 +207,32 @@ class PhotoRemovalNotifierTest {
     private fun message() = PhotographerMessage(photographerId = owner.id, kindWire = "photo_removal_request", body = "safe",
         photoRemovalRequestId = request.id, noticeKey = "removal:review:${review.id}:requested", createdAt = now.minusSeconds(60).atOffset(ZoneOffset.UTC))
     private fun historyEvent() = RemovalHistoryEvent(requestId = request.id, actorType = RemovalActorType.SYSTEM, action = "NOTICE_STORED", occurredAt = now, commandId = UUID.randomUUID())
+
+    @Test fun `the review notice lists a tagged photo by its lowest bib and says how long to reply`() {
+        val tagged = Photo(id = selected.photoIdSnapshot, eventId = request.eventIdSnapshot, s3Key = "k", pricePhp = java.math.BigDecimal.ZERO)
+        tagged.bibs = mutableSetOf(PhotoBibEmbed("512", java.math.BigDecimal.ONE), PhotoBibEmbed("1024", java.math.BigDecimal.ONE))
+        `when`(photos.findAllById(listOf(selected.photoIdSnapshot))).thenReturn(listOf(tagged))
+        notifier.notifyReview(review.id)
+        val body = persisted.single().body
+        assertTrue(body.contains("bib 1024"), body)
+        assertFalse(body.contains(selected.id.toString()))
+        assertTrue(body.contains("within 72 hours"), body)
+    }
+
+    @Test fun `more than 20 photos are listed as 20 plus a count`() {
+        val many = (1..25).map { PhotoRemovalItem(requestId = request.id, photoIdSnapshot = UUID.randomUUID(), ownerIdSnapshot = owner.id,
+            reviewId = review.id, state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.MANUAL) }
+        `when`(items.findByRequestIdOrderByIdAsc(request.id)).thenReturn(many)
+        notifier.notifyReview(review.id)
+        val body = persisted.single().body
+        assertEquals(20, Regex("Photo [0-9a-f]{8}").findAll(body).count(), body)
+        assertTrue(body.contains("and 5 more"), body)
+    }
+
+    @Test fun `a retry that stores nothing sends no email`() {
+        val existing = message()
+        `when`(messages.findByNoticeKey("removal:review:${review.id}:requested")).thenReturn(existing)
+        notifier.notifyReview(review.id)
+        assertTrue(persisted.isEmpty()); assertTrue(stored.isEmpty())
+    }
 }
