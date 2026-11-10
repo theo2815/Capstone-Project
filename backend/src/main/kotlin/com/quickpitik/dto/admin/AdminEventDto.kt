@@ -64,6 +64,14 @@ data class ApproveEventRequest(
     val expectedRevision: Long? = null,
 )
 
+// POST /admin/events/{id}/same-race (AA-R6) — the pending race repeats another one; the
+// target defaults to the race's stored possible duplicate.
+data class SameRaceRequest(
+    val targetEventId: UUID? = null,
+    @field:PositiveOrZero
+    val expectedRevision: Long? = null,
+)
+
 // POST /admin/events/{id}/reject — the reason reaches the photographer's inbox.
 data class RejectEventRequest(
     @field:NotBlank

@@ -10,6 +10,7 @@ import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.AdminReindexResponseDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.RejectEventRequest
+import com.quickpitik.dto.admin.SameRaceRequest
 import com.quickpitik.dto.admin.SetEventListingRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
 import com.quickpitik.security.AuthPrincipal
@@ -77,6 +78,14 @@ class AdminEventsController(
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: RejectEventRequest,
     ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason, body.expectedRevision)
+
+    // AA-R6: the pending race repeats another one; its submitter joins that race. Returns the target.
+    @PostMapping("/{eventId}/same-race")
+    fun sameRace(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody(required = false) body: SameRaceRequest? = null,
+    ): AdminListEventDto = adminEventService.sameRace(principal.userId, eventId, body?.targetEventId, body?.expectedRevision)
 
     // "Show on /events" switch for a photographer-owned Public event (V89).
     @PatchMapping("/{eventId}/listing")

@@ -101,7 +101,8 @@ class AdminEventCommandTest {
             Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java), users,
             testTransactionTemplate(), service,
             com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
-            com.quickpitik.config.RaceProperties())
+            com.quickpitik.config.RaceProperties(),
+            Mockito.mock(com.quickpitik.service.events.RaceEventService::class.java))
 
         val error = assertFailsWith<com.quickpitik.exception.ValidationException> {
             events.create(actor, com.quickpitik.dto.admin.CreateAdminEventRequest(title = "Fun Run", date = "10/10/2026",
@@ -147,7 +148,8 @@ class AdminEventCommandTest {
             Mockito.mock(com.quickpitik.repository.PhotographerSettingsRepository::class.java), users,
             testTransactionTemplate(), service,
             com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
-            com.quickpitik.config.RaceProperties())
+            com.quickpitik.config.RaceProperties(),
+            Mockito.mock(com.quickpitik.service.events.RaceEventService::class.java))
 
         val error = assertFailsWith<com.quickpitik.exception.ValidationException> {
             events.update(actor, id, com.quickpitik.dto.admin.UpdateAdminEventRequest(date = "2025-10-01"), key = key)
