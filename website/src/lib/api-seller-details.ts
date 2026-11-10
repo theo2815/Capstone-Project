@@ -113,7 +113,10 @@ export function submitLiveCheck(input: { livenessSessionId: string; idNumber: st
   return api.post<SellerDetails>("/me/photographer/seller-details/live-check", input);
 }
 
-// ─── Admin review (SC-1b backend: E3 to E6) ─────────────────────────────
+// ─── Admin review (SC-1b backend: E3 to E6; AA-I8 adds the automatic results) ───
+
+/** The admin list filter: the review queue, the spot check, or everything (null). */
+export type AdminSellerFilter = "manual_review" | "auto_approved" | null;
 
 export interface AdminSellerDetailsRow {
   userId: string;
@@ -121,8 +124,23 @@ export interface AdminSellerDetailsRow {
   legalName: string;
   idType: SellerIdType;
   status: Exclude<SellerDetailsStatus, "missing">;
+  reviewState: Exclude<ReviewState, "missing">;
   submittedAt: string;
   reviewedAt: string | null;
+  /** UPPERCASE SellerReasonCode names; [] with autoCheckedAt null = sent before automatic checks. */
+  reasonCodes: string[];
+  /** 0-100, null when not run. */
+  livenessConfidence: number | null;
+  faceSimilarity: number | null;
+  autoCheckedAt: string | null;
+}
+
+export interface RepeatMatch {
+  userId: string;
+  email: string;
+  /** ID_NUMBER | PAYOUT_NUMBER | PHONE */
+  matchedOn: string[];
+  suspended: boolean;
 }
 
 export interface AdminSellerDetails extends AdminSellerDetailsRow {
@@ -133,13 +151,16 @@ export interface AdminSellerDetails extends AdminSellerDetailsRow {
   rejectionReason: string | null;
   reviewedBy: string | null;
   revision: number;
+  biometricConsentAt: string | null;
+  hasIdNumber: boolean;
+  repeatMatches: RepeatMatch[];
   // Links that expire after five minutes; only on E4, and each fetch logs a view.
-  files: { idFront: string; idBack: string | null; selfie: string; birForm: string | null } | null;
+  files: { idFront: string; idBack: string | null; selfie: string; birForm: string | null; livenessReference: string | null } | null;
   linksExpireAt: string | null;
 }
 
 export function listSellerDetails(
-  status: "submitted" | null,
+  status: AdminSellerFilter,
   limit: number,
   signal?: AbortSignal,
 ): Promise<PaginatedResponse<AdminSellerDetailsRow>> {
