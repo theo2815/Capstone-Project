@@ -21,7 +21,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { usePhotographerEventDetail } from "@/hooks/use-photographer-data";
 import { usePublicEvents } from "@/hooks/use-public-events";
+import { useSellerDetails } from "@/hooks/use-seller-details";
 import { useToast } from "@/hooks/use-toast";
+import { reviewStateOf } from "@/lib/api-seller-details";
 import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
 import { ApiError } from "@/lib/api";
 import { captureAuthSession } from "@/lib/auth-session";
@@ -440,6 +442,7 @@ function UploadForm({
   const { showToast } = useToast();
   const [entries, setEntries] = useState<UploadEntry[]>([]);
   const [gateError, setGateError] = useState<{ message: string; code?: string } | null>(null);
+  const sellerDetails = useSellerDetails().query.data;
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
@@ -1001,7 +1004,8 @@ function UploadForm({
           </p>
           {gateError.code === "SELLER_DETAILS_REQUIRED" && (
             <Link href={`${ROUTES.DASHBOARD_SETTINGS}#seller-details`} className="mt-2 mr-4 inline-block underline underline-offset-4">
-              Add your seller details
+              {/* Under the identity gate an admin is already checking (review F28). */}
+              {sellerDetails && reviewStateOf(sellerDetails) === "manual_review" ? "See your seller-details status" : "Add your seller details"}
             </Link>
           )}
           <button type="button" onClick={() => { paused.current = false; setGateError(null); setRetryNonce((n) => n + 1); }} className="mt-2 underline underline-offset-4">
