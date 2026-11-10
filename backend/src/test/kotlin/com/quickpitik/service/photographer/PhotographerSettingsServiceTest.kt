@@ -6,8 +6,19 @@ import com.quickpitik.dto.photographer.BrandPatchRequest
 import com.quickpitik.dto.photographer.HandlePatchRequest
 import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
+import com.quickpitik.entity.PhotographerMessage
+import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
+import com.quickpitik.entity.SellerDetails
+import com.quickpitik.entity.SellerDetailsStatus
+import com.quickpitik.entity.SellerIdType
+import com.quickpitik.repository.AdminDecisionLogRepository
+import com.quickpitik.repository.PhotographerMessageRepository
+import com.quickpitik.repository.SellerDetailsRepository
+import com.quickpitik.service.admin.AdminDecisionLogService
+import org.mockito.ArgumentCaptor
+import kotlin.test.assertNull
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
@@ -67,6 +78,10 @@ class PhotographerSettingsServiceTest {
     private val userId = UUID.randomUUID()
     private val moderation: ImageModerationService = Mockito.mock(ImageModerationService::class.java)
     private val flags: SystemFlagService = Mockito.mock(SystemFlagService::class.java)
+    private val sellerDetailsRepository: SellerDetailsRepository = Mockito.mock(SellerDetailsRepository::class.java)
+    private val messageRepository: PhotographerMessageRepository = Mockito.mock(PhotographerMessageRepository::class.java).also {
+        Mockito.`when`(it.save(Mockito.any(PhotographerMessage::class.java))).thenAnswer { call -> call.getArgument(0) }
+    }
 
     private fun <T> anyArg(): T = Mockito.any()
 
@@ -96,6 +111,10 @@ class PhotographerSettingsServiceTest {
         moderation,
         flags,
         testTransactionTemplate(),
+        sellerDetailsRepository,
+        AdminDecisionLogService(
+            Mockito.mock(AdminDecisionLogRepository::class.java), messageRepository, Mockito.mock(ApplicationEventPublisher::class.java),
+        ),
     )
 
     private fun stubExistingSettings() {
@@ -471,6 +490,109 @@ class PhotographerSettingsServiceTest {
         assertEquals(user.suspendedAt.toString(), result.suspendedAt)
         assertEquals("Original suspension", result.suspensionReason)
         assertEquals(1L, settings.verificationRevision)
+    }
+
+    // ─── AA-I7: the profile is approved automatically once identity has passed ───
+
+    private fun identity(status: SellerDetailsStatus?) {
+        Mockito.`when`(sellerDetailsRepository.findById(userId)).thenReturn(Optional.ofNullable(status?.let {
+            SellerDetails(
+                userId = userId, legalName = "Aira Cruz", idType = SellerIdType.PHILSYS, idFrontKey = "f.jpg", idBackKey = null,
+                selfieKey = "s.jpg", birFormKey = null, address = "Cebu City", phone = "09170000000", phoneKey = "9170000000",
+                status = it, revision = 1, submittedAt = java.time.OffsetDateTime.now(),
+            )
+        }))
+    }
+
+    private fun pushedMessages(): List<PhotographerMessage> {
+        val captor = ArgumentCaptor.forClass(PhotographerMessage::class.java)
+        Mockito.verify(messageRepository, Mockito.atLeast(0)).save(captor.capture())
+        return captor.allValues
+    }
+
+    @Test
+    fun `a complete profile with auto approved identity is approved at once`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.INCOMPLETE }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        assertEquals("approved", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(2L, settings.verificationRevision) // the PENDING generation, then the approval
+    }
+
+    @Test
+    fun `a complete profile waits as pending while identity is in manual review`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.INCOMPLETE }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.MANUAL_REVIEW)
+
+        assertEquals("pending", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
+    fun `a pending repeat submit approves once identity passed`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.PENDING }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.APPROVED)
+
+        assertEquals("approved", service().submitVerification(userId).status)
+        assertEquals(1L, settings.verificationRevision)
+        Mockito.verifyNoInteractions(eventPublisher) // no second "submitted" push to the admin queue
+    }
+
+    @Test
+    fun `re-submitting an approved profile whose identity passed changes nothing and sends no message`() {
+        val settings = completeSettings() // APPROVED
+        stubVerification(settings)
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        assertEquals("approved", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(0L, settings.verificationRevision)
+        Mockito.verifyNoInteractions(eventPublisher)
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
+    fun `an incomplete profile is never approved`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.PENDING; watermarkS3Key = null }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.APPROVED)
+
+        assertEquals(false, service().approveIfReady(userId))
+        assertEquals("incomplete", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
+    fun `auto approval pushes the approved message with no admin`() {
+        stubVerification(completeSettings().apply { verificationStatus = VerificationStatus.PENDING })
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        assertTrue(service().approveIfReady(userId))
+
+        val message = pushedMessages().single()
+        assertEquals(PhotographerMessageKind.VERIFICATION_APPROVED.wire, message.kindWire)
+        assertEquals("Your photographer profile is approved. You can now upload to events.", message.body)
+        assertNull(message.sourceAdminId)
+        assertNull(message.sourceDecisionId)
+    }
+
+    @Test
+    fun `gate off still needs identity passed for profile approval`() {
+        // The service never reads IDENTITY_GATE_ENABLED: profile approval always needs a passed identity (P1-N4).
+        for (status in listOf(null, SellerDetailsStatus.MANUAL_REVIEW, SellerDetailsStatus.REJECTED)) {
+            val settings = completeSettings().apply { verificationStatus = VerificationStatus.PENDING }
+            stubVerification(settings)
+            identity(status)
+            assertEquals(false, service().approveIfReady(userId), "identity $status")
+            assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        }
+        assertTrue(pushedMessages().isEmpty())
     }
 
     // AA-I11: covers and watermarks are checked (on the processed bytes) before they are stored.

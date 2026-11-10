@@ -38,6 +38,15 @@ import com.quickpitik.service.ai.FaceCompareResult
 import com.quickpitik.service.ai.LivenessResult
 import com.quickpitik.service.ai.RekognitionIdentityClient
 import com.quickpitik.service.liveness.LivenessSessionService
+import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.ReservedHandleRepository
+import com.quickpitik.repository.SocialLinkRepository
+import com.quickpitik.service.admin.SystemFlagService
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.WordListChecker
+import com.quickpitik.service.reference.RegionsService
 import org.springframework.beans.factory.ObjectProvider
 import software.amazon.awssdk.core.exception.SdkClientException
 import software.amazon.awssdk.services.rekognition.model.LivenessSessionStatus
@@ -137,11 +146,95 @@ class SellerDetailsServiceTest {
     }
 
     // The real decision-log and identity-check services over mocks, so tests read what they would write.
-    private fun service(identity: IdentityProperties = IdentityProperties()) = SellerDetailsService(
+    private fun service(
+        identity: IdentityProperties = IdentityProperties(),
+        profiles: PhotographerSettingsService = Mockito.mock(PhotographerSettingsService::class.java),
+    ) = SellerDetailsService(
         repository, userRepository, storage, TransactionTemplate(txManager), clock,
-        AdminDecisionLogService(decisionRepository, messageRepository, Mockito.mock(ApplicationEventPublisher::class.java)),
-        StorageProperties(), identityChecks(), payoutRepository, identity,
+        decisionLog(),
+        StorageProperties(), identityChecks(), payoutRepository, identity, profiles,
     )
+
+    private fun decisionLog() =
+        AdminDecisionLogService(decisionRepository, messageRepository, Mockito.mock(ApplicationEventPublisher::class.java))
+
+    // ─── AA-I7: a passed identity approves a waiting, complete profile ───
+
+    private val settingsRepository: PhotographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
+
+    /** The real profile service over mocks, reading this test's seller-details [repository]. */
+    private fun profiles() = PhotographerSettingsService(
+        settingsRepository, userRepository, Mockito.mock(ReservedHandleRepository::class.java),
+        Mockito.mock(RegionsService::class.java), storage, StorageProperties(),
+        Mockito.mock(SocialLinkRepository::class.java).also { Mockito.`when`(it.countByUserId(userId)).thenReturn(1L) },
+        payoutRepository, Mockito.mock(ApplicationEventPublisher::class.java), WordListChecker(),
+        Mockito.mock(ImageModerationService::class.java), Mockito.mock(SystemFlagService::class.java),
+        TransactionTemplate(txManager), repository, decisionLog(),
+    )
+
+    /** A PENDING profile; [complete] = all 8 items. Call after withRecord (it re-stubs the user). */
+    private fun pendingProfile(complete: Boolean = true): PhotographerSettings {
+        val user = User(id = userId, email = "seller@test.local", passwordHash = "unused", name = "S", role = Role.PHOTOGRAPHER)
+            .apply { avatarUrl = "https://example.test/avatar.jpg" }
+        Mockito.`when`(userRepository.lockById(userId)).thenReturn(user)
+        Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(user))
+        Mockito.`when`(payoutRepository.countByUserIdAndQrS3KeyIsNotNull(userId)).thenReturn(1L)
+        val settings = PhotographerSettings(
+            userId = userId, handle = "aira", brandName = "Aira Studio", coverS3Key = "covers/c.jpg",
+            watermarkS3Key = "watermarks/w.png".takeIf { complete }, regionCode = "07", provinceCode = "0722",
+            verificationStatus = VerificationStatus.PENDING,
+        )
+        Mockito.`when`(settingsRepository.findByUserIdForUpdate(userId)).thenReturn(settings)
+        Mockito.`when`(settingsRepository.save(anyArg<PhotographerSettings>())).thenAnswer { it.getArgument(0) }
+        return settings
+    }
+
+    private fun approvedMessages() = messages().filter { it.kindWire == PhotographerMessageKind.VERIFICATION_APPROVED.wire }
+
+    @Test
+    fun `admin identity approval flips a pending complete profile`() {
+        withRecord()
+        val settings = pendingProfile()
+
+        service(profiles = profiles()).approve(adminId, userId, 4)
+
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(1L, settings.verificationRevision)
+        assertNull(approvedMessages().single().sourceAdminId) // automatic: no admin on the message
+    }
+
+    @Test
+    fun `admin identity approval leaves an incomplete profile alone`() {
+        withRecord()
+        val settings = pendingProfile(complete = false)
+
+        service(profiles = profiles()).approve(adminId, userId, 4)
+
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertTrue(approvedMessages().isEmpty())
+    }
+
+    @Test
+    fun `a passing live check flips a pending complete profile`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+        val settings = pendingProfile()
+
+        val checked = service(profiles = profiles()).liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+
+        assertEquals("auto_approved", checked.reviewState)
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(1, approvedMessages().size)
+    }
+
+    @Test
+    fun `a submit that lands in manual review never asks for profile approval`() {
+        val profiles = Mockito.mock(PhotographerSettingsService::class.java)
+
+        assertEquals("manual_review", service(profiles = profiles).submit(userId, form()).reviewState) // no live check: DECLINED
+
+        Mockito.verifyNoInteractions(profiles)
+    }
 
     // ─── AA-I6: uploadsAllowed and identityGateStartsOn ───
 

@@ -561,6 +561,15 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the admin profile approve route answers 404`() {
+        // AA-I7 (Q7): profiles are approved automatically once identity passes; reject and reset stay.
+        val (_, photographerId) = registerPhotographerWithId()
+        val removed = post("/api/v1/admin/users/$photographerId/approve", """{"expectedRevision":0}""", adminToken())
+        assertEquals(404, removed.statusCode())
+        assertEquals("NOT_FOUND", errorCode(removed))
+    }
+
+    @Test
     fun `admin seller details routes are admin only`() {
         val root = "/api/v1/admin/seller-details"
         val (_, sellerId) = registerPhotographerWithId()
