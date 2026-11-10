@@ -5,6 +5,7 @@ import com.quickpitik.config.AiProperties
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoBibEmbed
+import com.quickpitik.entity.MAX_BIB_LENGTH
 import com.quickpitik.entity.PhotoFacePersonEmbed
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.AiApiException
@@ -201,7 +202,7 @@ class PhotoIndexingService(
             bibs = result.detections
                 .filter { it.confidence >= aiApiProperties.bibConfidenceThresholdDefault }
                 .groupBy { it.bib_number.trim().uppercase() }
-                .filterKeys { it.isNotEmpty() }
+                .filterKeys { it.isNotEmpty() && it.length <= MAX_BIB_LENGTH }
                 .mapValues { (_, detections) -> BigDecimal.valueOf(detections.maxOf { it.confidence }) }
             bibsOk = true
         } catch (ex: Exception) {

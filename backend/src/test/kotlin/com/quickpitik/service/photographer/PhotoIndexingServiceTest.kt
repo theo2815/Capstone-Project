@@ -543,4 +543,29 @@ class PhotoIndexingServiceTest {
 
         assertTrue(p.bibs.isEmpty())
     }
+
+    @Test fun `a detected word longer than twenty characters is dropped and the real bib is kept`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("A".repeat(21), 0.95), BibDetection("1234", 0.92))))
+
+        service.index(p.id)
+
+        assertEquals(setOf("1234"), p.bibs.map { it.bibNumber }.toSet())
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        Mockito.verify(workFence, Mockito.times(1)).finish(anyArg())
+    }
+
+    // Guard: passes before and after the cap (only the empty-key filter existed before).
+    @Test fun `a twenty character word is kept`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("B".repeat(20), 0.95))))
+
+        service.index(p.id)
+
+        assertEquals(setOf("B".repeat(20)), p.bibs.map { it.bibNumber }.toSet())
+    }
 }

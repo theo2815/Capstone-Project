@@ -10,6 +10,7 @@ import com.quickpitik.entity.IndexJobStatus
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoBibEmbed
+import com.quickpitik.entity.MAX_BIB_LENGTH
 import com.quickpitik.entity.PhotoFacePersonEmbed
 import com.quickpitik.repository.AiIndexBatchRepository
 import com.quickpitik.repository.AiIndexJobRepository
@@ -158,7 +159,7 @@ class PhotoBatchIngestService(
                         val bm = b as? Map<*, *> ?: return@forEach
                         val conf = (bm["confidence"] as? Number)?.toDouble() ?: 0.0
                         val bibNumber = (bm["bib_number"] as? String)?.trim()?.uppercase()
-                        if (!bibNumber.isNullOrEmpty() &&
+                        if (!bibNumber.isNullOrEmpty() && bibNumber.length <= MAX_BIB_LENGTH &&
                             conf >= aiApiProperties.bibConfidenceThresholdDefault &&
                             photo.bibs.none { it.bibNumber == bibNumber }
                         ) {
