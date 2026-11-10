@@ -3,6 +3,7 @@ package com.quickpitik.entity
 import jakarta.persistence.*
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
+import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
 
@@ -63,6 +64,25 @@ class PhotoRemovalRequest(
     var evidenceCleanupNextAttemptAt: Instant? = null,
     @Column(name = "creation_command_id", nullable = false, updatable = false)
     val creationCommandId: UUID,
+    // Runner deletion requests (V99); support cases keep the defaults.
+    @Enumerated(EnumType.STRING) @Column(nullable = false, updatable = false, length = 16)
+    val source: RemovalRequestSource = RemovalRequestSource.SUPPORT,
+    @Column(name = "reason_code", length = 32)
+    var reasonCode: String? = null,
+    @Column(name = "consent_version", length = 16)
+    var consentVersion: String? = null,
+    @Column(name = "consent_at")
+    var consentAt: Instant? = null,
+    @Column(name = "liveness_session_id", length = 128)
+    var livenessSessionId: String? = null,
+    @Enumerated(EnumType.STRING) @Column(name = "liveness_band", length = 16)
+    var livenessBand: RunnerLivenessBand? = null,
+    @Column(name = "liveness_confidence", precision = 5, scale = 2)
+    var livenessConfidence: BigDecimal? = null,
+    @JdbcTypeCode(SqlTypes.JSON) @Column(name = "risk_flags", nullable = false, columnDefinition = "jsonb")
+    var riskFlags: MutableList<String> = mutableListOf(),
+    @Enumerated(EnumType.STRING) @Column(name = "close_reason", length = 16)
+    var closeReason: RunnerRemovalCloseReason? = null,
 )
 
 data class RemovalCandidateCache(val requestVersion: Long, val evidenceGeneration: Long, val candidates: List<RemovalCachedCandidate>)

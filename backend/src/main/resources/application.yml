@@ -95,6 +95,8 @@ app:
       photographer-daily-auto-hides: ${RUNNER_REMOVAL_PHOTOGRAPHER_DAILY:50}
       candidate-limit: ${RUNNER_REMOVAL_CANDIDATE_LIMIT:50}
       email-claim-stale-after: ${RUNNER_REMOVAL_EMAIL_CLAIM_STALE_AFTER:PT10M}
+      checks-per-day: ${RUNNER_REMOVAL_CHECKS_PER_DAY:3}
+      max-open-requests: ${RUNNER_REMOVAL_MAX_OPEN:3}
   security:
     origin-secret: ${ORIGIN_SECRET:}
   # Externally-reachable URLs the BE needs to embed in artifacts whose request

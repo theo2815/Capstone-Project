@@ -404,6 +404,38 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `runner photo deletion routes are runner only and never cached`() {
+        val root = "/api/v1/me/runner/photo-removal-requests"
+        val eligibility = "$root/eligibility?eventId=${UUID.randomUUID()}"
+        val start = "$root/liveness-session"
+        val body = """{"eventId":"${UUID.randomUUID()}","biometricConsent":true,"consentVersion":"1.3"}"""
+        val runner = register(Role.RUNNER)
+        val others = listOf(register(Role.PHOTOGRAPHER), adminToken())
+        for (path in listOf("$root/reasons", eligibility)) {
+            assertEquals(401, get(path).statusCode())
+            for (t in others) assertEquals(403, get(path, t).statusCode())
+        }
+        assertEquals(401, post(start, body).statusCode())
+        for (t in others) assertEquals(403, post(start, body, t).statusCode())
+
+        val reasons = get("$root/reasons", runner)
+        assertEquals(200, reasons.statusCode())
+        assertTrue("no-store" in reasons.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals(listOf("PRIVACY", "SAFETY", "NO_CONSENT", "OTHER"), json.readTree(reasons.body()).path("data").map { it.path("code").asText() })
+
+        // An unknown event is not eligible; the refusal comes before any AWS call.
+        val e = get(eligibility, runner)
+        assertEquals(200, e.statusCode())
+        assertEquals("EVENT_NOT_ELIGIBLE", json.readTree(e.body()).path("data").path("blockedReason").asText())
+        val started = post(start, body, runner)
+        assertEquals(404, started.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(started))
+        assertTrue("no-store" in started.headers().firstValue("Cache-Control").orElse(""))
+        // No consent tick: rejected at the edge.
+        assertEquals(400, post(start, body.replace("true", "false"), runner).statusCode())
+    }
+
+    @Test
     fun `seller details routes are photographer only and private to their owner`() {
         val path = "/api/v1/me/photographer/seller-details"
         val form = multipart(mapOf("legalName" to "Juan Dela Cruz"))

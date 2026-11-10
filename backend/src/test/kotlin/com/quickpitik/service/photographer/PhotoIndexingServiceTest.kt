@@ -311,6 +311,20 @@ class PhotoIndexingServiceTest {
     }
 
     @Test
+    fun `indexing stores the enrolled face count`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(
+            aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId),
+        ).thenReturn(FacesEnrollResult(person_id = "person-3", faces_enrolled = 3))
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+
+        service.index(p.id)
+
+        assertEquals(3.toShort(), p.faceCount)
+    }
+
+    @Test
     fun `NO_FACES is benign - still INDEXED, no face person`() {
         val p = photo()
         expectPhoto(p)

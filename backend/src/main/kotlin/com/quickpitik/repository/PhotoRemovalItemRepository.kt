@@ -4,6 +4,7 @@ import com.quickpitik.entity.PhotoRemovalItem
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.domain.Pageable
+import java.time.Instant
 import java.util.UUID
 
 interface PhotoRemovalItemRepository : JpaRepository<PhotoRemovalItem, UUID> {
@@ -20,4 +21,14 @@ interface PhotoRemovalItemRepository : JpaRepository<PhotoRemovalItem, UUID> {
 
     @Query("SELECT DISTINCT i.requestId FROM PhotoRemovalItem i WHERE i.photoIdSnapshot IN :photoIds ORDER BY i.requestId")
     fun findOverlappingRequestIds(photoIds: Collection<UUID>, pageable: Pageable): List<UUID>
+
+    // Auto-hides (system-verified items: no verification actor) of runner requests for one event, per photographer.
+    @Query("""SELECT new com.quickpitik.repository.OwnerCount(i.ownerIdSnapshot, count(i))
+        FROM PhotoRemovalItem i, PhotoRemovalRequest r WHERE i.requestId = r.id
+        AND r.source = com.quickpitik.entity.RemovalRequestSource.RUNNER AND r.eventIdSnapshot = :eventId
+        AND i.ownerIdSnapshot IN :ownerIds AND i.verificationActorId IS NULL AND i.verifiedAt >= :since
+        GROUP BY i.ownerIdSnapshot ORDER BY i.ownerIdSnapshot""")
+    fun countRunnerAutoHidesSince(eventId: UUID, ownerIds: Collection<UUID>, since: Instant): List<OwnerCount>
 }
+
+data class OwnerCount(val ownerId: UUID, val count: Long)

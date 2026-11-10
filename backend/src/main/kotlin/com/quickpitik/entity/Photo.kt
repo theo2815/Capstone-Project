@@ -159,6 +159,10 @@ class Photo(
     @Column(name = "indexed_provider", length = 16)
     var indexedProvider: String? = null,
 
+    // Faces the provider indexed (V99); a lower bound, as small or blurred faces are not kept. NULL = not counted.
+    @Column(name = "face_count")
+    var faceCount: Short? = null,
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(
         name = "photo_bibs",
