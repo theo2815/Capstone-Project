@@ -8,6 +8,7 @@ import com.quickpitik.dto.admin.ApproveEventRequest
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.AdminReindexResponseDto
+import com.quickpitik.dto.admin.AdminRacePricesDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.RejectEventRequest
 import com.quickpitik.dto.admin.SameRaceRequest
@@ -16,6 +17,7 @@ import com.quickpitik.dto.admin.UpdateAdminEventRequest
 import com.quickpitik.dto.photographer.RaceCandidateDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
+import com.quickpitik.service.events.RacePriceService
 import jakarta.validation.Valid
 import org.springframework.beans.propertyeditors.StringTrimmerEditor
 import org.springframework.http.MediaType
@@ -42,7 +44,17 @@ import java.util.UUID
 @PreAuthorize("hasRole('ADMIN')")
 class AdminEventsController(
     private val adminEventService: AdminEventService,
+    private val racePriceService: RacePriceService,
 ) {
+    @GetMapping("/{eventId}/photographer-prices")
+    fun photographerPrices(@PathVariable eventId: UUID): AdminRacePricesDto = racePriceService.listForAdmin(eventId)
+
+    @PostMapping("/{eventId}/photographer-prices/{photographerId}/reset")
+    fun resetPhotographerPrice(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @PathVariable photographerId: UUID,
+    ): AdminRacePricesDto = racePriceService.resetToFloor(principal.userId, eventId, photographerId)
 
     // `review=queue` (V46) lists photographer-owned events awaiting a
     // decision instead of the full pipeline.

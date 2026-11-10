@@ -4,6 +4,8 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.RaceProperties
 import com.quickpitik.dto.photographer.RacePriceDto
+import com.quickpitik.dto.admin.AdminRacePricesDto
+import com.quickpitik.dto.admin.AdminRacePriceHistoryDto
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.entity.EventPhotographerId
@@ -18,6 +20,8 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.RacePriceChangeRepository
 import com.quickpitik.service.photographer.PhotographerAccessGuard
+import com.quickpitik.service.admin.AdminDecisionLogService
+import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -46,7 +50,65 @@ class RacePriceService(
     private val raceProperties: RaceProperties,
     private val platformProperties: PlatformProperties,
     private val clock: Clock,
+    private val decisions: AdminDecisionLogService,
 ) {
+    // Caller holds photos -> coverage -> event and changes the event's floor after this call.
+    @Transactional
+    fun applyFloor(event: Event, newFloor: BigDecimal, adminId: UUID) {
+        if (event.eventType == null) {
+            photoRepository.updatePriceByEventId(event.id, newFloor)
+            return
+        }
+        val ceiling = ceilingFor(newFloor)
+        val now = OffsetDateTime.now(clock)
+        for (row in eventPhotographerRepository.lockByEventIdForUpdate(event.id)) {
+            val old = row.pricePhp ?: continue
+            val clamped = old.coerceIn(newFloor, ceiling)
+            row.pricePhp = clamped.takeIf { it.compareTo(newFloor) != 0 }
+            if (old.compareTo(clamped) != 0) {
+                racePriceChangeRepository.save(RacePriceChange(eventId = event.id, photographerId = row.id.photographerId,
+                    changedBy = adminId, fromPhp = old, toPhp = clamped, reason = RacePriceReason.CLAMP, changedAt = now))
+            }
+        }
+        // Flush the clamped coverage values before the native query reads them.
+        eventPhotographerRepository.flush()
+        photoRepository.updateRacePricesByEventId(event.id, newFloor)
+    }
+
+    @Transactional
+    fun resetToFloor(adminId: UUID, eventId: UUID, photographerId: UUID): AdminRacePricesDto {
+        adminRace(eventId)
+        photoRepository.lockIdsByEventIdAndPhotographerIdForUpdate(eventId, photographerId)
+        val row = eventPhotographerRepository.findByIdForUpdate(EventPhotographerId(eventId, photographerId))
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        val floor = eventRepository.findPricePerPhoto(eventId)!!
+        val from = row.pricePhp ?: floor
+        row.pricePhp = null
+        eventPhotographerRepository.flush()
+        photoRepository.updatePriceByEventIdAndPhotographerId(eventId, photographerId, floor)
+        racePriceChangeRepository.save(RacePriceChange(eventId = eventId, photographerId = photographerId,
+            changedBy = adminId, fromPhp = from, toPhp = floor, reason = RacePriceReason.RESET, changedAt = OffsetDateTime.now(clock)))
+        decisions.logEventDecision(adminId, eventId, "race_price_reset", meta = mapOf("photographerId" to photographerId.toString()))
+        return listForAdmin(eventId)
+    }
+
+    @Transactional(readOnly = true)
+    fun listForAdmin(eventId: UUID): AdminRacePricesDto {
+        adminRace(eventId)
+        val floor = eventRepository.findPricePerPhoto(eventId)!!
+        return AdminRacePricesDto(floor, ceilingFor(floor), eventPhotographerRepository.findAdminPrices(eventId),
+            eventPhotographerRepository.findPriceHistory(eventId, PageRequest.of(0, 50)).map {
+                AdminRacePriceHistoryDto(it.photographerId, it.changedBy, it.fromPhp, it.toPhp, it.reason, it.changedAt)
+            })
+    }
+
+    private fun adminRace(eventId: UUID): Event {
+        val event = eventRepository.findById(eventId).orElse(null)?.takeIf { it.deletedAt == null }
+            ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
+        if (event.eventType == null) throw ConflictException(code = ErrorCodes.RACE_PRICE_NOT_ALLOWED, message = "Prices are only listed for race events.")
+        return event
+    }
+
     @Transactional
     fun setMyPrice(photographerId: UUID, eventId: UUID, pricePhp: BigDecimal?): RacePriceDto {
         val event = eventRepository.findById(eventId).orElse(null)

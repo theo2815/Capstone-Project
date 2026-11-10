@@ -81,7 +81,7 @@ class EventFormBindingTest {
                 Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java),
             ),
         )
-        admin = mvc(AdminEventsController(adminEvents))
+        admin = mvc(AdminEventsController(adminEvents, Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java)))
         val principal = AuthPrincipal(UUID.randomUUID(), "photographer@test.local", Role.PHOTOGRAPHER)
         SecurityContextHolder.getContext().authentication =
             UsernamePasswordAuthenticationToken(principal, null, principal.authorities)

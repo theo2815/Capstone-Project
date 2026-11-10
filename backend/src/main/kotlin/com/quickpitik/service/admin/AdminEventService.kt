@@ -27,6 +27,7 @@ import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
@@ -37,6 +38,7 @@ import com.quickpitik.service.events.EventInputs
 import com.quickpitik.service.events.DuplicateMatcher
 import com.quickpitik.service.events.RaceEdit
 import com.quickpitik.service.events.RaceEventService
+import com.quickpitik.service.events.RacePriceService
 import com.quickpitik.config.RaceProperties
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.transaction.support.TransactionSynchronization
@@ -70,6 +72,8 @@ class AdminEventService(
     private val regionsService: RegionsService,
     raceProperties: RaceProperties,
     private val raceEventService: RaceEventService,
+    private val eventPhotographerRepository: EventPhotographerRepository,
+    private val racePriceService: RacePriceService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val matcher = raceProperties.duplicate.let { DuplicateMatcher(it.strongScore, it.mediumScore, it.dateToleranceDays) }
@@ -167,8 +171,8 @@ class AdminEventService(
                 val change = PricingTrio.fromJson(event.pendingChange.orEmpty())
                 val priceChanged = change.pricePerPhoto.compareTo(event.pricePerPhoto) != 0
                 val policyChanged = change.watermarkPolicy != event.watermarkPolicy
+                if (priceChanged) racePriceService.applyFloor(event, change.pricePerPhoto, adminId)
                 change.applyTo(event)
-                if (priceChanged) photoRepository.updatePriceByEventId(event.id, change.pricePerPhoto)
                 // A different mark makes every LIVE preview stale — send them
                 // back through the watermark sweep under the new policy.
                 if (policyChanged) photoRepository.resetForRewatermark(event.id)
@@ -502,7 +506,10 @@ class AdminEventService(
             eventCoverService.upload(eventId, it.bytes, it.contentType)
         }
         val (result, oldCoverKey) = transactionTemplate.execute {
-            if (req.pricePerPhoto != null) lockEventPhotos(eventId)
+            if (req.pricePerPhoto != null) {
+                lockEventPhotos(eventId)
+                eventPhotographerRepository.lockByEventIdForUpdate(eventId)
+            }
             val event = loadForReview(eventId)
             event.requireReviewRevision(req.expectedRevision)
             val oldKey = event.coverS3Key
@@ -568,7 +575,10 @@ class AdminEventService(
                 processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
                 processed?.let(eventCoverService::digest)
             }, { storageKey, recovery -> writeCover(storageKey, recovery, processed!!) }, eventCoverService::delete, { _, coverKey ->
-                if (req.pricePerPhoto != null) lockEventPhotos(eventId)
+                if (req.pricePerPhoto != null) {
+                    lockEventPhotos(eventId)
+                    eventPhotographerRepository.lockByEventIdForUpdate(eventId)
+                }
                 val event = loadForReview(eventId)
                 event.requireReviewRevision(req.expectedRevision)
                 val previous = event.coverS3Key
@@ -684,8 +694,8 @@ class AdminEventService(
                 changes["pricePerPhoto"] = mapOf("from" to oldPriceStr, "to" to newPriceStr)
                 before["pricePerPhoto"] = oldPriceStr
                 after["pricePerPhoto"] = newPriceStr
+                racePriceService.applyFloor(event, newPrice, adminId)
                 event.pricePerPhoto = newPrice
-                photoRepository.updatePriceByEventId(event.id, newPrice)
             }
         }
         // Cover handling — upload wins over remove when both are signalled.

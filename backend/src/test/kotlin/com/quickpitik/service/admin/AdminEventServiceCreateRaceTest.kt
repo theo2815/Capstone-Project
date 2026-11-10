@@ -80,6 +80,8 @@ class AdminEventServiceCreateRaceTest {
             RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
             RaceProperties(),
             raceEvents,
+            Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java),
+            Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java),
         )
     }
 
