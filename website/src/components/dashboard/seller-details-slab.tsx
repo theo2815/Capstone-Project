@@ -221,7 +221,10 @@ function LiveCheckPanel({ onSent }: { onSent: (saved: SellerDetails) => void }) 
       if (!isCurrent()) return;
       const saved = await submitLiveCheck({ livenessSessionId, idNumber: idNumber.trim() });
       if (!isCurrent()) return;
-      showToast({ kind: "success", message: "Live check sent." });
+      const approved = reviewStateOf(saved) === "auto_approved";
+      showToast({ kind: "success", message: approved ? "Seller details approved." : "Live check sent. An admin will check your details." });
+      setIdNumber(""); // never shown back after a send
+      setConsent(false);
       onSent(saved);
     } catch (err) {
       if (isCurrent()) setErrors(errorsFrom(err));

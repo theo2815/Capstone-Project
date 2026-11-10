@@ -193,6 +193,18 @@ it("manual_review row offers the live check only and calls submitLiveCheck witho
   expect(await screen.findByText("Approved")).toBeInTheDocument();
 });
 
+it("a live check that stays in review clears the typed number and says an admin checks", async () => {
+  renderSlab(record({}));
+  mockPost({ [LIVE_CHECK]: record({}) });
+  fireEvent.change(await screen.findByLabelText(/^ID number/), { target: { value: "P1234567A" } });
+  tick();
+  fireEvent.click(screen.getByRole("button", { name: "Take the live selfie now" }));
+  fireEvent.click(await screen.findByRole("button", { name: "finish check" }));
+  await waitFor(() => expect(showToast).toHaveBeenCalledWith({ kind: "success", message: "Live check sent. An admin will check your details." }));
+  expect(screen.getByLabelText(/^ID number/)).toHaveValue("");
+  expect(screen.getByRole("checkbox")).not.toBeChecked();
+});
+
 it("requires the back of the card only for a PhilSys ID", async () => {
   renderSlab(MISSING);
   const post = mockPost({ [SUBMIT]: record({}) });
