@@ -143,6 +143,13 @@ object ErrorCodes {
     const val LIVENESS_ATTEMPTS_EXHAUSTED = "LIVENESS_ATTEMPTS_EXHAUSTED"
     const val LIVENESS_SESSION_INVALID = "LIVENESS_SESSION_INVALID"
 
+    // RD-2 runner photo deletion: an open request already covers this event (or the open-request cap is reached);
+    // intake is closed (checks-per-day 0); the consent tick was for an older legal version; the live check failed (RD-4).
+    const val REMOVAL_REQUEST_OPEN = "REMOVAL_REQUEST_OPEN"
+    const val REMOVAL_INTAKE_CLOSED = "REMOVAL_INTAKE_CLOSED"
+    const val CONSENT_VERSION_MISMATCH = "CONSENT_VERSION_MISMATCH"
+    const val LIVENESS_FAILED = "LIVENESS_FAILED"
+
     // AA-R3 shared races: the rollout switch is off; the event cannot be joined; the V98 backstop fired.
     const val SELF_SERVE_RACES_DISABLED = "SELF_SERVE_RACES_DISABLED"
     const val EVENT_NOT_JOINABLE = "EVENT_NOT_JOINABLE"
