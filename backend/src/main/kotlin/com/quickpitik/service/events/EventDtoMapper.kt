@@ -4,6 +4,7 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.events.EventDetailDto
 import com.quickpitik.dto.events.EventDto
+import com.quickpitik.dto.photographer.RaceCandidateDto
 import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
@@ -78,7 +79,14 @@ class EventDtoMapper(
 
     // `owner` is the photographer who created the event (V46), resolved in
     // batch by the caller; null for admin events.
-    fun toAdminListDto(event: Event, owner: PhotographerRef? = null): AdminListEventDto = AdminListEventDto(
+    // AA-R7: `submitter` names a race's submitter; the two candidates are review-queue context.
+    fun toAdminListDto(
+        event: Event,
+        owner: PhotographerRef? = null,
+        submitter: PhotographerRef? = null,
+        possibleDuplicateOf: RaceCandidateDto? = null,
+        lookalike: RaceCandidateDto? = null,
+    ): AdminListEventDto = AdminListEventDto(
         id = event.id,
         slug = event.slug,
         name = event.name,
@@ -107,6 +115,14 @@ class EventDtoMapper(
         regionCode = event.regionCode,
         provinceCode = event.provinceCode,
         listedOnEvents = event.listedOnEvents,
+        eventType = event.eventType?.name,
+        submittedByHandle = submitter?.handle,
+        submittedByName = submitter?.name,
+        possibleDuplicateOf = possibleDuplicateOf,
+        lookalike = lookalike,
+        checkReasons = event.checkReasons.orEmpty().map { it.name },
+        hiddenAt = event.hiddenAt,
+        adminApproved = event.adminApprovedAt != null,
     )
 
     fun resolveBannerUrl(event: Event): String? =

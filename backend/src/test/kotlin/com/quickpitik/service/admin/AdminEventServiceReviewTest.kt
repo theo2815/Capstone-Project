@@ -60,6 +60,8 @@ class AdminEventServiceReviewTest {
     private lateinit var provider: FaceBibProvider
     private lateinit var aiProperties: AiApiProperties
     private val raceEvents: com.quickpitik.service.events.RaceEventService = Mockito.mock(com.quickpitik.service.events.RaceEventService::class.java)
+    private val settingsRepo: PhotographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
+    private val users: UserRepository = Mockito.mock(UserRepository::class.java)
 
     @BeforeEach
     fun setUp() {
@@ -84,8 +86,8 @@ class AdminEventServiceReviewTest {
             covers,
             com.quickpitik.service.events.EventFaceExpiry(eventRepository, provider, aiProperties, java.time.Clock.systemUTC(), transactions),
             aiProperties,
-            Mockito.mock(PhotographerSettingsRepository::class.java),
-            Mockito.mock(UserRepository::class.java),
+            settingsRepo,
+            users,
             transactions,
             Mockito.mock(AdminActionCommandService::class.java),
             com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
@@ -281,6 +283,58 @@ class AdminEventServiceReviewTest {
 
         assertEquals(2, page.total)
         Mockito.verify(eventRepository, Mockito.never()).pageForAdmin(anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    // AA-R7: the queue tells the admin why a race waits, who submitted it and which race it may repeat.
+    private fun candidate(name: String, strength: String) = com.quickpitik.dto.photographer.RaceCandidateDto(
+        UUID.randomUUID(), "cebu-marathon", name, LocalDate.of(2026, 10, 10), "Cebu City", "07", "CEB", "", "ROAD_RACE",
+        null, "approved", strength,
+    )
+
+    private fun queueOf(vararg rows: Event) {
+        Mockito.`when`(eventRepository.findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(anyArg()))
+            .thenReturn(rows.toList())
+    }
+
+    @Test
+    fun `queue shows possible duplicate and reasons for a pending race`() {
+        val race = pendingRace().apply { possibleDuplicateOf = UUID.randomUUID() }
+        val twin = candidate("Cebu City Marathon", "strong")
+        queueOf(race)
+        Mockito.`when`(raceEvents.duplicatesOf(listOf(race))).thenReturn(mapOf(race.id to twin))
+        Mockito.`when`(settingsRepo.findAllById(setOf(photographerId)))
+            .thenReturn(listOf(com.quickpitik.entity.PhotographerSettings(userId = photographerId).apply { handle = "juan" }))
+        val user = Mockito.mock(com.quickpitik.entity.User::class.java)
+        Mockito.`when`(user.id).thenReturn(photographerId)
+        Mockito.`when`(user.name).thenReturn("Juan Dela Cruz")
+        Mockito.`when`(users.findAllById(setOf(photographerId))).thenReturn(listOf(user))
+
+        val row = service.list(stateFilter = null, review = "queue", params = PaginationParams.of(0, 20)).items.single()
+
+        assertEquals("ROAD_RACE", row.eventType)
+        assertEquals(listOf("POSSIBLE_DUPLICATE"), row.checkReasons)
+        assertEquals(twin, row.possibleDuplicateOf)
+        assertEquals("juan", row.submittedByHandle)
+        assertEquals("Juan Dela Cruz", row.submittedByName)
+        assertNull(row.createdByHandle, "a race has no owner")
+        assertNull(row.lookalike)
+        assertFalse(row.adminApproved)
+        assertNull(row.hiddenAt)
+    }
+
+    @Test
+    fun `queue shows the lookalike race for a pending Other event`() {
+        val other = submitted().apply { name = "Cebu City Marathon" }
+        val race = candidate("Cebu City Marathon", "medium")
+        queueOf(other)
+        Mockito.`when`(raceEvents.lookalikes(listOf(other))).thenReturn(mapOf(other.id to race))
+
+        val row = service.list(stateFilter = null, review = "queue", params = PaginationParams.of(0, 20)).items.single()
+
+        assertEquals(race, row.lookalike)
+        assertNull(row.eventType)
+        assertNull(row.possibleDuplicateOf)
+        assertEquals(emptyList(), row.checkReasons)
     }
 
     @Test
