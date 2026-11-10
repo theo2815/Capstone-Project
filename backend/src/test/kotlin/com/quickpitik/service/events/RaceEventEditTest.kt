@@ -256,6 +256,25 @@ class RaceEventEditTest {
     }
 
     @Test
+    fun `a rename onto another race on the same day is held with POSSIBLE_DUPLICATE`() {
+        val event = race()
+        val other = Event(slug = "cebu-south-marathon", name = "Cebu South Marathon", date = event.date, location = "SRP",
+            status = EventStatus.ACTIVE, provinceCode = "cebu").apply { eventType = RaceType.ROAD_RACE }
+        Mockito.`when`(events.findRaceCandidates(anyArg(), anyArg())).thenReturn(listOf(event, other))
+
+        service().update(me, event.id, UpdateRaceRequest(title = "Cebu South Marathon"), null)
+
+        assertEquals("Cebu City Marathon", event.name)
+        assertEquals(EventReviewStatus.CHANGE_PENDING, event.reviewStatus)
+        assertEquals(listOf(RaceCheckReason.POSSIBLE_DUPLICATE), event.checkReasons)
+        Mockito.verify(events).lockRaceCreation()
+        val note = org.mockito.ArgumentCaptor.forClass(String::class.java)
+        Mockito.verify(flags).raise(eqArg(FlagTargetKind.EVENT), eqArg(event.id), eqArg(SystemFlagReason.RACE_EDIT_HELD),
+            note.capture(), Mockito.isNull())
+        kotlin.test.assertContains(note.value, other.id.toString())
+    }
+
+    @Test
     fun `switch off answers SELF_SERVE_RACES_DISABLED`() {
         val event = race()
 
