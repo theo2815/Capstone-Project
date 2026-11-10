@@ -13,7 +13,7 @@
 --      records, kept on purpose); the R2 files to delete.
 --   3. With confirm=yes: deletes the users row (checking exactly one row went) and commits.
 --      Foreign keys do the rest. CASCADE: tokens, saved selfies, saved events, cart, photo
---      alerts, messages. SET NULL: orders, payments stay with their order, ledger rows,
+--      alerts, messages, live-check sessions. SET NULL: orders, payments stay with their order, ledger rows,
 --      disputes, flags, photo removal requests. No AWS call is needed: saved selfies are
 --      never indexed at Rekognition.
 --
@@ -113,7 +113,8 @@ UNION ALL SELECT 'user_selfies', count(*) FROM user_selfies WHERE user_id = :'qp
 UNION ALL SELECT 'saved_events', count(*) FROM saved_events WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'cart_items', count(*) FROM cart_items WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'event_photo_alerts', count(*) FROM event_photo_alerts WHERE user_id = :'qp_user_id'
-UNION ALL SELECT 'runner_messages', count(*) FROM runner_messages WHERE runner_id = :'qp_user_id';
+UNION ALL SELECT 'runner_messages', count(*) FROM runner_messages WHERE runner_id = :'qp_user_id'
+UNION ALL SELECT 'liveness_sessions', count(*) FROM liveness_sessions WHERE user_id = :'qp_user_id';
 
 \echo '== Kept, with the link to the account cleared (rows), and the personal data that stays on them'
 SELECT 'orders.user_id' AS link_cleared, count(*) AS rows, 'recipient_email' AS personal_data_kept FROM orders WHERE user_id = :'qp_user_id'
@@ -121,7 +122,7 @@ UNION ALL SELECT 'transactions.buyer_id', count(*), 'buyer_display_name' FROM tr
 UNION ALL SELECT 'disputes.runner_id', count(*), 'note, refund_reason, refund_link_url' FROM disputes WHERE runner_id = :'qp_user_id'
 UNION ALL SELECT 'disputes.refund_requested_by', count(*), '' FROM disputes WHERE refund_requested_by = :'qp_user_id'
 UNION ALL SELECT 'flags.reporter_id', count(*), 'note' FROM flags WHERE reporter_id = :'qp_user_id'
-UNION ALL SELECT 'photo_removal_requests.requester_user_id', count(*), 'requester_contact, requester_reason, evidence file in R2 (kept with the case)' FROM photo_removal_requests WHERE requester_user_id = :'qp_user_id'
+UNION ALL SELECT 'photo_removal_requests.requester_user_id', count(*), 'requester_contact, requester_reason, reason_code, consent_version, consent_at, liveness_session_id, liveness_band, liveness_confidence, risk_flags, evidence file in R2 (kept with the case; on RUNNER cases creator_id keeps the runner id)' FROM photo_removal_requests WHERE requester_user_id = :'qp_user_id'
 UNION ALL SELECT 'admin_decision_log.target_user_id', count(*), 'reason, meta (may name the person)' FROM admin_decision_log WHERE target_user_id = :'qp_user_id';
 
 \echo '== R2 files to delete after the confirmed run (then list selfies/<id>/ and avatars/<id>/: both must be empty)'

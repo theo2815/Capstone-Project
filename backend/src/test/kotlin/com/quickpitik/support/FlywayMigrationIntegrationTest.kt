@@ -507,6 +507,47 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // Upgrade rehearsal: staging holds support-made removal cases when V99 (RD-1) arrives. Starts at V97 so it
+    // still runs AA-R10's V98 in between once that merges.
+    @Test
+    fun `V99 upgrades earlier versions with existing removal cases defaulting to SUPPORT`() {
+        val schema = "removal_v99_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "97").migrate()
+            val case = UUID.randomUUID()
+            jdbcTemplate.update(
+                "INSERT INTO $schema.photo_removal_requests (id, event_id_snapshot, event_name_snapshot, requester_contact, " +
+                    "support_reference, requester_reason, public_to_owner_reason, status, created_at, updated_at, creator_id, " +
+                    "creation_command_id) VALUES (?, ?, 'Cebu Marathon', 'support@example.test', 'SUP-1', 'Privacy', " +
+                    "'Privacy removal request', 'OPEN', now(), now(), ?, ?)",
+                case, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+            )
+
+            flywayFor(schema, "99").migrate()
+
+            assertEquals("99", latestVersion(schema))
+            assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM $schema.photo_removal_requests WHERE id = ? AND source = 'SUPPORT' " +
+                    "AND risk_flags = '[]'::jsonb AND reason_code IS NULL AND consent_version IS NULL AND consent_at IS NULL " +
+                    "AND liveness_session_id IS NULL AND liveness_band IS NULL AND liveness_confidence IS NULL AND close_reason IS NULL",
+                Int::class.java, case,
+            ))
+            assertEquals(listOf("YES"), jdbcTemplate.queryForList(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = ? AND table_name = 'photos' " +
+                    "AND column_name = 'face_count' AND column_default IS NULL",
+                String::class.java, schema,
+            ))
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.photo_removal_requests SET source = 'EMAIL' WHERE id = ?", case)
+            }
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.photo_removal_requests SET risk_flags = '{}'::jsonb WHERE id = ?", case)
+            }
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
     private fun latestVersion(schema: String): String = jdbcTemplate.queryForObject(
         "SELECT version FROM $schema.flyway_schema_history WHERE success AND version IS NOT NULL " +
             "ORDER BY installed_rank DESC LIMIT 1",
