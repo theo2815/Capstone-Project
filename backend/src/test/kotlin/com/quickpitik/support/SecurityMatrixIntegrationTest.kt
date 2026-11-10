@@ -606,6 +606,18 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the admin same-race route is admin only`() {
+        // AA-R6: an admin folds a pending duplicate race into the race it repeats.
+        val path = "/api/v1/admin/events/${UUID.randomUUID()}/same-race"
+        assertEquals(401, post(path, "{}").statusCode())
+        assertEquals(403, post(path, "{}", register(Role.RUNNER)).statusCode())
+        assertEquals(403, post(path, "{}", register(Role.PHOTOGRAPHER)).statusCode())
+        val missing = post(path, "{}", adminToken())
+        assertEquals(404, missing.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(missing))
+    }
+
+    @Test
     fun `admin seller details routes are admin only`() {
         val root = "/api/v1/admin/seller-details"
         val (_, sellerId) = registerPhotographerWithId()

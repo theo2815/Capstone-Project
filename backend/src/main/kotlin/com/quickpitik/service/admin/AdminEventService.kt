@@ -67,6 +67,7 @@ class AdminEventService(
     private val commands: AdminActionCommandService,
     private val regionsService: RegionsService,
     raceProperties: RaceProperties,
+    private val raceEventService: RaceEventService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val matcher = raceProperties.duplicate.let { DuplicateMatcher(it.strongScore, it.mediumScore, it.dateToleranceDays) }
@@ -123,6 +124,9 @@ class AdminEventService(
             EventReviewStatus.PENDING -> {
                 event.status = EventStatus.ACTIVE
                 markReviewed(event, adminId, EventReviewStatus.APPROVED)
+                // AA-R6: approving a pending race ("a different race") is a real admin approval, so it counts as proven.
+                if (event.eventType != null) event.adminApprovedAt = event.reviewedAt
+                event.checkReasons = null
                 val decision = adminDecisionLogService.logEventDecision(
                     adminId = adminId,
                     targetEventId = event.id,
@@ -180,6 +184,7 @@ class AdminEventService(
             EventReviewStatus.PENDING -> {
                 markReviewed(event, adminId, EventReviewStatus.REJECTED)
                 event.reviewNote = note
+                event.checkReasons = null
                 val decision = adminDecisionLogService.logEventDecision(
                     adminId = adminId,
                     targetEventId = event.id,
@@ -226,6 +231,7 @@ class AdminEventService(
     // list while they keep ownership. Review state is untouched.
     fun setListing(adminId: UUID, eventId: UUID, listed: Boolean): AdminListEventDto {
         val event = loadForReview(eventId)
+        if (event.eventType != null) return setRaceListing(adminId, event, listed)
         if (event.createdBy == null) throw ValidationException("Admin events are always listed on /events.")
         if (listed && event.visibility == EventVisibility.UNLISTED) {
             throw ValidationException("This event is Private. The photographer must make it Public first.")
@@ -240,6 +246,62 @@ class AdminEventService(
                 adminId = adminId,
                 targetEventId = event.id,
                 decision = if (listed) "event_listed" else "event_unlisted",
+            )
+        }
+        return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
+    }
+
+    // AA-R6: "same race as X". The submitter joins X and the pending row goes: it is a DRAFT with no
+    // photos, so it is soft-deleted as REJECTED with the reason, and its cover is removed after commit.
+    fun sameRace(adminId: UUID, eventId: UUID, targetId: UUID? = null, expectedRevision: Long? = null): AdminListEventDto {
+        val event = loadForReview(eventId)
+        event.requireReviewRevision(expectedRevision)
+        val submitter = event.submittedBy
+        if (event.eventType == null || event.reviewStatus != EventReviewStatus.PENDING || submitter == null) {
+            throw ConflictException(code = ErrorCodes.CONFLICT, message = "This race is not awaiting review.")
+        }
+        val targetEventId = targetId ?: event.possibleDuplicateOf
+        if (targetEventId == null || targetEventId == event.id) throw ValidationException("Pick the race this one is the same as.")
+        val target = raceEventService.joinInternal(targetEventId, submitter, event.name)
+        markReviewed(event, adminId, EventReviewStatus.REJECTED)
+        event.deletedAt = event.reviewedAt
+        event.reviewNote = "Same race as ${target.name}".take(500)
+        event.checkReasons = null
+        event.coverS3Key?.takeIf { it.isNotBlank() }?.let(::deleteCoverAfterCommit)
+        eventRepository.save(event)
+        val decision = adminDecisionLogService.logEventDecision(
+            adminId = adminId,
+            targetEventId = event.id,
+            decision = "event_same_race",
+            meta = mapOf("targetEventId" to target.id.toString()),
+        )
+        notifyOwner(
+            event,
+            PhotographerMessageKind.ADMIN_MESSAGE,
+            "An admin found that ${event.name} is the same race as ${target.name}. You are now covering ${target.name}; upload your photos there.",
+            adminId,
+            decision.id,
+        )
+        return eventDtoMapper.toAdminListDto(target, resolveOwners(listOf(target))[target.createdBy])
+    }
+
+    // AA-R6: a typed race is always public, so the switch hides it (hidden_at) or relists it; a relist is
+    // an admin approval, so the proof sweep (R8) and reports (R9) never hide it again.
+    private fun setRaceListing(adminId: UUID, event: Event, listed: Boolean): AdminListEventDto {
+        val changed = if (listed) event.hiddenAt != null || event.adminApprovedAt == null else event.hiddenAt == null
+        if (changed) {
+            val now = OffsetDateTime.now()
+            if (listed) {
+                event.hiddenAt = null
+                event.adminApprovedAt = now
+            } else {
+                event.hiddenAt = now
+            }
+            eventRepository.save(event)
+            adminDecisionLogService.logEventDecision(
+                adminId = adminId,
+                targetEventId = event.id,
+                decision = if (listed) "event_relisted" else "event_hidden",
             )
         }
         return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])

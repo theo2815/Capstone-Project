@@ -59,6 +59,7 @@ class AdminEventServiceReviewTest {
     private lateinit var covers: EventCoverService
     private lateinit var provider: FaceBibProvider
     private lateinit var aiProperties: AiApiProperties
+    private val raceEvents: com.quickpitik.service.events.RaceEventService = Mockito.mock(com.quickpitik.service.events.RaceEventService::class.java)
 
     @BeforeEach
     fun setUp() {
@@ -89,6 +90,7 @@ class AdminEventServiceReviewTest {
             Mockito.mock(AdminActionCommandService::class.java),
             com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
             com.quickpitik.config.RaceProperties(),
+            raceEvents,
         )
         service = ProxyFactory(target).apply {
             addAdvice(TransactionInterceptor().apply {
@@ -682,6 +684,155 @@ class AdminEventServiceReviewTest {
         assertEquals("Cebu North Marathon", event.name)
         assertEquals("cebu marathon north", event.nameKey)
         Mockito.verify(eventRepository).saveAndFlush(event)
+    }
+
+    // ── AA-R6: admin decisions on shared races ───────────────────────────
+    private fun asRace(event: Event, name: String = "Cebu City Marathon"): Event = event.apply {
+        createdBy = null
+        submittedBy = photographerId
+        eventType = com.quickpitik.entity.RaceType.ROAD_RACE
+        this.name = name
+        nameKey = name.lowercase()
+    }
+
+    private fun pendingRace(): Event = asRace(submitted()).apply {
+        checkReasons = listOf(com.quickpitik.entity.RaceCheckReason.POSSIBLE_DUPLICATE)
+    }
+
+    @Test
+    fun `approving a pending race marks it admin approved and messages the submitter`() {
+        val event = pendingRace()
+
+        service.approve(adminId, event.id)
+
+        assertEquals(EventStatus.ACTIVE, event.status)
+        assertEquals(EventReviewStatus.APPROVED, event.reviewStatus)
+        assertNotNull(event.adminApprovedAt)
+        assertNull(event.checkReasons)
+        assertEquals(listOf(PhotographerMessageKind.EVENT_APPROVED), pushed)
+        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+    }
+
+    @Test
+    fun `rejecting a pending race clears its check reasons`() {
+        val event = pendingRace()
+
+        service.reject(adminId, event.id, "Not a real race")
+
+        assertEquals(EventReviewStatus.REJECTED, event.reviewStatus)
+        assertNull(event.checkReasons)
+        assertNull(event.adminApprovedAt)
+    }
+
+    @Test
+    fun `approving an untyped submission does not mark it admin approved`() {
+        val event = submitted()
+
+        service.approve(adminId, event.id)
+
+        assertNull(event.adminApprovedAt)
+    }
+
+    @Test
+    fun `hiding and relisting a shared race toggles hidden_at and relist proves it`() {
+        val event = asRace(live())
+
+        service.setListing(adminId, event.id, listed = false)
+
+        assertNotNull(event.hiddenAt)
+        assertNull(event.adminApprovedAt)
+        assertFalse(event.listedOnEvents)
+        Mockito.verify(decisions).logEventDecision(eqArg(adminId), eqArg(event.id), eqArg("event_hidden"), anyArg(), anyArg())
+
+        service.setListing(adminId, event.id, listed = true)
+
+        assertNull(event.hiddenAt)
+        assertNotNull(event.adminApprovedAt)
+        assertFalse(event.listedOnEvents)
+        Mockito.verify(decisions).logEventDecision(eqArg(adminId), eqArg(event.id), eqArg("event_relisted"), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `hiding a race that is already hidden writes no second audit row`() {
+        val event = asRace(live()).apply { hiddenAt = java.time.OffsetDateTime.now() }
+
+        service.setListing(adminId, event.id, listed = false)
+
+        Mockito.verifyNoInteractions(decisions)
+    }
+
+    @Test
+    fun `same race joins the submitter to the target and removes the pending row`() {
+        val target = asRace(live(), name = "Cebu Marathon")
+        val event = pendingRace().apply {
+            possibleDuplicateOf = target.id
+            coverS3Key = "events/covers/pending.jpg"
+        }
+        Mockito.`when`(raceEvents.joinInternal(target.id, photographerId, event.name)).thenReturn(target)
+
+        val row = service.sameRace(adminId, event.id)
+
+        assertEquals(target.id, row.id)
+        Mockito.verify(raceEvents).joinInternal(target.id, photographerId, "Cebu City Marathon")
+        assertNotNull(event.deletedAt)
+        assertEquals(EventReviewStatus.REJECTED, event.reviewStatus)
+        assertEquals("Same race as Cebu Marathon", event.reviewNote)
+        assertNull(event.checkReasons)
+        Mockito.verify(decisions).logEventDecision(eqArg(adminId), eqArg(event.id), eqArg("event_same_race"), anyArg(), anyArg())
+        assertEquals(listOf(PhotographerMessageKind.ADMIN_MESSAGE), pushed)
+        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+        Mockito.verify(covers).delete("events/covers/pending.jpg")
+    }
+
+    @Test
+    fun `same race takes an explicit target over the stored duplicate`() {
+        val target = asRace(live(), name = "Cebu Marathon")
+        val event = pendingRace().apply { possibleDuplicateOf = UUID.randomUUID() }
+        Mockito.`when`(raceEvents.joinInternal(target.id, photographerId, event.name)).thenReturn(target)
+
+        service.sameRace(adminId, event.id, targetId = target.id)
+
+        Mockito.verify(raceEvents).joinInternal(target.id, photographerId, "Cebu City Marathon")
+    }
+
+    @Test
+    fun `same race refuses a row that is not a pending race or has no target`() {
+        val untyped = submitted()
+        val live = asRace(live())
+        val noTarget = pendingRace()
+        val self = pendingRace().apply { possibleDuplicateOf = id }
+
+        assertFailsWith<ConflictException> { service.sameRace(adminId, untyped.id, targetId = UUID.randomUUID()) }
+        assertFailsWith<ConflictException> { service.sameRace(adminId, live.id, targetId = UUID.randomUUID()) }
+        assertFailsWith<ValidationException> { service.sameRace(adminId, noTarget.id) }
+        assertFailsWith<ValidationException> { service.sameRace(adminId, self.id) }
+
+        Mockito.verifyNoInteractions(raceEvents, decisions)
+        assertNull(noTarget.deletedAt)
+    }
+
+    @Test
+    fun `same race refuses a stale revision`() {
+        val event = pendingRace().apply { possibleDuplicateOf = UUID.randomUUID() }
+
+        assertFailsWith<com.quickpitik.exception.ApiException> {
+            service.sameRace(adminId, event.id, expectedRevision = event.reviewRevision + 1)
+        }
+
+        Mockito.verifyNoInteractions(raceEvents)
+    }
+
+    @Test
+    fun `untyped admin events still refuse the listing switch`() {
+        for (listed in listOf(true, false)) {
+            val event = live().apply { createdBy = null }
+
+            assertFailsWith<ValidationException> { service.setListing(adminId, event.id, listed) }
+
+            assertNull(event.hiddenAt)
+            assertNull(event.adminApprovedAt)
+        }
+        Mockito.verifyNoInteractions(decisions)
     }
 
     private fun submitted(): Event = event(EventStatus.DRAFT, EventReviewStatus.PENDING)
