@@ -93,6 +93,7 @@ class Bucket4jRateLimiter(
         POLICY_MEDIA_UPLOAD -> properties.mediaUpload
         POLICY_PHOTO_VERIFY -> properties.photoVerify
         POLICY_REFUND_LINK_PER_DISPUTE -> properties.refundLinkPerDispute
+        POLICY_REPORT -> properties.report
         // Policies are compile-time constants — an unknown string is a call-site
         // typo, and silently defaulting (the old 60/min fallback) would ship the
         // wrong limit. Die loudly so a test catches it.
@@ -117,6 +118,7 @@ class Bucket4jRateLimiter(
         const val POLICY_MEDIA_UPLOAD = "media-upload"
         const val POLICY_PHOTO_VERIFY = "photo-verify"
         const val POLICY_REFUND_LINK_PER_DISPUTE = "refund-link-per-dispute"
+        const val POLICY_REPORT = "report"
 
         // Every routable policy, for the resolution test — a constant missing
         // here escapes that net, so keep it in sync with the list above.
@@ -138,6 +140,7 @@ class Bucket4jRateLimiter(
             POLICY_MEDIA_UPLOAD,
             POLICY_PHOTO_VERIFY,
             POLICY_REFUND_LINK_PER_DISPUTE,
+            POLICY_REPORT,
         )
     }
 }
