@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { Slab } from "@/components/profile-shell/slab";
@@ -11,36 +12,59 @@ import {
   useAdminSellerDetailsList,
   useAdminSellerDetailsRecord,
 } from "@/hooks/use-admin-seller-details";
-import { useAdminPhotographerSettings } from "@/hooks/use-admin-users";
+import { EMPTY_ADMIN_USERS, useAdminPhotographerSettings, useAdminUsers } from "@/hooks/use-admin-users";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
-import { SELLER_ID_TYPES, type AdminSellerDetails } from "@/lib/api-seller-details";
+import { SELLER_ID_TYPES, type AdminSellerDetails, type AdminSellerFilter, type RepeatMatch } from "@/lib/api-seller-details";
 import { captureAuthSession } from "@/lib/auth-session";
+import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
 
 const KICKER = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
-const STATUS_LABEL = { submitted: "Waiting", approved: "Approved", rejected: "Rejected" } as const;
+// Keyed by reviewState; `status` keeps the old values for old builds.
+const STATUS_LABEL: Record<string, string> = { manual_review: "Needs review", auto_approved: "Auto-approved", approved: "Approved", rejected: "Rejected" };
+const REASON_LABEL: Record<string, string> = {
+  PASSED: "Passed",
+  LIVENESS_LOW: "Live check score below the bar",
+  FACE_MISMATCH: "Live face does not match the ID photo",
+  NO_FACE_ON_ID: "No face found on the ID photo",
+  AI_DISABLED: "Automatic checks were off",
+  AI_ERROR: "Automatic check failed",
+  DECLINED: "Photographer asked for an admin check",
+  ID_NUMBER_MISMATCH: "Typed ID number differs from the ID photo",
+  ID_NUMBER_UNREADABLE: "Could not read the ID number off the photo",
+  PAYOUT_NAME_MISMATCH: "Payout name differs from the legal name",
+  REPEAT_ACCOUNT_MATCH: "Same ID number, payout number or phone as another account",
+  PREVIOUSLY_REJECTED: "Sent again after an admin rejected it",
+};
+const MATCH_LABEL: Record<string, string> = { ID_NUMBER: "ID number", PAYOUT_NUMBER: "payout number", PHONE: "phone" };
+const FILTERS = [["manual_review", "Needs review"], ["auto_approved", "Auto-approved"], [null, "All"]] as const;
+const FILTER_COUNT = { manual_review: "waiting", auto_approved: "auto-approved", all: "in all" } as const;
+const FILTER_EMPTY = { manual_review: "No seller details waiting.", auto_approved: "No auto-approved seller details.", all: "No seller details yet." } as const;
 const LINK_LIFETIME_MS = 5 * 60_000;
 const idLabel = (value: string) => SELLER_ID_TYPES.find((t) => t.value === value)?.label ?? value;
+const statusLabel = (reviewState: string) => STATUS_LABEL[reviewState] ?? reviewState;
+const score = (value: number | null) => (value === null ? "Not run" : `${value.toFixed(1)}%`);
 
 // SC-2b: admins review photographers' seller details (ID photos, a selfie
 // holding the ID) on the verifications page, separate from verification itself.
+// AA-I16: manual-review cases first (the server sorts), with the automatic results.
 export function SellerDetailsQueue() {
-  const [status, setStatus] = useState<"submitted" | null>("submitted");
+  const [status, setStatus] = useState<AdminSellerFilter>("manual_review");
   const [limit, setLimit] = useState<number>(PAGE_SIZE.ADMIN_INCREMENT);
   const [openId, setOpenId] = useState<string | null>(null);
   const list = useAdminSellerDetailsList(status, limit);
   const rows = list.data?.items ?? [];
   const total = list.data?.total ?? 0;
-  const filter = (next: "submitted" | null) => { setStatus(next); setLimit(PAGE_SIZE.ADMIN_INCREMENT); };
+  const filter = (next: AdminSellerFilter) => { setStatus(next); setLimit(PAGE_SIZE.ADMIN_INCREMENT); };
 
   return (
     <Slab id="seller-details" number="04" title="Seller details" caption="ID checks before uploads"
-      trailing={<span className="tnum">{total} {status ? "waiting" : "in all"}</span>}>
-      <div role="group" aria-label="Filter seller details" className="mb-6 flex gap-2">
-        {([["submitted", "Waiting"], [null, "All"]] as const).map(([value, label]) => (
+      trailing={<span className="tnum">{total} {FILTER_COUNT[status ?? "all"]}</span>}>
+      <div role="group" aria-label="Filter seller details" className="mb-6 flex flex-wrap gap-2">
+        {FILTERS.map(([value, label]) => (
           <button key={label} type="button" aria-pressed={status === value} onClick={() => filter(value)}
             className={cn(BTN_SECONDARY, BTN_SIZE.sm, status === value && "bg-ink text-surface")}>
             {label}
@@ -55,7 +79,7 @@ export function SellerDetailsQueue() {
           <button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-3")}>Try again</button>
         </div>
       ) : rows.length === 0 ? (
-        <p className="font-sans text-sm text-slate-soft">{status ? "No seller details waiting." : "No seller details yet."}</p>
+        <p className="font-sans text-sm text-slate-soft">{FILTER_EMPTY[status ?? "all"]}</p>
       ) : (
         <>
           <ul className="space-y-3">
@@ -69,7 +93,7 @@ export function SellerDetailsQueue() {
                       {idLabel(row.idType)} · <span className="tnum">{formatLongDate(row.submittedAt, true)}</span>
                     </span>
                   </span>
-                  <span className={cn(KICKER, "shrink-0 text-slate")}>{STATUS_LABEL[row.status]}</span>
+                  <span className={cn(KICKER, "shrink-0 text-slate")}>{statusLabel(row.reviewState)}</span>
                 </button>
               </li>
             ))}
@@ -124,18 +148,19 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
     }
   };
 
-  const canReject = data?.status === "submitted" || data?.status === "approved";
+  const canApprove = data?.reviewState === "manual_review";
+  const canReject = canApprove || data?.reviewState === "auto_approved" || data?.reviewState === "approved";
   return (
     <AdminDetailDrawer open onClose={() => { if (!isPending) onClose(); }} escDisabled={isPending}
       kicker="Seller details" title={data?.legalName ?? "Seller details"}
-      rightHeader={data && <span className={cn(KICKER, "inline-flex rounded-full border border-line text-slate px-3 py-0.5")}>{STATUS_LABEL[data.status]}</span>}
+      rightHeader={data && <span className={cn(KICKER, "inline-flex rounded-full border border-line text-slate px-3 py-0.5")}>{statusLabel(data.reviewState)}</span>}
       subtitle={data && <p className={cn(KICKER, "text-slate")}>{data.email}</p>}
       actions={data && (
         <>
           {canReject && (
             <button type="button" disabled={isPending} onClick={() => void decide("reject")} className={cn(BTN_DANGER, BTN_SIZE.sm)}>Reject</button>
           )}
-          {data.status === "submitted" && (
+          {canApprove && (
             <button type="button" disabled={isPending} onClick={() => void decide("approve")} className={cn(BTN_PRIMARY, BTN_SIZE.sm)}>Approve</button>
           )}
         </>
@@ -156,6 +181,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
             </div>
           )}
           <Details data={data} payoutNames={settings.isError ? "Couldn't load payout accounts" : settings.data?.payouts.map((p) => p.accountName) ?? null} />
+          {data.repeatMatches.length > 0 && <RepeatMatches matches={data.repeatMatches} />}
           <Photos data={data} expired={now >= expiresAt} onReload={() => void record.refetch()} reloading={record.isFetching} />
           <Checklist />
           {canReject && (
@@ -183,6 +209,13 @@ function Details({ data, payoutNames }: { data: AdminSellerDetails; payoutNames:
     ["Phone", data.phone],
     ["Payout account names", payoutNames === null ? "Loading…" : typeof payoutNames === "string" ? payoutNames : payoutNames.join(", ") || "No payout accounts"],
     ["Submitted", formatLongDate(data.submittedAt)],
+    ["Live check score", score(data.livenessConfidence)],
+    ["Face match score", score(data.faceSimilarity)],
+    ["Reasons", data.reasonCodes.length > 0
+      ? data.reasonCodes.map((code) => REASON_LABEL[code] ?? code).join("; ")
+      : data.autoCheckedAt ? "None" : "Sent before automatic checks"],
+    ["Live-selfie consent", data.biometricConsentAt ? formatLongDate(data.biometricConsentAt) : "Not given"],
+    ["ID number on file", data.hasIdNumber ? "Yes" : "No"],
   ];
   if (data.rejectionReason) rows.push(["Last rejection", data.rejectionReason]);
   return (
@@ -197,9 +230,35 @@ function Details({ data, payoutNames }: { data: AdminSellerDetails; payoutNames:
   );
 }
 
+// The admin page for one photographer is keyed by handle, which a match does not carry:
+// it comes from the admin users list (already cached on this page). No handle = plain email.
+function RepeatMatches({ matches }: { matches: RepeatMatch[] }) {
+  const users = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
+  return (
+    <section aria-label="Other accounts" className="font-sans text-sm text-ink">
+      <p className="font-semibold">Other accounts with the same details</p>
+      <ul className="mt-3 space-y-2">
+        {matches.map((match) => {
+          const handle = users.find((u) => u.userId === match.userId)?.handle;
+          return (
+            <li key={match.userId} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 break-words">
+              {handle
+                ? <Link href={`${ROUTES.ADMIN_PHOTOGRAPHERS}/${encodeURIComponent(handle)}`} className="underline underline-offset-4">{match.email}</Link>
+                : <span>{match.email}</span>}
+              <span className="text-slate">· {match.matchedOn.map((kind) => MATCH_LABEL[kind] ?? kind).join(", ")}</span>
+              {match.suspended && <span className={cn(KICKER, "text-error")}>Suspended</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function Photos({ data, expired, onReload, reloading }: { data: AdminSellerDetails; expired: boolean; onReload: () => void; reloading: boolean }) {
   const files = data.files;
   const shots = files ? ([
+    ["Live selfie (reference)", files.livenessReference],
     ["Front of the ID", files.idFront],
     ["Back of the ID", files.idBack],
     ["Photo holding the ID", files.selfie],
@@ -231,9 +290,8 @@ function Checklist() {
     <section aria-label="Checklist" className="font-sans text-sm text-ink">
       <p className="font-semibold">Before you approve</p>
       <ul className="mt-3 list-disc space-y-2 pl-5">
-        <li>The typed legal name, the name on the ID and the payout account names match.</li>
         <li>The ID is not expired, and the photos show a real card (not a screen) with no edited-looking text or pasted-on photo.</li>
-        <li>The face in the selfie matches the ID photo, and the ID in the selfie is the same card.</li>
+        <li>The live selfie and the photo holding the ID show the person on the ID photo, and the held card is the same card.</li>
         <li>PhilSys National ID: scan the QR code in the back photo with PSA&apos;s PhilSys Check (verify.philsys.gov.ph). It should say &quot;Verified&quot; and show the same photo.</li>
         <li>PRC ID: look the licence up at verification.prc.gov.ph.</li>
       </ul>
