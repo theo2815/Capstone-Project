@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminUsers, fetchAdminUserDetail, fetchAdminPhotographerSettings,
-  approveUser, rejectUser, suspendUser, unsuspendUser, resetUserVerification,
+  rejectUser, suspendUser, unsuspendUser, resetUserVerification,
   sendAdminMessage, fetchAdminCommand, type SendAdminMessageInput,
   type AdminUserDetail,
 } from "@/lib/api-admin";
@@ -150,16 +150,16 @@ export function useAdminUserActions() {
       },
       isPending: (ids: string[]) => mutation.isPending(ids.map((id) => ({ kind: "user", id }))),
       pendingAction: (id: string) => mutation.pendingAction([{ kind: "user", id }]),
-      approve: (id: string, revision?: number) => run(id, "Approving…", () => approveUser(id, revision), "approve"),
       reject: (id: string, reason: string, revision?: number) => run(id, "Sending back…", () => rejectUser(id, reason, revision), "reject"),
       suspend: (id: string, reason: string) => run(id, "suspend", () => suspendUser(id, reason)),
       unsuspend: (id: string) => run(id, "Unsuspending…", () => unsuspendUser(id), "unsuspend"),
       resetVerification: (id: string, reason: string, revision?: number) => run(id, "Resetting verification…", () => resetUserVerification(id, reason, revision), "reset verification"),
-      verifyBatch: async (rows: { userId: string; verificationRevision: number }[], action: "approve" | "reject", reason = ""): Promise<boolean[] | null> => {
-        const result = await mutation.run({ targets: rows.map((row) => ({ kind: "user", id: row.userId })), action: action === "approve" ? "Approving…" : "Sending back…", execute: async () => {
+      // Bulk send back only: profiles approve themselves once identity passes (Q7).
+      verifyBatch: async (rows: { userId: string; verificationRevision: number }[], reason: string): Promise<boolean[] | null> => {
+        const result = await mutation.run({ targets: rows.map((row) => ({ kind: "user", id: row.userId })), action: "Sending back…", execute: async () => {
           const session = useAuthStore.getState();
-          const outcomes = await Promise.all(rows.map((row) => settle(row.userId, action,
-            () => action === "approve" ? approveUser(row.userId, row.verificationRevision) : rejectUser(row.userId, reason, row.verificationRevision), true)));
+          const outcomes = await Promise.all(rows.map((row) => settle(row.userId, "reject",
+            () => rejectUser(row.userId, reason, row.verificationRevision), true)));
           if (useAuthStore.getState().sessionVersion === session.sessionVersion) refresh(session.user!.id);
           return outcomes;
         } });

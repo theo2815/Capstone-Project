@@ -234,13 +234,6 @@ export async function fetchAdminPhotographerSettings(
   );
 }
 
-export async function approveUser(userId: string, expectedRevision?: number): Promise<AdminUserRow> {
-  return api.post<AdminUserRow>(
-    `/admin/users/${encodeURIComponent(userId)}/approve`,
-    { expectedRevision },
-  );
-}
-
 export async function rejectUser(
   userId: string,
   reason: string,
