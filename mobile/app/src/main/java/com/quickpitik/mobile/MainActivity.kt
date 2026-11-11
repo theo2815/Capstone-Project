@@ -815,9 +815,12 @@ class MainActivity : ComponentActivity() {
                                 ) { entry ->
                                     val vm = studioViewModel(navController, entry)
                                     val eventId = entry.arguments?.getString("eventId")
+                                    val settingsVm = studioSettingsViewModel(navController, entry)
+                                    val regions by settingsVm.regions.collectAsState()
                                     StudioTheme {
                                         PhotographerEventFormScreen(
                                             viewModel = vm,
+                                            regions = regions,
                                             eventId = eventId,
                                             onBack = { navController.popBackStack() },
                                             onSaved = { navController.popBackStack() },
