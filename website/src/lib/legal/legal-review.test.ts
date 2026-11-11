@@ -72,6 +72,8 @@ describe("approved text (PT-0b)", () => {
 
   it.each([
     ["privacy", "how-we-use-it", "Sections 12 and 13"],
+    ["privacy", "how-we-use-it", "Automatic checks on uploads"],
+    ["privacy", "how-we-use-it", "Safety, security, automatic checks on uploads and photo removal requests"],
     ["privacy", "face-matching", "You can object"],
     ["privacy", "who-receives-it", "QuickPitik stays responsible"],
     ["privacy", "what-we-collect", "technical logs may record it"],
