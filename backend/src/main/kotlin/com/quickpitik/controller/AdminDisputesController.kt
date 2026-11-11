@@ -43,6 +43,9 @@ class AdminDisputesController(
         return adminDisputeService.list(status, PaginationParams.of(offset, limit))
     }
 
+    @GetMapping("/{disputeId}")
+    fun get(@PathVariable disputeId: UUID): AdminDisputeDto = adminDisputeService.get(disputeId)
+
     @PostMapping("/{disputeId}/resolve")
     fun resolve(
         @AuthenticationPrincipal principal: AuthPrincipal,

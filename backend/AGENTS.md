@@ -241,6 +241,10 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `PHOTO_REMOVAL_EMAIL_SWEEP_INTERVAL` | `PT15M` | How often the sweep re-sends photographer removal emails whose send claim went stale and was never delivered (last 24 hours only). |
 | `RUNNER_REMOVAL_CHECKS_PER_DAY` | `3` | Live checks one account may start per Manila day (shared with the seller check). `0` closes runner deletion intake (kill switch). |
 | `RUNNER_REMOVAL_MAX_OPEN` | `3` | Open deletion requests one runner may have at once (1 or more). |
+| `DISPUTE_REVIEW_BUSINESS_DAYS` | `3` | Business days (Mon-Fri, Manila; holidays not skipped) an admin has to review an open or escalated dispute; drives its due time and overdue flag. |
+| `DISPUTE_REFUND_SEND_WITHIN` | `PT48H` | After a QR Ph refund is approved, how long the admin has to send the PayMongo refund link (earlier if PayMongo's refund window closes first). |
+| `DISPUTE_LINK_EXPIRING_SOON` | `PT24H` | A sent refund link is flagged "expiring soon" this long before it stops working. |
+| `DISPUTE_REFUND_STUCK_AFTER` | `PT24H` | An in-flight PayMongo refund older than this becomes a refund problem the admin must check. |
 | `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |
 | `LOG_LEVEL_APP` | `INFO` | `com.quickpitik` log level (set `DEBUG` for local debugging). |
 | `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |

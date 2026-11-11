@@ -1,5 +1,6 @@
 package com.quickpitik.service.admin
 
+import com.quickpitik.config.DisputeQueueProperties
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.common.ErrorCodes
@@ -27,6 +28,7 @@ import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.support.testTransactionTemplate
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.NotFoundException
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.data.domain.PageImpl
@@ -72,6 +74,7 @@ class AdminDisputeServiceTest {
         refundService,
         Mockito.mock(TransactionTemplate::class.java),
         PaymongoProperties(),
+        DisputeQueueProperties(),
         Clock.fixed(now.toInstant(), ZoneOffset.UTC),
     )
 
@@ -95,6 +98,7 @@ class AdminDisputeServiceTest {
             refunds,
             testTransactionTemplate(),
             PaymongoProperties(),
+            DisputeQueueProperties(),
             Clock.systemUTC(),
         )
         val adminId = UUID.randomUUID()
@@ -129,6 +133,7 @@ class AdminDisputeServiceTest {
             refunds,
             testTransactionTemplate(),
             PaymongoProperties(),
+            DisputeQueueProperties(),
             Clock.systemUTC(),
         )
         val adminId = UUID.randomUUID()
@@ -395,6 +400,40 @@ class AdminDisputeServiceTest {
         assertEquals(DisputeStatus.OPEN, d.status)
         Mockito.verify(disputeRepository, Mockito.never()).save(d)
         Mockito.verifyNoInteractions(decisionLogService)
+    }
+
+    @Test
+    fun `get returns one dispute with its attention and due time`() {
+        val order = qrphOrder()
+        val requested = now.minusHours(10)
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.refundStatus = "manual_review"
+        dispute.refundRequestedAt = requested
+        Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
+        Mockito.`when`(orderRepository.findById(order.id)).thenReturn(Optional.of(order))
+        Mockito.`when`(orderItemRepository.findById(OrderItemId(order.id, dispute.photoId))).thenReturn(Optional.empty())
+        Mockito.`when`(photoRepository.findById(dispute.photoId)).thenReturn(Optional.empty())
+
+        val dto = service.get(dispute.id)
+
+        assertEquals(dispute.id, dto.id)
+        assertEquals(requested.toString(), dto.refundRequestedAt)
+        // Paid 2026-10-01, so PayMongo's window closed 2026-10-31, before the 48 h send deadline: due at the close.
+        assertEquals("send_link", dto.attention)
+        assertEquals(paidOn.plusDays(30).toString(), dto.dueAt)
+        assertEquals(true, dto.overdue)
+        assertEquals(false, dto.linkExpiringSoon)
+        assertEquals(paidOn.plusDays(30).toString(), dto.refundWindowClosesAt)
+    }
+
+    @Test
+    fun `get answers 404 for an unknown dispute`() {
+        val id = UUID.randomUUID()
+        Mockito.`when`(disputeRepository.findById(id)).thenReturn(Optional.empty())
+
+        val error = assertFailsWith<NotFoundException> { service.get(id) }
+
+        assertEquals(ErrorCodes.DISPUTE_NOT_FOUND, error.code)
     }
 
     private val paidOn = OffsetDateTime.parse("2026-10-01T00:00:00Z")
