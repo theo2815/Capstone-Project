@@ -37,6 +37,8 @@ interface PhotoFaceWork {
     val priorPersonIds: String
     val jobIds: String
     val batchPhotoIds: String
+    val batchId: UUID?
+    val priorCleanupFinishedAt: java.time.Instant?
     val finishedAt: java.time.Instant?
     val facesErasedAt: java.time.Instant?
 }
@@ -189,7 +191,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         w.prior_provider AS "priorProvider", w.prior_person_ids::text AS "priorPersonIds", w.job_ids::text AS "jobIds",
         COALESCE((SELECT jsonb_agg(bp.photo_id ORDER BY bp.idx)::text FROM ai_index_batch_photos bp
             WHERE bp.batch_id = w.batch_id), '[]') AS "batchPhotoIds",
-        w.finished_at AS "finishedAt", w.faces_erased_at AS "facesErasedAt"
+        w.prior_cleanup_finished_at AS "priorCleanupFinishedAt", w.batch_id AS "batchId", w.finished_at AS "finishedAt", w.faces_erased_at AS "facesErasedAt"
         FROM photo_work_outputs w WHERE w.event_id = :eventId AND w.photo_id = :photoId AND w.kind = 'INDEXING'
         ORDER BY w.created_at, w.token""", nativeQuery = true)
     fun faceWorkForPhoto(eventId: UUID, photoId: UUID): List<PhotoFaceWork>
@@ -238,6 +240,10 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         ) UPDATE photo_work_outputs SET expires_at = :expiry
         WHERE token = :token AND finished_at IS NULL AND EXISTS (SELECT 1 FROM renewed)""", nativeQuery = true)
     fun renewIndexingWork(photoId: UUID, token: UUID, expiry: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET prior_cleanup_finished_at = :now WHERE token = :token AND kind = 'INDEXING' AND prior_cleanup_finished_at IS NULL", nativeQuery = true)
+    fun confirmPriorCleanup(token: UUID, now: OffsetDateTime): Int
 
     @Modifying
     @Query(value = "UPDATE photo_work_outputs SET finished_at = :now WHERE token = :token AND finished_at IS NULL", nativeQuery = true)
@@ -820,6 +826,19 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         photographerId: UUID,
         contentHashes: Collection<String>,
     ): List<Photo>
+
+    // Only the sweep may release held indexing work; the fence rechecks under the photo lock.
+    @Query(value = """
+        SELECT p.id FROM photos p
+        JOIN photo_work_outputs w ON w.token = p.indexing_work_token AND w.photo_id = p.id
+        WHERE p.indexing_work_expires_at < :cutoff
+          AND p.deleted_at IS NULL AND p.deletion_started_at IS NULL AND p.removal_state = 'NONE'
+          AND p.indexing_status IN ('PENDING', 'FAILED', 'PARTIAL') AND p.indexing_attempts < :maxAttempts
+          AND w.kind = 'INDEXING' AND w.provider = 'rekognition' AND w.finished_at IS NULL AND w.batch_id IS NULL
+          AND w.prior_cleanup_finished_at IS NOT NULL
+        ORDER BY p.indexing_work_expires_at, p.id
+        """, nativeQuery = true)
+    fun findEndedIndexingClaims(@Param("cutoff") cutoff: OffsetDateTime, @Param("maxAttempts") maxAttempts: Int, pageable: Pageable): List<UUID>
 
     // Reconciliation backlog: photos whose async indexing hasn't settled. The
     // cutoff skips photos the AFTER_COMMIT hot path is probably still handling,

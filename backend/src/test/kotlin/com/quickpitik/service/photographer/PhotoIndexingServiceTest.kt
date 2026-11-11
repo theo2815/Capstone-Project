@@ -58,6 +58,57 @@ class PhotoIndexingServiceTest {
 
         Mockito.verify(aiClient, Mockito.never()).facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId)
         assertEquals(setOf("old-person"), p.facePersons.map { it.aiPersonId }.toSet())
+        Mockito.verify(workFence, Mockito.never()).confirmPriorCleanup(anyArg())
+    }
+
+    @Test fun `a worker paused in prior cleanup cannot lose its claim to a replacement`() {
+        val p = photo(IndexingStatus.PARTIAL)
+        p.indexedProvider = "rekognition"
+        p.facePersons.add(PhotoFacePersonEmbed(0, "${p.eventId}.${p.id}", com.quickpitik.entity.FaceProvider.REKOGNITION))
+        expectPhoto(p)
+        var now = java.time.Instant.parse("2026-11-11T00:00:00Z")
+        val clock = Mockito.mock(java.time.Clock::class.java)
+        Mockito.`when`(clock.instant()).thenAnswer { now }
+        Mockito.`when`(clock.zone).thenReturn(java.time.ZoneOffset.UTC)
+        val output = Mockito.mock(com.quickpitik.repository.PhotoFaceWork::class.java)
+        Mockito.`when`(output.token).thenAnswer { p.indexingWorkToken }
+        Mockito.`when`(output.expiresAt).thenAnswer { p.indexingWorkExpiresAt!!.toInstant() }
+        Mockito.`when`(output.provider).thenReturn("rekognition")
+        var cleanupFinished: java.time.Instant? = null
+        Mockito.`when`(output.priorCleanupFinishedAt).thenAnswer { cleanupFinished }
+        Mockito.`when`(photoRepo.faceWorkForPhoto(p.eventId, p.id)).thenReturn(listOf(output))
+        Mockito.`when`(photoRepo.findAllByIdForUpdate(listOf(p.id))).thenReturn(listOf(p))
+        Mockito.`when`(photoRepo.claimWork(anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer {
+            p.indexingWorkToken = it.getArgument(2)
+            p.indexingWorkExpiresAt = it.getArgument(3)
+            1
+        }
+        Mockito.`when`(photoRepo.confirmPriorCleanup(anyArg(), anyArg())).thenAnswer {
+            cleanupFinished = it.getArgument<OffsetDateTime>(1).toInstant()
+            1
+        }
+        val realFence = com.quickpitik.service.photos.PhotoWorkFence(photoRepo,
+            com.quickpitik.config.StorageProperties(operationTimeout = java.time.Duration.ofSeconds(7)), props(),
+            AiProperties(AiProvider.REKOGNITION), com.quickpitik.config.RekognitionProperties(operationTimeout = java.time.Duration.ofSeconds(11)),
+            com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), clock)
+        val cleanup = Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java)
+        Mockito.doAnswer {
+            now = p.indexingWorkExpiresAt!!.toInstant().plusSeconds(45)
+            // A replacement here could finish, then this old cleanup would erase its fixed face identity.
+            kotlin.test.assertFalse(realFence.releaseEndedIndexing(p.id))
+            Unit
+        }.`when`(cleanup).erasePrior(p)
+        Mockito.`when`(storage.getBytes(p.s3Key)).thenAnswer {
+            kotlin.test.assertNotNull(cleanupFinished, "cleanup must be confirmed after it returns and before later work")
+            jpegBytes
+        }
+        val indexer = PhotoIndexingService(photoRepo, storage, aiClient, props(), AiProperties(AiProvider.REKOGNITION),
+            publisher, template(), SimpleMeterRegistry(), realFence, cleanup, faceExpiry)
+
+        indexer.index(p.id)
+
+        kotlin.test.assertNotNull(cleanupFinished)
+        Mockito.verify(aiClient, Mockito.never()).facesEnroll(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
     }
 
     @Test fun `new enrollment stores the provider with its face target`() {

@@ -554,6 +554,38 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         String::class.java,
     )!!
 
+    @Test
+    fun `cleanup completion migration upgrades V100 while unknown old writers stay held`() {
+        val schema = "index_cleanup_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "100").migrate()
+            fun output(provider: String = "rekognition", persons: String = "[]", kind: String = "INDEXING",
+                finished: Boolean = false, batch: Boolean = false): UUID {
+                val token = UUID.randomUUID()
+                jdbcTemplate.update("INSERT INTO $schema.photo_work_outputs " +
+                    "(token, photo_id, event_id, generation, kind, provider, expires_at, person_ids, finished_at, batch_id) " +
+                    "VALUES (?, ?, ?, 0, ?, ?, now() - interval '1 hour', cast(? AS jsonb), ?, ?)",
+                    token, UUID.randomUUID(), UUID.randomUUID(), kind, provider, persons,
+                    if (finished) OffsetDateTime.now() else null, if (batch) UUID.randomUUID() else null)
+                return token
+            }
+            val confirmed = output(persons = "[\"known-face\"]")
+            output()
+            output(provider = "ai_api", persons = "[\"other-face\"]")
+            output(kind = "WATERMARK", provider = "storage", persons = "[\"not-indexing\"]")
+            output(persons = "[\"batch-face\"]", batch = true)
+            output(persons = "[\"settled-face\"]", finished = true)
+
+            flywayFor(schema, "101").migrate()
+
+            assertEquals("101", latestVersion(schema))
+            assertEquals(setOf(confirmed), jdbcTemplate.queryForList(
+                "SELECT token FROM $schema.photo_work_outputs WHERE prior_cleanup_finished_at IS NOT NULL", UUID::class.java).toSet())
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
     private fun flywayFor(schema: String, target: String): Flyway = Flyway.configure()
         .dataSource(dataSource)
         .locations("classpath:db/migration")
