@@ -32,7 +32,7 @@ See root `AGENTS.md` for monorepo-wide rules and `docs/project-vision.md` for th
 
 ## UI Change Pre-flight (BLOCKING)
 
-Before reporting any UI task complete — including bug fixes, new features, refactors, or token migrations — verify in a real browser:
+Before reporting any UI task complete — including bug fixes, new features, refactors, or token migrations — verify in a real browser, with Playwright CLI as the root `AGENTS.md` **Browser checks** says (`resize 375 812`, `screenshot`, `reload`, `console`):
 
 1. **Mobile-first.** Open the route at 375 px and walk through the feature end-to-end. Finish Line is mobile-first; if it doesn't sing on a phone, it doesn't ship.
 2. **Two more breakpoints.** Confirm `md` (≥768) and `lg` (≥1024) don't break.
