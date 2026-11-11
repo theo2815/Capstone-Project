@@ -1,6 +1,8 @@
 package com.quickpitik.repository
 
+import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.entity.BatchRelevance
+import com.quickpitik.entity.PhotoMetadataState
 import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
@@ -177,6 +179,61 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         @Param("weak") weak: Int,
     ): BatchCounts
 
+    // The batch's capture times for the date rule (plan 5.3 item 2), read through the entity mapping and
+    // never by a SQL cast: the stored JSON shape of takenAtLocal is Hibernate's to choose.
+    // `= batch evidence photo` (as batchCounts).
+    @Query("""
+        SELECT m.photoId AS photoId, m.state AS state, m.fields AS fields
+        FROM PhotoMetadata m, Photo p
+        WHERE p.id = m.photoId AND p.eventId = :eventId AND p.photographerId = :photographerId
+            AND p.deletedAt IS NULL AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+            AND p.status IN (com.quickpitik.entity.PhotoStatus.LIVE, com.quickpitik.entity.PhotoStatus.HIDDEN)
+        ORDER BY p.uploadedAt, m.photoId
+    """)
+    fun metadataRows(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): List<BatchMetadataRow>
+
+    // Photos whose XMP marker names a photo of another photographer, in any event and of any status
+    // (plan 5.3 item 3). Evidence only (C16). `<>` drops a named photo with no photographer; a trashed or
+    // removal-review photo is no match, as in lookUpNext.
+    // `= batch evidence photo` (as batchCounts).
+    @Query(value = """
+        SELECT count(*) FROM photos p
+        JOIN photo_metadata m ON m.photo_id = p.id
+        JOIN photos o ON o.id = m.xmp_photo_id
+        WHERE p.event_id = :eventId
+          AND p.photographer_id = :photographerId
+          AND p.deleted_at IS NULL AND p.removal_state = 'NONE' AND p.status IN ('LIVE', 'HIDDEN')
+          AND o.photographer_id <> p.photographer_id
+          AND o.deleted_at IS NULL AND o.removal_state = 'NONE'
+    """, nativeQuery = true)
+    fun xmpMatches(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): Long
+
+    // Bibbed batch photos, and how many share at least one bib word with another photographer's photo in
+    // the same event (plan 5.3 item 4). Goes through photos by event, never through the global bib_number
+    // index (the eventsSharingBibs shape), so a word seen only in another event is not an overlap.
+    // `= batch evidence photo` (as batchCounts) on the batch side.
+    @Query(value = """
+        WITH others AS MATERIALIZED (
+            SELECT DISTINCT b.bib_number
+            FROM photos o
+            JOIN photo_bibs b ON b.photo_id = o.id
+            WHERE o.event_id = :eventId
+              AND o.photographer_id <> :photographerId
+              AND o.deleted_at IS NULL AND o.removal_state = 'NONE'
+        )
+        SELECT count(*) AS "bibbedPhotos", count(*) FILTER (WHERE x.overlaps) AS "bibOverlapPhotos"
+        FROM (
+            SELECT bool_or(EXISTS (SELECT 1 FROM others WHERE others.bib_number = b.bib_number)) AS overlaps
+            FROM photos p
+            JOIN photo_bibs b ON b.photo_id = p.id
+            WHERE p.event_id = :eventId
+              AND p.photographer_id = :photographerId
+              AND p.deleted_at IS NULL AND p.removal_state = 'NONE' AND p.status IN ('LIVE', 'HIDDEN')
+            GROUP BY p.id
+        ) x
+    """, nativeQuery = true)
+    fun bibOverlap(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): BibOverlap
+
     // R2-23: call first inside each look-up transaction with app.relevance.lookup-timeout; the limit ends
     // with the transaction (SET LOCAL), and a timeout fails only that batch's step.
     @Query(value = "SELECT set_config('statement_timeout', CAST(:ms AS text), true)", nativeQuery = true)
@@ -191,6 +248,18 @@ interface BatchCounts {
     val tightHits: Long
     val weakHits: Long
     val exactMatches: Long
+}
+
+// photoId is for PE-2.3's date samples.
+interface BatchMetadataRow {
+    val photoId: UUID
+    val state: PhotoMetadataState
+    val fields: PhotoMetadataFields?
+}
+
+interface BibOverlap {
+    val bibbedPhotos: Long
+    val bibOverlapPhotos: Long
 }
 
 // lastUploadAt keeps microseconds: the due rule compares it with scored_upload_at for equality.
