@@ -71,7 +71,7 @@ class PhotoMetadataSchedulingIsolationIntegrationTest : PostgresIntegrationTest(
 
         val foreignPool = AsyncConfig().metadataProcessingExecutor()
         val foreignStorage = Mockito.mock(StorageService::class.java) // No object in the other context's storage.
-        val foreignWorker = PhotoMetadataService(metadata, photos, coverage, extractor, foreignStorage, watermarkPool, properties, transactions, clock, foreignPool, suspension)
+        val foreignWorker = PhotoMetadataService(metadata, photos, coverage, extractor, foreignStorage, watermarkPool, properties, transactions, clock, foreignPool, suspension, com.quickpitik.config.RelevanceProperties())
         val scheduled = mutableListOf<Runnable>()
         val scheduler = Mockito.mock(TaskScheduler::class.java) { invocation ->
             when {
