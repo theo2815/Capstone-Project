@@ -39,7 +39,7 @@ export const TERMS_OF_SERVICE: LegalDoc = {
             "**Guests** can browse public events, search by bib or selfie, and buy photos with an email address.",
             '**Runners** have an account to save selfies and events, get "photos ready" alerts, and see their orders.',
             "**Photographers** upload and sell event photos. A runner account cannot become a photographer account; photographers sign up separately.",
-            "**Admins** run QuickPitik: they approve photographers and photographer events, and handle reports, refunds, disputes, removals and payouts.",
+            "**Admins** run QuickPitik: they review photographers, photographer events and race events that our automatic checks send to them, may review or reject anything those checks approved, and handle reports, refunds, disputes, removals and payouts.",
           ],
         },
       ],
@@ -52,7 +52,8 @@ export const TERMS_OF_SERVICE: LegalDoc = {
           list: [
             "Events created by QuickPitik are public and listed on the Events page.",
             "A photographer makes each of their events Public or Private. A Private event can be opened only by its link. A photographer's Public event is listed on the Events page only if an admin chooses to list it.",
-            "Photographer events start as drafts and need an admin's approval.",
+            "A photographer's own events start as drafts and need an admin's approval.",
+            "**Race events** (road races, fun runs, trail runs, ultramarathons, obstacle races and cycling races) are shared by every photographer who covers them. A photographer who has passed the seller check can create one, and it is listed on the Events page at once unless our checks send it to an admin first (for example when it may duplicate another race). A race event may be hidden from the Events page if no one can confirm it took place, or if signed-in users report it; an admin can list it again. Events that are not races follow the rule above.",
             "Previews carry a watermark: QuickPitik's mark, the photographer's own mark, or none, as set for the event. Paid events always carry QuickPitik's mark. Photos you buy are downloaded without the watermark.",
             "Some events are free: their photos can be downloaded without paying.",
           ],
@@ -65,7 +66,7 @@ export const TERMS_OF_SERVICE: LegalDoc = {
       blocks: [
         {
           list: [
-            "The photographer sets the price of each photo for paid events. Prices are in Philippine pesos.",
+            "The photographer sets the price of each photo for their own paid events. In a race event, QuickPitik sets the race price, and each photographer may charge more for their own photos, up to twice the race price, changing it at most once a day. Prices are in Philippine pesos. If a price changes after you add a photo to your cart, the cart shows it, and checkout stops so you can see the new price before you pay.",
             "The only payment method is QR Ph through PayMongo: you scan a QR code with your bank or e-wallet app. We never see your bank or e-wallet login.",
             "After payment we email a receipt with download links to the email on the order. You can download bought photos for one year after payment.",
             "You get the original file, which may include the location where it was taken (see the [Privacy Policy](/privacy#photo-metadata)).",
@@ -101,7 +102,7 @@ export const TERMS_OF_SERVICE: LegalDoc = {
       id: "photographers",
       heading: "Photographers",
       blocks: [
-        "**Verification and approval.** An admin verifies each photographer account. Before you can upload photos, you must give us your full legal name, photos of a valid government ID (both sides for a PhilSys National ID), a photo of yourself holding that ID, your address and a phone number. You may also give us your BIR Certificate of Registration (Form 2303). The Internet Transactions Act (RA 11967) and BIR rules require online marketplaces to collect these. We may show buyers your name or brand and your city or province, and we give your details to the authorities when the law requires. A photographer's public page is hidden until the account is verified, and while it is suspended. Photographer events need an admin's approval before they go live.",
+        "**Verification and approval.** Before you can upload photos, you must give us your full legal name, photos of a valid government ID (both sides for a PhilSys National ID), a photo of yourself holding that ID, your ID number, your address and a phone number. You may also give us your BIR Certificate of Registration (Form 2303). The Internet Transactions Act (RA 11967) and BIR rules require online marketplaces to collect these. We check them automatically with a short live selfie, or an admin checks them if you choose (see the [Privacy Policy](/privacy#seller-checks)). Details that pass every check are approved automatically; anything else goes to an admin, and only an admin can reject them. An admin may review or reject your details or your profile later. We may show buyers your name or brand and your city or province, and we give your details to the authorities when the law requires. A photographer's public page is hidden until the account is verified, and while it is suspended. A photographer's own events need an admin's approval before they go live; race events follow [Events and watermarks](#events-and-watermarks).",
         "**Fees.** QuickPitik keeps 25% of the price of each photo sold; the photographer gets the rest. The 25% is worked out on the full price.",
         "**Coupons.** Photographers can offer coupons, up to the limit shown in the app. A coupon comes out of the photographer's share only.",
         "**Payouts.**",
@@ -169,7 +170,7 @@ export const TERMS_OF_SERVICE: LegalDoc = {
             "remove, crop, cover or edit out a watermark, or save or screenshot previews to avoid paying;",
             "share download or bundle links publicly, or use bought photos beyond what the [buyer licence](#buyer-licence) allows;",
             "make false refund claims or disputes, or pay with money they are not allowed to use;",
-            "send abusive, threatening or false content in reports, disputes, refund or removal requests, or any other text field;",
+            "send abusive, threatening or false content in reports, disputes, refund or removal requests, or any other text field, or report an event or a photographer without an honest reason;",
             "upload anything that is not a photo or could harm the service (malware, broken or oversized files).",
           ],
         },
@@ -197,8 +198,9 @@ export const TERMS_OF_SERVICE: LegalDoc = {
           list: [
             "remove or restrict photos;",
             "refuse refunds and disputes;",
-            "hold money from disputed sales; and",
-            "suspend an account, with a written reason. A suspended photographer cannot upload, and their public pages are hidden.",
+            "hold money from disputed sales;",
+            "hide a race event from the Events page, or list it again; and",
+            "suspend an account, with a written reason. A suspended photographer cannot sign in or upload, their public pages are hidden, their photos are taken off sale (photos already in a cart show as no longer available), and their own events leave the Events page (shared race events stay listed, without their photos). Buyers keep the photos they already bought.",
           ],
         },
       ],

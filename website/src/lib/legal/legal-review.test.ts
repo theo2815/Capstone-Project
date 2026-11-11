@@ -34,17 +34,15 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  // AA-I14 adds the identity copy with ASK OWNER text; AA-I21's final commit turns
-  // this back into "passes the production guard with version 1.3".
-  it("the production guard refuses the legal text while the identity copy holds ASK OWNER text", () => {
+  // AA-I21 session 1: the 1.3 text is in, but a production build still refuses the draft version.
+  it("the production guard refuses the legal text while the version is 1.3-draft", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
         LEGAL_VERSION,
         "production",
       ),
-    ).toThrow(/ASK OWNER/);
-    expect(LEGAL_VERSION).toBe("1.2");
+    ).toThrow(/1\.3-draft is a draft/);
   });
 
   it("says both selfie and bib searches ask for a tick first (BT-1, S10)", () => {
@@ -102,7 +100,7 @@ describe("seller checks text (SC-2a)", () => {
 
   it("says admins compare by eye and names the seller-check photos in storage", () => {
     const privacy = text(PRIVACY_POLICY.sections);
-    expect(privacy).toContain("we never run face recognition on them");
+    expect(privacy).toContain("an admin compares your photos by eye");
     expect(privacy).toContain("seller-check photos");
     expect(privacy).toContain("Photographer seller-check details and photos");
     expect(privacy).toContain("Seller-check details and photos you gave us are kept as legal records.");
@@ -111,5 +109,37 @@ describe("seller checks text (SC-2a)", () => {
   it("no seller passage still says the checks are optional", () => {
     const all = [text(PRIVACY_POLICY.sections), text(TERMS_OF_SERVICE.sections)].join("\n");
     expect(all).not.toMatch(/Seller checks we may ask for|we may ask for your full name|if we asked for them/);
+  });
+});
+
+// AA-I21: the adviser-signed 1.3 text (AA-0.7 draft, signed 2026-11-11), without the
+// runner-deletion parts until RD-11 merges (owner answer O1).
+describe("legal 1.3 text (AA-I21)", () => {
+  it("explains the seller checks: live selfie in Malaysia, ID number kept as a fingerprint", () => {
+    const checks = section(PRIVACY_POLICY, "seller-checks");
+    expect(checks).toContain("run by AWS in Malaysia");
+    expect(checks).toContain("we keep only a fingerprint of it");
+    expect(checks).toContain("Only an admin can reject them");
+    expect(section(PRIVACY_POLICY, "what-we-collect")).not.toContain("we never run face recognition on them");
+    expect(section(PRIVACY_POLICY, "who-receives-it")).toContain("the live checks in AWS's Malaysia region");
+  });
+
+  it("names the moderation checks and race events in the Terms", () => {
+    expect(section(TERMS_OF_SERVICE, "photographers")).toContain("Details that pass every check are approved automatically");
+    expect(section(TERMS_OF_SERVICE, "events-and-watermarks")).toContain("**Race events**");
+    expect(section(TERMS_OF_SERVICE, "buying-photos")).toContain("up to twice the race price");
+    expect(section(TERMS_OF_SERVICE, "what-quickpitik-may-do")).toContain("Buyers keep the photos they already bought.");
+  });
+
+  it("fills the identity copy with the signed text and links the seller checks", () => {
+    for (const line of [LEGAL_COPY.identityNotice, LEGAL_COPY.identityTickLabel, LEGAL_COPY.identityAdminInstead]) {
+      expect(line).not.toContain("[ASK OWNER");
+    }
+    expect(LEGAL_COPY.identityNotice).toContain("#seller-checks)");
+  });
+
+  it("leaves out the runner deletion live check until RD-11 merges (O1)", () => {
+    const all = [text(PRIVACY_POLICY.sections), text(TERMS_OF_SERVICE.sections)].join("\n");
+    expect(all).not.toMatch(/Deletion requests with a live check|deletion live check|runner accounts can also ask on the website/);
   });
 });
