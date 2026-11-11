@@ -96,6 +96,45 @@ class CheckoutSheetTest {
         }
     }
 
+    @Test fun `order items carry the shown price as expectedPricePhp`() {
+        var orderBody = ""
+        val base = backend.server.dispatcher
+        backend.server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.path.orEmpty().substringBefore('?') == "/api/v1/orders") orderBody = request.body.readUtf8()
+                return base.dispatch(request)
+            }
+        }
+        val vm = CartViewModel(application)
+        vm.cartItems.awaitFirst { it.isNotEmpty() }
+        vm.checkout("runner@example.com")
+        vm.checkoutState.awaitFirst { it is CheckoutState.AwaitingQr }
+        assertTrue(orderBody, orderBody.contains(""""photoId":"p1","eventId":"e1","expectedPricePhp":125.0"""))
+        assertTrue(orderBody, orderBody.contains(""""photoId":"p2","eventId":"e1","expectedPricePhp":125.0"""))
+    }
+
+    @Test fun `a price-changed answer refreshes the cart and opens no payment`() {
+        var cartReads = 0
+        val base = backend.server.dispatcher
+        backend.server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                when (request.path.orEmpty().substringBefore('?')) {
+                    "/api/v1/me/cart" -> ok(if (cartReads++ == 0) CART else CART.replace("125.0", "150.0"))
+                    "/api/v1/orders" -> MockResponse().setResponseCode(409).setBody(
+                        """{"success":false,"errors":[{"code":"CART_ITEM_PRICE_CHANGED","message":"$PRICE_CHANGED"}]}""",
+                    )
+                    else -> base.dispatch(request)
+                }
+        }
+        val vm = CartViewModel(application)
+        vm.cartItems.awaitFirst { it.isNotEmpty() }
+        vm.checkout("runner@example.com")
+        val state = vm.checkoutState.awaitFirst { it is CheckoutState.Error }
+        assertEquals(PRICE_CHANGED, (state as CheckoutState.Error).message)
+        vm.cartItems.awaitFirst { items -> items.all { it.price == 150.0 } }
+        assertTrue(vm.checkoutState.value !is CheckoutState.AwaitingQr)
+    }
+
     @Test fun `pure QR helpers`() {
         assertEquals(QrOutcome.EXPIRED, qrEndOutcome(expiresAtMillis = 10_000, now = 6_000))
         assertEquals(QrOutcome.FAILED, qrEndOutcome(expiresAtMillis = 10_000, now = 4_999))
@@ -121,6 +160,7 @@ class CheckoutSheetTest {
     private fun SemanticsNodeInteraction.tap() = performSemanticsAction(SemanticsActions.OnClick)
 
     private companion object {
+        const val PRICE_CHANGED = "Photo price changed from ₱125.00 to ₱150.00. Refresh your cart and try again."
         const val CART = """[{"photoId":"p1","eventId":"e1","thumbnailUrl":null,"price":125.0,"bib":"B-1","eventName":"Run","eventSlug":"run","tone":null,"time":null},{"photoId":"p2","eventId":"e1","thumbnailUrl":null,"price":125.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null}]"""
         const val QR_ORDER = """{"id":"o1","status":"PENDING","items":[{"photoId":"p1","price":125.0}],"totalAmount":250.0,"checkoutTotalAmount":250.0,"paymentMethod":"qrph","createdAt":"2026-09-11T00:00:00Z","qrPh":{"imageUrl":"data:image/png;base64,iVBORw0KGgo=","expiresAt":"2099-01-01T00:00:00Z","returnToken":null,"testUrl":null}}"""
     }

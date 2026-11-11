@@ -118,6 +118,7 @@ import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
+import com.quickpitik.mobile.ui.common.fromPrice
 import com.quickpitik.mobile.ui.theme.SuccessGreen
 import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
@@ -1361,6 +1362,10 @@ private fun EventPickerCard(
                     color = Slate,
                     style = Typography.bodyMedium
                 )
+                fromPrice(event.priceVaries, event.pricePerPhoto)?.let {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    StatusChip(text = it, tone = StatusTone.Neutral)
+                }
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),

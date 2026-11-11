@@ -720,6 +720,11 @@ fun AboutStrip(
             Kicker("Pricing")
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.Bottom) {
+                // A race whose photographers charge more shows its floor as "from" (AA-R14).
+                if (detail.priceVaries == true) {
+                    Kicker("from", modifier = Modifier.padding(bottom = 8.dp))
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     text = peso(detail.pricePerPhoto, 0),
                     style = NumeralStyle.copy(fontSize = 40.sp, lineHeight = 44.sp),

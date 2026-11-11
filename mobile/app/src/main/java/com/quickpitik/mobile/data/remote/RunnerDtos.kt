@@ -15,6 +15,11 @@ data class EventDto(
     // Wire is lowercase: visibility public|unlisted, pricingMode paid|free.
     val visibility: String = "public",
     val pricingMode: String = "paid",
+    // Plan 2 (AA-R14), nullable so older servers parse: the race price (floor),
+    // whether a covering photographer charges more ("from ₱"), and the race type.
+    val pricePerPhoto: Double? = null,
+    val priceVaries: Boolean? = null,
+    val eventType: String? = null,
 )
 
 // GET /events/{slug} — backend dto/events/EventDetailDto. The list DTO above
@@ -45,6 +50,9 @@ data class EventDetailDto(
     val pricingMode: String = "paid",
     val watermarkPolicy: String = "platform",
     val photographerHandle: String? = null,
+    // Plan 2 (AA-R14): see EventDto.
+    val priceVaries: Boolean? = null,
+    val eventType: String? = null,
 )
 
 data class PhotoDto(
@@ -136,4 +144,13 @@ data class PhotoVerifyResultDto(
     val photographerHandle: String? = null,
     val eventName: String? = null,
     val eventDate: String? = null,
+)
+
+// POST /me/reports/events/{eventId} and /me/reports/photographers/{handle} (AA-R9).
+// note is 10-500 characters; alreadyReported = this account already has an open report there.
+data class ReportRequest(val note: String)
+
+data class ReportResultDto(
+    val reported: Boolean = true,
+    val alreadyReported: Boolean = false,
 )
