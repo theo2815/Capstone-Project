@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCartStore } from "@/store/cart-store";
+import { payableItems, useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
 import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { useCheckoutActions } from "@/hooks/use-checkout-actions";
@@ -103,7 +103,8 @@ export interface Receipt {
 
 /** Owns checkout state and effects; the modal owns presentation and confirmation. */
 export function useCheckoutWorkflow(isOpen: boolean) {
-  const items = useCartStore((s) => s.items);
+  const cartItems = useCartStore((s) => s.items);
+  const items = useMemo(() => payableItems(cartItems), [cartItems]);
   const total = useCartStore((s) => s.total());
   const clearCart = useCartStore((s) => s.clear);
   const removeItem = useCartStore((s) => s.removeItem);

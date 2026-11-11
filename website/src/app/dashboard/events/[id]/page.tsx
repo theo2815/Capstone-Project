@@ -8,6 +8,7 @@ import type { EventState, ListEvent } from "@/types/event";
 import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
 import { PhotographerPurchasePreview, type PurchaseSelection } from "@/components/dashboard/photographer-purchase-preview";
 import { MyEventForm } from "@/components/dashboard/my-event-form";
+import { RacePriceBand } from "@/components/dashboard/race-price-modal";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
   PhotoPreviewCard,
@@ -261,6 +262,7 @@ export default function FocusedSharePage() {
         {ownedUi}
         {raceUi}
         {couponUi}
+        <RacePriceBand eventId={liveDetail.id} racePrice={liveDetail.racePrice} />
         <EventMetadataVisibility event={liveDetail} />
         {uploadsOpen && (
           <>
