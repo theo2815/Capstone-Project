@@ -18,6 +18,7 @@ import com.quickpitik.mobile.data.remote.RefundResponse
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.RunnerDisputeDto
 import com.quickpitik.mobile.data.remote.apiCall
+import com.quickpitik.mobile.data.remote.payableItems
 import com.quickpitik.mobile.data.remote.toResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -183,7 +184,7 @@ class CartRepositoryImpl : CartRepository {
         paymentMethod: String,
         couponCode: String?
     ): Result<OrderResponse> {
-        val currentItems = _cartItems.value
+        val currentItems = payableItems(_cartItems.value)
         if (currentItems.isEmpty()) {
             return Result.failure(Exception("Cart is empty"))
         }

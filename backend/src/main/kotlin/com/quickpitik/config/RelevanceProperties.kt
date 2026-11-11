@@ -1,6 +1,7 @@
 package com.quickpitik.config
 
 import org.springframework.boot.context.properties.ConfigurationProperties
+import java.time.Duration
 
 // PE-1: photo-to-event relevance. The sweep only writes evidence; a person decides.
 // Thresholds are placeholders until PE-0 measures them (PE-1.7).
@@ -19,6 +20,8 @@ data class RelevanceProperties(
     val rescoreMinutes: Long = 60,
     // After uploads close, stop waiting for late EXIF after this.
     val settleDays: Long = 7,
+    // Statement timeout of one look-up transaction; a slow event fails that batch's step, not the tick.
+    val lookupTimeout: Duration = Duration.ofSeconds(5),
     val copy: Copy = Copy(),
     val date: Date = Date(),
 ) {
@@ -29,6 +32,7 @@ data class RelevanceProperties(
         require(maxBatchesPerTick >= 1) { "maxBatchesPerTick must be at least 1" }
         require(rescoreMinutes >= 1) { "rescoreMinutes must be at least 1" }
         require(settleDays >= 1) { "settleDays must be at least 1" }
+        require(lookupTimeout >= Duration.ofMillis(1)) { "lookupTimeout must be at least 1ms" }
     }
 
     // D20: a hit is an earlier photo by another photographer within tightDistance bits.

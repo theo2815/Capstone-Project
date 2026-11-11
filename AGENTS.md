@@ -71,6 +71,7 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
 - Create NEW commits; never amend published commits without explicit instruction.
 - Never use `--no-verify` or bypass signing unless the user asks. Never force-push `main`.
 - Stage specific files; avoid `git add -A`.
+- **`dev-main` is protected (2026-11-11): changes land only by pull request, once its `unit` and `integration` checks pass.** Push your branch, open a PR into `dev-main`, wait for green (`gh pr checks <n> --watch`), then `gh pr merge <n> --merge`. The branch need not be up to date, so a red `dev-main` run after your merge is yours to check first. This replaces any older "`--no-ff` merge, then `git push origin HEAD:dev-main`" step, which GitHub now refuses. Never merge past a red check.
 - **No agent/tool identity in commits** (no `Co-Authored-By`, no session trailer) — this is the maintainer's house style. Who did what belongs on the vault board + journal, not in git trailers.
 - **Commit messages: plain English a teammate who wasn't there can follow.** A subject line (≤72 chars, optional `module:` prefix) saying what changed, a blank line, then a 2–5 line body: what changed, why, and what it means for users or other code. Describe behaviour in everyday words, not just file or function names; explain any task code you mention. No essays — test output and full rationale go in the vault journal. Only a truly trivial change (typo, one-line config) may be subject-only. Pass the body with a second `-m`. Example:
   ```
@@ -84,6 +85,11 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
 **Cloud testing & deploys**
 - **Read `docs/testing-cloud-services.md` in full before** running backend `integrationTest`, any test that calls AWS / R2 / PayMongo, any Railway or Vercel command, or pushing `dev-main`. Two traps it covers: a plain `integrationTest` in a checkout with `application-local.yml` makes real, billed AWS calls (and that file's bucket is the **production** one — never point a test at it), and a `dev-main` push that changes `backend/**` deploys to staging and runs its migrations.
 - **Cloudflare (R2) from the command line: use the `cf` CLI, not Wrangler**, and run `cf auth whoami` first to confirm the QuickPitik account. Setup and account ID: `docs/testing-cloud-services.md` § Looking at R2 by hand.
+
+**Browser checks**
+- **Use Playwright CLI** — skill `.claude/skills/playwright-cli/SKILL.md` (same copy for Codex in `.agents/skills/`); never run `install --skills`, it is committed. Claude-in-Chrome only when a page needs the user's own logged-in browser.
+- **Check before installing, never reinstall** — first that works wins: `playwright-cli --version` → `npx --no-install playwright cli --version` (then prefix every command with `npx playwright cli`) → else **ask the user**, then `npm i -g @playwright/cli@0.1.24`.
+- **Browser:** open with `--browser=msedge` (Windows) or `--browser=chrome` so nothing downloads; run `install-browser` only after asking.
 
 **Cross-module changes**
 - Changes spanning `ai-api` ↔ backend ↔ client require coordination — update the integration docs in the same commit.

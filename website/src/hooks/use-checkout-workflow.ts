@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCartStore } from "@/store/cart-store";
+import { payableItems, useCartStore } from "@/store/cart-store";
 import { useAuthStore } from "@/store/auth-store";
 import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { useCheckoutActions } from "@/hooks/use-checkout-actions";
@@ -103,7 +103,8 @@ export interface Receipt {
 
 /** Owns checkout state and effects; the modal owns presentation and confirmation. */
 export function useCheckoutWorkflow(isOpen: boolean) {
-  const items = useCartStore((s) => s.items);
+  const cartItems = useCartStore((s) => s.items);
+  const items = useMemo(() => payableItems(cartItems), [cartItems]);
   const total = useCartStore((s) => s.total());
   const clearCart = useCartStore((s) => s.clear);
   const removeItem = useCartStore((s) => s.removeItem);
@@ -227,6 +228,8 @@ export function useCheckoutWorkflow(isOpen: boolean) {
   // replaces this quote until it is removed; a cart edit re-quotes.
   const photoIdsKey = items.map((i) => i.photoId).join(",");
   const typedCode = coupon?.code ?? null;
+  // A price refresh (AA-R14) keeps the ids, so prices also re-quote.
+  const pricesKey = items.map((i) => i.price).join(",");
   useEffect(() => {
     if (!isOpen || step !== "payment" || typedCode || !photoIdsKey) return;
     let cancelled = false;
@@ -241,7 +244,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [isOpen, step, typedCode, photoIdsKey]);
+  }, [isOpen, step, typedCode, photoIdsKey, pricesKey]);
 
   const handleIdentifySubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -275,7 +278,7 @@ export function useCheckoutWorkflow(isOpen: boolean) {
 
     try {
       const order = await checkoutActions.createOrder({
-        items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId })),
+        items: items.map((i) => ({ photoId: i.photoId, eventId: i.eventId, expectedPricePhp: i.price })),
         paymentMethod: "qrph",
         recipientEmail: isAuthenticated ? undefined : email,
         // Only a typed code travels; automatic coupons are the server's call.
@@ -355,6 +358,12 @@ export function useCheckoutWorkflow(isOpen: boolean) {
       }
       if (err instanceof ApiError && err.errors.some((e) => e.code === "CONFLICT")) {
         forgetKeyFor(fingerprint);
+      }
+      // A price rose since the runner looked (AA-R14): no order was written, so show
+      // the new prices and the server's message; the next Pay sends them.
+      if (err instanceof ApiError && err.errors.some((e) => e.code === "CART_ITEM_PRICE_CHANGED")) {
+        await useCartStore.getState().refreshPrices().catch(() => {});
+        if (!isCurrentSession()) return;
       }
       setOutcome({
         kind: "error",

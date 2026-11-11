@@ -43,10 +43,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.payableItems
 import com.quickpitik.mobile.ui.common.PhotoPreview
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.common.toPreviewData
@@ -204,6 +206,7 @@ fun CartSheet(
                         text = "Continue to checkout →",
                         onClick = onContinueToCheckout,
                         modifier = Modifier.fillMaxWidth(),
+                        enabled = payableItems(items).isNotEmpty(),
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(
@@ -318,6 +321,7 @@ private fun CartSheetRow(
     onPreview: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    val unavailable = item.available == false
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -371,12 +375,20 @@ private fun CartSheetRow(
                 Spacer(modifier = Modifier.height(6.dp))
                 StatusChip(text = "Already purchased", tone = StatusTone.Neutral)
             }
+            if (unavailable) {
+                Spacer(modifier = Modifier.height(6.dp))
+                StatusChip(text = "No longer available", tone = StatusTone.Neutral)
+            }
         }
         Column(horizontalAlignment = Alignment.End) {
+            // Website parity: an unavailable row's price is struck through and left out of the subtotal.
             Text(
                 text = peso(item.price, 0),
-                style = NumeralStyle.copy(fontSize = 14.sp),
-                color = Ink,
+                style = NumeralStyle.copy(
+                    fontSize = 14.sp,
+                    textDecoration = if (unavailable) TextDecoration.LineThrough else null,
+                ),
+                color = if (unavailable) SlateSoft else Ink,
             )
             Spacer(modifier = Modifier.height(6.dp))
             TextButton(

@@ -446,6 +446,21 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query("UPDATE Photo p SET p.processingAttempts = p.processingAttempts + 1 WHERE p.id = :id")
     fun incrementProcessingAttempts(@Param("id") id: UUID): Int
 
+    // A run that threw still costs one attempt, so the sweep cannot re-run paid calls without end; the
+    // last one sets FAILED so the admin reindex route finds it. Settled or removed rows are left alone.
+    @Modifying
+    @Query(
+        """
+        UPDATE Photo p SET p.indexingAttempts = p.indexingAttempts + 1, p.indexingError = :error,
+            p.indexingStatus = CASE WHEN p.indexingAttempts + 1 >= :maxAttempts
+                THEN com.quickpitik.entity.IndexingStatus.FAILED ELSE p.indexingStatus END
+        WHERE p.id = :id AND p.deletedAt IS NULL AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingStatus NOT IN (com.quickpitik.entity.IndexingStatus.INDEXED, com.quickpitik.entity.IndexingStatus.SKIPPED)
+        """,
+    )
+    fun failIndexingAttempt(@Param("id") id: UUID, @Param("error") error: String, @Param("maxAttempts") maxAttempts: Int): Int
+
     // Admin flag queue. Conditional for the same reason as publishWatermarked:
     // the watermark pipeline writes this row concurrently, so a load-modify-save
     // from the flag queue would clobber the columns it just set. Already-HIDDEN

@@ -169,6 +169,7 @@ Local: `docs/testing-payments-locally.md`. **Never scan a test QR code with a re
 ## 7. Not covered by any automated test
 
 - **CI does not test AWS or R2.** GitHub Actions has no keys, so the five checks skip there. A green CI run says nothing about the cloud services.
+- **A red `backend-tests` run on `dev-main` is never normal.** Read which tests failed; known failures are listed in vault `backend/tasks.md`. Fix them or name them in your report; never push past them silently.
 - Resend email delivery, Google sign-in, and live WebSocket delivery have no test routine. Check them by hand when a change touches them, and report them as unchecked otherwise.
 
 ## What to report

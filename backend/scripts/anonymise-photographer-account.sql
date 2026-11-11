@@ -26,7 +26,8 @@
 --   Deleted: sign-in, reset, email-change and desktop tokens; social links; payout accounts
 --     and their audit rows; photographer messages; leftover upload intents; saved selfies,
 --     saved events, cart and photo alerts (if they used runner features); live-selfie
---     sessions (liveness_sessions).
+--     sessions (liveness_sessions); photo relevance checks (batch_relevance, with their
+--     looked-up photo rows).
 --   photographer_settings: handle becomes deleted-<id without dashes> (40 characters, longer
 --     than the app lets anyone choose); brand name, bio, place, cover and watermark cleared.
 --   Their remaining (sold) photos go to the bin, so nobody can buy them any more; buyers keep
@@ -149,7 +150,8 @@ UNION ALL SELECT 'user_selfies', count(*) FROM user_selfies WHERE user_id = :'qp
 UNION ALL SELECT 'saved_events', count(*) FROM saved_events WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'cart_items', count(*) FROM cart_items WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'event_photo_alerts', count(*) FROM event_photo_alerts WHERE user_id = :'qp_user_id'
-UNION ALL SELECT 'liveness_sessions', count(*) FROM liveness_sessions WHERE user_id = :'qp_user_id';
+UNION ALL SELECT 'liveness_sessions', count(*) FROM liveness_sessions WHERE user_id = :'qp_user_id'
+UNION ALL SELECT 'batch_relevance', count(*) FROM batch_relevance WHERE photographer_id = :'qp_user_id';
 
 \echo '== Kept (rows), and the personal data that stays on them'
 SELECT 'photos (sold; binned by the run)' AS kept, count(*) AS rows, 'credit in already-made previews' AS personal_data_kept FROM photos WHERE photographer_id = :'qp_user_id' AND purged_at IS NULL
@@ -219,6 +221,8 @@ BEGIN
     DELETE FROM saved_events WHERE user_id = uid;
     DELETE FROM cart_items WHERE user_id = uid;
     DELETE FROM liveness_sessions WHERE user_id = uid;
+    -- A deadlock error here means the relevance sweep was scoring this account: ROLLBACK and run again.
+    DELETE FROM batch_relevance WHERE photographer_id = uid;
     UPDATE photographer_coupons SET active = false, updated_at = now() WHERE photographer_id = uid;
     -- Bin what is left (only sold photos pass the checks) and lower the counts, as trash() does.
     WITH binned AS (

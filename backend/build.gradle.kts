@@ -142,4 +142,11 @@ val integrationTest by tasks.registering(Test::class) {
 	shouldRunAfter(tasks.test)
 	maxHeapSize = "2g"
 	forkEvery = 1
+	// CI runners have 4 CPUs and 16 GB; a laptop keeps one worker (it has run out of memory before).
+	if (System.getenv("CI") != null) maxParallelForks = 2
+	// -PitShards=4 -PitShard=0..3 runs one quarter of the classes (CI splits the suite over 4 machines).
+	// A nested class goes with its outer class, so a class's fixtures never land on another shard.
+	val shards = (project.findProperty("itShards") as String?)?.toInt() ?: 1
+	val shard = (project.findProperty("itShard") as String?)?.toInt() ?: 0
+	if (shards > 1) exclude { !it.isDirectory && Math.floorMod(it.path.removeSuffix(".class").substringBefore('$').hashCode(), shards) != shard }
 }

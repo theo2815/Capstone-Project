@@ -123,8 +123,8 @@ export default function UploadPickerPage() {
           <UploadSection
             id="admin"
             number={owned.length > 0 ? "02" : "01"}
-            title="Admin events"
-            caption="Races QuickPitik scheduled · race-day upload window"
+            title="Race events"
+            caption="Shared races · race-day upload window"
             items={adminEvents}
             canUpload={canUpload}
           />

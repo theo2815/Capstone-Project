@@ -199,6 +199,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RELEVANCE_MAX_BATCHES_PER_TICK` | `5` | Due batches read per sweep tick. |
 | `RELEVANCE_RESCORE_MINUTES` | `60` | Wait before re-scoring a batch that was still processing or reading EXIF. |
 | `RELEVANCE_SETTLE_DAYS` | `7` | After uploads close, stop waiting for late EXIF after this many days. |
+| `RELEVANCE_LOOKUP_TIMEOUT` | `5s` | Statement timeout of one copy look-up transaction; a slower one fails that batch's step and the next tick tries again. |
 | `RELEVANCE_COPY_TIGHT_DISTANCE` | `4` | pHash bits (0–64) within which an earlier photo by another photographer is a copy hit. Not yet measured (PE-0). |
 | `RELEVANCE_COPY_WEAK_DISTANCE` | `8` | Upper end of the weak-evidence band (≥ tight distance). Not yet measured (PE-0). |
 | `RELEVANCE_COPY_MIN_HITS` | `3` | Copy hits a batch needs before the copy rule can mark it Low. Not yet measured (PE-0). |

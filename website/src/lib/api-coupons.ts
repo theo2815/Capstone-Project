@@ -65,6 +65,8 @@ export interface CouponPreview {
   items: CouponPreviewItem[];
   eligibleCount: number;
   discountTotal: number;
+  // Live price of every sellable requested photo, coupon or not (AA-R14); absent on an older backend.
+  livePrices?: { photoId: string; price: number }[];
 }
 
 export async function postCouponPreview(args: {
@@ -72,4 +74,12 @@ export async function postCouponPreview(args: {
   photoIds: string[];
 }): Promise<CouponPreview> {
   return api.post<CouponPreview>("/coupons/preview", args);
+}
+
+/** Live price per photo id; a photo that is off sale is simply missing. */
+export async function fetchLivePrices(photoIds: string[]): Promise<Map<string, number>> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < photoIds.length; i += 100) chunks.push(photoIds.slice(i, i + 100)); // the preview takes 100 ids
+  const previews = await Promise.all(chunks.map((ids) => postCouponPreview({ photoIds: ids })));
+  return new Map(previews.flatMap((p) => p.livePrices ?? []).map((l) => [l.photoId, l.price]));
 }

@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.download.PhotoDownloader
+import com.quickpitik.mobile.data.remote.payableItems
 import com.quickpitik.mobile.ui.auth.validateEmail
 import com.quickpitik.mobile.ui.common.CheckoutTermsLine
 import com.quickpitik.mobile.ui.common.formatManila
@@ -266,7 +267,7 @@ fun CheckoutSheet(
                         couponLabel = couponPreview?.code?.let { "Coupon $it" } ?: "Coupon discount",
                         ownedCount = ownedItems.size,
                         onRemoveOwned = { ownedItems.forEach { cartViewModel.removeFromCart(it.photoId) } },
-                        photoCount = cartItems.size,
+                        photoCount = payableItems(cartItems).size,
                         discount = discount,
                         net = net,
                         isLoading = isLoading,

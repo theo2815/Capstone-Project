@@ -56,7 +56,7 @@ class CartViewModelPollTest {
                             else -> ok("""{"id":"o1","status":"$step"}""")
                         }
                     path == "/api/v1/me/cart" && request.method == "DELETE" -> ok("""{"cleared":0}""")
-                    path == "/api/v1/me/cart" -> ok(cart)
+                    path == "/api/v1/me/cart?includeUnavailable=true" -> ok(cart)
                     path == "/api/v1/me/orders/o1" || path.startsWith("/api/v1/orders/o1?") -> ok(DETAIL)
                     else -> MockResponse().setResponseCode(404)
                 }

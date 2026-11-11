@@ -328,6 +328,7 @@ app:
     max-batches-per-tick: ${RELEVANCE_MAX_BATCHES_PER_TICK:5}
     rescore-minutes: ${RELEVANCE_RESCORE_MINUTES:60}
     settle-days: ${RELEVANCE_SETTLE_DAYS:7}
+    lookup-timeout: ${RELEVANCE_LOOKUP_TIMEOUT:5s}
     copy:
       tight-distance: ${RELEVANCE_COPY_TIGHT_DISTANCE:4} # [NOT MEASURED: PE-0]
       weak-distance: ${RELEVANCE_COPY_WEAK_DISTANCE:8} # [NOT MEASURED: PE-0]
