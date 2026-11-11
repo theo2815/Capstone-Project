@@ -86,6 +86,11 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
 - **Read `docs/testing-cloud-services.md` in full before** running backend `integrationTest`, any test that calls AWS / R2 / PayMongo, any Railway or Vercel command, or pushing `dev-main`. Two traps it covers: a plain `integrationTest` in a checkout with `application-local.yml` makes real, billed AWS calls (and that file's bucket is the **production** one — never point a test at it), and a `dev-main` push that changes `backend/**` deploys to staging and runs its migrations.
 - **Cloudflare (R2) from the command line: use the `cf` CLI, not Wrangler**, and run `cf auth whoami` first to confirm the QuickPitik account. Setup and account ID: `docs/testing-cloud-services.md` § Looking at R2 by hand.
 
+**Browser checks**
+- **Use Playwright CLI** — skill `.claude/skills/playwright-cli/SKILL.md` (same copy for Codex in `.agents/skills/`); never run `install --skills`, it is committed. Claude-in-Chrome only when a page needs the user's own logged-in browser.
+- **Check before installing, never reinstall** — first that works wins: `playwright-cli --version` → `npx --no-install playwright cli --version` (then prefix every command with `npx playwright cli`) → else **ask the user**, then `npm i -g @playwright/cli@0.1.24`.
+- **Browser:** open with `--browser=msedge` (Windows) or `--browser=chrome` so nothing downloads; run `install-browser` only after asking.
+
 **Cross-module changes**
 - Changes spanning `ai-api` ↔ backend ↔ client require coordination — update the integration docs in the same commit.
 - Breaking API changes go under a new version prefix (`/api/v2/...`); existing clients must not be silently broken.
