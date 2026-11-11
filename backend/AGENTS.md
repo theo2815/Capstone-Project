@@ -132,7 +132,8 @@ ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.durati
 `qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28),
 `qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}`,
 face search (2026-10-27): `qp.search.request{mode=oneshot|stored|library|alert}`, `qp.search.selfie.fetch`,
-`qp.search.photo.query`, `qp.ai.error{op,code}`, `qp.indexing.reconciled`, `qp.watermark.reconciled` —
+`qp.search.photo.query`, `qp.ai.error{op,code}`, `qp.indexing.reconciled`, `qp.watermark.reconciled`,
+`qp.relevance.lookups`, `qp.relevance.scored{level}`, `qp.relevance.tick` —
 plus Hikari/JVM/HTTP-server metrics for free. Each face search also logs one INFO line
 (`face search mode=… total_ms=… r2_ms=… aws_ms=… query_ms=… results=…`); metrics reset on every deploy.
 
