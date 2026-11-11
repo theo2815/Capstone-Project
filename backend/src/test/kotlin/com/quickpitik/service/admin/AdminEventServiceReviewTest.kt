@@ -93,6 +93,12 @@ class AdminEventServiceReviewTest {
             com.quickpitik.service.reference.RegionsService(com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()).apply { load() },
             com.quickpitik.config.RaceProperties(),
             raceEvents,
+            Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java),
+            com.quickpitik.service.events.RacePriceService(eventRepository,
+                Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java), photoRepository,
+                Mockito.mock(com.quickpitik.repository.RacePriceChangeRepository::class.java),
+                Mockito.mock(com.quickpitik.service.photographer.PhotographerAccessGuard::class.java),
+                com.quickpitik.config.RaceProperties(), com.quickpitik.config.PlatformProperties(), java.time.Clock.systemUTC(), decisions),
         )
         service = ProxyFactory(target).apply {
             addAdvice(TransactionInterceptor().apply {

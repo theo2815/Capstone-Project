@@ -58,7 +58,7 @@ class EventLocationIntegrationTest : PostgresIntegrationTest() {
         SecurityContextHolder.getContext().authentication =
             UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
         try {
-            val mvc = MockMvcBuilders.standaloneSetup(AdminEventsController(admin))
+            val mvc = MockMvcBuilders.standaloneSetup(AdminEventsController(admin, org.mockito.Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java)))
                 .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
                 .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
             val form = multipart(if (id == null) "/api/v1/admin/events" else "/api/v1/admin/events/$id")

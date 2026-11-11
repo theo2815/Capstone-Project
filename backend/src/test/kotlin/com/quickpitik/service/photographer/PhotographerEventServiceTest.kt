@@ -50,6 +50,7 @@ class PhotographerEventServiceTest {
             Mockito.mock(com.quickpitik.service.photographer.PhotographerAccessGuard::class.java),
             com.quickpitik.config.RaceProperties(selfServeEnabled = true), com.quickpitik.config.PlatformProperties(),
             java.time.Clock.systemUTC(),
+            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
         ),
         com.quickpitik.config.RaceProperties(selfServeEnabled = true),
     )

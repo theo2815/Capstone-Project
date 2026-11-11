@@ -20,6 +20,7 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.RacePriceChangeRepository
 import com.quickpitik.service.photographer.PhotographerAccessGuard
+import com.quickpitik.service.admin.AdminDecisionLogService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
@@ -50,6 +51,8 @@ class RacePriceServiceTest {
     private lateinit var guard: PhotographerAccessGuard
     private lateinit var race: Event
     private lateinit var row: EventPhotographer
+    private val admin = UUID.randomUUID()
+    private val decisions = Mockito.mock(AdminDecisionLogService::class.java)
 
     private fun <T> anyArg(): T = Mockito.any()
     private fun <T> eqArg(value: T): T { Mockito.eq(value); return value }
@@ -69,11 +72,85 @@ class RacePriceServiceTest {
         Mockito.`when`(events.findPricePerPhoto(race.id)).thenReturn(BigDecimal("125.00"))
         Mockito.`when`(coverage.existsById(EventPhotographerId(race.id, me))).thenReturn(true)
         Mockito.`when`(coverage.findByIdForUpdate(EventPhotographerId(race.id, me))).thenReturn(row)
+        Mockito.`when`(coverage.lockByEventIdForUpdate(race.id)).thenReturn(listOf(row))
         Mockito.`when`(guard.requireApproved(eqArg(me), Mockito.anyString())).thenReturn(PhotographerSettings(userId = me))
     }
 
     private fun service(selfServe: Boolean = true) =
-        RacePriceService(events, coverage, photos, history, guard, RaceProperties(selfServeEnabled = selfServe), PlatformProperties(), clock)
+        RacePriceService(events, coverage, photos, history, guard, RaceProperties(selfServeEnabled = selfServe), PlatformProperties(), clock, decisions)
+
+    @Test
+    fun `clamps a raise down when the floor rises past it`() {
+        row.pricePhp = BigDecimal("180.00")
+        service().applyFloor(race, BigDecimal("150.00"), admin)
+        assertEquals(BigDecimal("180.00"), row.pricePhp)
+        Mockito.verifyNoInteractions(history)
+
+        service().applyFloor(race, BigDecimal("200.00"), admin)
+        assertNull(row.pricePhp)
+        val saved = ArgumentCaptor.forClass(RacePriceChange::class.java)
+        Mockito.verify(history).save(saved.capture())
+        assertEquals(BigDecimal("180.00"), saved.value.fromPhp)
+        assertEquals(BigDecimal("200.00"), saved.value.toPhp)
+        assertEquals(RacePriceReason.CLAMP, saved.value.reason)
+        assertEquals(admin, saved.value.changedBy)
+    }
+
+    @Test
+    fun `clamps a raise up to the new floor`() {
+        row.pricePhp = BigDecimal("180.00")
+        row.priceChangedAt = OffsetDateTime.ofInstant(now, ZoneOffset.UTC).minusHours(1)
+        val changedAt = row.priceChangedAt
+        service().applyFloor(race, BigDecimal("200.00"), admin)
+        assertNull(row.pricePhp, "a clamp to the floor must follow future floor changes")
+        assertEquals(changedAt, row.priceChangedAt)
+        Mockito.verify(photos).updateRacePricesByEventId(race.id, BigDecimal("200.00"))
+    }
+
+    @Test
+    fun `a falling floor clamps a raise down to the new ceiling`() {
+        row.pricePhp = BigDecimal("240.00")
+        service().applyFloor(race, BigDecimal("80.00"), admin)
+        assertEquals(BigDecimal("160.00"), row.pricePhp)
+    }
+
+    @Test
+    fun `photos with no coverage row take the new floor`() {
+        Mockito.`when`(coverage.lockByEventIdForUpdate(race.id)).thenReturn(emptyList())
+        service().applyFloor(race, BigDecimal("200.00"), admin)
+        Mockito.verify(photos).updateRacePricesByEventId(race.id, BigDecimal("200.00"))
+    }
+
+    @Test
+    fun `leaves non-race events on the bulk re-price`() {
+        race.eventType = null
+        service().applyFloor(race, BigDecimal("150.00"), admin)
+        Mockito.verify(photos).updatePriceByEventId(race.id, BigDecimal("150.00"))
+        Mockito.verify(coverage, Mockito.never()).lockByEventIdForUpdate(anyArg())
+        Mockito.verifyNoInteractions(history)
+    }
+
+    @Test
+    fun `reset writes RESET history and keeps the cooldown`() {
+        row.pricePhp = BigDecimal("180.00")
+        row.priceChangedAt = OffsetDateTime.ofInstant(now, ZoneOffset.UTC).minusHours(1)
+        val changedAt = row.priceChangedAt
+        service().resetToFloor(admin, race.id, me)
+        assertNull(row.pricePhp)
+        assertEquals(changedAt, row.priceChangedAt)
+        Mockito.verify(photos).updatePriceByEventIdAndPhotographerId(race.id, me, BigDecimal("125.00"))
+        val saved = ArgumentCaptor.forClass(RacePriceChange::class.java)
+        Mockito.verify(history).save(saved.capture())
+        assertEquals(RacePriceReason.RESET, saved.value.reason)
+        assertEquals(BigDecimal("180.00"), saved.value.fromPhp)
+        assertEquals(BigDecimal("125.00"), saved.value.toPhp)
+        assertEquals(admin, saved.value.changedBy)
+        Mockito.verify(decisions).logEventDecision(admin, race.id, "race_price_reset", null, mapOf("photographerId" to me.toString()))
+        val order = Mockito.inOrder(photos, coverage, events)
+        order.verify(photos).lockIdsByEventIdAndPhotographerIdForUpdate(race.id, me)
+        order.verify(coverage).findByIdForUpdate(row.id)
+        order.verify(events).findPricePerPhoto(race.id)
+    }
 
     @Test
     fun `refuses a price above twice the race price`() {

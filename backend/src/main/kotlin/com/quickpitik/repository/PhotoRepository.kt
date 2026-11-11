@@ -283,12 +283,6 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         "AND p.indexingStatus <> com.quickpitik.entity.IndexingStatus.INDEXED")
     fun skipIndexing(@Param("id") id: UUID): Int
 
-    // Bulk re-prices every photo under the event. Used by admin event PATCH
-    // when the operator changes events.price_per_photo so existing photos
-    // pick up the new price across runner-facing galleries. Carts follow
-    // automatically: CartService renders the live photos.price_php and
-    // OrderService.create charges it, so cart_items.price_php_at_add is
-    // deliberately left alone — nothing displays or bills off that column.
     // V46: an approved watermark-policy change makes every LIVE preview stale.
     // Back to PROCESSING with a fresh budget; PhotoWatermarkTrigger.reconcile
     // re-renders them under the new policy within a sweep. Runners lose the
@@ -308,6 +302,20 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("eventId") eventId: UUID,
         @Param("price") price: BigDecimal,
     ): Int
+
+    // RacePriceService clamps coverage prices first. Missing coverage (including a NULL
+    // photographer) follows the floor; cart snapshots and purchase prices stay untouched.
+    @Modifying
+    @Query(value = """
+        UPDATE photos p SET price_php = prices.price
+        FROM (
+            SELECT photo.id, COALESCE(ep.price_php, :floor) AS price
+            FROM photos photo LEFT JOIN event_photographer ep
+              ON ep.event_id = photo.event_id AND ep.photographer_id = photo.photographer_id
+            WHERE photo.event_id = :eventId
+        ) prices WHERE p.id = prices.id
+    """, nativeQuery = true)
+    fun updateRacePricesByEventId(@Param("eventId") eventId: UUID, @Param("floor") floor: BigDecimal): Int
 
     // AA-R11: one photographer's photos in a race, locked in id order before their coverage row
     // (the price writers' one lock order: photos, then event_photographer, then events).
