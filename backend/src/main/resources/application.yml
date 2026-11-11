@@ -37,7 +37,8 @@ spring:
     scheduling:
       # Boot default is 1 thread, which let a slow indexing reconcile sweep
       # starve the reaper / batch drain / poll / photos-ready sweeps.
-      pool-size: 6
+      pool:
+        size: 6
   flyway:
     enabled: true
     locations: classpath:db/migration
