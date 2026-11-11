@@ -75,13 +75,31 @@ class PhotoIndexingService(
             log.warn("Indexing {}: work claim not granted (another worker holds it); left for the sweep", photoId)
             return
         }
-        val outcome = runInference(photo, claim)
+        // Finish only with proof every remote write ended (PhotoWorkFence.finish): inference returned and
+        // the face call is resolved. Otherwise the claim is kept for reconciliation.
+        var resolved = false
+        try {
+            val outcome = runInference(photo, claim)
+            resolved = !outcome.facesUnresolved
 
-        // Phase C — short write transaction.
-        transactionTemplate.execute {
-            if (workFence.isCurrent(claim)) writeOutcome(photoId, outcome)
+            // Phase C — short write transaction.
+            transactionTemplate.execute {
+                if (workFence.isCurrent(claim)) writeOutcome(photoId, outcome)
+            }
+        } catch (ex: Exception) {
+            // The outcome's own attempt bump rolled back with it; record one here (class name only, never provider text).
+            try {
+                transactionTemplate.execute {
+                    photoRepository.failIndexingAttempt(photoId, ex.javaClass.simpleName, aiApiProperties.maxIndexingAttempts)
+                }
+            } catch (attemptEx: Exception) {
+                ex.addSuppressed(attemptEx)
+                resolved = false // no attempt counted: keep the claim so the sweep cannot loop on it
+            }
+            throw ex
+        } finally {
+            if (resolved) workFence.finish(claim)
         }
-        if (!outcome.facesUnresolved) workFence.finish(claim)
     }
 
     // Everything phase C needs to persist, produced without touching the
