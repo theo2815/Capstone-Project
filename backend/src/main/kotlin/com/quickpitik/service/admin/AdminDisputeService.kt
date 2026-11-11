@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.DisputeQueueProperties
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminDisputeDto
@@ -20,7 +21,6 @@ import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
 import com.quickpitik.entity.OrderItemId
 import com.quickpitik.entity.Payment
-import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
@@ -75,8 +75,17 @@ class AdminDisputeService(
     private val paymongoRefundService: PaymongoRefundService,
     private val transactionTemplate: TransactionTemplate,
     private val paymongoProperties: PaymongoProperties,
+    private val disputeQueueProperties: DisputeQueueProperties,
     private val clock: Clock,
 ) {
+
+    @Transactional(readOnly = true)
+    fun get(disputeId: UUID): AdminDisputeDto {
+        val dispute = disputeRepository.findById(disputeId).orElseThrow {
+            NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
+        }
+        return hydrateOne(dispute)
+    }
 
     @Transactional(readOnly = true)
     fun list(
@@ -306,6 +315,8 @@ class AdminDisputeService(
                 },
             )
             .associateBy { it.id }
+        // One clock read per page, so no row crosses a deadline mid-page.
+        val now = OffsetDateTime.now(clock)
         return disputes.map { d ->
             val order = ordersById[d.orderId]
             val photo = photosById[d.photoId]
@@ -319,6 +330,7 @@ class AdminDisputeService(
                 runner = d.runnerId?.let { runnersById[it] },
                 photographerSettings = photo?.photographerId?.let { settingsById[it] },
                 event = (order?.eventId ?: photo?.eventId)?.let { eventsById[it] },
+                now = now,
             )
         }
     }
@@ -363,6 +375,7 @@ class AdminDisputeService(
         photographerSettings: PhotographerSettings? =
             photo?.photographerId?.let { photographerSettingsRepository.findById(it).orElse(null) },
         event: Event? = (order?.eventId ?: photo?.eventId)?.let { eventRepository.findById(it).orElse(null) },
+        now: OffsetDateTime = OffsetDateTime.now(clock),
     ): AdminDisputeDto {
         // A runnerId that no longer resolves still reads as "" (deleted user),
         // never as the guest-email fallback — matches the pre-batching logic.
@@ -376,9 +389,8 @@ class AdminDisputeService(
 
         val eventId = order?.eventId ?: photo?.eventId ?: dispute.orderId // fallback for ghost rows
         val eventName = event?.name
-        val parkedQrph = order?.takeIf {
-            it.paymentMethod == PaymentMethod.QRPH && dispute.refundStatus == "manual_review"
-        }
+        val queue = queueState(dispute, order, paymongoProperties, disputeQueueProperties, now)
+        val parkedQrph = order?.takeIf { queue.attention in PARKED_QRPH_ATTENTIONS }
 
         return AdminDisputeDto(
             id = dispute.id,
@@ -419,6 +431,11 @@ class AdminDisputeService(
                 },
             ),
             activity = activity,
+            refundRequestedAt = dispute.refundRequestedAt?.toString(),
+            attention = queue.attention.wire,
+            dueAt = queue.dueAt?.toString(),
+            overdue = queue.overdue,
+            linkExpiringSoon = queue.linkExpiringSoon,
         )
     }
 
