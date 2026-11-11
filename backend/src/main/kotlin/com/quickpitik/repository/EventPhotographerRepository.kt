@@ -35,6 +35,12 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
     @Query("SELECT c FROM RacePriceChange c WHERE c.eventId = :eventId ORDER BY c.changedAt DESC, c.id DESC")
     fun findPriceHistory(@Param("eventId") eventId: UUID, pageable: Pageable): List<RacePriceChange>
 
+    // AA-R14: events where a covering photographer with photos charges above the race price
+    // (a row's price equal to the floor is stored NULL, so NOT NULL means raised).
+    @Query("SELECT DISTINCT ep.id.eventId FROM EventPhotographer ep " +
+        "WHERE ep.id.eventId IN :eventIds AND ep.pricePhp IS NOT NULL AND ep.photoCount > 0")
+    fun findEventIdsWithRaisedPrice(@Param("eventIds") eventIds: Collection<UUID>): List<UUID>
+
     // AA-R11: the race price row, locked after the photographer's photos in that race.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT ep FROM EventPhotographer ep WHERE ep.id = :id")

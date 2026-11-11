@@ -2,6 +2,7 @@ package com.quickpitik.service.cart
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.cart.MergeCartItem
 import com.quickpitik.entity.CartItemEntity
 import com.quickpitik.entity.CartItemId
 import com.quickpitik.entity.Event
@@ -79,7 +80,7 @@ class CartServiceTest {
         val hidden = photo(event.id, status = PhotoStatus.HIDDEN)
         stub(listOf(hidden), listOf(event))
 
-        service.merge(userId, listOf(hidden.id to event.id))
+        service.merge(userId, items(hidden.id to event.id))
 
         assertEquals(emptyList(), written)
     }
@@ -90,7 +91,7 @@ class CartServiceTest {
         val live = photo(archived.id)
         stub(listOf(live), listOf(archived))
 
-        service.merge(userId, listOf(live.id to archived.id))
+        service.merge(userId, items(live.id to archived.id))
 
         assertEquals(emptyList(), written)
     }
@@ -106,7 +107,7 @@ class CartServiceTest {
 
         service.merge(
             userId,
-            listOf(good.id to open.id, hidden.id to open.id, fromArchived.id to archived.id),
+            items(good.id to open.id, hidden.id to open.id, fromArchived.id to archived.id),
         )
 
         assertEquals(listOf(good.id), written.map { it.id.photoId })
@@ -118,7 +119,7 @@ class CartServiceTest {
         val good = photo(open.id, price = BigDecimal("150.00"))
         stub(listOf(good), listOf(open))
 
-        service.merge(userId, listOf(good.id to open.id))
+        service.merge(userId, items(good.id to open.id))
 
         assertEquals(BigDecimal("150.00"), written.single().pricePhpAtAdd)
     }
@@ -176,7 +177,7 @@ class CartServiceTest {
         val free = photo(event.id, price = BigDecimal.ZERO)
         stub(listOf(free), listOf(event))
 
-        service.merge(userId, listOf(free.id to event.id))
+        service.merge(userId, items(free.id to event.id))
 
         assertEquals(emptyList(), written)
     }
@@ -248,10 +249,72 @@ class CartServiceTest {
         val other = photo(event.id, photographer = UUID.randomUUID())
         stub(listOf(theirs, other), listOf(event))
 
-        service.merge(userId, listOf(theirs.id to event.id, other.id to event.id))
+        service.merge(userId, items(theirs.id to event.id, other.id to event.id))
 
         assertEquals(listOf(other.id), written.map { it.id.photoId })
     }
+
+    // ─── AA-R14: the add-time price is kept and shown beside the live price ─────
+
+    @Test
+    fun `merge keeps an existing row's snapshot`() {
+        val open = event(EventStatus.ACTIVE)
+        val raised = photo(open.id, price = BigDecimal("150.00"))
+        val row = CartItemEntity(id = CartItemId(userId, raised.id), eventId = open.id, pricePhpAtAdd = BigDecimal("125.00"))
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(row))
+        stub(listOf(raised), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        service.merge(userId, listOf(MergeCartItem(raised.id, open.id, priceAtAdd = BigDecimal("150.00"))))
+
+        assertEquals(BigDecimal("125.00"), written.single().pricePhpAtAdd)
+    }
+
+    @Test
+    fun `merge takes a valid guest snapshot`() {
+        val open = event(EventStatus.ACTIVE)
+        val raised = photo(open.id, price = BigDecimal("150.00"))
+        stub(listOf(raised), listOf(open))
+
+        service.merge(userId, listOf(MergeCartItem(raised.id, open.id, priceAtAdd = BigDecimal("125"))))
+
+        assertEquals(BigDecimal("125.00"), written.single().pricePhpAtAdd)
+    }
+
+    @Test
+    fun `merge ignores a guest snapshot above the live price`() {
+        val open = event(EventStatus.ACTIVE)
+        val above = photo(open.id, price = BigDecimal("150.00"))
+        val zero = photo(open.id, price = BigDecimal("150.00"))
+        stub(listOf(above, zero), listOf(open))
+
+        service.merge(
+            userId,
+            listOf(
+                MergeCartItem(above.id, open.id, priceAtAdd = BigDecimal("150.01")),
+                MergeCartItem(zero.id, open.id, priceAtAdd = BigDecimal.ZERO),
+            ),
+        )
+
+        assertEquals(listOf(BigDecimal("150.00"), BigDecimal("150.00")), written.map { it.pricePhpAtAdd })
+    }
+
+    @Test
+    fun `cart item carries priceAtAdd and the live price`() {
+        val open = event(EventStatus.ACTIVE)
+        val raised = photo(open.id, price = BigDecimal("150.00"))
+        val row = CartItemEntity(id = CartItemId(userId, raised.id), eventId = open.id, pricePhpAtAdd = BigDecimal("125.00"))
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(row))
+        stub(listOf(raised), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        val item = service.list(userId).single()
+
+        assertEquals(BigDecimal("125.00"), item.priceAtAdd)
+        assertEquals(BigDecimal("150.00"), item.price)
+    }
+
+    private fun items(vararg pairs: Pair<UUID, UUID>) = pairs.map { (photoId, eventId) -> MergeCartItem(photoId, eventId) }
 
     private fun stub(photos: List<Photo>, events: List<Event>) {
         Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(photos)

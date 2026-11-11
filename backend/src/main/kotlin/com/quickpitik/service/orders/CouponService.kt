@@ -6,6 +6,7 @@ import com.quickpitik.dto.orders.CouponDto
 import com.quickpitik.dto.orders.CouponPreviewDto
 import com.quickpitik.dto.orders.CouponPreviewItemDto
 import com.quickpitik.dto.orders.CouponPreviewRequest
+import com.quickpitik.dto.orders.PhotoPriceDto
 import com.quickpitik.dto.orders.UpsertCouponRequest
 import com.quickpitik.dto.orders.toDto
 import com.quickpitik.dto.photos.CouponQuote
@@ -260,6 +261,7 @@ class CouponService(
             items = items,
             eligibleCount = items.size,
             discountTotal = items.fold(BigDecimal.ZERO) { sum, item -> sum.add(item.discount) },
+            livePrices = photos.map { PhotoPriceDto(it.id, it.pricePhp) },
         )
     }
 

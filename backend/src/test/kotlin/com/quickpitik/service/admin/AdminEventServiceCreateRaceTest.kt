@@ -69,7 +69,8 @@ class AdminEventServiceCreateRaceTest {
         val photos = Mockito.mock(PhotoRepository::class.java)
         service = AdminEventService(
             events, photos, decisions,
-            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), photos),
+            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), photos,
+                Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java)),
             covers,
             EventFaceExpiry(events, Mockito.mock(FaceBibProvider::class.java), aiProperties, java.time.Clock.systemUTC(), testTransactionTemplate()),
             aiProperties,

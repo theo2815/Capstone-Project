@@ -27,6 +27,11 @@ data class EventDto(
     val regionCode: String? = null,
     @field:Schema(description = "Canonical province code from /regions; null when unclassified", nullable = true)
     val provinceCode: String? = null,
+    // AA-R14: race type (null = legacy or Other), the race price (floor), and
+    // whether a covering photographer with photos charges above it ("from ₱").
+    val eventType: String? = null,
+    val pricePerPhoto: BigDecimal? = null,
+    val priceVaries: Boolean = false,
 )
 
 // `photographerHandle` is the owner of a photographer-created event (V46) —
@@ -55,4 +60,6 @@ data class EventDetailDto(
     val regionCode: String? = null,
     @field:Schema(description = "Canonical province code from /regions; null when unclassified", nullable = true)
     val provinceCode: String? = null,
+    val eventType: String? = null,
+    val priceVaries: Boolean = false,
 )
