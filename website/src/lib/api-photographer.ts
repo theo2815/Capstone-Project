@@ -31,6 +31,22 @@ export interface PhotographerEventDetail extends PhotographerEventSummary {
   description: string;
   organizerName: string;
   pricePerPhoto: number;
+  // AA-R11: set only on a race this photographer covers while self-serve races are on.
+  racePrice?: RacePrice | null;
+}
+
+// AA-R11 race price. myPricePhp null = the race price; nextChangeAt null = can change now.
+//   PUT /api/v1/me/photographer/events/{id}/price  { pricePhp: number | null } → RacePrice
+export interface RacePrice {
+  floorPhp: number;
+  ceilingPhp: number;
+  myPricePhp: number | null;
+  effectivePhp: number;
+  nextChangeAt: string | null;
+}
+
+export async function putRacePrice(eventId: string, pricePhp: number | null): Promise<RacePrice> {
+  return api.put<RacePrice>(`/me/photographer/events/${encodeURIComponent(eventId)}/price`, { pricePhp });
 }
 
 // Photographer-owned events (V46). Multipart like the admin create; text

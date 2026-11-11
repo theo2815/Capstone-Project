@@ -768,6 +768,26 @@ export async function fetchAdminDuplicateCandidates(args: {
   return api.get<RaceCandidate[]>(`/admin/events/duplicate-candidates?${p.toString()}`);
 }
 
+// AA-R12: each covering photographer's price in a race, newest 50 history rows.
+//   GET  /admin/events/{id}/photographer-prices                    → AdminRacePrices
+//   POST /admin/events/{id}/photographer-prices/{photographerId}/reset → AdminRacePrices
+export interface AdminRacePrices {
+  floorPhp: number;
+  ceilingPhp: number;
+  prices: { photographerId: string; name: string; handle: string | null; effectivePhp: number; custom: boolean; priceChangedAt: string | null }[];
+  history: { photographerId: string; changedBy: string | null; fromPhp: number; toPhp: number; reason: "SET" | "RESET" | "CLAMP"; changedAt: string }[];
+}
+
+export async function fetchAdminRacePrices(eventId: string, signal?: AbortSignal): Promise<AdminRacePrices> {
+  return api.get<AdminRacePrices>(`/admin/events/${encodeURIComponent(eventId)}/photographer-prices`, { signal });
+}
+
+export async function resetAdminRacePrice(eventId: string, photographerId: string): Promise<AdminRacePrices> {
+  return api.post<AdminRacePrices>(
+    `/admin/events/${encodeURIComponent(eventId)}/photographer-prices/${encodeURIComponent(photographerId)}/reset`,
+  );
+}
+
 // PATCH /admin/events/{id}/listing — show a photographer's Public event on /events.
 // On a typed race (AA-R6): false hides it, true relists it and marks it admin approved.
 export async function setAdminEventListing(eventId: string, listed: boolean): Promise<AdminEventRow> {
