@@ -800,6 +800,38 @@ class OrderServiceCheckoutTest {
         assertTrue(savedOrders.isEmpty())
     }
 
+    // AA-R14: checkout never charges a price the runner was not shown.
+    @Test
+    fun `an expected price that differs from the live price answers CART_ITEM_PRICE_CHANGED and writes no order`() {
+        val stale = CreateOrderItem(photo.id, eventId, expectedPricePhp = BigDecimal("100.00"))
+
+        val error = assertFailsWith<ConflictException> { service.create(null, request(items = listOf(stale)), key) }
+
+        assertEquals(ErrorCodes.CART_ITEM_PRICE_CHANGED, error.code)
+        assertTrue(error.message!!.contains("₱100.00") && error.message!!.contains("₱125.00"))
+        assertTrue(savedOrders.isEmpty())
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    @Test
+    fun `an order without expected prices is charged as today`() {
+        stubProvider()
+
+        val response = service.create(null, request(), key)
+
+        assertEquals(BigDecimal("125.00"), response.totalAmount)
+    }
+
+    @Test
+    fun `a matching expected price checks out`() {
+        stubProvider()
+        val shown = CreateOrderItem(photo.id, eventId, expectedPricePhp = BigDecimal("125"))
+
+        val response = service.create(null, request(items = listOf(shown)), key)
+
+        assertEquals(BigDecimal("125.00"), response.totalAmount)
+    }
+
     @Test
     fun `hidden photos are rejected before a payment session is created`() {
         photo.status = PhotoStatus.HIDDEN

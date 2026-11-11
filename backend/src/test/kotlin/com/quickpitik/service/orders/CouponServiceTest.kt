@@ -372,6 +372,25 @@ class CouponServiceTest {
         assertEquals(1, preview.eligibleCount)
     }
 
+    // AA-R14: a guest cart reads each photo's own price, coupon or not.
+    @Test
+    fun `preview lists live prices without a code`() {
+        val suspendedOwner = UUID.randomUUID()
+        val mine = photo(photographerId, "125.00")
+        val raised = photo(otherPhotographerId, "180.00")
+        val offSale = photo(suspendedOwner, "150.00")
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(mine, raised, offSale))
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenReturn(setOf(suspendedOwner))
+
+        val preview = service.preview(CouponPreviewRequest(code = null, photoIds = listOf(mine.id, raised.id, offSale.id)))
+
+        assertEquals(emptyList(), preview.items)
+        assertEquals(
+            mapOf(mine.id to BigDecimal("125.00"), raised.id to BigDecimal("180.00")),
+            preview.livePrices.associate { it.photoId to it.price },
+        )
+    }
+
     @Test
     fun `preview without a code prices every photographer's own live coupon`() {
         val thirdPhotographerId = UUID.randomUUID()

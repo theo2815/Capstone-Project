@@ -62,7 +62,8 @@ class AdminEventServiceRacePriceTest {
             null
         }.`when`(prices).applyFloor(race, BigDecimal("150.00"), admin)
         val service = AdminEventService(events, photos, decisions,
-            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), photos),
+            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), photos,
+                Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java)),
             Mockito.mock(EventCoverService::class.java), Mockito.mock(EventFaceExpiry::class.java), AiApiProperties(),
             Mockito.mock(PhotographerSettingsRepository::class.java), Mockito.mock(UserRepository::class.java),
             testTransactionTemplate(), commands, Mockito.mock(RegionsService::class.java), RaceProperties(),
