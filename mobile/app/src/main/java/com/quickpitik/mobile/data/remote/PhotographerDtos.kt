@@ -39,6 +39,9 @@ data class PhotographerEventSummaryDto(
     // Copied from the public EventDto for the upload picker's "From ₱" chip (AA-R19); null on the coverage list.
     val pricePerPhoto: Double? = null,
     val priceVaries: Boolean? = null,
+    val eventType: String? = null,
+    val submittedByMe: Boolean? = null,
+    val hidden: Boolean? = null,
 )
 
 // POST/PATCH /me/photographer/events response (create/edit owned event, V46).
@@ -71,6 +74,42 @@ data class PhotographerEventDetailDto(
     val pricePerPhoto: Double = 0.0,
     val deletedAt: String? = null,
 )
+
+data class RaceTypeDto(
+    val code: String? = null,
+    val label: String? = null,
+    val hint: String? = null,
+    val shared: Boolean? = null,
+)
+
+data class RaceTypesDto(
+    val selfServeEnabled: Boolean? = null,
+    val types: List<RaceTypeDto>? = null,
+)
+
+data class RaceCandidateDto(
+    val id: String? = null,
+    val slug: String? = null,
+    val name: String? = null,
+    val date: String? = null,
+    val location: String? = null,
+    val regionCode: String? = null,
+    val provinceCode: String? = null,
+    val organizerName: String? = null,
+    val eventType: String? = null,
+    val bannerUrl: String? = null,
+    val reviewStatus: String? = null,
+    val strength: String? = null,
+)
+
+data class RaceCreateResultDto(
+    val outcome: String? = null,
+    val event: PhotographerEventDetailDto? = null,
+    val candidates: List<RaceCandidateDto>? = null,
+    val checkReasons: List<String>? = null,
+)
+
+data class JoinRaceRequest(val typedName: String? = null)
 
 // Event coupon (V47) — lives on the event, not Settings.
 // GET/PUT/DELETE /me/photographer/events/{eventId}/coupon. GET data is null when

@@ -15,6 +15,23 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface QuickPitikApi {
+    @GET("api/v1/race-types")
+    suspend fun getRaceTypes(): ApiResponseEnvelope<RaceTypesDto>
+
+    @Multipart
+    @POST("api/v1/me/photographer/races")
+    suspend fun createRace(
+        @Header("Authorization") token: String,
+        @Part parts: List<MultipartBody.Part>,
+    ): ApiResponseEnvelope<RaceCreateResultDto>
+
+    @POST("api/v1/me/photographer/races/{eventId}/join")
+    suspend fun joinRace(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: JoinRaceRequest,
+    ): ApiResponseEnvelope<RaceCreateResultDto>
+
     @GET("api/v1/me/photographer/metadata-settings")
     suspend fun getMetadataSettings(@Header("Authorization") token: String): ApiResponseEnvelope<MetadataSettingsDto>
 
