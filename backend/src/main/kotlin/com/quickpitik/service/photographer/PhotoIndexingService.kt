@@ -136,6 +136,9 @@ class PhotoIndexingService(
             return InferenceOutcome(error = "Prior face cleanup unconfirmed", facesTransport = true, bibsTransport = true)
         }
 
+        // A released worker must never resume cleanup and erase a replacement's faces.
+        workFence.confirmPriorCleanup(claim)
+
         val bytes = try {
             storageService.getBytes(photo.s3Key)
         } catch (ex: Exception) {

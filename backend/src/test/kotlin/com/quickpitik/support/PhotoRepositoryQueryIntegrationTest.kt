@@ -24,6 +24,7 @@ class PhotoRepositoryQueryIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var events: EventRepository
     @Autowired lateinit var users: UserRepository
     @Autowired lateinit var tx: TransactionTemplate
+    @Autowired lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
     lateinit var event: Event
     lateinit var otherEvent: Event
     lateinit var owner: User
@@ -106,6 +107,34 @@ class PhotoRepositoryQueryIntegrationTest : PostgresIntegrationTest() {
             assertEquals(4, it.indexingAttempts)
             assertEquals(IndexingStatus.INDEXED, it.indexingStatus)
         }
+    }
+
+    @Test fun `ended indexing claims are found, and batching, deleted and exhausted photos are not`() {
+        fun held(status: IndexingStatus = IndexingStatus.PENDING, attempts: Int = 0,
+            provider: String = "rekognition", expiry: OffsetDateTime = old, finished: Boolean = false,
+            deleted: Boolean = false, deleting: Boolean = false, removal: String = "NONE",
+            batchId: UUID? = null, cleanupFinished: Boolean = true): Photo {
+            val p = save(indexingStatus = status, indexingAttempts = attempts)
+            val token = UUID.randomUUID()
+            jdbc.update("UPDATE photos SET indexing_work_token = ?, indexing_work_expires_at = ?, deleted_at = ?, deletion_started_at = ?, removal_state = ? WHERE id = ?",
+                token, expiry, if (deleted || deleting) old else null, if (deleting) old else null, removal, p.id)
+            tx.executeWithoutResult {
+                photos.recordWork(token, p.id, event.id, 0, "INDEXING", provider, expiry, null, p.id.toString(), null, "[]")
+                if (cleanupFinished) jdbc.update("UPDATE photo_work_outputs SET prior_cleanup_finished_at = ? WHERE token = ?", old, token)
+                if (finished) photos.finishWorkOutput(token, old)
+                if (batchId != null) photos.attributeWorkBatch(token, batchId)
+            }
+            return p
+        }
+        val eligible = listOf(held(), held(IndexingStatus.FAILED), held(IndexingStatus.PARTIAL))
+        val excluded = listOf(held(IndexingStatus.BATCHING), held(IndexingStatus.INDEXED), held(IndexingStatus.SKIPPED),
+            held(attempts = 5), held(provider = "ai_api"), held(expiry = cutoff), held(finished = true),
+            held(deleted = true), held(deleting = true), held(removal = "REVIEW"), held(batchId = UUID.randomUUID()), held(cleanupFinished = false))
+        val noClaim = save(indexingStatus = IndexingStatus.PENDING)
+        val mine = (eligible + excluded + noClaim).map { it.id }.toSet()
+
+        assertEquals(eligible.map { it.id }.toSet(),
+            photos.findEndedIndexingClaims(cutoff, 5, everything).filter { it in mine }.toSet())
     }
 
     @Test fun `findPhotographerLibrary returns the owner's untrashed photos in the event at any status`() {
