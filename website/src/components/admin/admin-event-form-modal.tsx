@@ -18,11 +18,13 @@ import {
   ACCEPTED_IMAGE_MIME,
   validateImageFile,
 } from "@/lib/image-utils";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 import { RegionProvinceFields, type RegionProvinceValue } from "@/components/ui/region-province-fields";
 import { useRegions } from "@/hooks/use-regions";
+import { useAdminRacePrices } from "@/hooks/use-admin-events";
+import { ApiError } from "@/lib/api";
 import { getRegion } from "@/lib/ph-regions";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 
 // Create / edit form modal for admin events. Fields: Title, Location, Date,
 // and an optional cover banner. The cover File is handed back to the caller
@@ -44,7 +46,8 @@ interface AdminEventFormModalProps {
   mode: Mode;
   pending?: boolean;
   recoveryNotice?: string | null;
-  event?: ListEvent | null;
+  /** An admin row at runtime; eventType (AA-R7) marks a shared race. */
+  event?: (ListEvent & { eventType?: string | null }) | null;
   onClose: () => void;
   onSubmit: (payload: {
     name: string;
@@ -341,6 +344,7 @@ export function AdminEventFormModal({
         inputClassName="tnum"
         hint={priceHint}
       />
+      {mode === "edit" && event?.eventType && <RacePriceList eventId={event.id} />}
 
       <AdminTextInput
         id="event-organizer"
@@ -396,6 +400,83 @@ export function AdminEventFormModal({
         </div>
       )}
     </AdminFormModal>
+  );
+}
+
+// AA-R16a: who charges what in a race. Reset asks inline (no stacked overlay
+// inside this modal) and the list shows only what the server answers.
+function RacePriceList({ eventId }: { eventId: string }) {
+  const { data, error, refetch, reset } = useAdminRacePrices(eventId);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [resetting, setResetting] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  async function confirmReset(photographerId: string) {
+    if (resetting) return;
+    setResetting(photographerId);
+    setResetError(null);
+    try {
+      await reset(photographerId);
+      setConfirming(null);
+    } catch (err) {
+      setResetError(err instanceof ApiError ? (err.errors[0]?.message ?? err.message) : "Couldn't reset the price. Try again.");
+    } finally {
+      setResetting(null);
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <AdminFieldLabel>Photographer prices</AdminFieldLabel>
+      {error ? (
+        <div role="alert" className="space-y-2">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load photographer prices.</p>
+          <button type="button" onClick={() => void refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry prices</button>
+        </div>
+      ) : !data ? (
+        <p role="status" className="font-sans text-sm text-slate">Loading photographer prices…</p>
+      ) : (
+        <>
+          <p className="font-sans text-sm text-slate tnum">
+            Race price {formatPrice(data.floorPhp)} · photographers may charge up to {formatPrice(data.ceilingPhp)}. Changing the price above moves everyone into the new range.
+          </p>
+          {data.prices.length === 0 ? (
+            <p className="font-sans text-sm text-slate">No photographer covers this race yet.</p>
+          ) : (
+            <ul className="divide-y divide-line rounded-2xl border border-line bg-surface">
+              {data.prices.map((row) => (
+                <li key={row.photographerId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="font-sans text-sm font-bold text-ink break-words">{row.name}</p>
+                    {row.handle && <p className="font-sans text-sm text-slate break-words">@{row.handle}</p>}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="font-mono text-sm text-ink tnum">{formatPrice(row.effectivePhp)}</p>
+                    {!row.custom ? (
+                      <p className="font-sans text-sm text-slate">Race price</p>
+                    ) : confirming === row.photographerId ? (
+                      <>
+                        <button type="button" onClick={() => void confirmReset(row.photographerId)} disabled={!!resetting} className={cn(BTN_DANGER, BTN_SIZE.sm)}>
+                          {resetting === row.photographerId ? "Resetting…" : "Confirm reset"}
+                        </button>
+                        <button type="button" onClick={() => { setConfirming(null); setResetError(null); }} disabled={!!resetting} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" onClick={() => { setConfirming(row.photographerId); setResetError(null); }} disabled={!!resetting} aria-label={`Reset ${row.name}`} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {resetError && <p role="alert" className="font-sans text-sm text-error">{resetError}</p>}
+        </>
+      )}
+    </section>
   );
 }
 
