@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminEvents, createAdminEvent, updateAdminEvent, deleteAdminEvent,
   approveAdminEvent, rejectAdminEvent, sameRaceAdminEvent, setAdminEventListing, fetchAdminCommand,
+  fetchAdminRacePrices, resetAdminRacePrice,
   type AdminEventListArgs, type AdminEventRow,
   type CreateAdminEventArgs, type UpdateAdminEventPatch,
 } from "@/lib/api-admin";
@@ -13,6 +14,7 @@ import { useToastStore } from "@/store/toast-store";
 import { useAdminMutation } from "./use-admin-mutation";
 import { claimAdminIntent, completeAdminIntent, adminIntentRecoveryNotice } from "@/lib/admin-action-intents";
 import { captureAuthSession } from "@/lib/auth-session";
+import { usePrivateQuerySession } from "./use-private-query-session";
 
 export const EMPTY_ADMIN_EVENTS: AdminEventRow[] = [];
 export const adminEventKeys = {
@@ -30,6 +32,28 @@ export function useAdminEvents(args: AdminEventListArgs = {}) {
     enabled: user?.role === "ADMIN",
     staleTime: 60_000,
   });
+}
+
+// AA-R16a: kept outside adminEventKeys.owner, whose queries settle() treats as event-row lists.
+const adminRacePriceKey = (session: readonly unknown[], eventId: string | null) =>
+  ["admin", "race-prices", eventId, ...session] as const;
+
+export function useAdminRacePrices(eventId: string | null) {
+  const session = usePrivateQuerySession("ADMIN");
+  const qc = useQueryClient();
+  const queryKey = adminRacePriceKey(session.key, eventId);
+  const query = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => fetchAdminRacePrices(eventId!, signal),
+    enabled: session.enabled && !!eventId,
+  });
+  // Awaits the server; the list shows its answer, never a guess.
+  const reset = async (photographerId: string) => {
+    const current = captureAuthSession();
+    const next = await resetAdminRacePrice(eventId!, photographerId);
+    if (current()) qc.setQueryData(queryKey, next);
+  };
+  return { ...query, reset };
 }
 
 export function useAdminEventActions() {
