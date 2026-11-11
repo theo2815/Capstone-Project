@@ -72,6 +72,125 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
     @Modifying
     @Query(value = "UPDATE batch_relevance SET last_swept_at = :now WHERE id = :id", nativeQuery = true)
     fun touchSwept(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // Looks up the batch's next :limit photos, in upload order, and stores one row each (plan 5.2, D20).
+    // The match is the nearest photo by another photographer in the same event uploaded strictly earlier,
+    // over three pairs (clean/clean, centre/centre, clean/marked), kept when within :weakMax bits; the
+    // tight/weak cut is made at scoring. The exact match is the earliest same-file photo by another
+    // photographer in any event (deleted events too). Idempotent: ON CONFLICT means a second run, or a
+    // second instance, inserts nothing. Returns the rows inserted.
+    // `= eligible look-up photo`: LIVE, not trashed, removal NONE, has a clean hash, not yet looked up.
+    @Modifying
+    @Query(value = """
+        INSERT INTO batch_relevance_photos
+            (photo_id, batch_id, looked_up_at, match_photo_id, match_distance, match_pair, exact_photo_id)
+        SELECT l.id, :batchId, :now, m.id, m.d,
+               CASE WHEN m.id IS NULL THEN NULL
+                    WHEN m.d = m.d_clean THEN 'CLEAN'
+                    WHEN m.d = m.d_centre THEN 'CENTRE'
+                    ELSE 'MARKED' END,
+               x.id
+        FROM (
+            SELECT p.id, p.event_id, p.photographer_id, p.uploaded_at, p.content_hash, p.phash_clean, p.phash_centre
+            FROM photos p
+            WHERE p.event_id = :eventId
+              AND p.photographer_id = :photographerId
+              AND p.status = 'LIVE' AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+              AND p.phash_clean IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM batch_relevance_photos d WHERE d.photo_id = p.id)
+            ORDER BY p.uploaded_at, p.id
+            LIMIT :limit
+        ) l
+        LEFT JOIN LATERAL (
+            SELECT o.id, c.d_clean, c.d_centre, c.d_marked,
+                   LEAST(c.d_clean, c.d_centre, c.d_marked) AS d
+            FROM photos o
+            CROSS JOIN LATERAL (
+                SELECT bit_count(CAST((l.phash_clean  # o.phash_clean)  AS bit(64))) AS d_clean,
+                       bit_count(CAST((l.phash_centre # o.phash_centre) AS bit(64))) AS d_centre,
+                       bit_count(CAST((l.phash_clean  # o.phash)        AS bit(64))) AS d_marked
+            ) c
+            WHERE o.event_id = l.event_id
+              AND o.photographer_id <> l.photographer_id
+              AND o.deleted_at IS NULL AND o.removal_state = 'NONE'
+              AND o.uploaded_at < l.uploaded_at
+              AND LEAST(c.d_clean, c.d_centre, c.d_marked) <= :weakMax
+            ORDER BY LEAST(c.d_clean, c.d_centre, c.d_marked), o.uploaded_at, o.id
+            LIMIT 1
+        ) m ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT o.id
+            FROM photos o
+            WHERE o.content_hash = l.content_hash
+              AND o.photographer_id <> l.photographer_id
+              AND o.deleted_at IS NULL AND o.removal_state = 'NONE'
+              AND o.uploaded_at < l.uploaded_at
+            ORDER BY o.uploaded_at, o.id
+            LIMIT 1
+        ) x ON TRUE
+        ON CONFLICT (photo_id) DO NOTHING
+    """, nativeQuery = true)
+    fun lookUpNext(
+        @Param("batchId") batchId: UUID,
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("limit") limit: Int,
+        @Param("weakMax") weakMax: Int,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    // 0 means every eligible photo has a look-up row and the batch can be scored. The service never infers
+    // this from lookUpNext's count: another instance may have inserted the same rows.
+    // `= eligible look-up photo` (as lookUpNext).
+    @Query(value = """
+        SELECT count(*) FROM photos p
+        WHERE p.event_id = :eventId
+          AND p.photographer_id = :photographerId
+          AND p.status = 'LIVE' AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+          AND p.phash_clean IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM batch_relevance_photos d WHERE d.photo_id = p.id)
+    """, nativeQuery = true)
+    fun countPendingLookups(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): Long
+
+    // The copy counts of one batch over its non-trashed photos not under a removal review (plan 5.3).
+    // A match is tight within :tight bits and weak above it up to :weak.
+    // `= batch evidence photo`: not trashed, removal NONE, LIVE or HIDDEN (a hidden batch keeps its evidence).
+    @Query(value = """
+        SELECT count(*) FILTER (WHERE p.status = 'LIVE') AS "photosLive",
+               count(*) FILTER (WHERE p.status = 'PROCESSING') AS "photosProcessing",
+               count(*) FILTER (WHERE p.status IN ('LIVE', 'HIDDEN') AND p.indexing_status = 'INDEXED') AS "indexedPhotos",
+               count(r.photo_id) FILTER (WHERE p.status IN ('LIVE', 'HIDDEN')) AS "lookups",
+               count(*) FILTER (WHERE p.status IN ('LIVE', 'HIDDEN') AND r.match_distance <= :tight) AS "tightHits",
+               count(*) FILTER (WHERE p.status IN ('LIVE', 'HIDDEN')
+                                  AND r.match_distance > :tight AND r.match_distance <= :weak) AS "weakHits",
+               count(*) FILTER (WHERE p.status IN ('LIVE', 'HIDDEN') AND r.exact_photo_id IS NOT NULL) AS "exactMatches"
+        FROM photos p
+        LEFT JOIN batch_relevance_photos r ON r.photo_id = p.id
+        WHERE p.event_id = :eventId
+          AND p.photographer_id = :photographerId
+          AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+    """, nativeQuery = true)
+    fun batchCounts(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("tight") tight: Int,
+        @Param("weak") weak: Int,
+    ): BatchCounts
+
+    // R2-23: call first inside each look-up transaction with app.relevance.lookup-timeout; the limit ends
+    // with the transaction (SET LOCAL), and a timeout fails only that batch's step.
+    @Query(value = "SELECT set_config('statement_timeout', CAST(:ms AS text), true)", nativeQuery = true)
+    fun setLocalStatementTimeout(@Param("ms") ms: Long): String
+}
+
+interface BatchCounts {
+    val photosLive: Long
+    val photosProcessing: Long
+    val indexedPhotos: Long
+    val lookups: Long
+    val tightHits: Long
+    val weakHits: Long
+    val exactMatches: Long
 }
 
 // lastUploadAt keeps microseconds: the due rule compares it with scored_upload_at for equality.

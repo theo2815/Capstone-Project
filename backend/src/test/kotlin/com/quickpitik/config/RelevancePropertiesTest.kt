@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.bind.Binder
 import org.springframework.boot.env.YamlPropertySourceLoader
 import org.springframework.core.env.StandardEnvironment
 import org.springframework.core.io.ClassPathResource
+import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -20,6 +21,7 @@ class RelevancePropertiesTest {
         assertEquals(5, p.maxBatchesPerTick)
         assertEquals(60L, p.rescoreMinutes)
         assertEquals(7L, p.settleDays)
+        assertEquals(Duration.ofSeconds(5), p.lookupTimeout)
         assertEquals(RelevanceProperties.Copy(tightDistance = 4, weakDistance = 8, minHits = 3, minHitSharePercent = 5), p.copy)
         assertEquals(RelevanceProperties.Date(windowDays = 2, minDatedPhotos = 10, outsideSharePercent = 80), p.date)
     }
@@ -34,7 +36,7 @@ class RelevancePropertiesTest {
         listOf(
             "RELEVANCE_MODE:off", "RELEVANCE_SWEEP_INTERVAL_MS:60000", "RELEVANCE_QUIET_MINUTES:10",
             "RELEVANCE_LOOKUPS_PER_TICK:100", "RELEVANCE_MAX_BATCHES_PER_TICK:5", "RELEVANCE_RESCORE_MINUTES:60",
-            "RELEVANCE_SETTLE_DAYS:7", "RELEVANCE_COPY_TIGHT_DISTANCE:4", "RELEVANCE_COPY_WEAK_DISTANCE:8",
+            "RELEVANCE_SETTLE_DAYS:7", "RELEVANCE_LOOKUP_TIMEOUT:5s", "RELEVANCE_COPY_TIGHT_DISTANCE:4", "RELEVANCE_COPY_WEAK_DISTANCE:8",
             "RELEVANCE_COPY_MIN_HITS:3", "RELEVANCE_COPY_MIN_HIT_SHARE_PERCENT:5", "RELEVANCE_DATE_WINDOW_DAYS:2",
             "RELEVANCE_DATE_MIN_DATED_PHOTOS:10", "RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT:80",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
@@ -62,6 +64,7 @@ class RelevancePropertiesTest {
         assertFailsWith<IllegalArgumentException> { RelevanceProperties(maxBatchesPerTick = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties(rescoreMinutes = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties(settleDays = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(lookupTimeout = Duration.ZERO) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Date(windowDays = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Date(minDatedPhotos = 0) }
     }
