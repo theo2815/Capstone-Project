@@ -4,11 +4,30 @@ on:
   push:
     branches: [dev-main, main]
     paths: ['backend/**', '.github/workflows/backend-tests.yml']
+  # Every PR runs this workflow: dev-main requires unit + integration to pass, and a check
+  # that never starts would block a website-only PR. The changes job skips them instead.
   pull_request:
-    paths: ['backend/**', '.github/workflows/backend-tests.yml']
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.diff.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ] || git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -qE '^(backend/|\.github/workflows/backend-tests\.yml$)'; then
+            echo backend=true >> "$GITHUB_OUTPUT"
+          else
+            echo backend=false >> "$GITHUB_OUTPUT"
+          fi
+
   unit:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -34,6 +53,8 @@ jobs:
     # ubuntu-latest ships a Docker daemon; Testcontainers starts postgres:16-alpine.
     # Budget ~35 s for PhotoBundleHttpIntegrationTest's deliberate streaming-timeout
     # sleep. The two Rekognition smoke classes self-skip without AWS credentials.
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:

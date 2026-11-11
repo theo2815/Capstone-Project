@@ -71,6 +71,7 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
 - Create NEW commits; never amend published commits without explicit instruction.
 - Never use `--no-verify` or bypass signing unless the user asks. Never force-push `main`.
 - Stage specific files; avoid `git add -A`.
+- **`dev-main` is protected (2026-11-11): changes land only by pull request, once its `unit` and `integration` checks pass and the branch is up to date with `dev-main`.** Push your branch, open a PR into `dev-main`, wait for green (`gh pr checks <n> --watch`; if it is behind, `gh pr update-branch <n>` and wait again), then `gh pr merge <n> --merge`. This replaces any older "`--no-ff` merge, then `git push origin HEAD:dev-main`" step, which GitHub now refuses. Never merge past a red check.
 - **No agent/tool identity in commits** (no `Co-Authored-By`, no session trailer) — this is the maintainer's house style. Who did what belongs on the vault board + journal, not in git trailers.
 - **Commit messages: plain English a teammate who wasn't there can follow.** A subject line (≤72 chars, optional `module:` prefix) saying what changed, a blank line, then a 2–5 line body: what changed, why, and what it means for users or other code. Describe behaviour in everyday words, not just file or function names; explain any task code you mention. No essays — test output and full rationale go in the vault journal. Only a truly trivial change (typo, one-line config) may be subject-only. Pass the body with a second `-m`. Example:
   ```
