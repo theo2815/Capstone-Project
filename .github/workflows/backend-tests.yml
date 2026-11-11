@@ -7,6 +7,8 @@ on:
   # Every PR runs this workflow: dev-main requires unit + integration to pass, and a check
   # that never starts would block a website-only PR. The changes job skips them instead.
   pull_request:
+  # The merge queue tests each queued PR on top of the ones ahead of it (same jobs, same skip).
+  merge_group:
 
 jobs:
   changes:
@@ -18,8 +20,17 @@ jobs:
         with:
           fetch-depth: 0
       - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: origin/${{ github.base_ref }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
-          if [ "${{ github.event_name }}" != pull_request ] || git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -qE '^(backend/|\.github/workflows/backend-tests\.yml$)'; then
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            merge_group) base="$QUEUE_BASE" ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || git diff --name-only "$base...HEAD" | grep -qE '^(backend/|\.github/workflows/backend-tests\.yml$)'; then
             echo backend=true >> "$GITHUB_OUTPUT"
           else
             echo backend=false >> "$GITHUB_OUTPUT"
