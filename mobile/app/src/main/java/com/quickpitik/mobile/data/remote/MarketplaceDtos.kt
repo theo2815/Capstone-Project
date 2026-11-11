@@ -14,8 +14,13 @@ data class CartItemDto(
     val eventName: String?,
     val eventSlug: String?,
     val tone: Int?,
-    val time: String?
+    val time: String?,
+    // false = a suspended photographer's photo, sent only with includeUnavailable=true (AA-I20b); null = available.
+    val available: Boolean? = null
 )
+
+/** The rows that can be paid for: an unavailable row stays in the cart but out of the total and checkout. */
+internal fun payableItems(items: List<CartItemDto>): List<CartItemDto> = items.filter { it.available != false }
 
 data class MergeCartRequest(
     val items: List<MergeCartItem>

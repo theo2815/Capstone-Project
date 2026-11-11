@@ -524,7 +524,8 @@ interface QuickPitikApi {
 
     @GET("api/v1/me/cart")
     suspend fun getCart(
-        @Header("Authorization") token: String
+        @Header("Authorization") token: String,
+        @Query("includeUnavailable") includeUnavailable: Boolean = true
     ): ApiResponseEnvelope<List<CartItemDto>>
 
     @POST("api/v1/me/cart/items")

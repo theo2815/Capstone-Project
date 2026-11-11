@@ -46,7 +46,7 @@ class CartRepositoryImplTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 requests += request
                 return when (request.path) {
-                    "/api/v1/me/cart" -> ok(CART)
+                    "/api/v1/me/cart?includeUnavailable=true" -> ok(CART)
                     "/api/v1/me/cart/items" -> addItem
                     "/api/v1/me/cart/items/p1" -> removeItem
                     "/api/v1/orders" -> order
