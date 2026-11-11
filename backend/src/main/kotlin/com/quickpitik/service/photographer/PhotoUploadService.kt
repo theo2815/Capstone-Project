@@ -1080,6 +1080,8 @@ class PhotoUploadService(
                 // lost increments and could PK-collide on first-upload races (H-3 / M-6).
                 val now = OffsetDateTime.now()
                 eventPhotographerRepository.upsertOnUpload(eventId, photographerId, now)
+                // AA-R13: after the upsert's row lock, so a race price change mid-upload is seen.
+                if (event.eventType != null) photoRepository.reseedRacePrice(photoId)
                 eventRepository.incrementPhotoCount(eventId)
 
                 // The photo.published WebSocket frame no longer fires here — it

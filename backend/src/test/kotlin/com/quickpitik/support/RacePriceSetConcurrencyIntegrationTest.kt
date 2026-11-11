@@ -3,12 +3,16 @@ package com.quickpitik.support
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.EventPhotographerRepository
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.events.RacePriceService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.TestPropertySource
+import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.time.OffsetDateTime
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutionException
@@ -25,6 +29,9 @@ class RacePriceSetConcurrencyIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired private lateinit var dataSource: DataSource
     @Autowired private lateinit var prices: RacePriceService
+    @Autowired private lateinit var tx: TransactionTemplate
+    @Autowired private lateinit var coverage: EventPhotographerRepository
+    @Autowired private lateinit var photos: PhotoRepository
 
     private fun id(sql: String, vararg args: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *args)!!
 
@@ -91,6 +98,47 @@ class RacePriceSetConcurrencyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, refused.size, "results: $results")
         assertEquals(ErrorCodes.RACE_PRICE_COOLDOWN, refused.single().code)
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM race_price_changes WHERE event_id = ?", Int::class.java, race))
+    }
+
+    @Test
+    fun `a price change during an upload leaves the new photo at the new price`() {
+        val (me, race) = coveredRace()
+        val priceHeld = CountDownLatch(1)
+        val releasePrice = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        val newPhoto = UUID.randomUUID()
+        try {
+            // Thread A: the photographer's price change, holding its row lock open.
+            val change = pool.submit {
+                tx.execute {
+                    prices.setMyPrice(me, race, BigDecimal("200"))
+                    priceHeld.countDown()
+                    check(releasePrice.await(20, TimeUnit.SECONDS)) { "price change was not released" }
+                }
+            }
+            check(priceHeld.await(20, TimeUnit.SECONDS)) { "price change did not take its locks" }
+            // Thread B: persistNew's transaction, the photo seeded at the floor read before the change.
+            val upload = pool.submit {
+                tx.execute {
+                    jdbc.update("INSERT INTO photos (id, event_id, photographer_id, s3_key, price_php) VALUES (?, ?, ?, ?, 125)",
+                        newPhoto, race, me, "rp/${UUID.randomUUID()}")
+                    coverage.upsertOnUpload(race, me, OffsetDateTime.now())
+                    photos.reseedRacePrice(newPhoto)
+                }
+            }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            while (waitingOnALock() < 1) {
+                check(System.nanoTime() < deadline) { "the upload never waited on the coverage row lock" }
+                Thread.sleep(20)
+            }
+            releasePrice.countDown()
+            change.get(30, TimeUnit.SECONDS)
+            upload.get(30, TimeUnit.SECONDS)
+        } finally {
+            releasePrice.countDown()
+            pool.shutdownNow()
+        }
+        assertEquals(BigDecimal("200.00"), jdbc.queryForObject("SELECT price_php FROM photos WHERE id = ?", BigDecimal::class.java, newPhoto))
     }
 
     private fun waitingOnALock(): Int = jdbc.queryForObject(
