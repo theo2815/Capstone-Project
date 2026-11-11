@@ -17,6 +17,7 @@ import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
 import { SaveButton } from "@/components/events/save-button";
+import { ReportButton } from "@/components/moderation/report-dialog";
 import {
   BibPanel,
   SelfieSearchPanel,
@@ -449,19 +450,22 @@ function CockpitTopBar({ event }: { event: EventDetail }) {
           </span>
           <span>Back to events</span>
         </Kicker>
-        <SaveButton
-          eventId={event.id}
-          event={{
-            id: event.id,
-            slug: event.slug,
-            name: event.name,
-            date: event.date,
-            state: deriveEventState(event.date),
-            bannerUrl: event.bannerUrl ?? null,
-            location: event.location,
-          }}
-          variant="inline"
-        />
+        <div className="flex items-center gap-4">
+          <ReportButton target={{ kind: "event", id: event.id }} />
+          <SaveButton
+            eventId={event.id}
+            event={{
+              id: event.id,
+              slug: event.slug,
+              name: event.name,
+              date: event.date,
+              state: deriveEventState(event.date),
+              bannerUrl: event.bannerUrl ?? null,
+              location: event.location,
+            }}
+            variant="inline"
+          />
+        </div>
       </div>
     </div>
   );

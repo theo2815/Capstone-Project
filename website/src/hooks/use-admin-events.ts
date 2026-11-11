@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminEvents, createAdminEvent, updateAdminEvent, deleteAdminEvent,
-  approveAdminEvent, rejectAdminEvent, setAdminEventListing, fetchAdminCommand,
+  approveAdminEvent, rejectAdminEvent, sameRaceAdminEvent, setAdminEventListing, fetchAdminCommand,
   type AdminEventListArgs, type AdminEventRow,
   type CreateAdminEventArgs, type UpdateAdminEventPatch,
 } from "@/lib/api-admin";
@@ -162,6 +162,8 @@ export function useAdminEventActions() {
       deleteEvent: (id: string) => run(id, "Deleting…", "delete", () => deleteAdminEvent(id), id),
       approve: (id: string, revision?: number) => run(id, "Approving…", "approve", () => approveAdminEvent(id, revision)),
       reject: (id: string, reason: string, revision?: number) => run(id, "Sending back…", "reject", () => rejectAdminEvent(id, reason, revision)),
+      // The answer is the target race; the pending row is gone, so drop it like a delete.
+      sameRace: (id: string, targetId?: string, revision?: number) => run(id, "Joining…", "decide", () => sameRaceAdminEvent(id, targetId, revision), id),
       setListing: (id: string, listed: boolean) => run(id, "Saving…", "update", () => setAdminEventListing(id, listed)),
     };
 }

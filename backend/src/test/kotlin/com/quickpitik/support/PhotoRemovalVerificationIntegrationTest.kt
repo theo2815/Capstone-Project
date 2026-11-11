@@ -72,11 +72,12 @@ class PhotoRemovalVerificationIntegrationTest : PostgresIntegrationTest() {
         assertEquals(3, storedMessages.size)
         val reviewCreatedAtOct5 = reviews.findByRequestIdOrderByIdAsc(case.id).first()
         assertEquals(Instant.parse("2026-10-08T00:00:00Z"), reviewCreatedAtOct5.deadline)
-        val ownerAItemIds = items.findByRequestIdOrderByIdAsc(case.id).filter { it.ownerIdSnapshot == ownerA.id }.map { it.id }.toSet()
         val noticeForA = storedMessages.single { it.photographerId == ownerA.id }
-        val noticeItemIds = UUID_REGEX.findAll(noticeForA.body).map { UUID.fromString(it.value) }.toList()
-        assertTrue(noticeItemIds.isNotEmpty())
-        assertTrue(noticeItemIds.all { it in ownerAItemIds })
+        // Since RD-10 the notice names each untagged photo by its short id and shows no raw ids.
+        val (photosOfA, others) = selected.partition { it.photographerId == ownerA.id }
+        assertTrue(photosOfA.all { noticeForA.body.contains("Photo ${it.id.toString().take(8)}") }, noticeForA.body)
+        assertTrue(others.none { noticeForA.body.contains(it.id.toString().take(8)) }, "Notice for A names another owner's photo")
+        assertTrue(UUID_REGEX.findAll(noticeForA.body).none(), "Notice shows a raw id")
         for (message in storedMessages) {
             assertEquals("photo_removal_request", message.kindWire)
             assertEquals(case.id, message.photoRemovalRequestId)

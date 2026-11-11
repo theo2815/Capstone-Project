@@ -8,6 +8,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { EventTile } from "@/components/events/event-tile";
+import { ReportButton } from "@/components/moderation/report-dialog";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchPublicPhotographer } from "@/lib/api-photographer-public";
@@ -145,10 +146,11 @@ function ProfileLayout({
               profile.avatarUrl ? { dataUrl: profile.avatarUrl } : null
             }
           />
-          <div className="flex-1 min-w-0 md:pb-2">
+          <div className="flex-1 min-w-0 w-full md:pb-2 flex items-center justify-between gap-4">
             <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
               Photographer
             </p>
+            <ReportButton target={{ kind: "photographer", handle: profile.handle }} />
           </div>
         </div>
 
