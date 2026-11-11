@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { useCartStore } from "./cart-store";
+import { payableItems, useCartStore } from "./cart-store";
 import type { CartItem } from "@/types/order";
 
 function makeItem(photoId: string, price: number): CartItem {
@@ -33,5 +33,17 @@ describe("useCartStore pricing precision", () => {
 
   it("returns 0 for empty cart", () => {
     expect(useCartStore.getState().total()).toBe(0);
+  });
+});
+
+describe("payableItems", () => {
+  it("a row without available counts as available", () => {
+    const old = makeItem("p1", 125);
+    expect(payableItems([old, { ...makeItem("p2", 150), available: false }])).toEqual([old]);
+  });
+
+  it("total leaves out unavailable rows", () => {
+    useCartStore.setState({ items: [makeItem("p1", 125), { ...makeItem("p2", 150), available: false }] });
+    expect(useCartStore.getState().total()).toBe(125);
   });
 });

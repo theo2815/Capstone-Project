@@ -14,6 +14,11 @@ import {
 // across multiple events without becoming a checkout-time foot-gun.
 export const MAX_CART_ITEMS = 100;
 
+/** The rows that can be paid for: a suspended photographer's rows stay in the cart but out of the total and checkout. */
+export function payableItems(items: CartItem[]): CartItem[] {
+  return items.filter((i) => i.available !== false);
+}
+
 interface CartState {
   items: CartItem[];
   // When true, mutators mirror to /me/cart. Set by `<AuthHydrator>` after the
@@ -99,7 +104,7 @@ export const useCartStore = create<CartState>()(
         }
       },
       total: () => {
-        const cents = get().items.reduce(
+        const cents = payableItems(get().items).reduce(
           (sum, item) => sum + Math.round(Number(item.price || 0) * 100),
           0,
         );

@@ -4,7 +4,7 @@ import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image"
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useCartStore } from "@/store/cart-store";
+import { payableItems, useCartStore } from "@/store/cart-store";
 import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
 import { useAuthStore } from "@/store/auth-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
@@ -377,6 +377,7 @@ export function CartModal({
                     onClose();
                   }
                 }}
+                disabled={payableItems(items).length === 0}
                 className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}
               >
                 Continue to checkout →
@@ -448,6 +449,7 @@ function CartRow({
 }) {
   const tone = item.tone ?? 0;
   const colorIdx = tone % TONE_COLORS.length;
+  const unavailable = item.available === false;
 
   return (
     <li
@@ -515,11 +517,25 @@ function CartRow({
               Already purchased
             </span>
           )}
+          {unavailable && (
+            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-bone-deep px-2.5 py-1 font-mono uppercase tracking-[0.14em] text-[13px] text-slate whitespace-nowrap">
+              <span
+                aria-hidden="true"
+                className="size-1.5 rounded-full bg-slate-soft"
+              />
+              No longer available
+            </span>
+          )}
         </div>
       </button>
 
       <div className="flex flex-col items-end gap-1.5 shrink-0">
-        <span className="font-mono text-sm text-ink tnum">
+        <span
+          className={cn(
+            "font-mono text-sm tnum",
+            unavailable ? "text-slate-soft line-through" : "text-ink",
+          )}
+        >
           {formatPrice(item.price)}
         </span>
         <button
