@@ -18,8 +18,8 @@ class PhotoWorkFenceTest {
     private val now = Instant.parse("2026-10-06T00:00:00Z")
     private val photo = Photo(eventId = UUID.randomUUID(), s3Key = "synthetic/original", pricePhp = BigDecimal.ONE)
     private fun <T> anyArg(): T = any()
-    private fun fence(provider: AiProvider = AiProvider.REKOGNITION) = PhotoWorkFence(photos,
-        StorageProperties(operationTimeout = Duration.ofSeconds(7)), AiApiProperties(), AiProperties(provider = provider),
+    private fun fence(provider: AiProvider = AiProvider.REKOGNITION, mode: IndexingMode = IndexingMode.PER_PHOTO) = PhotoWorkFence(photos,
+        StorageProperties(operationTimeout = Duration.ofSeconds(7)), AiApiProperties(indexingMode = mode), AiProperties(provider = provider),
         RekognitionProperties(operationTimeout = Duration.ofSeconds(11)), ObjectMapper(), Clock.fixed(now, ZoneOffset.UTC))
 
     @Test fun `claims derive deadlines from configured operation budgets and preserve known targets`() {
@@ -114,7 +114,7 @@ class PhotoWorkFenceTest {
         verify(photos).finishWork(photo.id, stale)
     }
 
-    @Test fun `a watermark claim within two storage timeouts of expiry stays held, and indexing claims are never released`() {
+    @Test fun `claim refuses a held watermark within two storage timeouts and any held indexing token`() {
         photo.watermarkWorkToken = UUID.randomUUID()
         photo.watermarkWorkExpiresAt = OffsetDateTime.ofInstant(now.minusSeconds(14), ZoneOffset.UTC)
         photo.indexingWorkToken = UUID.randomUUID()
@@ -126,6 +126,102 @@ class PhotoWorkFenceTest {
         verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
         verify(photos, never()).finishWork(anyArg(), anyArg())
         verify(photos, never()).claimWork(anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    private fun endedIndexing(provider: String = "rekognition", batchId: UUID? = null, cleanupFinished: Boolean = true): UUID {
+        val token = UUID.randomUUID()
+        photo.indexingWorkToken = token
+        photo.indexingWorkExpiresAt = OffsetDateTime.ofInstant(now.minusSeconds(44), ZoneOffset.UTC)
+        `when`(photos.findAllByIdForUpdate(listOf(photo.id))).thenReturn(listOf(photo))
+        val output = mock(com.quickpitik.repository.PhotoFaceWork::class.java)
+        `when`(output.token).thenReturn(token)
+        `when`(output.provider).thenReturn(provider)
+        `when`(output.batchId).thenReturn(batchId)
+        `when`(output.priorCleanupFinishedAt).thenReturn(if (cleanupFinished) now else null)
+        `when`(output.expiresAt).thenReturn(now.minusSeconds(44))
+        `when`(photos.faceWorkForPhoto(photo.eventId, photo.id)).thenReturn(listOf(output))
+        return token
+    }
+
+    @Test fun `a paused prior cleanup keeps an expired claim held`() {
+        endedIndexing(cleanupFinished = false)
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
+        verify(photos, never()).finishWork(anyArg(), anyArg())
+    }
+
+    @Test fun `an indexing claim is released only after four call deadlines past its expiry`() {
+        val token = endedIndexing()
+        photo.indexingWorkExpiresAt = OffsetDateTime.ofInstant(now.minusSeconds(43), ZoneOffset.UTC)
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
+
+        photo.indexingWorkExpiresAt = OffsetDateTime.ofInstant(now.minusSeconds(44), ZoneOffset.UTC)
+        assertTrue(fence().releaseEndedIndexing(photo.id))
+        assertEquals(OffsetDateTime.ofInstant(now.minusSeconds(44), ZoneOffset.UTC), fence().endedIndexingCutoff())
+        verify(photos).finishWork(photo.id, token)
+    }
+
+    @Test fun `releasing an ended indexing claim finishes its output row and clears both columns`() {
+        val token = endedIndexing()
+        assertTrue(fence().releaseEndedIndexing(photo.id))
+        verify(photos).finishWorkOutput(token, OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
+        verify(photos).finishWork(photo.id, token)
+    }
+
+    @Test fun `an ai_api claim four deadlines past expiry is not released`() {
+        endedIndexing("ai_api")
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
+        verify(photos, never()).finishWork(anyArg(), anyArg())
+    }
+
+    @Test fun `a batch claim is held even if the sweep now runs in per photo mode`() {
+        endedIndexing(batchId = UUID.randomUUID())
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
+    }
+
+    @Test fun `batch mode keeps expired Rekognition claims held`() {
+        endedIndexing()
+        assertFalse(fence(mode = IndexingMode.BATCH).releaseEndedIndexing(photo.id))
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
+    }
+
+    @Test fun `release requires the matching unfinished output and respects its later deadline`() {
+        endedIndexing()
+        val output = photos.faceWorkForPhoto(photo.eventId, photo.id).single()
+        `when`(output.expiresAt).thenReturn(now.minusSeconds(43))
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        `when`(output.expiresAt).thenReturn(now.minusSeconds(44))
+        `when`(output.finishedAt).thenReturn(now)
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        `when`(output.finishedAt).thenReturn(null)
+        photo.indexingWorkToken = UUID.randomUUID()
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
+    }
+
+    @Test fun `release rechecks restrictions retry state and budget under the photo lock`() {
+        endedIndexing()
+        photo.deletedAt = OffsetDateTime.ofInstant(now, ZoneOffset.UTC)
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        photo.deletedAt = null
+        photo.deletionStartedAt = OffsetDateTime.ofInstant(now, ZoneOffset.UTC)
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        photo.deletionStartedAt = null
+        photo.removalState = RemovalState.REVIEW
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        photo.removalState = RemovalState.NONE
+        photo.indexingAttempts = 5
+        assertFalse(fence().releaseEndedIndexing(photo.id))
+        photo.indexingAttempts = 0
+        for (status in listOf(com.quickpitik.entity.IndexingStatus.BATCHING, com.quickpitik.entity.IndexingStatus.INDEXED,
+            com.quickpitik.entity.IndexingStatus.SKIPPED)) {
+            photo.indexingStatus = status
+            assertFalse(fence().releaseEndedIndexing(photo.id))
+        }
+        verify(photos, never()).finishWorkOutput(anyArg(), anyArg())
     }
 
     @Test fun `Rekognition write settles only four call deadlines after its claim expired`() {
