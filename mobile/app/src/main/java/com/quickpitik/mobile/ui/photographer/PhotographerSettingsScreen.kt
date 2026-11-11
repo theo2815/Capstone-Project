@@ -75,7 +75,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PayoutAccountDto
-import com.quickpitik.mobile.data.remote.RegionDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SocialLinkDto
 import com.quickpitik.mobile.ui.theme.Bone
@@ -1342,74 +1341,6 @@ private fun HandleSlab(
 
 // ─── Slab: Region + province ─────────────────────────────────────────────────
 
-@Composable
-private fun RegionSlab(
-    regions: List<RegionDto>,
-    regionCode: String,
-    provinceCode: String,
-    onRegionChange: (String) -> Unit,
-    onProvinceChange: (String) -> Unit,
-    showValidation: Boolean = false,
-) {
-    val selectedRegion = regions.firstOrNull { it.code == regionCode }
-    val selectedProvince = selectedRegion?.provinces?.firstOrNull { it.code == provinceCode }
-    var regionMenuExpanded by remember { mutableStateOf(false) }
-    var provinceMenuExpanded by remember { mutableStateOf(false) }
-    val isMissing = regionCode.isBlank()
-    val isError = showValidation && isMissing
-
-    Column {
-        Kicker(
-            text = if (isError) "Region  ·  FILL THIS SECTION" else "Region",
-            color = if (isError) ErrorRed else SlateSoft
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-
-        DropdownField(
-            label = "Region",
-            valueLabel = selectedRegion?.name.orEmpty(),
-            // The saved code can't resolve to a name until the list arrives,
-            // so say it's loading rather than "Pick a region" — which would
-            // read as "nothing is set" on a photographer who has set one.
-            placeholder = if (regions.isEmpty()) "Loading regions…" else "Pick a region",
-            expanded = regionMenuExpanded,
-            onExpand = { regionMenuExpanded = true },
-            onCollapse = { regionMenuExpanded = false },
-        ) {
-            regions.forEach { region ->
-                DropdownMenuItem(
-                    text = { Text(region.name, color = Ink, style = Typography.bodyMedium) },
-                    onClick = {
-                        onRegionChange(region.code)
-                        regionMenuExpanded = false
-                    },
-                )
-            }
-        }
-
-        if (selectedRegion != null) {
-            Spacer(modifier = Modifier.height(12.dp))
-            DropdownField(
-                label = "Province",
-                valueLabel = selectedProvince?.name.orEmpty(),
-                placeholder = "Pick a province",
-                expanded = provinceMenuExpanded,
-                onExpand = { provinceMenuExpanded = true },
-                onCollapse = { provinceMenuExpanded = false },
-            ) {
-                selectedRegion.provinces.forEach { province ->
-                    DropdownMenuItem(
-                        text = { Text(province.name, color = Ink, style = Typography.bodyMedium) },
-                        onClick = {
-                            onProvinceChange(province.code)
-                            provinceMenuExpanded = false
-                        },
-                    )
-                }
-            }
-        }
-    }
-}
 
 // ─── Slab: Socials ───────────────────────────────────────────────────────────
 
@@ -1756,13 +1687,14 @@ private fun QpFormField(
 }
 
 @Composable
-private fun DropdownField(
+internal fun DropdownField(
     label: String,
     valueLabel: String,
     placeholder: String,
     expanded: Boolean,
     onExpand: () -> Unit,
     onCollapse: () -> Unit,
+    enabled: Boolean = true,
     items: @Composable () -> Unit,
 ) {
     Column {
@@ -1774,7 +1706,7 @@ private fun DropdownField(
                     .fillMaxWidth()
                     .clip(FieldShape)
                     .background(Bone)
-                    .clickable { onExpand() }
+                    .clickable(enabled = enabled) { onExpand() }
                     .padding(horizontal = 14.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1791,7 +1723,7 @@ private fun DropdownField(
                 )
             }
             DropdownMenu(
-                expanded = expanded,
+                expanded = expanded && enabled,
                 onDismissRequest = onCollapse,
             ) {
                 items()

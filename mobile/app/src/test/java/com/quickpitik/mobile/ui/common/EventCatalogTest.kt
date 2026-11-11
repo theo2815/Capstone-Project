@@ -1,11 +1,36 @@
 package com.quickpitik.mobile.ui.common
 
 import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
+import com.google.gson.Gson
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.LocalDate
 
 class EventCatalogTest {
+    private fun race(review: String = "approved", hidden: Boolean = false): PhotographerEventSummaryDto =
+        Gson().fromJson("""{"id":"race","slug":"cebu-run","name":"Cebu Run","date":"2026-11-11","location":"Cebu","state":"live","photoCount":0,"salesCount":0,"revenueKept":0,"ownedByMe":false,"eventType":"ROAD_RACE","reviewStatus":"$review","hidden":$hidden}""",
+            PhotographerEventSummaryDto::class.java)
+
+    @Test fun `a joined pending race is not open for uploads`() {
+        assertEquals(false, canUploadToEvent(race("pending"), LocalDate.parse("2026-11-11")))
+    }
+
+    @Test fun `a hidden race is not open for uploads`() {
+        assertEquals(false, canUploadToEvent(race(hidden = true), LocalDate.parse("2026-11-11")))
+    }
+
+    @Test fun `an approved race inside its window is open`() {
+        assertEquals(true, canUploadToEvent(race(), LocalDate.parse("2026-11-14")))
+        assertEquals(true, canUploadToEvent(race("change_pending"), LocalDate.parse("2026-11-11")))
+        assertEquals(false, canUploadToEvent(race(), LocalDate.parse("2026-11-15")))
+    }
+
+    @Test fun `an admin event without the new fields keeps todays rule`() {
+        val event = PhotographerEventSummaryDto("admin", "admin", "Admin race", "2026-11-11", "Cebu", "live", 0, 0, 0.0)
+        assertEquals(true, canUploadToEvent(event, LocalDate.parse("2026-11-11")))
+        assertEquals(false, canUploadToEvent(event, LocalDate.parse("2026-11-15")))
+    }
+
     @Test fun ownerWindowIncludesPreEventAndClampsToTheCalendarMonth() {
         val event = PhotographerEventSummaryDto("id", "slug", "Event", "2026-01-31", "Cebu", "open", 0, 0, 0.0,
             ownedByMe = true)
