@@ -88,6 +88,13 @@ export interface PhotographerEventSummary {
   reviewStatus?: EventReviewStatus;
   reviewNote?: string | null;
   pendingChange?: PendingPricingChange | null;
+  // Shared races (AA-R3/R5). eventType null = legacy or Other; on a race
+  // ownedByMe stays false and submittedByMe marks the photographer who made it.
+  eventType?: string | null;
+  submittedByMe?: boolean;
+  canEditRace?: boolean;
+  checkReasons?: string[];
+  hidden?: boolean;
   /** ₱ kept by the photographer for this event (post-platform-cut). */
   revenueKept: number;
 }

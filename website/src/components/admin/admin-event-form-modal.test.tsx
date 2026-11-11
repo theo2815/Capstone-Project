@@ -94,3 +94,25 @@ it("preserves the dirty draft across refetch, resets on a fresh session, and own
   await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Cebu Race"));
   expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Province: Cebu" })).toBeInTheDocument();
 });
+
+// AA-R17b: a typed admin create checks for duplicates first.
+it("duplicate warning needs a second confirm", async () => {
+  const candidate = { id: "race-0", slug: "cebu-marathon", name: "Cebu Marathon", date: "2026-11-01", location: "SRP", regionCode: null, provinceCode: null, organizerName: "", eventType: "ROAD_RACE", bannerUrl: null, reviewStatus: "approved", strength: "strong" };
+  const raceTypes = { selfServeEnabled: false, types: [
+    { code: "ROAD_RACE", label: "Road race", hint: "5K to 42K", shared: true },
+    { code: "OTHER", label: "Other", hint: "Not a race", shared: false },
+  ] };
+  const get = vi.spyOn(api, "get").mockImplementation(async (path) => path === "/race-types" ? raceTypes : [candidate]);
+  const checks = () => get.mock.calls.filter(([path]) => String(path).startsWith("/admin/events/duplicate-candidates"));
+  const { submit } = mount("create", adminEvent);
+  await userEvent.click(await screen.findByRole("radio", { name: /^Road race/ }));
+  expect(screen.queryByRole("radio", { name: /^Other/ })).not.toBeInTheDocument();
+  fillCreate(); await pick("Region", eventRegions[0].name); await pick("Province", "Cebu");
+  await userEvent.click(screen.getByRole("button", { name: "Create event" }));
+  expect(checks()).toEqual([["/admin/events/duplicate-candidates?name=Race&date=2026-11-01&provinceCode=cebu"]]);
+  expect(submit).not.toHaveBeenCalled();
+  expect(await screen.findByText(/Cebu Marathon/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Create anyway" }));
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ eventType: "ROAD_RACE", name: "Race" }));
+  expect(checks()).toHaveLength(1);
+});

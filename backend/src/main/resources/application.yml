@@ -318,6 +318,25 @@ app:
       min-shared-bibs: ${RACE_SAME_BIB_MIN_SHARED:30} # [NOT MEASURED]
     reports:
       hide-threshold: ${RACE_REPORT_HIDE_THRESHOLD:3} # distinct accounts; [NOT MEASURED]
+  relevance:
+    # PE-1 photo-to-event relevance. off = the sweep does nothing (kill switch);
+    # shadow = relevance rows only. Nothing is hidden or held automatically.
+    mode: ${RELEVANCE_MODE:off}
+    sweep-interval-ms: ${RELEVANCE_SWEEP_INTERVAL_MS:60000}
+    quiet-minutes: ${RELEVANCE_QUIET_MINUTES:10}
+    lookups-per-tick: ${RELEVANCE_LOOKUPS_PER_TICK:100}
+    max-batches-per-tick: ${RELEVANCE_MAX_BATCHES_PER_TICK:5}
+    rescore-minutes: ${RELEVANCE_RESCORE_MINUTES:60}
+    settle-days: ${RELEVANCE_SETTLE_DAYS:7}
+    copy:
+      tight-distance: ${RELEVANCE_COPY_TIGHT_DISTANCE:4} # [NOT MEASURED: PE-0]
+      weak-distance: ${RELEVANCE_COPY_WEAK_DISTANCE:8} # [NOT MEASURED: PE-0]
+      min-hits: ${RELEVANCE_COPY_MIN_HITS:3} # [NOT MEASURED: PE-0]
+      min-hit-share-percent: ${RELEVANCE_COPY_MIN_HIT_SHARE_PERCENT:5} # [NOT MEASURED: PE-0]
+    date:
+      window-days: ${RELEVANCE_DATE_WINDOW_DAYS:2} # [NOT MEASURED: PE-0]
+      min-dated-photos: ${RELEVANCE_DATE_MIN_DATED_PHOTOS:10} # [NOT MEASURED: PE-0]
+      outside-share-percent: ${RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT:80} # [NOT MEASURED: PE-0]
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

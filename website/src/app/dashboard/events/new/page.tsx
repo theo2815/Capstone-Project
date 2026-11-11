@@ -7,8 +7,10 @@ import { MyEventForm } from "@/components/dashboard/my-event-form";
 import { RequirePhotographerReady } from "@/components/dashboard/require-photographer-ready";
 import { SiteHeader } from "@/components/layout/site-header";
 import { Kicker } from "@/components/ui/kicker";
+import { useRaceTypes } from "@/hooks/use-race-types";
 import { useToast } from "@/hooks/use-toast";
 import { ROUTES } from "@/lib/constants";
+import { raceOutcomeMessage } from "@/lib/photographer-events";
 
 // Create a photographer-owned event (V46). Focused page (no dashboard rail —
 // the /dashboard/events/[^/]+ pattern in app/dashboard/layout.tsx escapes
@@ -19,6 +21,7 @@ export default function NewEventPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const { selfServeEnabled } = useRaceTypes();
 
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col">
@@ -38,12 +41,27 @@ export default function NewEventPage() {
             <h1 className="font-display text-4xl md:text-6xl font-extrabold tracking-tight text-ink mt-4 leading-[1.05]">
               Create an event.
             </h1>
-            <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-md">
-              A race you organise or shoot on your own. Choose paid or free,
-              public or link-only; an admin approves it before it goes live.
-            </p>
+            {selfServeEnabled ? (
+              <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-md">
+                A race goes live for every photographer once its checks pass.
+                Pick Other for an event of your own: paid or free, public or
+                link-only, approved by an admin first.
+              </p>
+            ) : (
+              <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-md">
+                A race you organise or shoot on your own. Choose paid or free,
+                public or link-only; an admin approves it before it goes live.
+              </p>
+            )}
           </section>
           <MyEventForm
+            onRaceDone={(result) => {
+              void queryClient.invalidateQueries({
+                queryKey: ["photographer", "events"],
+              });
+              showToast({ kind: "success", message: raceOutcomeMessage(result) });
+              router.push(ROUTES.DASHBOARD_EVENTS);
+            }}
             onDone={() => {
               void queryClient.invalidateQueries({
                 queryKey: ["photographer", "events"],

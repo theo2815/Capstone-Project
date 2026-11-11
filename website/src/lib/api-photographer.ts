@@ -54,7 +54,7 @@ export interface MyEventFields {
   withdrawPendingChange?: boolean;
 }
 
-function toEventForm(fields: MyEventFields): FormData {
+function toEventForm(fields: MyEventFields | RaceFields): FormData {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined || value === null || key === "cover") continue;
@@ -79,6 +79,87 @@ export async function updateMyEvent(
 ): Promise<PhotographerEventDetail> {
   return api.fetch<PhotographerEventDetail>(
     `/me/photographer/events/${encodeURIComponent(eventId)}`,
+    { method: "PATCH", body: toEventForm(fields) },
+  );
+}
+
+// Shared race events (AA-R3/R5), behind SELF_SERVE_RACES_ENABLED. The server
+// decides every outcome; the client only shows what it answers.
+//   GET    /api/v1/race-types                      → RaceTypes (public)
+//   POST   /api/v1/me/photographer/races           → RaceCreateResult (multipart)
+//   POST   /api/v1/me/photographer/races/{id}/join → RaceCreateResult
+//   PATCH  /api/v1/me/photographer/races/{id}      → PhotographerEventDetail (multipart)
+export interface RaceType {
+  code: string;
+  label: string;
+  hint: string;
+  shared: boolean;
+}
+
+export interface RaceTypes {
+  selfServeEnabled: boolean;
+  types: RaceType[];
+}
+
+export interface RaceCandidate {
+  id: string;
+  slug: string;
+  name: string;
+  date: string;
+  location: string;
+  regionCode: string | null;
+  provinceCode: string | null;
+  organizerName: string;
+  eventType: string | null;
+  bannerUrl: string | null;
+  reviewStatus: string;
+  strength: "strong" | "medium";
+}
+
+export interface RaceCreateResult {
+  outcome: "created" | "pending_review" | "match" | "candidates" | "joined";
+  event?: PhotographerEventDetail | null;
+  candidates: RaceCandidate[];
+  checkReasons: string[];
+}
+
+export interface RaceFields {
+  title?: string;
+  date?: string;
+  location?: string;
+  regionCode?: string;
+  provinceCode?: string;
+  eventType?: string;
+  organizerName?: string;
+  description?: string;
+  confirmDifferentFrom?: string;
+  cover?: File | null;
+}
+
+export async function fetchRaceTypes(): Promise<RaceTypes | null> {
+  return api.get<RaceTypes>("/race-types");
+}
+
+export async function createRace(fields: RaceFields): Promise<RaceCreateResult> {
+  return api.post<RaceCreateResult>("/me/photographer/races", toEventForm(fields));
+}
+
+export async function joinRace(
+  eventId: string,
+  typedName?: string,
+): Promise<RaceCreateResult> {
+  return api.post<RaceCreateResult>(
+    `/me/photographer/races/${encodeURIComponent(eventId)}/join`,
+    { typedName },
+  );
+}
+
+export async function updateRace(
+  eventId: string,
+  fields: RaceFields,
+): Promise<PhotographerEventDetail> {
+  return api.fetch<PhotographerEventDetail>(
+    `/me/photographer/races/${encodeURIComponent(eventId)}`,
     { method: "PATCH", body: toEventForm(fields) },
   );
 }

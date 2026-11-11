@@ -336,6 +336,18 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("price") price: BigDecimal,
     ): Int
 
+    // AA-R13: a race photo takes its photographer's race price (else the floor). Runs after
+    // upsertOnUpload in the persist transaction, so a price change that commits mid-upload is seen.
+    @Modifying
+    @Query(
+        value = """UPDATE photos p SET price_php = COALESCE(ep.price_php, e.price_per_photo)
+        FROM event_photographer ep, events e
+        WHERE p.id = :photoId AND ep.event_id = p.event_id AND ep.photographer_id = p.photographer_id
+          AND e.id = p.event_id AND p.price_php IS DISTINCT FROM COALESCE(ep.price_php, e.price_per_photo)""",
+        nativeQuery = true,
+    )
+    fun reseedRacePrice(@Param("photoId") photoId: UUID): Int
+
     // Bulk re-queue for AI indexing (admin reindex endpoint). Resets the
     // attempt budget so the reconcile sweep actually picks the rows up —
     // exhausted attempts are otherwise excluded forever.

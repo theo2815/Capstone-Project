@@ -102,7 +102,30 @@ export default function AdminEventsPage() {
     return map;
   }, [catalog]);
 
+  // AA-R17b: shared races (typed) → hidden or not; the listing switch hides or relists them.
+  // Not a draft: relisting marks a race admin approved, which only a review may do.
+  const raceHiddenById = useMemo(
+    () => new Map(catalog.filter((row) => row.eventType && row.status !== "DRAFT").map((row) => [row.id, !!row.hiddenAt])),
+    [catalog],
+  );
+
   const liveCount = byState(catalog, "live").length;
+
+  async function handleRaceListing(event: ListEvent, listed: boolean) {
+    await confirm({
+      title: listed ? "Relist this race?" : "Hide this race?",
+      message: listed
+        ? <>Puts <strong className="text-ink">{event.name}</strong> back on /events and the upload pickers, and marks it as checked by an admin.</>
+        : <>Takes <strong className="text-ink">{event.name}</strong> off /events and the upload pickers. Its link still opens, and it still shows on its photographers&apos; public profiles.</>,
+      confirmLabel: listed ? "Relist race" : "Hide race",
+      danger: !listed,
+      onConfirm: async () => {
+        const ok = await setListing(event.id, listed);
+        if (!ok) throw new Error("Another action is pending or the session changed. Review this race before retrying.");
+        showToast({ kind: "success", message: `${listed ? "Relisted" : "Hidden"} · ${event.name}` });
+      },
+    });
+  }
 
   async function handleCreateSubmit(payload: {
     name: string;
@@ -115,9 +138,11 @@ export default function AdminEventsPage() {
     description: string;
     cover: File | null;
     removeCover: boolean;
+    eventType?: string;
   }) {
     try {
       const ok = await createEvent({
+        eventType: payload.eventType,
         title: payload.name,
         location: payload.location,
         regionCode: payload.regionCode ?? undefined,
@@ -249,6 +274,8 @@ export default function AdminEventsPage() {
                     onEdit={(e) => { if (editTarget?.id !== e.id || !recoveryNotice(e.id)) setEditTarget(e); setEditOpen(true); }}
                     onDelete={handleDelete}
                     onSetListing={(e, listed) => { void setListing(e.id, listed).catch(() => {}); }}
+                    raceHidden={raceHiddenById.get(event.id)}
+                    onRaceListing={handleRaceListing}
                   />
                 ))}
               </div>
