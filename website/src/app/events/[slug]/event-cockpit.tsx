@@ -607,6 +607,7 @@ function AboutStrip({ event }: { event: EventDetail }) {
             ) : (
               <>
                 <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                  {event.priceVaries && <Kicker>from</Kicker>}
                   <span className="font-display text-5xl md:text-6xl font-extrabold text-fresh tracking-tight tnum">
                     ₱{event.pricePerPhoto}
                   </span>
