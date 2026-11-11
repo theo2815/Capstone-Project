@@ -17,6 +17,8 @@ export interface CartItem {
   eventSlug?: string;
   tone?: number;
   time?: string;
+  // false = the photographer is suspended (GET /me/cart?includeUnavailable=true); missing = available.
+  available?: boolean;
 }
 
 export interface Order {
