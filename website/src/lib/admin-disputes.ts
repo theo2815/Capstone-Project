@@ -1,4 +1,15 @@
-export type DisputeStatus = "open" | "resolved" | "denied" | "escalated";
+export type DisputeStatus = "open" | "resolved" | "denied" | "escalated" | "withdrawn";
+// Server-derived "what this dispute needs now" (backend DisputeAttention wire values).
+export type DisputeAttention =
+  | "review"
+  | "escalated"
+  | "send_link"
+  | "awaiting_claim"
+  | "link_expired"
+  | "check_paymongo"
+  | "refund_problem"
+  | "refund_in_progress"
+  | "closed";
 export type DisputeReason =
   | "wrong_runner"
   | "low_quality"
@@ -73,6 +84,36 @@ export interface Dispute {
   // Server-side audit trail — every admin action ever taken on this
   // dispute, newest first. Persisted by the backend across sessions.
   activity?: DisputeActivityEntry[];
+  // Due times worked out by the server on read (DW-1); older responses omit them.
+  refundRequestedAt?: string | null;
+  attention?: DisputeAttention;
+  dueAt?: string | null;
+  overdue?: boolean;
+  linkExpiringSoon?: boolean;
+}
+
+export const DISPUTE_STATUS_LABEL: Record<DisputeStatus, string> = {
+  open: "Open",
+  resolved: "Resolved",
+  denied: "Denied",
+  escalated: "Escalated",
+  withdrawn: "Withdrawn",
+};
+
+// Values match AdminStatusPillTone; lib stays free of component imports.
+export function disputeStatusTone(status: DisputeStatus): "amber" | "fresh" | "ink" | "slate" | "muted" {
+  switch (status) {
+    case "open":
+      return "amber";
+    case "resolved":
+      return "fresh";
+    case "denied":
+      return "ink";
+    case "escalated":
+      return "slate";
+    case "withdrawn":
+      return "muted";
+  }
 }
 
 export const DISPUTE_REASON_LABEL: Record<DisputeReason, string> = {

@@ -3,12 +3,13 @@
 import Link from "next/link";
 import {
   type Dispute,
-  type DisputeStatus,
   DISPUTE_REASON_LABEL,
+  DISPUTE_STATUS_LABEL,
+  disputeStatusTone,
 } from "@/lib/admin-disputes";
 import { ROUTES } from "@/lib/constants";
 import { formatPrice } from "@/lib/utils";
-import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
+import { AdminStatusPill } from "./admin-status-pill";
 
 interface AdminDisputeCardProps {
   dispute: Dispute;
@@ -21,26 +22,6 @@ interface AdminDisputeCardProps {
   onOpen?: () => void;
   /** Phase 4: J/K keyboard focus indicator. Adds an ink ring + offset. */
   focused?: boolean;
-}
-
-const STATUS_LABEL: Record<DisputeStatus, string> = {
-  open: "Open",
-  resolved: "Resolved",
-  denied: "Denied",
-  escalated: "Escalated",
-};
-
-function statusTone(status: DisputeStatus): AdminStatusPillTone {
-  switch (status) {
-    case "open":
-      return "amber";
-    case "resolved":
-      return "fresh";
-    case "denied":
-      return "ink";
-    case "escalated":
-      return "slate";
-  }
 }
 
 // Directory list-row for /admin/disputes. Whole card is a Link to the
@@ -86,8 +67,8 @@ export function AdminDisputeCard({
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0 ml-auto md:ml-0">
           <AdminStatusPill
-            label={STATUS_LABEL[dispute.status]}
-            tone={statusTone(dispute.status)}
+            label={DISPUTE_STATUS_LABEL[dispute.status]}
+            tone={disputeStatusTone(dispute.status)}
           />
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
             {formatPrice(showAmount)}

@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import {
-  fetchAdminDisputes, fetchAdminDispute, resolveDispute, denyDispute, escalateDispute, sendRefundLink, markRefunded,
-  type AdminDisputeListArgs, type ResolveDisputeArgs,
+  fetchAdminDisputes, fetchAdminDispute, fetchAdminDisputePage, resolveDispute, denyDispute, escalateDispute, sendRefundLink, markRefunded,
+  type AdminDisputeListArgs, type AdminDisputePageArgs, type AdminDisputeView, type ResolveDisputeArgs,
 } from "@/lib/api-admin";
 import type { Dispute } from "@/lib/admin-disputes";
 import { useAuthStore } from "@/store/auth-store";
@@ -19,6 +19,9 @@ export const adminDisputeKeys = {
   lists: (userId: string | null) => [...adminDisputeKeys.owner(userId), "list"] as const,
   list: (userId: string | null, args: AdminDisputeListArgs = {}) =>
     [...adminDisputeKeys.lists(userId), args] as const,
+  // Under lists, so every invalidation of the lists also refetches the queue pages.
+  page: (userId: string | null, args: AdminDisputePageArgs = {}) =>
+    [...adminDisputeKeys.lists(userId), "page", args] as const,
   detail: (userId: string | null, id: string) =>
     [...adminDisputeKeys.owner(userId), "detail", id] as const,
 };
@@ -30,6 +33,23 @@ export function useAdminDisputes(args: AdminDisputeListArgs = {}) {
     queryFn: () => fetchAdminDisputes(args),
     enabled: user?.role === "ADMIN",
     staleTime: 60_000,
+  });
+}
+
+const DISPUTES_STALE_MS = 60_000;
+// Due times pass without any websocket event, so the deadline views poll.
+const LIVE_VIEW_REFETCH_MS = 60_000;
+const LIVE_VIEWS: readonly AdminDisputeView[] = ["needs_me", "overdue", "refund_run"];
+
+export function useAdminDisputePage(args: AdminDisputePageArgs = {}) {
+  const user = useAuthStore((s) => s.user);
+  return useQuery({
+    queryKey: adminDisputeKeys.page(user?.id ?? null, args),
+    queryFn: ({ signal }) => fetchAdminDisputePage({ ...args, signal }),
+    enabled: user?.role === "ADMIN",
+    staleTime: DISPUTES_STALE_MS,
+    placeholderData: keepPreviousData,
+    refetchInterval: args.view && LIVE_VIEWS.includes(args.view) ? LIVE_VIEW_REFETCH_MS : false,
   });
 }
 
@@ -76,7 +96,9 @@ export function useDisputeActions() {
       // An older read must not overwrite the confirmed mutation response.
       await qc.cancelQueries({ queryKey: adminDisputeKeys.owner(userId) });
       if (!isCurrent()) return null;
-      for (const [key] of qc.getQueriesData<Dispute[]>({ queryKey: adminDisputeKeys.lists(userId) })) {
+      for (const [key, rows] of qc.getQueriesData<Dispute[]>({ queryKey: adminDisputeKeys.lists(userId) })) {
+        // Queue pages ({items, total}) are left to the refetch below.
+        if (!Array.isArray(rows)) continue;
         const args = key.at(-1) as AdminDisputeListArgs;
         qc.setQueryData<Dispute[]>(key, (rows) => rows?.flatMap((row) => {
           if (row.id !== dispute.id) return [row];
