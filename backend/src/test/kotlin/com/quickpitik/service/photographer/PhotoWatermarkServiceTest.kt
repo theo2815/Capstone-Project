@@ -412,17 +412,17 @@ class PhotoWatermarkServiceTest {
         val parsing = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)
         val returned = java.util.concurrent.CountDownLatch(2)
-        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenAnswer {
             parsing.countDown()
             assertTrue(release.await(10, java.util.concurrent.TimeUnit.SECONDS))
-            com.quickpitik.dto.photos.PhotoMetadataFields()
+            com.quickpitik.service.image.ExtractedMetadata(com.quickpitik.dto.photos.PhotoMetadataFields(), null)
         }
         val workers = com.quickpitik.config.AsyncConfig().watermarkProcessingExecutor()
         val metadataWorkers = com.quickpitik.config.AsyncConfig().metadataProcessingExecutor()
         val extraction = PhotoMetadataService(metadata, photoRepository,
             Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java), extractor, storageService,
             workers, com.quickpitik.config.PhotoMetadataProperties(), TransactionTemplate(transactionManager), java.time.Clock.systemUTC(), metadataWorkers,
-            Mockito.mock(com.quickpitik.service.photos.PhotographerSuspension::class.java))
+            Mockito.mock(com.quickpitik.service.photos.PhotographerSuspension::class.java), com.quickpitik.config.RelevanceProperties())
         try {
             repeat(2) { workers.execute { service(metadata = extraction).process(photoId); returned.countDown() } }
             assertTrue(parsing.await(5, java.util.concurrent.TimeUnit.SECONDS))
@@ -444,7 +444,7 @@ class PhotoWatermarkServiceTest {
         var committed = false
         var parsed = false
         Mockito.doAnswer { committed = true; null }.`when`(transactionManager).commit(anyArg())
-        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenAnswer {
             assertTrue(committed)
             parsed = true
             throw IllegalArgumentException("broken metadata")
@@ -463,12 +463,13 @@ class PhotoWatermarkServiceTest {
                 Mockito.doAnswer { it.getArgument<Runnable>(0).run(); null }.`when`(pool).execute(Mockito.any(Runnable::class.java))
             },
             Mockito.mock(com.quickpitik.service.photos.PhotographerSuspension::class.java),
+            com.quickpitik.config.RelevanceProperties(),
         )
 
         service(metadata = extraction).process(photoId)
 
         assertTrue(parsed)
-        Mockito.verify(metadata).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())
+        Mockito.verify(metadata).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>(), anyArg())
         Mockito.verify(photoRepository, Mockito.never()).incrementProcessingAttempts(anyArg())
         Mockito.verify(transactionManager, Mockito.never()).rollback(anyArg())
     }

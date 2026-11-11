@@ -6,6 +6,10 @@ import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Test
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
+import java.util.UUID
+import javax.imageio.ImageIO
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
@@ -90,4 +94,32 @@ class PhotoMetadataExtractorTest {
             javaClass.getResourceAsStream("/photo-metadata/malformed.jpg")!!.use { PhotoMetadataExtractor().extract(it) }
         }
     }
+
+    @Test
+    fun `a QuickPitik preview gives back the photo id from its marker`() {
+        val photoId = UUID.randomUUID()
+        val preview = JpegXmp.inject(smallJpeg(), JpegXmp.creditPacket("Ana Cruz", "ana", photoId, 2026))
+        assertEquals(photoId, PhotoMetadataExtractor().extractWithMarker(preview.inputStream()).xmpPhotoId)
+    }
+
+    @Test
+    fun `a marker that is not a UUID is ignored`() {
+        val photoId = UUID.randomUUID()
+        val packet = JpegXmp.creditPacket("Ana Cruz", "ana", photoId, 2026).replace(photoId.toString(), "not-a-uuid")
+        val extracted = PhotoMetadataExtractor().extractWithMarker(JpegXmp.inject(smallJpeg(), packet).inputStream())
+        assertNull(extracted.xmpPhotoId)
+        assertEquals("Ana Cruz", extracted.fields.author)
+    }
+
+    @Test
+    fun `a photo with no marker has none and the same fields as before`() {
+        val bytes = javaClass.getResourceAsStream("/photo-metadata/complete-exif.jpg")!!.use { it.readAllBytes() }
+        val extracted = PhotoMetadataExtractor().extractWithMarker(bytes.inputStream())
+        assertNull(extracted.xmpPhotoId)
+        assertEquals(PhotoMetadataExtractor().extract(bytes.inputStream()), extracted.fields)
+    }
+
+    private fun smallJpeg(): ByteArray = ByteArrayOutputStream().also {
+        ImageIO.write(BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB), "jpg", it)
+    }.toByteArray()
 }

@@ -18,11 +18,17 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
+import java.util.UUID
+
+// The marker stays outside fields: the public metadata endpoint returns fields whole.
+data class ExtractedMetadata(val fields: PhotoMetadataFields, val xmpPhotoId: UUID?)
 
 /** Reads only display-safe metadata from an already bounded original image stream. */
 @Component
 class PhotoMetadataExtractor {
-    fun extract(input: InputStream): PhotoMetadataFields {
+    fun extract(input: InputStream): PhotoMetadataFields = extractWithMarker(input).fields
+
+    fun extractWithMarker(input: InputStream): ExtractedMetadata {
         val metadata = ImageMetadataReader.readMetadata(input)
         val ifd0 = metadata.getFirstDirectoryOfType(ExifIFD0Directory::class.java)
         val exif = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory::class.java)
@@ -83,12 +89,14 @@ class PhotoMetadataExtractor {
             }
             return result.toString().ifBlank { null }
         }
-        return PhotoMetadataFields(
+        val marker = xmp.value(JpegXmp.QUICKPITIK_NS, JpegXmp.PHOTO_ID_PROPERTY)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        return ExtractedMetadata(PhotoMetadataFields(
             cameraMake = fit(make), cameraModel = fit(model), lens = fit(lens), aperture = aperture,
             exposureTime = exposureTime, iso = iso, author = fit(author), copyright = fit(copyright),
             takenAtLocal = taken?.first, takenAtOffset = taken?.second,
             flash = flash, exposureMode = exposureMode, whiteBalance = whiteBalance,
-        )
+        ), marker)
     }
 
     private fun clean(value: String?, limit: Int): String? = value?.let {
