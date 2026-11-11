@@ -192,6 +192,20 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RACE_REPORT_HIDE_THRESHOLD` | `3` | Distinct accounts whose reports hide an unproven race. Not yet measured. |
 | `RACE_PRICE_CEILING_MULTIPLIER` | `2.0` | A photographer's own race price may go up to this times the race price (`PUT /me/photographer/events/{id}/price`, AA-R11). Owner decision D3. |
 | `RACE_PRICE_COOLDOWN` | `PT24H` | How long after a race price change the photographer must wait before the next one. Not yet measured. |
+| `RELEVANCE_MODE` | `off` | Photo-to-event relevance (PE-1) rollout and kill switch: `off` = the sweep does nothing; `shadow` = it writes relevance rows only. Never hides, holds or deletes. Independent of `AI_API_ENABLED`. Owner sets it. |
+| `RELEVANCE_SWEEP_INTERVAL_MS` | `60000` | Cadence of the relevance sweep; also its first delay after boot. |
+| `RELEVANCE_QUIET_MINUTES` | `10` | A photographer's batch in an event is scored this long after their newest upload. |
+| `RELEVANCE_LOOKUPS_PER_TICK` | `100` | Copy look-ups per sweep tick, all batches together (1–1000). |
+| `RELEVANCE_MAX_BATCHES_PER_TICK` | `5` | Due batches read per sweep tick. |
+| `RELEVANCE_RESCORE_MINUTES` | `60` | Wait before re-scoring a batch that was still processing or reading EXIF. |
+| `RELEVANCE_SETTLE_DAYS` | `7` | After uploads close, stop waiting for late EXIF after this many days. |
+| `RELEVANCE_COPY_TIGHT_DISTANCE` | `4` | pHash bits (0–64) within which an earlier photo by another photographer is a copy hit. Not yet measured (PE-0). |
+| `RELEVANCE_COPY_WEAK_DISTANCE` | `8` | Upper end of the weak-evidence band (≥ tight distance). Not yet measured (PE-0). |
+| `RELEVANCE_COPY_MIN_HITS` | `3` | Copy hits a batch needs before the copy rule can mark it Low. Not yet measured (PE-0). |
+| `RELEVANCE_COPY_MIN_HIT_SHARE_PERCENT` | `5` | Percent (1–100) of a batch's look-ups that must be hits for Low. Not yet measured (PE-0). |
+| `RELEVANCE_DATE_WINDOW_DAYS` | `2` | Days either side of the event date a capture date may fall and still count as inside. Not yet measured (PE-0). |
+| `RELEVANCE_DATE_MIN_DATED_PHOTOS` | `10` | Photos with a capture time a batch needs before the date rule can mark it Low. Not yet measured (PE-0). |
+| `RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT` | `80` | Percent (1–100) of dated photos outside the window for Low. Not yet measured (PE-0). |
 | `IDENTITY_GATE_ENABLED` | `false` | Off = today's upload rule (any seller details not REJECTED). On = new uploads need seller details AUTO_APPROVED or APPROVED; MANUAL_REVIEW is refused too, still `403 SELLER_DETAILS_REQUIRED`; photos already reserved still finish (auto-approval AA-I6). |
 | `IDENTITY_GATE_STARTS_ON` | blank | The announced date the identity gate turns on (`YYYY-MM-DD`), sent as `identityGateStartsOn` on the photographer's seller-details responses. Blank = none; an invalid date fails boot. |
 | `LIVENESS_REGION` | `ap-southeast-5` | Region for AWS Face Liveness (session create, result read, the browser's STS keys). Needs IAM `rekognition:CreateFaceLivenessSession` + `GetFaceLivenessSessionResults` there. |
