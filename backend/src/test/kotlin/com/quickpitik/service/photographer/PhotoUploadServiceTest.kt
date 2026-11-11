@@ -1648,6 +1648,33 @@ class PhotoUploadServiceTest {
     }
 
     @Test
+    fun `race upload re-seeds price after the coverage upsert`() {
+        stubValidationsPass()
+        Mockito.`when`(eventRepository.findById(eventId))
+            .thenReturn(Optional.of(event().apply { eventType = com.quickpitik.entity.RaceType.ROAD_RACE }))
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+
+        service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        val photo = ArgumentCaptor.forClass(Photo::class.java)
+        Mockito.verify(entityManager).persist(capture(photo))
+        val order = Mockito.inOrder(eventPhotographerRepository, photoRepository)
+        order.verify(eventPhotographerRepository).upsertOnUpload(eqArg(eventId), eqArg(photographerId), anyArg())
+        order.verify(photoRepository).reseedRacePrice(photo.value.id)
+    }
+
+    @Test
+    fun `non-race upload never re-seeds`() {
+        stubValidationsPass()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+
+        service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        Mockito.verify(eventPhotographerRepository).upsertOnUpload(eqArg(eventId), eqArg(photographerId), anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).reseedRacePrice(anyArg())
+    }
+
+    @Test
     fun `multipart acceptance stores sanitized basename and actual byte size once`() {
         stubValidationsPass()
         val upload = file()
