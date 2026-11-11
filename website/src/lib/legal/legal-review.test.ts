@@ -34,15 +34,16 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  // AA-I21 session 1: the 1.3 text is in, but a production build still refuses the draft version.
-  it("the production guard refuses the legal text while the version is 1.3-draft", () => {
+  // AA-I21: the adviser-signed 1.3 text (sign-off 2026-11-11) passes the production guard.
+  it("passes the production guard with version 1.3", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
         LEGAL_VERSION,
         "production",
       ),
-    ).toThrow(/1\.3-draft is a draft/);
+    ).not.toThrow();
+    expect(LEGAL_VERSION).toBe("1.3");
   });
 
   it("says both selfie and bib searches ask for a tick first (BT-1, S10)", () => {
