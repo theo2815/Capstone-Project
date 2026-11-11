@@ -26,6 +26,8 @@ data class IdentityProperties(
     val idNumberHmacSecret: String = "dev-only-id-number-hmac-secret",
     // A regex over the normalised number, per ID type. Blank = no format check. [NOT MEASURED: set from AA-0.5]
     val idNumberFormats: Map<SellerIdType, String> = emptyMap(),
+    // The identity notice (AA-I22) sends one mail at a time, at most this many a second. [NOT MEASURED: Resend's limit]
+    val noticeSendPerSecond: Int = 2,
 ) {
     /** Compiled once, so an invalid regex fails boot. */
     val idNumberPatterns: Map<SellerIdType, Regex> = idNumberFormats.filterValues { it.isNotBlank() }.mapValues { (type, regex) ->
@@ -39,5 +41,6 @@ data class IdentityProperties(
         require(livenessAttemptsPerDay >= 1) { "app.identity.liveness-attempts-per-day must be at least 1" }
         // STS minimum 900 s; the role's MaxSessionDuration is the default 3600 s.
         require(livenessCredentialSeconds in 900..3600) { "app.identity.liveness-credential-seconds must be within 900..3600" }
+        require(noticeSendPerSecond in 1..1000) { "app.identity.notice-send-per-second must be within 1..1000" }
     }
 }
