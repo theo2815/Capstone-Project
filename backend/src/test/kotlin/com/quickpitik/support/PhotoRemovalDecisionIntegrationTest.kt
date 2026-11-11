@@ -207,13 +207,16 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test fun `outcome notice survives deletion and contains only that owners results`() {
-        val ownerA = user(); val ownerB = user(); val case = verified(listOf(photo(ownerA), photo(ownerB)))
+        val ownerA = user(); val ownerB = user(); val photoA = photo(ownerA); val photoB = photo(ownerB)
+        val case = verified(listOf(photoA, photoB))
         val item = case.items.single { it.ownerIdSnapshot == ownerA.id }
         assertEquals(200, decide(case.id, item.id, RemovalDecision.RETAIN).statusCode())
         val notice = messages.findByPhotographerIdOrderByCreatedAtDescIdAsc(ownerA.id).singleOrNull { it.kindWire == "photo_removal_outcome" }
         assertNotNull(notice, "Decided owner must receive a durable scoped outcome")
-        assertTrue(notice.body.contains(item.id.toString()))
-        assertFalse(notice.body.contains(case.items.single { it.ownerIdSnapshot == ownerB.id }.id.toString()))
+        // Since RD-10 a notice names an untagged photo by its short id, never by the internal item id.
+        assertTrue(notice.body.contains("Photo ${photoA.id.toString().take(8)}"), notice.body)
+        assertFalse(notice.body.contains(photoB.id.toString().take(8)), "Notice names another owner's photo")
+        assertFalse(notice.body.contains(item.id.toString()))
         assertFalse(notice.body.contains("private"))
         jdbc.update("DELETE FROM photographer_messages WHERE id = ?", notice.id)
         service.reconcile(case.id)
@@ -319,7 +322,10 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         notifier.notifyReview(reviewId)
         notifier.notifyReview(reviewId)
         val notice = messages.findByNoticeKey("removal:review:$reviewId:outcome:1001")!!
-        case.items.forEach { assertTrue(notice.body.contains(it.id.toString()), "Acknowledged notice omitted ${it.id}") }
+        // The notice shows 20 photos, then counts the rest: 20 shown plus "80 more" proves all 100 of version 1001
+        // (a partial batch of 99 would say "79 more").
+        assertEquals(20, case.items.count { notice.body.contains("Photo ${it.photoIdSnapshot.toString().take(8)}") }, notice.body)
+        assertTrue(notice.body.endsWith("; and 80 more."), "Acknowledged notice omitted part of version 1001: ${notice.body.takeLast(40)}")
     }
 
     @Test fun `restricted exception removal reopens the case while cleanup is pending`() {
