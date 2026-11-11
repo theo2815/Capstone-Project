@@ -16,7 +16,9 @@ data class CartItemDto(
     val tone: Int?,
     val time: String?,
     // false = a suspended photographer's photo, sent only with includeUnavailable=true (AA-I20b); null = available.
-    val available: Boolean? = null
+    val available: Boolean? = null,
+    // The price when the photo was added (AA-R14); the row notes a rise while price is higher. Null on older servers.
+    val priceAtAdd: Double? = null
 )
 
 /** The rows that can be paid for: an unavailable row stays in the cart but out of the total and checkout. */
@@ -58,7 +60,10 @@ data class CreateOrderRequest(
 
 data class CreateOrderItem(
     val photoId: String,
-    val eventId: String
+    val eventId: String,
+    // The price this row showed (AA-R14): a different live price answers 409
+    // CART_ITEM_PRICE_CHANGED instead of charging it.
+    val expectedPricePhp: Double? = null
 )
 
 data class OrderResponse(
@@ -213,6 +218,13 @@ data class CouponPreviewDto(
     val items: List<CouponPreviewItemDto> = emptyList(),
     val eligibleCount: Int = 0,
     val discountTotal: Double = 0.0,
+    // Live price of every sellable requested photo, coupon or not (AA-R14). Null on older servers.
+    val livePrices: List<PhotoPriceDto>? = null,
+)
+
+data class PhotoPriceDto(
+    val photoId: String,
+    val price: Double,
 )
 
 // GET /me/orders/{id}/status + GET /orders/{id}/status (V39 status-only poll).

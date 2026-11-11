@@ -36,6 +36,9 @@ data class PhotographerEventSummaryDto(
     val reviewStatus: String = "approved",
     val reviewNote: String? = null,
     val pendingChange: Map<String, Any?>? = null,
+    // Copied from the public EventDto for the upload picker's "From ₱" chip (AA-R19); null on the coverage list.
+    val pricePerPhoto: Double? = null,
+    val priceVaries: Boolean? = null,
 )
 
 // POST/PATCH /me/photographer/events response (create/edit owned event, V46).

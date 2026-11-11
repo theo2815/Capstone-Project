@@ -59,7 +59,9 @@ class CartRepositoryImpl : CartRepository {
             eventName = eventName,
             eventSlug = eventSlug,
             tone = photoDto.tone,
-            time = photoDto.time
+            time = photoDto.time,
+            // A guest row keeps the price it was added at; a signed-in row takes the server's.
+            priceAtAdd = photoDto.price
         )
 
         // Optimistically add to local state
@@ -203,7 +205,7 @@ class CartRepositoryImpl : CartRepository {
             ?: UUID.randomUUID().toString().also { idempotency = fingerprint to it }
 
         val request = CreateOrderRequest(
-            items = currentItems.map { CreateOrderItem(it.photoId, it.eventId) },
+            items = currentItems.map { CreateOrderItem(it.photoId, it.eventId, expectedPricePhp = it.price) },
             paymentMethod = paymentMethod,
             recipientEmail = recipientEmail,
             couponCode = couponCode,
@@ -226,13 +228,28 @@ class CartRepositoryImpl : CartRepository {
                 // website does on CONFLICT / CHECKOUT_IN_PROGRESS, so the next
                 // try is a new checkout. Any other failure (PAYMENT_FAILED is a
                 // 409 too) keeps it so a retry resumes the order it may have made.
-                if (e.code() == 409 && refusesKey(e)) idempotency = null
+                if (e.code() == 409 && hasCode(e, KEY_REFUSED)) idempotency = null
+                // A price moved since the runner saw it: show the new prices; the
+                // runner checks out again after reading them (no order was made).
+                if (e.code() == 409 && hasCode(e, PRICE_CHANGED)) refreshPrices(token)
                 throw e
             }
         }
             // Order minted — the key has served its purpose; the next
             // checkout is a new order.
             .onSuccess { idempotency = null }
+    }
+
+    // Signed in: the server cart. Guest: the live per-photo prices the coupon preview lists (AA-R14).
+    // shortcut: one preview call (its cap is 100 photos); chunk it if guest carts ever grow past that.
+    private suspend fun refreshPrices(token: String?) {
+        if (token != null) {
+            fetchCart(token)
+            return
+        }
+        val live = previewCoupon(null, _cartItems.value.map { it.photoId }, null).getOrNull()
+            ?.livePrices.orEmpty().associate { it.photoId to it.price }
+        _cartItems.value = _cartItems.value.map { item -> live[item.photoId]?.let { item.copy(price = it) } ?: item }
     }
 
     override suspend fun getOrders(token: String): Result<List<OrderListItemDto>> {
@@ -317,11 +334,12 @@ class CartRepositoryImpl : CartRepository {
 }
 
 private val KEY_REFUSED = Regex(""""code"\s*:\s*"(CONFLICT|CHECKOUT_IN_PROGRESS)"""")
+private val PRICE_CHANGED = Regex(""""code"\s*:\s*"CART_ITEM_PRICE_CHANGED"""")
 
 // Reads the error envelope's codes without consuming the body, so
 // RetrofitClient.parseError can still show the backend's message.
-private fun refusesKey(e: HttpException): Boolean {
+private fun hasCode(e: HttpException, codes: Regex): Boolean {
     val source = e.response()?.errorBody()?.source() ?: return false
     source.request(Long.MAX_VALUE)
-    return KEY_REFUSED.containsMatchIn(source.buffer.clone().readUtf8())
+    return codes.containsMatchIn(source.buffer.clone().readUtf8())
 }

@@ -286,7 +286,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                             photoCount = eventDto.photoCount,
                             salesCount = 0,
                             revenueKept = 0.0,
-                            bannerUrl = eventDto.bannerUrl
+                            bannerUrl = eventDto.bannerUrl,
+                            pricePerPhoto = eventDto.pricePerPhoto,
+                            priceVaries = eventDto.priceVaries,
                         )
                     }
                     _publicEventsState.value = EventsState.Success(publicList)

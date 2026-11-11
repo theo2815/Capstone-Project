@@ -314,6 +314,10 @@ fun CartSheet(
     }
 }
 
+/** Website cart parity (AA-R14 snapshot): a row notes a rise while its live price is above the add-time price. */
+internal fun priceRoseNote(price: Double, priceAtAdd: Double?): String? =
+    if (priceAtAdd != null && price > priceAtAdd) "Price went up from ${peso(priceAtAdd)} to ${peso(price)}" else null
+
 @Composable
 private fun CartSheetRow(
     item: com.quickpitik.mobile.data.remote.CartItemDto,
@@ -378,6 +382,11 @@ private fun CartSheetRow(
             if (unavailable) {
                 Spacer(modifier = Modifier.height(6.dp))
                 StatusChip(text = "No longer available", tone = StatusTone.Neutral)
+            }
+            val rose = if (unavailable) null else priceRoseNote(item.price, item.priceAtAdd)
+            if (rose != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(text = rose, style = Typography.bodySmall, color = Slate)
             }
         }
         Column(horizontalAlignment = Alignment.End) {

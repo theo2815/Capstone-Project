@@ -739,4 +739,19 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("eventId") eventId: String
     ): ApiResponseEnvelope<RemovedResponse>
+
+    // AA-R9 reports, signed-in only.
+    @POST("api/v1/me/reports/events/{eventId}")
+    suspend fun reportEvent(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: ReportRequest
+    ): ApiResponseEnvelope<ReportResultDto>
+
+    @POST("api/v1/me/reports/photographers/{handle}")
+    suspend fun reportPhotographer(
+        @Header("Authorization") token: String,
+        @Path("handle") handle: String,
+        @Body request: ReportRequest
+    ): ApiResponseEnvelope<ReportResultDto>
 }
