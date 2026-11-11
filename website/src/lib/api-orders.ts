@@ -27,7 +27,8 @@ export interface OrderDetail extends OrderSummary {
 }
 
 export interface CreateOrderArgs {
-  items: { photoId: string; eventId: string }[];
+  // expectedPricePhp = the price the runner saw; a different live price answers 409 CART_ITEM_PRICE_CHANGED.
+  items: { photoId: string; eventId: string; expectedPricePhp?: number }[];
   paymentMethod: "qrph";
   recipientEmail?: string;
   // Photographer coupon (V45). Validated and priced server-side; the client

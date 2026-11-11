@@ -34,6 +34,11 @@ describe("useCartStore pricing precision", () => {
   it("returns 0 for empty cart", () => {
     expect(useCartStore.getState().total()).toBe(0);
   });
+
+  it("a guest add fixes priceAtAdd at the price shown when added", () => {
+    useCartStore.getState().addItem(makeItem("p1", 125));
+    expect(useCartStore.getState().items[0].priceAtAdd).toBe(125);
+  });
 });
 
 describe("payableItems", () => {

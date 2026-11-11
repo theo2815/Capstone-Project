@@ -37,6 +37,19 @@ it("after reset and sign-in hydrate, available comes from the server", async () 
   vi.restoreAllMocks();
 });
 
+it("cart rows re-hydrate priceAtAdd from the server", async () => {
+  useCartStore.getState().setItems([{ photoId: "p1", eventId: "event", thumbnailUrl: "", price: 150, priceAtAdd: 150 }]);
+  resetUserScopedStores();
+
+  const serverRow = { photoId: "p1", eventId: "event", thumbnailUrl: "", price: 150, priceAtAdd: 125 };
+  vi.spyOn(api, "post").mockResolvedValue([]);
+  vi.spyOn(api, "get").mockResolvedValue([serverRow]);
+  useCartStore.getState().setItems(await mergeCart([{ photoId: "p1", eventId: "event", thumbnailUrl: "", price: 150, priceAtAdd: 150 }]));
+
+  expect(useCartStore.getState().items[0].priceAtAdd).toBe(125);
+  vi.restoreAllMocks();
+});
+
 it("clears the pending payment from memory and persistence on a session reset", async () => {
   usePendingPaymentStore.getState().set({
     orderId: "order-1",
