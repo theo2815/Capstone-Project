@@ -290,6 +290,9 @@ app:
       prc: ${ID_NUMBER_FORMAT_PRC:}
       postal: ${ID_NUMBER_FORMAT_POSTAL:}
       voters: ${ID_NUMBER_FORMAT_VOTERS:}
+    # POST /admin/identity-notice (AA-I22) mails one photographer at a time, at most this many a second.
+    # [NOT MEASURED: Resend's rate limit]
+    notice-send-per-second: ${IDENTITY_NOTICE_SEND_PER_SECOND:2}
   races:
     # AA-R1 (auto-approval Plan 2): shared race events. Off = today's flow; on lets
     # photographers create, join and edit races and set a race price.

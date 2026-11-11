@@ -132,3 +132,6 @@ data class SellerDetailsRejectRequest(
     @field:Size(max = 500)
     val reason: String,
 )
+
+// C16 (AA-I22): photographers the identity notice reaches, and how many mails went out (0 on a dry run).
+data class IdentityNoticeResultDto(val recipients: Int, val sent: Int)

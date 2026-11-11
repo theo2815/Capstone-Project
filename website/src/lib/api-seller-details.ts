@@ -17,6 +17,27 @@ export function reviewStateOf(details: Pick<SellerDetails, "reviewState">): Revi
   return REVIEW_STATES.includes(details.reviewState) ? details.reviewState : "manual_review";
 }
 
+const manilaToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }); // YYYY-MM-DD
+
+/**
+ * The announced identity-gate date (AA-I22), while it is today or later in Manila and identity has not
+ * passed; else null. After the date the identity gate state speaks instead (a slipped date would be wrong).
+ */
+export function identityNoticeDate(details: SellerDetails | undefined, now: Date = new Date()): string | null {
+  const startsOn = details?.identityGateStartsOn;
+  if (!details || !startsOn) return null;
+  const state = reviewStateOf(details);
+  if (state === "auto_approved" || state === "approved") return null;
+  return startsOn >= manilaToday.format(now) ? startsOn : null;
+}
+
+/** "Monday 7 December 2026", as the notice email writes it. */
+export function formatGateDate(isoDate: string): string {
+  return new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })
+    .format(new Date(isoDate))
+    .replace(",", "");
+}
+
 export const SELLER_ID_TYPES = [
   { value: "philsys", label: "PhilSys National ID (card or ePhilID)" },
   { value: "drivers_license", label: "Driver's licence" },

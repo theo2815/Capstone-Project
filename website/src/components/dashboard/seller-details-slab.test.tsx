@@ -75,6 +75,17 @@ it("shows the form when nothing was sent yet", async () => {
   expect(api.get).toHaveBeenCalledWith("/me/photographer/seller-details", expect.anything());
 });
 
+it("names the gate date until identity passes", async () => {
+  renderSlab(record({ identityGateStartsOn: "2099-01-05" }));
+  expect(await screen.findByText(/From Monday 5 January 2099, you need a passed identity check/)).toBeInTheDocument();
+});
+
+it("no gate date line once identity passed", async () => {
+  renderSlab(record({ status: "approved", reviewState: "auto_approved", identityGateStartsOn: "2099-01-05" }));
+  expect(await screen.findByText("Verified")).toBeInTheDocument();
+  expect(screen.queryByText(/you need a passed identity check/)).not.toBeInTheDocument();
+});
+
 it("live path sends the session id and no score", async () => {
   renderSlab(MISSING);
   const post = mockPost();
