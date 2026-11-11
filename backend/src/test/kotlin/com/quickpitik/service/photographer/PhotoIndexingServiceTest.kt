@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.SimpleTransactionStatus
@@ -33,6 +34,7 @@ import java.util.Optional
 import java.util.UUID
 import java.time.OffsetDateTime
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -76,6 +78,61 @@ class PhotoIndexingServiceTest {
         service.index(p.id)
         Mockito.verify(workFence, Mockito.never()).finish(anyArg())
         assertTrue(p.facePersons.isEmpty())
+    }
+
+    // ─── IX-W3b: a failed run frees a resolved claim and always costs one attempt ───
+
+    @Test fun `a failed outcome write releases the claim and records one attempt`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        Mockito.`when`(photoRepo.save(p)).thenThrow(DataIntegrityViolationException("value too long"))
+
+        assertFailsWith<DataIntegrityViolationException> { service.index(p.id) }
+
+        val order = Mockito.inOrder(photoRepo, workFence)
+        order.verify(photoRepo).failIndexingAttempt(p.id, "DataIntegrityViolationException", 5)
+        order.verify(workFence).finish(anyArg())
+    }
+
+    @Test fun `an unresolved enrolment whose write fails keeps its claim and records one attempt`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId))
+            .thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "response lost"))
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        Mockito.`when`(photoRepo.save(p)).thenThrow(DataIntegrityViolationException("value too long"))
+
+        assertFailsWith<DataIntegrityViolationException> { service.index(p.id) }
+
+        Mockito.verify(photoRepo).failIndexingAttempt(p.id, "DataIntegrityViolationException", 5)
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
+    }
+
+    @Test fun `an exception inside inference records one attempt and keeps the claim`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(faceExpiry.ended(p.eventId)).thenThrow(IllegalStateException("database down"))
+
+        assertFailsWith<IllegalStateException> { service.index(p.id) }
+
+        Mockito.verify(photoRepo).failIndexingAttempt(p.id, "IllegalStateException", 5)
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
+    }
+
+    @Test fun `when the attempt cannot be recorded the claim is kept`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        Mockito.`when`(photoRepo.save(p)).thenThrow(DataIntegrityViolationException("value too long"))
+        Mockito.`when`(photoRepo.failIndexingAttempt(anyArg(), Mockito.anyString(), Mockito.anyInt()))
+            .thenThrow(IllegalStateException("database down"))
+
+        assertFailsWith<DataIntegrityViolationException> { service.index(p.id) }
+
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
     }
 
     @Test fun `removal during enrollment prevents publishing its face and bib results`() {

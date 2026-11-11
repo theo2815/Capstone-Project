@@ -84,6 +84,30 @@ class PhotoRepositoryQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(3, reload(photo).processingAttempts)
     }
 
+    @Test fun `a failed indexing attempt is counted and the fifth one marks the photo failed`() {
+        val photo = save(indexingStatus = IndexingStatus.PENDING, indexingAttempts = 3)
+        val settled = save(indexingStatus = IndexingStatus.INDEXED, indexingAttempts = 4)
+
+        assertEquals(1, inTx { photos.failIndexingAttempt(photo.id, "DataIntegrityViolationException", 5) })
+        reload(photo).let {
+            assertEquals(4, it.indexingAttempts)
+            assertEquals(IndexingStatus.PENDING, it.indexingStatus)
+            assertEquals("DataIntegrityViolationException", it.indexingError)
+        }
+        assertEquals(1, inTx { photos.failIndexingAttempt(photo.id, "IllegalStateException", 5) })
+        reload(photo).let {
+            assertEquals(5, it.indexingAttempts)
+            assertEquals(IndexingStatus.FAILED, it.indexingStatus)
+            assertEquals("IllegalStateException", it.indexingError)
+        }
+        // A settled row gets no attempt and is not set to FAILED.
+        assertEquals(0, inTx { photos.failIndexingAttempt(settled.id, "IllegalStateException", 5) })
+        reload(settled).let {
+            assertEquals(4, it.indexingAttempts)
+            assertEquals(IndexingStatus.INDEXED, it.indexingStatus)
+        }
+    }
+
     @Test fun `findPhotographerLibrary returns the owner's untrashed photos in the event at any status`() {
         val live = save(status = PhotoStatus.LIVE)
         val processing = save(status = PhotoStatus.PROCESSING)
