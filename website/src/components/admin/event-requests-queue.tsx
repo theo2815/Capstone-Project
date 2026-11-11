@@ -330,7 +330,12 @@ function HeldRaceEdit({ row, change }: { row: AdminEventRow; change: RaceEditCha
           </dd>
         </div>
       ))}
-      {change.coverS3Key && <p className="font-sans text-sm text-ink">A new cover photo</p>}
+      {change.coverS3Key && (
+        <div>
+          <dt className={DETAIL_LABEL}>Cover</dt>
+          <dd className="mt-1 font-sans text-sm text-ink">A new cover photo</dd>
+        </div>
+      )}
     </dl>
   );
 }

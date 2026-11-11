@@ -222,3 +222,8 @@ it("relist waits for the API before the chip clears", async () => {
   await act(async () => { rows = [{ ...hidden, hiddenAt: null, adminApproved: true }]; request.resolve(rows[0]); });
   await waitFor(() => expect(screen.queryByText("Hidden")).not.toBeInTheDocument());
 });
+it("a race still waiting for review offers no Hide or Relist", () => {
+  rows = [{ ...adminEvent, eventType: "ROAD_RACE", status: "DRAFT", reviewStatus: "pending", hiddenAt: "2026-09-12T00:00:00Z" }];
+  client.setQueryData(key, rows); mount();
+  expect(screen.queryByRole("button", { name: /^(Hide|Relist)$/ })).not.toBeInTheDocument();
+});

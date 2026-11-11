@@ -199,7 +199,7 @@ export function AdminEventFormModal({
   const duplicateKey = JSON.stringify([raceType, trimmedName, date, pair.provinceCode, organizerName.trim()]);
   const warnedNow = warned?.key === duplicateKey ? warned.races : null;
   const raceOptions = mode === "create" && types.some((t) => t.shared)
-    ? [{ value: "", label: "No race type — an admin event as today" },
+    ? [{ value: "", label: "No race type (a regular admin event)" },
        ...types.filter((t) => t.shared).map((t) => ({ value: t.code, label: `${t.label} — ${t.hint}` }))]
     : [];
 

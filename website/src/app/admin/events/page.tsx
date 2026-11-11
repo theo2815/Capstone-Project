@@ -103,8 +103,9 @@ export default function AdminEventsPage() {
   }, [catalog]);
 
   // AA-R17b: shared races (typed) → hidden or not; the listing switch hides or relists them.
+  // Not a draft: relisting marks a race admin approved, which only a review may do.
   const raceHiddenById = useMemo(
-    () => new Map(catalog.filter((row) => row.eventType).map((row) => [row.id, !!row.hiddenAt])),
+    () => new Map(catalog.filter((row) => row.eventType && row.status !== "DRAFT").map((row) => [row.id, !!row.hiddenAt])),
     [catalog],
   );
 
