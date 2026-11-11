@@ -49,13 +49,18 @@ jobs:
           name: backend-unit-test-report
           path: backend/build/reports/tests/test
 
-  integration:
+  integration-shard:
     # ubuntu-latest ships a Docker daemon; Testcontainers starts postgres:16-alpine.
     # Budget ~35 s for PhotoBundleHttpIntegrationTest's deliberate streaming-timeout
     # sleep. The two Rekognition smoke classes self-skip without AWS credentials.
+    # The suite is split over 4 machines (see itShards in build.gradle.kts).
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     defaults:
       run:
         working-directory: backend
@@ -66,9 +71,25 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew integrationTest --console=plain --no-daemon
+      - run: ./gradlew integrationTest -PitShards=4 -PitShard=${{ matrix.shard }} --console=plain --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-integration-results-${{ matrix.shard }}
+          path: backend/build/test-results/integrationTest/*.xml
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: backend-integration-test-report
+          name: backend-integration-test-report-${{ matrix.shard }}
           path: backend/build/reports/tests/integrationTest
+
+  # The check dev-main requires. It fails unless the change check ran and, when backend/
+  # changed, every shard passed (a skipped shard after a failed change check is not a pass).
+  integration:
+    needs: [changes, integration-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          [ "${{ needs.changes.result }}" = success ]
+          [ "${{ needs.changes.outputs.backend }}" != true ] || [ "${{ needs.integration-shard.result }}" = success ]
