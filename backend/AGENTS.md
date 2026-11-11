@@ -208,7 +208,8 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RELEVANCE_DATE_MIN_DATED_PHOTOS` | `10` | Photos with a capture time a batch needs before the date rule can mark it Low. Not yet measured (PE-0). |
 | `RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT` | `80` | Percent (1–100) of dated photos outside the window for Low. Not yet measured (PE-0). |
 | `IDENTITY_GATE_ENABLED` | `false` | Off = today's upload rule (any seller details not REJECTED). On = new uploads need seller details AUTO_APPROVED or APPROVED; MANUAL_REVIEW is refused too, still `403 SELLER_DETAILS_REQUIRED`; photos already reserved still finish (auto-approval AA-I6). |
-| `IDENTITY_GATE_STARTS_ON` | blank | The announced date the identity gate turns on (`YYYY-MM-DD`), sent as `identityGateStartsOn` on the photographer's seller-details responses. Blank = none; an invalid date fails boot. |
+| `IDENTITY_GATE_STARTS_ON` | blank | The announced date the identity gate turns on (`YYYY-MM-DD`), sent as `identityGateStartsOn` on the photographer's seller-details responses, and the date the identity notice email names (`POST /admin/identity-notice` refuses while it is blank). Blank = none; an invalid date fails boot. |
+| `IDENTITY_NOTICE_SEND_PER_SECOND` | `2` | How many identity-notice mails `POST /admin/identity-notice` sends a second (one at a time; 1-1000). Keep it under Resend's rate limit [NOT MEASURED] (auto-approval AA-I22). |
 | `LIVENESS_REGION` | `ap-southeast-5` | Region for AWS Face Liveness (session create, result read, the browser's STS keys). Needs IAM `rekognition:CreateFaceLivenessSession` + `GetFaceLivenessSessionResults` there. |
 | `LIVENESS_MIN_CONFIDENCE` | `95` | 0–100 liveness score an automatic identity pass needs. Strict until measured (AA-0.4). |
 | `FACE_MIN_SIMILARITY` | `99` | 0–100 CompareFaces similarity (live selfie vs ID front) an automatic pass needs. Strict until measured (AA-0.4). Not the runner face-search threshold. |
