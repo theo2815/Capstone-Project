@@ -4,9 +4,12 @@ import jakarta.persistence.EntityManager
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.photographer.HandlePatchRequest
 import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.RaceType
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.service.events.RaceEventService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Test
@@ -507,8 +510,8 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
-    // Upgrade rehearsal: staging holds support-made removal cases when V99 (RD-1) arrives. Starts at V97 so it
-    // still runs AA-R10's V98 in between once that merges.
+    // Upgrade rehearsal: staging holds support-made removal cases when V99 (RD-1) arrives. Starts at V97
+    // (AA-R10's index took V102, not V98).
     @Test
     fun `V99 upgrades earlier versions with existing removal cases defaulting to SUPPORT`() {
         val schema = "removal_v99_${UUID.randomUUID().toString().replace("-", "")}"
@@ -547,6 +550,84 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
         }
     }
+
+    // AA-R10: one live self-serve race per date and name key, the race lock's last line of defence.
+    @Test
+    fun `two self-serve races on one date and key are refused`() {
+        val key = raceKey()
+        race(key, photographer())
+        val error = assertFailsWith<DataIntegrityViolationException> { race(key, photographer()) }
+        assertTrue(RaceEventService.RACE_UNIQUE_INDEX in error.mostSpecificCause.message.orEmpty())
+    }
+
+    @Test
+    fun `an admin race with the same key is allowed`() {
+        val key = raceKey()
+        race(key, photographer())
+        race(key, submittedBy = null)
+        race(key, submittedBy = null)
+    }
+
+    @Test
+    fun `a different-race decision with the same key is allowed`() {
+        val key = raceKey()
+        val first = race(key, photographer())
+        race(key, photographer(), duplicateOf = first.id)
+    }
+
+    @Test
+    fun `a rejected race does not block a new race with the same name and date`() {
+        val key = raceKey()
+        race(key, photographer(), review = EventReviewStatus.REJECTED)
+        race(key, photographer())
+    }
+
+    // Upgrade rehearsal: staging is on V100 with race rows when V102 arrives (V98 was passed by V99 and V100;
+    // V101 is IX-W3c's and runs in between once it merges).
+    @Test
+    fun `V102 upgrades V100 with existing races and indexes only self-serve ones`() {
+        val schema = "race_v102_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "100").migrate()
+            val key = raceKey()
+            val selfServe = race(key, photographer())
+            val admin = race(key, submittedBy = null)
+            val cols = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'events'",
+                String::class.java, schema,
+            ).joinToString(", ") { "\"$it\"" }
+            // submitted_by points at public.users, so the copy drops it into the schema's own users first.
+            jdbcTemplate.update("INSERT INTO $schema.users SELECT * FROM public.users WHERE id = ?", selfServe.submittedBy)
+            assertEquals(2, jdbcTemplate.update(
+                "INSERT INTO $schema.events ($cols) SELECT $cols FROM public.events WHERE id IN (?, ?)", selfServe.id, admin.id,
+            ))
+
+            flywayFor(schema, "102").migrate()
+
+            assertEquals("102", latestVersion(schema))
+            assertTrue("WHERE" in indexDefinition(schema, RaceEventService.RACE_UNIQUE_INDEX))
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
+    private fun raceKey() = "unique run ${UUID.randomUUID()}"
+
+    private fun photographer(): UUID = jdbcTemplate.queryForObject(
+        "INSERT INTO users (email, password_hash, name, role) VALUES (?, 'x', 'Race owner', 'PHOTOGRAPHER') RETURNING id",
+        UUID::class.java, "r10-${UUID.randomUUID()}@test.local",
+    )!!
+
+    private fun race(
+        key: String,
+        submittedBy: UUID?,
+        review: EventReviewStatus = EventReviewStatus.APPROVED,
+        duplicateOf: UUID? = null,
+    ): Event = events.saveAndFlush(
+        Event(slug = "r10-${UUID.randomUUID()}", name = key, date = LocalDate.of(1905, 6, 4), location = "Cebu City",
+            status = EventStatus.ACTIVE, eventType = RaceType.ROAD_RACE, reviewStatus = review)
+            .apply { this.submittedBy = submittedBy; nameKey = key; possibleDuplicateOf = duplicateOf },
+    )
 
     private fun latestVersion(schema: String): String = jdbcTemplate.queryForObject(
         "SELECT version FROM $schema.flyway_schema_history WHERE success AND version IS NOT NULL " +
