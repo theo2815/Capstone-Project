@@ -5,9 +5,14 @@ import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import {
   AdminFieldHint,
   AdminFieldLabel,
+  AdminRadioGroup,
   AdminTextInput,
   AdminTextarea,
 } from "@/components/admin/admin-form-fields";
+import { useRaceTypes } from "@/hooks/use-race-types";
+import { fetchAdminDuplicateCandidates } from "@/lib/api-admin";
+import type { RaceCandidate } from "@/lib/api-photographer";
+import { formatLongDate } from "@/lib/format";
 import type { ListEvent } from "@/types/event";
 import {
   ACCEPTED_IMAGE_MIME,
@@ -60,6 +65,8 @@ interface AdminEventFormModalProps {
      *  file — signals to the caller to send `removeCover` to the backend.
      *  Always false in create mode (no existing cover to remove). */
     removeCover: boolean;
+    /** AA-R7 race-type code; create only, absent = an untyped admin event. */
+    eventType?: string;
   }) => Promise<boolean>;
 }
 
@@ -100,6 +107,12 @@ export function AdminEventFormModal({
   // removeCover=true on the PATCH.
   const [initialHadCover, setInitialHadCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
+  // AA-R17b: a typed create checks GET /admin/events/duplicate-candidates first;
+  // a hit shows the races and the next press creates anyway, for those inputs only.
+  const { types } = useRaceTypes();
+  const [raceType, setRaceType] = useState("");
+  const [warned, setWarned] = useState<{ key: string; races: RaceCandidate[] } | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const draftTarget = useRef<string | null>(null);
@@ -137,6 +150,9 @@ export function AdminEventFormModal({
     }
     setCoverFile(null);
     setCoverError(null);
+    setRaceType("");
+    setWarned(null);
+    setCheckError(null);
     setSubmitting(false);
   }, [open, mode, event, recoveryNotice]);
 
@@ -180,6 +196,13 @@ export function AdminEventFormModal({
     pairValid &&
     !submitting && !pending;
 
+  const duplicateKey = JSON.stringify([raceType, trimmedName, date, pair.provinceCode, organizerName.trim()]);
+  const warnedNow = warned?.key === duplicateKey ? warned.races : null;
+  const raceOptions = mode === "create" && types.some((t) => t.shared)
+    ? [{ value: "", label: "No race type — an admin event as today" },
+       ...types.filter((t) => t.shared).map((t) => ({ value: t.code, label: `${t.label} — ${t.hint}` }))]
+    : [];
+
   async function handleSubmit() {
     if (!canSubmit || parsedPrice === null || submittingRef.current) return;
     // User cleared an existing cover (Remove button) and didn't replace it.
@@ -190,6 +213,23 @@ export function AdminEventFormModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      if (raceType && warned?.key !== duplicateKey) {
+        setCheckError(null);
+        let races: RaceCandidate[];
+        try {
+          races = await fetchAdminDuplicateCandidates({
+            name: trimmedName, date, provinceCode: pair.provinceCode ?? undefined,
+            organizerName: organizerName.trim() || undefined,
+          });
+        } catch (error) {
+          setCheckError(`${error instanceof Error ? error.message : "Request failed."} Couldn't check for duplicate races; try again.`);
+          return;
+        }
+        if (races.length > 0) {
+          setWarned({ key: duplicateKey, races });
+          return;
+        }
+      }
       const completed = await onSubmit({
         name: trimmedName,
         location: trimmedLocation,
@@ -200,6 +240,7 @@ export function AdminEventFormModal({
         description: description.trim(),
         cover: coverFile,
         removeCover,
+        ...(raceType ? { eventType: raceType } : {}),
       });
       if (completed) draftTarget.current = null;
     } finally {
@@ -214,7 +255,7 @@ export function AdminEventFormModal({
       ? "Creating…"
       : "Saving…"
     : mode === "create"
-      ? "Create event"
+      ? warnedNow ? "Create anyway" : "Create event"
       : "Save changes";
   const intro =
     mode === "create"
@@ -235,6 +276,12 @@ export function AdminEventFormModal({
       escDisabled={locationOpen}
     >
       {recoveryNotice && <p role="status" className="font-sans text-sm text-slate">{recoveryNotice}</p>}
+      {raceOptions.length > 0 && (
+        <fieldset className="space-y-3">
+          <AdminFieldLabel>Race type</AdminFieldLabel>
+          <AdminRadioGroup name="admin-event-type" options={raceOptions} value={raceType} onChange={setRaceType} />
+        </fieldset>
+      )}
       <AdminTextInput
         id="event-name"
         label="Title"
@@ -333,6 +380,21 @@ export function AdminEventFormModal({
           setCoverError(null);
         }}
       />
+      {checkError && <p role="alert" className="font-sans text-sm text-error">{checkError}</p>}
+      {warnedNow && (
+        <div role="alert" className="rounded-2xl border border-warning/40 bg-bone-deep p-4 space-y-2">
+          <p className="font-sans text-sm text-ink">
+            This may repeat a race that is already on QuickPitik. Check it first; press Create anyway only if yours is a different race.
+          </p>
+          <ul className="space-y-1 font-sans text-sm text-ink tnum">
+            {warnedNow.map((race) => (
+              <li key={race.id} className="break-words">
+                {race.name} · {formatLongDate(race.date, true)} · {race.location} · {race.strength === "strong" ? "strong match" : "possible match"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </AdminFormModal>
   );
 }

@@ -101,7 +101,7 @@ it("shows loading and a retryable query error instead of an empty catalog", asyn
   client.clear(); let failed = false;
   vi.mocked(api.get).mockImplementation(async (path) => {
     if (path === "/regions") return eventRegions;
-    if (!failed) { failed = true; throw new Error("Offline"); }
+    if (!failed && String(path).startsWith("/admin/events")) { failed = true; throw new Error("Offline"); }
     return { items: rows };
   }); mount();
   expect(screen.getByRole("status")).toHaveTextContent("Loading events");
@@ -207,4 +207,18 @@ it("keeps the switch as the server has it when listing fails", async () => {
   await waitFor(() => expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ kind: "error", message: "This event is Private. The photographer must make it Public first." })]));
   expect(screen.getByRole("checkbox", { name: "Show on /events" })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Show on /events" })).toBeEnabled();
+});
+// AA-R17b: a hidden shared race is relisted through the listing switch.
+it("relist waits for the API before the chip clears", async () => {
+  const hidden = { ...adminEvent, eventType: "ROAD_RACE", hiddenAt: "2026-09-12T00:00:00Z" };
+  rows = [hidden]; client.setQueryData(key, rows);
+  const request = deferred(); const patch = vi.spyOn(api, "fetch").mockReturnValueOnce(request.promise); mount();
+  expect(screen.getByText("Hidden")).toBeInTheDocument();
+  expect(screen.getByText(/link still opens/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Relist" }));
+  await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Relist race" }));
+  expect(patch).toHaveBeenCalledWith(`/admin/events/${hidden.id}/listing`, { method: "PATCH", body: JSON.stringify({ listed: true }) });
+  expect(screen.getByText("Hidden")).toBeInTheDocument();
+  await act(async () => { rows = [{ ...hidden, hiddenAt: null, adminApproved: true }]; request.resolve(rows[0]); });
+  await waitFor(() => expect(screen.queryByText("Hidden")).not.toBeInTheDocument());
 });
