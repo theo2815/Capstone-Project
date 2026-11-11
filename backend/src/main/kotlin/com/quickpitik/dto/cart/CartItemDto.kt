@@ -16,6 +16,8 @@ data class CartItemDto(
     val time: String? = null,
     /** False only for a suspended photographer's photo, and only on `GET /me/cart?includeUnavailable=true`. */
     val available: Boolean = true,
+    /** The price when the photo was added (AA-R14); clients show "went up from ₱priceAtAdd" while `price` is higher. */
+    val priceAtAdd: BigDecimal,
 )
 
 data class AddCartItemRequest(
@@ -30,4 +32,6 @@ data class MergeCartRequest(
 data class MergeCartItem(
     val photoId: UUID,
     val eventId: UUID,
+    /** The guest cart's add-time price; kept only when 0 < value ≤ the live price, else the live price (AA-R14). */
+    val priceAtAdd: BigDecimal? = null,
 )

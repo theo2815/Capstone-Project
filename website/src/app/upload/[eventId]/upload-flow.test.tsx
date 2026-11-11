@@ -5,7 +5,8 @@ import { useAuthStore } from "@/store/auth-store";
 import { OfflineUploadError } from "@/lib/api-photographer";
 import { ApiError } from "@/lib/api";
 
-const { upload, check, hash } = vi.hoisted(() => ({ upload: vi.fn(), check: vi.fn(), hash: vi.fn() }));
+const { upload, check, hash, seller } = vi.hoisted(() => ({ upload: vi.fn(), check: vi.fn(), hash: vi.fn(), seller: { reviewState: "missing" } }));
+vi.mock("@/hooks/use-seller-details", () => ({ useSellerDetails: () => ({ query: { data: { status: "missing", reviewState: seller.reviewState } } }) }));
 vi.mock("next/navigation", () => ({ useParams: () => ({ eventId: "event-1" }), notFound: () => { throw new Error("not found"); }, unstable_rethrow: () => undefined }));
 vi.mock("@/components/layout/site-header", () => ({ SiteHeader: () => null }));
 vi.mock("@/components/dashboard/verification-banner", () => ({ VerificationBanner: () => null }));
@@ -28,7 +29,7 @@ beforeEach(() => {
   check.mockResolvedValue([{ hash: "a".repeat(64), status: "new", eventName: null }]);
   hash.mockResolvedValue("a".repeat(64));
 });
-afterEach(() => { upload.mockReset(); check.mockReset(); hash.mockReset(); vi.unstubAllGlobals(); });
+afterEach(() => { upload.mockReset(); check.mockReset(); hash.mockReset(); vi.unstubAllGlobals(); seller.reviewState = "missing"; });
 
 it("labels a preflight duplicate that sits in the photographer's trash", async () => {
   check.mockReset();
@@ -349,6 +350,17 @@ it("pauses the batch on SELLER_DETAILS_REQUIRED and links to the seller details 
   expect(screen.getByRole("alert")).not.toHaveTextContent("Resolve access");
   expect(screen.getByText("seller-4.jpg")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Add your seller details" })).toHaveAttribute("href", "/dashboard/settings#seller-details");
+});
+
+it("a manual_review refusal does not ask to add seller details", async () => {
+  seller.reviewState = "manual_review";
+  upload.mockRejectedValueOnce(new ApiError([{ code: "SELLER_DETAILS_REQUIRED", message: "An admin is checking your seller details. New uploads open once they are approved." }], 403));
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "review.jpg", { type: "image/jpeg" })] },
+  });
+  expect(await screen.findByRole("link", { name: "See your seller-details status" })).toHaveAttribute("href", "/dashboard/settings#seller-details");
+  expect(screen.queryByRole("link", { name: "Add your seller details" })).toBeNull();
 });
 
 it.each([

@@ -7,6 +7,16 @@ import type { PaginatedResponse } from "@/types/api";
 
 export type SellerDetailsStatus = "missing" | "submitted" | "approved" | "rejected";
 
+// The detailed state (AA-I1). New code reads this, never `status`, which keeps
+// today's values for old clients.
+export type ReviewState = "missing" | "manual_review" | "auto_approved" | "approved" | "rejected";
+const REVIEW_STATES: readonly string[] = ["missing", "manual_review", "auto_approved", "approved", "rejected"];
+
+/** An unknown value (a newer backend) is treated like manual review. */
+export function reviewStateOf(details: Pick<SellerDetails, "reviewState">): ReviewState {
+  return REVIEW_STATES.includes(details.reviewState) ? details.reviewState : "manual_review";
+}
+
 export const SELLER_ID_TYPES = [
   { value: "philsys", label: "PhilSys National ID (card or ePhilID)" },
   { value: "drivers_license", label: "Driver's licence" },
@@ -21,6 +31,10 @@ export type SellerIdType = (typeof SELLER_ID_TYPES)[number]["value"];
 
 export interface SellerDetails {
   status: SellerDetailsStatus;
+  reviewState: ReviewState;
+  /** The server's upload-gate answer (AA-I6); clients never re-derive it. */
+  uploadsAllowed?: boolean;
+  identityGateStartsOn?: string | null;
   legalName?: string | null;
   idType?: SellerIdType | null;
   address?: string | null;
@@ -41,7 +55,23 @@ export interface SellerDetailsInput {
   idBack?: File | null;
   selfie: File;
   birForm?: File | null;
+  idNumber: string;
+  /** The finished live check. Left out = "Have an admin check instead". */
+  livenessSessionId?: string;
 }
+
+// C1 (AA-I2). The STS keys work only for StartFaceLivenessSession, and the
+// session expires about 3 minutes after this call (AA-0.3b): start it on press.
+export interface LivenessSession {
+  sessionId: string;
+  region: string;
+  attemptsLeftToday: number;
+  credentials: { accessKeyId: string; secretAccessKey: string; sessionToken: string; expiration: string } | null;
+}
+
+/** Same rule as the server's first check (IdentityCheckService); the server still decides. */
+export const normaliseIdNumber = (raw: string) => raw.replace(/[\s-]/g, "");
+export const isValidIdNumber = (raw: string) => /^[A-Za-z0-9]{4,30}$/.test(normaliseIdNumber(raw));
 
 // Mirrors SellerDetailsService on the server; the server still decides.
 export const SELLER_FILE_MAX_BYTES = 5 * 1024 * 1024;
@@ -69,10 +99,24 @@ export function submitSellerDetails(input: SellerDetailsInput): Promise<SellerDe
   if (input.idBack) fd.append("idBack", input.idBack);
   fd.append("selfie", input.selfie);
   if (input.birForm) fd.append("birForm", input.birForm);
+  fd.append("idNumber", input.idNumber);
+  if (input.livenessSessionId) fd.append("livenessSessionId", input.livenessSessionId);
   return api.post<SellerDetails>("/me/photographer/seller-details", fd);
 }
 
-// ─── Admin review (SC-1b backend: E3 to E6) ─────────────────────────────
+export function startLivenessSession(): Promise<LivenessSession> {
+  return api.post<LivenessSession>("/me/photographer/seller-details/liveness-session", { biometricConsent: true });
+}
+
+/** C2b: a new live check for a manual-review record; the stored files are reused. */
+export function submitLiveCheck(input: { livenessSessionId: string; idNumber: string }): Promise<SellerDetails> {
+  return api.post<SellerDetails>("/me/photographer/seller-details/live-check", input);
+}
+
+// ─── Admin review (SC-1b backend: E3 to E6; AA-I8 adds the automatic results) ───
+
+/** The admin list filter: the review queue, the spot check, or everything (null). */
+export type AdminSellerFilter = "manual_review" | "auto_approved" | null;
 
 export interface AdminSellerDetailsRow {
   userId: string;
@@ -80,8 +124,23 @@ export interface AdminSellerDetailsRow {
   legalName: string;
   idType: SellerIdType;
   status: Exclude<SellerDetailsStatus, "missing">;
+  reviewState: Exclude<ReviewState, "missing">;
   submittedAt: string;
   reviewedAt: string | null;
+  /** UPPERCASE SellerReasonCode names; [] with autoCheckedAt null = sent before automatic checks. */
+  reasonCodes: string[];
+  /** 0-100, null when not run. */
+  livenessConfidence: number | null;
+  faceSimilarity: number | null;
+  autoCheckedAt: string | null;
+}
+
+export interface RepeatMatch {
+  userId: string;
+  email: string;
+  /** ID_NUMBER | PAYOUT_NUMBER | PHONE */
+  matchedOn: string[];
+  suspended: boolean;
 }
 
 export interface AdminSellerDetails extends AdminSellerDetailsRow {
@@ -92,13 +151,16 @@ export interface AdminSellerDetails extends AdminSellerDetailsRow {
   rejectionReason: string | null;
   reviewedBy: string | null;
   revision: number;
+  biometricConsentAt: string | null;
+  hasIdNumber: boolean;
+  repeatMatches: RepeatMatch[];
   // Links that expire after five minutes; only on E4, and each fetch logs a view.
-  files: { idFront: string; idBack: string | null; selfie: string; birForm: string | null } | null;
+  files: { idFront: string; idBack: string | null; selfie: string; birForm: string | null; livenessReference: string | null } | null;
   linksExpireAt: string | null;
 }
 
 export function listSellerDetails(
-  status: "submitted" | null,
+  status: AdminSellerFilter,
   limit: number,
   signal?: AbortSignal,
 ): Promise<PaginatedResponse<AdminSellerDetailsRow>> {

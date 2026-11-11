@@ -283,12 +283,6 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         "AND p.indexingStatus <> com.quickpitik.entity.IndexingStatus.INDEXED")
     fun skipIndexing(@Param("id") id: UUID): Int
 
-    // Bulk re-prices every photo under the event. Used by admin event PATCH
-    // when the operator changes events.price_per_photo so existing photos
-    // pick up the new price across runner-facing galleries. Carts follow
-    // automatically: CartService renders the live photos.price_php and
-    // OrderService.create charges it, so cart_items.price_php_at_add is
-    // deliberately left alone — nothing displays or bills off that column.
     // V46: an approved watermark-policy change makes every LIVE preview stale.
     // Back to PROCESSING with a fresh budget; PhotoWatermarkTrigger.reconcile
     // re-renders them under the new policy within a sweep. Runners lose the
@@ -308,6 +302,51 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("eventId") eventId: UUID,
         @Param("price") price: BigDecimal,
     ): Int
+
+    // RacePriceService clamps coverage prices first. Missing coverage (including a NULL
+    // photographer) follows the floor; cart snapshots and purchase prices stay untouched.
+    @Modifying
+    @Query(value = """
+        UPDATE photos p SET price_php = prices.price
+        FROM (
+            SELECT photo.id, COALESCE(ep.price_php, :floor) AS price
+            FROM photos photo LEFT JOIN event_photographer ep
+              ON ep.event_id = photo.event_id AND ep.photographer_id = photo.photographer_id
+            WHERE photo.event_id = :eventId
+        ) prices WHERE p.id = prices.id
+    """, nativeQuery = true)
+    fun updateRacePricesByEventId(@Param("eventId") eventId: UUID, @Param("floor") floor: BigDecimal): Int
+
+    // AA-R11: one photographer's photos in a race, locked in id order before their coverage row
+    // (the price writers' one lock order: photos, then event_photographer, then events).
+    @Query(
+        value = "SELECT id FROM photos WHERE event_id = :eventId AND photographer_id = :photographerId ORDER BY id FOR NO KEY UPDATE",
+        nativeQuery = true,
+    )
+    fun lockIdsByEventIdAndPhotographerIdForUpdate(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+    ): List<UUID>
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.pricePhp = :price WHERE p.eventId = :eventId AND p.photographerId = :photographerId")
+    fun updatePriceByEventIdAndPhotographerId(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("price") price: BigDecimal,
+    ): Int
+
+    // AA-R13: a race photo takes its photographer's race price (else the floor). Runs after
+    // upsertOnUpload in the persist transaction, so a price change that commits mid-upload is seen.
+    @Modifying
+    @Query(
+        value = """UPDATE photos p SET price_php = COALESCE(ep.price_php, e.price_per_photo)
+        FROM event_photographer ep, events e
+        WHERE p.id = :photoId AND ep.event_id = p.event_id AND ep.photographer_id = p.photographer_id
+          AND e.id = p.event_id AND p.price_php IS DISTINCT FROM COALESCE(ep.price_php, e.price_per_photo)""",
+        nativeQuery = true,
+    )
+    fun reseedRacePrice(@Param("photoId") photoId: UUID): Int
 
     // Bulk re-queue for AI indexing (admin reindex endpoint). Resets the
     // attempt budget so the reconcile sweep actually picks the rows up —

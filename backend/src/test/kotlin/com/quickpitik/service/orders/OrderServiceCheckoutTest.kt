@@ -800,6 +800,64 @@ class OrderServiceCheckoutTest {
         assertTrue(savedOrders.isEmpty())
     }
 
+    // AA-R14: checkout never charges a price the runner was not shown.
+    @Test
+    fun `an expected price that differs from the live price answers CART_ITEM_PRICE_CHANGED and writes no order`() {
+        val stale = CreateOrderItem(photo.id, eventId, expectedPricePhp = BigDecimal("100.00"))
+
+        val error = assertFailsWith<ConflictException> { service.create(null, request(items = listOf(stale)), key) }
+
+        assertEquals(ErrorCodes.CART_ITEM_PRICE_CHANGED, error.code)
+        assertTrue(error.message!!.contains("₱100.00") && error.message!!.contains("₱125.00"))
+        assertTrue(savedOrders.isEmpty())
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    @Test
+    fun `an order without expected prices is charged as today`() {
+        stubProvider()
+
+        val response = service.create(null, request(), key)
+
+        assertEquals(BigDecimal("125.00"), response.totalAmount)
+    }
+
+    @Test
+    fun `a matching expected price checks out`() {
+        stubProvider()
+        val shown = CreateOrderItem(photo.id, eventId, expectedPricePhp = BigDecimal("125"))
+
+        val response = service.create(null, request(items = listOf(shown)), key)
+
+        assertEquals(BigDecimal("125.00"), response.totalAmount)
+    }
+
+    // A same-key retry charges the price saved on its order rows, so the live
+    // price is not checked again: the runner pays what they saw at first submit.
+    @Test
+    fun `a same-key retry is not refused when the live price moved after it was reserved`() {
+        val existing = Order(
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = "gcash",
+            totalPhp = BigDecimal("125.00"),
+            idempotencyKey = key,
+        )
+        Mockito.`when`(
+            orderRepository.findByUserIdIsNullAndRecipientEmailIgnoreCaseAndIdempotencyKey(email, key),
+        ).thenReturn(listOf(existing))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(listOf(existing.id))).thenReturn(
+            listOf(OrderItem(OrderItemId(existing.id, photo.id), BigDecimal("125.00"))),
+        )
+        savedPayments += Payment(orderId = existing.id, provider = "paymongo", amountPhp = existing.totalPhp)
+        photo.pricePhp = BigDecimal("150.00")
+        stubProvider()
+
+        service.create(null, request(items = listOf(CreateOrderItem(photo.id, eventId, expectedPricePhp = BigDecimal("125.00")))), key)
+
+        assertEquals(listOf(12500L), lastProviderRequest!!.data.attributes.lineItems.map { it.amount })
+    }
+
     @Test
     fun `hidden photos are rejected before a payment session is created`() {
         photo.status = PhotoStatus.HIDDEN

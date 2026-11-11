@@ -37,7 +37,6 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.auth.RefreshTokenService
-import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.runner.RunnerMessagesService
@@ -63,7 +62,6 @@ class AdminUserService(
     private val storageProperties: StorageProperties,
     private val userDtoMapper: UserDtoMapper,
     private val runnerMessagesService: RunnerMessagesService,
-    private val photographerSettingsService: PhotographerSettingsService,
     private val refreshTokenService: RefreshTokenService,
     private val adminActionCommandService: AdminActionCommandService,
     private val photographerMessageRepository: com.quickpitik.repository.PhotographerMessageRepository,
@@ -213,42 +211,6 @@ class AdminUserService(
             socials = socials,
             payouts = payouts,
         )
-    }
-
-    fun approve(adminId: UUID, userId: UUID, expectedRevision: Long? = null): AdminUserRowDto {
-        val (user, settings) = lockUserAndSettings(userId)
-        val s = requirePhotographerSettings(user, settings, persistIfMissing = true)
-        requireVerificationRevision(s, expectedRevision)
-        // Re-validate against the SAME required-field set the photographer's own
-        // submit gate uses, so admin approval and self-submit can never diverge.
-        // Without this an admin could approve a profile that never passed submit
-        // — including one whose settings row requirePhotographerSettings just
-        // lazy-created empty — and the public profile would render broken.
-        val incomplete = photographerSettingsService.collectMissing(userId, s)
-        if (!incomplete.isComplete) {
-            throw ApiException(
-                status = HttpStatus.UNPROCESSABLE_ENTITY,
-                code = ErrorCodes.INCOMPLETE_PROFILE,
-                message = "Cannot approve — profile is missing: ${incomplete.labels.joinToString(", ")}",
-            )
-        }
-        requireVerificationState(s, VerificationStatus.PENDING)
-        s.verificationStatus = VerificationStatus.APPROVED
-        s.verificationRevision++
-        photographerSettingsRepository.save(s)
-        val decision = adminDecisionLogService.logUserDecision(
-            adminId = adminId,
-            targetUserId = userId,
-            decision = "approved",
-        )
-        adminDecisionLogService.pushMessage(
-            photographerId = userId,
-            kind = PhotographerMessageKind.VERIFICATION_APPROVED,
-            body = "Your photographer profile is approved. You can now upload to events.",
-            sourceAdminId = adminId,
-            sourceDecisionId = decision.id,
-        )
-        return hydrateRow(user, s)
     }
 
     fun reject(adminId: UUID, userId: UUID, reason: String, expectedRevision: Long? = null): AdminUserRowDto {

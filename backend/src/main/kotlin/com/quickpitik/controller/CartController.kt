@@ -53,10 +53,7 @@ class CartController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @RequestBody body: MergeCartRequest,
     ): List<CartItemDto> =
-        cartService.merge(
-            userId = principal.userId,
-            incoming = body.items.map { it.photoId to it.eventId },
-        )
+        cartService.merge(userId = principal.userId, incoming = body.items)
 
     @DeleteMapping
     fun clear(@AuthenticationPrincipal principal: AuthPrincipal): ClearedResponse =

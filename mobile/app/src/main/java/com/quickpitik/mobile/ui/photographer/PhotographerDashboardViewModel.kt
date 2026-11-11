@@ -9,6 +9,7 @@ import com.quickpitik.mobile.data.remote.PhotographerEventSummaryDto
 import com.quickpitik.mobile.data.remote.PhotographerMessageFrame
 import com.quickpitik.mobile.data.remote.QpWebSocket
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.data.remote.SellerDetailsDto
 import com.quickpitik.mobile.data.remote.apiCall
 import com.quickpitik.mobile.data.remote.uiMessage
 import com.quickpitik.mobile.data.remote.WsState
@@ -83,6 +84,9 @@ sealed class SharePhotosState {
     }
     data class Error(val message: String) : SharePhotosState()
 }
+
+internal fun shouldResumeUploads(details: SellerDetailsDto?): Boolean =
+    details?.uploadsAllowed ?: (details?.status in setOf("submitted", "approved"))
 
 class PhotographerDashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionManager = SessionManager.getInstance(application)
@@ -610,16 +614,18 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
     }
 
-    // SC-3: a failed read shows no card (the server still gates uploads). Once the details are
-    // sent, restart the photos a SELLER_DETAILS_REQUIRED refusal left waiting.
+    // A failed read shows no card; restart paused photos only when the server allows uploads.
     fun fetchSellerDetails() {
         viewModelScope.launch {
             val token = sessionManager.getAccessToken() ?: return@launch
             val details = try {
                 RetrofitClient.apiService.getSellerDetails("Bearer $token").data
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
-            _sellerDetailsState.value = sellerDetailsCard(details?.status, details?.rejectionReason)
-            if (details?.status == "submitted" || details?.status == "approved") {
+            _sellerDetailsState.value = sellerDetailsCard(
+                details?.reviewState ?: details?.status, details?.rejectionReason,
+                details?.uploadsAllowed, details?.identityGateStartsOn,
+            )
+            if (shouldResumeUploads(details)) {
                 UploadPausedNotice.cancel(getApplication())
                 PhotoUploadScheduler.enqueue(getApplication())
             }
@@ -697,7 +703,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     // Straight from the response, not a refetch: a refetch would
                     // flip the card back to Loading for a frame.
                     _verificationState.value = VerificationUiState.Success(response.data)
-                    _verificationActionState.value = ActionState.Done("Submitted for admin review!")
+                    _verificationActionState.value = ActionState.Done(when (response.data.status) {
+                        "approved" -> "Your studio is live."
+                        "pending" -> "Saved. Your studio goes live when your identity check passes."
+                        else -> "Submitted for admin review!"
+                    })
                 } else {
                     _verificationActionState.value =
                         ActionState.Failed(response.error ?: "Failed to submit verification.")

@@ -4,6 +4,7 @@ import com.quickpitik.entity.SellerDetails
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotNull
 import jakarta.validation.constraints.Size
+import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -17,6 +18,10 @@ data class AdminSellerDetailsRowDto(
     val reviewState: String,
     val submittedAt: OffsetDateTime,
     val reviewedAt: OffsetDateTime?,
+    val reasonCodes: List<String>,
+    val livenessConfidence: BigDecimal?,
+    val faceSimilarity: BigDecimal?,
+    val autoCheckedAt: OffsetDateTime?,
 )
 
 // E4 links, each valid for five minutes; null when that file was not sent.
@@ -25,6 +30,15 @@ data class SellerDetailsFilesDto(
     val idBack: String?,
     val selfie: String,
     val birForm: String?,
+    val livenessReference: String?,
+)
+
+// Another account sharing a detail; email and suspended are read live at view time.
+data class RepeatMatchDto(
+    val userId: UUID,
+    val email: String,
+    val matchedOn: List<String>,
+    val suspended: Boolean,
 )
 
 // E4 to E6. `files` and `linksExpireAt` are set only on E4 (the view writes a decision-log row).
@@ -44,6 +58,14 @@ data class AdminSellerDetailsDto(
     val reviewedAt: OffsetDateTime?,
     val reviewedBy: UUID?,
     val revision: Long,
+    val reasonCodes: List<String>,
+    val livenessConfidence: BigDecimal?,
+    val faceSimilarity: BigDecimal?,
+    val autoCheckedAt: OffsetDateTime?,
+    val biometricConsentAt: OffsetDateTime?,
+    // Only whether a number was given: the raw number is never stored and its hash never leaves the server.
+    val hasIdNumber: Boolean,
+    val repeatMatches: List<RepeatMatchDto>,
     val files: SellerDetailsFilesDto? = null,
     val linksExpireAt: OffsetDateTime? = null,
 )
@@ -57,9 +79,18 @@ fun SellerDetails.toAdminRowDto(email: String) = AdminSellerDetailsRowDto(
     reviewState = status.reviewState(),
     submittedAt = submittedAt,
     reviewedAt = reviewedAt,
+    reasonCodes = reasonCodes.map { it.name },
+    livenessConfidence = livenessConfidence,
+    faceSimilarity = faceSimilarity,
+    autoCheckedAt = autoCheckedAt,
 )
 
-fun SellerDetails.toAdminDto(email: String, files: SellerDetailsFilesDto? = null, linksExpireAt: OffsetDateTime? = null) =
+fun SellerDetails.toAdminDto(
+    email: String,
+    repeatMatches: List<RepeatMatchDto> = emptyList(),
+    files: SellerDetailsFilesDto? = null,
+    linksExpireAt: OffsetDateTime? = null,
+) =
     AdminSellerDetailsDto(
         userId = userId,
         email = email,
@@ -76,6 +107,13 @@ fun SellerDetails.toAdminDto(email: String, files: SellerDetailsFilesDto? = null
         reviewedAt = reviewedAt,
         reviewedBy = reviewedBy,
         revision = revision,
+        reasonCodes = reasonCodes.map { it.name },
+        livenessConfidence = livenessConfidence,
+        faceSimilarity = faceSimilarity,
+        autoCheckedAt = autoCheckedAt,
+        biometricConsentAt = biometricConsentAt,
+        hasIdNumber = idNumberHmac != null,
+        repeatMatches = repeatMatches,
         files = files,
         linksExpireAt = linksExpireAt,
     )

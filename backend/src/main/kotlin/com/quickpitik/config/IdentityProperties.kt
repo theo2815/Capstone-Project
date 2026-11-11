@@ -2,6 +2,7 @@ package com.quickpitik.config
 
 import com.quickpitik.entity.SellerIdType
 import org.springframework.boot.context.properties.ConfigurationProperties
+import java.time.LocalDate
 
 // Auto-approval Plan 1: photographer identity (AWS Face Liveness + CompareFaces).
 // Scores use AWS's 0-100 scale, unlike RekognitionProperties, because admins see 0-100.
@@ -9,6 +10,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 data class IdentityProperties(
     // Off = today's upload rule; on = uploads need AUTO_APPROVED or APPROVED (AA-I6).
     val gateEnabled: Boolean = false,
+    // The announced turn-on date, shown to photographers (C3); blank = none. An invalid date fails boot.
+    val gateStartsOn: LocalDate? = null,
     // Face Liveness only (AA-0.1); every other Rekognition call stays in app.ai.rekognition.region.
     val livenessRegion: String = "ap-southeast-5",
     // Strict until measured (review F6). [NOT MEASURED: set from AA-0.4]

@@ -18,5 +18,10 @@ export const LEGAL_COPY = {
   bibNotice: `To find your photos, we look for this bib number in this event's photos. Search only for your own photos, your child's, or those of someone who agreed. [How search works](${ROUTES.PRIVACY}#face-matching)`,
   bibTickLabel: "I agree. This is my bib number, my child's, or I have the runner's permission.",
   checkoutLine: `By paying, you agree to the [Terms of Service (including refunds)](${ROUTES.TERMS}#refunds).`,
+  // AA-I14: the live-selfie step. The drafts are the owner's 2026-11-08 wording; AA-I21
+  // replaces each with the adviser-signed 1.3 text, and the production build refuses them until then.
+  identityNotice: "[ASK OWNER: adviser confirms with legal 1.3. Draft: We use a short live video selfie to check that you are a real person and that you match your ID. Amazon Web Services processes it in Malaysia and Singapore for us. We keep one still image from it, privately, with your ID photos. It is never used for photo search.]",
+  identityTickLabel: "[ASK OWNER: adviser confirms with legal 1.3. Draft: I agree to the live selfie check and to QuickPitik keeping one still image from it with my ID photos.]",
+  identityAdminInstead: "[ASK OWNER: adviser confirms with legal 1.3. Draft: Prefer not to? Have an admin check your ID instead. This takes longer.]",
   deletionText: `To delete your account, email [${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(DELETION_MAIL_SUBJECT)}) from your account's email address. We'll do it within ${DELETION_WINDOW}. Some purchase records are kept, as the [Privacy Policy](${ROUTES.PRIVACY}#deletion) explains.`,
 } as const;

@@ -44,4 +44,31 @@ interface PhotographerMessageRepository : JpaRepository<PhotographerMessage, UUI
         @Param("photographerId") photographerId: UUID,
         @Param("readAt") readAt: OffsetDateTime,
     ): Int
+
+    // RD-10 email send claim (columns from V99, the orders.email_sent_at pattern). Native: the entity does not map them.
+    @Modifying
+    @Query(value = "UPDATE photographer_messages SET email_sent_at = :now WHERE id = :id AND email_sent_at IS NULL", nativeQuery = true)
+    fun claimEmailSend(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    @Modifying
+    @Query(value = "UPDATE photographer_messages SET email_delivered_at = :at WHERE id = :id AND email_delivered_at IS NULL", nativeQuery = true)
+    fun stampEmailDelivered(@Param("id") id: UUID, @Param("at") at: OffsetDateTime): Int
+
+    // Removal notices claimed before the cutoff and never delivered, from the last 24 hours.
+    @Query(
+        value = """SELECT id FROM photographer_messages
+            WHERE kind IN ('photo_removal_request', 'photo_removal_outcome')
+              AND email_sent_at < :cutoff AND email_delivered_at IS NULL AND created_at >= :since
+            ORDER BY email_sent_at LIMIT :limit""",
+        nativeQuery = true,
+    )
+    fun findStaleEmailClaimIds(@Param("cutoff") cutoff: OffsetDateTime, @Param("since") since: OffsetDateTime, @Param("limit") limit: Int): List<UUID>
+
+    // Match the old timestamp and missing delivery stamp, so a second instance's fresh claim is not released.
+    @Modifying
+    @Query(
+        value = "UPDATE photographer_messages SET email_sent_at = NULL WHERE id = :id AND email_sent_at < :cutoff AND email_delivered_at IS NULL",
+        nativeQuery = true,
+    )
+    fun releaseStaleEmailSend(@Param("id") id: UUID, @Param("cutoff") cutoff: OffsetDateTime): Int
 }

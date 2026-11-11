@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotNull
 import org.springframework.web.multipart.MultipartFile
 import java.time.Instant
+import java.time.LocalDate
 import java.time.OffsetDateTime
 
 // E1/E2 response. Deliberately no links and no storage keys: the photographer
@@ -24,6 +25,10 @@ data class SellerDetailsDto(
     val rejectionReason: String? = null,
     val submittedAt: OffsetDateTime? = null,
     val reviewedAt: OffsetDateTime? = null,
+    /** AA-I6: the upload gate's answer for this record as configured now; clients never re-derive it. */
+    val uploadsAllowed: Boolean = false,
+    /** AA-I6: the announced date the identity gate turns on (IDENTITY_GATE_STARTS_ON), or null. */
+    val identityGateStartsOn: LocalDate? = null,
 ) {
     companion object {
         val MISSING = SellerDetailsDto(status = "missing", reviewState = "missing")

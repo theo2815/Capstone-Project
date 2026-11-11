@@ -3,6 +3,7 @@ package com.quickpitik.service.cart
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.cart.CartItemDto
+import com.quickpitik.dto.cart.MergeCartItem
 import com.quickpitik.entity.CartItemEntity
 import com.quickpitik.entity.CartItemId
 import com.quickpitik.entity.Event
@@ -18,6 +19,7 @@ import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.math.RoundingMode
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -113,22 +115,23 @@ class CartService(
      * discards the whole merge (cart *and* saved-events), and price drift never
      * self-heals, so every later login would re-fail and strand the guest cart.
      *
-     * Same reason `pricePhpAtAdd` is refreshed rather than raising
-     * CART_ITEM_PRICE_CHANGED here: the snapshot is not what the runner sees
-     * or pays. [toDto] renders `photos.price_php` and `OrderService.create`
-     * charges it, so refreshing the column keeps the stored row honest
-     * instead of preserving a number nothing reads.
+     * Same reason price drift never raises CART_ITEM_PRICE_CHANGED here. The
+     * `pricePhpAtAdd` snapshot is now displayed (AA-R14: "went up from ₱X")
+     * and lives as long as the row, so merge never overwrites an existing
+     * row's snapshot. A new row takes the guest's `priceAtAdd` only when
+     * 0 < value ≤ the live price (a client cannot claim a higher one), else
+     * the live price. What the runner pays is still the live price.
      */
-    fun merge(userId: UUID, incoming: List<Pair<UUID, UUID>>): List<CartItemDto> {
+    fun merge(userId: UUID, incoming: List<MergeCartItem>): List<CartItemDto> {
         val existing = cartItemRepository.findByUserId(userId)
             .associateBy { it.id.photoId }
             .toMutableMap()
-        val incomingIds = incoming.map { it.first }.toSet()
+        val incomingIds = incoming.map { it.photoId }.toSet()
         val photoLookup = photoRepository.findAllById(incomingIds).associateBy { it.id }
-        val eventLookup = eventRepository.findAllById(incoming.map { it.second }.toSet())
+        val eventLookup = eventRepository.findAllById(incoming.map { it.eventId }.toSet())
             .associateBy { it.id }
         val suspended = photographerSuspension.suspendedOwnerIds(photoLookup.values)
-        for ((photoId, eventId) in incoming) {
+        for ((photoId, eventId, guestPriceAtAdd) in incoming) {
             val photo = photoLookup[photoId] ?: continue
             if (photo.eventId != eventId) continue
             if (!photo.isSellable || photo.photographerId in suspended) continue
@@ -139,16 +142,16 @@ class CartService(
             val key = CartItemId(userId, photoId)
             val row = existing[photoId]
             if (row == null) {
+                val guest = guestPriceAtAdd?.setScale(2, RoundingMode.HALF_UP)
                 val saved = cartItemRepository.save(
                     CartItemEntity(
                         id = key,
                         eventId = eventId,
-                        pricePhpAtAdd = photo.pricePhp,
+                        pricePhpAtAdd = guest?.takeIf { it.signum() > 0 && it <= photo.pricePhp } ?: photo.pricePhp,
                     ),
                 )
                 existing[photoId] = saved
             } else {
-                row.pricePhpAtAdd = photo.pricePhp
                 row.eventId = eventId
                 cartItemRepository.save(row)
             }
@@ -173,11 +176,9 @@ class CartService(
         }
     }
 
-    // `price` is the LIVE `photos.price_php`, not the `pricePhpAtAdd` snapshot.
-    // Checkout has no snapshot to honour — `OrderService.create` totals and
-    // charges `photos.price_php` — so rendering the snapshot here meant an
-    // admin re-price (AdminEventService → PhotoRepository.updatePriceByEventId)
-    // left the runner looking at ₱125 and paying ₱150.
+    // `price` is the LIVE `photos.price_php`: `OrderService.create` totals and
+    // charges it. `priceAtAdd` is the snapshot, shown only as "went up from
+    // ₱priceAtAdd" while `price` is higher (AA-R14), never as the price.
     private fun CartItemEntity.toDto(photo: Photo, event: Event?, available: Boolean): CartItemDto = CartItemDto(
         photoId = id.photoId,
         eventId = eventId,
@@ -192,6 +193,7 @@ class CartService(
             .toLocalTime()
             .format(TIME_FORMATTER),
         available = available,
+        priceAtAdd = pricePhpAtAdd,
     )
 
     private fun thumbnailUrlOf(photo: Photo): String {

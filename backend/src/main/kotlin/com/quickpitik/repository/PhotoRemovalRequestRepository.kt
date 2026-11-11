@@ -14,7 +14,37 @@ import java.time.Instant
 import java.util.UUID
 
 interface PhotoRemovalRequestRepository : JpaRepository<PhotoRemovalRequest, UUID>, JpaSpecificationExecutor<PhotoRemovalRequest> {
+    companion object {
+        // = uq_photo_removal_requests_runner_open (V99): a runner's live request, alias `r`. A withdrawn or no-match
+        // case waiting in RESOLVING for its evidence purge no longer counts.
+        const val RUNNER_OPEN_SQL = "r.source = 'RUNNER' AND (r.status IN ('DRAFT','OPEN') " +
+            "OR (r.status = 'RESOLVING' AND r.close_reason IS NULL))"
+    }
+
     fun findByCreationCommandId(creationCommandId: UUID): PhotoRemovalRequest?
+
+    @Query(value = "SELECT count(*) FROM photo_removal_requests r WHERE r.requester_user_id = :userId AND $RUNNER_OPEN_SQL",
+        nativeQuery = true)
+    fun countOpenRunnerRequests(userId: UUID): Long
+
+    @Query(value = """SELECT r.id FROM photo_removal_requests r WHERE r.requester_user_id = :userId
+        AND r.event_id_snapshot = :eventId AND $RUNNER_OPEN_SQL""", nativeQuery = true)
+    fun findOpenRunnerRequestId(userId: UUID, eventId: UUID): UUID?
+
+    @Query(value = """SELECT EXISTS (SELECT 1 FROM photo_removal_requests r WHERE r.requester_user_id = :userId
+        AND r.event_id_snapshot = :eventId AND $RUNNER_OPEN_SQL)""", nativeQuery = true)
+    fun existsOpenRunnerRequest(userId: UUID, eventId: UUID): Boolean
+
+    // Q13 + R7: an admin kept the photos (RETAIN, nothing removed), or the case ended with every suggestion
+    // dismissed. Withdraw, no-match, demote-only and an undecided cancel are not a rejection.
+    @Query(value = """SELECT EXISTS (SELECT 1 FROM photo_removal_requests r WHERE r.source = 'RUNNER'
+        AND r.requester_user_id = :userId AND r.event_id_snapshot = :eventId AND r.close_reason IS NULL
+        AND NOT EXISTS (SELECT 1 FROM photo_removal_items i WHERE i.request_id = r.id AND i.state IN ('REMOVAL_AUTHORIZED','REMOVED'))
+        AND (EXISTS (SELECT 1 FROM photo_removal_items i WHERE i.request_id = r.id AND i.admin_decision = 'RETAIN')
+            OR (r.status IN ('RESOLVED','CANCELLED')
+                AND EXISTS (SELECT 1 FROM photo_removal_history h WHERE h.request_id = r.id AND h.action = 'SUGGESTION_DISMISSED'))))""",
+        nativeQuery = true)
+    fun existsRejectedRunnerRequest(userId: UUID, eventId: UUID): Boolean
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT r FROM PhotoRemovalRequest r WHERE r.id = :id")

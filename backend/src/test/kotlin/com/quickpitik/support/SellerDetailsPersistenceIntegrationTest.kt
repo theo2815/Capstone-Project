@@ -174,18 +174,25 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `the upload gate query passes MANUAL_REVIEW AUTO_APPROVED and APPROVED and refuses REJECTED and no record`() {
+    fun `the upload gate query checks both sets on real rows`() {
         val submitted = photographer().also { insert(it) }
         val auto = photographer().also { insert(it, status = "AUTO_APPROVED") }
         val approved = photographer().also { insert(it, status = "APPROVED") }
         val rejected = photographer().also { insert(it, status = "REJECTED", reason = "blurry") }
         val none = photographer()
-        val gate = { id: UUID -> repository.existsByUserIdAndStatusNot(id, SellerDetailsStatus.REJECTED) }
-        assertTrue(gate(submitted))
-        assertTrue(gate(auto))
-        assertTrue(gate(approved))
-        assertFalse(gate(rejected))
-        assertFalse(gate(none))
+        val gate = { id: UUID, on: Boolean -> repository.existsByUserIdAndStatusIn(id, SellerDetailsStatus.uploadGateSet(on)) }
+        // Gate off (legacy): anything but REJECTED.
+        assertTrue(gate(submitted, false))
+        assertTrue(gate(auto, false))
+        assertTrue(gate(approved, false))
+        assertFalse(gate(rejected, false))
+        assertFalse(gate(none, false))
+        // Gate on (strict): AUTO_APPROVED or APPROVED only.
+        assertFalse(gate(submitted, true))
+        assertTrue(gate(auto, true))
+        assertTrue(gate(approved, true))
+        assertFalse(gate(rejected, true))
+        assertFalse(gate(none, true))
     }
 
     // AA-I5: the three repeat-account lookups, each leaving out the caller.

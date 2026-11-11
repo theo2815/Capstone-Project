@@ -4,14 +4,17 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.events.EventDetailDto
 import com.quickpitik.dto.events.EventDto
+import com.quickpitik.dto.photographer.RaceCandidateDto
 import com.quickpitik.dto.photos.PhotographerRef
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.UUID
 
 /**
  * Single point of truth for Event → DTO conversion.
@@ -27,14 +30,20 @@ class EventDtoMapper(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val photoRepository: PhotoRepository,
+    private val eventPhotographerRepository: EventPhotographerRepository,
 ) {
     fun toListDtos(events: List<Event>): List<EventDto> {
         if (events.isEmpty()) return emptyList()
         val counts = photoRepository.countPublicByEventIds(events.map { it.id }).associate { it.eventId to it.photoCount.toInt() }
-        return events.map { toListDto(it, counts[it.id] ?: 0) }
+        val raised = raisedPriceEventIds(events)
+        return events.map { toListDto(it, counts[it.id] ?: 0, it.id in raised) }
     }
 
-    fun toListDto(event: Event, publicPhotoCount: Int = photoRepository.countPublicForEvent(event.id).toInt()): EventDto = EventDto(
+    fun toListDto(
+        event: Event,
+        publicPhotoCount: Int = photoRepository.countPublicForEvent(event.id).toInt(),
+        priceVaries: Boolean = event.id in raisedPriceEventIds(listOf(event)),
+    ): EventDto = EventDto(
         id = event.id,
         slug = event.slug,
         name = event.name,
@@ -48,7 +57,16 @@ class EventDtoMapper(
         pricingMode = event.pricingMode.wire,
         regionCode = event.regionCode,
         provinceCode = event.provinceCode,
+        eventType = event.eventType?.name,
+        pricePerPhoto = event.pricePerPhoto,
+        priceVaries = priceVaries,
     )
+
+    // Only races carry a per-photographer price, so other events skip the query.
+    private fun raisedPriceEventIds(events: List<Event>): Set<UUID> {
+        val raceIds = events.filter { it.eventType != null }.map { it.id }
+        return if (raceIds.isEmpty()) emptySet() else eventPhotographerRepository.findEventIdsWithRaisedPrice(raceIds).toSet()
+    }
 
     // `ownerHandle` — the creating photographer's public handle (V46),
     // resolved by the caller; null for admin events.
@@ -74,11 +92,20 @@ class EventDtoMapper(
         photographerHandle = ownerHandle,
         regionCode = event.regionCode,
         provinceCode = event.provinceCode,
+        eventType = event.eventType?.name,
+        priceVaries = event.id in raisedPriceEventIds(listOf(event)),
     )
 
     // `owner` is the photographer who created the event (V46), resolved in
     // batch by the caller; null for admin events.
-    fun toAdminListDto(event: Event, owner: PhotographerRef? = null): AdminListEventDto = AdminListEventDto(
+    // AA-R7: `submitter` names a race's submitter; the two candidates are review-queue context.
+    fun toAdminListDto(
+        event: Event,
+        owner: PhotographerRef? = null,
+        submitter: PhotographerRef? = null,
+        possibleDuplicateOf: RaceCandidateDto? = null,
+        lookalike: RaceCandidateDto? = null,
+    ): AdminListEventDto = AdminListEventDto(
         id = event.id,
         slug = event.slug,
         name = event.name,
@@ -107,6 +134,14 @@ class EventDtoMapper(
         regionCode = event.regionCode,
         provinceCode = event.provinceCode,
         listedOnEvents = event.listedOnEvents,
+        eventType = event.eventType?.name,
+        submittedByHandle = submitter?.handle,
+        submittedByName = submitter?.name,
+        possibleDuplicateOf = possibleDuplicateOf,
+        lookalike = lookalike,
+        checkReasons = event.checkReasons.orEmpty().map { it.name },
+        hiddenAt = event.hiddenAt,
+        adminApproved = event.adminApprovedAt != null,
     )
 
     fun resolveBannerUrl(event: Event): String? =

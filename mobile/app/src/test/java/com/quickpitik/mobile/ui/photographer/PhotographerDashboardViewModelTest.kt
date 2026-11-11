@@ -4,17 +4,20 @@ import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
 import com.quickpitik.mobile.support.signInAs
+import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -223,6 +226,53 @@ class PhotographerDashboardViewModelTest {
         route("GET /api/v1/me/photographer/verification") { ok(verification("pending")) }
         vm.fetchVerificationStatus()
         assertFalse(vm.dashboardApproved.awaitFirst { !it })
+    }
+
+    @Test fun `a legacy seller-details response leaves the additive fields null`() = runBlocking {
+        route("GET /api/v1/me/photographer/seller-details") { ok("""{"status":"submitted","rejectionReason":null}""") }
+        val details = requireNotNull(RetrofitClient.apiService.getSellerDetails("Bearer t").data)
+        assertEquals("submitted", details.status)
+        assertNull(details.reviewState)
+        assertNull(details.uploadsAllowed)
+        assertNull(details.identityGateStartsOn)
+    }
+
+    @Test fun `a manual-review response takes precedence over its legacy submitted status`() {
+        route("GET /api/v1/me/photographer/seller-details") {
+            ok("""{"status":"submitted","reviewState":"manual_review","uploadsAllowed":false,"identityGateStartsOn":"2026-11-17","rejectionReason":null}""")
+        }
+        assertEquals(
+            SellerDetailsCard.ManualReview(paused = true, dueDate = null),
+            model().sellerDetailsState.awaitFirst { it != null },
+        )
+    }
+
+    @Test fun `a legacy seller state still shows its rejection card`() {
+        route("GET /api/v1/me/photographer/seller-details") { ok("""{"status":"rejected","rejectionReason":"Expired ID."}""") }
+        assertEquals(
+            SellerDetailsCard.Rejected("Expired ID"),
+            model().sellerDetailsState.awaitFirst { it != null },
+        )
+    }
+
+    @Test fun `an approved profile submit says the studio is live`() {
+        route("POST /api/v1/me/photographer/verification") { ok(verification("approved")) }
+        val vm = model()
+        vm.submitVerification()
+        assertEquals(
+            ActionState.Done("Your studio is live."),
+            vm.verificationActionState.awaitFirst { it is ActionState.Done || it is ActionState.Failed },
+        )
+    }
+
+    @Test fun `a pending profile submit explains the identity check`() {
+        route("POST /api/v1/me/photographer/verification") { ok(verification("pending")) }
+        val vm = model()
+        vm.submitVerification()
+        assertEquals(
+            ActionState.Done("Saved. Your studio goes live when your identity check passes."),
+            vm.verificationActionState.awaitFirst { it is ActionState.Done || it is ActionState.Failed },
+        )
     }
 
     private companion object {

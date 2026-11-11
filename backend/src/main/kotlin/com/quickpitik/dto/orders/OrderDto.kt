@@ -34,6 +34,9 @@ data class CreateOrderRequest(
 data class CreateOrderItem(
     val photoId: UUID,
     val eventId: UUID,
+    // The price the client showed (AA-R14). Sent and different from the live
+    // price → 409 CART_ITEM_PRICE_CHANGED; old clients omit it and pay as today.
+    val expectedPricePhp: BigDecimal? = null,
 )
 
 // POST /orders response — matches website/src/types/order.ts Order interface.

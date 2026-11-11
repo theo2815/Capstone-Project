@@ -41,6 +41,21 @@ class PhotoBatchIngestServiceTest {
         assertEquals(IndexingStatus.BATCHING, photo1.indexingStatus)
     }
 
+    @Test fun `a batch result word longer than twenty characters is not stored`() {
+        val bibJob = job(IndexJobKind.BIB, "bib-job")
+        expectLookup(bibJob)
+        Mockito.`when`(jobRepo.findByBatchId(batch.id)).thenReturn(listOf(bibJob))
+        Mockito.`when`(aiClient.jobStatus("bib-job", 0, 2)).thenReturn(
+            JobStatusResult(job_id = "bib-job", status = "completed", result = listOf(
+                mapOf("ref" to pid1.toString(), "bibs" to listOf(
+                    mapOf("bib_number" to "A".repeat(21), "confidence" to 0.95),
+                    mapOf("bib_number" to "1234", "confidence" to 0.92),
+                )),
+            )))
+        service.ingest("bib-job")
+        assertEquals(setOf("1234"), photo1.bibs.map { it.bibNumber }.toSet())
+    }
+
     private lateinit var photoRepo: PhotoRepository
     private lateinit var batchRepo: AiIndexBatchRepository
     private lateinit var jobRepo: AiIndexJobRepository

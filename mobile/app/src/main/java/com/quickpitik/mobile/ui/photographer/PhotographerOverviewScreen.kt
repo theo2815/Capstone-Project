@@ -151,7 +151,7 @@ fun PhotographerOverviewScreen(
     }
     val chipText = when {
         isApproved -> "Studio live"
-        currentStatus == "pending" -> "Review in progress"
+        currentStatus == "pending" -> "Waiting for identity check"
         isRejected || currentStatus == "rejected" -> "Changes needed"
         else -> "Setup pending · $completedCount of ${setupItems.size}"
     }
@@ -188,7 +188,8 @@ fun PhotographerOverviewScreen(
                     )
                     Text(
                         text = when {
-                            currentStatus == "pending" || isRejected || currentStatus == "rejected" -> chipText.uppercase()
+                            currentStatus == "pending" -> chipText
+                            isRejected || currentStatus == "rejected" -> chipText.uppercase()
                             completedCount == setupItems.size -> "READY FOR REVIEW"
                             else -> "SETUP PENDING · $completedCount OF ${setupItems.size}"
                         },
@@ -214,7 +215,7 @@ fun PhotographerOverviewScreen(
             Text(
                 text = when {
                     currentStatus == "pending" ->
-                        "An admin is reviewing your studio setup. Check back shortly."
+                        "Your studio goes live when your identity check passes."
                     isRejected || currentStatus == "rejected" ->
                         rejectionReason ?: "Some details need updates before runners can find you."
                     else ->

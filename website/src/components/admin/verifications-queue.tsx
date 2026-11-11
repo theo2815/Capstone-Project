@@ -6,7 +6,6 @@ import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import {
   BTN_DANGER,
-  BTN_PRIMARY,
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
@@ -48,14 +47,15 @@ import { useRegions } from "@/hooks/use-regions";
 // /admin/inbox can render the same three slabs (Open queue · Incomplete ·
 // Recent decisions) under its own KPI-stripped header.
 //
-// Phase 2 added bulk-select on the Open queue: tick checkboxes to stage
-// approve/reject across multiple pending photographers. Selection is
+// Phase 2 added bulk-select on the Open queue: tick checkboxes to send
+// back several pending photographers at once. Selection is
 // local Set<string>, never URL or store. ESC clears the selection when
 // no modal is open. The floating bar mirrors the payouts bar pattern.
 //
 // Phase 3 adds the focus-mode drawer. Click a pending row → drawer with
 // the full review surface (photographer header, completeness panel,
-// Approve/Reject in the footer). With at least one row selected, the row
+// Reject in the footer). Profiles approve themselves once identity
+// passes (Q7), so no admin surface approves one. With at least one row selected, the row
 // click toggles the checkbox instead of opening the drawer; the chevron
 // on the right always opens. URL state via ?row=<userId> so refresh and
 // browser-back behave; the drawer mirrors the chip route pattern.
@@ -77,7 +77,7 @@ export function VerificationsQueue() {
   const effective = users.data ?? EMPTY_ADMIN_USERS;
   const { isPending: loading, refetch } = users;
   const error = users.error?.message;
-  const { approve, reject, verifyBatch, isPending: actionPending, pendingAction } = useAdminUserActions();
+  const { reject, verifyBatch, isPending: actionPending } = useAdminUserActions();
   const { showToast } = useToast();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -87,7 +87,6 @@ export function VerificationsQueue() {
   const [rowId, setRowId] = useUrlState<string>("row", "");
   const detail = useAdminUserDetail(rowId || null);
   const submitting = actionPending([...selected, ...(rowId ? [rowId] : [])]);
-  const activeLabel = pendingAction(rowId || Array.from(selected)[0] || "");
 
   const pending = useMemo(
     () =>
@@ -223,18 +222,6 @@ export function VerificationsQueue() {
     setRowId(id);
   }
 
-  // Bulk handlers await explicit outcomes in parallel so
-  // one BE failure doesn't block the rest. The summary toast tallies
-  // successes vs failures so admin sees an honest count — individual
-  // failures already surfaced their own error toast from the action hook.
-  async function handleBulkApprove() {
-    await handleBulkDecision();
-  }
-
-  async function handleBulkRejectSubmit(reason: string) {
-    await handleBulkDecision(reason);
-  }
-
   function openRejection(bulk: boolean) {
     const rows = bulk ? Array.from(selected).map((id) => byId.get(id)!) : openRow ? [openRow] : [];
     setRejectRevisions(Object.fromEntries(rows.map((row) => [row.userId, row.verificationRevision])));
@@ -245,14 +232,17 @@ export function VerificationsQueue() {
   // A row ticked after the send-back form opened has no captured revision; the server would skip its stale check.
   const sendBackIds = Array.from(selected).filter((id) => pendingIds.has(id) && id in rejectRevisions);
 
-  async function handleBulkDecision(reason?: string) {
+  // Sends back in parallel so one BE failure doesn't block the rest. The
+  // summary toast tallies successes vs failures so admin sees an honest
+  // count — individual failures already surfaced their own error toast.
+  async function handleBulkRejectSubmit(reason: string) {
     const sessionVersion = useAuthStore.getState().sessionVersion;
-    const ids = reason === undefined ? Array.from(selected).filter((id) => pendingIds.has(id)) : sendBackIds;
+    const ids = sendBackIds;
     if (!ids.length) {
-      if (reason !== undefined) showToast({ kind: "error", message: "These rows changed after this form opened. Close the form and tick them again." });
+      showToast({ kind: "error", message: "These rows changed after this form opened. Close the form and tick them again." });
       return;
     }
-    const results = await verifyBatch(ids.map((id) => ({ userId: id, verificationRevision: reason === undefined ? byId.get(id)!.verificationRevision : rejectRevisions[id] })), reason === undefined ? "approve" : "reject", reason);
+    const results = await verifyBatch(ids.map((id) => ({ userId: id, verificationRevision: rejectRevisions[id] })), reason);
     if (!results) return;
     if (useAuthStore.getState().sessionVersion !== sessionVersion) return;
     const failed = ids.filter((_, i) => !results[i]);
@@ -260,18 +250,9 @@ export function VerificationsQueue() {
     const count = ids.length - failed.length;
     if (!failed.length) setBulkRejectOpen(false);
     if (count) showToast({
-      kind: failed.length ? "error" : reason === undefined ? "success" : "info",
-      message: failed.length ? `${count}/${ids.length} updated — ${failed.length} failed` : `${reason === undefined ? "Approved" : "Sent back"} · ${count} ${count === 1 ? "photographer" : "photographers"}`,
+      kind: failed.length ? "error" : "info",
+      message: failed.length ? `${count}/${ids.length} updated — ${failed.length} failed` : `Sent back · ${count} ${count === 1 ? "photographer" : "photographers"}`,
     });
-  }
-
-  async function handleDrawerApprove() {
-    if (!openRow) return;
-    const row = openRow;
-      if (await approve(row.userId, row.verificationRevision)) {
-        showToast({ kind: "success", message: `Approved · ${row.brandName ?? row.name}` });
-        setRowId("");
-      }
   }
 
   async function handleDrawerRejectSubmit(reason: string) {
@@ -283,14 +264,12 @@ export function VerificationsQueue() {
       }
   }
 
-  // Drawer verbs: E approves the open photographer, R opens the reject
-  // reason modal. Disabled while the modal is on top so a stray E/R
-  // doesn't punch through.
+  // Drawer verb: R opens the reject reason modal. Disabled while the
+  // modal is on top so a stray R doesn't punch through.
   useDrawerVerbs({
     active: openRow !== null && !drawerRejectOpen && !submitting,
     verbs: openRow
       ? {
-          E: handleDrawerApprove,
           R: () => openRejection(false),
         }
       : {},
@@ -411,9 +390,7 @@ export function VerificationsQueue() {
 
       <VerificationsBulkBar
         submitting={submitting}
-        pendingLabel={activeLabel}
         count={selected.size}
-        onApprove={handleBulkApprove}
         onReject={() => openRejection(true)}
         onClear={clearSelection}
       />
@@ -453,26 +430,15 @@ export function VerificationsQueue() {
             </p>
           }
           actions={
-            <>
-              <button
-                type="button"
-                disabled={submitting}
-                  aria-busy={submitting}
-                onClick={() => openRejection(false)}
-                className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
-              >
-                Reject…
-              </button>
-              <button
-                type="button"
-                disabled={submitting}
-                  aria-busy={submitting}
-                onClick={handleDrawerApprove}
-                className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
-              >
-                {activeLabel === "Approving…" ? activeLabel : "Approve"}
-              </button>
-            </>
+            <button
+              type="button"
+              disabled={submitting}
+              aria-busy={submitting}
+              onClick={() => openRejection(false)}
+              className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
+            >
+              Reject…
+            </button>
           }
         >
           <VerificationDetailBody row={openRow} />
@@ -580,6 +546,10 @@ function PendingRow({
                   </span>
                 )}
               </div>
+              <p className="font-sans text-sm text-ink-soft mt-3">
+                Waits for the identity check. Decide it under{" "}
+                <Link className="underline" href="/admin/verifications#seller-details" onClick={(e) => e.stopPropagation()}>Seller details</Link>.
+              </p>
             </div>
 
             <button
@@ -997,15 +967,11 @@ function FieldRow({
 function VerificationsBulkBar({
   count,
   submitting,
-  pendingLabel,
-  onApprove,
   onReject,
   onClear,
 }: {
   count: number;
   submitting: boolean;
-  pendingLabel: string | null;
-  onApprove: () => void;
   onReject: () => void;
   onClear: () => void;
 }) {
@@ -1022,15 +988,6 @@ function VerificationsBulkBar({
           <span className="tnum">{count}</span> selected
         </p>
         <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            disabled={submitting}
-                  aria-busy={submitting}
-            onClick={onApprove}
-            className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
-          >
-            {pendingLabel === "Approving…" ? pendingLabel : `Approve ${count}`}
-          </button>
           <button
             type="button"
             disabled={submitting}

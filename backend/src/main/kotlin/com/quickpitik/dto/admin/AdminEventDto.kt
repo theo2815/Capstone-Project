@@ -4,8 +4,10 @@ import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 import jakarta.validation.constraints.PositiveOrZero
 import io.swagger.v3.oas.annotations.media.Schema
+import com.quickpitik.dto.photographer.RaceCandidateDto
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.UUID
 
 // Mirrors website/src/app/events/events-browser.tsx ListEvent =
@@ -51,6 +53,17 @@ data class AdminListEventDto(
     val provinceCode: String? = null,
     @field:Schema(description = "Admin's \"Show on /events\" switch for a photographer-owned Public event (V89)")
     val listedOnEvents: Boolean = false,
+    // AA-R7 (Plan 2 § 3.4): race context. Every field is nullable or defaulted for older clients.
+    val eventType: String? = null,
+    val submittedByHandle: String? = null,
+    val submittedByName: String? = null,
+    @field:Schema(description = "The race a pending race may repeat (review queue only)", nullable = true)
+    val possibleDuplicateOf: RaceCandidateDto? = null,
+    @field:Schema(description = "The shared race a pending Other event looks like (review queue only)", nullable = true)
+    val lookalike: RaceCandidateDto? = null,
+    val checkReasons: List<String> = emptyList(),
+    val hiddenAt: OffsetDateTime? = null,
+    val adminApproved: Boolean = false,
 )
 
 // PATCH /admin/events/{id}/listing — show or hide a photographer event on /events.
@@ -61,6 +74,14 @@ data class SetEventListingRequest(
 data class ApproveEventRequest(
     @field:PositiveOrZero
     @field:Schema(description = "Optional v1 precondition; stale generations return 409 before side effects")
+    val expectedRevision: Long? = null,
+)
+
+// POST /admin/events/{id}/same-race (AA-R6) — the pending race repeats another one; the
+// target defaults to the race's stored possible duplicate.
+data class SameRaceRequest(
+    val targetEventId: UUID? = null,
+    @field:PositiveOrZero
     val expectedRevision: Long? = null,
 )
 
@@ -100,6 +121,8 @@ data class CreateAdminEventRequest(
     val regionCode: String? = null,
     @field:Size(max = 40)
     val provinceCode: String? = null,
+    @field:Schema(description = "AA-R7: one of the six shared race types from /race-types; omit for Other", nullable = true)
+    val eventType: String? = null,
 )
 
 // PATCH /admin/events/{id} — body { title?, date?, location?, pricePerPhoto?,

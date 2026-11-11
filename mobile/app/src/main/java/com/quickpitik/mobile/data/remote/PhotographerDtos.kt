@@ -196,6 +196,9 @@ data class VerificationSubmitResponseDto(
 data class SellerDetailsDto(
     val status: String, // "missing", "submitted", "approved", "rejected"
     val rejectionReason: String?,
+    val reviewState: String? = null,
+    val uploadsAllowed: Boolean? = null,
+    val identityGateStartsOn: String? = null,
 )
 
 data class BrandPatchRequest(

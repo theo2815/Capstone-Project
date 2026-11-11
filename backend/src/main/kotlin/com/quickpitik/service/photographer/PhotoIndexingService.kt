@@ -5,6 +5,7 @@ import com.quickpitik.config.AiProperties
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoBibEmbed
+import com.quickpitik.entity.MAX_BIB_LENGTH
 import com.quickpitik.entity.PhotoFacePersonEmbed
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.AiApiException
@@ -97,6 +98,7 @@ class PhotoIndexingService(
         val error: String? = null,
         val facesUnresolved: Boolean = false,
         val facesThrottled: Boolean = false,
+        val faceCount: Int? = null,
     )
 
     private fun runInference(photo: Photo, claim: PhotoWorkClaim): InferenceOutcome {
@@ -142,6 +144,7 @@ class PhotoIndexingService(
         // any of them matches at search time. NO_FACES / LOW_QUALITY are benign —
         // the call ran, there was simply nothing usable to enroll.
         var personId: String? = null
+        var faceCount: Int? = null
         var facesOk = false
         var facesTransport = false
         var facesUnresolved = false
@@ -164,6 +167,7 @@ class PhotoIndexingService(
                 )
             }!!
             personId = enroll.person_id
+            faceCount = enroll.faces_enrolled
             personId?.let { workFence.recordPerson(claim, it) }
             facesOk = true
         } catch (ex: AiApiException) {
@@ -198,7 +202,7 @@ class PhotoIndexingService(
             bibs = result.detections
                 .filter { it.confidence >= aiApiProperties.bibConfidenceThresholdDefault }
                 .groupBy { it.bib_number.trim().uppercase() }
-                .filterKeys { it.isNotEmpty() }
+                .filterKeys { it.isNotEmpty() && it.length <= MAX_BIB_LENGTH }
                 .mapValues { (_, detections) -> BigDecimal.valueOf(detections.maxOf { it.confidence }) }
             bibsOk = true
         } catch (ex: Exception) {
@@ -217,6 +221,7 @@ class PhotoIndexingService(
             error = error,
             facesUnresolved = facesUnresolved,
             facesThrottled = facesThrottled,
+            faceCount = faceCount,
         )
     }
 
@@ -280,6 +285,7 @@ class PhotoIndexingService(
             photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = it,
                 provider = FaceProvider.valueOf(aiProperties.provider.name)))
         }
+        photo.faceCount = outcome.faceCount?.toShort()
         outcome.bibs.forEach { (bibNumber, confidence) ->
             photo.bibs.add(PhotoBibEmbed(bibNumber = bibNumber, ocrConfidence = confidence))
         }

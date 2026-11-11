@@ -38,6 +38,15 @@ import com.quickpitik.service.ai.FaceCompareResult
 import com.quickpitik.service.ai.LivenessResult
 import com.quickpitik.service.ai.RekognitionIdentityClient
 import com.quickpitik.service.liveness.LivenessSessionService
+import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.ReservedHandleRepository
+import com.quickpitik.repository.SocialLinkRepository
+import com.quickpitik.service.admin.SystemFlagService
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.WordListChecker
+import com.quickpitik.service.reference.RegionsService
 import org.springframework.beans.factory.ObjectProvider
 import software.amazon.awssdk.core.exception.SdkClientException
 import software.amazon.awssdk.services.rekognition.model.LivenessSessionStatus
@@ -137,11 +146,136 @@ class SellerDetailsServiceTest {
     }
 
     // The real decision-log and identity-check services over mocks, so tests read what they would write.
-    private fun service() = SellerDetailsService(
+    private fun service(
+        identity: IdentityProperties = IdentityProperties(),
+        profiles: PhotographerSettingsService = Mockito.mock(PhotographerSettingsService::class.java),
+    ) = SellerDetailsService(
         repository, userRepository, storage, TransactionTemplate(txManager), clock,
-        AdminDecisionLogService(decisionRepository, messageRepository, Mockito.mock(ApplicationEventPublisher::class.java)),
-        StorageProperties(), identityChecks(), payoutRepository,
+        decisionLog(),
+        StorageProperties(), identityChecks(), payoutRepository, identity, profiles,
     )
+
+    private fun decisionLog() =
+        AdminDecisionLogService(decisionRepository, messageRepository, Mockito.mock(ApplicationEventPublisher::class.java))
+
+    // ─── AA-I7: a passed identity approves a waiting, complete profile ───
+
+    private val settingsRepository: PhotographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
+
+    /** The real profile service over mocks, reading this test's seller-details [repository]. */
+    private fun profiles() = PhotographerSettingsService(
+        settingsRepository, userRepository, Mockito.mock(ReservedHandleRepository::class.java),
+        Mockito.mock(RegionsService::class.java), storage, StorageProperties(),
+        Mockito.mock(SocialLinkRepository::class.java).also { Mockito.`when`(it.countByUserId(userId)).thenReturn(1L) },
+        payoutRepository, Mockito.mock(ApplicationEventPublisher::class.java), WordListChecker(),
+        Mockito.mock(ImageModerationService::class.java), Mockito.mock(SystemFlagService::class.java),
+        TransactionTemplate(txManager), repository, decisionLog(),
+    )
+
+    /** A PENDING profile; [complete] = all 8 items. Call after withRecord (it re-stubs the user). */
+    private fun pendingProfile(complete: Boolean = true): PhotographerSettings {
+        val user = User(id = userId, email = "seller@test.local", passwordHash = "unused", name = "S", role = Role.PHOTOGRAPHER)
+            .apply { avatarUrl = "https://example.test/avatar.jpg" }
+        Mockito.`when`(userRepository.lockById(userId)).thenReturn(user)
+        Mockito.`when`(userRepository.findById(userId)).thenReturn(Optional.of(user))
+        Mockito.`when`(payoutRepository.countByUserIdAndQrS3KeyIsNotNull(userId)).thenReturn(1L)
+        val settings = PhotographerSettings(
+            userId = userId, handle = "aira", brandName = "Aira Studio", coverS3Key = "covers/c.jpg",
+            watermarkS3Key = "watermarks/w.png".takeIf { complete }, regionCode = "07", provinceCode = "0722",
+            verificationStatus = VerificationStatus.PENDING,
+        )
+        Mockito.`when`(settingsRepository.findByUserIdForUpdate(userId)).thenReturn(settings)
+        Mockito.`when`(settingsRepository.save(anyArg<PhotographerSettings>())).thenAnswer { it.getArgument(0) }
+        return settings
+    }
+
+    private fun approvedMessages() = messages().filter { it.kindWire == PhotographerMessageKind.VERIFICATION_APPROVED.wire }
+
+    @Test
+    fun `admin identity approval flips a pending complete profile`() {
+        withRecord()
+        val settings = pendingProfile()
+
+        service(profiles = profiles()).approve(adminId, userId, 4)
+
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(1L, settings.verificationRevision)
+        assertNull(approvedMessages().single().sourceAdminId) // automatic: no admin on the message
+    }
+
+    @Test
+    fun `admin identity approval leaves an incomplete profile alone`() {
+        withRecord()
+        val settings = pendingProfile(complete = false)
+
+        service(profiles = profiles()).approve(adminId, userId, 4)
+
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertTrue(approvedMessages().isEmpty())
+    }
+
+    @Test
+    fun `a passing live check flips a pending complete profile`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+        val settings = pendingProfile()
+
+        val checked = service(profiles = profiles()).liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+
+        assertEquals("auto_approved", checked.reviewState)
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(1, approvedMessages().size)
+    }
+
+    @Test
+    fun `a submit that lands in manual review never asks for profile approval`() {
+        val profiles = Mockito.mock(PhotographerSettingsService::class.java)
+
+        assertEquals("manual_review", service(profiles = profiles).submit(userId, form()).reviewState) // no live check: DECLINED
+
+        Mockito.verifyNoInteractions(profiles)
+    }
+
+    // ─── AA-I6: uploadsAllowed and identityGateStartsOn ───
+
+    @Test
+    fun `uploadsAllowed follows the same gate set as the upload refusal`() {
+        val expected = mapOf(
+            false to mapOf(SellerDetailsStatus.MANUAL_REVIEW to true, SellerDetailsStatus.AUTO_APPROVED to true, SellerDetailsStatus.REJECTED to false, null to false),
+            true to mapOf(SellerDetailsStatus.MANUAL_REVIEW to false, SellerDetailsStatus.AUTO_APPROVED to true, SellerDetailsStatus.REJECTED to false, null to false),
+        )
+        for ((gate, byStatus) in expected) for ((status, allowed) in byStatus) {
+            Mockito.`when`(repository.findById(userId)).thenReturn(Optional.ofNullable(status?.let(::existing)))
+            val dto = service(IdentityProperties(gateEnabled = gate)).get(userId)
+            assertEquals(allowed, dto.uploadsAllowed, "gate=$gate status=$status")
+            assertEquals(allowed, status != null && status in SellerDetailsStatus.uploadGateSet(gate), "the upload refusal's set, gate=$gate status=$status")
+        }
+    }
+
+    @Test
+    fun `identityGateStartsOn comes from config and is null when blank`() {
+        val day = java.time.LocalDate.parse("2026-12-01")
+        assertEquals(day, service(IdentityProperties(gateStartsOn = day)).get(userId).identityGateStartsOn)
+        assertNull(service().get(userId).identityGateStartsOn)
+    }
+
+    @Test
+    fun `submit and live check responses carry uploadsAllowed and identityGateStartsOn`() {
+        val day = java.time.LocalDate.parse("2026-12-01")
+        val identity = IdentityProperties(gateEnabled = true, gateStartsOn = day)
+        val submitted = service(identity).submit(userId, form(livenessSessionId = SESSION))
+        assertEquals("auto_approved", submitted.reviewState)
+        assertTrue(submitted.uploadsAllowed)
+        assertEquals(day, submitted.identityGateStartsOn)
+
+        val old = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(storage.getBytes(old.idFrontKey)).thenReturn(jpeg(32, 32))
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+        val checked = service(identity).liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+        assertEquals("auto_approved", checked.reviewState)
+        assertTrue(checked.uploadsAllowed)
+        assertEquals(day, checked.identityGateStartsOn)
+    }
 
     private val payoutRepository: PayoutAccountRepository = Mockito.mock(PayoutAccountRepository::class.java)
 
@@ -524,6 +658,65 @@ class SellerDetailsServiceTest {
     }
 
     @Test
+    fun `admin view links the reference image and logs that it was opened`() {
+        val row = withRecord(birForm = false).apply { livenessReferenceKey = "seller-details/$userId/ref.jpg" }
+
+        val dto = service().adminView(adminId, userId)
+
+        assertEquals("https://signed.example/${row.livenessReferenceKey}?ttl=300&name=liveness_reference.jpg", dto.files!!.livenessReference)
+        assertEquals(listOf("id_front", "id_back", "selfie", "liveness_reference"), decisions().single().meta!!["files"])
+    }
+
+    @Test
+    fun `repeat matches carry email and the live suspended state`() {
+        val otherId = UUID.randomUUID()
+        val consent = OffsetDateTime.parse("2026-11-03T00:00:00Z")
+        withRecord().apply {
+            reasonCodes = listOf(SellerReasonCode.REPEAT_ACCOUNT_MATCH)
+            livenessConfidence = BigDecimal("97.50")
+            faceSimilarity = BigDecimal("99.20")
+            autoCheckedAt = consent
+            biometricConsentAt = consent
+            idNumberHmac = "ab".repeat(32)
+            repeatMatches = listOf(RepeatMatch(otherId, listOf(RepeatMatchKind.PHONE, RepeatMatchKind.ID_NUMBER)))
+        }
+        val other = User(id = otherId, email = "other@test.local", passwordHash = "unused", name = "O", role = Role.PHOTOGRAPHER)
+            .apply { suspendedAt = consent }
+        Mockito.`when`(userRepository.findAllById(listOf(otherId))).thenReturn(listOf(other))
+
+        val dto = service().adminView(adminId, userId)
+
+        assertEquals(listOf(com.quickpitik.dto.admin.RepeatMatchDto(otherId, "other@test.local", listOf("PHONE", "ID_NUMBER"), true)), dto.repeatMatches)
+        assertEquals(listOf("REPEAT_ACCOUNT_MATCH"), dto.reasonCodes)
+        assertEquals(BigDecimal("97.50"), dto.livenessConfidence)
+        assertEquals(BigDecimal("99.20"), dto.faceSimilarity)
+        assertEquals(consent, dto.autoCheckedAt)
+        assertEquals(consent, dto.biometricConsentAt)
+        assertTrue(dto.hasIdNumber)
+        assertFalse("ab".repeat(32) in dto.toString(), "the ID-number hash never leaves the server")
+    }
+
+    @Test
+    fun `admin list filters auto approved`() {
+        val row = withRecord(SellerDetailsStatus.AUTO_APPROVED).apply {
+            reasonCodes = listOf(SellerReasonCode.PASSED)
+            livenessConfidence = BigDecimal("98.00")
+            faceSimilarity = BigDecimal("99.90")
+            autoCheckedAt = OffsetDateTime.parse("2026-11-03T00:00:00Z")
+        }
+        Mockito.`when`(repository.findForAdmin(Mockito.eq(SellerDetailsStatus.AUTO_APPROVED) ?: SellerDetailsStatus.AUTO_APPROVED, anyArg()))
+            .thenReturn(PageImpl(listOf(row)))
+
+        val item = service().adminList("auto_approved", PaginationParams.of(0, 20)).items.single()
+
+        assertEquals("auto_approved", item.reviewState)
+        assertEquals(listOf("PASSED"), item.reasonCodes)
+        assertEquals(BigDecimal("98.00"), item.livenessConfidence)
+        assertEquals(BigDecimal("99.90"), item.faceSimilarity)
+        assertEquals(row.autoCheckedAt, item.autoCheckedAt)
+    }
+
+    @Test
     fun `the admin view of a photographer with no record answers 404 and logs nothing`() {
         assertFailsWith<NotFoundException> { service().adminView(adminId, userId) }
         assertTrue(decisions().isEmpty())
@@ -641,7 +834,7 @@ class SellerDetailsServiceTest {
     fun `after a reject the upload gate refuses, after a resubmission it passes`() {
         val row = withRecord()
         service().reject(adminId, userId, 4, "blurry")
-        assertTrue(row.status == SellerDetailsStatus.REJECTED, "the gate (existsByUserIdAndStatusNot REJECTED) refuses this row")
+        assertTrue(row.status == SellerDetailsStatus.REJECTED, "the gate (existsByUserIdAndStatusIn uploadGateSet) refuses this row")
 
         service().submit(userId, form())
 
