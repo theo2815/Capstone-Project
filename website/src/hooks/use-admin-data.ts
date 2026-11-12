@@ -1,6 +1,7 @@
 "use client";
 
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import { useInfiniteList } from "@/hooks/use-infinite-list";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,6 +11,12 @@ import {
   hideAdminFlag,
   dismissAdminFlag,
   escalateAdminFlag,
+  resolveAdminFlag,
+  confirmFlagPayoutHold,
+  hideFlagBatch,
+  restoreFlagHiddenPhoto,
+  fetchFlagRelevance,
+  fetchFlagHiddenPhotos,
   fetchAdminSalesKpis,
   fetchAdminSalesByEvent,
   type AdminKpis,
@@ -19,7 +26,7 @@ import {
   type AdminSalesKpis,
   type AdminSalesRange,
 } from "@/lib/api-admin";
-import type { Flag } from "@/lib/admin-flags";
+import type { Flag, HiddenPhoto, RelevanceEvidence } from "@/lib/admin-flags";
 import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { captureAuthSession } from "@/lib/auth-session";
@@ -98,7 +105,10 @@ export function useAdminFlags(
 export function useFlagActions() {
   const qc = useQueryClient();
   const mutation = useAdminMutation();
-    const settle = async (operation: () => Promise<unknown>): Promise<boolean> => {
+    const settle = async (
+      operation: () => Promise<unknown>,
+      extraKeys: readonly (readonly string[])[] = [],
+    ): Promise<boolean> => {
       const auth = useAuthStore.getState();
       if (!auth.isAuthenticated || auth.user?.role !== "ADMIN") return false;
       const isCurrent = captureAuthSession();
@@ -112,14 +122,20 @@ export function useFlagActions() {
       const refresh = await Promise.allSettled([
         qc.invalidateQueries({ queryKey: ["admin", "flags"] }, { throwOnError: true }),
         qc.invalidateQueries({ queryKey: ["admin", "kpis"] }, { throwOnError: true }),
+        ...extraKeys.map((key) => qc.invalidateQueries({ queryKey: [...key] }, { throwOnError: true })),
       ]);
       if (isCurrent() && refresh.some((result) => result.status === "rejected")) {
         useToastStore.getState().showToast({ kind: "info", message: "Flag action saved, but the list could not refresh. Reload before taking another action." });
       }
       return isCurrent();
     };
-    const run = async (id: string, action: string, execute: () => Promise<unknown>) => {
-      const result = await mutation.run({ targets: [{ kind: "flag", id }], action, execute: () => settle(execute) });
+    const run = async (
+      id: string,
+      action: string,
+      execute: () => Promise<unknown>,
+      extraKeys: readonly (readonly string[])[] = [],
+    ) => {
+      const result = await mutation.run({ targets: [{ kind: "flag", id }], action, execute: () => settle(execute, extraKeys) });
       return result.kind === "completed" && result.value;
     };
     return {
@@ -131,7 +147,44 @@ export function useFlagActions() {
         run(flagId, "Dismissing…", () => dismissAdminFlag(flagId, reason)),
       escalate: (flagId: string, note: string | null) =>
         run(flagId, "Escalating…", () => escalateAdminFlag(flagId, note)),
+      // PE-2.7: relevance flags only.
+      resolve: (flagId: string, note: string | null = null) =>
+        run(flagId, "Resolving…", () => resolveAdminFlag(flagId, note)),
+      // A confirmed hold also refreshes the payout queues, which show the hold.
+      confirmHold: (flagId: string) =>
+        run(flagId, "Holding payouts…", () => confirmFlagPayoutHold(flagId), [["admin", "payouts"]]),
+      hideBatch: (flagId: string, eventId: string, note: string | null = null) =>
+        run(flagId, "Hiding batch…", () => hideFlagBatch(flagId, eventId, note)),
+      restorePhoto: (flagId: string, photoId: string) =>
+        run(flagId, "Restoring photo…", () => restoreFlagHiddenPhoto(flagId, photoId)),
     };
+}
+
+// PE-2.7: the evidence behind a relevance flag. Keys sit under ["admin","flags"]
+// so `settle` refreshes them after every flag action.
+export function useFlagRelevance(flagId: string) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useQuery<RelevanceEvidence>({
+    queryKey: ["admin", "flags", "relevance", flagId, ...session.key],
+    queryFn: ({ signal }) => fetchFlagRelevance(flagId, signal),
+    staleTime: LIST_STALE_MS,
+    enabled: session.enabled && ADMIN_FLAGS_ENABLED,
+  });
+}
+
+export function useFlagHiddenPhotos(flagId: string) {
+  const session = usePrivateQuerySession("ADMIN");
+  // Paged with the shared offset adapter; restored rows stay in the list, so every page is reachable.
+  return useInfiniteList<HiddenPhoto & { id: string }>({
+    queryKey: ["admin", "flags", "hidden-photos", flagId, ...session.key],
+    fetchPage: async (offset, limit, signal) => {
+      const page = await fetchFlagHiddenPhotos(flagId, { offset, limit }, signal);
+      return { ...page, items: page.items.map((p) => ({ ...p, id: p.photoId })) };
+    },
+    limit: 100,
+    staleTime: LIST_STALE_MS,
+    enabled: session.enabled && ADMIN_FLAGS_ENABLED,
+  });
 }
 
 // ───────────────────────────────────────────── Sales

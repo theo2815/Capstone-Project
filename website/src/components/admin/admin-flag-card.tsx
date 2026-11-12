@@ -7,9 +7,14 @@ import {
   type FlagStatus,
   canDismiss,
   canEscalate,
+  canConfirmHold,
   canHide,
+  canResolve,
   flagEventName,
   flagReasonLabel,
+  relevanceConfirmText,
+  serverMessage,
+  type FlagConfirmKind,
 } from "@/lib/admin-flags";
 import { useFlagActions } from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
@@ -46,6 +51,8 @@ const DONE_LABEL = {
   hide: "Hidden",
   dismiss: "Dismissed",
   escalate: "Escalated",
+  hold: "Payouts on hold",
+  resolve: "Resolved",
 } as const;
 
 const STATUS_LABEL: Record<FlagStatus, string> = {
@@ -78,12 +85,16 @@ export function AdminFlagCard({
   focused = false,
 }: AdminFlagCardProps) {
   const { showToast } = useToast();
-  const { hide, dismiss, escalate, isPending, pendingAction } = useFlagActions();
+  const { hide, dismiss, escalate, resolve, confirmHold, isPending, pendingAction } = useFlagActions();
   const submitting = isPending(flag.id);
 
   const [hideOpen, setHideOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
-  const [confirmDismiss, setConfirmDismiss] = useState(false);
+  // One inline confirm at a time: hold, resolve or dismiss.
+  const [confirm, setConfirm] = useState<FlagConfirmKind | null>(null);
+  const confirmDismiss = confirm === "dismiss";
+  const relevance = canResolve(flag);
+  const toggleConfirm = (kind: FlagConfirmKind) => setConfirm((c) => (c === kind ? null : kind));
 
   const eventName = flagEventName(flag);
   const cover = syntheticCoverGradient(flag.id);
@@ -91,17 +102,19 @@ export function AdminFlagCard({
   const actionable = canDismiss(flag);
 
   async function run(
-    verb: "hide" | "dismiss" | "escalate",
+    verb: keyof typeof DONE_LABEL,
     action: () => Promise<boolean>,
   ) {
     try {
       if (!(await action())) return false;
       showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${flag.id}` });
       return true;
-    } catch {
+    } catch (error) {
       showToast({
         kind: "error",
-        message: `Could not ${verb} ${flag.id} — check the current status before retrying.`,
+        message:
+          serverMessage(error) ??
+          `Could not ${verb} ${flag.id} — check the current status before retrying.`,
       });
     }
   }
@@ -109,7 +122,13 @@ export function AdminFlagCard({
     if (await run("hide", () => hide(flag.id, reason))) setHideOpen(false);
   }
   async function handleDismiss() {
-    if (await run("dismiss", () => dismiss(flag.id))) setConfirmDismiss(false);
+    if (await run("dismiss", () => dismiss(flag.id))) setConfirm(null);
+  }
+  async function handleHold() {
+    if (await run("hold", () => confirmHold(flag.id))) setConfirm(null);
+  }
+  async function handleResolve() {
+    if (await run("resolve", () => resolve(flag.id))) setConfirm(null);
   }
   async function handleEscalate(note: string | null) {
     if (await run("escalate", () => escalate(flag.id, note))) setEscalateOpen(false);
@@ -119,7 +138,8 @@ export function AdminFlagCard({
     if (onOpen) onOpen();
   }
   function handleArticleKeyDown(e: React.KeyboardEvent<HTMLElement>) {
-    if (!onOpen) return;
+    // Keys pressed on a button or link inside the card belong to that control.
+    if (!onOpen || e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onOpen();
@@ -179,6 +199,12 @@ export function AdminFlagCard({
 
         <p className="font-sans text-sm text-ink-soft">{flag.note}</p>
 
+        {flag.payoutHoldAt && (
+          <p className="font-sans text-sm font-medium text-ink tnum">
+            Payouts on hold since {formatLongDate(flag.payoutHoldAt)}
+          </p>
+        )}
+
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
           {flag.reportedBy === "system"
             ? "System"
@@ -235,12 +261,38 @@ export function AdminFlagCard({
                 Hide…
               </button>
             )}
+            {canConfirmHold(flag) && (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleConfirm("hold");
+                }}
+                className={dangerBtn}
+              >
+                {confirm === "hold" ? "Cancel" : "Hold payouts"}
+              </button>
+            )}
+            {relevance && (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleConfirm("resolve");
+                }}
+                className={tertiaryBtn}
+              >
+                {confirm === "resolve" ? "Cancel" : "Resolve"}
+              </button>
+            )}
             <button
               type="button"
                 disabled={submitting}
               onClick={(e) => {
                 e.stopPropagation();
-                setConfirmDismiss((v) => !v);
+                toggleConfirm("dismiss");
               }}
               className={tertiaryBtn}
             >
@@ -266,26 +318,30 @@ export function AdminFlagCard({
           </div>
         )}
 
-        {confirmDismiss && actionable && (
+        {confirm && actionable && (
           <div
             onClick={(e) => e.stopPropagation()}
             className="rounded-xl border border-line bg-bone-deep p-4 space-y-3"
           >
             <p className="font-sans text-sm text-ink-soft">
-              {flag.status === "hidden"
-                ? "Reopen the photo for runners (unless another hidden flag still targets it) and mark this flag a false alarm."
-                : "Mark this flag a false alarm. The photo stays live, no action against the photographer. The dismissal is logged."}
+              {relevance || confirm === "hold"
+                ? relevanceConfirmText(confirm)
+                : flag.status === "hidden"
+                  ? "Reopen the photo for runners (unless another hidden flag still targets it) and mark this flag a false alarm."
+                  : "Mark this flag a false alarm. The photo stays live, no action against the photographer. The dismissal is logged."}
             </p>
             <button
               type="button"
                 disabled={submitting}
               onClick={(e) => {
                 e.stopPropagation();
-                handleDismiss();
+                if (confirm === "hold") handleHold();
+                else if (confirm === "resolve") handleResolve();
+                else handleDismiss();
               }}
               className={`${secondaryBtn} w-full`}
             >
-              Confirm dismiss
+              {confirm === "hold" ? "Confirm hold" : confirm === "resolve" ? "Confirm resolve" : "Confirm dismiss"}
             </button>
           </div>
         )}
