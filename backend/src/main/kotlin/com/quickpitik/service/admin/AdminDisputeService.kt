@@ -13,10 +13,13 @@ import com.quickpitik.dto.admin.DisputeDenyReasonDto
 import com.quickpitik.dto.admin.DisputeOrderSnapshotDto
 import com.quickpitik.dto.admin.DisputePhotoSnapshotDto
 import com.quickpitik.dto.admin.ResolveDisputeRequest
+import com.quickpitik.dto.admin.RunnerDisputeHistoryDto
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeResolution
 import com.quickpitik.entity.DisputeStatus
+import com.quickpitik.entity.DownloadGrant
+import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.OrderItem
@@ -33,6 +36,8 @@ import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
+import com.quickpitik.repository.DownloadGrantRepository
+import com.quickpitik.repository.RunnerDisputeCount
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -75,6 +80,7 @@ class AdminDisputeService(
     private val eventRepository: EventRepository,
     private val userRepository: UserRepository,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
+    private val downloadGrantRepository: DownloadGrantRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
@@ -410,6 +416,12 @@ class AdminDisputeService(
             disputes.filter { it.refundabilityShown() }
                 .mapNotNullTo(mutableSetOf()) { paymentsByOrder[it.orderId].orEmpty().settledPaymongo()?.providerRef },
         )
+        val grantsById = downloadGrantRepository
+            .findAllById(disputes.map { DownloadGrantId(it.orderId, it.photoId) })
+            .associateBy { it.id }
+        val runnerIds = disputes.mapNotNullTo(mutableSetOf()) { it.runnerId }
+        val countsByRunner = if (runnerIds.isEmpty()) emptyMap() else
+            disputeRepository.countByRunnerAndStatus(runnerIds).groupBy { it.runnerId }
         // One clock read per page (the caller's `now`), so no row crosses a deadline mid-page.
         return disputes.map { d ->
             val order = ordersById[d.orderId]
@@ -426,6 +438,8 @@ class AdminDisputeService(
                 event = (order?.eventId ?: photo?.eventId)?.let { eventsById[it] },
                 now = now,
                 checkoutByRef = checkoutByRef,
+                grant = grantsById[DownloadGrantId(d.orderId, d.photoId)],
+                runnerCounts = d.runnerId?.let { countsByRunner[it] }.orEmpty(),
             )
         }
     }
@@ -473,6 +487,9 @@ class AdminDisputeService(
         now: OffsetDateTime = OffsetDateTime.now(clock),
         // null: load this one dispute's checkout if its refundability is shown.
         checkoutByRef: Map<String, CheckoutFacts>? = null,
+        grant: DownloadGrant? = downloadGrantRepository.findById(DownloadGrantId(dispute.orderId, dispute.photoId)).orElse(null),
+        runnerCounts: List<RunnerDisputeCount> =
+            dispute.runnerId?.let { disputeRepository.countByRunnerAndStatus(listOf(it)) }.orEmpty(),
     ): AdminDisputeDto {
         // A runnerId that no longer resolves still reads as "" (deleted user),
         // never as the guest-email fallback — matches the pre-batching logic.
@@ -544,6 +561,23 @@ class AdminDisputeService(
             refundBlockedReason = blocker?.wire,
             refundBlockedMessage = blocker?.message,
             paymentPhotoCount = checkout?.photoCount,
+            downloadCount = grant?.downloadCount,
+            lastDownloadedAt = grant?.lastDownloadedAt?.toString(),
+            runnerHistory = dispute.runnerId?.let { runnerHistory(dispute, runnerCounts) },
+        )
+    }
+
+    // The runner's requests per status, this dispute's own row left out.
+    private fun runnerHistory(dispute: Dispute, counts: List<RunnerDisputeCount>): RunnerDisputeHistoryDto {
+        val byStatus = counts.groupingBy { it.statusWire }.fold(0L) { sum, row -> sum + row.n }.toMutableMap()
+        byStatus.computeIfPresent(dispute.status.wire) { _, n -> (n - 1).coerceAtLeast(0) }
+        fun rows(vararg statuses: String) = statuses.sumOf { byStatus[it] ?: 0L }.toInt()
+        return RunnerDisputeHistoryDto(
+            total = byStatus.values.sum().toInt(),
+            refunded = rows(DisputeStatus.RESOLVED.wire),
+            denied = rows(DisputeStatus.DENIED.wire),
+            withdrawn = rows(DisputeStatus.WITHDRAWN.wire),
+            open = rows(DisputeStatus.OPEN.wire, DisputeStatus.ESCALATED.wire),
         )
     }
 
