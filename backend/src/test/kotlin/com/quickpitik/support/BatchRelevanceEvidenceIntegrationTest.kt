@@ -6,9 +6,12 @@ import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PhotoMetadataRepository
+import com.quickpitik.repository.PhotoRepository
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -25,6 +28,8 @@ class BatchRelevanceEvidenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var metadata: PhotoMetadataRepository
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired private lateinit var flags: FlagRepository
+    @Autowired private lateinit var photos: PhotoRepository
+    @Autowired private lateinit var txManager: PlatformTransactionManager
 
     @Test
     fun `a saved capture time comes back equal through the entity mapping`() {
@@ -261,5 +266,33 @@ class BatchRelevanceEvidenceIntegrationTest : PostgresIntegrationTest() {
 
     private companion object {
         val NOW: OffsetDateTime = OffsetDateTime.parse("2002-06-09T08:00:00.123456Z")
+    }
+
+    // ─── PE-2.4: the evidence survives a batch hide ───────────────────────
+
+    @Test
+    fun `the evidence and the level survive a batch hide and a later scoring`() {
+        val e = event()
+        val theirs = photo(e, photographer())
+        val me = photographer()
+        val flag = flag(me)
+        val batch = batch(e, me, flag)
+        val a = photo(e, me).also { lookup(it, batch, theirs, 0) }
+        photo(e, me).also { lookup(it, batch, theirs, 2) }
+        jdbc.update("UPDATE batch_relevance SET level = 'LOW', copy_low = true WHERE id = ?", batch)
+        val before = batches.batchCounts(e, me, 8, 14).let { listOf(it.tightHits, it.lookups) }
+        val samplesBefore = batches.copySamples(batch, 12).map { it.photoId }
+
+        TransactionTemplate(txManager).execute {
+            flags.recordBatchHide(flag, e, me, NOW)
+            photos.hideRecordedForFlag(flag)
+        }
+
+        assertEquals("HIDDEN", jdbc.queryForObject("SELECT status FROM photos WHERE id = ?", String::class.java, a))
+        // A scoring reads LIVE and HIDDEN alike, so the counts, the samples and the stored level are what they were.
+        assertEquals(before, batches.batchCounts(e, me, 8, 14).let { listOf(it.tightHits, it.lookups) })
+        assertEquals(listOf(2L, 2L), before)
+        assertEquals(samplesBefore, batches.copySamples(batch, 12).map { it.photoId })
+        assertEquals("LOW", jdbc.queryForObject("SELECT level FROM batch_relevance WHERE id = ?", String::class.java, batch))
     }
 }
