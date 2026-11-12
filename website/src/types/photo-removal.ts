@@ -94,3 +94,37 @@ export interface RemovalSupportUpdateCommand extends MatchRemovalCommand { note:
 export interface RemovalRequestFilters { offset?: number; limit?: number; eventId?: string; status?: RemovalRequestStatus; needsAction?: boolean }
 export interface RemovalPhotoFilters { offset?: number; limit?: number; bib?: string }
 export interface RemovalPageFilters { offset?: number; limit?: number }
+
+// Runner self-serve deletion (RD-11). Codes stay codes; the page owns the copy.
+export interface RunnerRemovalReason { code: string; label: string }
+export type RunnerRemovalBlockedReason =
+  | "EVENT_NOT_ELIGIBLE" | "AI_OFF" | "FACE_DATA_EXPIRED" | "INTAKE_CLOSED" | "REQUEST_OPEN" | "TOO_MANY_OPEN" | "ATTEMPTS_EXHAUSTED";
+export interface RunnerRemovalEligibility {
+  eligible: boolean;
+  blockedReason: RunnerRemovalBlockedReason | null;
+  attemptsLeftToday: number;
+  emailVerified: boolean;
+  openRequestId: string | null;
+}
+export type RunnerRemovalStatus =
+  | "PROCESSING" | "PENDING_ADMIN_REVIEW" | "ADDITIONAL_VERIFICATION_REQUIRED" | "NO_MATCHES_FOUND"
+  | "APPROVED" | "REJECTED" | "COMPLETED" | "WITHDRAWN";
+export interface RunnerSubmitResult { requestId: string; status: RunnerRemovalStatus; hiddenCount: number; suggestedCount: number }
+/** Short-lived STS keys for the browser's one liveness call; never logged or stored. */
+export interface RunnerLivenessSession {
+  sessionId: string;
+  region: string;
+  attemptsLeftToday: number;
+  credentials: { accessKeyId: string; secretAccessKey: string; sessionToken: string; expiration: string } | null;
+}
+// RD-12: status, counts and a timeline only (backend RunnerPhotoRemovalDtos.kt): no photo ids, images or scores.
+export interface RunnerRemovalCounts { hidden: number; suggested: number; removed: number; kept: number }
+export interface RunnerRemovalRequestDto {
+  id: string; eventId: string; eventName: string; status: RunnerRemovalStatus; createdAt: string; updatedAt: string;
+  version: number; canWithdraw: boolean; counts: RunnerRemovalCounts;
+}
+export type RunnerTimelineStep =
+  | "SUBMITTED" | "PHOTOS_HIDDEN" | "SENT_FOR_REVIEW" | "MORE_INFO_NEEDED" | "APPROVED" | "KEPT" | "WITHDRAWN" | "CLOSED";
+export interface RunnerRemovalRequestDetailDto extends RunnerRemovalRequestDto { timeline: { at: string; step: RunnerTimelineStep }[] }
+export interface StartRunnerLivenessCommand { eventId: string; biometricConsent: true; consentVersion: string }
+export interface SubmitRunnerRemovalCommand { sessionId: string; eventId: string; reasonCode: string; details?: string }

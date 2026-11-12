@@ -1,11 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Slab } from "@/components/profile-shell";
-import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { PAGE_SIZE } from "@/lib/pagination-config";
+import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import {
@@ -15,43 +12,79 @@ import {
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminDisputeActivityList } from "@/components/admin/admin-dispute-activity-list";
 import { AdminDisputeActionAside } from "@/components/admin/admin-dispute-action-aside";
-import { useAdminDispute, useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
+import { useAdminDispute, useAdminDisputePage, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import {
   type Dispute,
   type DisputeResolution,
+  DISPUTE_PAYMENT_LABEL,
   DISPUTE_REASON_LABEL,
   DISPUTE_RESOLUTION_LABEL,
   DISPUTE_STATUS_LABEL,
   disputeStatusTone,
 } from "@/lib/admin-disputes";
+import type { AdminDisputeView } from "@/lib/api-admin";
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { formatLongDate } from "@/lib/format";
-import { formatPrice } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 
-const PAYMENT_LABEL: Record<string, string> = {
-  gcash: "GCash",
-  maya: "Maya",
-  paymaya: "PayMaya",
-  card: "Card",
-  grabpay: "GrabPay",
-};
+// The server's views (no status filter in the UI on purpose; the server keeps `status=`).
+type QueueView = Extract<AdminDisputeView, "needs_me" | "overdue" | "closed" | "all">;
+const VIEWS: readonly { value: QueueView; label: string; empty: string }[] = [
+  { value: "needs_me", label: "Needs you", empty: "Nothing needs you right now." },
+  { value: "overdue", label: "Overdue", empty: "Nothing is overdue." },
+  { value: "closed", label: "Closed", empty: "No closed disputes yet." },
+  { value: "all", label: "All", empty: "No disputes yet." },
+];
+const parseView = (raw: string): QueueView =>
+  VIEWS.some((v) => v.value === raw) ? (raw as QueueView) : "needs_me";
+const SEARCH_DEBOUNCE_MS = 300;
+// The server's page size when the request names none (PaginationParams.DEFAULT_LIMIT).
+const SERVER_PAGE_SIZE = 50;
 
-// Disputes queue body — extracted from /admin/disputes/page.tsx so the
-// universal /admin/inbox can render the same four slabs (Open / Resolved
-// / Denied / Escalated) under the chip filter. Header stays on the
-// dedicated page; this component renders only the slab stack.
+// Disputes queue body, shared by /admin/disputes and /admin/inbox. The
+// server sorts and pages each view ("Needs you" is due time first); the
+// header stays on the dedicated page.
 //
-// Phase 3 adds a focus-mode drawer. Card click → drawer with full
-// detail (claim, photo, parties, activity log) and the shared
-// <AdminDisputeActionAside> in the footer. URL state via ?row=<disputeId>;
-// the old /admin/disputes/[id] route redirects here. The aside owns its
-// modals and reports when one is open, so the drawer's ESC stands down.
+// Card click → drawer with full detail (claim, photo, parties, activity
+// log) and the shared <AdminDisputeActionAside> in the footer. URL state
+// via ?row=<disputeId>; the old /admin/disputes/[id] route redirects here.
+// The aside owns its modals and reports when one is open, so the drawer's
+// ESC stands down.
 
 export function DisputesQueue() {
-  const query = useAdminDisputes();
-  const effective = query.data ?? EMPTY_DISPUTES;
+  const [view, setView] = useUrlState<QueueView>("view", "needs_me", { parse: parseView });
+  const [q, setQ] = useUrlState<string>("q", "");
+  // The box holds what is typed; the URL (and the request) get it trimmed, after a pause.
+  const [qDraft, setQDraft] = useState(q);
+  const [qSeen, setQSeen] = useState(q);
+  if (q !== qSeen) {
+    // q changed from outside (back button, a link): show it in the box.
+    setQSeen(q);
+    if (q !== qDraft.trim()) setQDraft(q);
+  }
+  useEffect(() => {
+    const next = qDraft.trim();
+    if (next === q) return;
+    const timer = setTimeout(() => setQ(next), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [qDraft, q, setQ]);
+
+  // A new view or search starts at the first page.
+  const pageScope = `${view}|${q}`;
+  const [paging, setPaging] = useState({ scope: pageScope, offset: 0 });
+  const offset = paging.scope === pageScope ? paging.offset : 0;
+  const goTo = (next: number) => setPaging({ scope: pageScope, offset: next });
+
+  const query = useAdminDisputePage({ view, q: q || undefined, offset });
+  const items = query.data?.items ?? EMPTY_DISPUTES;
+  const total = query.data?.total ?? 0;
+  const limit = query.data?.limit || SERVER_PAGE_SIZE;
+  // Rows left this page (decided, or the view shrank): step back to the last page that has rows.
+  if (query.isSuccess && !query.isPlaceholderData && items.length === 0 && offset > 0) {
+    goTo(Math.floor(Math.max(total - 1, 0) / limit) * limit);
+  }
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
   // Any aside dialog (resolve, refund confirm, deny, escalate, refund panel) is open; the drawer must ignore Esc.
@@ -59,9 +92,9 @@ export function DisputesQueue() {
 
   const byId = useMemo(() => {
     const map = new Map<string, Dispute>();
-    for (const d of effective) map.set(d.id, d);
+    for (const d of items) map.set(d.id, d);
     return map;
-  }, [effective]);
+  }, [items]);
 
   // A ?row= link to a dispute outside the loaded list is fetched by id.
   const fallbackId = query.isSuccess && rowId && !byId.has(rowId) ? rowId : "";
@@ -77,74 +110,13 @@ export function DisputesQueue() {
     if (fallbackId && fallback.isSuccess && fallback.data === null) setRowId("");
   }, [fallbackId, fallback.isSuccess, fallback.data, setRowId]);
 
-  const open = useMemo(
-    () =>
-      [...effective.filter((d) => d.status === "open")].sort((a, b) =>
-        a.reportedAt.localeCompare(b.reportedAt),
-      ),
-    [effective],
-  );
-  const resolved = useMemo(
-    () =>
-      [...effective.filter((d) => d.status === "resolved")].sort((a, b) =>
-        (b.resolvedAt ?? "").localeCompare(a.resolvedAt ?? ""),
-      ),
-    [effective],
-  );
-  const denied = useMemo(
-    () =>
-      [...effective.filter((d) => d.status === "denied")].sort((a, b) =>
-        (b.resolvedAt ?? "").localeCompare(a.resolvedAt ?? ""),
-      ),
-    [effective],
-  );
-  const escalated = useMemo(
-    () =>
-      [...effective.filter((d) => d.status === "escalated")].sort((a, b) =>
-        b.reportedAt.localeCompare(a.reportedAt),
-      ),
-    [effective],
-  );
-
   const drawerEscDisabled = asideDialogOpen;
 
-  // Pagination — load-more model. Open keeps full visibility because
-  // that's where the triage flow + J/K nav land. Read-only history slabs
-  // start at 10 and grow by 10 per click.
-  const [resolvedLoaded, setResolvedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const [deniedLoaded, setDeniedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const [escalatedLoaded, setEscalatedLoaded] = useState(
-    PAGE_SIZE.ADMIN_INITIAL,
-  );
-  const resolvedVisible = useMemo(
-    () => resolved.slice(0, resolvedLoaded),
-    [resolved, resolvedLoaded],
-  );
-  const deniedVisible = useMemo(
-    () => denied.slice(0, deniedLoaded),
-    [denied, deniedLoaded],
-  );
-  const escalatedVisible = useMemo(
-    () => escalated.slice(0, escalatedLoaded),
-    [escalated, escalatedLoaded],
-  );
-
-  // Keyboard nav iterates through every dispute slab in render order.
+  // Keyboard nav walks the rows on this page, in server order.
   // Resolve/Deny/Escalate aren't part of the E/R/H/S verb whitelist, so
   // the drawer doesn't register verbs — keystrokes inside the drawer fall
-  // through to ESC + the click-only footer buttons. Use the visible
-  // slices for paginated slabs so J/K only visits rows that are currently
-  // rendered.
-  const rowIds = useMemo(
-    () =>
-      [
-        ...open,
-        ...resolvedVisible,
-        ...deniedVisible,
-        ...escalatedVisible,
-      ].map((d) => d.id),
-    [open, resolvedVisible, deniedVisible, escalatedVisible],
-  );
+  // through to ESC + the click-only footer buttons.
+  const rowIds = useMemo(() => items.map((d) => d.id), [items]);
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
     rowIds,
@@ -174,73 +146,76 @@ export function DisputesQueue() {
     </div>
   );
 
+  const emptyText = q
+    ? `No disputes match “${q}”.`
+    : VIEWS.find((v) => v.value === view)?.empty;
+
   return (
     <>
-      <DisputeSlab
-        id="open"
-        number="01"
-        title="Open"
-        caption="Awaiting decision"
-        totalCount={open.length}
-        rows={open}
-        empty="No open disputes — queue is clear."
-        onOpenRow={handleOpenRow}
-        focusedId={focusedId}
-      />
-      <DisputeSlab
-        id="resolved"
-        number="02"
-        title="Resolved"
-        caption="Closed with refund"
-        totalCount={resolved.length}
-        rows={resolvedVisible}
-        empty="No resolved disputes yet."
-        onOpenRow={handleOpenRow}
-        focusedId={focusedId}
-        loadMore={{
-          shown: resolvedVisible.length,
-          total: resolved.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setResolvedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />
-      <DisputeSlab
-        id="denied"
-        number="03"
-        title="Denied"
-        caption="Closed without refund"
-        totalCount={denied.length}
-        rows={deniedVisible}
-        empty="No denied disputes."
-        onOpenRow={handleOpenRow}
-        focusedId={focusedId}
-        loadMore={{
-          shown: deniedVisible.length,
-          total: denied.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setDeniedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />
-      <DisputeSlab
-        id="escalated"
-        number="04"
-        title="Escalated"
-        caption="Pushed to higher review"
-        totalCount={escalated.length}
-        rows={escalatedVisible}
-        empty="No escalations."
-        onOpenRow={handleOpenRow}
-        focusedId={focusedId}
-        loadMore={{
-          shown: escalatedVisible.length,
-          total: escalated.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setEscalatedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />
+      <div className="pt-6 md:pt-8 space-y-6">
+        {/* Side by side from lg only: at md the admin rail leaves too narrow a column. */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div role="tablist" aria-label="Dispute views" className="flex flex-wrap gap-2">
+            {VIEWS.map((v) => {
+              const active = view === v.value;
+              return (
+                <button
+                  key={v.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setView(v.value)}
+                  className={cn(
+                    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
+                    active
+                      ? "bg-ink text-bone border border-ink"
+                      : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",
+                  )}
+                >
+                  {v.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="lg:w-80">
+            <label htmlFor="dispute-search" className="sr-only">
+              Search disputes
+            </label>
+            <input
+              id="dispute-search"
+              type="search"
+              value={qDraft}
+              onChange={(e) => setQDraft(e.target.value)}
+              placeholder="Runner, photographer, event, or an ID"
+              className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
+            />
+          </div>
+        </div>
+
+        {items.length === 0 ? (
+          <p className="font-sans text-sm text-slate-soft">{emptyText}</p>
+        ) : (
+          <ul className="space-y-4">
+            {items.map((row) => (
+              <li key={row.id}>
+                <AdminDisputeCard
+                  dispute={row}
+                  focused={focusedId === row.id}
+                  onOpen={() => handleOpenRow(row.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {total > limit && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset === 0} onClick={() => goTo(Math.max(0, offset - limit))}>← Previous</button>
+            <span className="font-mono tnum text-sm text-slate">{offset + 1}–{offset + items.length} of {total}</span>
+            <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset + items.length >= total} onClick={() => goTo(offset + items.length)}>Next →</button>
+          </div>
+        )}
+      </div>
 
       {openRow && (
         <AdminDetailDrawer
@@ -283,72 +258,6 @@ export function DisputesQueue() {
   );
 }
 
-function DisputeSlab({
-  id,
-  number,
-  title,
-  caption,
-  rows,
-  totalCount,
-  empty,
-  onOpenRow,
-  focusedId,
-  loadMore,
-}: {
-  id: string;
-  number: string;
-  title: string;
-  caption: string;
-  rows: Dispute[];
-  totalCount: number;
-  empty: string;
-  onOpenRow: (id: string) => void;
-  focusedId: string | null;
-  loadMore?: {
-    shown: number;
-    total: number;
-    increment: number;
-    onLoadMore: () => void;
-  };
-}) {
-  const noun = totalCount === 1 ? "dispute" : "disputes";
-  return (
-    <Slab
-      id={id}
-      number={number}
-      title={title}
-      caption={caption}
-      trailing={`${totalCount} ${noun}`}
-    >
-      {totalCount === 0 ? (
-        <p className="font-sans text-sm text-slate-soft">{empty}</p>
-      ) : (
-        <>
-          <ul className="space-y-4">
-            {rows.map((row) => (
-              <li key={row.id}>
-                <AdminDisputeCard
-                  dispute={row}
-                  focused={focusedId === row.id}
-                  onOpen={() => onOpenRow(row.id)}
-                />
-              </li>
-            ))}
-          </ul>
-          {loadMore && (
-            <LoadMoreButton
-              shown={loadMore.shown}
-              total={loadMore.total}
-              increment={loadMore.increment}
-              onLoadMore={loadMore.onLoadMore}
-            />
-          )}
-        </>
-      )}
-    </Slab>
-  );
-}
-
 function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
   const eventName = dispute.eventName ?? "Event archived";
   return (
@@ -365,7 +274,7 @@ function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
 function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
   const eventName = dispute.eventName ?? "Event archived";
   const paymentLabel =
-    PAYMENT_LABEL[dispute.orderSnapshot.paymentMethod] ??
+    DISPUTE_PAYMENT_LABEL[dispute.orderSnapshot.paymentMethod] ??
     dispute.orderSnapshot.paymentMethod;
   const thumbnailUrl = dispute.photoSnapshot.thumbnailUrl;
   const [previewOpen, setPreviewOpen] = useState(false);

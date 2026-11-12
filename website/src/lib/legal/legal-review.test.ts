@@ -34,8 +34,7 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  // AA-I21: the adviser-signed 1.3 text (sign-off 2026-11-11) passes the production guard.
-  it("passes the production guard with version 1.3", () => {
+  it("passes the production guard with version 1.4", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
@@ -43,7 +42,7 @@ describe("approved text (PT-0b)", () => {
         "production",
       ),
     ).not.toThrow();
-    expect(LEGAL_VERSION).toBe("1.3");
+    expect(LEGAL_VERSION).toBe("1.4");
   });
 
   it("says both selfie and bib searches ask for a tick first (BT-1, S10)", () => {
@@ -113,8 +112,8 @@ describe("seller checks text (SC-2a)", () => {
   });
 });
 
-// AA-I21: the adviser-signed 1.3 text (AA-0.7 draft, signed 2026-11-11), without the
-// runner-deletion parts until RD-11 merges (owner answer O1).
+// AA-I21: the adviser-signed 1.3 text (AA-0.7 draft, signed 2026-11-11). Its
+// runner-deletion parts came in 1.4 with RD-11 (owner answer O1, RD-15 part B).
 describe("legal 1.3 text (AA-I21)", () => {
   it("explains the seller checks: live selfie in Malaysia, ID number kept as a fingerprint", () => {
     const checks = section(PRIVACY_POLICY, "seller-checks");
@@ -139,8 +138,26 @@ describe("legal 1.3 text (AA-I21)", () => {
     expect(LEGAL_COPY.identityNotice).toContain("#seller-checks)");
   });
 
-  it("leaves out the runner deletion live check until RD-11 merges (O1)", () => {
-    const all = [text(PRIVACY_POLICY.sections), text(TERMS_OF_SERVICE.sections)].join("\n");
-    expect(all).not.toMatch(/Deletion requests with a live check|deletion live check|runner accounts can also ask on the website/);
+});
+
+// RD-15 part B: the runner-deletion parts of the signed 1.3 draft, shipped as 1.4 (O1).
+describe("legal 1.4 text (RD-15)", () => {
+  it("explains the deletion live check, where it runs and how long the image is kept", () => {
+    const face = section(PRIVACY_POLICY, "face-matching");
+    expect(face).toContain("**Deletion requests with a live check.**");
+    expect(face).toContain("When someone asks us by email to remove photos of them");
+    expect(section(PRIVACY_POLICY, "who-receives-it")).toContain("the live checks (for seller checks and deletion requests) in Malaysia");
+    expect(section(PRIVACY_POLICY, "how-long-we-keep-it")).toContain("Photo removal evidence, including the live-check image");
+    expect(section(PRIVACY_POLICY, "photos-of-you")).toContain("**With a runner account:**");
+    expect(section(PRIVACY_POLICY, "on-your-device")).toContain("(a seller check or a deletion request)");
+    expect(section(TERMS_OF_SERVICE, "photo-removal")).toContain("runner accounts can also ask on the website with a live check");
+  });
+
+  it("fills the four runner deletion texts with the signed wording", () => {
+    expect(JSON.stringify(LEGAL_COPY)).not.toContain("[ASK OWNER");
+    expect(LEGAL_COPY.runnerDeletionMailSubject).toBe("Photo deletion request");
+    expect(LEGAL_COPY.runnerDeletionTickLabel).toBe("I agree to the live check and to this face search. The photos I'm asking about are of me.");
+    expect(LEGAL_COPY.runnerDeletionNotice).toMatch(/^To find photos of you, we run a short live check/);
+    expect(LEGAL_COPY.runnerDeletionEmailInstead).toContain("subject=Photo%20deletion%20request)");
   });
 });

@@ -216,7 +216,7 @@ export const TERMS_OF_SERVICE: LegalDoc = {
       id: "photo-removal",
       heading: "Photo removal",
       blocks: [
-        "Anyone can ask us to remove a photo of them by email (see the [Privacy Policy](/privacy#photos-of-you)). The photographer gets 72 hours to respond, then QuickPitik makes the final decision. Photographers must follow removal decisions. Copies already downloaded by buyers cannot be recalled.",
+        "Anyone can ask us to remove a photo of them by email, and runner accounts can also ask on the website with a live check (see the [Privacy Policy](/privacy#photos-of-you)). Photos may be hidden while a request is reviewed. The photographer gets 72 hours to respond, then QuickPitik makes the final decision. Photographers must follow removal decisions. Copies already downloaded by buyers cannot be recalled.",
       ],
     },
     {

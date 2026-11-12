@@ -427,6 +427,7 @@ class PhotoRemovalService(
             }
             // Conditional availability writer clears the persistence context after its update.
             availability.refreshRemovalState(selectedIds.toSet())
+            publisher.publishEvent(removalChangedEvent(requestId, adminId, now))
             val detail = queries.adminDetail(adminId, requestId)
             val receipt = commands.findByCommandId(command.commandId)!!
             receipt.result = mapper.valueToTree(detail)
@@ -544,6 +545,7 @@ class PhotoRemovalService(
                 return@execute commands.findByCommandId(command.commandId)!!.replay(adminId, requestId, RemovalCommandOperation.CANCEL, hash, mapper)
             }
             closeCase(request, selected, RemovalActorType.ADMIN, adminId, command.commandId, command.reason, null, now)
+            publisher.publishEvent(removalChangedEvent(requestId, adminId, now))
             val result = queries.adminDetail(adminId, requestId)
             val receipt = commands.findByCommandId(command.commandId)!!
             receipt.result = mapper.valueToTree(result)
@@ -732,12 +734,14 @@ class PhotoRemovalService(
             request.updatedAt = now
             if (outcome.matchingUnavailable) {
                 requests.flush()
+                publisher.publishEvent(removalChangedEvent(requestId, null, now))
                 return@execute RunnerCaseResult(emptyList(), false, 0, 0)
             }
             if (outcome.candidates.isEmpty()) {
                 closeCase(request, existing, RemovalActorType.SYSTEM, null,
                     UUID.nameUUIDFromBytes("removal:runner:$requestId:no-matches".toByteArray()), "No matching photos",
                     RunnerRemovalCloseReason.NO_MATCHES, now)
+                publisher.publishEvent(removalChangedEvent(requestId, null, now))
                 purge = true
                 return@execute RunnerCaseResult(emptyList(), true, 0, 0)
             }

@@ -114,7 +114,7 @@ function AccountBody() {
               user={user}
               number={isPhotographer ? "03" : "04"}
             />
-            <DangerSlab number={isPhotographer ? "04" : "05"} />
+            <DangerSlab number={isPhotographer ? "04" : "05"} role={user.role} />
             {process.env.NODE_ENV === "development" && (
               <DevRoleSlab
                 number={isPhotographer ? "05" : "06"}
@@ -618,7 +618,7 @@ function DevRoleSlab({ user, number }: { user: User; number: string }) {
   );
 }
 
-function DangerSlab({ number }: { number: string }) {
+function DangerSlab({ number, role }: { number: string; role: User["role"] }) {
   const router = useRouter();
   const { logout } = useAuth();
 
@@ -651,6 +651,18 @@ function DangerSlab({ number }: { number: string }) {
         <p className="font-sans text-sm text-slate max-w-md">
           <LegalText text={LEGAL_COPY.deletionText} />
         </p>
+
+        {/* RD-12: runner accounts only; everyone else uses the email route. */}
+        {role === "RUNNER" && (
+          <div className="flex flex-col gap-3">
+            <Link href={ROUTES.ACCOUNT_PHOTO_DELETION_NEW} className="w-fit font-mono text-sm text-ink hover:text-fresh transition-colors">
+              Request photo deletion →
+            </Link>
+            <Link href={ROUTES.ACCOUNT_PHOTO_DELETION} className="w-fit font-mono text-sm text-ink hover:text-fresh transition-colors">
+              Your deletion requests →
+            </Link>
+          </div>
+        )}
       </div>
     </Slab>
   );

@@ -3,11 +3,14 @@
 import Link from "next/link";
 import {
   type Dispute,
+  DISPUTE_ATTENTION_LABEL,
+  DISPUTE_PAYMENT_LABEL,
   DISPUTE_REASON_LABEL,
   DISPUTE_STATUS_LABEL,
   disputeStatusTone,
 } from "@/lib/admin-disputes";
 import { ROUTES } from "@/lib/constants";
+import { formatSalesDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
 import { AdminStatusPill } from "./admin-status-pill";
 
@@ -32,10 +35,15 @@ export function AdminDisputeCard({
   onOpen,
   focused = false,
 }: AdminDisputeCardProps) {
+  // Undecided: the photo's own charge. Closed: what was refunded, so a partial refund shows its amount.
   const showAmount =
     dispute.status === "open" || dispute.status === "escalated"
-      ? dispute.orderSnapshot.total
+      ? dispute.itemChargeAmount ?? dispute.orderSnapshot.total
       : dispute.refundAmount ?? dispute.orderSnapshot.total;
+  const paymentLabel =
+    DISPUTE_PAYMENT_LABEL[dispute.orderSnapshot.paymentMethod] ??
+    dispute.orderSnapshot.paymentMethod;
+  const attentionLabel = dispute.attention ? DISPUTE_ATTENTION_LABEL[dispute.attention] : null;
 
   const inner = (
     <article
@@ -72,9 +80,22 @@ export function AdminDisputeCard({
           />
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
             {formatPrice(showAmount)}
+            <span className="text-slate-soft"> · {paymentLabel}</span>
           </p>
         </div>
       </div>
+      {(attentionLabel || dispute.dueAt) && (
+        // Full card width, so the chips fit at 375 px.
+        <div className="flex flex-wrap gap-2 mt-4">
+          {attentionLabel && <AdminStatusPill label={attentionLabel} tone="ink" className={CHIP} />}
+          {dispute.dueAt && (dispute.overdue
+            ? <AdminStatusPill label={`Overdue · ${formatSpan(Date.now() - new Date(dispute.dueAt).getTime())}`} tone="error" className={CHIP} />
+            : <AdminStatusPill label={`Due ${formatSalesDate(dispute.dueAt)}`} tone="muted" className={CHIP} />)}
+          {dispute.linkExpiringSoon && dispute.refundLinkExpiresAt && (
+            <AdminStatusPill label={`Link expires ${formatSalesDate(dispute.refundLinkExpiresAt)}`} tone="amber" className={CHIP} />
+          )}
+        </div>
+      )}
     </article>
   );
 
@@ -97,6 +118,16 @@ export function AdminDisputeCard({
       {inner}
     </Link>
   );
+}
+
+// Mono chips must not wrap mid-word at 375 px (ui-pitfalls 2026-05-06): one line, cut with an ellipsis.
+const CHIP = "block max-w-full truncate tnum";
+
+function formatSpan(ms: number): string {
+  const minutes = Math.max(Math.floor(ms / 60000), 1);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
 }
 
 function formatAge(iso: string): string {

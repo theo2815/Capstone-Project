@@ -29,6 +29,8 @@ export const ROUTES = {
   ORDERS_RETURN: "/orders/return",
   PROFILE: "/profile",
   ACCOUNT: "/account",
+  ACCOUNT_PHOTO_DELETION: "/account/photo-deletion",
+  ACCOUNT_PHOTO_DELETION_NEW: "/account/photo-deletion/new",
   DASHBOARD: "/dashboard",
   DASHBOARD_UPLOAD: "/dashboard/upload",
   DASHBOARD_EVENTS: "/dashboard/events",
