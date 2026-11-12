@@ -50,4 +50,7 @@ class BatchRelevance(
     @Column(name = "date_low") var dateLow: Boolean? = null,
     // NULL = not Low. Version 1 has only LOW (D22).
     @Column(name = "level", length = 8) var level: String? = null,
+    // PE-2.1: the relevance flag this batch raised or extended, and when.
+    @Column(name = "flag_id") var flagId: UUID? = null,
+    @Column(name = "flagged_at") var flaggedAt: OffsetDateTime? = null,
 )

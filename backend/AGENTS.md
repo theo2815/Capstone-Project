@@ -193,7 +193,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RACE_REPORT_HIDE_THRESHOLD` | `3` | Distinct accounts whose reports hide an unproven race. Not yet measured. |
 | `RACE_PRICE_CEILING_MULTIPLIER` | `2.0` | A photographer's own race price may go up to this times the race price (`PUT /me/photographer/events/{id}/price`, AA-R11). Owner decision D3. |
 | `RACE_PRICE_COOLDOWN` | `PT24H` | How long after a race price change the photographer must wait before the next one. Not yet measured. |
-| `RELEVANCE_MODE` | `off` | Photo-to-event relevance (PE-1) rollout and kill switch: `off` = the sweep does nothing; `shadow` = it writes relevance rows only. Never hides, holds or deletes. Independent of `AI_API_ENABLED`. Owner sets it. |
+| `RELEVANCE_MODE` | `off` | Photo-to-event relevance (PE-1) rollout and kill switch: `off` = the sweep does nothing; `shadow` = it writes relevance rows only; `flag` = a Low batch also opens or extends one admin flag per photographer (reason `batch_relevance_low`) and a date-rule Low may send the photographer one inbox note; behaves as `shadow` while `ADMIN_FLAGS_ENABLED` is off. Never hides, holds or deletes. Independent of `AI_API_ENABLED`. Owner sets it; an unknown value stops boot. |
 | `RELEVANCE_SWEEP_INTERVAL_MS` | `60000` | Cadence of the relevance sweep; also its first delay after boot. |
 | `RELEVANCE_QUIET_MINUTES` | `10` | A photographer's batch in an event is scored this long after their newest upload. |
 | `RELEVANCE_LOOKUPS_PER_TICK` | `100` | Copy look-ups per sweep tick, all batches together (1–1000). |

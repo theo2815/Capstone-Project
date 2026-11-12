@@ -44,6 +44,48 @@ class BatchRelevanceSchemaIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // PE-2.1: all of PE-2's schema in one migration.
+    @Test
+    fun `the PE-2 migration adds the hold columns, the batch link and the hidden photo table`() {
+        val (previous, mine) = versions("__relevance_flags.sql")
+        val schema = "relevance_${UUID.randomUUID().toString().replace("-", "")}"
+        fun columns() = jdbc.queryForList(
+            "SELECT table_name || '.' || column_name FROM information_schema.columns WHERE table_schema = ? " +
+                "AND (table_name, column_name) IN (('flags', 'payout_hold_at'), ('flags', 'payout_hold_by'), " +
+                "('batch_relevance', 'flag_id'), ('batch_relevance', 'flagged_at')) ORDER BY 1",
+            String::class.java, schema,
+        )
+        fun indexes() = jdbc.queryForList(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = ? " +
+                "AND indexname IN ('idx_batch_relevance_flag', 'idx_flag_hidden_photos_photo', 'flag_hidden_photos_pkey') ORDER BY 1",
+            String::class.java, schema,
+        )
+        try {
+            flywayFor(schema, previous).migrate()
+            assertEquals(emptyList(), columns())
+            assertEquals(emptyList(), indexes())
+
+            flywayFor(schema, mine).migrate()
+
+            assertEquals(mine, latestVersion(schema))
+            assertEquals(listOf("batch_relevance.flag_id", "batch_relevance.flagged_at", "flags.payout_hold_at", "flags.payout_hold_by"), columns())
+            assertEquals(listOf("flag_hidden_photos_pkey", "idx_batch_relevance_flag", "idx_flag_hidden_photos_photo"), indexes())
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+
+        // Deleting a flag unlinks its batch and drops its hidden-photo rows.
+        val f = fixture()
+        val photo = photo(f.event, f.photographer)
+        val batch = batch(f.event, f.photographer)
+        val flag = id("INSERT INTO flags (target_kind, target_id, reason) VALUES ('user', ?, 'batch_relevance_low')", f.photographer)
+        jdbc.update("UPDATE batch_relevance SET flag_id = ?, flagged_at = now() WHERE id = ?", flag, batch)
+        jdbc.update("INSERT INTO flag_hidden_photos (flag_id, photo_id, hidden_at) VALUES (?, ?, now())", flag, photo)
+        jdbc.update("DELETE FROM flags WHERE id = ?", flag)
+        assertEquals(listOf<UUID?>(null), jdbc.queryForList("SELECT flag_id FROM batch_relevance WHERE id = ?", UUID::class.java, batch))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM flag_hidden_photos WHERE photo_id = ?", Int::class.java, photo))
+    }
+
     @Test
     fun `deleting a photo removes its look-up row and deleting a batch removes its rows`() {
         val f = fixture()
@@ -115,11 +157,11 @@ class BatchRelevanceSchemaIntegrationTest : PostgresIntegrationTest() {
 
     // This migration's version and the one before it, read from the classpath, so a rename at merge
     // (the number is fixed then: plan R2-24) needs no edit here.
-    private fun versions(): Pair<String, String> {
+    private fun versions(suffix: String = "__batch_relevance.sql"): Pair<String, String> {
         val all = PathMatchingResourcePatternResolver().getResources("classpath:db/migration/V*__*.sql")
             .map { it.filename!! }
         fun version(name: String) = name.removePrefix("V").substringBefore("__").toInt()
-        val mine = version(all.single { it.endsWith("__batch_relevance.sql") })
+        val mine = version(all.single { it.endsWith(suffix) })
         val previous = all.map(::version).filter { it < mine }.max()
         return previous.toString() to mine.toString()
     }

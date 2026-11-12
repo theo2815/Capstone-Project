@@ -324,7 +324,9 @@ app:
       hide-threshold: ${RACE_REPORT_HIDE_THRESHOLD:3} # distinct accounts; [NOT MEASURED]
   relevance:
     # PE-1 photo-to-event relevance. off = the sweep does nothing (kill switch);
-    # shadow = relevance rows only. Nothing is hidden or held automatically.
+    # shadow = relevance rows only; flag = a Low batch also opens or extends one admin
+    # flag per photographer (PE-2.1; acts as shadow while app.admin.flags-enabled is off).
+    # Nothing is hidden or held automatically.
     mode: ${RELEVANCE_MODE:off}
     sweep-interval-ms: ${RELEVANCE_SWEEP_INTERVAL_MS:60000}
     quiet-minutes: ${RELEVANCE_QUIET_MINUTES:10}
