@@ -1,6 +1,7 @@
 package com.quickpitik.service.earnings
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.dto.earnings.PayoutBalanceAccountDto
 import com.quickpitik.dto.earnings.PayoutBalanceDto
@@ -9,8 +10,10 @@ import com.quickpitik.dto.earnings.buildSequencedCycleId
 import com.quickpitik.dto.earnings.toDto
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
+import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
@@ -60,6 +63,8 @@ class PayoutRequestService(
     private val platformProperties: PlatformProperties,
     private val userRepository: UserRepository,
     private val clock: Clock,
+    private val flagRepository: FlagRepository,
+    private val adminProperties: AdminProperties,
 ) {
 
     @Transactional(readOnly = true)
@@ -94,6 +99,7 @@ class PayoutRequestService(
                     hasQr = !it.qrS3Key.isNullOrBlank(),
                 )
             },
+            payoutHoldReason = if (relevanceHoldOpen(photographerId)) "UPLOAD_REVIEW" else null,
         )
     }
 
@@ -123,6 +129,14 @@ class PayoutRequestService(
                 status = HttpStatus.CONFLICT,
                 code = ErrorCodes.PAYOUT_ACCOUNT_COOLDOWN,
                 message = "Payout is on a short hold after a recent payout-account change. Try again later.",
+            )
+        }
+
+        if (relevanceHoldOpen(photographerId)) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.PAYOUT_ON_HOLD,
+                message = "Payouts are on hold while we review some of your uploads. Check your inbox for details.",
             )
         }
 
@@ -233,6 +247,13 @@ class PayoutRequestService(
         // the reservation and frees the photographer to request again.
         payoutCycleTransitions.apply(cycle, PayoutTransition.PhotographerCancel, photographerId)
     }
+
+    // PE-2.2 (D23): the one home of the relevance payout hold. Open while an admin-confirmed
+    // relevance flag on this photographer is open or escalated; the admin payout steps borrow
+    // it as they borrow assertCovered. No hold binds while the flags switch is off (P9).
+    fun relevanceHoldOpen(photographerId: UUID): Boolean =
+        adminProperties.flagsEnabled &&
+            flagRepository.existsOpenPayoutHold(photographerId, SystemFlagReason.BATCH_RELEVANCE_LOW.wire)
 
     fun assertCovered(cycle: PayoutCycle) {
         val cutoff = OffsetDateTime.now(clock).minus(platformProperties.payoutClearingWindow)

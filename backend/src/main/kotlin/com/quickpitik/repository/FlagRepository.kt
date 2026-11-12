@@ -34,6 +34,33 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
     @Query("SELECT f.targetId FROM Flag f WHERE f.id = :id AND f.targetKindWire = 'photo'")
     fun findPhotoId(@Param("id") id: UUID): UUID?
 
+    // PE-2.2: the photographer behind a relevance flag, read before any lock (the twin of findPhotoId).
+    @Query("SELECT f.targetId FROM Flag f WHERE f.id = :id AND f.targetKindWire = 'user' AND f.reason = :reason")
+    fun findRelevanceUserTarget(@Param("id") id: UUID, @Param("reason") reason: String): UUID?
+
+    // PE-2.2: the read behind PayoutRequestService.relevanceHoldOpen, the one home of the hold rule.
+    @Query(
+        """
+        SELECT COUNT(f) > 0 FROM Flag f
+        WHERE f.targetKindWire = 'user' AND f.targetId = :userId AND f.reason = :reason
+          AND f.statusWire IN ('open', 'escalated') AND f.payoutHoldAt IS NOT NULL
+        """,
+    )
+    fun existsOpenPayoutHold(@Param("userId") userId: UUID, @Param("reason") reason: String): Boolean
+
+    // PE-2.2: open relevance flags for a page of photographers, held or not (the admin payout list).
+    @Query(
+        """
+        SELECT f FROM Flag f
+        WHERE f.targetKindWire = 'user' AND f.targetId IN :userIds AND f.reason = :reason
+          AND f.statusWire IN ('open', 'escalated')
+        """,
+    )
+    fun findOpenByUserTargetsAndReason(
+        @Param("userIds") userIds: Collection<UUID>,
+        @Param("reason") reason: String,
+    ): List<Flag>
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT f FROM Flag f WHERE f.id = :id")
     fun findByIdForUpdate(@Param("id") id: UUID): Flag?

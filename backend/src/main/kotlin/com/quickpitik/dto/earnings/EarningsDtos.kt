@@ -166,6 +166,9 @@ data class PayoutBalanceDto(
     // IsPrimaryTrue query the request() check uses, so the gate and the check
     // are always consistent. Null when no primary account is configured.
     val primaryAccount: PayoutBalanceAccountDto?,
+    // PE-2.2: "UPLOAD_REVIEW" while an admin-confirmed relevance hold is open, else null.
+    // Clients show fixed copy for any non-null value.
+    val payoutHoldReason: String? = null,
 )
 
 data class PayoutBalanceAccountDto(
