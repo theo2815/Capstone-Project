@@ -29,6 +29,7 @@ import com.quickpitik.service.storage.StorageService
 import com.quickpitik.support.testTransactionTemplate
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ValidationException
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.data.domain.PageImpl
@@ -315,7 +316,8 @@ class AdminDisputeServiceTest {
         val first = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
         val second = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
         Mockito.`when`(disputeRepository.pageForAdmin(
-            Mockito.isNull(),
+            Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
+            Mockito.eq("") ?: "",
             Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
         ))
             .thenReturn(PageImpl(listOf(first, second)))
@@ -331,7 +333,7 @@ class AdminDisputeServiceTest {
         Mockito.`when`(paymentRepository.findByOrderIdIn(setOf(order.id)))
             .thenReturn(listOf(payment(order.id, "cs_paid", "pay_paid", PaymentStatus.SUCCEEDED)))
 
-        val page = service.list(null, PaginationParams.of(0, 10))
+        val page = service.list(null, null, null, PaginationParams.of(0, 10))
         assertEquals(listOf(BigDecimal("100.00"), BigDecimal("127.50")), page.items.map { it.itemChargeAmount })
         assertEquals(listOf("pay_paid", "pay_paid"), page.items.map { it.paymentId })
         Mockito.verify(orderItemRepository).findByIdOrderIdIn(setOf(order.id))
@@ -437,6 +439,126 @@ class AdminDisputeServiceTest {
     }
 
     private val paidOn = OffsetDateTime.parse("2026-10-01T00:00:00Z")
+
+    // The in-memory views (plan 5.2). `now` is Sun 2026-11-08 11:00 Manila.
+    private val qrph = qrphOrder()
+    private val fresh = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+        openedAt = now.minusHours(1)) // review, due Thu 2026-11-12 00:00 Manila: not overdue
+    private val stale = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+        openedAt = now.minusDays(10)) // review, overdue
+    private val escalated = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+        statusWire = DisputeStatus.ESCALATED.wire, openedAt = now.minusHours(2)) // not overdue
+    private val inProgress = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+        openedAt = now.minusDays(20)).apply {
+        refundStatus = "requesting"
+        refundRequestedAt = now.minusHours(1)
+    }
+    private val parked = Dispute(orderId = qrph.id, photoId = UUID.randomUUID(), reasonWire = "other",
+        statusWire = DisputeStatus.ESCALATED.wire, openedAt = now.minusDays(30)).apply {
+        refundStatus = "manual_review" // send_link, due when PayMongo's window closed on 2026-10-31: overdue
+        refundRequestedAt = now.minusHours(10)
+    }
+
+    private fun unresolved(vararg disputes: Dispute) {
+        Mockito.`when`(disputeRepository.pageForAdmin(listOf("open", "escalated"), "", Pageable.unpaged()))
+            .thenReturn(PageImpl(disputes.toList()))
+        Mockito.`when`(orderRepository.findAllById(Mockito.anyIterable())).thenReturn(listOf(qrph))
+    }
+
+    private fun ids(view: String, offset: Int = 0, limit: Int = 50) =
+        service.list(view, null, null, PaginationParams.of(offset, limit)).let { page -> page.items.map { it.id } to page.total }
+
+    @Test
+    fun `needs_me lists unresolved disputes by due time and leaves out refunds in progress`() {
+        unresolved(fresh, inProgress, stale, parked, escalated)
+
+        val (items, total) = ids("needs_me")
+
+        // fresh and escalated share Thursday's due time; the one opened first comes first.
+        assertEquals(listOf(parked.id, stale.id, escalated.id, fresh.id), items)
+        assertEquals(4, total)
+    }
+
+    @Test
+    fun `overdue keeps only past-due disputes`() {
+        unresolved(fresh, inProgress, stale, parked, escalated)
+
+        assertEquals(listOf(parked.id, stale.id) to 2L, ids("overdue"))
+    }
+
+    @Test
+    fun `refund_run keeps only parked QR Ph refunds`() {
+        unresolved(fresh, inProgress, stale, parked, escalated)
+
+        assertEquals(listOf(parked.id) to 1L, ids("refund_run"))
+    }
+
+    @Test
+    fun `paging slices the sorted list and reports the full total`() {
+        unresolved(fresh, stale, parked)
+
+        assertEquals(listOf(stale.id) to 3L, ids("needs_me", offset = 1, limit = 1))
+    }
+
+    @Test
+    fun `an offset past the end returns no items and the full total`() {
+        unresolved(fresh, stale, parked)
+
+        assertEquals(emptyList<UUID>() to 3L, ids("needs_me", offset = 10))
+    }
+
+    @Test
+    fun `list trims a pasted PayMongo ID before it reaches the repository`() {
+        Mockito.`when`(disputeRepository.pageForAdmin(
+            Mockito.anyCollection() ?: emptyList(),
+            Mockito.anyString() ?: "",
+            Mockito.any(Pageable::class.java) ?: Pageable.unpaged(),
+        )).thenReturn(PageImpl(emptyList()))
+
+        service.list(null, null, "  pay_AbC123\n", PaginationParams.of(0, 10))
+
+        Mockito.verify(disputeRepository).pageForAdmin(
+            Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
+            Mockito.eq("pay_AbC123") ?: "",
+            Mockito.any(Pageable::class.java) ?: Pageable.unpaged(),
+        )
+    }
+
+    @Test
+    fun `view and status together are refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.list("needs_me", "open", null, PaginationParams.of(0, 10))
+        }
+
+        assertEquals(ErrorCodes.VALIDATION_ERROR, error.code)
+        assertEquals("view", error.field)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `an unknown view is refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.list("everything", null, null, PaginationParams.of(0, 10))
+        }
+
+        assertEquals(ErrorCodes.VALIDATION_ERROR, error.code)
+        assertEquals("view", error.field)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `queueCounts counts open, escalated and parked refunds but not refunds in progress`() {
+        unresolved(fresh, inProgress, parked, escalated)
+
+        assertEquals(3, service.queueCounts().needsAdmin)
+    }
+
+    @Test
+    fun `queueCounts overdue counts only past-due ones`() {
+        unresolved(fresh, inProgress, stale, parked, escalated)
+
+        assertEquals(DisputeQueueCounts(needsAdmin = 4, overdue = 2), service.queueCounts())
+    }
 
     private fun qrphOrder() = Order(
         eventId = UUID.randomUUID(),

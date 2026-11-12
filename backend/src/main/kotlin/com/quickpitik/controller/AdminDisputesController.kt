@@ -34,14 +34,13 @@ class AdminDisputesController(
 
     @GetMapping
     fun list(
+        @RequestParam(required = false) view: String?,
         @RequestParam(required = false) status: String?,
         @RequestParam(required = false) q: String?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
-    ): PaginatedResponse<AdminDisputeDto> {
-        @Suppress("UNUSED_VARIABLE") val _q = q
-        return adminDisputeService.list(status, PaginationParams.of(offset, limit))
-    }
+    ): PaginatedResponse<AdminDisputeDto> =
+        adminDisputeService.list(view, status, q, PaginationParams.of(offset, limit))
 
     @GetMapping("/{disputeId}")
     fun get(@PathVariable disputeId: UUID): AdminDisputeDto = adminDisputeService.get(disputeId)
