@@ -53,6 +53,22 @@ it("refreshes canonical queues on reconnect and filed events, and ignores messag
   client.clear();
 });
 
+it("dispute_withdrawn refreshes disputes and KPIs", () => {
+  const socket = { onopen: () => {}, onmessage: vi.fn<(event: { data: string }) => void>(), close: vi.fn() };
+  vi.stubGlobal("WebSocket", vi.fn(function () { return socket; }));
+  const client = new QueryClient();
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { unmount } = renderHook(() => useAdminNotificationsWs(true), { wrapper });
+  socket.onopen();
+  invalidate.mockClear();
+  socket.onmessage({ data: JSON.stringify({ type: "dispute_withdrawn", entityId: "dispute-1" }) });
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "disputes"] });
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "kpis"] });
+  unmount();
+  client.clear();
+});
+
 it("refreshes current-session removal cases on reconnect and removal changes", async () => {
   const socket = { onopen: () => {}, onmessage: vi.fn<(event: { data: string }) => void>(), close: vi.fn() };
   vi.stubGlobal("WebSocket", vi.fn(function () { return socket; }));
