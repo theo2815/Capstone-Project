@@ -60,15 +60,15 @@ export function CartModal({
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const ownedItems = items.filter((i) => ownedPhotoIds.has(i.photoId));
 
-  // Guest carts carry the price captured at browse time. A signed-in runner's
-  // cart self-corrects — the server owns the row and `GET /me/cart` renders
-  // the live `photos.price_php` — but a guest has no `cart_items` row for the
-  // BE to correct, while checkout still charges the live price. So an admin
-  // re-price between browsing and checking out would bill more than the cart
-  // showed. Re-read on open, per photo: in a race each photographer may charge
-  // above the event price (AA-R14 livePrices), so the event detail can't answer.
+  // Re-read on open. Signed in: `GET /me/cart` returns the live price and
+  // `available` (a photographer suspended since the add, AA-I20a); without it
+  // the cart stayed stale until a reload. Guest: no server row, so per-photo
+  // live prices (AA-R14), since checkout charges the live price.
+  // Re-runs when sync turns on, so the login merge's result is re-read too.
+  // shortcut: the signed-in re-read replaces the list, so an add or remove still in
+  // flight can briefly show wrong (a reload fixes it); keep pending rows if runners hit it.
   useEffect(() => {
-    if (!isOpen || syncEnabled) return;
+    if (!isOpen) return;
     useCartStore.getState().refreshPrices().catch(() => {
       // Display only: checkout still sends the shown price and is refused if it changed.
     });

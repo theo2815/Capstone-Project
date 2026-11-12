@@ -10,7 +10,10 @@ import { formatPrice } from "@/lib/utils";
 // above the race price), and a row says when its price rose since it was added.
 const http = vi.hoisted(() => ({
   get: vi.fn(async (path: string) =>
-    path.startsWith("/events/") ? { pricePerPhoto: 125 } : { items: [], total: 0, offset: 0, limit: 200 },
+    path.startsWith("/events/") ? { pricePerPhoto: 125 }
+      // A signed-in open re-reads GET /me/cart; the server echoes the rows it holds.
+      : path.startsWith("/me/cart") ? useCartStore.getState().items
+      : { items: [], total: 0, offset: 0, limit: 200 },
   ),
   post: vi.fn(async (path: string, body: { photoIds?: string[] }) =>
     path === "/coupons/preview"
