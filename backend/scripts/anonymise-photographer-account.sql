@@ -15,8 +15,10 @@
 --   * been paid everything they are owed, even below the 500 peso minimum, with no payout
 --     still open (D20). Money still inside the 7-day clearing window counts as owed.
 -- The script refuses (error, no change) until both are true, while an unpaid order still
--- holds one of their photos (a late payment would add a sale), and while the id is not an
--- existing PHOTOGRAPHER. Read the counts in the error to tell the photographer what is left.
+-- holds one of their photos (a late payment would add a sale), while an open or escalated
+-- relevance flag is on the account (an admin resolves or dismisses it first), and while the
+-- id is not an existing PHOTOGRAPHER. Read the counts in the error to tell the photographer
+-- what is left.
 --
 -- What the confirmed run does, in one transaction:
 --   users: name "Deleted photographer", email deleted-<id>@deleted.invalid, a random
@@ -107,6 +109,11 @@ BEGIN
     END IF;
     IF user_role <> 'PHOTOGRAPHER' THEN
         RAISE EXCEPTION 'Refused: user % is %; this script closes PHOTOGRAPHER accounts only', uid, user_role;
+    END IF;
+    -- PE-2.1 (R2-05): the review must end before the account goes.
+    IF EXISTS (SELECT 1 FROM flags WHERE target_kind = 'user' AND target_id = uid
+               AND reason = 'batch_relevance_low' AND status IN ('open', 'escalated')) THEN
+        RAISE EXCEPTION 'Refused: photographer % is under an upload review; close the relevance flag first (resolve or dismiss)', uid;
     END IF;
     -- "Sold" as PhotographerPhotoService.isSold: a download grant, or a paid order line.
     SELECT count(*) INTO unsold FROM photos p

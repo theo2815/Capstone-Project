@@ -140,7 +140,8 @@ class SystemFlagServiceTest {
 
     @Test
     fun `every reason fits the 40-character column`() {
-        assertEquals(12, SystemFlagReason.entries.size)
+        // RD-6 adds another reason: whichever of PE-2.1 and RD-6 merges second recounts.
+        assertEquals(13, SystemFlagReason.entries.size)
         assertTrue(SystemFlagReason.entries.all { it.wire.length <= 40 && it.wire == it.name.lowercase() })
     }
 }
