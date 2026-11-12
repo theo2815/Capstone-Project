@@ -3,7 +3,7 @@ import type {
   RemovalPage, RemovalPhotoDto, PhotoRemovalRequestDto, PhotographerRemovalRequestDto, RemovalHistoryDto,
   RemovalMatchResult, RemovalRequestFilters, RemovalPhotoFilters, RemovalPageFilters,
   CreateRemovalRequestCommand, MatchRemovalCommand, VerifyRemovalCommand, CancelRemovalCommand,
-  DecideRemovalCommand, RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand,
+  DecideRemovalCommand, RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand, ReviewSuggestionsCommand,
   RunnerRemovalReason, RunnerRemovalEligibility, RunnerLivenessSession, RunnerSubmitResult,
   StartRunnerLivenessCommand, SubmitRunnerRemovalCommand, RunnerRemovalRequestDto, RunnerRemovalRequestDetailDto,
 } from "@/types/photo-removal";
@@ -51,6 +51,9 @@ export function cancelRemovalRequest(id: string, command: CancelRemovalCommand):
 }
 export function decideRemovalRequest(id: string, command: DecideRemovalCommand): Promise<PhotoRemovalRequestDto> {
   return api.post(`${casePath(id)}/decisions`, command);
+}
+export function reviewRemovalSuggestions(id: string, body: ReviewSuggestionsCommand): Promise<PhotoRemovalRequestDto> {
+  return api.post(`${casePath(id)}/suggestions`, body);
 }
 export function retryRemovalCleanup(id: string, command: RetryRemovalCleanupCommand): Promise<PhotoRemovalRequestDto> {
   return api.post(`${casePath(id)}/retry-cleanup`, command);

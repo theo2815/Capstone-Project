@@ -44,3 +44,10 @@ export const openCase: PhotoRemovalRequestDto = {
   ...draftCase, status: "OPEN", version: 7, verificationMethod: "Ticket", verificationNote: "Checked", verifiedAt: "2026-10-08T02:00:00Z",
   evidenceCleanupState: "PRESENT",
 };
+
+// RD-13: a runner's own request after the live check, as the backend sends it (RD-6 fields).
+export const runnerCase: PhotoRemovalRequestDto = {
+  ...openCase, source: "RUNNER", supportReference: "RUNNER-case-1", verificationMethod: null, verificationNote: null,
+  livenessBand: "PASS", riskFlags: ["GROUP_PHOTOS"], reasonCode: "PRIVACY", consentVersion: "1.4",
+  requesterEmailVerified: true, requesterAccountCreatedAt: "2026-09-01T00:00:00Z",
+};
