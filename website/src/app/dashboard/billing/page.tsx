@@ -269,15 +269,19 @@ function RequestPayoutHero({
   }
 
   const primary = balance.primaryAccount;
+  const onHold = !!balance.payoutHoldReason;
 
   if (balance.hasOpenRequest && balance.openRequest) {
     return (
-      <OpenRequestHero
-        cycle={balance.openRequest}
-        primary={primary ?? null}
-        onWithdraw={onWithdraw}
-        onOpenHow={onOpenHow}
-      />
+      <>
+        {onHold && <PayoutHoldNotice className="mb-8" />}
+        <OpenRequestHero
+          cycle={balance.openRequest}
+          primary={primary ?? null}
+          onWithdraw={onWithdraw}
+          onOpenHow={onOpenHow}
+        />
+      </>
     );
   }
 
@@ -294,13 +298,15 @@ function RequestPayoutHero({
       <p
         className={cn(
           "font-display text-5xl md:text-7xl font-semibold tracking-tight tnum mt-3 leading-none",
-          eligible ? "text-fresh" : "text-slate",
+          eligible && !onHold ? "text-fresh" : "text-slate",
         )}
       >
         ₱{balance.unpaidBalance.toLocaleString()}
       </p>
       <p className="font-sans text-sm md:text-base text-ink mt-4">
-        {eligible ? (
+        {onHold ? (
+          <>On hold while we review some of your uploads.</>
+        ) : eligible ? (
           <>Ready to request — admin reviews each request.</>
         ) : (
           <>
@@ -326,6 +332,8 @@ function RequestPayoutHero({
           </p>
         </div>
       )}
+
+      {onHold && <PayoutHoldNotice className="mt-6" />}
 
       {cooldownActive && (
         <div className="mt-6 rounded-xl border border-warning/40 bg-warning/5 p-4 max-w-lg">
@@ -380,7 +388,7 @@ function RequestPayoutHero({
         <button
           type="button"
           onClick={onRequest}
-          disabled={!eligible || !primary?.hasQr || cooldownActive}
+          disabled={!eligible || !primary?.hasQr || cooldownActive || onHold}
           className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
         >
           Request payout
@@ -388,6 +396,28 @@ function RequestPayoutHero({
       </div>
 
       <HowItWorksLink onClick={onOpenHow} />
+    </div>
+  );
+}
+
+// The account-wide payout hold of an upload review (PE-2.2), not the per-request
+// "Held — needs attention" state. Wording: PE-L4 T7 (approved 2026-11-12).
+function PayoutHoldNotice({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border border-warning/40 bg-warning/5 p-4 max-w-lg",
+        className,
+      )}
+    >
+      <Kicker as="p" className="text-warning">
+        Payouts on hold
+      </Kicker>
+      <p className="font-sans text-sm text-ink-soft mt-2">
+        We are reviewing some of your uploads, so you can&apos;t request a
+        payout until the review is finished. Your earnings stay in your
+        balance. Check your inbox for details, or contact support.
+      </p>
     </div>
   );
 }
@@ -403,6 +433,7 @@ interface PayoutBalanceResponseLike {
   hasOpenRequest: boolean;
   openRequest: PhotographerPayout | null;
   primaryAccount: PrimaryPayoutAccount | null;
+  payoutHoldReason: string | null;
 }
 
 interface PrimaryPayoutAccount {

@@ -23,7 +23,8 @@ export type FlagReason =
   | "no_proof_hidden"
   | "no_proof_unindexed"
   | "report_threshold_hidden"
-  | "user_report";
+  | "user_report"
+  | "runner_removal_held";
 
 /** What a flag points at (flags.target_kind). Only photo flags can be hidden. */
 export type FlagTargetKind = "photo" | "user" | "event";
@@ -74,6 +75,7 @@ export const FLAG_REASON_LABEL: Record<FlagReason, string> = {
   no_proof_unindexed: "Race has no indexed photos yet",
   report_threshold_hidden: "Race hidden after several reports",
   user_report: "Reported by a user",
+  runner_removal_held: "Runner deletion held",
 };
 
 export function flagReasonLabel(reason: string): string {

@@ -21,6 +21,7 @@ const balance = {
   unpaidBalance: 1000, clearing: 0, reserved: 0, minimum: 500,
   hasOpenRequest: false, openRequest: null, accountCooldownUntil: null,
   primaryAccount: { method: "gcash", accountNumber: "09170001111", accountName: "Seller", hasQr: true },
+  payoutHoldReason: null,
 };
 const photo = { id: "photo-1", bib: "101", status: "live", salesCount: 1, uploadedAt: sale.paidAt, tone: 0, span: "default", thumbnailUrl: sale.thumbnailUrl };
 const purchase = {

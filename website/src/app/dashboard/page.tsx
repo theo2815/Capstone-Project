@@ -118,6 +118,7 @@ function BillingGlance() {
         <AvailableGlance
           unpaidBalance={balance.unpaidBalance}
           minimum={balance.minimum}
+          onHold={!!balance.payoutHoldReason}
         />
       )}
     </Slab>
@@ -176,9 +177,11 @@ function OpenRequestGlance({
 function AvailableGlance({
   unpaidBalance,
   minimum,
+  onHold,
 }: {
   unpaidBalance: number;
   minimum: number;
+  onHold: boolean;
 }) {
   const eligible = unpaidBalance >= minimum;
 
@@ -204,13 +207,15 @@ function AvailableGlance({
       <p
         className={cn(
           "font-display text-5xl md:text-6xl font-extrabold tracking-tight tnum mt-3 leading-none",
-          eligible ? "text-fresh" : "text-slate",
+          eligible && !onHold ? "text-fresh" : "text-slate",
         )}
       >
         ₱{unpaidBalance.toLocaleString()}
       </p>
       <p className="font-sans text-sm text-ink-soft mt-4 max-w-md">
-        {eligible ? (
+        {onHold ? (
+          <>Payouts on hold — open billing for details.</>
+        ) : eligible ? (
           <>
             Ready to request — open billing to confirm and submit.
           </>

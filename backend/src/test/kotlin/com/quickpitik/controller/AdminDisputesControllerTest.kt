@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminDisputeDto
+import com.quickpitik.dto.admin.DisputeDenyReasonDto
 import com.quickpitik.dto.admin.DisputeOrderSnapshotDto
 import com.quickpitik.dto.admin.DisputePhotoSnapshotDto
 import com.quickpitik.entity.Role
@@ -254,6 +255,39 @@ class AdminDisputesControllerTest {
             .andExpect(jsonPath("$.total").value(51))
 
         Mockito.verify(service).list("needs_me", null, " pay_AbC ", params)
+    }
+
+    @Test
+    fun `the deny reasons are served to admins, not runners`() {
+        for (role in listOf(Role.RUNNER, Role.PHOTOGRAPHER)) {
+            signIn(role)
+            mvc.perform(get("/api/v1/admin/disputes/deny-reasons")).andExpect(status().isForbidden)
+        }
+        Mockito.verifyNoInteractions(service)
+
+        signIn(Role.ADMIN)
+        val reasons = listOf(DisputeDenyReasonDto("wrong_photo", "Picked the wrong photo", "You picked the wrong photo.", false))
+        Mockito.`when`(service.denyReasons()).thenReturn(PaginatedResponse.of(reasons, 1, PaginationParams.of(0, 1)))
+
+        mvc.perform(get("/api/v1/admin/disputes/deny-reasons"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.items[0].code").value("wrong_photo"))
+            .andExpect(jsonPath("$.items[0].label").value("Picked the wrong photo"))
+            .andExpect(jsonPath("$.items[0].noteRequired").value(false))
+            .andExpect(jsonPath("$.total").value(1))
+    }
+
+    @Test
+    fun `deny passes reasonCode and note through`() {
+        signIn(Role.ADMIN)
+        Mockito.`when`(service.deny(adminId, disputeId, null, "preference", "We checked the angle.")).thenReturn(dto())
+
+        mvc.perform(
+            post("/api/v1/admin/disputes/{id}/deny", disputeId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reasonCode\":\"preference\",\"note\":\"We checked the angle.\"}"),
+        ).andExpect(status().isOk)
+
+        Mockito.verify(service).deny(adminId, disputeId, null, "preference", "We checked the angle.")
     }
 
     @Test
