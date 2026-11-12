@@ -1,13 +1,16 @@
 package com.quickpitik.support
 
-import com.quickpitik.service.photographer.PhotoMetadataService
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor
 import org.springframework.scheduling.config.TaskManagementConfigUtils
 
-/** Cached test contexts share PostgreSQL, but their storage/extractor mocks do not. */
+/**
+ * No @Scheduled method runs on a timer in a test context. Cached test contexts share
+ * PostgreSQL but not their mocks, so an idle context's sweep would act on another
+ * class's rows with the wrong mocks. Tests call the sweep methods directly.
+ */
 @TestConfiguration(proxyBeanMethods = false)
 class MetadataRecoveryTestIsolation {
     companion object {
@@ -22,9 +25,6 @@ class MetadataRecoveryTestIsolation {
     }
 
     class TestSchedules : ScheduledAnnotationBeanPostProcessor() {
-        override fun postProcessAfterInitialization(bean: Any, beanName: String): Any =
-            // Manual recoverDue calls retain the real recovery policy and assertions.
-            if (bean is PhotoMetadataService || bean is com.quickpitik.service.photos.PhotoErasureSweep) bean
-            else super.postProcessAfterInitialization(bean, beanName)
+        override fun postProcessAfterInitialization(bean: Any, beanName: String): Any = bean
     }
 }
