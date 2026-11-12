@@ -11,6 +11,7 @@ import com.quickpitik.dto.admin.AdminFlagDto
 import com.quickpitik.dto.admin.CopySampleDto
 import com.quickpitik.dto.admin.DateSampleDto
 import com.quickpitik.dto.admin.FlagPhotoSnapshotDto
+import com.quickpitik.dto.admin.HiddenPhotoDto
 import com.quickpitik.dto.admin.RelevanceBatchDto
 import com.quickpitik.dto.admin.RelevanceEvidenceDto
 import com.quickpitik.entity.Flag
@@ -172,6 +173,67 @@ class AdminFlagService(
         return hydrateOne(flag)
     }
 
+    // PE-2.4 (plan 5.12): hide every photo of one batch of an open relevance flag. The flag's status does
+    // not change: a `hidden` flag would stop being open for the raise dedupe and for the payout hold.
+    // Lock order for relevance actions: user (loadFlag), flag (loadFlag), photos in id order (R2-04).
+    fun hideBatch(adminId: UUID, flagId: UUID, eventId: UUID, resolutionNote: String?): AdminFlagDto {
+        ensureEnabled()
+        val flag = loadFlag(flagId)
+        if (!isRelevanceFlag(flag) || batchRelevanceRepository.findByFlagId(flag.id).none { it.eventId == eventId }) {
+            throw invalidTransition("A batch can be hidden only from a relevance flag linked to that event")
+        }
+        requireStatus(flag, FlagStatus.OPEN, FlagStatus.ESCALATED)
+        val recorded = flagRepository.recordBatchHide(flag.id, eventId, flag.targetId, OffsetDateTime.now())
+        lockRecordedPhotos(flag.id)
+        photoRepository.hideRecordedForFlag(flag.id)
+        adminDecisionLogService.logUserDecision(
+            adminId = adminId,
+            targetUserId = flag.targetId,
+            decision = "batch_hidden",
+            reason = resolutionNote,
+            meta = mapOf("flagId" to flag.id, "eventId" to eventId, "count" to recorded),
+        )
+        return hydrateOne(flag)
+    }
+
+    // Allowed in any flag state: after Resolve the batch stays hidden and is restored one photo at a time (P8).
+    fun restoreHiddenPhoto(adminId: UUID, flagId: UUID, photoId: UUID): AdminFlagDto {
+        ensureEnabled()
+        val flag = loadFlag(flagId)
+        photoRepository.lockIdsForUpdate(listOf(photoId))
+        if (!flagRepository.isRecorded(flag.id, photoId)) throw invalidTransition("That photo was not hidden by this flag")
+        // 0 rows: already restored, so there is nothing more to do.
+        if (flagRepository.markRestored(flag.id, photoId, OffsetDateTime.now()) > 0) {
+            if (!stillHeldHidden(photoId, flag.id)) unhidePhoto(photoId)
+            adminDecisionLogService.logUserDecision(
+                adminId = adminId,
+                targetUserId = flag.targetId,
+                decision = "photo_restored",
+                meta = mapOf("flagId" to flag.id, "photoId" to photoId),
+            )
+        }
+        return hydrateOne(flag)
+    }
+
+    @Transactional(readOnly = true)
+    fun listHiddenPhotos(flagId: UUID, params: PaginationParams): PaginatedResponse<HiddenPhotoDto> {
+        ensureEnabled()
+        if (!flagRepository.existsById(flagId)) {
+            throw NotFoundException(code = ErrorCodes.FLAG_NOT_FOUND, message = "Flag not found")
+        }
+        val page = flagRepository.pageHiddenPhotos(flagId, OffsetLimitPageable(params))
+        if (page.isEmpty) return PaginatedResponse.empty(params)
+        val items = page.content.map {
+            HiddenPhotoDto(it.photoId, it.eventId, thumbnailUrl(it.thumbnailKey), it.hiddenAt.toString(), it.restoredAt?.toString())
+        }
+        return PaginatedResponse.of(items, page.totalElements, params)
+    }
+
+    private fun lockRecordedPhotos(flagId: UUID) {
+        val ids = flagRepository.unrestoredPhotoIds(flagId)
+        if (ids.isNotEmpty()) photoRepository.lockIdsForUpdate(ids)
+    }
+
     private fun close(adminId: UUID, flagId: UUID, resolutionNote: String?, target: FlagStatus): AdminFlagDto {
         ensureEnabled()
         val flag = loadFlag(flagId)
@@ -183,6 +245,12 @@ class AdminFlagService(
         flag.resolvedAt = OffsetDateTime.now()
         flagRepository.save(flag)
         if (wasHidden) restorePhotoIfUnflagged(flag)
+        // PE-2.4 (P8): dismissing a relevance flag is a false alarm, so its batch comes back; resolving keeps it hidden.
+        if (target == FlagStatus.DISMISSED && isRelevanceFlag(flag)) {
+            lockRecordedPhotos(flag.id)
+            photoRepository.unhideRecordedForFlag(flag.id) // the same rule as stillHeldHidden, in SQL
+            flagRepository.markAllRestored(flag.id, OffsetDateTime.now())
+        }
         // PE-2.2 (P11): closing a held relevance flag ends the hold; tell the photographer.
         if (isRelevanceFlag(flag) && flag.payoutHoldAt != null) {
             adminDecisionLogService.pushMessage(
@@ -282,10 +350,10 @@ class AdminFlagService(
 
     // Never the original s3Key: a still-PROCESSING photo has no derived
     // asset yet and the card falls back to its gradient placeholder.
-    private fun thumbnailUrl(photo: Photo?): String? =
-        (photo?.watermarkS3Key ?: photo?.thumbnailS3Key)?.let { key ->
-            storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
-        }
+    private fun thumbnailUrl(photo: Photo?): String? = thumbnailUrl(photo?.watermarkS3Key ?: photo?.thumbnailS3Key)
+
+    private fun thumbnailUrl(key: String?): String? =
+        key?.let { storageService.presignedGetUrl(it, storageProperties.presignedTtl.thumbnail) }
 
     private fun isRelevanceFlag(flag: Flag): Boolean =
         flag.targetKind == FlagTargetKind.USER && flag.reason == SystemFlagReason.BATCH_RELEVANCE_LOW.wire
@@ -302,11 +370,19 @@ class AdminFlagService(
 
     private fun restorePhotoIfUnflagged(flag: Flag) {
         if (flag.targetKind != FlagTargetKind.PHOTO) return
-        val stillHiddenByAnother = flagRepository.existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
-            flag.targetKindWire, flag.targetId, FlagStatus.HIDDEN.wire, flag.id,
-        )
-        if (stillHiddenByAnother) return
-        photoRepository.findById(flag.targetId).ifPresent { photo ->
+        if (stillHeldHidden(flag.targetId, flag.id)) return
+        unhidePhoto(flag.targetId)
+    }
+
+    // The one restore rule (C21): a photo may come back only when no other photo flag is `hidden` on it and no
+    // other flag's batch hide still holds it. Copied in SQL by PhotoRepository.unhideRecordedForFlag.
+    private fun stillHeldHidden(photoId: UUID, exceptFlagId: UUID): Boolean =
+        flagRepository.existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
+            FlagTargetKind.PHOTO.wire, photoId, FlagStatus.HIDDEN.wire, exceptFlagId,
+        ) || flagRepository.existsOtherBatchHold(photoId, exceptFlagId)
+
+    private fun unhidePhoto(photoId: UUID) {
+        photoRepository.findById(photoId).ifPresent { photo ->
             // A photo hidden mid-pipeline never rendered a preview: LIVE would
             // serve s3Key — the clean, unwatermarked original — as the public
             // thumbnail. Hand it back to the watermark sweep instead. The
@@ -315,6 +391,12 @@ class AdminFlagService(
             photoRepository.unhideForFlag(photo.id, target)
         }
     }
+
+    private fun invalidTransition(message: String) = ApiException(
+        status = HttpStatus.CONFLICT,
+        code = ErrorCodes.INVALID_STATE_TRANSITION,
+        message = message,
+    )
 
     private fun loadFlag(flagId: UUID): Flag {
         // Read only the immutable target first, so the flag is hydrated after both locks.

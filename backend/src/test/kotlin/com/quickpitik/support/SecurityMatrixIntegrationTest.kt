@@ -739,6 +739,25 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the batch hide, its list and the single restore are admin only`() {
+        val flag = UUID.randomUUID()
+        val routes = listOf(
+            "POST" to "/api/v1/admin/flags/$flag/hide-batch",
+            "GET" to "/api/v1/admin/flags/$flag/hidden-photos",
+            "POST" to "/api/v1/admin/flags/$flag/hidden-photos/${UUID.randomUUID()}/restore",
+        )
+        for ((method, route) in routes) {
+            for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+                val response = if (method == "GET") get(route, token) else post(route, """{"eventId":"${UUID.randomUUID()}"}""", token)
+                assertEquals(if (token == null) 401 else 403, response.statusCode(), "$method $route")
+            }
+            val missing = if (method == "GET") get(route, adminToken()) else post(route, """{"eventId":"${UUID.randomUUID()}"}""", adminToken())
+            assertEquals(404, missing.statusCode(), "$method $route")
+            assertTrue("FLAG_NOT_FOUND" in missing.body(), missing.body())
+        }
+    }
+
+    @Test
     fun `the relevance evidence read is admin only`() {
         val route = "/api/v1/admin/flags/${UUID.randomUUID()}/relevance"
         for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
