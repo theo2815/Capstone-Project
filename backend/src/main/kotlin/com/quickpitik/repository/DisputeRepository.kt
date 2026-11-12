@@ -87,19 +87,43 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
     )
     fun sumSucceededRefundsByEvent(): List<Array<Any>>
 
+    // Admin queue list and search. `q` is '' for no search, never null (a null bind inside
+    // LOWER(CONCAT(...)) is typed bytea by Postgres). Names, e-mails, the handle and the event
+    // name match as case-insensitive "contains"; ids and PayMongo ids match exactly.
+    // EXISTS keeps one row per dispute however many payments or joins match.
     @Query(
         """
         SELECT d FROM Dispute d
-        WHERE (:statusWire IS NULL OR d.statusWire = :statusWire)
+        WHERE d.statusWire IN :statusWires AND ($ADMIN_SEARCH)
         ORDER BY d.openedAt DESC, d.id ASC
         """,
         countQuery = """
         SELECT COUNT(d) FROM Dispute d
-        WHERE (:statusWire IS NULL OR d.statusWire = :statusWire)
+        WHERE d.statusWire IN :statusWires AND ($ADMIN_SEARCH)
         """,
     )
     fun pageForAdmin(
-        @Param("statusWire") statusWire: String?,
+        @Param("statusWires") statusWires: Collection<String>,
+        @Param("q") q: String,
         pageable: Pageable,
     ): Page<Dispute>
 }
+
+private const val CONTAINS_Q = "LIKE LOWER(CONCAT('%', :q, '%'))"
+
+// The `q` predicates of pageForAdmin, shared by its row and count queries.
+private const val ADMIN_SEARCH = """
+    :q = ''
+    OR CAST(d.id AS String) = LOWER(:q)
+    OR CAST(d.orderId AS String) = LOWER(:q)
+    OR EXISTS (SELECT 1 FROM User u WHERE u.id = d.runnerId
+        AND (LOWER(u.name) $CONTAINS_Q OR LOWER(u.email) $CONTAINS_Q))
+    OR EXISTS (SELECT 1 FROM Order o WHERE o.id = d.orderId
+        AND d.runnerId IS NULL AND LOWER(o.recipientEmail) $CONTAINS_Q)
+    OR EXISTS (SELECT 1 FROM Photo p, PhotographerSettings ps WHERE p.id = d.photoId
+        AND ps.userId = p.photographerId AND LOWER(ps.handle) $CONTAINS_Q)
+    OR EXISTS (SELECT 1 FROM Order o, Event e WHERE o.id = d.orderId
+        AND e.id = o.eventId AND LOWER(e.name) $CONTAINS_Q)
+    OR EXISTS (SELECT 1 FROM Payment pm WHERE pm.orderId = d.orderId
+        AND (pm.providerPaymentId = :q OR pm.providerRef = :q))
+"""

@@ -55,4 +55,19 @@ class EmailServiceRemovalTest {
         try { service().sendPhotographerRemovalReviewEmail("p@example.com", "Run", "body", requestId) } catch (e: RuntimeException) { thrown = true }
         assertTrue(thrown)
     }
+
+    @Test
+    fun `the update email links the status page and escapes the event name`() {
+        val sent = capture()
+        service().sendRunnerRemovalUpdateEmail("runner@example.com", "Run <b>5K</b> & more",
+            "Your photos have been deleted", "The photos in your request have been deleted.", requestId)
+        val html = sent().html
+        assertEquals(listOf("runner@example.com"), sent().to)
+        assertTrue(sent().subject.contains("Your photos have been deleted"), sent().subject)
+        assertTrue(html.contains("href=\"http://localhost:3000/account/photo-deletion/$requestId\""), html)
+        assertTrue(html.contains("Run &lt;b&gt;5K&lt;/b&gt; &amp; more"), html)
+        assertFalse(html.contains("<b>5K"), html)
+        assertFalse(html.contains("<img"), html)
+        assertTrue(html.contains("The photos in your request have been deleted."), html)
+    }
 }
