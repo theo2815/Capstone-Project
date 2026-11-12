@@ -141,7 +141,9 @@ val integrationTest by tasks.registering(Test::class) {
 	classpath = sourceSets.test.get().runtimeClasspath
 	shouldRunAfter(tasks.test)
 	maxHeapSize = "2g"
-	forkEvery = 1
+	// One JVM runs many classes, so classes with the same setup share one started Spring app.
+	// At most 4 apps stay in memory (Spring's default of 32 ran the heap out on 2026-10-07).
+	systemProperty("spring.test.context.cache.maxSize", "4")
 	// CI runners have 4 CPUs and 16 GB; a laptop keeps one worker (it has run out of memory before).
 	if (System.getenv("CI") != null) maxParallelForks = 2
 	// -PitShards=4 -PitShard=0..3 runs one quarter of the classes (CI splits the suite over 4 machines).
