@@ -1,6 +1,7 @@
 "use client";
 
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
+import { useInfiniteList } from "@/hooks/use-infinite-list";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -173,9 +174,14 @@ export function useFlagRelevance(flagId: string) {
 
 export function useFlagHiddenPhotos(flagId: string) {
   const session = usePrivateQuerySession("ADMIN");
-  return useQuery<PaginatedResponse<HiddenPhoto>>({
+  // Paged with the shared offset adapter; restored rows stay in the list, so every page is reachable.
+  return useInfiniteList<HiddenPhoto & { id: string }>({
     queryKey: ["admin", "flags", "hidden-photos", flagId, ...session.key],
-    queryFn: ({ signal }) => fetchFlagHiddenPhotos(flagId, {}, signal),
+    fetchPage: async (offset, limit, signal) => {
+      const page = await fetchFlagHiddenPhotos(flagId, { offset, limit }, signal);
+      return { ...page, items: page.items.map((p) => ({ ...p, id: p.photoId })) };
+    },
+    limit: 100,
     staleTime: LIST_STALE_MS,
     enabled: session.enabled && ADMIN_FLAGS_ENABLED,
   });

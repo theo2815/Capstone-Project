@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Kicker } from "@/components/ui/kicker";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { PAGE_SIZE } from "@/lib/pagination-config";
 import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   COPY_PAIR_NOTICE,
@@ -74,8 +76,11 @@ function BatchCard({ flag, batch }: { flag: Flag; batch: RelevanceBatch }) {
   const [confirming, setConfirming] = useState(false);
   const submitting = isPending(flag.id);
   // A photographer's own event has no copy or date rule (C8): exact and marker counts only.
-  const own = !batch.sharedRace;
-  const rule = batch.copyLow ? "Copy rule" : batch.dateLow ? "Date rule" : "No rule fired";
+  const gone = batch.eventName === "";
+  const own = !batch.sharedRace && !gone;
+  const rule =
+    batch.copyLow && batch.dateLow ? "Copy rule and date rule" : batch.copyLow ? "Copy rule" : batch.dateLow ? "Date rule" : "No rule fired";
+  const name = gone ? "Event no longer available" : batch.eventName;
 
   async function handleHide() {
     try {
@@ -97,13 +102,17 @@ function BatchCard({ flag, batch }: { flag: Flag; batch: RelevanceBatch }) {
   }
 
   return (
-    <section aria-label={`Batch in ${batch.eventName}`} className="rounded-2xl border border-line p-4 md:p-5 space-y-4">
+    <section aria-label={`Batch in ${gone ? "an event that is no longer available" : batch.eventName}`} className="rounded-2xl border border-line p-4 md:p-5 space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h4 className="font-display text-base md:text-lg font-medium text-ink">{batch.eventName}</h4>
+          <h4 className="font-display text-base md:text-lg font-medium text-ink">{name}</h4>
           <p className={`${labelCls} mt-1 tnum`}>
-            {formatLongDate(batch.eventDate, true)}
-            <span> · </span>
+            {!gone && (
+              <>
+                {formatLongDate(batch.eventDate, true)}
+                <span> · </span>
+              </>
+            )}
             {own ? "Own event" : rule}
           </p>
         </div>
@@ -177,7 +186,7 @@ function HiddenPhotos({ flag }: { flag: Flag }) {
   const { restorePhoto, isPending } = useFlagActions();
   const { showToast } = useToast();
   const submitting = isPending(flag.id);
-  const items = query.data?.items ?? [];
+  const items = query.items;
 
   async function handleRestore(photoId: string) {
     try {
@@ -190,8 +199,8 @@ function HiddenPhotos({ flag }: { flag: Flag }) {
     }
   }
 
-  if (query.isPending) return <p role="status" className="font-sans text-sm text-slate-soft">Loading hidden photos…</p>;
-  if (query.isError) {
+  if (query.isLoading) return <p role="status" className="font-sans text-sm text-slate-soft">Loading hidden photos…</p>;
+  if (query.error && items.length === 0) {
     return (
       <div role="alert" className="space-y-2">
         <p className="font-sans text-sm text-ink-soft">Could not load the hidden photos.</p>
@@ -201,6 +210,7 @@ function HiddenPhotos({ flag }: { flag: Flag }) {
   }
   if (items.length === 0) return <p className="font-sans text-sm text-slate-soft">No photos hidden by this flag.</p>;
   return (
+    <>
     <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3">
       {items.map((p) => (
         <li key={p.photoId} data-restored={p.restoredAt ? "true" : undefined} className={p.restoredAt ? "opacity-50" : undefined}>
@@ -216,6 +226,15 @@ function HiddenPhotos({ flag }: { flag: Flag }) {
         </li>
       ))}
     </ul>
+    <LoadMoreButton
+      shown={items.length}
+      total={query.total}
+      increment={PAGE_SIZE.ADMIN_INCREMENT}
+      onLoadMore={query.fetchNextPage}
+      isLoading={query.isFetchingNextPage}
+      label="Load more"
+    />
+    </>
   );
 }
 

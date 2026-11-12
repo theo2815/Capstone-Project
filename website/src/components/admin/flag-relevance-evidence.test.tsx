@@ -138,3 +138,48 @@ it("loading, empty and error states render", async () => {
   await user.click(screen.getAllByRole("button", { name: "Retry" })[0]!);
   expect(await screen.findByRole("region", { name: /Batch in/ })).toBeInTheDocument();
 });
+
+it("a hidden list longer than one page shows shown of total, loads the next page and restores a later photo", async () => {
+  const user = userEvent.setup();
+  const all = ["a", "b", "c", "d", "e"].map((id) => hp(id));
+  const offsets: number[] = [];
+  vi.mocked(api.get).mockImplementation((async (url: string) => {
+    if (url.includes("/relevance")) return relevance();
+    const offset = Number(new URL(`http://x${url}`).searchParams.get("offset"));
+    offsets.push(offset);
+    return { items: all.slice(offset, offset + 2), total: all.length, offset, limit: 2 };
+  }) as typeof api.get);
+  const post = vi.spyOn(api, "post").mockImplementation(async () => {
+    all[4] = hp("e", "2026-11-13T05:00:00Z");
+    return flag;
+  });
+  mount();
+  expect(await screen.findByText(/Showing 2 of 5/)).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Restore" })).toHaveLength(2);
+  await user.click(screen.getByRole("button", { name: /Load/ }));
+  expect(await screen.findByText(/Showing 4 of 5/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Load/ }));
+  expect(await screen.findByText(/All 5 loaded/)).toBeInTheDocument();
+  expect(offsets).toEqual(expect.arrayContaining([0, 2, 4]));
+  const restore = screen.getAllByRole("button", { name: "Restore" });
+  expect(restore).toHaveLength(5);
+  await user.click(restore[4]!);
+  await waitFor(() => expect(post).toHaveBeenCalledWith("/admin/flags/flag-2/hidden-photos/e/restore"));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Restore" })).toHaveLength(4));
+  expect(document.querySelectorAll('[data-restored="true"]')).toHaveLength(1);
+});
+
+it("a batch where both rules fired names both", async () => {
+  relevance = async () => evidence([{ ...batch, copyLow: true, dateLow: true }]);
+  mount();
+  const card = await screen.findByRole("region", { name: /Batch in/ });
+  expect(within(card).getByText(/Copy rule and date rule/)).toBeInTheDocument();
+});
+
+it("a batch whose event is gone says so and is not called an own event", async () => {
+  relevance = async () => evidence([{ ...batch, eventName: "", eventDate: "", sharedRace: false, copySamples: [] }]);
+  mount();
+  const card = await screen.findByRole("region", { name: "Batch in an event that is no longer available" });
+  expect(within(card).getByRole("heading", { name: "Event no longer available" })).toBeInTheDocument();
+  expect(within(card).queryByText(/Own event/)).not.toBeInTheDocument();
+});
