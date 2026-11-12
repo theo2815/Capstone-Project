@@ -47,6 +47,10 @@ export function usePhotographerPayoutActions() {
         const fallback = `Couldn't ${label} — please try again.`;
         const message = apiMessage ?? fallback;
         useToastStore.getState().showToast({ kind: "error", message });
+        // A hold placed since the last balance read: refetch so the billing notice shows at once.
+        if (error instanceof ApiError && error.errors[0]?.code === "PAYOUT_ON_HOLD") {
+          await qc.invalidateQueries({ queryKey: photographerPayoutKeys.balance(owner, role, version) });
+        }
         return false;
       }
 
