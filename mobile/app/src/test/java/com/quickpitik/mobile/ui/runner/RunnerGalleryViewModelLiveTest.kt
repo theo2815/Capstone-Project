@@ -44,6 +44,7 @@ class RunnerGalleryViewModelLiveTest {
     private val serverSockets = CopyOnWriteArrayList<WebSocket>()
     private val opens = Semaphore(0)
     private val paths = CopyOnWriteArrayList<String>()
+    @Volatile private var galleryItems = "[]"
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
@@ -63,7 +64,7 @@ class RunnerGalleryViewModelLiveTest {
                         }
                     })
                     path.startsWith("/api/v1/events/") && path.contains("/photos") ->
-                        ok("""{"items":[],"total":0,"offset":0,"limit":60,"snapshotAt":"2026-09-11T00:00:00Z"}""")
+                        ok("""{"items":$galleryItems,"total":${galleryTotal()},"offset":0,"limit":60,"snapshotAt":"2026-09-11T00:00:00Z"}""")
                     else -> MockResponse().setResponseCode(404) // the editorial detail is best-effort
                 }
             }
@@ -72,6 +73,7 @@ class RunnerGalleryViewModelLiveTest {
 
     @After fun tearDown() = SessionManager.getInstance(application).clearSession()
 
+    private fun galleryTotal() = Regex("\"id\"").findAll(galleryItems).count()
     private fun event(date: LocalDate) = EventDto("ev-1", "cebu", "Cebu Run", date.toString(), "Cebu", null, 0, 0, "LIVE")
     private fun photoPages() = paths.count { it.startsWith("/api/v1/events/") && it.contains("/photos") }
     private fun sockets() = paths.count { it.startsWith("/ws/events/ev-1/photos") }
@@ -113,6 +115,26 @@ class RunnerGalleryViewModelLiveTest {
         assertTrue(opens.tryAcquire(5, TimeUnit.SECONDS))
         assertEquals(2, sockets())
         vm.liveState.awaitFirst { it is WsState.Open }
+        vm.disconnectLivePhotos()
+    }
+
+    @Test fun `photo hidden removes the photo from the loaded list and an unknown frame is ignored`() {
+        galleryItems = """[{"id":"p1"},{"id":"p2"}]"""
+        val vm = RunnerGalleryViewModel(application)
+        vm.selectEvent(event(LocalDate.now()))
+        vm.searchState.awaitFirst { it is PhotosSearchState.Success }
+        vm.connectLivePhotos()
+        assertTrue(opens.tryAcquire(5, TimeUnit.SECONDS))
+        vm.liveState.awaitFirst { it is WsState.Open }
+
+        val server = serverSockets.last()
+        server.send("""{"type":"photo.mystery","photoId":"p1"}""")
+        server.send("""{"type":"photo.hidden","photoId":"p1"}""")
+        val after = vm.searchState.awaitFirst { it is PhotosSearchState.Success && it.photos.size == 1 } as PhotosSearchState.Success
+
+        assertEquals(listOf("p2"), after.photos.map { it.id })
+        assertEquals(1L, after.total)
+        assertEquals(0, vm.newPhotoCount.value)
         vm.disconnectLivePhotos()
     }
 

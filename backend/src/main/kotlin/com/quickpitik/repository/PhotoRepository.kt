@@ -3,6 +3,7 @@ package com.quickpitik.repository
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.RemovalState
 import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
@@ -159,6 +160,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           ) THEN 'REVIEW' ELSE 'NONE' END
         """, nativeQuery = true)
     fun refreshRemovalState(@Param("ids") ids: Collection<UUID>): Int
+
+    // RD-8: which of these photos the database now holds in the given removal state.
+    fun findAllByIdInAndRemovalState(ids: Collection<UUID>, removalState: RemovalState): List<Photo>
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("UPDATE Photo p SET p.removalState = com.quickpitik.entity.RemovalState.REMOVED, p.workGeneration = p.workGeneration + 1 " +

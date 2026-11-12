@@ -28,6 +28,9 @@ import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.data.domain.PageRequest
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.bean.override.mockito.MockitoBean
+import org.springframework.test.context.event.ApplicationEvents
+import org.springframework.test.context.event.RecordApplicationEvents
+import com.quickpitik.websocket.PhotosHiddenEvent
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -43,6 +46,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import kotlin.test.*
 
+@RecordApplicationEvents
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
     @LocalServerPort var port: Int = 0
@@ -65,6 +69,7 @@ class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var tokens: OrderAccessTokenService
     @Autowired lateinit var tx: TransactionTemplate
     @Autowired lateinit var jdbc: JdbcTemplate
+    @Autowired lateinit var recorded: ApplicationEvents
     @Autowired lateinit var removals: com.quickpitik.service.removal.PhotoRemovalService
     @MockitoBean lateinit var storage: StorageService
     @MockitoBean lateinit var provider: AiApiClient
@@ -146,6 +151,13 @@ class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
             { assertEquals(0, mapper.toDetailDto(event).photoCount) },
             { assertEquals(1, mapper.toAdminListDto(event).photoCount) },
         )
+    }
+
+    @Test fun `restricting a photo announces it hidden for its event`() {
+        restrict()
+
+        val hidden = recorded.stream(PhotosHiddenEvent::class.java).toList()
+        assertEquals(listOf(PhotosHiddenEvent(event.id, listOf(photo.id))), hidden)
     }
 
     @Test fun `directPhotoLookupCannotBypassRestriction`() {

@@ -16,7 +16,6 @@ import com.quickpitik.mobile.data.remote.QpWebSocket
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SearchByFaceJsonRequest
 import com.quickpitik.mobile.data.remote.SelfieRefDto
-import com.quickpitik.mobile.data.remote.WsFrameEnvelope
 import com.quickpitik.mobile.data.remote.WsState
 import com.quickpitik.mobile.data.shrinkSelfie
 import com.quickpitik.mobile.ui.common.EventState
@@ -26,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -203,15 +203,27 @@ class RunnerGalleryViewModel @JvmOverloads constructor(
     private fun observeLivePhotos() {
         viewModelScope.launch {
             liveSocket.frames.collect { raw ->
-                val type = runCatching {
-                    gson.fromJson(raw, WsFrameEnvelope::class.java)?.type
-                }.getOrNull()
+                val frame = runCatching { gson.fromJson(raw, LiveFrame::class.java) }.getOrNull()
+                // A photo held for removal review leaves the grid at once; no refetch.
+                if (frame?.type == "photo.hidden") {
+                    frame.photoId?.let(::dropHiddenPhoto)
+                    return@collect
+                }
                 // photo.indexed rides the same channel but only carries
                 // {id, bib, indexingStatus} and mobile has no per-photo indexing
                 // UI — drop it, and anything else we don't know, quietly.
-                if (type != "photo.published") return@collect
+                if (frame?.type != "photo.published") return@collect
                 _newPhotoCount.value = _newPhotoCount.value + 1
             }
+        }
+    }
+
+    private class LiveFrame(val type: String?, val photoId: String?)
+
+    private fun dropHiddenPhoto(photoId: String) {
+        _searchState.update { state ->
+            if (state !is PhotosSearchState.Success || state.photos.none { it.id == photoId }) state
+            else state.copy(photos = state.photos.filter { it.id != photoId }, total = (state.total - 1).coerceAtLeast(0))
         }
     }
 
