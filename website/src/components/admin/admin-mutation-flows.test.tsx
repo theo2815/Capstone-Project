@@ -33,17 +33,24 @@ it.each(["dispute", "report"])("displays another view's pending %s action and re
   const fail = pendingRequest(family === "dispute" ? "post" : "fetch");
   let pending!: Promise<unknown>;
   act(() => { pending = family === "dispute" ? actions.result.current.disputes.deny(dispute.id, "Reason") : actions.result.current.reports.acknowledge(report.id, "Reply"); });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Resolve…" })).toBeDisabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: family === "dispute" ? "Approve refund…" : "Resolve…" })).toBeDisabled());
   expect(screen.getByText(family === "dispute" ? "Denying…" : "Acknowledging…")).toBeInTheDocument();
   await fail();
   await pending;
-  await waitFor(() => expect(screen.getByRole("button", { name: "Resolve…" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: family === "dispute" ? "Approve refund…" : "Resolve…" })).toBeEnabled());
 });
 vi.mock("next/navigation", () => ({
   useRouter: () => fixtures.router,
   usePathname: () => "/admin/inbox",
   useSearchParams: () => new URLSearchParams(fixtures.search),
 }));
+
+const denyReasons = [
+  { code: "preference", label: "Doesn't like how it looks", runnerText: "The photo arrived as shown.", noteRequired: false },
+  { code: "bought_together", label: "Bought together with other photos", runnerText: "Bought together.", noteRequired: false },
+  { code: "window_closed", label: "PayMongo's refund window closed", runnerText: "Window closed.", noteRequired: false },
+  { code: "other", label: "Other (write the reason)", runnerText: "", noteRequired: true },
+];
 
 let client: QueryClient;
 beforeEach(() => {
@@ -54,7 +61,9 @@ beforeEach(() => {
   fixtures.search = "";
   fixtures.router.replace.mockClear();
   useAuthStore.getState().setUser(admin);
-  vi.spyOn(api, "get").mockImplementation(async (path) => path.startsWith("/admin/disputes")
+  vi.spyOn(api, "get").mockImplementation(async (path) => path === "/admin/disputes/deny-reasons"
+    ? { items: denyReasons, total: denyReasons.length }
+    : path.startsWith("/admin/disputes")
     ? { items: fixtures.disputes, total: fixtures.disputes.length }
     : path.startsWith("/admin/payouts/reports")
       ? { items: fixtures.reports, total: fixtures.reports.length }
@@ -133,7 +142,7 @@ it.each([false, true])("preserves the selected dispute while loading (stale cach
 });
 
 describe.each(["detail", "queue"])("dispute %s", (surface) => {
-  it.each(["refund", "resolve-deny", "deny", "escalate"])("keeps %s retryable after a failed request, then closes only on success", async (action) => {
+  it.each(["refund", "deny", "escalate"])("keeps %s retryable after a failed request, then closes only on success", async (action) => {
     const user = userEvent.setup();
     render(<QueryClientProvider client={client}>{surface === "detail"
       ? <AdminDisputeActionAside dispute={dispute} runnerHandle={dispute.runnerHandle} />
@@ -144,28 +153,25 @@ describe.each(["detail", "queue"])("dispute %s", (surface) => {
     const note = "Please review the supporting evidence.";
     let dialog: HTMLElement;
     let submit: HTMLElement;
-    if (action === "refund" || action === "resolve-deny") {
-      await user.click(screen.getByRole("button", { name: "Resolve…" }));
+    if (action === "refund") {
+      await user.click(screen.getByRole("button", { name: "Approve refund…" }));
       dialog = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+      await user.clear(within(dialog).getByRole("textbox"));
       await user.type(within(dialog).getByRole("textbox"), note);
-      if (action === "resolve-deny") {
-        await user.click(within(dialog).getByRole("radio", { name: /Deny — no refund/ }));
-        submit = within(dialog).getByRole("button", { name: "Deny" });
-      } else {
-        await user.click(within(dialog).getByRole("button", { name: "Continue" }));
-        dialog = screen.getByRole("dialog", { name: "Confirm refund" });
-        submit = within(dialog).getByRole("button", { name: "Confirm refund" });
-      }
+      await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+      dialog = screen.getByRole("dialog", { name: "Confirm refund" });
+      submit = within(dialog).getByRole("button", { name: "Confirm refund" });
     } else {
       await user.click(screen.getByRole("button", { name: action === "deny" ? "Deny…" : "Escalate…" }));
       dialog = screen.getByRole("dialog", { name: `${action === "deny" ? "Deny" : "Escalate"} dispute-1` });
+      if (action === "deny") await user.click(await within(dialog).findByRole("radio", { name: /Doesn't like/ }));
       await user.type(within(dialog).getByRole("textbox"), note);
       submit = within(dialog).getByRole("button", { name: action === "deny" ? "Deny claim" : "Escalate" });
     }
     const label = submit.textContent!;
     await user.click(submit);
     expect(submit).toBeDisabled();
-    expect(submit).toHaveTextContent(action === "refund" || action === "resolve-deny" ? "Resolving" : action === "deny" ? "Denying" : "Escalating");
+    expect(submit).toHaveTextContent(action === "refund" ? "Resolving" : action === "deny" ? "Denying" : "Escalating");
     await user.click(submit);
     expect(api.post).toHaveBeenCalledTimes(1);
     expect(useToastStore.getState().toasts).toEqual([]);
@@ -209,9 +215,10 @@ it.each([
     ? <AdminDisputeActionAside dispute={priced} runnerHandle={priced.runnerHandle} />
     : <DisputesQueue />}</QueryClientProvider>);
   if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
-  await user.click(screen.getByRole("button", { name: "Resolve…" }));
+  await user.click(screen.getByRole("button", { name: "Approve refund…" }));
   const form = screen.getByRole("dialog", { name: "Resolve dispute-1" });
   expect(within(form).getByText(/Full refund/)).toHaveTextContent("₱127.50");
+  await user.clear(within(form).getByRole("textbox"));
   await user.type(within(form).getByRole("textbox"), "Refund approved.");
   await user.click(within(form).getByRole("button", { name: "Continue" }));
   const confirm = screen.getByRole("dialog", { name: "Confirm refund" });
@@ -234,8 +241,9 @@ it.each(["detail", "queue"])("labels a provider-confirmed %s refund with the ret
     ? <AdminDisputeActionAside dispute={dispute} runnerHandle={dispute.runnerHandle} />
     : <DisputesQueue />}</QueryClientProvider>);
   if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
-  await user.click(screen.getByRole("button", { name: "Resolve…" }));
+  await user.click(screen.getByRole("button", { name: "Approve refund…" }));
   const form = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  await user.clear(within(form).getByRole("textbox"));
   await user.type(within(form).getByRole("textbox"), "Refund approved.");
   await user.click(within(form).getByRole("button", { name: "Continue" }));
   const confirm = screen.getByRole("dialog", { name: "Confirm refund" });
@@ -254,8 +262,6 @@ it.each([null, 0, undefined])("disables monetary resolve when the item charge is
   await user.type(within(dialog).getByRole("textbox"), "Reviewed the request.");
   if (itemChargeAmount === 0) expect(dialog).toHaveTextContent("This item has no refundable charge.");
   expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
-  await user.click(within(dialog).getByRole("radio", { name: /Deny/ }));
-  expect(within(dialog).getByRole("button", { name: "Deny" })).toBeEnabled();
 });
 
 it("accepts at most 500 resolve-note characters and only centavo partial amounts below the item charge", async () => {
@@ -324,4 +330,33 @@ it.each(["detail", "queue"])("offers no Escalate on a denied dispute in the %s v
   // The server escalates open disputes only.
   expect(screen.queryByRole("button", { name: "Escalate…" })).not.toBeInTheDocument();
   expect(screen.getByText("This dispute is closed. No further actions are available.")).toBeInTheDocument();
+});
+
+it.each(["detail", "queue"])("an admin-escalated dispute shows Approve refund and Deny in the %s view", async (surface) => {
+  const user = userEvent.setup();
+  const escalated: Dispute = { ...dispute, status: "escalated", attention: "escalated" };
+  fixtures.disputes = [escalated];
+  seedDisputes([escalated]);
+  render(<QueryClientProvider client={client}>{surface === "detail"
+    ? <AdminDisputeActionAside dispute={escalated} runnerHandle={escalated.runnerHandle} />
+    : <DisputesQueue />}</QueryClientProvider>);
+  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  expect(screen.getByRole("button", { name: "Approve refund…" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Deny…" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Escalate…" })).not.toBeInTheDocument();
+});
+
+it("Deny with this reason closes Approve and opens Deny with that reason picked", async () => {
+  const user = userEvent.setup();
+  const blocked: Dispute = {
+    ...dispute, refundable: false, refundBlockedReason: "window_closed",
+    refundBlockedMessage: "PayMongo's refund window closed.", paymentPhotoCount: 1,
+  };
+  render(<QueryClientProvider client={client}><AdminDisputeActionAside dispute={blocked} runnerHandle="runner" /></QueryClientProvider>);
+  await user.click(screen.getByRole("button", { name: "Approve refund…" }));
+  await user.click(within(screen.getByRole("dialog", { name: "Resolve dispute-1" })).getByRole("button", { name: "Deny with this reason" }));
+  expect(screen.queryByRole("dialog", { name: "Resolve dispute-1" })).not.toBeInTheDocument();
+  const deny = screen.getByRole("dialog", { name: "Deny dispute-1" });
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(await within(deny).findByRole("radio", { name: /refund window closed/ })).toBeChecked();
 });
