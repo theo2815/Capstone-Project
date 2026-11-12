@@ -61,7 +61,7 @@ export const PRIVACY_POLICY: LegalDoc = {
         {
           list: [
             'Inbox messages, saved events, your cart, and "photos ready" alerts you turn on.',
-            "Reports about photos, events and photographers, refund requests and disputes (with any note you write), and photo removal requests (your contact details, the reason, and any evidence file).",
+            "Reports about photos, events and photographers, refund requests and disputes (with any note you write), and photo removal requests (your contact details, the reason, and any evidence file). If you ask on the website with a live check, the request also holds the event you chose, the reason you picked, when you agreed and to which version of this policy, the result of the live check, and one still image of your face from the check (see [Deletion requests with a live check](#face-matching)).",
           ],
         },
         "**Security records**",
@@ -87,7 +87,7 @@ export const PRIVACY_POLICY: LegalDoc = {
             "**Automatic checks on uploads:** when a photographer uploads photos, we check that they belong to the event and are the photographer's own. We work out a fingerprint of each photo (a short code computed from the image, not a face template) and compare it with other photographers' photos in the same event. We also check whether the same file was already uploaded to QuickPitik by another photographer, in any event, look for the QuickPitik photo id that our watermarked previews carry, compare the bib numbers read from the photos with other photographers' photos in the same event, and compare the date the camera recorded with the event's date. We store the results for each photographer and event and do not show them publicly. A person reviews them before any photo is hidden or any payout is held.",
             "**Promoting QuickPitik:** we use event photos in our own promotion only when no one in them can be recognised, or the people who can be recognised agreed, and we credit the photographer.",
             "**Security:** to limit repeated requests, lock an account for a while after 5 wrong passwords, and let admins turn on a second sign-in step.",
-            "**Emails:** we send only emails about your account and orders: password reset codes, email verification, email-change confirmation, \"photos ready\" alerts (if you turn them on), order receipts with download links, refund links, an alert when a photographer's payout account changes, and, for photographers, one notice before the identity check becomes required to upload. We send no newsletters or marketing emails.",
+            "**Emails:** we send only emails about your account and orders: password reset codes, email verification, email-change confirmation, \"photos ready\" alerts (if you turn them on), order receipts with download links, refund links, an alert when a photographer's payout account changes, updates about a photo deletion request you made, and, for photographers, a notice when photos of theirs are hidden for review after a request and the decision on them, and one notice before the identity check becomes required to upload. We send no newsletters or marketing emails.",
           ],
         },
         "We do not use your data for advertising, and we do not give it to advertisers or data brokers.",
@@ -100,6 +100,7 @@ export const PRIVACY_POLICY: LegalDoc = {
             'The live selfie and the face comparison in a seller check: your consent, given with the tick before the live selfie starts. If you do not agree, choose "Have an admin check instead"; you can still sell.',
             "Safety, security, automatic checks on uploads and photo removal requests: our legitimate interest in protecting users, photographers and the service. A legitimate interest is a real need of ours that does not override your rights.",
             'Face matching with your selfie, saved selfies and "photos ready" alerts: your consent, given with the tick before you search or save a selfie, and by turning alerts on. A parent or guardian gives it for their child. You can withdraw it at any time by deleting your saved selfies and turning alerts off; searches already made are not undone.',
+            "The live check and the face search for a deletion request: your consent, given with the tick before the check starts. If you do not agree, you can ask by email instead (see [Photos of you](#photos-of-you)).",
             "Faces and bib numbers of people in event photos who have not searched: our legitimate interest in helping runners find their own race photos (see [People without an account](#face-matching)).",
           ],
         },
@@ -115,7 +116,8 @@ export const PRIVACY_POLICY: LegalDoc = {
         '**Saved selfies.** Runners can save up to 5 selfies to their profile. We keep them in our cloud storage until you delete them (you can delete them yourself at any time in your profile). Saved selfies are not added to any event\'s face collection; we send a saved selfie to Amazon Rekognition each time you use it to search. If you turn on "photos ready" alerts for an event, we use the saved selfie you choose to look for you in that event\'s new photos.',
         "**Before you search** by selfie or by bib number, the website and app show a short notice and ask you to tick that you agree. Your tick is remembered on that device.",
         "**How long.** An event's face templates are deleted 6 months after the event date, or earlier if the event is deleted or a photo is removed after a request (see [Photos of you](#photos-of-you)). After that, the event's photos can still be found by bib number.",
-        "**Admins.** When someone asks us to remove photos of them, an admin may use the selfie they send to find those photos. That selfie is kept only for the request and deleted when it closes.",
+        "**Deletion requests with a live check.** A runner account can ask us to delete photos of them from one event, on the website. The website first runs a live check: Amazon Rekognition Face Liveness, run by AWS in Malaysia, watches a few seconds of video from your camera to confirm a real person is there, and gives us one still image of your face. We use that image once, to search only the event you chose (Amazon Rekognition in Singapore). It is not added to any face collection, not used for any other search, and not compared with other accounts. We keep it with your request as evidence and delete it when the request closes. AWS keeps no extra images from the check for us. Very close matches may be hidden from the gallery at once; every other match waits for an admin, and only an admin deletes a photo. The photographers are told how many of their photos are affected, but not who asked, why, or what you look like.",
+        "**Admins.** When someone asks us by email to remove photos of them, an admin may use the selfie they send to find those photos. That selfie is kept only for the request and deleted when it closes.",
         "**People without an account.** Most people in event photos have never used QuickPitik. For them we rely on our legitimate interest in helping runners find their own race photos at events where photography is expected. To protect them, face templates stay inside one event's collection, are never shown to anyone, are compared only when someone searches that event after ticking the notice, and are deleted 6 months after the event date. You can object, or ask us to remove your photos and face templates, at any time (see [Photos of you](#photos-of-you)). A parent or guardian can do this for a child.",
       ],
     },
@@ -139,15 +141,15 @@ export const PRIVACY_POLICY: LegalDoc = {
         {
           table: [
             ["Company", "What it receives", "Why"],
-            ["Amazon Web Services (Amazon Rekognition)", "event photos, search selfies, photographers' ID front and live-selfie video and still image, photographers' profile pictures, covers, watermarks and race covers", "face matching, bib reading, ID text reading, seller face comparison and image checks in AWS's Singapore region; the live checks in AWS's Malaysia region"],
-            ["Cloudflare (R2 storage)", "all images: original photos, previews, selfies, profile pictures, payout QR images, seller-check photos and the still image from the seller live selfie, removal evidence", "storage"],
+            ["Amazon Web Services (Amazon Rekognition)", "event photos, search selfies, photographers' ID front and live-selfie video and still image, photographers' profile pictures, covers, watermarks and race covers, and the live-check video and image for a deletion request", "face matching, bib reading, ID text reading, seller face comparison and image checks in AWS's Singapore region; the live checks in AWS's Malaysia region"],
+            ["Cloudflare (R2 storage)", "all images: original photos, previews, selfies, profile pictures, payout QR images, seller-check photos and the still image from the seller live selfie, removal evidence and the still image from a deletion live check", "storage"],
             ["PayMongo", "the buyer's email (the part before the @ is used as the billing name); if we send payouts through PayMongo, the photographer's payout account name and number", "payments, refunds, payouts"],
             ["Resend", "your email address, your name and the email's content", "sending emails"],
             ["Google", "your Google sign-in, if you use it", "sign-in"],
             ["Railway and Vercel", "everything we store or show", "hosting the server, database and website"],
           ],
         },
-        "Amazon Rekognition processes event photos, selfies, ID photos and profile images in Singapore, and the live checks (for seller checks) in Malaysia. The other companies above may also store or process data outside the Philippines. Wherever your data is, QuickPitik stays responsible for it, and we use these companies' data-protection terms to keep it protected to a level comparable with Philippine law.",
+        "Amazon Rekognition processes event photos, selfies, ID photos and profile images in Singapore, and the live checks (for seller checks and deletion requests) in Malaysia. The other companies above may also store or process data outside the Philippines. Wherever your data is, QuickPitik stays responsible for it, and we use these companies' data-protection terms to keep it protected to a level comparable with Philippine law.",
         "**Other users see:**",
         {
           list: [
@@ -177,7 +179,8 @@ export const PRIVACY_POLICY: LegalDoc = {
             ["Orders, payments and sales records", "kept for at least 5 years after the tax-return deadline for the last year recorded in our books, as Philippine tax law requires (Tax Code Section 235, as amended by RA 11976), and longer while a tax audit, case or claim about them is open. This applies after an account is deleted too"],
             ["Photographer seller-check details and photos, the still image from the live selfie, and the fingerprint of the ID number", "while you sell on QuickPitik, then for at least 5 years like other money records. AWS keeps no extra images from the live selfie for us"],
             ["Download links for bought photos", "downloads work for one year after payment"],
-            ["Photo removal evidence", "deleted after the request is closed"],
+            ["Photo removal evidence, including the live-check image", "deleted after the request is closed"],
+            ["The rest of a deletion request (event, reason, contact, consent, live-check result)", "kept with the request record, like other removal requests"],
             ["Sign-in tokens and codes (hashed)", "not yet cleaned up automatically"],
             ["Server logs (technical records our server and hosting providers write; they can include your IP address, and your email address when we send you an email)", "kept by our hosting provider, Railway, for the time its settings allow"],
             ["Backups", "our hosting and storage providers may keep backup copies for the time their settings allow"],
@@ -247,7 +250,8 @@ export const PRIVACY_POLICY: LegalDoc = {
       id: "photos-of-you",
       heading: "Photos of you",
       blocks: [
-        `If you appear in an event photo and want it removed, email ${EMAIL_LINK} with the event and the photos (a link or a description), and why. A parent or guardian can ask for a child.`,
+        "**With a runner account:** go to your account and choose Request photo deletion, pick the event and a reason, and take the live check. You can follow the request and withdraw it in your account. Photos uploaded after you ask are not included; you can ask again once the request closes.",
+        `**By email, for anyone:** email ${EMAIL_LINK} with the event and the photos (a link or a description), and why. Use email if you have no runner account, cannot or would rather not use the camera, are asking for a child (a parent or guardian can ask for a child), or the event's face templates are already deleted.`,
         "The photographer gets 72 hours to respond, then QuickPitik decides. If we remove a photo, we delete its files and its face templates; a minimal record of the removal is kept. We cannot recall copies that buyers already downloaded, screenshots, or copies shared elsewhere.",
       ],
     },
@@ -263,7 +267,7 @@ export const PRIVACY_POLICY: LegalDoc = {
       id: "on-your-device",
       heading: "On your device",
       blocks: [
-        "**Website.** The website sets no cookies of its own. It keeps these in your browser's storage: your sign-in tokens, cart, a payment in progress, saved events, display choices, tips you have dismissed, and whether you have agreed to the face-matching notice. Fonts are part of the website (no font service is called). The sign-in pages load Google's sign-in button from Google; Google's own policies apply to it. During a live check (a seller check), the browser asks to use your camera; the video goes to AWS and is not saved on your device.",
+        "**Website.** The website sets no cookies of its own. It keeps these in your browser's storage: your sign-in tokens, cart, a payment in progress, saved events, display choices, tips you have dismissed, and whether you have agreed to the face-matching notice. Fonts are part of the website (no font service is called). The sign-in pages load Google's sign-in button from Google; Google's own policies apply to it. During a live check (a seller check or a deletion request), the browser asks to use your camera; the video goes to AWS and is not saved on your device.",
         "**Android app.**",
         {
           list: [

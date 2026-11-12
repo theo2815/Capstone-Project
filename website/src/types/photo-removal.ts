@@ -117,5 +117,14 @@ export interface RunnerLivenessSession {
   attemptsLeftToday: number;
   credentials: { accessKeyId: string; secretAccessKey: string; sessionToken: string; expiration: string } | null;
 }
+// RD-12: status, counts and a timeline only (backend RunnerPhotoRemovalDtos.kt): no photo ids, images or scores.
+export interface RunnerRemovalCounts { hidden: number; suggested: number; removed: number; kept: number }
+export interface RunnerRemovalRequestDto {
+  id: string; eventId: string; eventName: string; status: RunnerRemovalStatus; createdAt: string; updatedAt: string;
+  version: number; canWithdraw: boolean; counts: RunnerRemovalCounts;
+}
+export type RunnerTimelineStep =
+  | "SUBMITTED" | "PHOTOS_HIDDEN" | "SENT_FOR_REVIEW" | "MORE_INFO_NEEDED" | "APPROVED" | "KEPT" | "WITHDRAWN" | "CLOSED";
+export interface RunnerRemovalRequestDetailDto extends RunnerRemovalRequestDto { timeline: { at: string; step: RunnerTimelineStep }[] }
 export interface StartRunnerLivenessCommand { eventId: string; biometricConsent: true; consentVersion: string }
 export interface SubmitRunnerRemovalCommand { sessionId: string; eventId: string; reasonCode: string; details?: string }

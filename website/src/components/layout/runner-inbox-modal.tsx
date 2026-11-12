@@ -31,7 +31,13 @@ const KIND_TONE: Record<RunnerMessageKind, string> = {
   account_suspended: "text-error",
   account_unsuspended: "text-fresh",
   photo_removed: "text-warning",
+  photo_removal_update: "text-ink",
 };
+
+// Only the runner's own deletion update links to its status page; a buyer's
+// photo_removed row carries another person's case id and keeps its order link.
+const deletionRequestId = (m: RunnerMessage) =>
+  m.kind === "photo_removal_update" ? m.photoRemovalRequestId ?? null : null;
 
 export function RunnerInboxModal({ isOpen, onClose }: RunnerInboxModalProps) {
   const router = useRouter();
@@ -63,7 +69,11 @@ export function RunnerInboxModal({ isOpen, onClose }: RunnerInboxModalProps) {
   async function handleRowClick(message: RunnerMessage) {
     if (pending) return;
     if (message.readAt === null && !(await markRead(message.id))) return;
-    if (message.orderId) {
+    const requestId = deletionRequestId(message);
+    if (requestId) {
+      router.push(`${ROUTES.ACCOUNT_PHOTO_DELETION}/${encodeURIComponent(requestId)}`);
+      onClose();
+    } else if (message.orderId) {
       router.push(`${ROUTES.ORDERS}?expand=${encodeURIComponent(message.orderId)}`);
       onClose();
     }
@@ -155,7 +165,9 @@ interface InboxRowProps {
 function InboxRow({ message, pending, onClick, onRemove }: InboxRowProps) {
   const isUnread = message.readAt === null;
   const title = resolveRunnerMessageTitle(message);
-  const clickable = isUnread || !!message.orderId;
+  const requestId = deletionRequestId(message);
+  const linked = !!requestId || !!message.orderId;
+  const clickable = isUnread || linked;
 
   return (
     <li
@@ -163,7 +175,7 @@ function InboxRow({ message, pending, onClick, onRemove }: InboxRowProps) {
         "px-2 py-4 transition-colors",
         isUnread
           ? "bg-bone-deep/40 hover:bg-bone-deep"
-          : message.orderId
+          : linked
             ? "hover:bg-bone-deep/40"
             : "",
       )}
@@ -177,7 +189,7 @@ function InboxRow({ message, pending, onClick, onRemove }: InboxRowProps) {
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <Kicker
             tone="soft"
-            className={cn("flex items-center gap-2", KIND_TONE[message.kind])}
+            className={cn("flex items-center gap-2", KIND_TONE[message.kind] ?? "text-ink")}
           >
             {isUnread && (
               <span
@@ -185,7 +197,7 @@ function InboxRow({ message, pending, onClick, onRemove }: InboxRowProps) {
                 aria-label="Unread"
               />
             )}
-            {RUNNER_MESSAGE_KIND_LABEL[message.kind]}
+            {RUNNER_MESSAGE_KIND_LABEL[message.kind] ?? "Update"}
           </Kicker>
           <Kicker as="time" tone="soft" tnum>
             {formatLongDate(message.createdAt)}
@@ -204,7 +216,11 @@ function InboxRow({ message, pending, onClick, onRemove }: InboxRowProps) {
         </p>
       </button>
       <div className="mt-3 flex items-center justify-between">
-        {message.orderId ? (
+        {requestId ? (
+          <button type="button" disabled={pending} onClick={onClick} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+            View request →
+          </button>
+        ) : message.orderId ? (
           <button type="button" disabled={pending} onClick={onClick} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
             View receipt →
           </button>
