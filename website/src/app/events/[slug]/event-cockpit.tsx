@@ -37,6 +37,7 @@ import { useEventPhotos } from "@/hooks/use-event-photos";
 import { useEventLivePhotos } from "@/hooks/use-event-live-photos";
 import { searchEventByFace, type EventPhotosResult } from "@/lib/api-photos";
 import { deriveEventState } from "@/lib/event-catalog";
+import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
@@ -800,6 +801,12 @@ function BrowseMode({
             Refund Policy
             <span aria-hidden="true">→</span>
           </Kicker>
+          <Link
+            href={`${ROUTES.ACCOUNT_PHOTO_DELETION_NEW}?event=${encodeURIComponent(event.slug)}`}
+            className="mt-3 flex w-fit font-sans text-sm text-slate underline decoration-line-strong underline-offset-4 hover:decoration-fresh hover:text-ink transition-colors"
+          >
+            In these photos? Request deletion →
+          </Link>
         </div>
       </header>
 

@@ -5,7 +5,7 @@ import type {
   CreateRemovalRequestCommand, MatchRemovalCommand, VerifyRemovalCommand, CancelRemovalCommand,
   DecideRemovalCommand, RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand,
   RunnerRemovalReason, RunnerRemovalEligibility, RunnerLivenessSession, RunnerSubmitResult,
-  StartRunnerLivenessCommand, SubmitRunnerRemovalCommand,
+  StartRunnerLivenessCommand, SubmitRunnerRemovalCommand, RunnerRemovalRequestDto, RunnerRemovalRequestDetailDto,
 } from "@/types/photo-removal";
 
 const adminPath = "/admin/photo-removal-requests";
@@ -82,4 +82,13 @@ export function startRunnerLiveness(body: StartRunnerLivenessCommand): Promise<R
 }
 export function submitRunnerRemoval(body: SubmitRunnerRemovalCommand, idempotencyKey: string): Promise<RunnerSubmitResult> {
   return api.post(runnerPath, body, { headers: { "Idempotency-Key": idempotencyKey } });
+}
+export function listRunnerRemovalRequests(filters: RemovalPageFilters = {}, signal?: AbortSignal): Promise<RemovalPage<RunnerRemovalRequestDto>> {
+  return api.get(filtered(runnerPath, filters), { signal });
+}
+export function getRunnerRemovalRequest(id: string, signal?: AbortSignal): Promise<RunnerRemovalRequestDetailDto> {
+  return api.get(`${runnerPath}/${encodeURIComponent(id)}`, { signal });
+}
+export function withdrawRunnerRemoval(id: string, expectedVersion: number, idempotencyKey: string): Promise<RunnerRemovalRequestDetailDto> {
+  return api.post(`${runnerPath}/${encodeURIComponent(id)}/withdraw`, { expectedVersion }, { headers: { "Idempotency-Key": idempotencyKey } });
 }
