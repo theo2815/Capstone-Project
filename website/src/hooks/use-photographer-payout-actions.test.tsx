@@ -2,7 +2,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { PhotographerPayout } from "@/lib/photographer-mock";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
@@ -55,6 +55,7 @@ const baseBalance = {
     accountName: "Test User",
     hasQr: true,
   },
+  payoutHoldReason: null,
 };
 
 let client: QueryClient;
@@ -130,6 +131,25 @@ describe("request payout", () => {
     expect(client.getQueryData(list)).toEqual([openRequest]);
     expect(client.getQueryData(balance)).toEqual(baseBalance);
     expect(useToastStore.getState().toasts).toEqual([]);
+  });
+
+  it("a request refused for a hold shows the server's message and refetches the balance", async () => {
+    const { list, balance } = currentKeys();
+    client.setQueryData(list, [openRequest]);
+    client.setQueryData(balance, baseBalance);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const message = "Payouts are on hold while we review some of your uploads. Check your inbox for details, or contact support.";
+    vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code: "PAYOUT_ON_HOLD", message }], 409));
+
+    const { result } = renderHook(usePhotographerPayoutActions, { wrapper: Wrapper });
+    const success = await act(async () => result.current.request());
+
+    expect(success).toBe(false);
+    expect(useToastStore.getState().toasts).toEqual([
+      expect.objectContaining({ kind: "error", message }),
+    ]);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: balance });
   });
 
   it("discards backend confirmation after session change and does not mutate cache", async () => {

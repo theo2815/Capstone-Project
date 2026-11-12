@@ -161,6 +161,9 @@ export interface PayoutBalanceResponse {
   // hero + modal gate on this so the FE never believes a primary exists when
   // the DB has none. Null when none is configured.
   primaryAccount: PayoutBalancePrimaryAccount | null;
+  // "UPLOAD_REVIEW" while an admin holds this photographer's payouts (PE-2.2), else null.
+  // Requests are refused with PAYOUT_ON_HOLD until the hold ends.
+  payoutHoldReason: string | null;
 }
 
 export async function fetchPhotographerPayoutBalance(signal?: AbortSignal): Promise<PayoutBalanceResponse | null> {
