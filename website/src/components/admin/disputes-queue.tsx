@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
+import { RefundRun } from "@/components/admin/refund-run";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import {
   PhotoPreviewCard,
@@ -30,10 +31,11 @@ import { formatLongDate } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
 
 // The server's views (no status filter in the UI on purpose; the server keeps `status=`).
-type QueueView = Extract<AdminDisputeView, "needs_me" | "overdue" | "closed" | "all">;
+type QueueView = Extract<AdminDisputeView, "needs_me" | "overdue" | "refund_run" | "closed" | "all">;
 const VIEWS: readonly { value: QueueView; label: string; empty: string }[] = [
   { value: "needs_me", label: "Needs you", empty: "Nothing needs you right now." },
   { value: "overdue", label: "Overdue", empty: "Nothing is overdue." },
+  { value: "refund_run", label: "Refund run", empty: "No approved refunds are waiting to be paid." },
   { value: "closed", label: "Closed", empty: "No closed disputes yet." },
   { value: "all", label: "All", empty: "No disputes yet." },
 ];
@@ -77,7 +79,7 @@ export function DisputesQueue() {
   const offset = paging.scope === pageScope ? paging.offset : 0;
   const goTo = (next: number) => setPaging({ scope: pageScope, offset: next });
 
-  const query = useAdminDisputePage({ view, q: q || undefined, offset });
+  const query = useAdminDisputePage({ view, q: view === "refund_run" ? undefined : q || undefined, offset });
   const items = query.data?.items ?? EMPTY_DISPUTES;
   const total = query.data?.total ?? 0;
   const limit = query.data?.limit || SERVER_PAGE_SIZE;
@@ -177,6 +179,7 @@ export function DisputesQueue() {
               );
             })}
           </div>
+          {view !== "refund_run" && (
           <div className="lg:w-80">
             <label htmlFor="dispute-search" className="sr-only">
               Search disputes
@@ -190,9 +193,12 @@ export function DisputesQueue() {
               className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
             />
           </div>
+          )}
         </div>
 
-        {items.length === 0 ? (
+        {view === "refund_run" ? (
+          <RefundRun onOpen={handleOpenRow} />
+        ) : items.length === 0 ? (
           <p className="font-sans text-sm text-slate-soft">{emptyText}</p>
         ) : (
           <ul className="space-y-4">
@@ -208,7 +214,7 @@ export function DisputesQueue() {
           </ul>
         )}
 
-        {total > limit && (
+        {view !== "refund_run" && total > limit && (
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset === 0} onClick={() => goTo(Math.max(0, offset - limit))}>← Previous</button>
             <span className="font-mono tnum text-sm text-slate">{offset + 1}–{offset + items.length} of {total}</span>
