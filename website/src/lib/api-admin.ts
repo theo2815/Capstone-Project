@@ -6,6 +6,7 @@ import type {
 } from "@/store/photographer-settings-store";
 import type {
   Dispute,
+  DisputeDenyReason,
   DisputeResolution,
 } from "@/lib/admin-disputes";
 import type { Flag, FlagStatus } from "@/lib/admin-flags";
@@ -420,6 +421,21 @@ export async function denyDispute(
   return api.post<Dispute>(
     `/admin/disputes/${encodeURIComponent(disputeId)}/deny`,
     { reason },
+  );
+}
+
+export async function fetchDisputeDenyReasons(): Promise<DisputeDenyReason[]> {
+  return (await api.get<PaginatedResponse<DisputeDenyReason>>("/admin/disputes/deny-reasons")).items;
+}
+
+export async function denyDisputeWithCode(
+  disputeId: string,
+  reasonCode: string,
+  note: string | null,
+): Promise<Dispute> {
+  return api.post<Dispute>(
+    `/admin/disputes/${encodeURIComponent(disputeId)}/deny`,
+    note ? { reasonCode, note } : { reasonCode },
   );
 }
 
