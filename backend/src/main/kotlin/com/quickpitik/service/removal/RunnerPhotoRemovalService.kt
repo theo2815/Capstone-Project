@@ -13,6 +13,7 @@ import com.quickpitik.entity.*
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.*
 import com.quickpitik.service.ai.AiApiException
+import com.quickpitik.service.admin.SystemFlagService
 import com.quickpitik.service.ai.RekognitionIdentityClient
 import com.quickpitik.service.liveness.LivenessSessionService
 import com.quickpitik.service.photos.PhotoSearchService
@@ -52,6 +53,7 @@ class RunnerPhotoRemovalService(
     private val users: UserRepository,
     private val events: EventRepository,
     private val tx: TransactionTemplate,
+    private val flags: SystemFlagService,
 ) {
     /**
      * Turns a passed live check into a case. Every AWS and R2 call runs outside a transaction; the
@@ -92,7 +94,18 @@ class RunnerPhotoRemovalService(
         evidence.putSystemEvidence(draft.evidenceKey, image)
         val case = removals.completeRunnerCase(draft.requestId, match(eventId, image, runner.emailVerifiedAt != null,
             requests.existsRejectedRunnerRequest(userId, eventId)))
-        return RunnerSubmitResultDto(draft.requestId, statusOf(draft.requestId), case.hiddenCount, case.suggestedCount)
+        val saved = requests.findById(draft.requestId).orElseThrow()
+        flagIfHeld(userId, saved)
+        return RunnerSubmitResultDto(draft.requestId, statusOf(saved, items.findByRequestIdOrderByIdAsc(saved.id)),
+            case.hiddenCount, case.suggestedCount)
+    }
+
+    // RD-6, after commit: a cap held the auto-hide, so the admin sees one open USER flag with a line per request.
+    private fun flagIfHeld(userId: UUID, request: PhotoRemovalRequest) {
+        if (request.riskFlags.none { it == RunnerRiskFlag.OVER_REQUEST_CAP.name || it == RunnerRiskFlag.PHOTOGRAPHER_BUDGET.name }) return
+        val note = "photo removal request ${request.id}: ${request.riskFlags.joinToString(", ")}"
+        if (!flags.raise(FlagTargetKind.USER, userId, SystemFlagReason.RUNNER_REMOVAL_HELD, note))
+            flags.appendNote(FlagTargetKind.USER, userId, SystemFlagReason.RUNNER_REMOVAL_HELD, note)
     }
 
     private fun match(eventId: UUID, image: SearchImage, emailVerified: Boolean, priorRejection: Boolean): RunnerMatchOutcome {
@@ -125,8 +138,6 @@ class RunnerPhotoRemovalService(
             all.count { it.state == RemovalItemState.VERIFIED }, all.count { it.state == RemovalItemState.CANDIDATE })
     }
 
-    private fun statusOf(requestId: UUID): String =
-        statusOf(requests.findById(requestId).orElseThrow(), items.findByRequestIdOrderByIdAsc(requestId))
 
     private fun statusOf(r: PhotoRemovalRequest, all: List<PhotoRemovalItem>): String =
         RunnerRemovalStatus.of(RunnerStatusView(r, all.stateCounts())).name

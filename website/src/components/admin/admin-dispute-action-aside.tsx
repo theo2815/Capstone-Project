@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
 import type { Dispute, DisputeResolution } from "@/lib/admin-disputes";
@@ -21,6 +21,10 @@ import {
 interface AdminDisputeActionAsideProps {
   dispute: Dispute;
   runnerHandle: string;
+  // Reports whether any of the aside's dialogs is open, so a host drawer can stand its Esc down.
+  onDialogOpenChange?: (open: boolean) => void;
+  // Replaces the page-column layout (sticky on lg); the card look stays.
+  className?: string;
 }
 
 interface PendingResolve {
@@ -42,6 +46,8 @@ interface PendingResolve {
 export function AdminDisputeActionAside({
   dispute,
   runnerHandle,
+  onDialogOpenChange,
+  className = "lg:sticky lg:top-24 mt-12 lg:mt-0",
 }: AdminDisputeActionAsideProps) {
   const { showToast } = useToast();
   const { resolve, deny, escalate, isPending, pendingAction } = useDisputeActions();
@@ -55,6 +61,16 @@ export function AdminDisputeActionAside({
   const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(
     null,
   );
+  // The refund panel's own confirm and cancel dialogs.
+  const [panelDialogOpen, setPanelDialogOpen] = useState(false);
+  const dialogOpen = resolveOpen || denyOpen || escalateOpen || pendingResolve !== null || panelDialogOpen;
+  // One writer, so a late "closed" from one modal can never clear another's "open".
+  // The cleanup also clears the host flag if the aside unmounts with a dialog open.
+  // Layout effect: the host hears it in the same commit, so no Esc lands in between.
+  useLayoutEffect(() => {
+    onDialogOpenChange?.(dialogOpen);
+    return () => onDialogOpenChange?.(false);
+  }, [dialogOpen, onDialogOpenChange]);
 
   // Every action needs an open dispute: the server escalates open ones only.
   const isOpen = dispute.status === "open";
@@ -119,7 +135,7 @@ export function AdminDisputeActionAside({
   return (
     <aside
       aria-label="Admin actions"
-      className="lg:sticky lg:top-24 mt-12 lg:mt-0 rounded-2xl border border-line bg-bone p-5 md:p-6"
+      className={`${className} rounded-2xl border border-line bg-bone p-5 md:p-6`}
     >
       <Kicker as="p" tone="soft">
         Admin actions
@@ -156,7 +172,7 @@ export function AdminDisputeActionAside({
             Escalate…
           </button>
         )}
-        {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} />}
+        {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={setPanelDialogOpen} />}
         {!isOpen && dispute.refundStatus !== "manual_review" && (
           <p className="font-sans text-sm text-slate-soft">
             This dispute is closed. No further actions are available.

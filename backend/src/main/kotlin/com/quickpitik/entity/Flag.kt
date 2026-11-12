@@ -35,6 +35,7 @@ enum class SystemFlagReason {
     PROFILE_IMAGE_FLAGGED, PROFILE_IMAGE_UNCHECKED, PAYOUT_NAME_CHANGED, REPEAT_ACCOUNT_MATCH,
     RACE_CHECK_MISS, RACE_EDIT_HELD, POSSIBLE_DUPLICATE, SAME_BIB_DUPLICATE,
     NO_PROOF_HIDDEN, NO_PROOF_UNINDEXED, REPORT_THRESHOLD_HIDDEN, USER_REPORT,
+    RUNNER_REMOVAL_HELD, // RD-6: a runner request whose auto-hide was held by a cap
     // PE-2.1: one USER flag per photographer whose upload batch scored Low (relevance flag mode).
     BATCH_RELEVANCE_LOW;
 

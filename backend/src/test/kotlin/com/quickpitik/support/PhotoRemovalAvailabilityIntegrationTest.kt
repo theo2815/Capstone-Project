@@ -307,6 +307,29 @@ class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
         )
     }
 
+    @Test fun `a promoted suggestion is hidden on every public path`() {
+        val (id, result) = removals.runnerCase(runnerOnly(), event, matched(photo to 0.95))
+        assertEquals(0 to 1, result.hiddenCount to result.suggestedCount)
+        val admin = users.saveAndFlush(User(email = "promote-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Admin", role = Role.ADMIN))
+        val suggestion = items.findByRequestIdOrderByIdAsc(id).single()
+        removals.reviewSuggestions(admin.id, id, com.quickpitik.dto.removal.ReviewSuggestionsCommand(UUID.randomUUID(),
+            requests.findById(id).orElseThrow().version, promote = listOf(suggestion.id)))
+        val buyer = users.saveAndFlush(User(email = "cart-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Buyer", role = Role.RUNNER))
+        val eventId = event.id
+        assertAll(
+            { assertEquals(RemovalItemState.VERIFIED to admin.id, items.findById(suggestion.id).orElseThrow().let { it.state to it.verificationActorId }) },
+            { assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState) },
+            { assertEquals(emptyList<UUID>(), publicGalleryIds(eventId)) },
+            { assertEquals(emptyList<UUID>(), publicFaceMatchIds(eventId)) },
+            { assertTrue(photos.searchForEvent(eventId, PhotoStatus.LIVE, "123", page).isEmpty) },
+            { assertEquals(0, mapper.toListDto(event).photoCount) },
+            { assertFailsWith<NotFoundException> { carts.add(buyer.id, photo.id, eventId) } },
+            { assertFailsWith<NotFoundException> { metadata.getPublic(photo.id) } },
+        )
+    }
+
     @Test fun `a runner case's suggested photos stay public`() {
         val (id, result) = removals.runnerCase(runnerOnly(), event, matched(photo to 0.95))
         assertEquals(0 to 1, result.hiddenCount to result.suggestedCount)
