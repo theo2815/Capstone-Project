@@ -78,6 +78,10 @@ class PhotoRemovalService(
             if (request.status == RemovalRequestStatus.RESOLVING && (selected.any { it.state != RemovalItemState.RETAINED_RESTRICTED } ||
                     audit.existsByRequestIdAndAction(requestId, RemovalHistoryActions.CANCEL_REQUESTED))) removalConflict()
             val current = photos.findAllByIdForUpdate(selected.map { it.photoIdSnapshot }.sorted()).associateBy { it.id }
+            // RD-6 (Q2): on a runner case a photo with other people in it is removed only on its own.
+            val removing = selected.zip(command.decisions).filter { it.second.decision == RemovalDecision.REMOVE }.map { it.first }
+            if (request.source == RemovalRequestSource.RUNNER && removing.size > 1 &&
+                removing.any { otherPeopleVisible(current[it.photoIdSnapshot]?.faceCount) }) removalInvalid("Decide photos with other people one at a time")
             val groups = reviews.findByRequestIdOrderByIdAsc(requestId).associateBy { it.id }
             val now = clock.instant()
             selected.zip(command.decisions).forEach { (item, decision) ->
@@ -554,6 +558,84 @@ class PhotoRemovalService(
     }
 
     /**
+     * RD-6: on an open case an admin promotes suggestions (CANDIDATE → VERIFIED, hidden, the owner told), dismisses them
+     * (→ EXCLUDED, never hidden) or demotes an auto-hide (→ CANDIDATE, public again unless another case holds it).
+     */
+    @Transactional(propagation = Propagation.NEVER)
+    fun reviewSuggestions(adminId: UUID, requestId: UUID, command: ReviewSuggestionsCommand): PhotoRemovalRequestDto {
+        val hash = commandHash(mapper, command)
+        val op = RemovalCommandOperation.REVIEW_SUGGESTIONS
+        val result = tx.execute {
+            requireActiveAdmin(users, adminId)
+            val request = requests.findForUpdate(requestId) ?: removalNotFound()
+            commands.findByCommandId(command.commandId)?.let { return@execute it.replay(adminId, requestId, op, hash, mapper) }
+            transitions.ensureVersion(request, command.expectedVersion)
+            val ids = command.promote + command.dismiss + command.demote
+            if (ids.isEmpty() || ids.size > 100 || ids.toSet().size != ids.size) removalInvalid("Select one to 100 distinct items")
+            if (request.status != RemovalRequestStatus.OPEN ||
+                commands.findByRequestIdAndStateIn(requestId, listOf(RemovalCommandState.PENDING, RemovalCommandState.UNKNOWN)).isNotEmpty()) removalConflict()
+            val all = items.findByRequestIdOrderByIdAsc(requestId).associateBy { it.id }
+            fun pick(list: List<UUID>, allowed: (PhotoRemovalItem) -> Boolean) = list.map { all[it]?.takeIf(allowed) ?: invalidTransition() }
+            val promote = pick(command.promote) { it.state == RemovalItemState.CANDIDATE }
+            val dismiss = pick(command.dismiss) { it.state == RemovalItemState.CANDIDATE }
+            val demote = pick(command.demote) { it.autoHiddenIn(request) && it.adminDecision == null }
+            // The checks verify and reverifyOwner make: the photo still exists, is in this event and is not removed.
+            val fresh = photos.findAllByIdForUpdate(promote.mapNotNull { it.photoId }.sorted()).associateBy { it.id }
+            promote.forEach { item ->
+                val photo = item.photoId?.let { fresh[it] }
+                if (photo == null || photo.eventId != request.eventIdSnapshot || photo.removalState == RemovalState.REMOVED) invalidTransition()
+            }
+            val now = clock.instant()
+            if (commands.insertClaim(command.commandId, requestId, op.name, adminId, hash, null, now) == 0)
+                return@execute commands.findByCommandId(command.commandId)!!.replay(adminId, requestId, op, hash, mapper)
+            val byOwner = reviews.findByRequestIdOrderByIdAsc(requestId).associateBy { it.ownerIdSnapshot }.toMutableMap()
+            promote.forEach { item ->
+                val ownerId = fresh.getValue(item.photoId!!).photographerId
+                val existing = ownerId?.let { byOwner[it] }
+                val review = ownerId?.let { id -> existing ?: reviews.saveAndFlush(PhotoRemovalReview(requestId = requestId,
+                    ownerIdSnapshot = id, ownerId = id)).also { byOwner[id] = it } }
+                // A notified owner must be told again, with a new notice and a fresh response clock (reverifyOwner's reset).
+                val renotify = existing != null && (existing.notifiedAt != null || existing.unavailableReason != null)
+                if (renotify) existing!!.apply {
+                    notifiedAt = null; notifiedMessageId = null; deadline = null; overdue = false; overdueAt = null
+                    unavailableReason = null; notificationNextAttemptAt = now
+                }
+                item.state = RemovalItemState.VERIFIED
+                item.reviewId = review?.id
+                item.verificationActorId = adminId
+                item.verifiedAt = now
+                history.record(RemovalHistoryEvent(requestId, item.id, item.reviewId, item.photoIdSnapshot, RemovalActorType.ADMIN,
+                    adminId, RemovalHistoryActions.VERIFIED, RemovalItemState.CANDIDATE.name, item.state.name, null, now, command.commandId,
+                    if (renotify) mapOf("kind" to "owner_reverification", "noticeVersion" to (command.expectedVersion + 1).toString()) else emptyMap()))
+            }
+            dismiss.forEach { item ->
+                item.state = RemovalItemState.EXCLUDED
+                history.record(RemovalHistoryEvent(requestId, item.id, null, item.photoIdSnapshot, RemovalActorType.ADMIN, adminId,
+                    RemovalHistoryActions.SUGGESTION_DISMISSED, RemovalItemState.CANDIDATE.name, item.state.name, null, now, command.commandId))
+            }
+            demote.forEach { item ->
+                item.state = RemovalItemState.CANDIDATE
+                item.reviewId = null // suggestions belong to no owner review (RD-4)
+                history.record(RemovalHistoryEvent(requestId, item.id, null, item.photoIdSnapshot, RemovalActorType.ADMIN, adminId,
+                    RemovalHistoryActions.SUGGESTED, RemovalItemState.VERIFIED.name, item.state.name, null, now, command.commandId,
+                    mapOf("kind" to "demoted")))
+            }
+            items.flush()
+            reviews.flush()
+            requests.advanceVersion(requestId, now)
+            // Conditional availability writer clears the persistence context after its update.
+            (promote + demote).mapNotNull { it.photoId }.toSet().takeIf { it.isNotEmpty() }?.let { availability.refreshRemovalState(it) }
+            val detail = queries.adminDetail(adminId, requestId)
+            commands.findByCommandId(command.commandId)!!.apply { this.result = mapper.valueToTree(detail); state = RemovalCommandState.SUCCEEDED }
+            commands.flush()
+            publisher.publishEvent(removalChangedEvent(requestId, adminId, now))
+            detail
+        }!!
+        result.reviews.filter { it.notifiedAt == null && it.unavailableReason == null }.forEach { notifier.attempt(it.id) }
+        return result
+    }
+
+    /**
      * RD-5: the runner withdraws their own case until removal is authorized. Photos go public again unless another case
      * holds them; the case waits in RESOLVING (close reason WITHDRAWN, so the runner may file again) until the purge.
      */
@@ -763,6 +845,8 @@ data class RunnerMatchOutcome(
 )
 data class RunnerCaseResult(val newReviewIds: List<UUID>, val closedNoMatches: Boolean, val hiddenCount: Int, val suggestedCount: Int)
 
+internal fun invalidTransition(): Nothing =
+    throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION, "Cannot change this photo removal item")
 internal fun validateText(value: String, max: Int) {
     if (value.isBlank() || value.length > max) removalInvalid("Photo removal field is empty or too long")
 }

@@ -39,6 +39,10 @@ data class PhotoRemovalItemDto(
     val photo: RemovalPhotoDto? = null,
     val reviewOwnerId: UUID? = null,
     val ownerReviewPending: Boolean = false,
+    // RD-6. Receipts replay stored DTOs, so every field added here has a default.
+    val faceCount: Int? = null,
+    val otherPeopleVisible: Boolean = true,
+    val autoHidden: Boolean = false,
 )
 data class PhotoRemovalReviewDto(
     val id: UUID, val ownerIdSnapshot: UUID, val notifiedMessageId: UUID?, val notifiedAt: Instant?,
@@ -54,6 +58,14 @@ data class PhotoRemovalRequestDto(
     val evidenceCleanupState: RemovalEvidenceCleanupState, val outstandingEvidenceCount: Int,
     val items: List<PhotoRemovalItemDto> = emptyList(), val reviews: List<PhotoRemovalReviewDto> = emptyList(),
     val guestBuyerRemovalNotices: List<GuestBuyerRemovalNoticeDto> = emptyList(),
+    // RD-6: runner cases. The liveness band only, never the score; account age is shown, not a gate (Q6).
+    val source: RemovalRequestSource = RemovalRequestSource.SUPPORT,
+    val livenessBand: RunnerLivenessBand? = null,
+    val riskFlags: List<String> = emptyList(),
+    val reasonCode: String? = null,
+    val consentVersion: String? = null,
+    val requesterEmailVerified: Boolean? = null,
+    val requesterAccountCreatedAt: Instant? = null,
 )
 
 data class GuestBuyerRemovalNoticeDto(val noticeId: UUID, val orderId: UUID, val photoId: UUID,
@@ -137,6 +149,15 @@ data class DecideRemovalCommand(
     @field:PositiveOrZero val expectedVersion: Long,
     @field:Valid @field:Size(min = 1, max = 100) val decisions: List<RemovalItemDecision>,
     val urgentReason: String? = null,
+)
+
+// RD-6: 1-100 item ids in all, items of this case only.
+data class ReviewSuggestionsCommand(
+    val commandId: UUID,
+    @field:PositiveOrZero val expectedVersion: Long,
+    val promote: List<UUID> = emptyList(),
+    val dismiss: List<UUID> = emptyList(),
+    val demote: List<UUID> = emptyList(),
 )
 
 data class RetryRemovalCleanupCommand(val commandId: UUID, @field:PositiveOrZero val expectedVersion: Long,
