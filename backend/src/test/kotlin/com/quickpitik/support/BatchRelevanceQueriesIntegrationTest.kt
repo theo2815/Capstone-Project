@@ -147,7 +147,7 @@ class BatchRelevanceQueriesIntegrationTest : PostgresIntegrationTest() {
         val sweptNew = batchKey(lastUpload = upload).also { swept(it, upload.plusDays(2)) }
         val cutoff = upload.plusDays(3)
 
-        fun page(limit: Int) = batches.findDueBatches(cutoff, cutoff, LocalDate.of(1990, 1, 1), LocalDate.of(1990, 1, 1), limit)
+        fun page(limit: Int) = batches.findDueBatches(cutoff, cutoff, LocalDate.of(1990, 1, 1), LocalDate.of(1990, 1, 1), limit, false)
             .map { Key(it.eventId, it.photographerId) }
 
         assertEquals(listOf(neverA, neverB, sweptOld), page(3))
@@ -257,10 +257,45 @@ class BatchRelevanceQueriesIntegrationTest : PostgresIntegrationTest() {
         "INSERT INTO batch_relevance (event_id, photographer_id, last_swept_at) VALUES (?, ?, ?)", b.event, b.photographer, at,
     )
 
-    private fun due(): List<DueBatch> =
-        batches.findDueBatches(NOW.minusMinutes(10), NOW.minusMinutes(60), ADMIN_CLOSED, OWNER_CLOSED, 10_000)
+    // PE-2.1, plan 5.9: a batch that went Low in shadow mode is scored again in flag mode until it is linked.
+    @Test
+    fun `in flag mode a low batch with no flag is due and one with a flag is not`() {
+        val unflagged = batchKey().also { scored(it) }
+        val flagged = batchKey().also { scored(it) }
+        jdbc.update("UPDATE batch_relevance SET level = 'LOW' WHERE photographer_id IN (?, ?)", unflagged.photographer, flagged.photographer)
+        val flag = id("INSERT INTO flags (target_kind, target_id, reason) VALUES ('user', ?, 'batch_relevance_low')", flagged.photographer)
+        jdbc.update("UPDATE batch_relevance SET flag_id = ? WHERE photographer_id = ?", flag, flagged.photographer)
 
-    private fun isDue(b: Key) = due().any { it.eventId == b.event && it.photographerId == b.photographer }
+        assertTrue(isDue(unflagged, raiseUnflagged = true))
+        assertFalse(isDue(flagged, raiseUnflagged = true))
+        assertFalse(isDue(unflagged), "shadow mode, or the flags switch off, never re-scores for a raise")
+    }
+
+    // R2-10: the wrong-event note needs another photographer's batch whose dates fit the current event date.
+    @Test
+    fun `another photographer's date clear batch in the same event is found`() {
+        val mine = batchKey()
+        fun other(dateLow: Boolean?, scoredDate: LocalDate = EVENT_DATE) {
+            val photographer = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')", "rel-${UUID.randomUUID()}@test.local")
+            jdbc.update("INSERT INTO batch_relevance (event_id, photographer_id, scored_event_date, date_low) VALUES (?, ?, ?, ?)",
+                mine.event, photographer, scoredDate, dateLow)
+        }
+        jdbc.update("INSERT INTO batch_relevance (event_id, photographer_id, scored_event_date, date_low) VALUES (?, ?, ?, false)",
+            mine.event, mine.photographer, EVENT_DATE)
+        fun found() = batches.existsOtherDateClear(mine.event, mine.photographer, EVENT_DATE)
+
+        assertFalse(found(), "the photographer's own clear batch does not count")
+        other(dateLow = true); other(dateLow = null); other(dateLow = false, scoredDate = EVENT_DATE.minusDays(10))
+        assertFalse(found(), "date-Low, undecided, or scored on an older event date")
+        other(dateLow = false)
+        assertTrue(found())
+    }
+
+    private fun due(raiseUnflagged: Boolean = false): List<DueBatch> =
+        batches.findDueBatches(NOW.minusMinutes(10), NOW.minusMinutes(60), ADMIN_CLOSED, OWNER_CLOSED, 10_000, raiseUnflagged)
+
+    private fun isDue(b: Key, raiseUnflagged: Boolean = false) =
+        due(raiseUnflagged).any { it.eventId == b.event && it.photographerId == b.photographer }
 
     private fun pid(): Int = jdbc.queryForObject("SELECT pg_backend_pid()", Int::class.java)!!
 

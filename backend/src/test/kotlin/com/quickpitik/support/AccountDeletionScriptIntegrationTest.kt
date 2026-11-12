@@ -390,6 +390,17 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         assertRefusedUnchanged(s.photographer)
     }
 
+    // PE-2.1 (R2-05): the admin closes the relevance flag (resolve or dismiss) before the account goes.
+    @Test
+    fun `an open relevance flag refuses the deletion`() {
+        val s = seedStudio()
+        val flag = id("INSERT INTO flags (target_kind, target_id, reason, status) VALUES ('user', ?, 'batch_relevance_low', 'escalated')", s.photographer)
+        assertRefusedUnchanged(s.photographer)
+        assertTrue("close the relevance flag first" in anonymise(s.photographer, confirm = "yes").stderr)
+        jdbc.update("UPDATE flags SET status = 'dismissed', resolved_at = now() WHERE id = ?", flag)
+        assertEquals(0, anonymise(s.photographer, confirm = "yes").exitCode)
+    }
+
     @Test
     fun `runners admins and unknown ids are refused by the photographer script`() {
         for (target in listOf(user("RUNNER"), user("ADMIN"), UUID.randomUUID())) {
@@ -471,7 +482,7 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         val s = seedStudio()
         val upload = OffsetDateTime.parse("2001-05-06T07:08:09.123456Z")
         jdbc.update("UPDATE event_photographer SET last_upload_at = ? WHERE event_id = ? AND photographer_id = ?", upload, s.event, s.photographer)
-        fun isDue() = relevance.findDueBatches(upload, upload, LocalDate.of(1990, 1, 1), LocalDate.of(1990, 1, 1), 10_000)
+        fun isDue() = relevance.findDueBatches(upload, upload, LocalDate.of(1990, 1, 1), LocalDate.of(1990, 1, 1), 10_000, false)
             .any { it.eventId == s.event && it.photographerId == s.photographer }
         assertTrue(isDue())
         assertEquals(1, tx.execute { relevance.ensureBatch(s.event, s.photographer) })

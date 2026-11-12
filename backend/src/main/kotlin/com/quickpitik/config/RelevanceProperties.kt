@@ -7,7 +7,8 @@ import java.time.Duration
 // Thresholds are placeholders until PE-0 measures them (PE-1.7).
 @ConfigurationProperties(prefix = "app.relevance")
 data class RelevanceProperties(
-    // Kill switch: off = the sweep does nothing; shadow = relevance rows only.
+    // Kill switch: off = the sweep does nothing; shadow = relevance rows only; flag = a Low batch also
+    // opens or extends one admin flag per photographer (only while app.admin.flags-enabled is on).
     val mode: RelevanceMode = RelevanceMode.OFF,
     // Tick cadence, and the first delay after boot.
     val sweepIntervalMs: Long = 60_000,
@@ -66,4 +67,5 @@ data class RelevanceProperties(
 enum class RelevanceMode {
     OFF,
     SHADOW,
+    FLAG,
 }
