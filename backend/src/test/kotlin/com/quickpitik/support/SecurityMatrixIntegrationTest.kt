@@ -357,6 +357,18 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertTrue(responses.last().headers().firstValue("Retry-After").isPresent)
     }
 
+    // RD-6: admin only. (The admin bucket is the media-write one the intake test drains, so no admin row here.)
+    @Test
+    fun `runner suggestion review is admin only`() {
+        val path = "/api/v1/admin/photo-removal-requests/${UUID.randomUUID()}/suggestions"
+        val body = """{"commandId":"${UUID.randomUUID()}","expectedVersion":0,"dismiss":["${UUID.randomUUID()}"]}"""
+        assertEquals(401, post(path, body).statusCode())
+        for (t in listOf(register(Role.RUNNER), register(Role.PHOTOGRAPHER))) assertEquals(403, post(path, body, t).statusCode())
+        val list = "/api/v1/admin/photo-removal-requests?source=RUNNER"
+        assertEquals(401, get(list).statusCode())
+        assertEquals(403, get(list, register(Role.RUNNER)).statusCode())
+    }
+
     @Test
     fun `removal gallery browsing is not bound by the face-search policy`() {
         val token = adminToken()

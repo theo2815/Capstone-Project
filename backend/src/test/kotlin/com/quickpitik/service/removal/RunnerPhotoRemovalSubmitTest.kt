@@ -64,11 +64,12 @@ class RunnerPhotoRemovalSubmitTest {
     private val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 1, 2, 3)
     private val draft = RunnerDraft(UUID.randomUUID(), "photo-removal/x/evidence/$key")
 
+    private val flags = mock(com.quickpitik.service.admin.SystemFlagService::class.java)
     private val service = RunnerPhotoRemovalService(
         eligibility, liveness, LegalProperties("1.3"), props,
         Clock.fixed(Instant.parse("2026-11-10T04:00:00Z"), ZoneOffset.UTC),
         sessions, identityProvider, policy, removals, evidence, search, requests, items, photos, users, events,
-        TransactionTemplate(manager),
+        TransactionTemplate(manager), flags,
     )
 
     init {
@@ -226,6 +227,39 @@ class RunnerPhotoRemovalSubmitTest {
         val ex = assertFailsWith<ApiException> { service.submit(runner.id, key, command.copy(reasonCode = "BORED")) }
         assertEquals(ErrorCodes.VALIDATION_ERROR, ex.code)
         verifyNoInteractions(liveness, identity)
+    }
+
+    // RD-6: a request whose auto-hide a cap held leaves one open USER flag on the runner, with a line per request.
+    private fun held(raised: Boolean): String {
+        passed()
+        matches()
+        `when`(requests.findById(draft.requestId)).thenReturn(Optional.of(runnerCase(draft.requestId).apply {
+            riskFlags = mutableListOf("OVER_REQUEST_CAP", "PHOTOGRAPHER_BUDGET") }))
+        val note = "photo removal request ${draft.requestId}: OVER_REQUEST_CAP, PHOTOGRAPHER_BUDGET"
+        `when`(flags.raise(FlagTargetKind.USER, runner.id, SystemFlagReason.RUNNER_REMOVAL_HELD, note, null)).thenReturn(raised)
+        service.submit(runner.id, key, command)
+        return note
+    }
+
+    @Test
+    fun `a held request raises one USER flag`() {
+        val note = held(raised = true)
+        verify(flags).raise(FlagTargetKind.USER, runner.id, SystemFlagReason.RUNNER_REMOVAL_HELD, note, null)
+        verify(flags, never()).appendNote(FlagTargetKind.USER, runner.id, SystemFlagReason.RUNNER_REMOVAL_HELD, note)
+    }
+
+    @Test
+    fun `a second held request from one runner appends a note to the open flag`() {
+        val note = held(raised = false)
+        verify(flags).appendNote(FlagTargetKind.USER, runner.id, SystemFlagReason.RUNNER_REMOVAL_HELD, note)
+    }
+
+    @Test
+    fun `a request nothing held raises no flag`() {
+        passed()
+        matches()
+        service.submit(runner.id, key, command) // the fixture case carries no risk flags
+        verifyNoInteractions(flags)
     }
 
     private fun draftCommand() = RunnerDraftCommand(UUID.randomUUID(), runner.id, runner.email, event, key, "PRIVACY", null, "1.3",
