@@ -133,6 +133,31 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
         assertFinds(f.order.id.toString(), f)
     }
 
+    // DW-3: the admin list sums each checkout's payments in one query, whatever their status.
+    @Test
+    fun `payments are found for several checkout references at once`() {
+        val a = fixture()
+        val b = fixture()
+        val other = fixture()
+        // One QR Ph checkout can span orders: a second order's row shares a's reference.
+        val sibling = payments.saveAndFlush(
+            Payment(
+                orderId = b.order.id,
+                provider = "paymongo",
+                providerRef = a.checkoutRef,
+                amountPhp = BigDecimal("50.00"),
+                status = PaymentStatus.PENDING,
+            ),
+        )
+
+        val found = payments.findAllByProviderAndProviderRefIn("paymongo", listOf(a.checkoutRef, b.checkoutRef))
+
+        assertEquals(mapOf(a.checkoutRef to 2, b.checkoutRef to 1), found.groupingBy { it.providerRef.orEmpty() }.eachCount())
+        assertTrue(sibling.id in found.map { it.id })
+        assertTrue(found.none { it.orderId == other.order.id })
+        assertTrue(payments.findAllByProviderAndProviderRefIn("card", listOf(a.checkoutRef)).isEmpty())
+    }
+
     class Fixture(
         val dispute: Dispute,
         val order: Order,

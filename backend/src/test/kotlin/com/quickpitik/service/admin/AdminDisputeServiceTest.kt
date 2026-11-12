@@ -597,6 +597,61 @@ class AdminDisputeServiceTest {
         assertEquals(sentAt.plusDays(3).toString(), dto.refundLinkExpiresAt)
     }
 
+    // --- DW-3: refundability shown up front ---
+
+    @Test
+    fun `an open QR Ph dispute bought with three other photos shows refundable false, bought_together, its admin message and a photo count of 4`() {
+        // Paid two days ago, so PayMongo's window is still open and only the whole-payment rule blocks it.
+        val order = qrphOrder().also { it.totalPhp = BigDecimal("600.00"); it.paidAt = now.minusDays(2) }
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        val paid = payment(order.id, "pi_four", "pay_four", PaymentStatus.SUCCEEDED).also { it.amountPhp = BigDecimal("600.00") }
+        val fourItems = listOf(item(dispute, "150.00", "0.00")) +
+            List(3) { OrderItem(OrderItemId(order.id, UUID.randomUUID()), BigDecimal("150.00")) }
+        Mockito.`when`(disputeRepository.pageForAdmin(
+            Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
+            Mockito.eq("") ?: "",
+            Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
+        )).thenReturn(PageImpl(listOf(dispute)))
+        Mockito.`when`(orderRepository.findAllById(setOf(order.id))).thenReturn(listOf(order))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(setOf(order.id))).thenReturn(fourItems)
+        Mockito.`when`(paymentRepository.findByOrderIdIn(setOf(order.id))).thenReturn(listOf(paid))
+        Mockito.`when`(paymentRepository.findAllByProviderAndProviderRefIn("paymongo", setOf("pi_four"))).thenReturn(listOf(paid))
+        Mockito.`when`(photoRepository.findAllById(setOf(dispute.photoId))).thenReturn(emptyList())
+        Mockito.`when`(userRepository.findAllById(emptySet())).thenReturn(emptyList())
+        Mockito.`when`(settingsRepository.findAllById(emptySet())).thenReturn(emptyList())
+        Mockito.`when`(eventRepository.findAllById(setOf(order.eventId))).thenReturn(emptyList())
+        Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(dispute.id))).thenReturn(emptyList())
+
+        val dto = service.list(null, null, null, PaginationParams.of(0, 10)).items.single()
+
+        assertEquals(false, dto.refundable)
+        assertEquals("bought_together", dto.refundBlockedReason)
+        assertEquals("PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead.", dto.refundBlockedMessage)
+        assertEquals(4, dto.paymentPhotoCount)
+    }
+
+    @Test
+    fun `an approved refund shows no refundability`() {
+        val order = qrphOrder()
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.statusWire = "escalated"
+        dispute.refundStatus = "manual_review"
+        Mockito.`when`(orderItemRepository.findById(OrderItemId(order.id, dispute.photoId)))
+            .thenReturn(Optional.of(item(dispute, "150.00", "0.00")))
+        Mockito.`when`(paymentRepository.findByOrderId(order.id))
+            .thenReturn(listOf(payment(order.id, "pi_one", "pay_one", PaymentStatus.SUCCEEDED)))
+
+        val dto = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
+
+        assertNull(dto.refundable)
+        assertNull(dto.refundBlockedReason)
+        assertNull(dto.refundBlockedMessage)
+        assertNull(dto.paymentPhotoCount)
+        Mockito.verify(paymentRepository, Mockito.never()).findAllByProviderAndProviderRefIn(
+            Mockito.anyString() ?: "", Mockito.anyCollection<String>() ?: emptyList(),
+        )
+    }
+
     @Test
     fun `hydrate leaves the refund dates null unless a QR Ph refund waits for a manual refund`() {
         val qrph = qrphOrder()

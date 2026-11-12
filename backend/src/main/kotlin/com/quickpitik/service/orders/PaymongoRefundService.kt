@@ -335,31 +335,20 @@ class PaymongoRefundService(
             DisputeResolution.REFUND_PARTIAL -> validatePartialAmount(requestedAmount, charged)
             DisputeResolution.DENY -> error("DENY is not a provider refund")
         }
-        val payment = paymentRepository.findByOrderId(dispute.orderId).settledPaymongo()
-            ?: throw checkoutConflict("The order has no settled PayMongo payment to refund.")
-        val providerRef = payment.providerRef
-            ?: throw checkoutConflict("The settled payment has no PayMongo reference.")
+        val found = paymentRepository.findByOrderId(dispute.orderId).settledPaymongo()
+        val order = orderRepository.findById(dispute.orderId).orElse(null)
+        // QR Ph payments cannot be refunded through the API: they are parked for PayMongo's dashboard.
+        val qrph = order?.paymentMethod == PaymentMethod.QRPH
+        val checkoutTotal = found?.providerRef?.takeIf { qrph }?.let { ref ->
+            paymentRepository.findAllByProviderAndProviderRef(PAYMONGO, ref).fold(BigDecimal.ZERO) { sum, it -> sum + it.amountPhp }
+        }
+        paymongoProperties.refundBlocker(order, found, checkoutTotal, amount, OffsetDateTime.now(clock))
+            ?.let { throw checkoutConflict(it.message) }
+        val payment = checkNotNull(found) { "refundBlocker lets no missing payment through" }
+        val providerRef = checkNotNull(payment.providerRef) { "refundBlocker lets no missing reference through" }
 
         // TIMESTAMPTZ keeps microseconds; store what the database will give back (INC-12).
         val now = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS)
-        // QR Ph payments cannot be refunded through the API. PayMongo's dashboard refunds a whole payment
-        // only, and one payment covers the whole checkout, so approval needs the refund to equal that total.
-        val qrphOrder = orderRepository.findById(dispute.orderId).orElse(null)
-            ?.takeIf { it.paymentMethod == PaymentMethod.QRPH }
-        val qrph = qrphOrder != null
-        if (qrphOrder != null) {
-            // PayMongo's dashboard cannot refund a payment older than its window, so approving would strand the runner.
-            if (!OffsetDateTime.now(clock).isBefore(paymongoProperties.refundWindowClosesAt(qrphOrder))) {
-                throw checkoutConflict("PayMongo's refund window for this payment has closed. Deny this request with a reason instead.")
-            }
-            val checkoutTotal = paymentRepository.findAllByProviderAndProviderRef(PAYMONGO, providerRef)
-                .fold(BigDecimal.ZERO) { sum, it -> sum + it.amountPhp }
-            if (amount.compareTo(checkoutTotal) != 0) {
-                throw checkoutConflict(
-                    "PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead.",
-                )
-            }
-        }
         dispute.resolution = resolution
         dispute.refundAmountPhp = amount
         dispute.refundStatus = if (qrph) MANUAL_REVIEW else REQUESTING
@@ -698,6 +687,33 @@ internal fun PaymongoProperties.refundCancelsAt(order: Order, dispute: Dispute):
     val windowCloses = refundWindowClosesAt(order)
     val linkExpires = refundLinkExpiresAt(dispute)
     return if (linkExpires != null && linkExpires.isAfter(windowCloses)) linkExpires else windowCloses
+}
+
+// Why a full or partial refund of `amount` cannot be approved now, or null if it can (plan DW-3, 5.3).
+// `prepare` throws the message as a 409; the admin list shows it before the admin clicks.
+internal enum class RefundBlocker(val wire: String, val message: String) {
+    NO_SETTLED_PAYMENT("no_payment", "The order has no settled PayMongo payment to refund."),
+    NO_PAYMENT_REF("no_payment", "The settled payment has no PayMongo reference."),
+    WINDOW_CLOSED("window_closed", "PayMongo's refund window for this payment has closed. Deny this request with a reason instead."),
+    BOUGHT_TOGETHER("bought_together", "PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead."),
+}
+
+// `checkoutTotal`: the sum of every payment sharing the settled payment's reference (one QR Ph checkout can span orders).
+internal fun PaymongoProperties.refundBlocker(
+    order: Order?,
+    payment: Payment?,
+    checkoutTotal: BigDecimal?,
+    amount: BigDecimal,
+    now: OffsetDateTime,
+): RefundBlocker? {
+    if (payment == null) return RefundBlocker.NO_SETTLED_PAYMENT
+    if (payment.providerRef == null) return RefundBlocker.NO_PAYMENT_REF
+    if (order?.paymentMethod != PaymentMethod.QRPH) return null
+    // PayMongo's dashboard cannot refund a payment older than its window, so approving would strand the runner.
+    if (!now.isBefore(refundWindowClosesAt(order))) return RefundBlocker.WINDOW_CLOSED
+    // The dashboard refunds a whole payment only, so the refund must equal the whole checkout.
+    if (amount.compareTo(checkoutTotal ?: BigDecimal.ZERO) != 0) return RefundBlocker.BOUGHT_TOGETHER
+    return null
 }
 
 // The order's settled PayMongo payment: the one a refund targets.
