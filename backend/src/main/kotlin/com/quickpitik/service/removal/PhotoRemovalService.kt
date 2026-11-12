@@ -50,6 +50,7 @@ class PhotoRemovalService(
     private val adminLog: AdminDecisionLogService,
     private val audit: PhotoRemovalHistoryRepository,
     private val properties: PhotoRemovalProperties,
+    private val autoHide: RunnerAutoHidePolicy,
 ) {
     @Transactional(propagation = Propagation.NEVER)
     fun decide(adminId: UUID, requestId: UUID, command: DecideRemovalCommand): PhotoRemovalRequestDto {
@@ -396,19 +397,9 @@ class PhotoRemovalService(
             if (commands.insertClaim(command.commandId, requestId, RemovalCommandOperation.VERIFY.name, adminId, hash, null, now) == 0) {
                 return@execute commands.findByCommandId(command.commandId)!!.replay(adminId, requestId, RemovalCommandOperation.VERIFY, hash, mapper)
             }
-            val owners = users.findAllById(fresh.values.mapNotNull { it.photographerId }.toSet()).associateBy { it.id }
-            val groups = fresh.values.mapNotNull { it.photographerId }.toSet().associateWith { ownerId ->
-                reviews.save(PhotoRemovalReview(requestId = requestId, ownerIdSnapshot = ownerId, ownerId = owners[ownerId]?.id))
-            }
-            reviews.flush()
-            val confirmed = command.selectedPhotos.map { selection ->
-                val photo = fresh.getValue(selection.photoId)
-                items.save(PhotoRemovalItem(requestId = requestId, photoIdSnapshot = photo.id, photoId = photo.id,
-                    ownerIdSnapshot = photo.photographerId, ownerNameSnapshot = owners[photo.photographerId]?.name,
-                    reviewId = groups[photo.photographerId]?.id, state = RemovalItemState.VERIFIED, matchSource = selection.source,
-                    matchScore = scores[photo.id], verificationActorId = adminId, verifiedAt = now,
-                    verificationReason = selection.note ?: command.verificationNote))
-            }
+            val confirmed = saveVerifiedItems(requestId, command.selectedPhotos.map { selection ->
+                VerifiedPick(fresh.getValue(selection.photoId), selection.source, scores[selection.photoId], selection.note ?: command.verificationNote)
+            }, adminId, now)
             items.flush()
             request.status = RemovalRequestStatus.OPEN
             request.verifierId = adminId
@@ -539,28 +530,13 @@ class PhotoRemovalService(
             commands.findByCommandId(command.commandId)?.let { return@execute it.replay(adminId, requestId, RemovalCommandOperation.CANCEL, hash, mapper) }
             transitions.ensureVersion(request, command.expectedVersion)
             validateText(command.reason, 2000)
-            if (request.status !in setOf(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN)) removalConflict()
             val selected = items.findByRequestIdOrderByIdAsc(requestId)
-            if (selected.any { it.state in setOf(RemovalItemState.REMOVAL_AUTHORIZED, RemovalItemState.REMOVED) }) removalConflict()
+            requireClosable(request, selected)
             val now = clock.instant()
             if (commands.insertClaim(command.commandId, requestId, RemovalCommandOperation.CANCEL.name, adminId, hash, null, now) == 0) {
                 return@execute commands.findByCommandId(command.commandId)!!.replay(adminId, requestId, RemovalCommandOperation.CANCEL, hash, mapper)
             }
-            val previous = request.status
-            selected.filter { it.state in setOf(RemovalItemState.CANDIDATE, RemovalItemState.VERIFIED, RemovalItemState.RETAINED_RESTRICTED) }
-                .forEach { it.state = RemovalItemState.EXCLUDED }
-            items.flush()
-            request.status = RemovalRequestStatus.RESOLVING
-            request.candidateCache = null
-            request.updatedAt = now
-            request.evidenceCleanupState = RemovalEvidenceCleanupState.PENDING
-            request.evidenceCleanupNextAttemptAt = now
-            requests.flush()
-            // Availability's native update clears the persistence context; persist the case first.
-            availability.refreshRemovalState(selected.mapNotNull { it.photoId }.toSet())
-            history.record(RemovalHistoryEvent(requestId = requestId, actorType = RemovalActorType.ADMIN, actorId = adminId,
-                action = RemovalHistoryActions.CANCEL_REQUESTED, fromState = previous.name, toState = request.status.name,
-                reason = command.reason, occurredAt = now, commandId = command.commandId))
+            closeCase(request, selected, RemovalActorType.ADMIN, adminId, command.commandId, command.reason, null, now)
             val result = queries.adminDetail(adminId, requestId)
             val receipt = commands.findByCommandId(command.commandId)!!
             receipt.result = mapper.valueToTree(result)
@@ -573,8 +549,181 @@ class PhotoRemovalService(
         // Receipt is the original command result, before asynchronous cleanup changes version/state.
         return tx.execute { commands.findByCommandId(command.commandId)!!.replay(adminId, requestId, RemovalCommandOperation.CANCEL, hash, mapper) }!!
     }
-    companion object { private val log = org.slf4j.LoggerFactory.getLogger(PhotoRemovalService::class.java) }
+
+    /** Transaction A of a runner submit: the case and its evidence key are stored before any upload. */
+    fun openRunnerDraft(command: RunnerDraftCommand): RunnerDraft {
+        val key = PhotoRemovalEvidenceService.recordedEvidenceKey(command.requestId, command.creationCommandId)
+        try {
+            tx.executeWithoutResult {
+                val now = clock.instant()
+                val reason = RunnerRemovalReason.valueOf(command.reasonCode).label + (command.details?.let { ": $it" } ?: "")
+                requests.saveAndFlush(PhotoRemovalRequest(id = command.requestId, eventId = command.event.id,
+                    eventIdSnapshot = command.event.id, eventNameSnapshot = command.event.name, requesterUserId = command.runnerId,
+                    requesterContact = command.runnerEmail, supportReference = "Runner request", requesterReason = reason,
+                    publicToOwnerReason = "Privacy removal request", creatorId = command.runnerId,
+                    creationCommandId = command.creationCommandId, createdAt = now, source = RemovalRequestSource.RUNNER,
+                    reasonCode = command.reasonCode, consentVersion = command.consentVersion, consentAt = command.consentAt,
+                    livenessSessionId = command.livenessSessionId, livenessBand = command.livenessBand,
+                    livenessConfidence = command.livenessConfidence, evidenceContentType = command.evidenceContentType,
+                    riskFlags = mutableListOf(RunnerRiskFlag.MATCHING_UNAVAILABLE.name), outstandingEvidenceKeys = listOf(key),
+                    evidenceCleanupState = RemovalEvidenceCleanupState.PENDING,
+                    evidenceCleanupNextAttemptAt = now.plus(properties.cleanupBackoff)))
+                history.record(RemovalHistoryEvent(requestId = command.requestId, actorType = RemovalActorType.RUNNER,
+                    actorId = command.runnerId, action = RemovalHistoryActions.CREATED, toState = RemovalRequestStatus.DRAFT.name,
+                    occurredAt = now, commandId = command.creationCommandId))
+            }
+        } catch (error: DataIntegrityViolationException) {
+            // uq_photo_removal_requests_runner_open or _liveness_session: nothing was stored.
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.REMOVAL_REQUEST_OPEN, "You already have an open request.")
+        }
+        return RunnerDraft(command.requestId, key)
+    }
+
+    /** Transaction B of a runner submit: install the evidence, then hide the auto band and suggest the rest. */
+    @Transactional(propagation = Propagation.NEVER)
+    fun completeRunnerCase(requestId: UUID, outcome: RunnerMatchOutcome): RunnerCaseResult {
+        var purge = false
+        val result = tx.execute {
+            val request = requests.findForUpdate(requestId) ?: removalNotFound()
+            val key = PhotoRemovalEvidenceService.recordedEvidenceKey(requestId, request.creationCommandId)
+            val existing = items.findByRequestIdOrderByIdAsc(requestId)
+            val now = clock.instant()
+            fun trackKey() {
+                request.outstandingEvidenceKeys = (request.outstandingEvidenceKeys + key).distinct()
+                request.evidenceCleanupState = RemovalEvidenceCleanupState.PENDING
+                request.evidenceCleanupNextAttemptAt = now
+            }
+            // A withdraw, admin cancel or admin verify took the lock first: a late upload is never installed.
+            if (request.status != RemovalRequestStatus.DRAFT || existing.isNotEmpty()) {
+                trackKey()
+                requests.flush()
+                purge = true
+                return@execute RunnerCaseResult(emptyList(), false, 0, 0)
+            }
+            if (key in request.outstandingEvidenceKeys) {
+                request.outstandingEvidenceKeys = request.outstandingEvidenceKeys - key
+                request.evidenceKey = key
+                request.evidenceGeneration++
+                request.evidenceCleanupState = if (request.outstandingEvidenceKeys.isEmpty()) RemovalEvidenceCleanupState.PRESENT else RemovalEvidenceCleanupState.PENDING
+                request.evidenceCleanupNextAttemptAt = if (request.outstandingEvidenceKeys.isEmpty()) null else now
+            } else trackKey() // The sweep already deleted it (R11): an upload that landed after the sweep is deleted too.
+            request.updatedAt = now
+            if (outcome.matchingUnavailable) {
+                requests.flush()
+                return@execute RunnerCaseResult(emptyList(), false, 0, 0)
+            }
+            if (outcome.candidates.isEmpty()) {
+                closeCase(request, existing, RemovalActorType.SYSTEM, null,
+                    UUID.nameUUIDFromBytes("removal:runner:$requestId:no-matches".toByteArray()), "No matching photos",
+                    RunnerRemovalCloseReason.NO_MATCHES, now)
+                purge = true
+                return@execute RunnerCaseResult(emptyList(), true, 0, 0)
+            }
+            // Lock order: case row, then owner rows, then photo rows (each sorted), so the daily cap holds across runners.
+            val bandOwners = outcome.candidates.filter { it.similarity >= properties.runner.autoHideMinSimilarity }
+                .mapNotNull { it.ownerId }.toSortedSet()
+            bandOwners.forEach { users.lockById(it) }
+            val manilaMidnight = now.atZone(MANILA).toLocalDate().atStartOfDay(MANILA).toInstant()
+            val hiddenToday = if (bandOwners.isEmpty()) emptyMap() else
+                items.countRunnerAutoHidesSince(request.eventIdSnapshot, bandOwners, manilaMidnight).associate { it.ownerId to it.count }
+            val decision = autoHide.decide(AutoHideInput(request.livenessBand!!, outcome.emailVerified, outcome.priorRejection,
+                outcome.possiblyTruncated, outcome.candidates, hiddenToday))
+            val locked = photos.findAllByIdForUpdate(decision.autoHide.map { it.photoId }.sorted()).associateBy { it.id }
+            val hide = decision.autoHide.mapNotNull { c -> locked[c.photoId]?.takeIf { it.eventId == request.eventIdSnapshot &&
+                it.removalState != RemovalState.REMOVED }?.let { VerifiedPick(it, RemovalMatchSource.SELFIE, c.similarity, AUTO_REASON) } }
+            val hidden = saveVerifiedItems(requestId, hide, null, now)
+            val suggestOwners = users.findAllById(decision.suggest.mapNotNull { it.ownerId }.toSet()).associate { it.id to it.name }
+            val present = photos.findAllById(decision.suggest.map { it.photoId }).filter { it.eventId == request.eventIdSnapshot }.map { it.id }.toSet()
+            val suggested = decision.suggest.filter { it.photoId in present }.map { c ->
+                items.save(PhotoRemovalItem(requestId = requestId, photoIdSnapshot = c.photoId, photoId = c.photoId,
+                    ownerIdSnapshot = c.ownerId, ownerNameSnapshot = suggestOwners[c.ownerId], state = RemovalItemState.CANDIDATE,
+                    matchSource = RemovalMatchSource.SELFIE, matchScore = c.similarity))
+            }
+            items.flush()
+            request.status = RemovalRequestStatus.OPEN
+            request.riskFlags = decision.flags.map { it.name }.sorted().toMutableList()
+            requests.flush()
+            hidden.forEach { history.record(RemovalHistoryEvent(requestId, it.id, it.reviewId, it.photoIdSnapshot,
+                RemovalActorType.SYSTEM, null, RemovalHistoryActions.VERIFIED, toState = it.state.name,
+                reason = it.verificationReason, occurredAt = now, commandId = request.creationCommandId)) }
+            suggested.forEach { history.record(RemovalHistoryEvent(requestId, it.id, null, it.photoIdSnapshot,
+                RemovalActorType.SYSTEM, null, RemovalHistoryActions.SUGGESTED, toState = it.state.name,
+                occurredAt = now, commandId = request.creationCommandId)) }
+            // Conditional availability writer clears the persistence context after its update.
+            availability.refreshRemovalState(hidden.map { it.photoIdSnapshot }.toSet())
+            publisher.publishEvent(removalChangedEvent(requestId, null, now))
+            RunnerCaseResult(hidden.mapNotNull { it.reviewId }.distinct(), false, hidden.size, suggested.size)
+        }!!
+        if (purge) evidence.purgeResolvedEvidence(requestId)
+        result.newReviewIds.forEach { notifier.attempt(it) }
+        return result
+    }
+
+    private data class VerifiedPick(val photo: Photo, val source: RemovalMatchSource, val score: Double?, val reason: String?)
+
+    // One review per owner and one VERIFIED item per pick (admin verify and runner auto-hide). The caller flushes items.
+    private fun saveVerifiedItems(requestId: UUID, picks: List<VerifiedPick>, actorId: UUID?, now: java.time.Instant): List<PhotoRemovalItem> {
+        val ownerIds = picks.mapNotNull { it.photo.photographerId }.toSet()
+        val owners = users.findAllById(ownerIds).associateBy { it.id }
+        val groups = ownerIds.associateWith { ownerId ->
+            reviews.save(PhotoRemovalReview(requestId = requestId, ownerIdSnapshot = ownerId, ownerId = owners[ownerId]?.id))
+        }
+        reviews.flush()
+        return picks.map { pick ->
+            val photo = pick.photo
+            items.save(PhotoRemovalItem(requestId = requestId, photoIdSnapshot = photo.id, photoId = photo.id,
+                ownerIdSnapshot = photo.photographerId, ownerNameSnapshot = owners[photo.photographerId]?.name,
+                reviewId = groups[photo.photographerId]?.id, state = RemovalItemState.VERIFIED, matchSource = pick.source,
+                matchScore = pick.score, verificationActorId = actorId, verifiedAt = now, verificationReason = pick.reason))
+        }
+    }
+
+    // Admin cancel and runner withdraw: only an open case with nothing authorized or removed can close.
+    private fun requireClosable(request: PhotoRemovalRequest, selected: List<PhotoRemovalItem>) {
+        if (request.status !in setOf(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN)) removalConflict()
+        if (selected.any { it.state in setOf(RemovalItemState.REMOVAL_AUTHORIZED, RemovalItemState.REMOVED) }) removalConflict()
+    }
+
+    // The caller runs evidence.purgeResolvedEvidence after commit, which moves the case to CANCELLED.
+    private fun closeCase(request: PhotoRemovalRequest, selected: List<PhotoRemovalItem>, actorType: RemovalActorType,
+        actorId: UUID?, commandId: UUID, reason: String?, closeReason: RunnerRemovalCloseReason?, now: java.time.Instant) {
+        val previous = request.status
+        selected.filter { it.state in setOf(RemovalItemState.CANDIDATE, RemovalItemState.VERIFIED, RemovalItemState.RETAINED_RESTRICTED) }
+            .forEach { it.state = RemovalItemState.EXCLUDED }
+        items.flush()
+        request.status = RemovalRequestStatus.RESOLVING
+        request.closeReason = closeReason
+        request.candidateCache = null
+        request.updatedAt = now
+        request.evidenceCleanupState = RemovalEvidenceCleanupState.PENDING
+        request.evidenceCleanupNextAttemptAt = now
+        requests.flush()
+        // Availability's native update clears the persistence context; persist the case first.
+        availability.refreshRemovalState(selected.mapNotNull { it.photoId }.toSet())
+        history.record(RemovalHistoryEvent(requestId = request.id, actorType = actorType, actorId = actorId,
+            action = RemovalHistoryActions.CANCEL_REQUESTED, fromState = previous.name, toState = request.status.name,
+            reason = reason, occurredAt = now, commandId = commandId))
+    }
+
+    companion object {
+        private val log = org.slf4j.LoggerFactory.getLogger(PhotoRemovalService::class.java)
+        private val MANILA = java.time.ZoneId.of("Asia/Manila")
+        private const val AUTO_REASON = "Automatic: live check passed and match at or above the auto-hide value"
+    }
 }
+
+data class RunnerDraftCommand(
+    val requestId: UUID, val runnerId: UUID, val runnerEmail: String, val event: Event, val creationCommandId: UUID,
+    val reasonCode: String, val details: String?, val consentVersion: String, val consentAt: java.time.Instant,
+    val livenessSessionId: String, val livenessBand: RunnerLivenessBand, val livenessConfidence: java.math.BigDecimal,
+    val evidenceContentType: String,
+)
+data class RunnerDraft(val requestId: UUID, val evidenceKey: String)
+data class RunnerMatchOutcome(
+    val matchingUnavailable: Boolean, val candidates: List<CandidatePhoto>, val possiblyTruncated: Boolean,
+    val emailVerified: Boolean, val priorRejection: Boolean,
+)
+data class RunnerCaseResult(val newReviewIds: List<UUID>, val closedNoMatches: Boolean, val hiddenCount: Int, val suggestedCount: Int)
 
 internal fun validateText(value: String, max: Int) {
     if (value.isBlank() || value.length > max) removalInvalid("Photo removal field is empty or too long")

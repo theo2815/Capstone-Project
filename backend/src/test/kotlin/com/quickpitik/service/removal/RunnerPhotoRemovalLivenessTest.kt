@@ -30,6 +30,15 @@ class RunnerPhotoRemovalLivenessTest {
         eligibility, liveness, LegalProperties("1.3"),
         PhotoRemovalProperties(runner = PhotoRemovalProperties.Runner(checksPerDay = checksPerDay)),
         Clock.fixed(Instant.parse("2026-11-10T04:00:00Z"), ZoneOffset.UTC),
+        // RD-4's submit collaborators; startLiveness never touches them.
+        mock(com.quickpitik.repository.LivenessSessionRepository::class.java),
+        @Suppress("UNCHECKED_CAST") (mock(org.springframework.beans.factory.ObjectProvider::class.java)
+            as org.springframework.beans.factory.ObjectProvider<com.quickpitik.service.ai.RekognitionIdentityClient>),
+        mock(RunnerAutoHidePolicy::class.java), mock(PhotoRemovalService::class.java), mock(PhotoRemovalEvidenceService::class.java),
+        mock(com.quickpitik.service.photos.PhotoSearchService::class.java), mock(com.quickpitik.repository.PhotoRemovalRequestRepository::class.java),
+        mock(com.quickpitik.repository.PhotoRemovalItemRepository::class.java), mock(com.quickpitik.repository.PhotoRepository::class.java),
+        mock(com.quickpitik.repository.UserRepository::class.java), mock(com.quickpitik.repository.EventRepository::class.java),
+        org.springframework.transaction.support.TransactionTemplate(),
     )
 
     private fun cmd(consent: Boolean = true, version: String = "1.3") = StartRunnerLivenessCommand(eventId, consent, version)

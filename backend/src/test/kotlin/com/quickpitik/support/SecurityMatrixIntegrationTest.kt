@@ -437,6 +437,17 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertTrue("no-store" in started.headers().firstValue("Cache-Control").orElse(""))
         // No consent tick: rejected at the edge.
         assertEquals(400, post(start, body.replace("true", "false"), runner).statusCode())
+
+        // RD-4 submit: runner only, a required Idempotency-Key, never cached; an unknown event stops before any AWS call.
+        val submit = """{"sessionId":"sess","eventId":"${UUID.randomUUID()}","reasonCode":"PRIVACY"}"""
+        assertEquals(401, post(root, submit).statusCode())
+        for (t in others) assertEquals(403, post(root, submit, t).statusCode())
+        assertEquals("INVALID_IDEMPOTENCY_KEY", errorCode(post(root, submit, runner)))
+        val filed = send(HttpRequest.newBuilder(uri(root)).header("Content-Type", "application/json")
+            .header("Idempotency-Key", UUID.randomUUID().toString()).POST(HttpRequest.BodyPublishers.ofString(submit)), runner)
+        assertEquals(404, filed.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(filed))
+        assertTrue("no-store" in filed.headers().firstValue("Cache-Control").orElse(""))
     }
 
     @Test
