@@ -58,6 +58,13 @@ data class CouponPreviewDto(
     val items: List<CouponPreviewItemDto>,
     val eligibleCount: Int,
     val discountTotal: BigDecimal,
+    /** Every sellable requested photo's live price, coupon or not (AA-R14): what a guest cart shows and checkout charges. */
+    val livePrices: List<PhotoPriceDto> = emptyList(),
+)
+
+data class PhotoPriceDto(
+    val photoId: UUID,
+    val price: BigDecimal,
 )
 
 fun PhotographerCoupon.toDto(usageCount: Long): CouponDto = CouponDto(

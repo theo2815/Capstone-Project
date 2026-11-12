@@ -11,6 +11,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.quickpitik.mobile.ui.common.WEBSITE_ORIGIN
+import com.quickpitik.mobile.ui.common.MANILA
 import com.quickpitik.mobile.ui.common.openInCustomTab
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.GhostCta
@@ -18,17 +19,32 @@ import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Kicker
 import com.quickpitik.mobile.ui.theme.QpCard
 import com.quickpitik.mobile.ui.theme.Typography
+import java.time.LocalDate
+import java.time.format.DateTimeParseException
 
-/** What the seller-details card shows; null means no card (sent, approved, or the read failed). */
+/** What the seller-details card shows; null means no card (verified, unknown, or the read failed). */
 sealed class SellerDetailsCard {
     data object Missing : SellerDetailsCard()
     data class Rejected(val reason: String?) : SellerDetailsCard()
+    data class ManualReview(val paused: Boolean, val dueDate: String?) : SellerDetailsCard()
 }
 
-internal fun sellerDetailsCard(status: String?, reason: String?): SellerDetailsCard? = when (status) {
+internal fun sellerDetailsCard(
+    reviewState: String?,
+    reason: String?,
+    uploadsAllowed: Boolean? = null,
+    dueDate: String? = null,
+    today: LocalDate = LocalDate.now(MANILA),
+): SellerDetailsCard? = when (reviewState) {
     "missing" -> SellerDetailsCard.Missing
     // The card adds its own ". " after the reason, so an admin's trailing period would double it.
     "rejected" -> SellerDetailsCard.Rejected(reason?.trim()?.trimEnd('.')?.trim()?.ifEmpty { null })
+    "manual_review" -> SellerDetailsCard.ManualReview(
+        paused = uploadsAllowed == false,
+        dueDate = if (uploadsAllowed == false) null else try {
+            dueDate?.takeIf { !LocalDate.parse(it).isBefore(today) }
+        } catch (_: DateTimeParseException) { null },
+    )
     else -> null
 }
 
@@ -58,6 +74,11 @@ fun SellerDetailsCardView(card: SellerDetailsCard, onReturn: () -> Unit, modifie
                     "Before you can upload, add your ID, address and phone number in your photographer settings on quickpitik.com."
                 is SellerDetailsCard.Rejected ->
                     "Your seller details were not accepted: ${card.reason ?: "no reason given"}. Send them again on quickpitik.com."
+                is SellerDetailsCard.ManualReview -> when {
+                    card.paused -> "An admin is checking your seller details. Uploads resume when they approve."
+                    card.dueDate != null -> "Before ${card.dueDate}, take the live selfie check on quickpitik.com to keep uploading."
+                    else -> "An admin is checking your seller details. You can upload meanwhile."
+                }
             },
             color = Ink, style = Typography.bodyMedium,
         )
@@ -76,3 +97,7 @@ private fun SellerDetailsMissingPreview() { SellerDetailsCardView(SellerDetailsC
 @Preview(showBackground = true)
 @Composable
 private fun SellerDetailsRejectedPreview() { SellerDetailsCardView(SellerDetailsCard.Rejected("The ID photo is blurry."), onReturn = {}) }
+
+@Preview(showBackground = true)
+@Composable
+private fun SellerDetailsManualReviewPreview() { SellerDetailsCardView(SellerDetailsCard.ManualReview(true, null), onReturn = {}) }

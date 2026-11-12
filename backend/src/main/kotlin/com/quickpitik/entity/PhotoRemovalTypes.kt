@@ -6,8 +6,13 @@ enum class PhotographerRemovalResponse { AGREE, OBJECT, ALREADY_DELETED }
 enum class RemovalDecision { REMOVE, RETAIN, MORE_EVIDENCE, RETAIN_RESTRICTED }
 enum class RemovalState { NONE, REVIEW, REMOVED }
 enum class RemovalMatchSource { SELFIE, BIB, MANUAL }
-enum class RemovalActorType { ADMIN, PHOTOGRAPHER, SYSTEM, SUPPORT }
+enum class RemovalActorType { ADMIN, PHOTOGRAPHER, SYSTEM, SUPPORT, RUNNER }
 enum class RemovalEvidenceCleanupState { NONE, PRESENT, PENDING, DELETED, RETRY_REQUIRED }
+
+// Who filed the case: support staff on a person's behalf, or the runner themselves (RD-1).
+enum class RemovalRequestSource { SUPPORT, RUNNER }
+// Why a runner case closed without an admin decision; null for every other close.
+enum class RunnerRemovalCloseReason { NO_MATCHES, WITHDRAWN }
 
 // A runner's live-check result for a deletion request; a fail is never stored.
 enum class RunnerLivenessBand { PASS, UNCERTAIN }

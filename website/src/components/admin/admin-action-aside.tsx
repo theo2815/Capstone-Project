@@ -12,7 +12,6 @@ import { Kicker } from "@/components/ui/kicker";
 import {
   BTN_DANGER,
   BTN_GHOST,
-  BTN_PRIMARY,
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
@@ -22,16 +21,16 @@ interface AdminActionAsideProps {
 }
 
 // Sticky-on-lg / inline-on-md action cluster for the photographer detail
-// page. Carries Approve, Reject, Suspend, Unsuspend, Reset verification,
-// Send message. Modal state is local so the detail page stays a thin shell.
+// page. Carries Reject, Suspend, Unsuspend, Reset verification, Send
+// message; profiles approve themselves once identity passes (Q7). Modal
+// state is local so the detail page stays a thin shell.
 //
-// One-fresh-per-viewport: only Approve is bg-fresh in its rest state.
 // Destructive actions (Reject, Suspend) carry the shared BTN_DANGER recipe
 // (error text on bone-deep) so they read as consequential before the modal
 // opens; restorative/neutral actions stay secondary/ghost.
 export function AdminActionAside({ row }: AdminActionAsideProps) {
   const { showToast } = useToast();
-  const { approve, reject, suspend, unsuspend, resetVerification, message, messageRecoveryNotice, isPending: actionPending, pendingAction } = useAdminUserActions();
+  const { reject, suspend, unsuspend, resetVerification, message, messageRecoveryNotice, isPending: actionPending, pendingAction } = useAdminUserActions();
   const submitting = actionPending([row.userId]);
   const activeLabel = pendingAction(row.userId);
 
@@ -45,13 +44,6 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   const isSuspended = row.suspendedAt !== null;
   const isIncomplete = row.verificationStatus === "incomplete";
   const displayName = row.brandName ?? row.name;
-
-  async function handleApprove() {
-    const ok = await approve(row.userId, row.verificationRevision);
-    if (ok) {
-      showToast({ kind: "success", message: `Approved · ${displayName}` });
-    }
-  }
 
   async function handleReject(reason: string) {
     const ok = await reject(row.userId, reason, reviewRevision);
@@ -110,24 +102,14 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
       </Kicker>
       <div className="mt-5 space-y-3">
         {isPending && (
-          <>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={handleApprove}
-              className={primaryFreshBtn}
-            >
-              {activeLabel === "Approving…" ? activeLabel : "Approve"}
-            </button>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => { setReviewRevision(row.verificationRevision); setRejectOpen(true); }}
-              className={dangerBtn}
-            >
-              Reject…
-            </button>
-          </>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => { setReviewRevision(row.verificationRevision); setRejectOpen(true); }}
+            className={dangerBtn}
+          >
+            Reject…
+          </button>
         )}
 
         {!isSuspended ? (
@@ -216,7 +198,6 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   );
 }
 
-const primaryFreshBtn = `${BTN_PRIMARY} ${BTN_SIZE.sm} w-full`;
 const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm} w-full`;
 const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} w-full`;
 const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm} w-full`;

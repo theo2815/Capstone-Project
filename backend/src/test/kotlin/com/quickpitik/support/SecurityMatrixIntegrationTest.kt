@@ -87,6 +87,10 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
 
         assertEquals(401, get("/actuator/metrics").statusCode())
         assertEquals(401, get("/api/v1/me/cart").statusCode())
+        // Reports need an account (AA-R9): one open report per account is the abuse limit.
+        val reportBody = """{"note":"This event never took place at all."}"""
+        assertEquals(401, post("/api/v1/me/reports/events/${UUID.randomUUID()}", reportBody).statusCode())
+        assertEquals(401, post("/api/v1/me/reports/photographers/some-handle", reportBody).statusCode())
         // Deliberately NOT in the permitAll list next to its /auth siblings.
         assertEquals(401, post("/api/v1/auth/resend-verification", "").statusCode())
         val me = get("/api/v1/auth/me")
@@ -404,6 +408,49 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `runner photo deletion routes are runner only and never cached`() {
+        val root = "/api/v1/me/runner/photo-removal-requests"
+        val eligibility = "$root/eligibility?eventId=${UUID.randomUUID()}"
+        val start = "$root/liveness-session"
+        val body = """{"eventId":"${UUID.randomUUID()}","biometricConsent":true,"consentVersion":"1.3"}"""
+        val runner = register(Role.RUNNER)
+        val others = listOf(register(Role.PHOTOGRAPHER), adminToken())
+        for (path in listOf("$root/reasons", eligibility)) {
+            assertEquals(401, get(path).statusCode())
+            for (t in others) assertEquals(403, get(path, t).statusCode())
+        }
+        assertEquals(401, post(start, body).statusCode())
+        for (t in others) assertEquals(403, post(start, body, t).statusCode())
+
+        val reasons = get("$root/reasons", runner)
+        assertEquals(200, reasons.statusCode())
+        assertTrue("no-store" in reasons.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals(listOf("PRIVACY", "SAFETY", "NO_CONSENT", "OTHER"), json.readTree(reasons.body()).path("data").map { it.path("code").asText() })
+
+        // An unknown event is not eligible; the refusal comes before any AWS call.
+        val e = get(eligibility, runner)
+        assertEquals(200, e.statusCode())
+        assertEquals("EVENT_NOT_ELIGIBLE", json.readTree(e.body()).path("data").path("blockedReason").asText())
+        val started = post(start, body, runner)
+        assertEquals(404, started.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(started))
+        assertTrue("no-store" in started.headers().firstValue("Cache-Control").orElse(""))
+        // No consent tick: rejected at the edge.
+        assertEquals(400, post(start, body.replace("true", "false"), runner).statusCode())
+
+        // RD-4 submit: runner only, a required Idempotency-Key, never cached; an unknown event stops before any AWS call.
+        val submit = """{"sessionId":"sess","eventId":"${UUID.randomUUID()}","reasonCode":"PRIVACY"}"""
+        assertEquals(401, post(root, submit).statusCode())
+        for (t in others) assertEquals(403, post(root, submit, t).statusCode())
+        assertEquals("INVALID_IDEMPOTENCY_KEY", errorCode(post(root, submit, runner)))
+        val filed = send(HttpRequest.newBuilder(uri(root)).header("Content-Type", "application/json")
+            .header("Idempotency-Key", UUID.randomUUID().toString()).POST(HttpRequest.BodyPublishers.ofString(submit)), runner)
+        assertEquals(404, filed.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(filed))
+        assertTrue("no-store" in filed.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
     fun `seller details routes are photographer only and private to their owner`() {
         val path = "/api/v1/me/photographer/seller-details"
         val form = multipart(mapOf("legalName" to "Juan Dela Cruz"))
@@ -430,15 +477,66 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals("manual_review", json.readTree(mine.body()).path("data").path("reviewState").asText())
         assertFalse("seller-details/" in mine.body(), "E1 must never carry a storage key")
         assertFalse("ab".repeat(32) in mine.body() || "idNumber" in mine.body(), "E1 must never carry the ID number or its hash")
+        // AA-I6: the server's upload answer (gate off by default: manual review may upload), never the scores.
+        jdbc.update(
+            "UPDATE photographer_seller_details SET liveness_confidence = 71.40, face_similarity = 98.10, reason_codes = '[\"LIVENESS_LOW\"]'::jsonb WHERE user_id = ?",
+            ownerId,
+        )
+        val scored = get(path, ownerToken).body()
+        assertTrue(json.readTree(scored).path("data").path("uploadsAllowed").asBoolean())
+        assertTrue(json.readTree(scored).path("data").has("identityGateStartsOn"))
+        for (secret in listOf("reasonCodes", "livenessConfidence", "faceSimilarity", "LIVENESS_LOW", "71.4", "98.1")) {
+            assertFalse(secret in scored, "C3 must never carry $secret")
+        }
         val theirs = get(path, other)
         assertEquals(200, theirs.statusCode())
         assertEquals("missing", json.readTree(theirs.body()).path("data").path("status").asText())
+        assertFalse(json.readTree(theirs.body()).path("data").path("uploadsAllowed").asBoolean(true))
         assertFalse("Juan" in theirs.body())
 
         // A photographer's incomplete form reaches the service and names the missing part.
         val incomplete = form(path, other)
         assertEquals(400, incomplete.statusCode())
         assertEquals("VALIDATION_ERROR", errorCode(incomplete))
+    }
+
+    @Test
+    fun `race create, join and edit are photographer only and refused while self-serve races are off`() {
+        val create = "/api/v1/me/photographer/races"
+        val join = "/api/v1/me/photographer/races/${UUID.randomUUID()}/join"
+        val edit = "/api/v1/me/photographer/races/${UUID.randomUUID()}"
+        val form = multipart(mapOf("title" to "Cebu City Marathon", "date" to "2026-12-06", "location" to "Cebu",
+            "regionCode" to "region-7", "provinceCode" to "cebu", "eventType" to "ROAD_RACE"))
+        val patch = multipart(mapOf("title" to "Cebu South Marathon"), method = "PATCH")
+        assertEquals(401, form(create, null).statusCode())
+        assertEquals(401, post(join, "{}").statusCode())
+        assertEquals(401, patch(edit, null).statusCode())
+        val runner = register(Role.RUNNER)
+        assertEquals(403, form(create, runner).statusCode())
+        assertEquals(403, post(join, "{}", runner).statusCode())
+        assertEquals(403, patch(edit, runner).statusCode())
+
+        // The test profile keeps SELF_SERVE_RACES_ENABLED off: a photographer reaches the service and is refused.
+        val photographer = register(Role.PHOTOGRAPHER)
+        for (response in listOf(form(create, photographer), post(join, "{}", photographer), patch(edit, photographer))) {
+            assertEquals(403, response.statusCode())
+            assertEquals("SELF_SERVE_RACES_DISABLED", errorCode(response))
+        }
+    }
+
+    @Test
+    fun `the race price route is photographer only and refused while self-serve races are off`() {
+        val path = "/api/v1/me/photographer/events/${UUID.randomUUID()}/price"
+        val put = { token: String? ->
+            send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString("""{"pricePhp":150}""")), token)
+        }
+        assertEquals(401, put(null).statusCode())
+        assertEquals(403, put(register(Role.RUNNER)).statusCode())
+
+        val refused = put(register(Role.PHOTOGRAPHER))
+        assertEquals(409, refused.statusCode())
+        assertEquals("RACE_PRICE_NOT_ALLOWED", errorCode(refused))
     }
 
     @Test
@@ -514,6 +612,38 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the admin profile approve route answers 404`() {
+        // AA-I7 (Q7): profiles are approved automatically once identity passes; reject and reset stay.
+        val (_, photographerId) = registerPhotographerWithId()
+        val removed = post("/api/v1/admin/users/$photographerId/approve", """{"expectedRevision":0}""", adminToken())
+        assertEquals(404, removed.statusCode())
+        assertEquals("NOT_FOUND", errorCode(removed))
+    }
+
+    @Test
+    fun `the admin same-race route is admin only`() {
+        // AA-R6: an admin folds a pending duplicate race into the race it repeats.
+        val path = "/api/v1/admin/events/${UUID.randomUUID()}/same-race"
+        assertEquals(401, post(path, "{}").statusCode())
+        assertEquals(403, post(path, "{}", register(Role.RUNNER)).statusCode())
+        assertEquals(403, post(path, "{}", register(Role.PHOTOGRAPHER)).statusCode())
+        val missing = post(path, "{}", adminToken())
+        assertEquals(404, missing.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(missing))
+    }
+
+    @Test
+    fun `the admin duplicate-candidates route is admin only`() {
+        // AA-R7: the admin create form warns about races that look the same before creating one.
+        val path = "/api/v1/admin/events/duplicate-candidates?name=Cebu%20City%20Marathon&date=2026-12-06"
+        assertEquals(401, get(path).statusCode())
+        assertEquals(403, get(path, register(Role.RUNNER)).statusCode())
+        assertEquals(403, get(path, register(Role.PHOTOGRAPHER)).statusCode())
+        val ok = get(path, adminToken())
+        assertEquals(200, ok.statusCode(), ok.body())
+    }
+
+    @Test
     fun `admin seller details routes are admin only`() {
         val root = "/api/v1/admin/seller-details"
         val (_, sellerId) = registerPhotographerWithId()
@@ -541,7 +671,23 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(200, view.statusCode())
         assertTrue("no-store" in view.headers().firstValue("Cache-Control").orElse(""))
         assertTrue(json.readTree(view.body()).path("data").path("files").path("idFront").asText().isNotBlank())
-        assertEquals(1, jdbc.queryForObject(
+        // E4 (AA-I8): the scores, reasons, reference link and repeat matches; never a storage key outside the links or the ID-number hash.
+        val (_, otherId) = registerPhotographerWithId()
+        jdbc.update(
+            "UPDATE photographer_seller_details SET id_number_hmac = ?, liveness_reference_key = ?, reason_codes = '[\"REPEAT_ACCOUNT_MATCH\"]'::jsonb, " +
+                "repeat_matches = ?::jsonb WHERE user_id = ?",
+            "cd".repeat(32), "seller-details/$sellerId/${UUID.randomUUID()}.jpg",
+            """[{"userId":"$otherId","matchedOn":["PHONE"]}]""", sellerId,
+        )
+        val rich = json.readTree(get("$root/$sellerId", admin).body()).path("data")
+        assertTrue(rich.path("files").path("livenessReference").asText().isNotBlank())
+        assertEquals(otherId.toString(), rich.path("repeatMatches").path(0).path("userId").asText())
+        assertEquals("PHONE", rich.path("repeatMatches").path(0).path("matchedOn").path(0).asText())
+        assertTrue(rich.path("hasIdNumber").asBoolean())
+        val outsideLinks = (rich.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>()).apply { remove("files") }.toString()
+        assertFalse("seller-details/" in outsideLinks, "E4 must carry storage keys only inside its signed links")
+        assertFalse("cd".repeat(32) in rich.toString() || "idNumberHmac" in rich.toString(), "E4 must never carry the ID-number hash")
+        assertEquals(2, jdbc.queryForObject(
             "SELECT count(*) FROM admin_decision_log WHERE target_user_id = ? AND decision = 'seller_details_viewed'", Int::class.java, sellerId,
         ))
         assertEquals(400, post("$root/$sellerId/reject", """{"revision":1,"reason":"  "}""", admin).statusCode())
@@ -574,7 +720,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     /** A real multipart body (text parts only): the role check must refuse it, not the binder. */
-    private fun multipart(fields: Map<String, String>): (String, String?) -> HttpResponse<String> = { path, token ->
+    private fun multipart(fields: Map<String, String>, method: String = "POST"): (String, String?) -> HttpResponse<String> = { path, token ->
         val boundary = "matrix-${UUID.randomUUID()}"
         val body = fields.entries.joinToString("") { (name, value) ->
             "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n"
@@ -582,7 +728,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         send(
             HttpRequest.newBuilder(uri(path))
                 .header("Content-Type", "multipart/form-data; boundary=$boundary")
-                .POST(HttpRequest.BodyPublishers.ofString(body)),
+                .method(method, HttpRequest.BodyPublishers.ofString(body)),
             token,
         )
     }

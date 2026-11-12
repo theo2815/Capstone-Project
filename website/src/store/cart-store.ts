@@ -6,13 +6,20 @@ import {
   postCartItem,
   deleteCartItem,
   clearServerCart,
+  fetchCart,
 } from "@/lib/api-cart";
+import { fetchLivePrices } from "@/lib/api-coupons";
 
 // Hard ceiling on cart size. Photos are deduped by `photoId` so per-photo
 // quantity is always 1 — this cap protects against BuyAllBar dumping a
 // massive race into the cart in one click. Reasonable headroom for keepers
 // across multiple events without becoming a checkout-time foot-gun.
 export const MAX_CART_ITEMS = 100;
+
+/** The rows that can be paid for: a suspended photographer's rows stay in the cart but out of the total and checkout. */
+export function payableItems(items: CartItem[]): CartItem[] {
+  return items.filter((i) => i.available !== false);
+}
 
 interface CartState {
   items: CartItem[];
@@ -25,6 +32,8 @@ interface CartState {
   addItem: (item: CartItem) => boolean;
   removeItem: (photoId: string) => void;
   clear: () => void;
+  /** Re-reads what checkout charges: the server cart when signed in, live per-photo prices for a guest. */
+  refreshPrices: () => Promise<void>;
   total: () => number;
   isFull: () => boolean;
   remainingCapacity: () => number;
@@ -43,7 +52,8 @@ export const useCartStore = create<CartState>()(
           if (state.items.some((i) => i.photoId === item.photoId)) return state;
           if (state.items.length >= MAX_CART_ITEMS) return state;
           added = true;
-          return { items: [...state.items, item] };
+          // A guest row keeps its add-time price; a signed-in row takes the server's.
+          return { items: [...state.items, { ...item, priceAtAdd: item.priceAtAdd ?? item.price }] };
         });
         if (added && get().syncEnabled) {
           const isCurrent = captureAuthSession();
@@ -98,8 +108,27 @@ export const useCartStore = create<CartState>()(
           });
         }
       },
+      refreshPrices: async () => {
+        const isCurrent = captureAuthSession();
+        if (get().syncEnabled) {
+          const rows = await fetchCart();
+          if (isCurrent()) set({ items: rows });
+          return;
+        }
+        const ids = get().items.map((i) => i.photoId);
+        if (ids.length === 0) return;
+        const live = await fetchLivePrices(ids);
+        if (!isCurrent() || live.size === 0) return;
+        // Re-read at write time: an add or remove may have landed meanwhile. Only `price` changes.
+        set((state) => ({
+          items: state.items.map((i) => {
+            const price = live.get(i.photoId);
+            return price === undefined || price === i.price ? i : { ...i, price };
+          }),
+        }));
+      },
       total: () => {
-        const cents = get().items.reduce(
+        const cents = payableItems(get().items).reduce(
           (sum, item) => sum + Math.round(Number(item.price || 0) * 100),
           0,
         );

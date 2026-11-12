@@ -4,17 +4,20 @@ import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
 import com.quickpitik.mobile.support.signInAs
+import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -77,6 +80,99 @@ class PhotographerDashboardViewModelTest {
         val deadline = System.currentTimeMillis() + 5_000
         while (!check() && System.currentTimeMillis() < deadline) Thread.sleep(5)
         assertTrue(check())
+    }
+
+    @Test fun `race types come from the server and an absent switch stays off`() {
+        route("GET /api/v1/race-types") { ok("""{"selfServeEnabled":true,"types":[{"code":"ROAD_RACE","label":"Road race","hint":"On roads","shared":true},{"code":"OTHER","label":"Other","hint":"Your own event","shared":false}]}""") }
+        val vm = model()
+        vm.loadRaceTypes()
+        val types = vm.raceTypes.awaitFirst { it?.selfServeEnabled == true }!!
+        assertEquals("ROAD_RACE", types.types?.first()?.code)
+        route("GET /api/v1/race-types") { ok("{}") }
+        vm.loadRaceTypes()
+        vm.raceTypes.awaitFirst { it?.selfServeEnabled != true }
+    }
+
+    @Test fun `duplicate answer moves to Duplicate state`() {
+        val vm = model()
+        for (outcome in listOf("match", "candidates")) {
+            route("POST $RACES") { ok(duplicate(outcome)) }
+            vm.submitRace(raceInput())
+            val state = vm.raceFormState.awaitFirst { it is RaceFormState.Duplicate } as RaceFormState.Duplicate
+            assertEquals(outcome, state.outcome)
+            assertEquals("ev-1", state.candidates.single().id)
+            assertEquals("pending", state.candidates.single().reviewStatus)
+            vm.dismissRaceDuplicate()
+        }
+    }
+
+    @Test fun `mine is different on a match moves to PendingReview`() {
+        route("POST $RACES") { ok(duplicate("match")) }
+        route("GET /api/v1/events") { ok("""{"items":[],"total":0,"offset":0,"limit":100}""") }
+        val vm = model()
+        vm.submitRace(raceInput())
+        vm.raceFormState.awaitFirst { it is RaceFormState.Duplicate }
+        route("POST $RACES") { ok("""{"outcome":"pending_review","event":$PENDING_RACE,"candidates":[],"checkReasons":["POSSIBLE_DUPLICATE"]}""") }
+        vm.submitRace(raceInput(), confirmDifferentFrom = "ev-1")
+        val result = vm.raceFormState.awaitFirst { it is RaceFormState.PendingReview } as RaceFormState.PendingReview
+        assertEquals("pending", result.result.event?.reviewStatus)
+        val sent = bodies("POST", RACES).last()
+        for (field in listOf("regionCode", "provinceCode", "eventType", "confirmDifferentFrom")) {
+            assertTrue(field, sent.contains("name=\"$field\""))
+        }
+        assertTrue(sent.contains("ev-1"))
+        for (field in listOf("pricePerPhoto", "pricingMode", "watermarkPolicy", "visibility")) {
+            assertFalse(field, sent.contains("name=\"$field\""))
+        }
+    }
+
+    @Test fun `joining a pending race explains the wait and refreshes both rosters`() {
+        route("POST $RACES/ev-1/join") { ok("""{"outcome":"joined","event":$PENDING_RACE,"candidates":[],"checkReasons":[]}""") }
+        route("GET /api/v1/events") { ok("""{"items":[],"total":0,"offset":0,"limit":100}""") }
+        val vm = model()
+        vm.eventsState.awaitFirst { it is EventsState.Success }
+        val before = count("GET", EVENTS)
+        vm.joinRace("ev-1", "Cebu Run")
+        vm.raceFormState.awaitFirst { it is RaceFormState.PendingReview }
+        assertEquals("""{"typedName":"Cebu Run"}""", bodies("POST", "$RACES/ev-1/join").single())
+        awaitUntil { count("GET", EVENTS) == before + 1 && count("GET", "/api/v1/events") == 1 }
+    }
+
+    @Test fun `a refused duplicate choice keeps its candidates for retry`() {
+        route("POST $RACES") { ok(duplicate("candidates")) }
+        val vm = model()
+        vm.submitRace(raceInput())
+        vm.raceFormState.awaitFirst { it is RaceFormState.Duplicate }
+        route("POST $RACES/ev-1/join") { MockResponse().setResponseCode(409).setBody(error("RACE_HIDDEN", "This race is hidden.")) }
+        vm.joinRace("ev-1", "Cebu Run")
+        val state = vm.raceFormState.awaitFirst { (it as? RaceFormState.Duplicate)?.error != null } as RaceFormState.Duplicate
+        assertEquals("This race is hidden.", state.error)
+        assertEquals("ev-1", state.candidates.single().id)
+    }
+
+    @Test fun `a newly created race moves to Created and a malformed result stays on the form`() {
+        route("POST $RACES") { ok("""{"outcome":"created","event":$EVENT,"candidates":[],"checkReasons":[]}""") }
+        route("GET /api/v1/events") { ok("""{"items":[],"total":0,"offset":0,"limit":100}""") }
+        val vm = model()
+        vm.submitRace(raceInput())
+        vm.raceFormState.awaitFirst { it is RaceFormState.Created }
+        vm.resetEventForm()
+        route("POST $RACES") { ok("{}") }
+        vm.submitRace(raceInput())
+        vm.raceFormState.awaitFirst { it is RaceFormState.Error }
+    }
+
+    private fun raceInput() = OwnedEventFormInput(title = "Cebu Run", date = "2026-11-11", location = "Cebu",
+        eventType = "ROAD_RACE", regionCode = "07", provinceCode = "0722", pricingMode = "paid", pricePerPhoto = "500", visibility = "unlisted")
+
+    @Test fun `resetting a form prevents an old race reply from replacing its new state`() {
+        route("POST $RACES") { ok(duplicate("match")).setBodyDelay(400, TimeUnit.MILLISECONDS) }
+        val vm = model()
+        vm.submitRace(raceInput())
+        awaitUntil { count("POST", RACES) == 1 }
+        vm.resetEventForm()
+        Thread.sleep(600)
+        assertEquals(RaceFormState.Idle, vm.raceFormState.value)
     }
 
     // The upload roster must keep the admin-only list: another photographer's
@@ -225,7 +321,57 @@ class PhotographerDashboardViewModelTest {
         assertFalse(vm.dashboardApproved.awaitFirst { !it })
     }
 
+    @Test fun `a legacy seller-details response leaves the additive fields null`() = runBlocking {
+        route("GET /api/v1/me/photographer/seller-details") { ok("""{"status":"submitted","rejectionReason":null}""") }
+        val details = requireNotNull(RetrofitClient.apiService.getSellerDetails("Bearer t").data)
+        assertEquals("submitted", details.status)
+        assertNull(details.reviewState)
+        assertNull(details.uploadsAllowed)
+        assertNull(details.identityGateStartsOn)
+    }
+
+    @Test fun `a manual-review response takes precedence over its legacy submitted status`() {
+        route("GET /api/v1/me/photographer/seller-details") {
+            ok("""{"status":"submitted","reviewState":"manual_review","uploadsAllowed":false,"identityGateStartsOn":"2026-11-17","rejectionReason":null}""")
+        }
+        assertEquals(
+            SellerDetailsCard.ManualReview(paused = true, dueDate = null),
+            model().sellerDetailsState.awaitFirst { it != null },
+        )
+    }
+
+    @Test fun `a legacy seller state still shows its rejection card`() {
+        route("GET /api/v1/me/photographer/seller-details") { ok("""{"status":"rejected","rejectionReason":"Expired ID."}""") }
+        assertEquals(
+            SellerDetailsCard.Rejected("Expired ID"),
+            model().sellerDetailsState.awaitFirst { it != null },
+        )
+    }
+
+    @Test fun `an approved profile submit says the studio is live`() {
+        route("POST /api/v1/me/photographer/verification") { ok(verification("approved")) }
+        val vm = model()
+        vm.submitVerification()
+        assertEquals(
+            ActionState.Done("Your studio is live."),
+            vm.verificationActionState.awaitFirst { it is ActionState.Done || it is ActionState.Failed },
+        )
+    }
+
+    @Test fun `a pending profile submit explains the identity check`() {
+        route("POST /api/v1/me/photographer/verification") { ok(verification("pending")) }
+        val vm = model()
+        vm.submitVerification()
+        assertEquals(
+            ActionState.Done("Saved. Your studio goes live when your identity check passes."),
+            vm.verificationActionState.awaitFirst { it is ActionState.Done || it is ActionState.Failed },
+        )
+    }
+
     private companion object {
+        const val RACES = "/api/v1/me/photographer/races"
+        const val PENDING_RACE = """{"id":"ev-1","slug":"cebu-run","name":"Cebu Run","date":"2026-11-11","location":"Cebu","state":"draft","reviewStatus":"pending","ownedByMe":false,"photoCount":0,"salesCount":0,"revenueKept":0}"""
+        fun duplicate(outcome: String) = """{"outcome":"$outcome","event":null,"candidates":[{"id":"ev-1","slug":"cebu-run","name":"Cebu Run","date":"2026-11-11","location":"Cebu","regionCode":"07","provinceCode":"0722","organizerName":"Club","eventType":"ROAD_RACE","bannerUrl":null,"reviewStatus":"pending","strength":"strong"}],"checkReasons":[]}"""
         const val COUPON = "/api/v1/me/photographer/events/ev-1/coupon"
         const val EVENTS = "/api/v1/me/photographer/events"
         const val EVENT = """{"id":"ev-1","slug":"cebu-run","name":"Cebu Run","date":"2026-12-01","location":"Cebu","state":"draft","visibility":"public","pricingMode":"flat","pricePerPhoto":50.0,"description":null,"organizerName":null,"watermarkPolicy":null,"photoCount":0,"bannerUrl":null}"""

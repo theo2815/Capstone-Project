@@ -13,7 +13,9 @@ import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
+import com.quickpitik.dto.photographer.RaceCandidateDto
 import com.quickpitik.dto.photos.PhotographerRef
+import com.quickpitik.service.events.RaceInput
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.EventStatus
@@ -25,6 +27,7 @@ import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
@@ -32,6 +35,14 @@ import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.service.events.EventInputs
+import com.quickpitik.service.events.DuplicateMatcher
+import com.quickpitik.service.events.RaceEdit
+import com.quickpitik.service.events.RaceEventService
+import com.quickpitik.service.events.RacePriceService
+import com.quickpitik.config.RaceProperties
+import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.quickpitik.service.photographer.PricingTrio
 import com.quickpitik.service.reference.RegionsService
 import org.slf4j.LoggerFactory
@@ -59,8 +70,13 @@ class AdminEventService(
     private val transactionTemplate: TransactionTemplate,
     private val commands: AdminActionCommandService,
     private val regionsService: RegionsService,
+    raceProperties: RaceProperties,
+    private val raceEventService: RaceEventService,
+    private val eventPhotographerRepository: EventPhotographerRepository,
+    private val racePriceService: RacePriceService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+    private val matcher = raceProperties.duplicate.let { DuplicateMatcher(it.strongScore, it.mediumScore, it.dateToleranceDays) }
 
     @Transactional(readOnly = true)
     fun list(
@@ -75,9 +91,14 @@ class AdminEventService(
             val rows = eventRepository.findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(
                 listOf(EventReviewStatus.PENDING, EventReviewStatus.CHANGE_PENDING),
             )
-            val owners = resolveOwners(rows)
-            val items = rows.drop(params.offset).take(params.limit)
-                .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy]) }
+            val page = rows.drop(params.offset).take(params.limit)
+            val owners = resolveOwners(page)
+            // AA-R7: why a race waits, the race it may repeat, and the race an Other event looks like.
+            val duplicates = raceEventService.duplicatesOf(page)
+            val lookalikes = raceEventService.lookalikes(page)
+            val items = page.map {
+                eventDtoMapper.toAdminListDto(it, owners[it.createdBy], owners[it.submittedBy], duplicates[it.id], lookalikes[it.id])
+            }
             return PaginatedResponse.of(items, rows.size.toLong(), params)
         }
         val pageable = OffsetLimitPageable(params)
@@ -89,12 +110,23 @@ class AdminEventService(
         )
         val owners = resolveOwners(page.content)
         val items = page.content
-            .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy]) }
+            .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy], owners[it.submittedBy]) }
             .let { rows ->
                 if (stateFilter.isNullOrBlank()) rows
                 else rows.filter { it.state == stateFilter.trim().lowercase() }
             }
         return PaginatedResponse.of(items, page.totalElements, params)
+    }
+
+    // AA-R7: the admin create form's duplicate warning. Read-only, no lock; a stale answer only
+    // means the admin sees one candidate too few or too many.
+    @Transactional(readOnly = true)
+    fun duplicateCandidates(name: String, date: String, provinceCode: String?, organizerName: String?,
+        excludeId: UUID?): List<RaceCandidateDto> {
+        val title = name.trim().takeIf { it.isNotEmpty() }
+            ?: throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "name is required", field = "name")
+        val input = RaceInput(title, parseDate(date), provinceCode?.trim()?.ifEmpty { null }, organizerName?.trim()?.ifEmpty { null })
+        return raceEventService.findDuplicates(input, excludeId)
     }
 
     // ── Photographer-owned event review (V46) ────────────────────────────
@@ -114,6 +146,9 @@ class AdminEventService(
             EventReviewStatus.PENDING -> {
                 event.status = EventStatus.ACTIVE
                 markReviewed(event, adminId, EventReviewStatus.APPROVED)
+                // AA-R6: approving a pending race ("a different race") is a real admin approval, so it counts as proven.
+                if (event.eventType != null) event.adminApprovedAt = event.reviewedAt
+                event.checkReasons = null
                 val decision = adminDecisionLogService.logEventDecision(
                     adminId = adminId,
                     targetEventId = event.id,
@@ -128,6 +163,7 @@ class AdminEventService(
                 )
             }
             EventReviewStatus.CHANGE_PENDING -> {
+                if (RaceEdit.isHeld(event.pendingChange)) return approveRaceEdit(adminId, event)
                 // Became a pricing change after the unlocked read. Locking photos now
                 // would invert the photos -> events order, so the admin retries.
                 if (!photosLocked) throw ConflictException(code = ErrorCodes.INVALID_STATE_TRANSITION,
@@ -135,8 +171,8 @@ class AdminEventService(
                 val change = PricingTrio.fromJson(event.pendingChange.orEmpty())
                 val priceChanged = change.pricePerPhoto.compareTo(event.pricePerPhoto) != 0
                 val policyChanged = change.watermarkPolicy != event.watermarkPolicy
+                if (priceChanged) racePriceService.applyFloor(event, change.pricePerPhoto, adminId)
                 change.applyTo(event)
-                if (priceChanged) photoRepository.updatePriceByEventId(event.id, change.pricePerPhoto)
                 // A different mark makes every LIVE preview stale — send them
                 // back through the watermark sweep under the new policy.
                 if (policyChanged) photoRepository.resetForRewatermark(event.id)
@@ -170,6 +206,7 @@ class AdminEventService(
             EventReviewStatus.PENDING -> {
                 markReviewed(event, adminId, EventReviewStatus.REJECTED)
                 event.reviewNote = note
+                event.checkReasons = null
                 val decision = adminDecisionLogService.logEventDecision(
                     adminId = adminId,
                     targetEventId = event.id,
@@ -186,7 +223,10 @@ class AdminEventService(
             }
             EventReviewStatus.CHANGE_PENDING -> {
                 // The live trio was never touched — just drop the request.
+                // AA-R5: a held race edit's cover was never shown; it goes once the rejection commits.
+                RaceEdit.heldCover(event.pendingChange)?.let(::deleteCoverAfterCommit)
                 event.pendingChange = null
+                event.checkReasons = null
                 markReviewed(event, adminId, EventReviewStatus.APPROVED)
                 event.reviewNote = note
                 val decision = adminDecisionLogService.logEventDecision(
@@ -213,6 +253,7 @@ class AdminEventService(
     // list while they keep ownership. Review state is untouched.
     fun setListing(adminId: UUID, eventId: UUID, listed: Boolean): AdminListEventDto {
         val event = loadForReview(eventId)
+        if (event.eventType != null) return setRaceListing(adminId, event, listed)
         if (event.createdBy == null) throw ValidationException("Admin events are always listed on /events.")
         if (listed && event.visibility == EventVisibility.UNLISTED) {
             throw ValidationException("This event is Private. The photographer must make it Public first.")
@@ -232,6 +273,62 @@ class AdminEventService(
         return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
     }
 
+    // AA-R6: "same race as X". The submitter joins X and the pending row goes: it is a DRAFT with no
+    // photos, so it is soft-deleted as REJECTED with the reason, and its cover is removed after commit.
+    fun sameRace(adminId: UUID, eventId: UUID, targetId: UUID? = null, expectedRevision: Long? = null): AdminListEventDto {
+        val event = loadForReview(eventId)
+        event.requireReviewRevision(expectedRevision)
+        val submitter = event.submittedBy
+        if (event.eventType == null || event.reviewStatus != EventReviewStatus.PENDING || submitter == null) {
+            throw ConflictException(code = ErrorCodes.CONFLICT, message = "This race is not awaiting review.")
+        }
+        val targetEventId = targetId ?: event.possibleDuplicateOf
+        if (targetEventId == null || targetEventId == event.id) throw ValidationException("Pick the race this one is the same as.")
+        val target = raceEventService.joinInternal(targetEventId, submitter, event.name)
+        markReviewed(event, adminId, EventReviewStatus.REJECTED)
+        event.deletedAt = event.reviewedAt
+        event.reviewNote = "Same race as ${target.name}".take(500)
+        event.checkReasons = null
+        event.coverS3Key?.takeIf { it.isNotBlank() }?.let(::deleteCoverAfterCommit)
+        eventRepository.save(event)
+        val decision = adminDecisionLogService.logEventDecision(
+            adminId = adminId,
+            targetEventId = event.id,
+            decision = "event_same_race",
+            meta = mapOf("targetEventId" to target.id.toString()),
+        )
+        notifyOwner(
+            event,
+            PhotographerMessageKind.ADMIN_MESSAGE,
+            "An admin found that ${event.name} is the same race as ${target.name}. You are now covering ${target.name}; upload your photos there.",
+            adminId,
+            decision.id,
+        )
+        return eventDtoMapper.toAdminListDto(target, resolveOwners(listOf(target))[target.createdBy])
+    }
+
+    // AA-R6: a typed race is always public, so the switch hides it (hidden_at) or relists it; a relist is
+    // an admin approval, so the proof sweep (R8) and reports (R9) never hide it again.
+    private fun setRaceListing(adminId: UUID, event: Event, listed: Boolean): AdminListEventDto {
+        val changed = if (listed) event.hiddenAt != null || event.adminApprovedAt == null else event.hiddenAt == null
+        if (changed) {
+            val now = OffsetDateTime.now()
+            if (listed) {
+                event.hiddenAt = null
+                event.adminApprovedAt = now
+            } else {
+                event.hiddenAt = now
+            }
+            eventRepository.save(event)
+            adminDecisionLogService.logEventDecision(
+                adminId = adminId,
+                targetEventId = event.id,
+                decision = if (listed) "event_relisted" else "event_hidden",
+            )
+        }
+        return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
+    }
+
     // Locked read: a second admin deciding the same row waits here and then
     // hits the 409 above instead of double-logging + double-notifying.
     private fun loadForReview(eventId: UUID): Event =
@@ -245,8 +342,52 @@ class AdminEventService(
         event.reviewedBy = adminId
     }
 
+    // AA-R5: a held race edit changes the race's details only, never a price; the old cover goes after commit.
+    private fun approveRaceEdit(adminId: UUID, event: Event): AdminListEventDto {
+        val held = event.pendingChange.orEmpty()
+        val edit = RaceEdit.fromJson(held)
+        edit.date?.let { eventFaceExpiry.checkDateChange(event, it) }
+        edit.applyTo(event, matcher)
+        RaceEdit.heldCover(held)?.let { cover ->
+            event.coverS3Key?.takeIf { it.isNotBlank() }?.let(::deleteCoverAfterCommit)
+            event.coverS3Key = cover
+        }
+        event.pendingChange = null
+        event.checkReasons = null
+        markReviewed(event, adminId, EventReviewStatus.APPROVED)
+        val decision = adminDecisionLogService.logEventDecision(
+            adminId = adminId,
+            targetEventId = event.id,
+            decision = "event_change_approved",
+            meta = held,
+        )
+        notifyOwner(event, PhotographerMessageKind.EVENT_CHANGE_APPROVED, "Your change to ${event.name} is live.", adminId, decision.id)
+        saveRace(event)
+        return eventDtoMapper.toAdminListDto(event, resolveOwners(listOf(event))[event.createdBy])
+    }
+
+    // A race's name_key feeds AA-R10's unique index, which fires at flush: answer RACE_DUPLICATE here, not a 500 at commit.
+    private fun saveRace(event: Event) {
+        try {
+            eventRepository.saveAndFlush(event)
+        } catch (ex: DataIntegrityViolationException) {
+            RaceEventService.rethrowRaceDuplicate(ex, "Another race already has this name on this date.")
+        }
+    }
+
+    private fun deleteCoverAfterCommit(key: String) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                override fun afterCommit() = eventCoverService.delete(key)
+            })
+        } else {
+            eventCoverService.delete(key)
+        }
+    }
+
     private fun notifyOwner(event: Event, kind: PhotographerMessageKind, body: String, adminId: UUID, decisionId: UUID) {
-        val owner = event.createdBy ?: return
+        // A shared race has no createdBy; its submitter hears instead (AA-R5, R6).
+        val owner = event.createdBy ?: event.submittedBy ?: return
         adminDecisionLogService.pushMessage(
             photographerId = owner,
             kind = kind,
@@ -263,9 +404,9 @@ class AdminEventService(
     }
 
     // Owner attribution for the admin list, two IN queries per page — same
-    // batch shape as PhotoService.resolvePhotographers.
+    // batch shape as PhotoService.resolvePhotographers. AA-R7: race submitters too.
     private fun resolveOwners(events: List<Event>): Map<UUID?, PhotographerRef> {
-        val ids = events.mapNotNullTo(mutableSetOf()) { it.createdBy }
+        val ids = events.flatMapTo(mutableSetOf()) { listOfNotNull(it.createdBy, it.submittedBy) }
         if (ids.isEmpty()) return emptyMap()
         val handles = photographerSettingsRepository.findAllById(ids).associate { it.userId to it.handle }
         val names = userRepository.findAllById(ids).associate { it.id to it.name }
@@ -279,8 +420,9 @@ class AdminEventService(
         cover: CoverUpload? = null,
         key: IdempotencyKey? = null,
     ): AdminListEventDto {
-        val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim())
-        validateLocation(normalized.regionCode, normalized.provinceCode)
+        val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim(),
+            eventType = req.eventType?.trim()?.takeIf { it.isNotEmpty() }?.let { RaceEventService.raceType(it).name })
+        EventInputs.validateLocation(regionsService, normalized.regionCode, normalized.provinceCode, required = false)
         if (key != null) return createCommand(adminId, normalized, cover, key)
         val date = parseDate(req.date)
         val price = validatedPrice(req.pricePerPhoto)
@@ -293,6 +435,10 @@ class AdminEventService(
 
     private fun createEvent(adminId: UUID, req: CreateAdminEventRequest, eventId: UUID, coverKey: String?,
         date: LocalDate, price: BigDecimal): Pair<Event, UUID> {
+        // AA-R7: a typed admin race is inserted under the photographers' race-creation lock (both
+        // create paths call this inside their write transaction) and is proven at birth.
+        val type = req.eventType?.let(RaceEventService::raceType)
+        if (type != null) eventRepository.lockRaceCreation()
         val event = eventRepository.save(
             Event(
                 id = eventId,
@@ -311,7 +457,13 @@ class AdminEventService(
                 pricePerPhoto = price,
                 createdAt = OffsetDateTime.now(),
                 updatedAt = OffsetDateTime.now(),
-            ),
+            ).apply {
+                if (type != null) {
+                    eventType = type
+                    nameKey = matcher.nameKey(name)
+                    adminApprovedAt = createdAt
+                }
+            },
         )
         val decision = adminDecisionLogService.logEventDecision(
             adminId = adminId,
@@ -342,7 +494,7 @@ class AdminEventService(
         key: IdempotencyKey? = null,
     ): AdminListEventDto {
         val normalized = req.copy(regionCode = req.regionCode?.trim(), provinceCode = req.provinceCode?.trim())
-        validateLocation(normalized.regionCode, normalized.provinceCode)
+        EventInputs.validateLocation(regionsService, normalized.regionCode, normalized.provinceCode, required = false)
         if (key != null) return updateCommand(adminId, eventId, normalized, cover, removeCover, key)
         // Preserve validation before the PUT, then reload in the write transaction
         // so edits made during the upload are not overwritten by a detached snapshot.
@@ -354,7 +506,10 @@ class AdminEventService(
             eventCoverService.upload(eventId, it.bytes, it.contentType)
         }
         val (result, oldCoverKey) = transactionTemplate.execute {
-            if (req.pricePerPhoto != null) lockEventPhotos(eventId)
+            if (req.pricePerPhoto != null) {
+                lockEventPhotos(eventId)
+                eventPhotographerRepository.lockByEventIdForUpdate(eventId)
+            }
             val event = loadForReview(eventId)
             event.requireReviewRevision(req.expectedRevision)
             val oldKey = event.coverS3Key
@@ -364,15 +519,6 @@ class AdminEventService(
         // Never delete the stored cover until its replacement/removal has committed.
         oldCoverKey?.let(eventCoverService::delete)
         return eventDtoMapper.toAdminListDto(result)
-    }
-
-    private fun validateLocation(region: String?, province: String?) {
-        if (region == null && province == null) return
-        if (region.isNullOrBlank() || province.isNullOrBlank() || region.length > 20 || province.length > 40 ||
-            !regionsService.isValidPair(region, province)) {
-            throw ValidationException(code = ErrorCodes.INVALID_REGION,
-                message = "Unknown regionCode/provinceCode pair", field = "regionCode")
-        }
     }
 
     private fun authorizeCommand(adminId: UUID) {
@@ -395,7 +541,7 @@ class AdminEventService(
         val fields = listOf(req.title.trim(), req.date.trim(), req.location.trim(),
             req.pricePerPhoto.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
             req.organizerName?.trim().orEmpty(), req.description?.trim().orEmpty(), cover?.let { eventCoverService.digest(it.bytes) }.orEmpty()) +
-            listOfNotNull(req.regionCode, req.provinceCode)
+            listOfNotNull(req.regionCode, req.provinceCode) + listOfNotNull(req.eventType)
         var processed: ByteArray? = null
         val result = commands.executeEvent(key, adminId, AdminActionOperation.EVENT_CREATE,
             null, commands.inputHash(fields), { authorizeCommand(adminId) }, {
@@ -429,7 +575,10 @@ class AdminEventService(
                 processed = cover?.let { eventCoverService.prepare(it.bytes, it.contentType) }
                 processed?.let(eventCoverService::digest)
             }, { storageKey, recovery -> writeCover(storageKey, recovery, processed!!) }, eventCoverService::delete, { _, coverKey ->
-                if (req.pricePerPhoto != null) lockEventPhotos(eventId)
+                if (req.pricePerPhoto != null) {
+                    lockEventPhotos(eventId)
+                    eventPhotographerRepository.lockByEventIdForUpdate(eventId)
+                }
                 val event = loadForReview(eventId)
                 event.requireReviewRevision(req.expectedRevision)
                 val previous = event.coverS3Key
@@ -474,6 +623,7 @@ class AdminEventService(
                 before["title"] = event.name
                 after["title"] = newName
                 event.name = newName
+                if (event.eventType != null) event.nameKey = matcher.nameKey(newName)
             }
         }
         req.date?.takeIf { it.isNotBlank() }?.let {
@@ -544,8 +694,8 @@ class AdminEventService(
                 changes["pricePerPhoto"] = mapOf("from" to oldPriceStr, "to" to newPriceStr)
                 before["pricePerPhoto"] = oldPriceStr
                 after["pricePerPhoto"] = newPriceStr
+                racePriceService.applyFloor(event, newPrice, adminId)
                 event.pricePerPhoto = newPrice
-                photoRepository.updatePriceByEventId(event.id, newPrice)
             }
         }
         // Cover handling — upload wins over remove when both are signalled.
@@ -578,7 +728,7 @@ class AdminEventService(
         )
         event.reviewRevision++
         event.adminOverrides = event.adminOverrides + entry
-        eventRepository.save(event)
+        if (event.eventType != null) saveRace(event) else eventRepository.save(event)
         val decision = adminDecisionLogService.logEventDecision(
             adminId = adminId,
             targetEventId = event.id,

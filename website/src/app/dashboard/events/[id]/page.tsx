@@ -8,6 +8,7 @@ import type { EventState, ListEvent } from "@/types/event";
 import { EventCouponModal } from "@/components/dashboard/event-coupon-modal";
 import { PhotographerPurchasePreview, type PurchaseSelection } from "@/components/dashboard/photographer-purchase-preview";
 import { MyEventForm } from "@/components/dashboard/my-event-form";
+import { RacePriceBand } from "@/components/dashboard/race-price-modal";
 import { SiteHeader } from "@/components/layout/site-header";
 import {
   PhotoPreviewCard,
@@ -47,7 +48,7 @@ import {
 import { captureAuthSession } from "@/lib/auth-session";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
-import { describePricing, isOwnedEventLive } from "@/lib/photographer-events";
+import { describePricing, isOwnedEventLive, raceCheckReasonLine } from "@/lib/photographer-events";
 import type {
   PhotographerEventSummary,
   PhotographerLibraryPhoto,
@@ -168,9 +169,40 @@ export default function FocusedSharePage() {
   // events have nothing to discount. Owned events get the button inside
   // OwnedBand; covered admin events get a slim band of their own.
   const paid = liveDetail.pricingMode !== "free";
+  // A race this photographer submitted (AA-R15): races keep ownedByMe false,
+  // so the race band takes the coverage band's place.
+  const myRace = !!liveDetail.eventType && liveDetail.submittedByMe === true;
+  const raceUi = myRace ? (
+    <>
+      <RaceBand
+        detail={liveDetail}
+        onEdit={liveDetail.canEditRace ? () => setEditOpen(true) : undefined}
+        onCoupon={paid ? () => setCouponOpen(true) : undefined}
+      />
+      {liveDetail.canEditRace && (
+        <Modal isOpen={editOpen} onClose={() => setEditOpen(false)} title="Edit race">
+          <MyEventForm
+            event={liveDetail}
+            onDone={(saved) => {
+              void refreshEvents();
+              setEditOpen(false);
+              showToast({
+                kind: "success",
+                message:
+                  saved.reviewStatus === "change_pending"
+                    ? RACE_HELD_EDIT_LINE
+                    : "Race updated.",
+              });
+            }}
+            onCancel={() => setEditOpen(false)}
+          />
+        </Modal>
+      )}
+    </>
+  ) : null;
   const couponUi = paid ? (
     <>
-      {!owned && <CoverageBand onCoupon={() => setCouponOpen(true)} />}
+      {!owned && !myRace && <CoverageBand onCoupon={() => setCouponOpen(true)} />}
       <EventCouponModal
         isOpen={couponOpen}
         onClose={() => setCouponOpen(false)}
@@ -228,7 +260,9 @@ export default function FocusedSharePage() {
         <BackChip />
         <Hero event={event} />
         {ownedUi}
+        {raceUi}
         {couponUi}
+        <RacePriceBand eventId={liveDetail.id} racePrice={liveDetail.racePrice} />
         <EventMetadataVisibility event={liveDetail} />
         {uploadsOpen && (
           <>
@@ -421,6 +455,68 @@ function OwnedBand({
           </button>
         )}
       </div>
+    </section>
+  );
+}
+
+const RACE_HELD_EDIT_LINE =
+  "Your change is waiting for an admin; the race keeps its current details.";
+
+// Band for a shared race the photographer submitted (AA-R15). Same slab
+// recipe as OwnedBand; the server's check reasons show as plain lines.
+function RaceBand({
+  detail,
+  onEdit,
+  onCoupon,
+}: {
+  detail: PhotographerEventDetail;
+  onEdit?: () => void;
+  onCoupon?: () => void;
+}) {
+  const status = detail.reviewStatus ?? "approved";
+  const [headline, body] = detail.hidden
+    ? ["Hidden from /events.", "Runners can't find it on /events right now. An admin decides what happens next."]
+    : status === "pending"
+      ? ["Waiting for admin review.", "Uploads open once an admin approves it."]
+      : status === "change_pending"
+        ? ["Live · change waiting for approval.", RACE_HELD_EDIT_LINE]
+        : status === "rejected"
+          ? ["Sent back by admin.", detail.reviewNote ? `Reason: ${detail.reviewNote}` : ""]
+          : ["Live on /events.", ""];
+  const reasons = detail.checkReasons ?? [];
+
+  return (
+    <section className="mb-10 md:mb-12 border border-line rounded-2xl bg-bone-deep/30 p-6 md:p-8 flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
+      <div className="flex-1 min-w-0">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+          Your race
+        </p>
+        <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
+          {headline}
+        </p>
+        {body && <p className="font-sans text-sm text-ink-soft mt-2">{body}</p>}
+        {reasons.length > 0 && (
+          <ul className="mt-3 space-y-1 font-sans text-sm text-ink-soft list-disc pl-5">
+            {reasons.map((code) => (
+              <li key={code}>{raceCheckReasonLine(code)}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {(onEdit || onCoupon) && (
+        <div className="flex flex-wrap gap-2 shrink-0">
+          {onEdit && (
+            <button type="button" onClick={onEdit} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+              Edit race
+            </button>
+          )}
+          {onCoupon && (
+            <button type="button" onClick={onCoupon} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+              Event coupon
+            </button>
+          )}
+        </div>
+      )}
     </section>
   );
 }

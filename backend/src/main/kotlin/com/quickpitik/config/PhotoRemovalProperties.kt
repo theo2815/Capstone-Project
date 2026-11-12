@@ -10,6 +10,7 @@ data class PhotoRemovalProperties(
     val cleanupBackoff: Duration = Duration.ofMinutes(5),
     val sweepBatchSize: Int = 50,
     val inRequestCleanupJobs: Int = 5,
+    val emailSweepInterval: Duration = Duration.ofMinutes(15),
     val runner: Runner = Runner(),
 ) {
     init {
@@ -18,6 +19,7 @@ data class PhotoRemovalProperties(
         require(cleanupBackoff > Duration.ZERO)
         require(sweepBatchSize in 1..100)
         require(inRequestCleanupJobs in 0..100)
+        require(emailSweepInterval > Duration.ZERO)
     }
 
     // Runner deletion requests. Liveness values are on AWS's 0-100 scale, similarity on 0-1.
@@ -29,6 +31,9 @@ data class PhotoRemovalProperties(
         val photographerDailyAutoHides: Int = 50,
         val candidateLimit: Int = 50,
         val emailClaimStaleAfter: Duration = Duration.ofMinutes(10),
+        // RD-2: 0 closes intake (kill switch); at most this many open requests per runner.
+        val checksPerDay: Int = 3,
+        val maxOpenRequests: Int = 3,
     ) {
         init {
             require(livenessUncertainMin >= 0.0 && livenessUncertainMin <= livenessPassMin && livenessPassMin <= 100.0)
@@ -37,6 +42,7 @@ data class PhotoRemovalProperties(
             require(photographerDailyAutoHides >= 0)
             require(candidateLimit in 1..4096)
             require(emailClaimStaleAfter > Duration.ZERO)
+            require(checksPerDay >= 0 && maxOpenRequests >= 1)
         }
     }
 }

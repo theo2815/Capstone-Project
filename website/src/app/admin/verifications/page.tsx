@@ -36,9 +36,9 @@ function Header({ pendingCount }: { pendingCount: number }) {
         Verifications.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Review what each photographer set up and decide if they&apos;re ready to
-        sell on QuickPitik. Approve closes the loop in one tap; reject
-        sends them back with a reason.
+        Review what each photographer set up. A complete profile goes live by
+        itself once their identity check passes; reject sends them back with
+        a reason.
       </p>
     </header>
   );

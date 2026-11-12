@@ -4,11 +4,10 @@ import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image"
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useCartStore } from "@/store/cart-store";
+import { payableItems, useCartStore } from "@/store/cart-store";
 import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
 import { useAuthStore } from "@/store/auth-store";
 import { useConfirmation } from "@/hooks/use-confirmation";
-import { fetchEventDetail } from "@/lib/api-events";
 import { ROUTES } from "@/lib/constants";
 import { useScrollLock } from "@/lib/scroll-lock";
 import { cn, formatPrice } from "@/lib/utils";
@@ -61,62 +60,18 @@ export function CartModal({
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const ownedItems = items.filter((i) => ownedPhotoIds.has(i.photoId));
 
-  // Guest carts carry the price captured at browse time. A signed-in runner's
-  // cart self-corrects — the server owns the row and `GET /me/cart` renders
-  // the live `photos.price_php` — but a guest has no `cart_items` row for the
-  // BE to correct, while checkout still charges the live price. So an admin
-  // re-price between browsing and checking out would bill more than the cart
-  // showed. Re-read on open.
-  //
-  // One GET per distinct event, not per photo: price is an event-level value
-  // (admin PATCH re-prices every photo under the event), so the event detail
-  // answers for the whole cart. Items with no `eventSlug` — persisted before
-  // the field existed — are skipped rather than guessed at.
+  // Re-read on open. Signed in: `GET /me/cart` returns the live price and
+  // `available` (a photographer suspended since the add, AA-I20a); without it
+  // the cart stayed stale until a reload. Guest: no server row, so per-photo
+  // live prices (AA-R14), since checkout charges the live price.
+  // Re-runs when sync turns on, so the login merge's result is re-read too.
+  // shortcut: the signed-in re-read replaces the list, so an add or remove still in
+  // flight can briefly show wrong (a reload fixes it); keep pending rows if runners hit it.
   useEffect(() => {
-    if (!isOpen || syncEnabled) return;
-    let cancelled = false;
-
-    const slugs = Array.from(
-      new Set(
-        useCartStore
-          .getState()
-          .items.map((i) => i.eventSlug)
-          .filter((s): s is string => Boolean(s)),
-      ),
-    );
-    if (slugs.length === 0) return;
-
-    void Promise.all(
-      slugs.map(async (slug) => {
-        const event = await fetchEventDetail(slug);
-        return [slug, event?.pricePerPhoto ?? null] as const;
-      }),
-    ).then((pairs) => {
-      if (cancelled) return;
-      const priceBySlug = new Map<string, number>();
-      for (const [slug, price] of pairs) {
-        if (price !== null) priceBySlug.set(slug, price);
-      }
-      if (priceBySlug.size === 0) return;
-
-      // Re-read at write time — an add or remove may have landed while the
-      // requests were in flight, and setItems replaces the whole array.
-      const current = useCartStore.getState().items;
-      let changed = false;
-      const next = current.map((item) => {
-        const price = item.eventSlug
-          ? priceBySlug.get(item.eventSlug)
-          : undefined;
-        if (price === undefined || price === item.price) return item;
-        changed = true;
-        return { ...item, price };
-      });
-      if (changed) useCartStore.getState().setItems(next);
+    if (!isOpen) return;
+    useCartStore.getState().refreshPrices().catch(() => {
+      // Display only: checkout still sends the shown price and is refused if it changed.
     });
-
-    return () => {
-      cancelled = true;
-    };
   }, [isOpen, syncEnabled]);
 
   async function handleClearCart() {
@@ -377,6 +332,7 @@ export function CartModal({
                     onClose();
                   }
                 }}
+                disabled={payableItems(items).length === 0}
                 className={cn(BTN_PRIMARY, BTN_SIZE.md, "w-full")}
               >
                 Continue to checkout →
@@ -448,6 +404,9 @@ function CartRow({
 }) {
   const tone = item.tone ?? 0;
   const colorIdx = tone % TONE_COLORS.length;
+  const unavailable = item.available === false;
+  // Shows until the runner removes the photo and adds it again (the new row takes the live price).
+  const priceRose = !unavailable && item.price > (item.priceAtAdd ?? item.price);
 
   return (
     <li
@@ -506,6 +465,11 @@ function CartRow({
               {item.time}
             </p>
           ) : null}
+          {priceRose && (
+            <p className="mt-1 font-sans text-sm text-ink tnum">
+              Price went up from {formatPrice(item.priceAtAdd ?? item.price)} to {formatPrice(item.price)}
+            </p>
+          )}
           {owned && (
             <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-bone-deep px-2.5 py-1 font-mono uppercase tracking-[0.14em] text-[13px] text-slate whitespace-nowrap">
               <span
@@ -515,11 +479,25 @@ function CartRow({
               Already purchased
             </span>
           )}
+          {unavailable && (
+            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-bone-deep px-2.5 py-1 font-mono uppercase tracking-[0.14em] text-[13px] text-slate whitespace-nowrap">
+              <span
+                aria-hidden="true"
+                className="size-1.5 rounded-full bg-slate-soft"
+              />
+              No longer available
+            </span>
+          )}
         </div>
       </button>
 
       <div className="flex flex-col items-end gap-1.5 shrink-0">
-        <span className="font-mono text-sm text-ink tnum">
+        <span
+          className={cn(
+            "font-mono text-sm tnum",
+            unavailable ? "text-slate-soft line-through" : "text-ink",
+          )}
+        >
           {formatPrice(item.price)}
         </span>
         <button

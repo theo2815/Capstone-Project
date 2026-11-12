@@ -49,6 +49,8 @@ class EventFormBindingTest {
     private val ownedEvents = Mockito.mock(PhotographerOwnedEventService::class.java)
     private val adminEvents = Mockito.mock(AdminEventService::class.java)
     private val rateLimiter = Mockito.mock(RateLimiter::class.java)
+    private val races = Mockito.mock(com.quickpitik.service.events.RaceEventService::class.java)
+    private var raceCreated: com.quickpitik.dto.photographer.CreateRaceRequest? = null
     private var created: CreateMyEventRequest? = null
     private var updated: UpdateMyEventRequest? = null
     private var adminCreated: CreateAdminEventRequest? = null
@@ -75,9 +77,11 @@ class EventFormBindingTest {
                 rateLimiter,
                 Mockito.mock(com.quickpitik.service.photographer.PhotoMetadataSettingsService::class.java),
                 Mockito.mock(com.quickpitik.service.photographer.PhotoMetadataService::class.java),
+                races,
+                Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java),
             ),
         )
-        admin = mvc(AdminEventsController(adminEvents))
+        admin = mvc(AdminEventsController(adminEvents, Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java)))
         val principal = AuthPrincipal(UUID.randomUUID(), "photographer@test.local", Role.PHOTOGRAPHER)
         SecurityContextHolder.getContext().authentication =
             UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
@@ -111,6 +115,43 @@ class EventFormBindingTest {
         assertEquals("paid", form.pricingMode)
         assertEquals(0, BigDecimal("250.00").compareTo(form.pricePerPhoto))
         assertNull(form.watermarkPolicy)
+    }
+
+    @Test
+    fun `a race create form binds the candidate id and reads blank optional parts as absent`() {
+        Mockito.`when`(races.create(anyArg(), anyArg(), anyArg()))
+            .thenAnswer { raceCreated = it.getArgument(1); com.quickpitik.dto.photographer.RaceCreateResultDto("created") }
+        val candidate = UUID.randomUUID()
+        photographer.perform(
+            multipart("/api/v1/me/photographer/races")
+                .param("title", "  Cebu City Marathon ")
+                .param("date", "2026-12-06")
+                .param("location", "IT Park")
+                .param("regionCode", " 07 ")
+                .param("provinceCode", "CEB")
+                .param("eventType", "ROAD_RACE")
+                .param("organizerName", "")
+                .param("confirmDifferentFrom", candidate.toString()),
+        ).andExpect(status().isOk)
+
+        val form = assertNotNull(raceCreated)
+        assertEquals("Cebu City Marathon", form.title)
+        assertEquals("07", form.regionCode)
+        assertNull(form.organizerName)
+        assertEquals(candidate, form.confirmDifferentFrom)
+    }
+
+    @Test
+    fun `a race create with no race type is a 400 against the eventType field`() {
+        photographer.perform(
+            multipart("/api/v1/me/photographer/races")
+                .param("title", "Cebu City Marathon").param("date", "2026-12-06").param("location", "IT Park")
+                .param("regionCode", "07").param("provinceCode", "CEB").param("eventType", " "),
+        )
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.errors[0].field").value("eventType"))
+
+        Mockito.verifyNoInteractions(races)
     }
 
     @Test

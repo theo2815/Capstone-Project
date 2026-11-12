@@ -6,8 +6,13 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import java.util.UUID
 
 @Service
 class EmailService(
@@ -143,6 +148,49 @@ class EmailService(
         log.info("Photos-ready email sent · to={} resendId={}", toEmail, response.id)
     }
 
+    // RD-10: a photographer is told a removal review started, or what was decided. The body is the stored inbox
+    // message (own photos only, photo references, no runner details). A failure MUST propagate: the caller keeps
+    // its dated claim and the sweep re-sends.
+    fun sendPhotographerRemovalReviewEmail(toEmail: String, eventName: String, body: String, requestId: UUID) =
+        sendPhotographerRemovalEmail(toEmail, "Photo removal review requested · $eventName", "A photo removal review needs your reply", eventName, body, requestId)
+
+    fun sendPhotographerRemovalOutcomeEmail(toEmail: String, eventName: String, body: String, requestId: UUID) =
+        sendPhotographerRemovalEmail(toEmail, "Photo removal outcome · $eventName", "A photo removal review has an outcome", eventName, body, requestId)
+
+    private fun sendPhotographerRemovalEmail(toEmail: String, subject: String, heading: String, eventName: String, body: String, requestId: UUID) {
+        val url = "$frontendOrigin/dashboard/photo-removal-requests/$requestId"
+        if (devMode) {
+            log.info("[EMAIL STUB] photo removal notice for {} — link: {}", toEmail, url)
+            return
+        }
+        val response = resendClient.send(
+            ResendSendEmailRequest(
+                from = "${resendProperties.fromName} <${resendProperties.fromAddress}>",
+                to = listOf(toEmail),
+                subject = subject,
+                html = renderPhotographerRemovalHtml(heading, eventName, body, url),
+            ),
+        )
+        log.info("Photo removal email sent · to={} resendId={}", toEmail, response.id)
+    }
+
+    private fun renderPhotographerRemovalHtml(heading: String, eventName: String, body: String, url: String): String = """
+<!doctype html>
+<html><body style="margin:0;background:#f6f6f4;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
+    <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:12px;padding:32px;">
+      <tr><td>
+        <h1 style="font-size:20px;margin:0 0 12px;color:#111;">${escapeHtml(heading)}</h1>
+        <p style="font-size:14px;color:#6b6b6b;margin:0 0 16px;">${escapeHtml(eventName)}</p>
+        <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 24px;">${escapeHtml(body)}</p>
+        <a href="${escapeUrl(url)}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px;">Open the request</a>
+        <p style="font-size:12px;color:#a8a8a8;margin:24px 0 0;">QuickPitik · Cebu, Philippines</p>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</body></html>
+""".trimIndent()
+
     // PayMongo refund transfer link for a parked QR Ph dispute. Sent AFTER_COMMIT + async via RefundLinkSentEmailListener.
     // A failure is logged and dropped: the runner's inbox message is the durable copy. Sending the same link
     // again sends nothing; only a different link sends a new e-mail.
@@ -201,6 +249,83 @@ class EmailService(
         } catch (ex: Exception) {
             log.error("Payout-account-change alert failed · to={} err={}", toEmail, ex.message, ex)
         }
+    }
+
+    // The one-off identity-check notice (AA-I22, wording approved in AA-0.8), sent by the admin
+    // identity-notice route. Returns whether Resend took it so the route can count; failures are logged.
+    fun sendIdentityCheckNotice(toEmail: String, name: String, startsOn: LocalDate): Boolean {
+        if (devMode) {
+            log.info("[EMAIL STUB] identity notice for {} — gate starts {}", toEmail, startsOn)
+            return true
+        }
+        val date = startsOn.format(NOTICE_DATE)
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        return try {
+            val response = resendClient.send(
+                ResendSendEmailRequest(
+                    from = sender,
+                    to = listOf(toEmail),
+                    subject = "Before $date: a quick live selfie to keep uploading",
+                    html = renderIdentityNoticeHtml(name, date),
+                ),
+            )
+            log.info("Identity notice sent · to={} resendId={}", toEmail, response.id)
+            true
+        } catch (ex: Exception) {
+            log.error("Identity notice failed · to={} err={}", toEmail, ex.message, ex)
+            false
+        }
+    }
+
+    private fun renderIdentityNoticeHtml(name: String, date: String): String {
+        val greeting = escapeHtml(name.trim().ifBlank { "there" })
+        val site = escapeHtml(runCatching { URI(frontendOrigin).host }.getOrNull() ?: frontendOrigin)
+        // No section anchor: that word is kept out of this file by the storage-prefix guard (SellerDetailsServiceTest 8).
+        val settingsUrl = escapeUrl("$frontendOrigin/dashboard/settings")
+        val privacyUrl = escapeUrl("$frontendOrigin/privacy#seller-checks")
+        val p = """style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 16px;""""
+        val li = """style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 8px;""""
+        val a = """style="color:#1a1a1a;text-decoration:underline;""""
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>A quick live selfie to keep uploading</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Identity check
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:30px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.1;color:#1a1a1a;">
+            A quick live selfie before you upload.
+          </h1>
+          <p $p>Hi $greeting,</p>
+          <p $p>From $date, QuickPitik will ask every photographer to pass an identity check before uploading new photos. Your account has not passed it yet.</p>
+          <p $p>What to do (about a minute):</p>
+          <ol style="margin:0 0 16px;padding-left:22px;">
+            <li $li>Sign in at <a href="$settingsUrl" $a>$site</a> and open Settings → Seller details. On the Android app, tap "Open settings on $site" on the Seller details card.</li>
+            <li $li>Type your ID number and take a short live selfie in your browser. We compare it with the ID photo you already sent.</li>
+            <li $li>Most checks pass straight away. If not, an admin checks your details, and uploads open once they approve.</li>
+          </ol>
+          <p $p>Rather not take the live selfie? Choose "Have an admin check instead". An admin will look at your details, and uploads open after they approve.</p>
+          <p $p>Until $date, you can upload as usual. From $date, new uploads stay paused until your check passes. Photos you have already uploaded or sold are not affected.</p>
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:24px 0;" />
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0 0 10px;">
+            The live selfie is processed by Amazon Web Services in Malaysia and Singapore. How we use and keep it: <a href="$privacyUrl" $a>$site/privacy#seller-checks</a>.
+          </p>
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            Questions? Write to quickpitiksupport@gmail.com.
+          </p>
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
     }
 
     private fun renderPayoutAccountChangedHtml(
@@ -523,3 +648,6 @@ class EmailService(
     // inside an href attribute in HTML email.
     private fun escapeUrl(s: String): String = s.replace("&", "&amp;")
 }
+
+// "Monday 7 December 2026", as the AA-0.8 wording writes the gate date.
+private val NOTICE_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", Locale.ENGLISH)

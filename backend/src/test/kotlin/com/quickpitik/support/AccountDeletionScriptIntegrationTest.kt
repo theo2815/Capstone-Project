@@ -1,17 +1,22 @@
 package com.quickpitik.support
 
 import com.quickpitik.exception.NotFoundException
+import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.service.photographer.PublicPhotographerService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.transaction.support.TransactionTemplate
 import org.testcontainers.containers.Container
 import org.testcontainers.utility.MountableFile
 import java.nio.file.Path
+import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -22,6 +27,8 @@ import kotlin.test.assertTrue
 class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired private lateinit var publicPhotographers: PublicPhotographerService
+    @Autowired private lateinit var relevance: BatchRelevanceRepository
+    @Autowired private lateinit var tx: TransactionTemplate
 
     @BeforeEach
     fun copyScripts() {
@@ -455,6 +462,32 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, result.exitCode, result.stderr)
         assertEquals(0, count("SELECT count(*) FROM liveness_sessions WHERE user_id = ?", s.photographer))
         assertEquals(1, count("SELECT count(*) FROM liveness_sessions WHERE user_id = ?", other))
+    }
+
+    // PE-1.2 (P2): the relevance rows go, and the sweep's due query skips the suspended account so the
+    // kept event_photographer row does not make them again. Uploads sit in 2001 (shared container).
+    @Test
+    fun `anonymising a photographer removes their relevance rows and they are not made again`() {
+        val s = seedStudio()
+        val upload = OffsetDateTime.parse("2001-05-06T07:08:09.123456Z")
+        jdbc.update("UPDATE event_photographer SET last_upload_at = ? WHERE event_id = ? AND photographer_id = ?", upload, s.event, s.photographer)
+        fun isDue() = relevance.findDueBatches(upload, upload, LocalDate.of(1990, 1, 1), LocalDate.of(1990, 1, 1), 10_000)
+            .any { it.eventId == s.event && it.photographerId == s.photographer }
+        assertTrue(isDue())
+        assertEquals(1, tx.execute { relevance.ensureBatch(s.event, s.photographer) })
+        jdbc.update(
+            "INSERT INTO batch_relevance_photos (photo_id, batch_id, looked_up_at) " +
+                "SELECT ?, id, now() FROM batch_relevance WHERE event_id = ? AND photographer_id = ?",
+            s.soldPhoto, s.event, s.photographer,
+        )
+
+        val result = anonymise(s.photographer, confirm = "yes")
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertEquals(0, count("SELECT count(*) FROM batch_relevance WHERE photographer_id = ?", s.photographer))
+        assertEquals(0, count("SELECT count(*) FROM batch_relevance_photos WHERE photo_id = ?", s.soldPhoto))
+        assertFalse(isDue())
+        assertEquals(0, tx.execute { relevance.ensureBatch(s.event, s.photographer) })
     }
 
     private fun assertRefusedUnchanged(photographer: UUID) {

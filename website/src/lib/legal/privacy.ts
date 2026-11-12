@@ -47,7 +47,7 @@ export const PRIVACY_POLICY: LegalDoc = {
           list: [
             "Profile: handle, brand name, bio, region, province and city, social links, verification status, and whether photo details are shown publicly.",
             "Payout details: account name and number for GCash, Maya or GoTyme, and the payout QR image. A copy of these details is saved with each payout.",
-            "Seller checks, required before you can upload: your full legal name, photos of a valid government ID (both sides for a PhilSys National ID), a photo of you holding that ID, your address and phone number; and, if you choose, your BIR Certificate of Registration (Form 2303). An admin compares the photos by eye; we never run face recognition on them. We do not show your ID, these photos or your phone number publicly.",
+            "Seller checks, required before you can upload: your full legal name, photos of a valid government ID (both sides for a PhilSys National ID), a photo of you holding that ID, your ID number, your address and phone number; and, if you choose, your BIR Certificate of Registration (Form 2303). We check these automatically (see [Seller checks](#seller-checks)), or an admin checks them by eye if you choose. We do not show your ID, your ID number, these photos or your phone number publicly.",
           ],
         },
         "**Orders and payments**",
@@ -61,7 +61,7 @@ export const PRIVACY_POLICY: LegalDoc = {
         {
           list: [
             'Inbox messages, saved events, your cart, and "photos ready" alerts you turn on.',
-            "Reports about photos, refund requests and disputes (with any note you write), and photo removal requests (your contact details, the reason, and any evidence file).",
+            "Reports about photos, events and photographers, refund requests and disputes (with any note you write), and photo removal requests (your contact details, the reason, and any evidence file).",
           ],
         },
         "**Security records**",
@@ -83,10 +83,11 @@ export const PRIVACY_POLICY: LegalDoc = {
             "**Finding photos:** to match selfies with faces in event photos and to read bib numbers, and to email you when new photos of you may be ready (only if you turn this on).",
             "**Selling photos:** to take payment through PayMongo, send receipts and download links, and handle refunds.",
             "**Paying photographers:** to keep the sales record, handle payout requests and send payouts to the photographer's saved account.",
-            "**Safety:** to handle reports, disputes and photo removal requests, to suspend accounts that break the [Terms](/terms#prohibited-conduct), and to keep a record of admin decisions.",
+            "**Safety:** to check photographers' seller details (see [Seller checks](#seller-checks)); to check photographers' brand names, bios, handles and race event names against lists of offensive words, and their profile pictures, covers, watermarks and race covers for sexual, violent or hateful images, using Amazon Rekognition; to handle reports from signed-in users about photos, events and photographers, disputes and photo removal requests; to hide race events that no one can confirm took place; to suspend accounts that break the [Terms](/terms#prohibited-conduct), and to keep a record of admin decisions.",
+            "**Automatic checks on uploads:** when a photographer uploads photos, we check that they belong to the event and are the photographer's own. We work out a fingerprint of each photo (a short code computed from the image, not a face template) and compare it with other photographers' photos in the same event. We also check whether the same file was already uploaded to QuickPitik by another photographer, in any event, look for the QuickPitik photo id that our watermarked previews carry, compare the bib numbers read from the photos with other photographers' photos in the same event, and compare the date the camera recorded with the event's date. We store the results for each photographer and event and do not show them publicly. A person reviews them before any photo is hidden or any payout is held.",
             "**Promoting QuickPitik:** we use event photos in our own promotion only when no one in them can be recognised, or the people who can be recognised agreed, and we credit the photographer.",
             "**Security:** to limit repeated requests, lock an account for a while after 5 wrong passwords, and let admins turn on a second sign-in step.",
-            "**Emails:** we send only emails about your account and orders: password reset codes, email verification, email-change confirmation, \"photos ready\" alerts (if you turn them on), order receipts with download links, refund links, and an alert when a photographer's payout account changes. We send no newsletters or marketing emails.",
+            "**Emails:** we send only emails about your account and orders: password reset codes, email verification, email-change confirmation, \"photos ready\" alerts (if you turn them on), order receipts with download links, refund links, an alert when a photographer's payout account changes, and, for photographers, one notice before the identity check becomes required to upload. We send no newsletters or marketing emails.",
           ],
         },
         "We do not use your data for advertising, and we do not give it to advertisers or data brokers.",
@@ -95,8 +96,9 @@ export const PRIVACY_POLICY: LegalDoc = {
           list: [
             "Accounts, buying and selling photos, paying photographers, and emails about your account and orders: to carry out our agreement with you (the [Terms](/terms)).",
             "Orders, payments, sales and payout records: to meet our legal duties, such as tax and bookkeeping rules, and to handle refunds, disputes and legal claims.",
-            "Seller checks (a photographer's government ID, the photo of them holding it, and BIR registration): because the Internet Transactions Act and BIR rules require them, and to make sure the ID belongs to the person selling. We treat ID numbers as sensitive personal information.",
-            "Safety, security and photo removal requests: our legitimate interest in protecting users, photographers and the service. A legitimate interest is a real need of ours that does not override your rights.",
+            "Seller checks (a photographer's government ID, the photo of them holding it, the ID number and BIR registration): because the Internet Transactions Act and BIR rules require them, and to make sure the ID belongs to the person selling. We treat ID numbers as sensitive personal information.",
+            'The live selfie and the face comparison in a seller check: your consent, given with the tick before the live selfie starts. If you do not agree, choose "Have an admin check instead"; you can still sell.',
+            "Safety, security, automatic checks on uploads and photo removal requests: our legitimate interest in protecting users, photographers and the service. A legitimate interest is a real need of ours that does not override your rights.",
             'Face matching with your selfie, saved selfies and "photos ready" alerts: your consent, given with the tick before you search or save a selfie, and by turning alerts on. A parent or guardian gives it for their child. You can withdraw it at any time by deleting your saved selfies and turning alerts off; searches already made are not undone.',
             "Faces and bib numbers of people in event photos who have not searched: our legitimate interest in helping runners find their own race photos (see [People without an account](#face-matching)).",
           ],
@@ -118,6 +120,18 @@ export const PRIVACY_POLICY: LegalDoc = {
       ],
     },
     {
+      id: "seller-checks",
+      heading: "Seller checks",
+      blocks: [
+        "When a photographer sends their seller details, we check them automatically before an admin needs to look.",
+        "**Live selfie.** In your browser, you take a short live video selfie. Amazon Rekognition Face Liveness, run by AWS in Malaysia, checks that a real person is in front of the camera and gives us one still image of your face. AWS keeps no extra images from the check for us. We then compare that still image with the photo on the front of your ID, using Amazon Rekognition in Singapore. We never compare it with the photo of you holding your ID.",
+        "**ID number.** You type your ID number. Amazon Rekognition in Singapore reads the text on the front of your ID, and we check that the number you typed is on it. We do not keep the number itself: we keep only a fingerprint of it (a code made from the number with a secret key, which cannot be turned back into the number). We use the fingerprint, your payout account number and your phone number to see whether the same person already has another account, and we compare your legal name with the name on your payout account.",
+        "**What happens next.** If every check passes, your seller details are approved automatically. If any check does not pass, or another account matches, an admin reviews your details. Only an admin can reject them, and an admin may review automatically approved details later. If an admin rejected your details before, an admin always reviews them again.",
+        '**Rather not take the live selfie?** Choose "Have an admin check instead". We then run no live check, no ID text reading and no face comparison: an admin compares your photos by eye. We still keep the fingerprint of your ID number for the repeat-account check.',
+        "**What the still image is used for.** The still image from a seller check is used only to check your identity. It is never added to a face collection, never used to search event photos, and never compared with other accounts. Admins can see it, like your ID photos.",
+      ],
+    },
+    {
       id: "who-receives-it",
       heading: "Who receives it",
       blocks: [
@@ -125,15 +139,15 @@ export const PRIVACY_POLICY: LegalDoc = {
         {
           table: [
             ["Company", "What it receives", "Why"],
-            ["Amazon Web Services (Amazon Rekognition)", "event photos and search selfies", "face matching and bib reading, in AWS's Singapore region"],
-            ["Cloudflare (R2 storage)", "all images: original photos, previews, selfies, profile pictures, payout QR images, seller-check photos, removal evidence", "storage"],
+            ["Amazon Web Services (Amazon Rekognition)", "event photos, search selfies, photographers' ID front and live-selfie video and still image, photographers' profile pictures, covers, watermarks and race covers", "face matching, bib reading, ID text reading, seller face comparison and image checks in AWS's Singapore region; the live checks in AWS's Malaysia region"],
+            ["Cloudflare (R2 storage)", "all images: original photos, previews, selfies, profile pictures, payout QR images, seller-check photos and the still image from the seller live selfie, removal evidence", "storage"],
             ["PayMongo", "the buyer's email (the part before the @ is used as the billing name); if we send payouts through PayMongo, the photographer's payout account name and number", "payments, refunds, payouts"],
             ["Resend", "your email address, your name and the email's content", "sending emails"],
             ["Google", "your Google sign-in, if you use it", "sign-in"],
             ["Railway and Vercel", "everything we store or show", "hosting the server, database and website"],
           ],
         },
-        "Amazon Rekognition processes event photos and selfies in Singapore. The other companies above may also store or process data outside the Philippines. Wherever your data is, QuickPitik stays responsible for it, and we use these companies' data-protection terms to keep it protected to a level comparable with Philippine law.",
+        "Amazon Rekognition processes event photos, selfies, ID photos and profile images in Singapore, and the live checks (for seller checks) in Malaysia. The other companies above may also store or process data outside the Philippines. Wherever your data is, QuickPitik stays responsible for it, and we use these companies' data-protection terms to keep it protected to a level comparable with Philippine law.",
         "**Other users see:**",
         {
           list: [
@@ -161,7 +175,7 @@ export const PRIVACY_POLICY: LegalDoc = {
             ["Face templates from event photos", "6 months after the event date, or earlier if the event is deleted or the photo is removed"],
             ["Event photos", "until the photographer deletes them or they are removed after a request. Sold photos cannot be deleted by the photographer, because buyers keep their downloads"],
             ["Orders, payments and sales records", "kept for at least 5 years after the tax-return deadline for the last year recorded in our books, as Philippine tax law requires (Tax Code Section 235, as amended by RA 11976), and longer while a tax audit, case or claim about them is open. This applies after an account is deleted too"],
-            ["Photographer seller-check details and photos", "while you sell on QuickPitik, then for at least 5 years like other money records"],
+            ["Photographer seller-check details and photos, the still image from the live selfie, and the fingerprint of the ID number", "while you sell on QuickPitik, then for at least 5 years like other money records. AWS keeps no extra images from the live selfie for us"],
             ["Download links for bought photos", "downloads work for one year after payment"],
             ["Photo removal evidence", "deleted after the request is closed"],
             ["Sign-in tokens and codes (hashed)", "not yet cleaned up automatically"],
@@ -249,7 +263,7 @@ export const PRIVACY_POLICY: LegalDoc = {
       id: "on-your-device",
       heading: "On your device",
       blocks: [
-        "**Website.** The website sets no cookies of its own. It keeps these in your browser's storage: your sign-in tokens, cart, a payment in progress, saved events, display choices, tips you have dismissed, and whether you have agreed to the face-matching notice. Fonts are part of the website (no font service is called). The sign-in pages load Google's sign-in button from Google; Google's own policies apply to it.",
+        "**Website.** The website sets no cookies of its own. It keeps these in your browser's storage: your sign-in tokens, cart, a payment in progress, saved events, display choices, tips you have dismissed, and whether you have agreed to the face-matching notice. Fonts are part of the website (no font service is called). The sign-in pages load Google's sign-in button from Google; Google's own policies apply to it. During a live check (a seller check), the browser asks to use your camera; the video goes to AWS and is not saved on your device.",
         "**Android app.**",
         {
           list: [

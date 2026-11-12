@@ -74,6 +74,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
@@ -248,6 +249,10 @@ class OrderService(
             val items = validateReplay(existing, request, paymentMethod)
             return CheckoutReservation(existing, photos, events, items)
         }
+
+        // Fresh checkout only, like the coupons below: a replay charges the
+        // price already reserved on its order rows, not the live one.
+        requireExpectedPrices(request.items, photos)
 
         // Fresh checkout only — the replay branches above never re-resolve
         // coupons, so a code that expired between attempts cannot strand a
@@ -741,6 +746,21 @@ class OrderService(
             throw checkoutConflict("Only live photos can be purchased.")
         }
         return photos
+    }
+
+    // AA-R14: never charge a price the runner was not shown. An omitted
+    // expectedPricePhp (old clients) skips the check.
+    private fun requireExpectedPrices(items: List<CreateOrderItem>, photos: Map<UUID, Photo>) {
+        items.forEach { item ->
+            val expected = item.expectedPricePhp ?: return@forEach
+            val live = photos.getValue(item.photoId).pricePhp
+            if (expected.compareTo(live) != 0) {
+                throw checkoutConflict(
+                    "Photo price changed from ₱${expected.setScale(2, RoundingMode.HALF_UP)} to ₱$live. Refresh your cart and try again.",
+                    code = ErrorCodes.CART_ITEM_PRICE_CHANGED,
+                )
+            }
+        }
     }
 
     private fun loadAndValidateEvents(items: List<CreateOrderItem>): Map<UUID, Event> {

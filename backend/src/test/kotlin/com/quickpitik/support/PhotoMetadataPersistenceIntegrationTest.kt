@@ -1,9 +1,11 @@
 package com.quickpitik.support
 
 import com.quickpitik.config.PhotoMetadataProperties
+import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.entity.*
 import com.quickpitik.repository.*
+import com.quickpitik.service.image.ExtractedMetadata
 import com.quickpitik.service.image.PhotoMetadataExtractor
 import com.quickpitik.service.photographer.PhotoMetadataService
 import com.quickpitik.service.storage.StorageService
@@ -97,10 +99,23 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     }
 
     private fun sweeper(photoRepository: PhotoRepository, executor: ThreadPoolTaskExecutor) =
-        PhotoMetadataService(metadata, photoRepository, coverage, extractor, storage, executor, properties, transactions, clock, executor, suspension)
+        PhotoMetadataService(metadata, photoRepository, coverage, extractor, storage, executor, properties, transactions, clock, executor, suspension, RelevanceProperties())
 
     private fun settle(id: UUID, token: UUID, version: Int = 1, model: String = "R6") =
         transactions.execute { metadata.settle(id, token, version, PhotoMetadataState.READY, PhotoMetadataFields(cameraModel = model), OffsetDateTime.now()) }!!
+
+    @Test
+    fun `settle writes the marker to its own column and never into the fields`() {
+        val id = fixture()
+        val token = UUID.randomUUID()
+        assertEquals(1, claim(id, token))
+        val marker = UUID.randomUUID()
+        assertEquals(1, transactions.execute {
+            metadata.settle(id, token, 1, PhotoMetadataState.READY, PhotoMetadataFields(cameraModel = "R6"), OffsetDateTime.now(), xmpPhotoId = marker)
+        })
+        assertEquals(marker, jdbc.queryForObject("SELECT xmp_photo_id FROM photo_metadata WHERE photo_id = ?", UUID::class.java, id))
+        assertFalse(jdbc.queryForObject("SELECT fields::text FROM photo_metadata WHERE photo_id = ?", String::class.java, id)!!.contains(marker.toString()))
+    }
 
     @Test
     fun `operator seed is bounded scoped and repeat safe without changing photo visibility or counters`() {
@@ -281,7 +296,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     fun `fourth claim can recover an expired metadata lease`() {
         val id = fixture(PhotoMetadataState.PROCESSING)
         jdbc.update("UPDATE photo_metadata SET attempts = 3, lease_until = now() - interval '1 minute' WHERE photo_id = ?", id)
-        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "Recovered"))
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenReturn(ExtractedMetadata(PhotoMetadataFields(cameraModel = "Recovered"), null))
 
         service.extractIfDue(id, byteArrayOf(1))
 
@@ -318,16 +333,16 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         val ids = List(5) { fixture() }
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
-        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenAnswer {
             started.countDown()
             assertTrue(release.await(10, TimeUnit.SECONDS))
             assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
             assertTrue(Thread.currentThread().name.startsWith("metadata-"))
-            PhotoMetadataFields(cameraModel = "Recovered")
+            ExtractedMetadata(PhotoMetadataFields(cameraModel = "Recovered"), null)
         }
         val pool = com.quickpitik.config.AsyncConfig().metadataProcessingExecutor()
         fun worker(executor: ThreadPoolTaskExecutor) = PhotoMetadataService(metadata, photos, coverage, extractor, storage,
-            watermarkPool, properties, transactions, clock, executor, suspension)
+            watermarkPool, properties, transactions, clock, executor, suspension, RelevanceProperties())
         val dispatch = worker(pool)
         try {
             dispatch.dispatchExtraction(ids[0], byteArrayOf(1))
@@ -345,7 +360,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
             awaitState(ids[0], PhotoMetadataState.READY, 1)
             awaitState(ids[2], PhotoMetadataState.READY, 1)
             assertEquals(0, metadata.findById(ids[1]).orElseThrow().attempts)
-            Mockito.verify(extractor, Mockito.times(2)).extract(anyArg())
+            Mockito.verify(extractor, Mockito.times(2)).extractWithMarker(anyArg())
 
             dispatch.dispatchExtraction(ids[4], byteArrayOf(1))
             assertEquals(0, metadata.findById(ids[4]).orElseThrow().attempts)
@@ -385,7 +400,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         val key = photos.findById(id).orElseThrow().s3Key
         Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
         Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
-        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "Recovered"))
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenReturn(ExtractedMetadata(PhotoMetadataFields(cameraModel = "Recovered"), null))
 
         service.recoverDue()
         awaitState(id, PhotoMetadataState.READY, 1)
@@ -411,10 +426,10 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
             Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
             Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(content))
         }
-        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenAnswer {
             when (it.getArgument<java.io.InputStream>(0).read()) {
-                2 -> PhotoMetadataFields()
-                else -> PhotoMetadataFields(cameraModel = "R6")
+                2 -> ExtractedMetadata(PhotoMetadataFields(), null)
+                else -> ExtractedMetadata(PhotoMetadataFields(cameraModel = "R6"), null)
             }
         }
         val tasks = mutableListOf<Runnable>()
@@ -561,7 +576,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         val key = photos.findById(id).orElseThrow().s3Key
         Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 2, "image/jpeg"))
         Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
-        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields())
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenReturn(ExtractedMetadata(PhotoMetadataFields(), null))
 
         service.recoverDue()
         awaitState(id, PhotoMetadataState.FAILED, 1)
@@ -604,7 +619,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         val key = photos.findById(id).orElseThrow().s3Key
         Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
         Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
-        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "Winner"))
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenReturn(ExtractedMetadata(PhotoMetadataFields(cameraModel = "Winner"), null))
         val first = mutableListOf<Runnable>()
         val second = mutableListOf<Runnable>()
         sweeper(photos, deferredExecutor(first)).recoverDue()
@@ -631,7 +646,7 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
         val key = photos.findById(id).orElseThrow().s3Key
         Mockito.`when`(storage.metadata(key)).thenReturn(StoredObject(key, 1, "image/jpeg"))
         Mockito.`when`(storage.open(key)).thenReturn(ByteArrayInputStream(byteArrayOf(1)))
-        Mockito.`when`(extractor.extract(anyArg())).thenThrow(IllegalArgumentException("bad tags"))
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenThrow(IllegalArgumentException("bad tags"))
 
         service.recoverDue()
         awaitState(id, PhotoMetadataState.FAILED, 1)
@@ -674,9 +689,9 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Test
     fun `parse suspends an ambient transaction and persists normalized fields independently`() {
         val id = fixture()
-        Mockito.`when`(extractor.extract(anyArg())).thenAnswer {
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenAnswer {
             assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
-            PhotoMetadataFields(cameraModel = "R6", iso = 400)
+            ExtractedMetadata(PhotoMetadataFields(cameraModel = "R6", iso = 400), null)
         }
         transactions.executeWithoutResult { status ->
             service.extractIfDue(id, byteArrayOf(1))
@@ -696,11 +711,11 @@ class PhotoMetadataPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Test
     fun `empty tags settle EMPTY and fatal parser failure is terminal without changing LIVE`() {
         val empty = fixture()
-        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields())
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenReturn(ExtractedMetadata(PhotoMetadataFields(), null))
         service.extractIfDue(empty, byteArrayOf(1))
         assertEquals(PhotoMetadataState.EMPTY, metadata.findById(empty).orElseThrow().state)
         val failed = fixture()
-        Mockito.`when`(extractor.extract(anyArg())).thenThrow(IllegalArgumentException("corrupt tags"))
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenThrow(IllegalArgumentException("corrupt tags"))
         service.extractIfDue(failed, byteArrayOf(1))
         service.extractIfDue(failed, byteArrayOf(1))
         val row = metadata.findById(failed).orElseThrow()

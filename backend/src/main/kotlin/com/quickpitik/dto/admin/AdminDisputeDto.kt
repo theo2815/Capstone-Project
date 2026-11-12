@@ -71,6 +71,15 @@ data class AdminDisputeDto(
     // open disputes (no admin action yet) or disputes closed before the
     // decision log went live.
     val activity: List<DisputeActivityEntry> = emptyList(),
+    // When the refund was approved (null until then).
+    val refundRequestedAt: String? = null,
+    // What the dispute needs from an admin now and by when (service/admin/DisputeAttention.kt):
+    // closed | refund_in_progress | send_link | awaiting_claim | link_expired | check_paymongo |
+    // refund_problem | escalated | review. Worked out when read, not stored.
+    val attention: String = "closed",
+    val dueAt: String? = null,
+    val overdue: Boolean = false,
+    val linkExpiringSoon: Boolean = false,
 )
 
 // POST /admin/disputes/{id}/resolve — body { resolution, refundAmount?, reason }.

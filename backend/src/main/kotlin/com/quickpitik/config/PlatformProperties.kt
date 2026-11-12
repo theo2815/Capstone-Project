@@ -7,6 +7,10 @@ import java.time.Duration
 @ConfigurationProperties(prefix = "app.platform")
 data class PlatformProperties(
     val photoPricePhp: BigDecimal = BigDecimal("125"),
+    // AA-R11: in a shared race a photographer may charge from the race price up to this
+    // times it, changing it once per cooldown. Overridable: RACE_PRICE_CEILING_MULTIPLIER, RACE_PRICE_COOLDOWN.
+    val racePriceCeilingMultiplier: BigDecimal = BigDecimal("2.0"),
+    val racePriceCooldown: Duration = Duration.ofHours(24),
     val platformCutRate: BigDecimal = BigDecimal("0.25"),
     // Largest photographer coupon, as a whole percentage of the photographer's
     // share. Whatever the value, the platform cut on a sale never moves.

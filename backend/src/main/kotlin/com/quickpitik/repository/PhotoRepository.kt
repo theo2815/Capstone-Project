@@ -38,6 +38,8 @@ interface PhotoFaceWork {
     val priorPersonIds: String
     val jobIds: String
     val batchPhotoIds: String
+    val batchId: UUID?
+    val priorCleanupFinishedAt: java.time.Instant?
     val finishedAt: java.time.Instant?
     val facesErasedAt: java.time.Instant?
 }
@@ -193,7 +195,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         w.prior_provider AS "priorProvider", w.prior_person_ids::text AS "priorPersonIds", w.job_ids::text AS "jobIds",
         COALESCE((SELECT jsonb_agg(bp.photo_id ORDER BY bp.idx)::text FROM ai_index_batch_photos bp
             WHERE bp.batch_id = w.batch_id), '[]') AS "batchPhotoIds",
-        w.finished_at AS "finishedAt", w.faces_erased_at AS "facesErasedAt"
+        w.prior_cleanup_finished_at AS "priorCleanupFinishedAt", w.batch_id AS "batchId", w.finished_at AS "finishedAt", w.faces_erased_at AS "facesErasedAt"
         FROM photo_work_outputs w WHERE w.event_id = :eventId AND w.photo_id = :photoId AND w.kind = 'INDEXING'
         ORDER BY w.created_at, w.token""", nativeQuery = true)
     fun faceWorkForPhoto(eventId: UUID, photoId: UUID): List<PhotoFaceWork>
@@ -244,6 +246,10 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     fun renewIndexingWork(photoId: UUID, token: UUID, expiry: OffsetDateTime): Int
 
     @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET prior_cleanup_finished_at = :now WHERE token = :token AND kind = 'INDEXING' AND prior_cleanup_finished_at IS NULL", nativeQuery = true)
+    fun confirmPriorCleanup(token: UUID, now: OffsetDateTime): Int
+
+    @Modifying
     @Query(value = "UPDATE photo_work_outputs SET finished_at = :now WHERE token = :token AND finished_at IS NULL", nativeQuery = true)
     fun finishWorkOutput(token: UUID, now: OffsetDateTime): Int
 
@@ -287,12 +293,6 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         "AND p.indexingStatus <> com.quickpitik.entity.IndexingStatus.INDEXED")
     fun skipIndexing(@Param("id") id: UUID): Int
 
-    // Bulk re-prices every photo under the event. Used by admin event PATCH
-    // when the operator changes events.price_per_photo so existing photos
-    // pick up the new price across runner-facing galleries. Carts follow
-    // automatically: CartService renders the live photos.price_php and
-    // OrderService.create charges it, so cart_items.price_php_at_add is
-    // deliberately left alone — nothing displays or bills off that column.
     // V46: an approved watermark-policy change makes every LIVE preview stale.
     // Back to PROCESSING with a fresh budget; PhotoWatermarkTrigger.reconcile
     // re-renders them under the new policy within a sweep. Runners lose the
@@ -312,6 +312,51 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("eventId") eventId: UUID,
         @Param("price") price: BigDecimal,
     ): Int
+
+    // RacePriceService clamps coverage prices first. Missing coverage (including a NULL
+    // photographer) follows the floor; cart snapshots and purchase prices stay untouched.
+    @Modifying
+    @Query(value = """
+        UPDATE photos p SET price_php = prices.price
+        FROM (
+            SELECT photo.id, COALESCE(ep.price_php, :floor) AS price
+            FROM photos photo LEFT JOIN event_photographer ep
+              ON ep.event_id = photo.event_id AND ep.photographer_id = photo.photographer_id
+            WHERE photo.event_id = :eventId
+        ) prices WHERE p.id = prices.id
+    """, nativeQuery = true)
+    fun updateRacePricesByEventId(@Param("eventId") eventId: UUID, @Param("floor") floor: BigDecimal): Int
+
+    // AA-R11: one photographer's photos in a race, locked in id order before their coverage row
+    // (the price writers' one lock order: photos, then event_photographer, then events).
+    @Query(
+        value = "SELECT id FROM photos WHERE event_id = :eventId AND photographer_id = :photographerId ORDER BY id FOR NO KEY UPDATE",
+        nativeQuery = true,
+    )
+    fun lockIdsByEventIdAndPhotographerIdForUpdate(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+    ): List<UUID>
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.pricePhp = :price WHERE p.eventId = :eventId AND p.photographerId = :photographerId")
+    fun updatePriceByEventIdAndPhotographerId(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("price") price: BigDecimal,
+    ): Int
+
+    // AA-R13: a race photo takes its photographer's race price (else the floor). Runs after
+    // upsertOnUpload in the persist transaction, so a price change that commits mid-upload is seen.
+    @Modifying
+    @Query(
+        value = """UPDATE photos p SET price_php = COALESCE(ep.price_php, e.price_per_photo)
+        FROM event_photographer ep, events e
+        WHERE p.id = :photoId AND ep.event_id = p.event_id AND ep.photographer_id = p.photographer_id
+          AND e.id = p.event_id AND p.price_php IS DISTINCT FROM COALESCE(ep.price_php, e.price_per_photo)""",
+        nativeQuery = true,
+    )
+    fun reseedRacePrice(@Param("photoId") photoId: UUID): Int
 
     // Bulk re-queue for AI indexing (admin reindex endpoint). Resets the
     // attempt budget so the reconcile sweep actually picks the rows up —
@@ -410,6 +455,21 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Modifying
     @Query("UPDATE Photo p SET p.processingAttempts = p.processingAttempts + 1 WHERE p.id = :id")
     fun incrementProcessingAttempts(@Param("id") id: UUID): Int
+
+    // A run that threw still costs one attempt, so the sweep cannot re-run paid calls without end; the
+    // last one sets FAILED so the admin reindex route finds it. Settled or removed rows are left alone.
+    @Modifying
+    @Query(
+        """
+        UPDATE Photo p SET p.indexingAttempts = p.indexingAttempts + 1, p.indexingError = :error,
+            p.indexingStatus = CASE WHEN p.indexingAttempts + 1 >= :maxAttempts
+                THEN com.quickpitik.entity.IndexingStatus.FAILED ELSE p.indexingStatus END
+        WHERE p.id = :id AND p.deletedAt IS NULL AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingStatus NOT IN (com.quickpitik.entity.IndexingStatus.INDEXED, com.quickpitik.entity.IndexingStatus.SKIPPED)
+        """,
+    )
+    fun failIndexingAttempt(@Param("id") id: UUID, @Param("error") error: String, @Param("maxAttempts") maxAttempts: Int): Int
 
     // Admin flag queue. Conditional for the same reason as publishWatermarked:
     // the watermark pipeline writes this row concurrently, so a load-modify-save
@@ -770,6 +830,19 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         photographerId: UUID,
         contentHashes: Collection<String>,
     ): List<Photo>
+
+    // Only the sweep may release held indexing work; the fence rechecks under the photo lock.
+    @Query(value = """
+        SELECT p.id FROM photos p
+        JOIN photo_work_outputs w ON w.token = p.indexing_work_token AND w.photo_id = p.id
+        WHERE p.indexing_work_expires_at < :cutoff
+          AND p.deleted_at IS NULL AND p.deletion_started_at IS NULL AND p.removal_state = 'NONE'
+          AND p.indexing_status IN ('PENDING', 'FAILED', 'PARTIAL') AND p.indexing_attempts < :maxAttempts
+          AND w.kind = 'INDEXING' AND w.provider = 'rekognition' AND w.finished_at IS NULL AND w.batch_id IS NULL
+          AND w.prior_cleanup_finished_at IS NOT NULL
+        ORDER BY p.indexing_work_expires_at, p.id
+        """, nativeQuery = true)
+    fun findEndedIndexingClaims(@Param("cutoff") cutoff: OffsetDateTime, @Param("maxAttempts") maxAttempts: Int, pageable: Pageable): List<UUID>
 
     // Reconciliation backlog: photos whose async indexing hasn't settled. The
     // cutoff skips photos the AFTER_COMMIT hot path is probably still handling,

@@ -66,7 +66,8 @@ class PhotoRemovalQueryService(
     internal fun photographerSnapshot(photographerId: UUID, requestId: UUID): OwnerSnapshot {
         // A later item snapshot may safely carry an older version; the reverse permits stale edits.
         val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
-        val owned = items.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId)
+        // R8: a suggestion stays with the admin until promoted.
+        val owned = items.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId).filter { it.state != RemovalItemState.CANDIDATE }
         if (owned.isEmpty()) removalNotFound()
         val pendingOwnerReviews = items.findPendingOwnerReviewItemIds(requestId).toSet()
         val current = photos.findAllById(owned.mapNotNull { it.photoId }).associateBy { it.id }

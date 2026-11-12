@@ -15,6 +15,23 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface QuickPitikApi {
+    @GET("api/v1/race-types")
+    suspend fun getRaceTypes(): ApiResponseEnvelope<RaceTypesDto>
+
+    @Multipart
+    @POST("api/v1/me/photographer/races")
+    suspend fun createRace(
+        @Header("Authorization") token: String,
+        @Part parts: List<MultipartBody.Part>,
+    ): ApiResponseEnvelope<RaceCreateResultDto>
+
+    @POST("api/v1/me/photographer/races/{eventId}/join")
+    suspend fun joinRace(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: JoinRaceRequest,
+    ): ApiResponseEnvelope<RaceCreateResultDto>
+
     @GET("api/v1/me/photographer/metadata-settings")
     suspend fun getMetadataSettings(@Header("Authorization") token: String): ApiResponseEnvelope<MetadataSettingsDto>
 
@@ -524,7 +541,8 @@ interface QuickPitikApi {
 
     @GET("api/v1/me/cart")
     suspend fun getCart(
-        @Header("Authorization") token: String
+        @Header("Authorization") token: String,
+        @Query("includeUnavailable") includeUnavailable: Boolean = true
     ): ApiResponseEnvelope<List<CartItemDto>>
 
     @POST("api/v1/me/cart/items")
@@ -738,4 +756,19 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("eventId") eventId: String
     ): ApiResponseEnvelope<RemovedResponse>
+
+    // AA-R9 reports, signed-in only.
+    @POST("api/v1/me/reports/events/{eventId}")
+    suspend fun reportEvent(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: ReportRequest
+    ): ApiResponseEnvelope<ReportResultDto>
+
+    @POST("api/v1/me/reports/photographers/{handle}")
+    suspend fun reportPhotographer(
+        @Header("Authorization") token: String,
+        @Path("handle") handle: String,
+        @Body request: ReportRequest
+    ): ApiResponseEnvelope<ReportResultDto>
 }

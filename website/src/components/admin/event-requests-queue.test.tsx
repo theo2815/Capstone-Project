@@ -61,3 +61,49 @@ it("shows everything the photographer filled in", () => {
   expect(screen.getByText("Unlisted · link only")).toBeInTheDocument();
   expect(screen.getByText(/Start 5 AM\.\s+Three loops\./)).toBeInTheDocument();
 });
+// AA-R17b: race context from the queue fields (AA-R7).
+const target = {
+  id: "race-0", slug: "cebu-marathon", name: "Cebu Marathon", date: "2026-09-10", location: "SRP, Cebu City",
+  regionCode: "region-vii", provinceCode: "cebu", organizerName: "Cebu Runners", eventType: "ROAD_RACE",
+  bannerUrl: null, reviewStatus: "approved", strength: "strong" as const,
+};
+const race = {
+  ...adminEvent, status: "DRAFT" as const, reviewStatus: "pending" as const, eventType: "ROAD_RACE",
+  submittedByHandle: "anashoots", submittedByName: "Ana Cruz", checkReasons: ["POSSIBLE_DUPLICATE"], possibleDuplicateOf: target,
+};
+it("shows duplicate candidates and decides only after the API answers", async () => {
+  client.setQueryData(key, [race]); const user = userEvent.setup();
+  let confirm!: (value: unknown) => void;
+  const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((resolve) => { confirm = resolve; }));
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByRole("link", { name: "Cebu Marathon" })).toHaveAttribute("href", "/events/cebu-marathon");
+  expect(screen.getByText("It may be the same race as one already listed.")).toBeInTheDocument();
+  expect(screen.getByText("Ana Cruz · @anashoots")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Different race" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Same race → join" }));
+  expect(post).toHaveBeenCalledWith(`/admin/events/${race.id}/same-race`, { targetEventId: target.id, expectedRevision: 4 });
+  expect(screen.getByRole("button", { name: "Different race" })).toBeDisabled();
+  expect(client.getQueryData(key)).toEqual([race]); expect(useToastStore.getState().toasts).toEqual([]);
+  await act(async () => { confirm(target); });
+  await waitFor(() => expect(client.getQueryData(key)).toEqual([]));
+  expect(useToastStore.getState().toasts[0]).toEqual(expect.objectContaining({ kind: "success", message: expect.stringMatching(/joined Cebu Marathon/) }));
+});
+it("a held race edit shows the changed fields", () => {
+  client.setQueryData(key, [{
+    ...adminEvent, eventType: "ROAD_RACE", reviewStatus: "change_pending", submittedByHandle: "anashoots", checkReasons: ["BAD_WORDS"],
+    pendingChange: { kind: "race_edit", fields: { title: "Cebu City Marathon", date: "2026-09-11" }, coverS3Key: "events/x/cover.jpg", requestedBy: "u", requestedAt: "2026-09-09T00:00:00Z" },
+  }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/Race edit · live race/)).toBeInTheDocument();
+  const title = screen.getByText("Title").closest("div")!;
+  expect(title).toHaveTextContent("Cebu Race"); expect(title).toHaveTextContent("Cebu City Marathon");
+  expect(screen.getByText("Date").closest("div")).toHaveTextContent("2026-09-11");
+  expect(screen.getByText("A new cover photo")).toBeInTheDocument();
+  expect(screen.getByText("The name or notes use a word an admin needs to check.")).toBeInTheDocument();
+  expect(screen.queryByText(/Requested/)).not.toBeInTheDocument();
+});
+it("an Other request shows the race it looks like", () => {
+  client.setQueryData(key, [{ ...adminEvent, status: "DRAFT", reviewStatus: "pending", createdByHandle: "anashoots", lookalike: { ...target, strength: "medium" } }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/Looks like a shared race:/).closest("p")).toHaveTextContent("Cebu Marathon");
+});

@@ -272,7 +272,8 @@ function Gallery({
               <>Free · every photo downloads in full, no watermark</>
             ) : (
               <>
-                ₱<span className="tnum">{event.pricePerPhoto}</span> per photo ·
+                {/* This photographer's own race price (AA-R13); the race price until photos load. */}
+                ₱<span className="tnum">{photos[0]?.price ?? event.pricePerPhoto}</span> per photo ·
                 free watermarked previews · pay once, download forever
               </>
             )}

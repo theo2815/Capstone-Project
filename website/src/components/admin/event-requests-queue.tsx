@@ -11,11 +11,16 @@ import {
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
+import Link from "next/link";
 import { useAdminEvents, useAdminEventActions } from "@/hooks/use-admin-events";
+import { useRaceTypes } from "@/hooks/use-race-types";
+import { useRegions } from "@/hooks/use-regions";
 import { useToast } from "@/hooks/use-toast";
-import type { AdminEventRow } from "@/lib/api-admin";
+import { isRaceEdit, type AdminEventRow, type RaceEditChange } from "@/lib/api-admin";
+import type { RaceCandidate } from "@/lib/api-photographer";
 import { formatLongDate } from "@/lib/format";
-import { describePricing } from "@/lib/photographer-events";
+import { getRegion } from "@/lib/ph-regions";
+import { describePricing, raceCheckReasonLine } from "@/lib/photographer-events";
 import { cn } from "@/lib/utils";
 
 // Event requests queue (V46) — photographer-owned events waiting on an
@@ -28,7 +33,7 @@ import { cn } from "@/lib/utils";
 export function EventRequestsQueue() {
   const query = useAdminEvents({ review: "queue" });
   const rows = query.data;
-  const { approve, reject, isPending, pendingAction } = useAdminEventActions();
+  const { approve, reject, sameRace, isPending, pendingAction } = useAdminEventActions();
   const { showToast } = useToast();
   const [rejecting, setRejecting] = useState<AdminEventRow | null>(null);
   const [reason, setReason] = useState("");
@@ -50,7 +55,7 @@ export function EventRequestsQueue() {
     const ok = await run(
       () => reject(row.id, text, row.reviewRevision),
       row.reviewStatus === "change_pending"
-        ? `Change declined — ${row.name} keeps its current pricing.`
+        ? `Change declined — ${row.name} keeps its current ${isRaceEdit(row.pendingChange) ? "details" : "pricing"}.`
         : `${row.name} sent back to the photographer.`,
     );
     if (ok) {
@@ -107,6 +112,12 @@ export function EventRequestsQueue() {
                 )
               }
               onReject={() => setRejecting(row)}
+              onSameRace={(target) =>
+                run(
+                  () => sameRace(row.id, target.id, row.reviewRevision),
+                  `${row.submittedByName ?? "The photographer"} joined ${target.name}. The duplicate request is removed.`,
+                )
+              }
             />
           ))}
         </ul>
@@ -126,7 +137,7 @@ export function EventRequestsQueue() {
         }
         intro={
           rejecting
-            ? `${rejecting.createdByName ?? "The photographer"} sees your reason in their inbox.`
+            ? `${rejecting.createdByName ?? rejecting.submittedByName ?? "The photographer"} sees your reason in their inbox.`
             : undefined
         }
         submitLabel={
@@ -155,26 +166,32 @@ function RequestRow({
   pendingLabel,
   onApprove,
   onReject,
+  onSameRace,
 }: {
   row: AdminEventRow;
   busy: boolean;
   pendingLabel: string | null;
   onApprove: () => void;
   onReject: () => void;
+  onSameRace: (target: RaceCandidate) => void;
 }) {
   const isChange = row.reviewStatus === "change_pending";
+  const heldEdit = isRaceEdit(row.pendingChange) ? row.pendingChange : null;
+  const duplicate = !isChange && row.eventType ? row.possibleDuplicateOf : null;
   const current = describePricing({
     pricingMode: row.pricingMode,
     pricePerPhoto: row.pricePerPhoto ?? 0,
     watermarkPolicy: row.watermarkPolicy,
   });
-  const owner = row.createdByHandle
-    ? `@${row.createdByHandle}`
-    : (row.createdByName ?? "Photographer");
+  // A shared race has no owner; its submitter (AA-R3) stands in.
+  const handle = row.createdByHandle ?? row.submittedByHandle;
+  const name = row.createdByName ?? row.submittedByName;
+  const owner = handle ? `@${handle}` : (name ?? "Photographer");
   const photographer =
-    [row.createdByName, row.createdByHandle && `@${row.createdByHandle}`]
-      .filter(Boolean)
-      .join(" · ") || "Unknown";
+    [name, handle && `@${handle}`].filter(Boolean).join(" · ") || "Unknown";
+  const kind = isChange
+    ? heldEdit ? "Race edit · live race" : "Pricing change · live event"
+    : row.eventType ? "New race" : "New event";
 
   return (
     // Side by side only from lg: at md the admin sidebar leaves too little room.
@@ -197,7 +214,7 @@ function RequestRow({
           )}
         </div>
         <Kicker as="p" tone="soft" tnum>
-          {isChange ? "Pricing change · live event" : "New event"} · {owner}
+          {kind} · {owner}
         </Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 break-words">
           {row.name}
@@ -205,7 +222,7 @@ function RequestRow({
         <p className="font-sans text-sm text-ink-soft mt-1 tnum">
           {formatLongDate(row.date, true)} · {row.location}
         </p>
-        {isChange && row.pendingChange && (
+        {isChange && row.pendingChange && !isRaceEdit(row.pendingChange) && (
           <p className="font-sans text-sm text-ink mt-3 tnum">
             <span className="text-slate">Now</span> {current}
             <span className="text-slate-soft mx-2">→</span>
@@ -213,6 +230,14 @@ function RequestRow({
             {describePricing(row.pendingChange)}
           </p>
         )}
+        {heldEdit && <HeldRaceEdit row={row} change={heldEdit} />}
+        {!!row.checkReasons?.length && (
+          <ul className="mt-3 space-y-1 list-disc pl-5 font-sans text-sm text-ink">
+            {row.checkReasons.map((code) => <li key={code}>{raceCheckReasonLine(code)}</li>)}
+          </ul>
+        )}
+        {duplicate && <RaceRef label="Possible duplicate of" race={duplicate} />}
+        {!row.eventType && row.lookalike && <RaceRef label="Looks like a shared race:" race={row.lookalike} />}
         <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-8">
           <Detail label="Photographer" value={photographer} />
           <Detail label="Organizer" value={row.organizerName || "Not given"} />
@@ -229,7 +254,7 @@ function RequestRow({
           </div>
         </dl>
       </div>
-      <div className="flex gap-2 shrink-0">
+      <div className="flex flex-wrap gap-2 shrink-0">
         <button
           type="button"
           onClick={onApprove}
@@ -237,8 +262,19 @@ function RequestRow({
           aria-busy={busy}
           className={cn(BTN_PRIMARY, BTN_SIZE.sm)}
         >
-          {pendingLabel === "Approving…" ? pendingLabel : "Approve"}
+          {pendingLabel === "Approving…" ? pendingLabel : duplicate ? "Different race" : "Approve"}
         </button>
+        {duplicate && (
+          <button
+            type="button"
+            onClick={() => onSameRace(duplicate)}
+            disabled={busy}
+            aria-busy={busy}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            {pendingLabel === "Joining…" ? pendingLabel : "Same race → join"}
+          </button>
+        )}
         <button
           type="button"
           onClick={onReject}
@@ -254,6 +290,72 @@ function RequestRow({
 
 const DETAIL_LABEL =
   "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
+
+const EDIT_FIELDS: ReadonlyArray<[keyof RaceEditChange["fields"], string]> = [
+  ["title", "Title"], ["date", "Date"], ["location", "Location"], ["regionCode", "Region"],
+  ["provinceCode", "Province"], ["eventType", "Race type"], ["organizerName", "Organizer"],
+  ["description", "Race day notes"],
+];
+
+// AA-R5 held edit: each changed field beside its live value. The race keeps
+// the live values until an admin approves.
+function HeldRaceEdit({ row, change }: { row: AdminEventRow; change: RaceEditChange }) {
+  const { types } = useRaceTypes();
+  const { regions } = useRegions();
+  const live: Record<keyof RaceEditChange["fields"], string | null | undefined> = {
+    title: row.name, date: row.date, location: row.location, regionCode: row.regionCode,
+    provinceCode: row.provinceCode, eventType: row.eventType, organizerName: row.organizerName,
+    description: row.description,
+  };
+  // Codes only on the wire; labels come from the backend's reference data.
+  const show = (field: keyof RaceEditChange["fields"], value: string | null | undefined) => {
+    if (!value) return "None";
+    if (field === "eventType") return types.find((t) => t.code === value)?.label ?? value;
+    if (field === "regionCode") return getRegion(regions, value)?.name ?? value;
+    if (field === "provinceCode") {
+      const region = getRegion(regions, change.fields.regionCode ?? row.regionCode ?? "");
+      return region?.provinces.find((p) => p.code === value)?.name ?? value;
+    }
+    return value;
+  };
+  return (
+    <dl className="mt-3 space-y-2">
+      {EDIT_FIELDS.filter(([field]) => change.fields[field] !== undefined).map(([field, label]) => (
+        <div key={field} className="min-w-0">
+          <dt className={DETAIL_LABEL}>{label}</dt>
+          <dd className="mt-1 font-sans text-sm text-ink tnum break-words whitespace-pre-line">
+            <span className="text-slate">{show(field, live[field])}</span>
+            <span className="text-slate-soft mx-2">→</span>
+            {show(field, change.fields[field])}
+          </dd>
+        </div>
+      ))}
+      {change.coverS3Key && (
+        <div>
+          <dt className={DETAIL_LABEL}>Cover</dt>
+          <dd className="mt-1 font-sans text-sm text-ink">A new cover photo</dd>
+        </div>
+      )}
+    </dl>
+  );
+}
+
+// A race the server matched. Only a live race has a public page to open.
+function RaceRef({ label, race }: { label: string; race: RaceCandidate }) {
+  return (
+    <p className="font-sans text-sm text-ink mt-3 tnum break-words">
+      <span className="text-slate">{label}</span>{" "}
+      {race.reviewStatus === "approved" ? (
+        <Link href={`/events/${race.slug}`} target="_blank" rel="noreferrer" className="underline decoration-line-strong underline-offset-4 hover:decoration-fresh">
+          {race.name}
+        </Link>
+      ) : (
+        <>{race.name} (waiting for review)</>
+      )}{" "}
+      · {formatLongDate(race.date, true)} · {race.location} · {race.strength === "strong" ? "strong match" : "possible match"}
+    </p>
+  );
+}
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (

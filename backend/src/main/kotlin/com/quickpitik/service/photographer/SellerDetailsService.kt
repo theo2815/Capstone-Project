@@ -4,9 +4,11 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.IdentityProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminSellerDetailsDto
 import com.quickpitik.dto.admin.AdminSellerDetailsRowDto
+import com.quickpitik.dto.admin.RepeatMatchDto
 import com.quickpitik.dto.admin.SellerDetailsFilesDto
 import com.quickpitik.dto.admin.toAdminDto
 import com.quickpitik.dto.admin.toAdminRowDto
@@ -67,11 +69,18 @@ class SellerDetailsService(
     private val storageProperties: StorageProperties,
     private val identityCheckService: IdentityCheckService,
     private val payoutAccountRepository: PayoutAccountRepository,
+    private val identityProperties: IdentityProperties,
+    private val photographerSettingsService: PhotographerSettingsService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun get(userId: UUID): SellerDetailsDto =
-        sellerDetailsRepository.findById(userId).map { it.toDto() }.orElse(SellerDetailsDto.MISSING)
+    fun get(userId: UUID): SellerDetailsDto = response(sellerDetailsRepository.findById(userId).orElse(null))
+
+    // The one C3 mapper: the GET, submit and live check carry the same upload answer (AA-I6, review F14).
+    private fun response(row: SellerDetails?): SellerDetailsDto = (row?.toDto() ?: SellerDetailsDto.MISSING).copy(
+        uploadsAllowed = row != null && row.status in SellerDetailsStatus.uploadGateSet(identityProperties.gateEnabled),
+        identityGateStartsOn = identityProperties.gateStartsOn,
+    )
 
     /**
      * Validates and re-encodes every file, runs the identity checks (AA-I3), stores the
@@ -208,7 +217,10 @@ class SellerDetailsService(
                 userRepository.lockById(userId)
                 val existing = sellerDetailsRepository.findById(userId).orElse(null)
                 val old = existing?.fileKeys().orEmpty() // before write() changes the row
-                sellerDetailsRepository.save(write(existing, keys, OffsetDateTime.now(clock))) to old
+                val row = sellerDetailsRepository.save(write(existing, keys, OffsetDateTime.now(clock)))
+                // AA-I7: an automatic pass approves a waiting, complete profile in the same transaction.
+                if (row.status == SellerDetailsStatus.AUTO_APPROVED) photographerSettingsService.approveIfReady(userId)
+                row to old
             })
         } catch (error: Exception) {
             if (outcome == null || outcome == TransactionSynchronization.STATUS_ROLLED_BACK) {
@@ -221,7 +233,7 @@ class SellerDetailsService(
             throw error
         }
         (oldKeys - saved.fileKeys().toSet()).forEach(::deleteQuietly)
-        return saved.toDto()
+        return response(saved)
     }
 
     /** E3: the review queue, waiting records first. No links: an admin opens files one record at a time. */
@@ -251,13 +263,27 @@ class SellerDetailsService(
             idBack = link(row.idBackKey, "id_back"),
             selfie = link(row.selfieKey, "selfie")!!,
             birForm = link(row.birFormKey, "bir_form"),
+            livenessReference = link(row.livenessReferenceKey, "liveness_reference"),
         )
-        val present = listOfNotNull("id_front", "id_back".takeIf { row.idBackKey != null }, "selfie", "bir_form".takeIf { row.birFormKey != null })
+        val present = listOfNotNull(
+            "id_front", "id_back".takeIf { row.idBackKey != null }, "selfie", "bir_form".takeIf { row.birFormKey != null },
+            "liveness_reference".takeIf { row.livenessReferenceKey != null },
+        )
         adminDecisionLogService.logUserDecision(
             adminId = adminId, targetUserId = userId, decision = "seller_details_viewed",
             meta = mapOf("files" to present, "revision" to row.revision),
         )
-        return row.toAdminDto(email(userId), files, OffsetDateTime.now(clock).plus(ttl))
+        return adminDto(row, files, OffsetDateTime.now(clock).plus(ttl))
+    }
+
+    /** The other accounts' email and suspended state are read live, in one query. */
+    private fun adminDto(row: SellerDetails, files: SellerDetailsFilesDto? = null, linksExpireAt: OffsetDateTime? = null): AdminSellerDetailsDto {
+        val users = userRepository.findAllById(row.repeatMatches.map { it.userId }).associateBy { it.id }
+        val matches = row.repeatMatches.map { m ->
+            val user = users[m.userId]
+            RepeatMatchDto(m.userId, user?.email.orEmpty(), m.matchedOn.map { it.name }, user?.suspendedAt != null)
+        }
+        return row.toAdminDto(email(row.userId), matches, files, linksExpireAt)
     }
 
     /** E5: only a MANUAL_REVIEW record at the revision the admin opened. */
@@ -271,7 +297,8 @@ class SellerDetailsService(
         adminDecisionLogService.logUserDecision(
             adminId = adminId, targetUserId = userId, decision = "seller_details_approved", meta = mapOf("revision" to revision),
         )
-        return row.toAdminDto(email(userId))
+        photographerSettingsService.approveIfReady(userId) // AA-I7
+        return adminDto(row)
     }
 
     /** E6: from MANUAL_REVIEW, or AUTO_APPROVED / APPROVED (a fake found later); pauses uploads and tells the photographer why. */
@@ -300,7 +327,7 @@ class SellerDetailsService(
             sourceAdminId = adminId,
             sourceDecisionId = decision.id,
         )
-        return row.toAdminDto(email(userId))
+        return adminDto(row)
     }
 
     private fun find(userId: UUID): SellerDetails = sellerDetailsRepository.findById(userId)

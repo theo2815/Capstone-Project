@@ -6,7 +6,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { AuthHydrator } from "@/components/layout/auth-hydrator";
 import { api } from "@/lib/api";
 import { resetUserScopedStores } from "@/lib/auth-reset";
-import { postCover, postSocial, withdrawVerification } from "@/lib/api-photographer-settings";
+import { postCover, postSocial, submitVerification, withdrawVerification } from "@/lib/api-photographer-settings";
 import { fitToDataUrl, inspectImageDimensions } from "@/lib/image-utils";
 import SettingsPage from "./page";
 import { DEFAULT_WATERMARK_PLACEMENT, usePhotographerSettingsStore } from "@/store/photographer-settings-store";
@@ -734,9 +734,13 @@ it("ignores an old verification withdrawal after account switching", async () =>
   expect(mocks.toast).not.toHaveBeenCalled();
 });
 
-function mockSellerStatus(status: string) {
+// uploadsAllowed defaults to the gate-off answer (AA-I6): only missing and rejected are refused.
+function mockSellerStatus(status: string, uploadsAllowed = status !== "missing" && status !== "rejected") {
   vi.spyOn(api, "get").mockImplementation((path) =>
-    path.endsWith("/seller-details") ? Promise.resolve({ status }) : new Promise(() => {}));
+    // The backend sends reviewState beside status (AA-I1); the slab reads only reviewState.
+    path.endsWith("/seller-details")
+      ? Promise.resolve({ status, reviewState: status === "submitted" ? "manual_review" : status, uploadsAllowed })
+      : new Promise(() => {}));
 }
 
 it.each([
@@ -753,7 +757,48 @@ it.each(["submitted", "approved"])("keeps 'uploads enabled' when verified and se
   mockSellerStatus(status);
   render(<SettingsPage />);
   await waitFor(() => expect(api.get).toHaveBeenCalledWith("/me/photographer/seller-details", expect.anything()));
-  await screen.findByText(status === "approved" ? "Approved" : "We're checking your details. You can upload meanwhile.");
+  await screen.findByText(status === "approved" ? "You can upload." : "You can upload meanwhile.");
+  expect(screen.getByText(status === "approved" ? "Verified" : "An admin is checking your details")).toBeInTheDocument();
   expect(screen.getByText("Verified · uploads enabled")).toBeInTheDocument();
   expect(screen.queryByText(/uploads paused/)).toBeNull();
+});
+
+it("says uploads are paused while an admin checks when the gate refuses manual review", async () => {
+  mockSellerStatus("submitted", false);
+  render(<SettingsPage />);
+  expect(await screen.findByRole("link", { name: "Verified · uploads paused while an admin checks your seller details" }))
+    .toHaveAttribute("href", "/dashboard/settings#seller-details");
+  expect(screen.getByText("An admin is checking your details")).toBeInTheDocument();
+  expect(screen.getByText("Uploads open when they approve.")).toBeInTheDocument();
+  expect(screen.queryByText("Verified · uploads enabled")).toBeNull();
+});
+
+it("heads missing seller details with what is needed", async () => {
+  mockSellerStatus("missing");
+  render(<SettingsPage />);
+  expect(await screen.findByText("Seller details needed")).toBeInTheDocument();
+  expect(screen.getByText("Add your ID and take a live selfie before you upload.")).toBeInTheDocument();
+});
+
+it.each([
+  ["approved", "success", "Your studio is live."],
+  ["pending", "info", "Saved. Your studio goes live when your identity check passes."],
+])("submit returning %s shows its toast", async (status, kind, message) => {
+  mockSellerStatus("approved");
+  usePhotographerSettingsStore.setState({ verificationStatus: "incomplete", verificationMissing: [] });
+  vi.mocked(submitVerification).mockResolvedValue({ status } as Awaited<ReturnType<typeof submitVerification>>);
+  render(<SettingsPage />);
+  fireEvent.click(screen.getAllByRole("button", { name: /Submit for review/ })[0]);
+  await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith({ kind, message }));
+  expect(usePhotographerSettingsStore.getState().verificationStatus).toBe(status);
+});
+
+// AA-I7: a pending profile approves itself when identity passes; no admin profile review is left to wait for.
+it("a pending profile says it goes live when the identity check passes, not after an admin review", async () => {
+  mockSellerStatus("submitted");
+  usePhotographerSettingsStore.setState({ verificationStatus: "pending" });
+  render(<SettingsPage />);
+  expect(await screen.findByText("Awaiting your identity check")).toBeInTheDocument();
+  expect(screen.queryByText(/business days/)).toBeNull();
+  expect(screen.queryByText(/the admin always sees/)).toBeNull();
 });

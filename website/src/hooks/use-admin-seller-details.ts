@@ -6,12 +6,13 @@ import {
   getSellerDetailsRecord,
   listSellerDetails,
   rejectSellerDetails,
+  type AdminSellerFilter,
 } from "@/lib/api-seller-details";
 import { useAuthStore } from "@/store/auth-store";
 
 const sellerKeys = {
   owner: (owner: string | null) => ["admin", "seller-details", owner] as const,
-  list: (owner: string | null, status: "submitted" | null, limit: number) =>
+  list: (owner: string | null, status: AdminSellerFilter, limit: number) =>
     [...sellerKeys.owner(owner), "list", status, limit] as const,
   record: (owner: string | null, userId: string | null) => [...sellerKeys.owner(owner), "record", userId] as const,
 };
@@ -21,7 +22,7 @@ function useAdminOwner() {
   return { owner: user?.id ?? null, enabled: user?.role === "ADMIN" };
 }
 
-export function useAdminSellerDetailsList(status: "submitted" | null, limit: number) {
+export function useAdminSellerDetailsList(status: AdminSellerFilter, limit: number) {
   const { owner, enabled } = useAdminOwner();
   return useQuery({
     queryKey: sellerKeys.list(owner, status, limit),

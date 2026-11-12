@@ -46,6 +46,12 @@ data class PhotographerEventSummaryDto(
     val reviewStatus: String = "approved",
     val reviewNote: String? = null,
     val pendingChange: Map<String, Any?>? = null,
+    // Shared races (AA-R3, Plan 2 § 3.4). eventType null = legacy or Other; canEditRace (AA-R5) is set on the detail only, the list keeps false.
+    val eventType: String? = null,
+    val submittedByMe: Boolean = false,
+    val canEditRace: Boolean = false,
+    val checkReasons: List<String> = emptyList(),
+    val hidden: Boolean = false,
 )
 
 // Mirrors website/src/lib/api-photographer.ts PhotographerEventDetail
@@ -76,6 +82,14 @@ data class PhotographerEventDetailDto(
     val organizerName: String = "",
     val pricePerPhoto: BigDecimal = BigDecimal.ZERO,
     val deletedAt: OffsetDateTime? = null,
+    // See PhotographerEventSummaryDto (AA-R3).
+    val eventType: String? = null,
+    val submittedByMe: Boolean = false,
+    val canEditRace: Boolean = false,
+    val checkReasons: List<String> = emptyList(),
+    val hidden: Boolean = false,
+    // AA-R11: null unless a race, the caller has a coverage row and self-serve races are on.
+    val racePrice: RacePriceDto? = null,
 )
 
 // POST /me/photographer/events — bound off the multipart form as a `@Valid
@@ -256,6 +270,10 @@ internal fun deriveEventState(event: Event, today: LocalDate = LocalDate.now(phZ
         EventStatus.DRAFT -> "upcoming"
     }
 
+// AA-R5: a race's held edit (its cover key and requester) is the submitter's alone.
+private fun pendingChangeFor(event: Event, viewerId: UUID?): Map<String, Any?>? =
+    event.pendingChange.takeIf { event.eventType == null || event.submittedBy == viewerId }
+
 fun summaryDto(
     event: Event,
     ep: EventPhotographer,
@@ -281,7 +299,11 @@ fun summaryDto(
         watermarkPolicy = event.watermarkPolicy.wire,
         reviewStatus = event.reviewStatus.wire,
         reviewNote = event.reviewNote,
-        pendingChange = event.pendingChange,
+        pendingChange = pendingChangeFor(event, viewerId),
+        eventType = event.eventType?.name,
+        submittedByMe = event.submittedBy != null && event.submittedBy == viewerId,
+        checkReasons = event.checkReasons.orEmpty().map { it.name },
+        hidden = event.hiddenAt != null,
     )
 
 fun detailDto(
@@ -311,11 +333,15 @@ fun detailDto(
         watermarkPolicy = event.watermarkPolicy.wire,
         reviewStatus = event.reviewStatus.wire,
         reviewNote = event.reviewNote,
-        pendingChange = event.pendingChange,
+        pendingChange = pendingChangeFor(event, viewerId),
         description = event.description,
         organizerName = event.organizerName,
         pricePerPhoto = event.pricePerPhoto,
         deletedAt = event.deletedAt,
+        eventType = event.eventType?.name,
+        submittedByMe = event.submittedBy != null && event.submittedBy == viewerId,
+        checkReasons = event.checkReasons.orEmpty().map { it.name },
+        hidden = event.hiddenAt != null,
     )
 
 fun Photo.toLibraryDto(

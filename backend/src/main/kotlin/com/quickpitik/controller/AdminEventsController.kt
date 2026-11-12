@@ -8,12 +8,16 @@ import com.quickpitik.dto.admin.ApproveEventRequest
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.AdminReindexResponseDto
+import com.quickpitik.dto.admin.AdminRacePricesDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.RejectEventRequest
+import com.quickpitik.dto.admin.SameRaceRequest
 import com.quickpitik.dto.admin.SetEventListingRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
+import com.quickpitik.dto.photographer.RaceCandidateDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminEventService
+import com.quickpitik.service.events.RacePriceService
 import jakarta.validation.Valid
 import org.springframework.beans.propertyeditors.StringTrimmerEditor
 import org.springframework.http.MediaType
@@ -40,7 +44,17 @@ import java.util.UUID
 @PreAuthorize("hasRole('ADMIN')")
 class AdminEventsController(
     private val adminEventService: AdminEventService,
+    private val racePriceService: RacePriceService,
 ) {
+    @GetMapping("/{eventId}/photographer-prices")
+    fun photographerPrices(@PathVariable eventId: UUID): AdminRacePricesDto = racePriceService.listForAdmin(eventId)
+
+    @PostMapping("/{eventId}/photographer-prices/{photographerId}/reset")
+    fun resetPhotographerPrice(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @PathVariable photographerId: UUID,
+    ): AdminRacePricesDto = racePriceService.resetToFloor(principal.userId, eventId, photographerId)
 
     // `review=queue` (V46) lists photographer-owned events awaiting a
     // decision instead of the full pipeline.
@@ -63,6 +77,16 @@ class AdminEventsController(
         return adminEventService.list(state, review, PaginationParams.of(offset, limit))
     }
 
+    // AA-R7: races that look like the one an admin is about to create (strong first). Read-only.
+    @GetMapping("/duplicate-candidates")
+    fun duplicateCandidates(
+        @RequestParam name: String,
+        @RequestParam date: String,
+        @RequestParam(required = false) provinceCode: String?,
+        @RequestParam(required = false) organizerName: String?,
+        @RequestParam(required = false) excludeId: UUID?,
+    ): List<RaceCandidateDto> = adminEventService.duplicateCandidates(name, date, provinceCode, organizerName, excludeId)
+
     // ── Photographer-owned event review (V46) ────────────────────────────
     @PostMapping("/{eventId}/approve")
     fun approve(
@@ -77,6 +101,14 @@ class AdminEventsController(
         @PathVariable eventId: UUID,
         @Valid @RequestBody body: RejectEventRequest,
     ): AdminListEventDto = adminEventService.reject(principal.userId, eventId, body.reason, body.expectedRevision)
+
+    // AA-R6: the pending race repeats another one; its submitter joins that race. Returns the target.
+    @PostMapping("/{eventId}/same-race")
+    fun sameRace(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable eventId: UUID,
+        @Valid @RequestBody(required = false) body: SameRaceRequest? = null,
+    ): AdminListEventDto = adminEventService.sameRace(principal.userId, eventId, body?.targetEventId, body?.expectedRevision)
 
     // "Show on /events" switch for a photographer-owned Public event (V89).
     @PatchMapping("/{eventId}/listing")

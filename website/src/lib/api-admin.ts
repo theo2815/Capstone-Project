@@ -23,6 +23,7 @@ import type {
   PendingPricingChange,
 } from "@/lib/photographer-mock";
 import type { DecisionLogEntry } from "@/lib/admin-user-registry";
+import type { RaceCandidate } from "@/lib/api-photographer";
 import type { PaginatedResponse } from "@/types/api";
 
 // Admin queues fetch a page and then categorize/merge/sort it CLIENT-SIDE
@@ -231,13 +232,6 @@ export async function fetchAdminPhotographerSettings(
 ): Promise<AdminPhotographerSettingsResponse> {
   return api.get<AdminPhotographerSettingsResponse>(
     `/admin/users/${encodeURIComponent(userId)}/settings`,
-  );
-}
-
-export async function approveUser(userId: string, expectedRevision?: number): Promise<AdminUserRow> {
-  return api.post<AdminUserRow>(
-    `/admin/users/${encodeURIComponent(userId)}/approve`,
-    { expectedRevision },
   );
 }
 
@@ -683,9 +677,33 @@ export interface AdminEventRow extends ListEvent {
   watermarkPolicy: "platform" | "own" | "none";
   reviewStatus: EventReviewStatus;
   reviewNote: string | null;
-  pendingChange: PendingPricingChange | null;
+  pendingChange: PendingPricingChange | RaceEditChange | null;
   // V89 "Show on /events" for a photographer-owned Public event.
   listedOnEvents: boolean;
+  // AA-R7 race context; optional so an older backend still parses.
+  eventType?: string | null;
+  submittedByHandle?: string | null;
+  submittedByName?: string | null;
+  /** The race a pending race may repeat (review queue only). */
+  possibleDuplicateOf?: RaceCandidate | null;
+  /** The shared race a pending Other event looks like (review queue only). */
+  lookalike?: RaceCandidate | null;
+  checkReasons?: string[];
+  hiddenAt?: string | null;
+  adminApproved?: boolean;
+}
+
+/** AA-R5 held race edit: only the changed fields, never a price. */
+export interface RaceEditChange {
+  kind: "race_edit";
+  fields: Partial<Record<"title" | "date" | "location" | "regionCode" | "provinceCode" | "eventType" | "organizerName" | "description", string>>;
+  coverS3Key?: string | null;
+  requestedBy: string;
+  requestedAt: string;
+}
+
+export function isRaceEdit(change: AdminEventRow["pendingChange"]): change is RaceEditChange {
+  return (change as RaceEditChange | null)?.kind === "race_edit";
 }
 
 export async function fetchAdminEvents(
@@ -726,7 +744,52 @@ export async function rejectAdminEvent(
   );
 }
 
+// AA-R6: the pending race is the same as `targetEventId` (default: its possibleDuplicateOf).
+// The submitter joins the target, the pending row is removed; answers the target row.
+export async function sameRaceAdminEvent(
+  eventId: string,
+  targetEventId?: string,
+  expectedRevision?: number,
+): Promise<AdminEventRow> {
+  return api.post<AdminEventRow>(
+    `/admin/events/${encodeURIComponent(eventId)}/same-race`,
+    { targetEventId, expectedRevision },
+  );
+}
+
+// AA-R7: shared races a new admin race may repeat, strong first. Read only, no lock.
+export async function fetchAdminDuplicateCandidates(args: {
+  name: string; date: string; provinceCode?: string; organizerName?: string; excludeId?: string;
+}): Promise<RaceCandidate[]> {
+  const p = new URLSearchParams({ name: args.name, date: args.date });
+  if (args.provinceCode) p.set("provinceCode", args.provinceCode);
+  if (args.organizerName) p.set("organizerName", args.organizerName);
+  if (args.excludeId) p.set("excludeId", args.excludeId);
+  return api.get<RaceCandidate[]>(`/admin/events/duplicate-candidates?${p.toString()}`);
+}
+
+// AA-R12: each covering photographer's price in a race, newest 50 history rows.
+//   GET  /admin/events/{id}/photographer-prices                    → AdminRacePrices
+//   POST /admin/events/{id}/photographer-prices/{photographerId}/reset → AdminRacePrices
+export interface AdminRacePrices {
+  floorPhp: number;
+  ceilingPhp: number;
+  prices: { photographerId: string; name: string; handle: string | null; effectivePhp: number; custom: boolean; priceChangedAt: string | null }[];
+  history: { photographerId: string; changedBy: string | null; fromPhp: number; toPhp: number; reason: "SET" | "RESET" | "CLAMP"; changedAt: string }[];
+}
+
+export async function fetchAdminRacePrices(eventId: string, signal?: AbortSignal): Promise<AdminRacePrices> {
+  return api.get<AdminRacePrices>(`/admin/events/${encodeURIComponent(eventId)}/photographer-prices`, { signal });
+}
+
+export async function resetAdminRacePrice(eventId: string, photographerId: string): Promise<AdminRacePrices> {
+  return api.post<AdminRacePrices>(
+    `/admin/events/${encodeURIComponent(eventId)}/photographer-prices/${encodeURIComponent(photographerId)}/reset`,
+  );
+}
+
 // PATCH /admin/events/{id}/listing — show a photographer's Public event on /events.
+// On a typed race (AA-R6): false hides it, true relists it and marks it admin approved.
 export async function setAdminEventListing(eventId: string, listed: boolean): Promise<AdminEventRow> {
   return api.fetch<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}/listing`,
@@ -750,6 +813,8 @@ export interface CreateAdminEventArgs {
   /** Organizer name + race-day notes for the "About this race" strip. */
   organizerName?: string;
   description?: string;
+  /** AA-R7 race-type code from /race-types; absent = an untyped admin event. */
+  eventType?: string;
 }
 
 export async function createAdminEvent(
@@ -767,6 +832,7 @@ export async function createAdminEvent(
     form.append("organizerName", args.organizerName);
   if (args.description !== undefined)
     form.append("description", args.description);
+  if (args.eventType) form.append("eventType", args.eventType);
   if (args.cover) form.append("cover", args.cover);
   return api.post<AdminEventRow>("/admin/events", form, { headers: { "Idempotency-Key": idempotencyKey } });
 }
