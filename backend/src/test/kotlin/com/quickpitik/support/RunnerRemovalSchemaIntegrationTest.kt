@@ -163,6 +163,43 @@ class RunnerRemovalSchemaIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, tx.execute { photographerMessages.releaseStaleEmailSend(delivered, java.time.OffsetDateTime.now().minusMinutes(10)) })
     }
 
+    @Test fun `insertKeyedNotice stores once per notice key`() {
+        val case = request()
+        val key = "removal:runner:${case.id}:PENDING_ADMIN_REVIEW"
+        val first = UUID.randomUUID()
+        assertEquals(1, tx.execute { runnerMessages.insertKeyedNotice(first, runner.id, case.id, key, "Title", "Body", java.time.OffsetDateTime.now()) })
+        assertEquals(0, tx.execute { runnerMessages.insertKeyedNotice(UUID.randomUUID(), runner.id, case.id, key, "Title", "Body", java.time.OffsetDateTime.now()) })
+        val saved = runnerMessages.findById(first).orElseThrow()
+        assertEquals(RunnerMessageKind.PHOTO_REMOVAL_UPDATE.wire, saved.kindWire)
+        assertEquals(case.id, saved.photoRemovalRequestId)
+        assertEquals("Title", saved.title)
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM runner_messages WHERE notice_key = ?", Int::class.java, key))
+    }
+
+    @Test fun `claimEmailSend claims once`() {
+        val m = runnerMessages.saveAndFlush(RunnerMessage(runnerId = runner.id,
+            kindWire = RunnerMessageKind.PHOTO_REMOVAL_UPDATE.wire, body = "Hello"))
+        val at = java.time.OffsetDateTime.now()
+        assertEquals(1, tx.execute { runnerMessages.claimEmailSend(m.id, at) })
+        assertEquals(0, tx.execute { runnerMessages.claimEmailSend(m.id, at) })
+        assertEquals(1, tx.execute { runnerMessages.stampEmailDelivered(m.id, at) })
+        assertEquals(0, tx.execute { runnerMessages.stampEmailDelivered(m.id, at) })
+    }
+
+    @Test fun `the stale-claim query skips delivered rows and rows older than 24 hours`() {
+        fun notice(kind: String = RunnerMessageKind.PHOTO_REMOVAL_UPDATE.wire) = runnerMessages.saveAndFlush(
+            RunnerMessage(runnerId = runner.id, kindWire = kind, body = "Hello")).id
+        val claimedAt = java.time.OffsetDateTime.now().minusMinutes(30)
+        val stale = notice(); val delivered = notice(); val old = notice(); val unclaimed = notice(); val other = notice(RunnerMessageKind.ADMIN_MESSAGE.wire)
+        for (id in listOf(stale, delivered, old, other)) jdbc.update("UPDATE runner_messages SET email_sent_at = ? WHERE id = ?", claimedAt, id)
+        jdbc.update("UPDATE runner_messages SET email_delivered_at = now() WHERE id = ?", delivered)
+        jdbc.update("UPDATE runner_messages SET created_at = now() - interval '2 days' WHERE id = ?", old)
+        val found = runnerMessages.findStaleEmailClaimIds(java.time.OffsetDateTime.now().minusMinutes(10), java.time.OffsetDateTime.now().minusHours(24), 50)
+        assertEquals(listOf(stale), found.filter { it in setOf(stale, delivered, old, unclaimed, other) })
+        assertEquals(1, tx.execute { runnerMessages.releaseStaleEmailSend(stale, java.time.OffsetDateTime.now().minusMinutes(10)) })
+        assertEquals(0, tx.execute { runnerMessages.releaseStaleEmailSend(delivered, java.time.OffsetDateTime.now().minusMinutes(10)) })
+    }
+
     @Test fun `a RUNNER history row and a SUGGESTED action save`() {
         val case = request()
         historyRow(case, RemovalHistoryActions.SUGGESTED, RemovalActorType.RUNNER)

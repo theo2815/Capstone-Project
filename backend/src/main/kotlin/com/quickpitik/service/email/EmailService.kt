@@ -152,13 +152,19 @@ class EmailService(
     // message (own photos only, photo references, no runner details). A failure MUST propagate: the caller keeps
     // its dated claim and the sweep re-sends.
     fun sendPhotographerRemovalReviewEmail(toEmail: String, eventName: String, body: String, requestId: UUID) =
-        sendPhotographerRemovalEmail(toEmail, "Photo removal review requested · $eventName", "A photo removal review needs your reply", eventName, body, requestId)
+        sendRemovalEmail(toEmail, "Photo removal review requested · $eventName", "A photo removal review needs your reply", eventName, body,
+            "$frontendOrigin/dashboard/photo-removal-requests/$requestId")
 
     fun sendPhotographerRemovalOutcomeEmail(toEmail: String, eventName: String, body: String, requestId: UUID) =
-        sendPhotographerRemovalEmail(toEmail, "Photo removal outcome · $eventName", "A photo removal review has an outcome", eventName, body, requestId)
+        sendRemovalEmail(toEmail, "Photo removal outcome · $eventName", "A photo removal review has an outcome", eventName, body,
+            "$frontendOrigin/dashboard/photo-removal-requests/$requestId")
 
-    private fun sendPhotographerRemovalEmail(toEmail: String, subject: String, heading: String, eventName: String, body: String, requestId: UUID) {
-        val url = "$frontendOrigin/dashboard/photo-removal-requests/$requestId"
+    // RD-9: a runner is told their deletion request reached a new status. Title and body are the stored inbox
+    // message (status and counts only). A failure MUST propagate, as above.
+    fun sendRunnerRemovalUpdateEmail(toEmail: String, eventName: String, title: String, body: String, requestId: UUID) =
+        sendRemovalEmail(toEmail, "$title · $eventName", title, eventName, body, "$frontendOrigin/account/photo-deletion/$requestId")
+
+    private fun sendRemovalEmail(toEmail: String, subject: String, heading: String, eventName: String, body: String, url: String) {
         if (devMode) {
             log.info("[EMAIL STUB] photo removal notice for {} — link: {}", toEmail, url)
             return
@@ -168,13 +174,13 @@ class EmailService(
                 from = "${resendProperties.fromName} <${resendProperties.fromAddress}>",
                 to = listOf(toEmail),
                 subject = subject,
-                html = renderPhotographerRemovalHtml(heading, eventName, body, url),
+                html = renderRemovalHtml(heading, eventName, body, url),
             ),
         )
         log.info("Photo removal email sent · to={} resendId={}", toEmail, response.id)
     }
 
-    private fun renderPhotographerRemovalHtml(heading: String, eventName: String, body: String, url: String): String = """
+    private fun renderRemovalHtml(heading: String, eventName: String, body: String, url: String): String = """
 <!doctype html>
 <html><body style="margin:0;background:#f6f6f4;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
