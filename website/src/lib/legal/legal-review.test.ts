@@ -34,7 +34,7 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  it("passes the production guard with version 1.4", () => {
+  it("passes the production guard with version 1.5", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
@@ -42,7 +42,7 @@ describe("approved text (PT-0b)", () => {
         "production",
       ),
     ).not.toThrow();
-    expect(LEGAL_VERSION).toBe("1.4");
+    expect(LEGAL_VERSION).toBe("1.5");
   });
 
   it("says both selfie and bib searches ask for a tick first (BT-1, S10)", () => {
@@ -159,5 +159,41 @@ describe("legal 1.4 text (RD-15)", () => {
     expect(LEGAL_COPY.runnerDeletionTickLabel).toBe("I agree to the live check and to this face search. The photos I'm asking about are of me.");
     expect(LEGAL_COPY.runnerDeletionNotice).toMatch(/^To find photos of you, we run a short live check/);
     expect(LEGAL_COPY.runnerDeletionEmailInstead).toContain("subject=Photo%20deletion%20request)");
+  });
+});
+
+// PE-2.5: the payout hold and the upload checks in the Terms and the Privacy Policy, version 1.5.
+// Wording: PE-L4 texts T10 to T13, R-a and R-b (owner, 2026-11-12).
+describe("legal 1.5 text (PE-2.5)", () => {
+  it("lets the Terms put payouts on hold while uploads are reviewed, and says how the photographer is told", () => {
+    const payouts = section(TERMS_OF_SERVICE, "photographers");
+    expect(payouts).toContain("put your payouts on hold");
+    expect(payouts).toContain("Your earnings stay in your balance.");
+    expect(payouts).toContain("in your QuickPitik inbox when a hold starts and when it ends");
+    expect(payouts).not.toContain("by email when it starts");
+    expect(payouts).toContain("withhold 1% tax");
+  });
+
+  it("lists the hold among what QuickPitik may do, with the 'and' on the last item", () => {
+    const mayDo = section(TERMS_OF_SERVICE, "what-quickpitik-may-do");
+    expect(mayDo).toContain("hold a photographer's payouts");
+    expect(mayDo).toContain("hide a race event from the Events page, or list it again;\n");
+    expect(mayDo).not.toContain("list it again; and");
+  });
+
+  it("lists the hold e-mail and tells who sees the check results", () => {
+    const how = section(PRIVACY_POLICY, "how-we-use-it");
+    expect(how).toContain("an alert when a photographer's payouts are put on hold,");
+    expect(how).toContain("we may send the photographer a message in their inbox");
+    expect(how).toContain("an admin may see both photographers' names and sample photos side by side");
+    expect(how).toContain("the photographer is told in their inbox when a hold starts and when it ends");
+    expect(how).not.toContain("A person reviews them before any photo is hidden");
+  });
+
+  it("names upload checks among what admins see and keeps their results in the retention table", () => {
+    expect(section(PRIVACY_POLICY, "who-receives-it")).toContain("reports, upload checks and removal requests");
+    expect(section(PRIVACY_POLICY, "how-long-we-keep-it")).toContain(
+      "Results of automatic checks on uploads, and admin reviews of them",
+    );
   });
 });
