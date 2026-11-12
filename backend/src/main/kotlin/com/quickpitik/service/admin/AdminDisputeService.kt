@@ -46,6 +46,7 @@ import com.quickpitik.service.orders.refundLinkExpiresAt
 import com.quickpitik.service.orders.refundWindowClosesAt
 import com.quickpitik.service.orders.settledPaymongo
 import com.quickpitik.service.storage.StorageService
+import org.springframework.data.domain.Pageable
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -55,6 +56,11 @@ import java.math.BigDecimal
 import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
+
+// Status lists the list views pass to DisputeRepository.pageForAdmin (an empty IN list matches nothing).
+private val UNRESOLVED_STATUS_WIRES = listOf(DisputeStatus.OPEN.wire, DisputeStatus.ESCALATED.wire)
+private val CLOSED_STATUS_WIRES = listOf(DisputeStatus.RESOLVED.wire, DisputeStatus.DENIED.wire, DisputeStatus.WITHDRAWN.wire)
+private val ALL_STATUS_WIRES = UNRESOLVED_STATUS_WIRES + CLOSED_STATUS_WIRES
 
 @Service
 @Transactional
@@ -87,16 +93,60 @@ class AdminDisputeService(
         return hydrateOne(dispute)
     }
 
+    // Views (plan 5.2): none, `all` and `closed` page in SQL, newest first; `needs_me`, `overdue`
+    // and `refund_run` read the attention of every unresolved dispute and sort by due time.
     @Transactional(readOnly = true)
     fun list(
+        view: String?,
         statusFilter: String?,
+        query: String?,
         params: PaginationParams,
     ): PaginatedResponse<AdminDisputeDto> {
+        val viewWire = view?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
         val statusWire = statusFilter?.takeIf { it.isNotBlank() }?.let { parseStatus(it).wire }
-        val page = disputeRepository.pageForAdmin(statusWire, OffsetLimitPageable(params))
+        if (viewWire != null && statusWire != null) {
+            throw ValidationException(message = "Use view or status, not both", field = "view")
+        }
+        // shortcut: LIKE wildcards in q are left as-is and only the length is capped (admin-only search); escape them if a non-admin search reuses this.
+        val q = query?.trim()?.take(100) ?: ""
+        val keep: (DisputeQueueState) -> Boolean = when (viewWire) {
+            null, "all" -> return sqlPage(statusWire?.let { listOf(it) } ?: ALL_STATUS_WIRES, q, params)
+            "closed" -> return sqlPage(CLOSED_STATUS_WIRES, q, params)
+            "needs_me" -> { s -> s.attention.needsAdmin }
+            "overdue" -> { s -> s.attention.needsAdmin && s.overdue }
+            "refund_run" -> { s -> s.attention in PARKED_QRPH_ATTENTIONS }
+            else -> throw ValidationException(
+                message = "view must be one of needs_me / overdue / refund_run / closed / all",
+                field = "view",
+            )
+        }
+        val now = OffsetDateTime.now(clock)
+        val sorted = unresolvedWithState(q, now)
+            .filter { keep(it.second) }
+            .sortedWith(compareBy({ it.second.dueAt }, { it.first.openedAt }, { it.first.id }))
+        val page = sorted.drop(params.offset).take(params.limit).map { it.first }
+        return PaginatedResponse.of(hydrateMany(page, now), sorted.size.toLong(), params)
+    }
+
+    // The badge's numbers: the same load and classify as the `needs_me` view.
+    @Transactional(readOnly = true)
+    fun queueCounts(): DisputeQueueCounts {
+        val states = unresolvedWithState("", OffsetDateTime.now(clock)).map { it.second }.filter { it.attention.needsAdmin }
+        return DisputeQueueCounts(needsAdmin = states.size.toLong(), overdue = states.count { it.overdue }.toLong())
+    }
+
+    private fun sqlPage(statusWires: List<String>, q: String, params: PaginationParams): PaginatedResponse<AdminDisputeDto> {
+        val page = disputeRepository.pageForAdmin(statusWires, q, OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.empty(params)
-        val items = hydrateMany(page.content)
-        return PaginatedResponse.of(items, page.totalElements, params)
+        return PaginatedResponse.of(hydrateMany(page.content), page.totalElements, params)
+    }
+
+    // shortcut: sorts unresolved disputes in memory; fine while open plus escalated stay in the low thousands (DW-0.2 count); upgrade to a stored due_at column with the photo-removal sweep recipe if it grows
+    private fun unresolvedWithState(q: String, now: OffsetDateTime): List<Pair<Dispute, DisputeQueueState>> {
+        val disputes = disputeRepository.pageForAdmin(UNRESOLVED_STATUS_WIRES, q, Pageable.unpaged()).content
+        if (disputes.isEmpty()) return emptyList()
+        val ordersById = orderRepository.findAllById(disputes.mapTo(mutableSetOf()) { it.orderId }).associateBy { it.id }
+        return disputes.map { it to queueState(it, ordersById[it.orderId], paymongoProperties, disputeQueueProperties, now) }
     }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -283,7 +333,7 @@ class AdminDisputeService(
         photoId.toString().take(8).uppercase()
 
     // ─── Existing helpers ─────────────────────────────────────────────────
-    private fun hydrateMany(disputes: List<Dispute>): List<AdminDisputeDto> {
+    private fun hydrateMany(disputes: List<Dispute>, now: OffsetDateTime = OffsetDateTime.now(clock)): List<AdminDisputeDto> {
         if (disputes.isEmpty()) return emptyList()
         // Batch-fetch the page's context (activity, orders, photos, runners,
         // settings, events) in six IN round-trips instead of ~8 queries per
@@ -315,8 +365,7 @@ class AdminDisputeService(
                 },
             )
             .associateBy { it.id }
-        // One clock read per page, so no row crosses a deadline mid-page.
-        val now = OffsetDateTime.now(clock)
+        // One clock read per page (the caller's `now`), so no row crosses a deadline mid-page.
         return disputes.map { d ->
             val order = ordersById[d.orderId]
             val photo = photosById[d.photoId]

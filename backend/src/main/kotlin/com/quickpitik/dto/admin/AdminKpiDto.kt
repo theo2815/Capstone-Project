@@ -14,6 +14,11 @@ data class AdminKpisDto(
     // Photographer-owned events awaiting a decision (V46): new submissions
     // + parked pricing changes.
     val pendingEventRequests: Long = 0,
+    // Disputes that need an admin (open, escalated, parked or failed refunds; not refunds in
+    // progress), and how many of those are past due (service/admin/DisputeAttention.kt).
+    // No defaults: this DTO is built in one place, so the compiler checks the wiring.
+    val disputesNeedingAdmin: Long,
+    val disputesOverdue: Long,
 )
 
 // Mirrors AdminTrendPoint. Day-bucketed counts for the kpi-trend chart.

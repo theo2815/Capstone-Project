@@ -45,6 +45,9 @@ data class DisputeQueueState(
     val linkExpiringSoon: Boolean,
 )
 
+// The admin badge: disputes that need an admin, and how many of those are past due.
+data class DisputeQueueCounts(val needsAdmin: Long, val overdue: Long)
+
 private val IN_FLIGHT_REFUND_STATUSES = setOf("requesting", "pending", "processing")
 
 // The first matching row wins (plan 5.1).

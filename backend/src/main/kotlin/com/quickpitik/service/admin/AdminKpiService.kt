@@ -33,6 +33,7 @@ class AdminKpiService(
     private val eventRepository: EventRepository,
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val jdbcTemplate: JdbcTemplate,
+    private val adminDisputeService: AdminDisputeService,
 ) {
 
     fun kpis(): AdminKpisDto {
@@ -54,6 +55,7 @@ class AdminKpiService(
         val pendingEventRequests = eventRepository.countByReviewStatusInAndDeletedAtIsNull(
             listOf(EventReviewStatus.PENDING, EventReviewStatus.CHANGE_PENDING),
         )
+        val disputeQueue = adminDisputeService.queueCounts()
 
         return AdminKpisDto(
             pendingVerifications = pendingVerifications,
@@ -65,6 +67,8 @@ class AdminKpiService(
             openFlags = openFlags,
             pendingPayouts = pendingPayouts,
             pendingEventRequests = pendingEventRequests,
+            disputesNeedingAdmin = disputeQueue.needsAdmin,
+            disputesOverdue = disputeQueue.overdue,
         )
     }
 

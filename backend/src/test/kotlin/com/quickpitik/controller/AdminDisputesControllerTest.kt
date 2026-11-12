@@ -1,6 +1,8 @@
 package com.quickpitik.controller
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminDisputeDto
 import com.quickpitik.dto.admin.DisputeOrderSnapshotDto
 import com.quickpitik.dto.admin.DisputePhotoSnapshotDto
@@ -234,6 +236,24 @@ class AdminDisputesControllerTest {
         markRefunded().andExpect(status().isTooManyRequests)
 
         Mockito.verifyNoInteractions(service)
+    }
+
+    @Test
+    fun `view and q reach the service`() {
+        signIn(Role.ADMIN)
+        val params = PaginationParams.of(50, 25)
+        Mockito.`when`(service.list("needs_me", null, " pay_AbC ", params))
+            .thenReturn(PaginatedResponse.of(listOf(dto()), 51, params))
+
+        mvc.perform(
+            get("/api/v1/admin/disputes")
+                .param("view", "needs_me").param("q", " pay_AbC ").param("offset", "50").param("limit", "25"),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.items[0].id").value(disputeId.toString()))
+            .andExpect(jsonPath("$.total").value(51))
+
+        Mockito.verify(service).list("needs_me", null, " pay_AbC ", params)
     }
 
     @Test
