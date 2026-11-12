@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import {
-  fetchAdminDisputes, fetchAdminDispute, fetchAdminDisputePage, resolveDispute, denyDispute, escalateDispute, sendRefundLink, markRefunded,
+  fetchAdminDisputes, fetchAdminDispute, fetchAdminDisputePage, resolveDispute, denyDispute, denyDisputeWithCode, fetchDisputeDenyReasons, escalateDispute, sendRefundLink, markRefunded,
   type AdminDisputeListArgs, type AdminDisputePageArgs, type AdminDisputeView, type ResolveDisputeArgs,
 } from "@/lib/api-admin";
 import type { Dispute } from "@/lib/admin-disputes";
@@ -24,7 +24,19 @@ export const adminDisputeKeys = {
     [...adminDisputeKeys.lists(userId), "page", args] as const,
   detail: (userId: string | null, id: string) =>
     [...adminDisputeKeys.owner(userId), "detail", id] as const,
+  reasons: (userId: string | null) => [...adminDisputeKeys.owner(userId), "deny-reasons"] as const,
 };
+
+// The deny reasons are server-owned and fixed per deploy; the modal fetches them when it first opens.
+export function useDisputeDenyReasons(enabled = true) {
+  const user = useAuthStore((s) => s.user);
+  return useQuery({
+    queryKey: adminDisputeKeys.reasons(user?.id ?? null),
+    queryFn: fetchDisputeDenyReasons,
+    enabled: enabled && user?.role === "ADMIN",
+    staleTime: Infinity,
+  });
+}
 
 export function useAdminDisputes(args: AdminDisputeListArgs = {}) {
   const user = useAuthStore((s) => s.user);
@@ -123,6 +135,8 @@ export function useDisputeActions() {
       pendingAction: (id: string) => mutation.pendingAction([{ kind: "dispute", id }]),
       resolve: (id: string, args: ResolveDisputeArgs) => run(id, "Resolving…", "resolve", () => resolveDispute(id, args)),
       deny: async (id: string, reason: string | null) => !!(await run(id, "Denying…", "deny", () => denyDispute(id, reason))),
+      denyWithCode: async (id: string, reasonCode: string, note: string | null) =>
+        !!(await run(id, "Denying…", "deny", () => denyDisputeWithCode(id, reasonCode, note))),
       escalate: async (id: string, reason: string | null) => !!(await run(id, "Escalating…", "escalate", () => escalateDispute(id, reason))),
       sendRefundLink: async (id: string, url: string) =>
         !!(await run(id, "Sending link…", "send the refund link for this", () => sendRefundLink(id, url))),
