@@ -229,7 +229,7 @@ export function PayoutFlagLine({ cycle }: { cycle: AdminPayoutCycle }) {
   if (!cycle.relevanceFlagId) return null;
   return (
     <p className="font-sans text-sm text-amber-700 mt-2">
-      <Link href={`/admin/flags?row=${cycle.relevanceFlagId}`} className="underline underline-offset-2 hover:text-ink">
+      <Link href={`/admin/flags?row=${cycle.relevanceFlagId}`} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} className="underline underline-offset-2 hover:text-ink">
         {cycle.relevanceHold ? PAYOUT_HOLD_REASON : PAYOUT_UNCONFIRMED_FLAG_NOTE}
       </Link>
     </p>

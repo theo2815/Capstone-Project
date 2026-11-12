@@ -1,4 +1,4 @@
-import { act, cleanup, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -305,4 +305,18 @@ it("the bulk bar refuses approve while a selected payout is on hold, and E does 
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   await user.keyboard("e");
   expect(post).not.toHaveBeenCalled();
+});
+
+it("the flag link in a row does not open the drawer or toggle selection, and Enter on it is not cancelled", async () => {
+  const user = userEvent.setup();
+  rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }]; client.setQueryData(key, rows);
+  mount();
+  const link = screen.getByRole("link", { name: "Payouts on hold: open relevance flag" });
+  await user.click(link);
+  expect(navigation.replace).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` })).not.toBeChecked();
+  expect(fireEvent.keyDown(link, { key: "Enter" })).toBe(true);
+  expect(navigation.replace).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
