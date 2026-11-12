@@ -4,6 +4,8 @@ import type {
   RemovalMatchResult, RemovalRequestFilters, RemovalPhotoFilters, RemovalPageFilters,
   CreateRemovalRequestCommand, MatchRemovalCommand, VerifyRemovalCommand, CancelRemovalCommand,
   DecideRemovalCommand, RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand,
+  RunnerRemovalReason, RunnerRemovalEligibility, RunnerLivenessSession, RunnerSubmitResult,
+  StartRunnerLivenessCommand, SubmitRunnerRemovalCommand,
 } from "@/types/photo-removal";
 
 const adminPath = "/admin/photo-removal-requests";
@@ -64,4 +66,20 @@ export function getPhotographerRemovalRequest(id: string, signal?: AbortSignal):
 }
 export function respondToRemovalRequest(id: string, command: RespondToRemovalCommand): Promise<PhotographerRemovalRequestDto> {
   return api.post(`${photographerPath}/${encodeURIComponent(id)}/responses`, command);
+}
+
+// Runner self-serve deletion (RD-11). The search image is the live check's own
+// reference image, read by the server: the client never sends a photo here.
+const runnerPath = "/me/runner/photo-removal-requests";
+export function listRunnerRemovalReasons(signal?: AbortSignal): Promise<RunnerRemovalReason[]> {
+  return api.get(`${runnerPath}/reasons`, { signal });
+}
+export function getRunnerRemovalEligibility(eventId: string, signal?: AbortSignal): Promise<RunnerRemovalEligibility> {
+  return api.get(`${runnerPath}/eligibility?eventId=${encodeURIComponent(eventId)}`, { signal });
+}
+export function startRunnerLiveness(body: StartRunnerLivenessCommand): Promise<RunnerLivenessSession> {
+  return api.post(`${runnerPath}/liveness-session`, body);
+}
+export function submitRunnerRemoval(body: SubmitRunnerRemovalCommand, idempotencyKey: string): Promise<RunnerSubmitResult> {
+  return api.post(runnerPath, body, { headers: { "Idempotency-Key": idempotencyKey } });
 }

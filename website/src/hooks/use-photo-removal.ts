@@ -14,13 +14,15 @@ import type {
 } from "@/types/photo-removal";
 
 type SessionKey = ReturnType<typeof usePrivateQuerySession>["key"];
-type RemovalRole = "ADMIN" | "PHOTOGRAPHER";
+type RemovalRole = "ADMIN" | "PHOTOGRAPHER" | "RUNNER";
 export const removalKeys = {
   all: ["photo-removal"] as const,
   admin: (session: SessionKey) => ["photo-removal", "admin", ...session] as const,
   photographer: (session: SessionKey) => ["photo-removal", "photographer", ...session] as const,
+  runner: (session: SessionKey) => ["photo-removal", "runner", ...session] as const,
 };
 function scope(role: RemovalRole, session: SessionKey) {
+  if (role === "RUNNER") return removalKeys.runner(session);
   return role === "ADMIN" ? removalKeys.admin(session) : removalKeys.photographer(session);
 }
 function useRemovalQuery<T>(role: RemovalRole, suffix: readonly unknown[], read: (signal: AbortSignal) => Promise<T>, enabled = true) {
@@ -54,6 +56,12 @@ export function useRemovalHistory(id: string, filters: RemovalPageFilters = {}) 
 }
 export function useRemovalEvidence(id: string) {
   return useRemovalQuery("ADMIN", ["evidence", id], (signal) => api.getRemovalEvidence(id, signal), !!id);
+}
+export function useRunnerRemovalReasons() {
+  return useRemovalQuery("RUNNER", ["reasons"], (signal) => api.listRunnerRemovalReasons(signal));
+}
+export function useRunnerRemovalEligibility(eventId: string | null) {
+  return useRemovalQuery("RUNNER", ["eligibility", eventId], (signal) => api.getRunnerRemovalEligibility(eventId!, signal), !!eventId);
 }
 export function usePhotographerRemovalRequests(filters: RemovalRequestFilters = {}) {
   return useRemovalQuery("PHOTOGRAPHER", ["list", filters], (signal) => api.listPhotographerRemovalRequests(filters, signal));
