@@ -270,7 +270,7 @@ function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
     <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
       {eventName}
       <span className="text-slate-soft"> · </span>
-      {formatPrice(dispute.orderSnapshot.total)}
+      Order total {formatPrice(dispute.orderSnapshot.total)}
       <span className="text-slate-soft"> · </span>
       Reported {formatLongDate(dispute.reportedAt)}
     </p>
@@ -353,7 +353,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow label="Order id" value={dispute.orderId} mono />
           <FieldRow
-            label="Total"
+            label="Order total"
             value={formatPrice(dispute.orderSnapshot.total)}
             mono
           />
@@ -365,6 +365,8 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
           />
         </dl>
       </section>
+
+      <DecisionFacts dispute={dispute} />
 
       <section>
         <Kicker as="p" tone="soft" className="mb-3">
@@ -422,6 +424,59 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
   );
 }
 
+// What the admin needs beside the decision. A field the server did not send (an older response) shows no row;
+// null means the server looked and there is nothing: no download record, or a deleted runner.
+function DecisionFacts({ dispute: d }: { dispute: Dispute }) {
+  const h = d.runnerHistory;
+  return (
+    <section>
+      <Kicker as="p" tone="soft" className="mb-3">
+        Decision facts
+      </Kicker>
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
+        {d.itemChargeAmount != null && (
+          <FieldRow label="This photo's charge" value={formatPrice(d.itemChargeAmount)} mono />
+        )}
+        {d.paymentPhotoCount != null && (
+          <FieldRow label="Payment covered" value={`${d.paymentPhotoCount} ${d.paymentPhotoCount === 1 ? "photo" : "photos"}`} mono />
+        )}
+        {d.refundable != null && (
+          <FieldRow
+            label="Can it be refunded?"
+            value={d.refundable ? "Yes" : `No: ${d.refundBlockedMessage ?? "see the payment"}`}
+            mono={false}
+          />
+        )}
+        {d.downloadCount !== undefined && (
+          <FieldRow
+            label="Downloads started"
+            value={
+              d.downloadCount === null
+                ? "No download record"
+                : d.downloadCount === 0
+                  ? "No downloads yet"
+                  : `${d.downloadCount}${d.lastDownloadedAt ? ` · last ${formatLongDate(d.lastDownloadedAt)}` : ""}`
+            }
+            help="Counts download starts; retries and share attempts count again. Gallery and receipt previews are not counted."
+            mono={d.downloadCount !== null && d.downloadCount > 0}
+          />
+        )}
+        {h !== undefined && (
+          <FieldRow
+            label="This runner's other requests"
+            value={
+              h === null
+                ? "Runner deleted"
+                : `${h.total} total · ${h.refunded} refunded · ${h.denied} declined · ${h.withdrawn} withdrawn · ${h.open} open`
+            }
+            mono={false}
+          />
+        )}
+      </dl>
+    </section>
+  );
+}
+
 function DisputePhotoThumb({
   thumbnailUrl,
   disputeId,
@@ -471,10 +526,12 @@ function FieldRow({
   label,
   value,
   mono,
+  help,
 }: {
   label: string;
   value: string;
   mono: boolean;
+  help?: string;
 }) {
   return (
     <div>
@@ -485,11 +542,12 @@ function FieldRow({
         className={`mt-1 ${
           mono
             ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
-            : "font-sans text-sm text-ink"
+            : "font-sans text-sm text-ink tnum"
         }`}
       >
         {value}
       </dd>
+      {help && <p className="mt-1 font-sans text-xs text-slate-soft">{help}</p>}
     </div>
   );
 }
