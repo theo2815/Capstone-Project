@@ -50,6 +50,8 @@ class EventPhotoAlertServiceTest {
         service = EventPhotoAlertService(eventRepository, userSelfieRepository, alertRepository)
 
         Mockito.`when`(eventRepository.findBySlugAndDeletedAtIsNull(slug)).thenReturn(event)
+        // findPublicBySlug excludes DRAFT in its query (EventSearchVisibilityIntegrationTest).
+        Mockito.`when`(eventRepository.findPublicBySlug(slug)).thenAnswer { if (event.status == EventStatus.DRAFT) null else event }
         Mockito.`when`(alertRepository.save(anyArg<EventPhotoAlert>())).thenAnswer { it.arguments[0] }
     }
 
@@ -140,6 +142,37 @@ class EventPhotoAlertServiceTest {
 
         Mockito.`when`(alertRepository.deleteByEventIdAndUserId(event.id, userId)).thenReturn(0L)
         assertFalse(service.optOut(userId, slug))
+    }
+
+    // A DRAFT (pending or refused) event is not public: like its page, its
+    // alert routes answer 404 instead of revealing that it exists.
+    @Test
+    fun `turning alerts on for a draft event answers not found`() {
+        event.status = EventStatus.DRAFT
+
+        val ex = assertFailsWith<NotFoundException> { service.register(userId, slug, null) }
+
+        assertEquals(ErrorCodes.EVENT_NOT_FOUND, ex.code)
+        Mockito.verify(alertRepository, Mockito.never()).save(anyArg())
+    }
+
+    @Test
+    fun `the alert status of a draft event answers not found`() {
+        event.status = EventStatus.DRAFT
+
+        val ex = assertFailsWith<NotFoundException> { service.status(userId, slug) }
+
+        assertEquals(ErrorCodes.EVENT_NOT_FOUND, ex.code)
+    }
+
+    // Withdrawing is always allowed, even if the event went back to draft after
+    // the runner turned the alert on.
+    @Test
+    fun `turning alerts off still works on a draft event`() {
+        event.status = EventStatus.DRAFT
+        Mockito.`when`(alertRepository.deleteByEventIdAndUserId(event.id, userId)).thenReturn(1L)
+
+        assertTrue(service.optOut(userId, slug))
     }
 
     private fun selfie() = UserSelfie(
