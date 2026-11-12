@@ -158,6 +158,31 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
         assertTrue(payments.findAllByProviderAndProviderRefIn("card", listOf(a.checkoutRef)).isEmpty())
     }
 
+    // DW-6: the runner's other requests, counted per dispute row and status.
+    @Test
+    fun `counts a runner's disputes by status and ignores other runners`() {
+        val mine = fixture()
+        val other = fixture(status = DisputeStatus.ESCALATED)
+        fixture(deletedRunner = true)
+        val me = mine.runner!!.id
+        val them = other.runner!!.id
+        // Closed requests can share the order and photo with the open one (refiled after a decision).
+        for (status in listOf(DisputeStatus.DENIED, DisputeStatus.DENIED, DisputeStatus.RESOLVED)) {
+            disputes.saveAndFlush(
+                Dispute(orderId = mine.order.id, photoId = mine.dispute.photoId, runnerId = me,
+                    reasonWire = "other", statusWire = status.wire),
+            )
+        }
+
+        val counts = disputes.countByRunnerAndStatus(listOf(me, them)).associate { (it.runnerId to it.statusWire) to it.n }
+
+        assertEquals(
+            mapOf((me to "open") to 1L, (me to "denied") to 2L, (me to "resolved") to 1L, (them to "escalated") to 1L),
+            counts,
+        )
+        assertEquals(setOf(me), disputes.countByRunnerAndStatus(listOf(me)).mapTo(mutableSetOf()) { it.runnerId })
+    }
+
     class Fixture(
         val dispute: Dispute,
         val order: Order,
