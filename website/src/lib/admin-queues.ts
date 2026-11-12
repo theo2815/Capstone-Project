@@ -34,7 +34,7 @@ export function useAdminAttentionTarget(): AdminAttentionTarget | null {
   const kpis = useAdminKpis();
   const pendingEventRequests = kpis?.pendingEventRequests ?? 0;
 
-  const openDisputes = kpis?.openDisputes ?? 0;
+  const openDisputes = kpis?.disputesNeedingAdmin ?? kpis?.openDisputes ?? 0;
   if (openDisputes > 0) {
     return {
       href: ROUTES.ADMIN_DISPUTES,
@@ -102,7 +102,7 @@ export function useAdminQueueCounts(): AdminQueueCounts {
   const kpis = useAdminKpis();
   const events = kpis?.pendingEventRequests ?? 0;
 
-  const disputes = kpis?.openDisputes ?? 0;
+  const disputes = kpis?.disputesNeedingAdmin ?? kpis?.openDisputes ?? 0;
   const payouts = serverPayouts.filter((p) => p.status === "pending_review").length;
   const inbox = usePendingVerificationsCount();
 

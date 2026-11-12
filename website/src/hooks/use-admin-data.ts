@@ -32,6 +32,9 @@ import { useAdminMutation } from "./use-admin-mutation";
 // Stale time: 60s for queue listings, 30s for KPIs, 60s for sales.
 
 const KPI_STALE_MS = 30_000;
+// A deadline passing or a refund failing sends no websocket event, so the
+// badge polls to move in an open tab (DW-9, plan 5.1).
+const KPI_POLL_MS = 60_000;
 const LIST_STALE_MS = 60_000;
 const SALES_STALE_MS = 60_000;
 
@@ -51,6 +54,7 @@ export function useAdminKpis(): AdminKpis | null {
     queryFn: ({ signal }) => fetchAdminKpis(signal),
     enabled: session.enabled,
     staleTime: KPI_STALE_MS,
+    refetchInterval: KPI_POLL_MS,
   });
   return query.data ?? null;
 }
