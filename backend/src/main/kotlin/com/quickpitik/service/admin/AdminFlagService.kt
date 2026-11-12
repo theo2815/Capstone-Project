@@ -5,23 +5,33 @@ import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AdminProperties
+import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminFlagDto
+import com.quickpitik.dto.admin.CopySampleDto
+import com.quickpitik.dto.admin.DateSampleDto
 import com.quickpitik.dto.admin.FlagPhotoSnapshotDto
+import com.quickpitik.dto.admin.RelevanceBatchDto
+import com.quickpitik.dto.admin.RelevanceEvidenceDto
 import com.quickpitik.entity.Flag
 import com.quickpitik.entity.FlagStatus
 import com.quickpitik.entity.FlagTargetKind
+import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.relevance.manilaDate
+import com.quickpitik.service.relevance.outsideWindow
 import com.quickpitik.service.storage.StorageService
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
@@ -43,6 +53,8 @@ class AdminFlagService(
     private val adminProperties: AdminProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val eventPublisher: ApplicationEventPublisher,
+    private val batchRelevanceRepository: BatchRelevanceRepository,
+    private val relevanceProperties: RelevanceProperties,
 ) {
 
     fun ensureEnabled() {
@@ -184,6 +196,97 @@ class AdminFlagService(
         return hydrateOne(flag)
     }
 
+    @Transactional(readOnly = true)
+    fun relevanceEvidence(flagId: UUID): RelevanceEvidenceDto {
+        ensureEnabled()
+        val flag = flagRepository.findById(flagId).orElseThrow {
+            NotFoundException(code = ErrorCodes.FLAG_NOT_FOUND, message = "Flag not found")
+        }
+        val rows = if (isRelevanceFlag(flag)) batchRelevanceRepository.findByFlagId(flag.id).sortedBy { it.flaggedAt } else emptyList()
+        if (rows.isEmpty()) return RelevanceEvidenceDto(flag.id, flag.payoutHoldAt?.toString(), emptyList())
+
+        val eventsById = eventRepository.findAllById(rows.map { it.eventId }.distinct()).associateBy { it.id }
+        val hiddenByEvent = flagRepository.countHiddenPhotosByEvent(flag.id).associate { it.eventId to it.hidden.toInt() }
+        val copyRows = rows.associate { it.id to batchRelevanceRepository.copySamples(it.id, EVIDENCE_SAMPLES) }
+        // Date samples: the batch photos dated outside the window, by the scoring's own rules (shared races only, C8).
+        val dateRows = rows.associate { row ->
+            val event = eventsById[row.eventId]
+            row.id to if (event == null || event.createdBy != null) emptyList() else {
+                batchRelevanceRepository.metadataRows(row.eventId, row.photographerId)
+                    .filter { it.state == PhotoMetadataState.READY }
+                    .mapNotNull { m -> m.fields?.takenAtLocal?.let { m.photoId to manilaDate(it, m.fields?.takenAtOffset) } }
+                    .filter { (_, day) -> outsideWindow(day, event.date, relevanceProperties.date.windowDays) }
+                    .take(EVIDENCE_SAMPLES)
+            }
+        }
+
+        // One batched read each for the photos, their owners and handles.
+        val photoIds = (copyRows.values.flatten().flatMap { listOfNotNull(it.photoId, it.matchPhotoId, it.exactPhotoId) } +
+            dateRows.values.flatten().map { it.first }).distinct()
+        val photosById = photoRepository.findAllById(photoIds).associateBy { it.id }
+        val ownerIds = photosById.values.mapNotNull { it.photographerId }.distinct()
+        val handles = photographerSettingsRepository.findAllById(ownerIds).associate { it.userId to it.handle }
+        val names = userRepository.findAllById(ownerIds).associate { it.id to it.name }
+        // R2-15: a gone photo (missing row or trashed) has no thumbnail; a handle only while it has an owner.
+        fun live(id: UUID?) = id?.let { photosById[it] }?.takeIf { it.deletedAt == null }
+        fun handleOf(id: UUID?) = id?.let { photosById[it] }?.photographerId?.let { owner ->
+            handles[owner]?.ifBlank { null } ?: names[owner]?.ifBlank { null } ?: "photographer"
+        }
+
+        val batches = rows.map { row ->
+            val event = eventsById[row.eventId]
+            RelevanceBatchDto(
+                eventId = row.eventId,
+                eventName = event?.name ?: "",
+                eventDate = (event?.date ?: row.scoredEventDate)?.toString() ?: "",
+                sharedRace = event != null && event.createdBy == null,
+                level = row.level,
+                copyLow = row.copyLow,
+                dateLow = row.dateLow,
+                photosLive = row.photosLive ?: 0,
+                lookups = row.lookups ?: 0,
+                tightHits = row.tightHits ?: 0,
+                weakHits = row.weakHits ?: 0,
+                exactMatches = row.exactMatches ?: 0,
+                xmpMatches = row.xmpMatches ?: 0,
+                datedPhotos = row.datedPhotos,
+                datedOutside = row.datedOutside,
+                metadataPending = row.metadataPending,
+                bibbedPhotos = row.bibbedPhotos,
+                bibOverlapPhotos = row.bibOverlapPhotos,
+                scoredAt = row.scoredAt?.toString(),
+                copySamples = copyRows.getValue(row.id).map { s ->
+                    CopySampleDto(
+                        photoId = s.photoId,
+                        thumbnailUrl = thumbnailUrl(live(s.photoId)),
+                        matchPhotoId = s.matchPhotoId,
+                        matchThumbnailUrl = thumbnailUrl(live(s.matchPhotoId)),
+                        matchPhotographerHandle = handleOf(s.matchPhotoId),
+                        distance = s.distance,
+                        pair = s.pair,
+                        exact = s.exactPhotoId != null,
+                        exactPhotoId = s.exactPhotoId,
+                        exactThumbnailUrl = thumbnailUrl(live(s.exactPhotoId)),
+                        exactPhotographerHandle = handleOf(s.exactPhotoId),
+                        exactEventId = s.exactPhotoId?.let { photosById[it] }?.eventId,
+                    )
+                },
+                dateSamples = dateRows.getValue(row.id).map { (id, day) ->
+                    DateSampleDto(photoId = id, thumbnailUrl = thumbnailUrl(live(id)), takenOn = day.toString())
+                },
+                hiddenPhotos = hiddenByEvent[row.eventId] ?: 0,
+            )
+        }
+        return RelevanceEvidenceDto(flag.id, flag.payoutHoldAt?.toString(), batches)
+    }
+
+    // Never the original s3Key: a still-PROCESSING photo has no derived
+    // asset yet and the card falls back to its gradient placeholder.
+    private fun thumbnailUrl(photo: Photo?): String? =
+        (photo?.watermarkS3Key ?: photo?.thumbnailS3Key)?.let { key ->
+            storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
+        }
+
     private fun isRelevanceFlag(flag: Flag): Boolean =
         flag.targetKind == FlagTargetKind.USER && flag.reason == SystemFlagReason.BATCH_RELEVANCE_LOW.wire
 
@@ -277,11 +380,7 @@ class AdminFlagService(
                 ?: reviewerUser?.email?.ifBlank { null }
                 ?: if (flag.resolvedBy != null) "admin" else null
 
-            // Never the original s3Key: a still-PROCESSING photo has no derived
-            // asset yet and the card falls back to its gradient placeholder.
-            val thumbnailUrl = (photo?.watermarkS3Key ?: photo?.thumbnailS3Key)?.let { key ->
-                storageService.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail)
-            }
+            val thumbnailUrl = thumbnailUrl(photo)
 
             AdminFlagDto(
                 id = flag.id,
@@ -313,4 +412,9 @@ class AdminFlagService(
     }
 
     private fun hydrateOne(flag: Flag): AdminFlagDto = hydrateMany(listOf(flag)).first()
+
+    private companion object {
+        // At most this many copy samples and date samples per batch.
+        const val EVIDENCE_SAMPLES = 12
+    }
 }

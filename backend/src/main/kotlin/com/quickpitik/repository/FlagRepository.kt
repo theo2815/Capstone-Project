@@ -85,10 +85,27 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
     )
     fun countDistinctReporters(@Param("targetKind") targetKind: String, @Param("targetId") targetId: UUID): Long
 
+    // PE-2.3 (R2-07): per event, the photos this flag hid that are not restored (flag_hidden_photos, PE-2.4).
+    @Query(
+        value = """
+        SELECT p.event_id AS "eventId", count(*) AS "hidden"
+        FROM flag_hidden_photos h JOIN photos p ON p.id = h.photo_id
+        WHERE h.flag_id = :flagId AND h.restored_at IS NULL
+        GROUP BY p.event_id
+        """,
+        nativeQuery = true,
+    )
+    fun countHiddenPhotosByEvent(@Param("flagId") flagId: UUID): List<HiddenPhotoCount>
+
     fun existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(
         targetKindWire: String,
         targetId: UUID,
         statusWire: String,
         id: UUID,
     ): Boolean
+}
+
+interface HiddenPhotoCount {
+    val eventId: UUID
+    val hidden: Long
 }

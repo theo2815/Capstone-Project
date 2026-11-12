@@ -3,14 +3,19 @@ package com.quickpitik.service.admin
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AdminProperties
+import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.admin.CopySampleDto
+import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.entity.AdminDecisionLog
+import com.quickpitik.entity.BatchRelevance
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Flag
 import com.quickpitik.entity.FlagStatus
 import com.quickpitik.entity.FlagTargetKind
 import com.quickpitik.entity.Photo
+import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.PhotographerMessageKind
@@ -19,10 +24,15 @@ import com.quickpitik.entity.Role
 import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.AdminDecisionLogRepository
+import com.quickpitik.repository.BatchMetadataRow
+import com.quickpitik.repository.BatchRelevanceRepository
+import com.quickpitik.repository.CopySampleRow
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
+import com.quickpitik.repository.HiddenPhotoCount
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -37,6 +47,7 @@ import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
@@ -45,6 +56,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 // The flag queue mutates photos (hide → HIDDEN, dismiss/resolve of a hidden
 // flag → LIVE again). These pin the transition table and the cascade so a
@@ -61,6 +73,7 @@ class AdminFlagServiceTest {
     private lateinit var adminDecisionLogRepository: AdminDecisionLogRepository
     private lateinit var photographerMessageRepository: PhotographerMessageRepository
     private lateinit var eventPublisher: ApplicationEventPublisher
+    private lateinit var batchRelevanceRepository: BatchRelevanceRepository
 
     private val adminId = UUID.randomUUID()
 
@@ -77,6 +90,7 @@ class AdminFlagServiceTest {
         adminDecisionLogRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
         photographerMessageRepository = Mockito.mock(PhotographerMessageRepository::class.java)
         eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
+        batchRelevanceRepository = Mockito.mock(BatchRelevanceRepository::class.java)
         Mockito.`when`(adminDecisionLogRepository.save(anyArg())).thenAnswer { it.getArgument(0) }
         Mockito.`when`(photographerMessageRepository.save(anyArg())).thenAnswer { it.getArgument(0) }
         Mockito.`when`(eventRepository.findAllById(anyArg())).thenReturn(emptyList())
@@ -97,6 +111,8 @@ class AdminFlagServiceTest {
         AdminProperties(flagsEnabled = flagsEnabled),
         AdminDecisionLogService(adminDecisionLogRepository, photographerMessageRepository, eventPublisher),
         eventPublisher,
+        batchRelevanceRepository,
+        RelevanceProperties(),
     )
 
     private fun photo(status: PhotoStatus = PhotoStatus.LIVE, watermarkKey: String? = null) = Photo(
@@ -409,5 +425,200 @@ class AdminFlagServiceTest {
                 assertFalse(forbidden in text, "note must not carry '$forbidden': $text")
             }
         }
+    }
+
+    // ─── PE-2.3: the evidence behind a relevance flag ─────────────────────
+    private val raceDate = LocalDate.of(2027, 1, 10)
+    private val race = Event(slug = "cebu-race", name = "Cebu Race 2027", date = raceDate, location = "Cebu City", status = EventStatus.ACTIVE)
+    private val otherId = UUID.randomUUID()
+
+    private fun readable(f: Flag): Flag = f.also { Mockito.`when`(flagRepository.findById(it.id)).thenReturn(Optional.of(it)) }
+
+    private fun linkedBatch(f: Flag, event: Event = race, shared: Boolean = true) = BatchRelevance(
+        eventId = event.id, photographerId = photographerId,
+        level = "LOW", copyLow = true, dateLow = if (shared) true else null, photosLive = 20, lookups = 20, tightHits = 9, weakHits = 2,
+        exactMatches = 1, xmpMatches = 0,
+        datedPhotos = if (shared) 12 else null, datedOutside = if (shared) 11 else null, metadataPending = if (shared) 0 else null,
+        bibbedPhotos = 5, bibOverlapPhotos = 1, scoredAt = OffsetDateTime.parse("2027-01-15T02:00:00Z"),
+        flagId = f.id, flaggedAt = OffsetDateTime.parse("2027-01-15T02:00:00Z"),
+    ).also { Mockito.`when`(batchRelevanceRepository.findByFlagId(f.id)).thenReturn(listOf(it)) }
+
+    private fun pic(eventId: UUID = race.id, owner: UUID? = photographerId, key: String? = "wm/${UUID.randomUUID()}.jpg") =
+        Photo(eventId = eventId, s3Key = "orig/${UUID.randomUUID()}.jpg", pricePhp = BigDecimal.TEN, watermarkS3Key = key)
+            .apply { photographerId = owner }
+
+    private fun sample(photo: UUID, match: UUID? = null, distance: Int? = null, pair: String? = null, exact: UUID? = null) =
+        object : CopySampleRow {
+            override val photoId = photo
+            override val matchPhotoId = match
+            override val distance = distance
+            override val pair = pair
+            override val exactPhotoId = exact
+        }
+
+    private fun meta(photo: UUID, takenOn: LocalDate?, state: PhotoMetadataState = PhotoMetadataState.READY) = object : BatchMetadataRow {
+        override val photoId = photo
+        override val state = state
+        override val fields = takenOn?.let { PhotoMetadataFields(takenAtLocal = it.atTime(7, 0), takenAtOffset = "+08:00") }
+    }
+
+    private fun known(vararg photos: Photo) {
+        Mockito.`when`(photoRepository.findAllById(anyArg())).thenReturn(photos.toList())
+        Mockito.`when`(storageService.presignedGetUrl(anyString(), anyArg())).thenAnswer { "signed:" + it.getArgument<String>(0) }
+        val other = User(id = otherId, email = "o@example.com", passwordHash = "x", name = "Maria Santos", role = Role.PHOTOGRAPHER)
+        Mockito.`when`(userRepository.findAllById(anyArg())).thenReturn(listOf(other))
+        Mockito.`when`(photographerSettingsRepository.findAllById(anyArg())).thenReturn(listOf(PhotographerSettings(userId = otherId, handle = "othershots")))
+    }
+
+    // The single copy sample of a one-batch relevance flag on the race.
+    private fun copySampleOf(row: CopySampleRow, vararg photos: Photo): CopySampleDto {
+        val f = readable(relevanceFlag())
+        val batch = linkedBatch(f)
+        Mockito.`when`(eventRepository.findAllById(anyArg())).thenReturn(listOf(race))
+        Mockito.`when`(batchRelevanceRepository.copySamples(batch.id, 12)).thenReturn(listOf(row))
+        known(*photos)
+        return service().relevanceEvidence(f.id).batches.single().copySamples.single()
+    }
+
+    @Test
+    fun `relevance evidence lists each linked batch with its counts and samples`() {
+        val f = readable(relevanceFlag(held = true))
+        val batch = linkedBatch(f)
+        Mockito.`when`(eventRepository.findAllById(anyArg())).thenReturn(listOf(race))
+        val mine = pic()
+        val theirs = pic(owner = otherId)
+        val inWindow = pic()
+        val outside = pic()
+        Mockito.`when`(batchRelevanceRepository.copySamples(batch.id, 12)).thenReturn(listOf(sample(mine.id, theirs.id, 2, "CLEAN")))
+        Mockito.`when`(batchRelevanceRepository.metadataRows(race.id, photographerId)).thenReturn(listOf(
+            meta(inWindow.id, raceDate.plusDays(1)),
+            meta(outside.id, LocalDate.of(2026, 12, 1)),
+            meta(pic().id, null, PhotoMetadataState.PENDING),
+        ))
+        Mockito.`when`(flagRepository.countHiddenPhotosByEvent(f.id)).thenReturn(listOf(object : HiddenPhotoCount {
+            override val eventId = race.id
+            override val hidden = 3L
+        }))
+        known(mine, theirs, inWindow, outside)
+
+        val dto = service().relevanceEvidence(f.id)
+
+        assertEquals(f.id, dto.flagId)
+        assertEquals(f.payoutHoldAt.toString(), dto.payoutHoldAt)
+        val b = dto.batches.single()
+        assertEquals(race.id, b.eventId)
+        assertEquals("Cebu Race 2027", b.eventName)
+        assertEquals("2027-01-10", b.eventDate)
+        assertTrue(b.sharedRace)
+        assertEquals("LOW", b.level)
+        assertEquals(listOf(20, 20, 9, 2, 1, 0), listOf(b.photosLive, b.lookups, b.tightHits, b.weakHits, b.exactMatches, b.xmpMatches))
+        assertEquals(listOf(12, 11, 0, 5, 1), listOf(b.datedPhotos, b.datedOutside, b.metadataPending, b.bibbedPhotos, b.bibOverlapPhotos))
+        assertEquals("2027-01-15T02:00Z", b.scoredAt)
+        assertEquals(3, b.hiddenPhotos)
+        val copy = b.copySamples.single()
+        assertEquals(mine.id, copy.photoId)
+        assertEquals("signed:${mine.watermarkS3Key}", copy.thumbnailUrl)
+        assertEquals(theirs.id, copy.matchPhotoId)
+        assertEquals("signed:${theirs.watermarkS3Key}", copy.matchThumbnailUrl)
+        assertEquals("othershots", copy.matchPhotographerHandle)
+        assertEquals(2, copy.distance)
+        assertEquals("CLEAN", copy.pair)
+        assertFalse(copy.exact)
+        val date = b.dateSamples.single() // only the photo outside the window
+        assertEquals(outside.id, date.photoId)
+        assertEquals("2026-12-01", date.takenOn)
+        assertEquals("signed:${outside.watermarkS3Key}", date.thumbnailUrl)
+    }
+
+    @Test
+    fun `a copy sample names the other photographer and a deleted match shows no thumbnail`() {
+        val mine = pic()
+        val trashed = pic(owner = otherId).apply { deletedAt = OffsetDateTime.now() }
+        val copy = copySampleOf(sample(mine.id, trashed.id, 1, "CENTRE"), mine, trashed)
+        assertEquals(trashed.id, copy.matchPhotoId)
+        assertNull(copy.matchThumbnailUrl)
+        assertEquals("othershots", copy.matchPhotographerHandle)
+    }
+
+    @Test
+    fun `a match whose row is gone keeps its id and shows no thumbnail and no handle`() {
+        val mine = pic()
+        val gone = UUID.randomUUID()
+        val copy = copySampleOf(sample(mine.id, gone, 0, "CLEAN"), mine)
+        assertEquals(gone, copy.matchPhotoId)
+        assertNull(copy.matchThumbnailUrl)
+        assertNull(copy.matchPhotographerHandle)
+    }
+
+    @Test
+    fun `a match kept as a privacy tombstone shows no thumbnail`() {
+        val mine = pic()
+        val tombstone = pic(owner = otherId, key = null).apply { deletedAt = OffsetDateTime.now() }
+        val copy = copySampleOf(sample(mine.id, tombstone.id, 3, "MARKED"), mine, tombstone)
+        assertNull(copy.matchThumbnailUrl)
+    }
+
+    @Test
+    fun `a match whose photographer is gone shows no handle`() {
+        val mine = pic()
+        val ownerless = pic(owner = null)
+        val copy = copySampleOf(sample(mine.id, ownerless.id, 0, "CLEAN"), mine, ownerless)
+        assertEquals("signed:${ownerless.watermarkS3Key}", copy.matchThumbnailUrl)
+        assertNull(copy.matchPhotographerHandle)
+    }
+
+    @Test
+    fun `an exact copy in another event names its photographer and its event`() {
+        val mine = pic()
+        val elsewhere = UUID.randomUUID()
+        val original = pic(eventId = elsewhere, owner = otherId)
+        val copy = copySampleOf(sample(mine.id, exact = original.id), mine, original)
+        assertTrue(copy.exact)
+        assertNull(copy.matchPhotoId)
+        assertNull(copy.distance)
+        assertEquals(original.id, copy.exactPhotoId)
+        assertEquals("signed:${original.watermarkS3Key}", copy.exactThumbnailUrl)
+        assertEquals("othershots", copy.exactPhotographerHandle)
+        assertEquals(elsewhere, copy.exactEventId)
+    }
+
+    @Test
+    fun `an own event carries no date counts`() {
+        val own = Event(slug = "own", name = "My Shoot", date = raceDate, location = "Cebu", status = EventStatus.ACTIVE, createdBy = photographerId)
+        val f = readable(relevanceFlag())
+        linkedBatch(f, own, shared = false)
+        Mockito.`when`(eventRepository.findAllById(anyArg())).thenReturn(listOf(own))
+
+        val b = service().relevanceEvidence(f.id).batches.single()
+
+        assertFalse(b.sharedRace)
+        assertNull(b.datedPhotos)
+        assertNull(b.datedOutside)
+        assertNull(b.dateLow)
+        assertTrue(b.dateSamples.isEmpty())
+        Mockito.verify(batchRelevanceRepository, Mockito.never()).metadataRows(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a flag of another kind has no batches`() {
+        val photoFlag = readable(flag(FlagStatus.OPEN))
+        val otherReason = readable(targetFlag(FlagTargetKind.USER, photographerId))
+
+        for (f in listOf(photoFlag, otherReason)) {
+            val dto = service().relevanceEvidence(f.id)
+            assertEquals(f.id, dto.flagId)
+            assertTrue(dto.batches.isEmpty())
+        }
+        Mockito.verifyNoInteractions(batchRelevanceRepository)
+    }
+
+    @Test
+    fun `the evidence read answers not found for an unknown flag and is refused while the flags switch is off`() {
+        val missing = UUID.randomUUID()
+        Mockito.`when`(flagRepository.findById(missing)).thenReturn(Optional.empty())
+        val notFound = assertFailsWith<NotFoundException> { service().relevanceEvidence(missing) }
+        assertEquals(ErrorCodes.FLAG_NOT_FOUND, notFound.code)
+        val off = assertFailsWith<ApiException> { service(flagsEnabled = false).relevanceEvidence(missing) }
+        assertEquals(ErrorCodes.FLAGS_DISABLED, off.code)
     }
 }
