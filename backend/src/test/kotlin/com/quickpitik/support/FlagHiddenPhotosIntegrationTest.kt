@@ -211,6 +211,9 @@ class FlagHiddenPhotosIntegrationTest : PostgresIntegrationTest() {
         batch(e, me, flag)
         val p = photo(e, me)
         flagAdmin.hideBatch(admin, flag, e, null)
+        // Setup must have worked, or the race below proves nothing.
+        assertEquals("HIDDEN", status(p))
+        assertEquals(1, count("SELECT count(*) FROM flag_hidden_photos WHERE flag_id = ? AND photo_id = ? AND restored_at IS NULL", flag, p))
         val photoFlag = jdbc.queryForObject(
             "INSERT INTO flags (target_kind, target_id, reason, status) VALUES ('photo', ?, 'other', 'hidden') RETURNING id", UUID::class.java, p,
         )!!
@@ -227,6 +230,9 @@ class FlagHiddenPhotosIntegrationTest : PostgresIntegrationTest() {
         batch(e, me, flag)
         val p = photo(e, me)
         flagAdmin.hideBatch(admin, flag, e, null)
+        // Setup must have worked, or the race below proves nothing.
+        assertEquals("HIDDEN", status(p))
+        assertEquals(1, count("SELECT count(*) FROM flag_hidden_photos WHERE flag_id = ? AND photo_id = ? AND restored_at IS NULL", flag, p))
         val photoFlag = jdbc.queryForObject(
             "INSERT INTO flags (target_kind, target_id, reason) VALUES ('photo', ?, 'other') RETURNING id", UUID::class.java, p,
         )!!
