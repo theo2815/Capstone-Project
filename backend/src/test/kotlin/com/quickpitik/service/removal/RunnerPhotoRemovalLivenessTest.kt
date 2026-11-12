@@ -39,6 +39,7 @@ class RunnerPhotoRemovalLivenessTest {
         mock(com.quickpitik.repository.PhotoRemovalItemRepository::class.java), mock(com.quickpitik.repository.PhotoRepository::class.java),
         mock(com.quickpitik.repository.UserRepository::class.java), mock(com.quickpitik.repository.EventRepository::class.java),
         org.springframework.transaction.support.TransactionTemplate(),
+        mock(com.quickpitik.service.admin.SystemFlagService::class.java),
     )
 
     private fun cmd(consent: Boolean = true, version: String = "1.3") = StartRunnerLivenessCommand(eventId, consent, version)

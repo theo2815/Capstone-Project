@@ -192,6 +192,30 @@ class PhotoRemovalMatchingIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, result["items"].size())
     }
 
+    // RD-6: a runner submit that met an AI error leaves a DRAFT with its evidence installed and MATCHING_UNAVAILABLE.
+    @Test fun `an admin can match and verify a DRAFT runner case from its stored evidence`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val target = photo(owner, "runner-face")
+        val runner = user(Role.RUNNER)
+        val id = UUID.randomUUID()
+        val creation = UUID.randomUUID()
+        requests.saveAndFlush(PhotoRemovalRequest(id = id, eventId = event.id, eventIdSnapshot = event.id, eventNameSnapshot = event.name,
+            requesterUserId = runner.id, requesterContact = runner.email, supportReference = "Runner request", requesterReason = "PRIVACY",
+            publicToOwnerReason = "Privacy removal request", creatorId = runner.id, creationCommandId = creation,
+            source = RemovalRequestSource.RUNNER, livenessBand = RunnerLivenessBand.PASS,
+            riskFlags = mutableListOf(RunnerRiskFlag.MATCHING_UNAVAILABLE.name),
+            evidenceKey = PhotoRemovalEvidenceService.recordedEvidenceKey(id, creation), evidenceContentType = "image/jpeg",
+            evidenceGeneration = 1, evidenceCleanupState = RemovalEvidenceCleanupState.PRESENT))
+        provider(FacesSearchResult(listOf(FaceMatch("runner-face", similarity = 0.95))))
+
+        assertEquals(setOf(target.id), ids(match(current(id))))
+        val verified = service.verify(admin.id, id, VerifyRemovalCommand(UUID.randomUUID(), current(id).version, "Runner live check",
+            "Matched from the runner's reference image", listOf(VerifyRemovalSelection(target.id, RemovalMatchSource.SELFIE))))
+        assertEquals(RemovalRequestStatus.OPEN to RemovalRequestSource.RUNNER, verified.status to verified.source)
+        assertEquals(listOf(target.id), verified.items.map { it.photoIdSnapshot })
+        assertFalse(verified.items.single().autoHidden) // an admin verified it
+    }
+
     @Test fun `no face differs from zero qualifying matches and provider errors`() {
         val case = case()
         provider(mapper.readValue("{\"matches\":[],\"noFaces\":true}", FacesSearchResult::class.java))

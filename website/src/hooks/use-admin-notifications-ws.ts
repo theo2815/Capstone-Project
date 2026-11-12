@@ -21,7 +21,7 @@ import { useAdminWsStatusStore } from "@/store/admin-ws-status-store";
 //   - event_change_requested  so the V46 event requests queue and its counts
 //                             refresh without a reload.
 //
-//   - dispute_filed / payout_report_filed → invalidate the matching Query
+//   - dispute_filed / dispute_withdrawn / payout_report_filed → invalidate the matching Query
 //     lists and KPI counts so incoming work is visible immediately.
 //
 // Reconnect policy mirrors usePhotographerNotificationsWs — indefinite
@@ -33,6 +33,7 @@ interface AdminInboxFrame {
   type:
     | "verification_submitted"
     | "dispute_filed"
+    | "dispute_withdrawn"
     | "payout_report_filed"
     | "event_submitted"
     | "event_change_requested"
@@ -113,6 +114,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
               void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
               break;
             case "dispute_filed":
+            case "dispute_withdrawn":
               void queryClient.invalidateQueries({ queryKey: ["admin", "disputes"] });
               void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
               break;

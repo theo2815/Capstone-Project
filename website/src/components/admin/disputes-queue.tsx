@@ -12,47 +12,23 @@ import {
   PhotoPreviewCard,
   type PhotoPreviewItem,
 } from "@/components/photos/photo-preview-card";
-import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
+import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminDisputeActivityList } from "@/components/admin/admin-dispute-activity-list";
-import { AdminResolveDisputeModal } from "@/components/admin/admin-resolve-dispute-modal";
-import { AdminRefundConfirmModal } from "@/components/admin/admin-refund-confirm-modal";
-import { AdminDenyDisputeModal } from "@/components/admin/admin-deny-dispute-modal";
-import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
-import { AdminRefundPanel } from "@/components/admin/admin-refund-panel";
-import { useAdminDisputes, useDisputeActions, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
+import { AdminDisputeActionAside } from "@/components/admin/admin-dispute-action-aside";
+import { useAdminDispute, useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useUrlState } from "@/hooks/use-url-state";
-import { useToast } from "@/hooks/use-toast";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import {
   type Dispute,
   type DisputeResolution,
-  type DisputeStatus,
   DISPUTE_REASON_LABEL,
   DISPUTE_RESOLUTION_LABEL,
+  DISPUTE_STATUS_LABEL,
+  disputeStatusTone,
 } from "@/lib/admin-disputes";
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
-
-const STATUS_LABEL: Record<DisputeStatus, string> = {
-  open: "Open",
-  resolved: "Resolved",
-  denied: "Denied",
-  escalated: "Escalated",
-};
-
-function statusTone(status: DisputeStatus): AdminStatusPillTone {
-  switch (status) {
-    case "open":
-      return "amber";
-    case "resolved":
-      return "fresh";
-    case "denied":
-      return "ink";
-    case "escalated":
-      return "slate";
-  }
-}
 
 const PAYMENT_LABEL: Record<string, string> = {
   gcash: "GCash",
@@ -62,40 +38,24 @@ const PAYMENT_LABEL: Record<string, string> = {
   grabpay: "GrabPay",
 };
 
-interface PendingResolve {
-  resolution: DisputeResolution;
-  refundAmount: number | null;
-  note: string;
-}
-
 // Disputes queue body — extracted from /admin/disputes/page.tsx so the
 // universal /admin/inbox can render the same four slabs (Open / Resolved
 // / Denied / Escalated) under the chip filter. Header stays on the
 // dedicated page; this component renders only the slab stack.
 //
 // Phase 3 adds a focus-mode drawer. Card click → drawer with full
-// detail (claim, photo, parties, activity log) and Resolve/Deny/Escalate
-// in the footer. URL state via ?row=<disputeId>. The dedicated route
-// /admin/disputes/[id] still works as a deep-link backup. Modal stack
-// (resolve → refund-confirm) is owned at queue level so the drawer's ESC
-// can stand down via escDisabled while any modal is on top.
+// detail (claim, photo, parties, activity log) and the shared
+// <AdminDisputeActionAside> in the footer. URL state via ?row=<disputeId>;
+// the old /admin/disputes/[id] route redirects here. The aside owns its
+// modals and reports when one is open, so the drawer's ESC stands down.
 
 export function DisputesQueue() {
-  const { resolve, deny, escalate, isPending, pendingAction } = useDisputeActions();
   const query = useAdminDisputes();
   const effective = query.data ?? EMPTY_DISPUTES;
-  const { showToast } = useToast();
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
-  const submitting = isPending(rowId);
-  const [resolveOpen, setResolveOpen] = useState(false);
-  const [denyOpen, setDenyOpen] = useState(false);
-  const [escalateOpen, setEscalateOpen] = useState(false);
-  // The Mark refunded confirm lives inside the drawer actions; the drawer must ignore Esc while it is up.
-  const [refundConfirmOpen, setRefundConfirmOpen] = useState(false);
-  const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(
-    null,
-  );
+  // Any aside dialog (resolve, refund confirm, deny, escalate, refund panel) is open; the drawer must ignore Esc.
+  const [asideDialogOpen, setAsideDialogOpen] = useState(false);
 
   const byId = useMemo(() => {
     const map = new Map<string, Dispute>();
@@ -103,14 +63,19 @@ export function DisputesQueue() {
     return map;
   }, [effective]);
 
+  // A ?row= link to a dispute outside the loaded list is fetched by id.
+  const fallbackId = query.isSuccess && rowId && !byId.has(rowId) ? rowId : "";
+  const fallback = useAdminDispute(fallbackId);
+
   const openRow = useMemo<Dispute | null>(() => {
     if (!rowId) return null;
-    return byId.get(rowId) ?? null;
-  }, [rowId, byId]);
+    return byId.get(rowId) ?? (fallbackId ? fallback.data ?? null : null);
+  }, [rowId, byId, fallbackId, fallback.data]);
 
+  // Close only when the server says the dispute does not exist.
   useEffect(() => {
-    if (query.isSuccess && !query.isFetching && rowId && !openRow) setRowId("");
-  }, [query.isSuccess, query.isFetching, rowId, openRow, setRowId]);
+    if (fallbackId && fallback.isSuccess && fallback.data === null) setRowId("");
+  }, [fallbackId, fallback.isSuccess, fallback.data, setRowId]);
 
   const open = useMemo(
     () =>
@@ -141,8 +106,7 @@ export function DisputesQueue() {
     [effective],
   );
 
-  const drawerEscDisabled =
-    resolveOpen || denyOpen || escalateOpen || pendingResolve !== null || refundConfirmOpen;
+  const drawerEscDisabled = asideDialogOpen;
 
   // Pagination — load-more model. Open keeps full visibility because
   // that's where the triage flow + J/K nav land. Read-only history slabs
@@ -198,64 +162,6 @@ export function DisputesQueue() {
   function handleOpenRow(id: string) {
     setFocusedId(id);
     setRowId(id);
-  }
-
-  async function handleContinueResolve(args: PendingResolve) {
-    if (!openRow || submitting) return;
-    if (args.resolution === "deny") {
-      const ok = await resolve(openRow.id, {
-        resolution: "deny",
-        refundAmount: null,
-        reason: args.note,
-      });
-      if (!ok) return;
-      setResolveOpen(false);
-      showToast({
-        kind: "info",
-        message: `Closed without refund · ${openRow.id}`,
-      });
-      return;
-    }
-    setPendingResolve(args);
-  }
-
-  async function handleConfirmRefund() {
-    if (!openRow || !pendingResolve || submitting) return;
-    const confirmed = await resolve(openRow.id, {
-      resolution: pendingResolve.resolution,
-      refundAmount: pendingResolve.refundAmount,
-      reason: pendingResolve.note,
-    });
-    if (!confirmed) return;
-    setPendingResolve(null);
-    setResolveOpen(false);
-    const refunded = confirmed.status === "resolved" && confirmed.refundAmount !== null;
-    showToast({
-      kind: refunded ? "success" : "info",
-      message: refunded
-        ? `Refunded · ${confirmed.id} · ${formatPrice(confirmed.refundAmount!)}`
-        : `Refund requested · ${confirmed.id}`,
-    });
-  }
-
-  function handleCancelRefund() {
-    setPendingResolve(null);
-  }
-
-  async function handleDeny(reason: string) {
-    if (!openRow || submitting) return;
-    const ok = await deny(openRow.id, reason);
-    if (!ok) return;
-    setDenyOpen(false);
-    showToast({ kind: "info", message: `Denied · ${openRow.id}` });
-  }
-
-  async function handleEscalate(note: string | null) {
-    if (!openRow || submitting) return;
-    const ok = await escalate(openRow.id, note);
-    if (!ok) return;
-    setEscalateOpen(false);
-    showToast({ kind: "info", message: `Escalated · ${openRow.id}` });
   }
 
   if (query.isPending) return <p role="status" className="py-6">Loading disputes…</p>;
@@ -351,73 +257,28 @@ export function DisputesQueue() {
           }
           rightHeader={
             <AdminStatusPill
-              label={STATUS_LABEL[openRow.status]}
-              tone={statusTone(openRow.status)}
+              label={DISPUTE_STATUS_LABEL[openRow.status]}
+              tone={disputeStatusTone(openRow.status)}
             />
           }
           subtitle={<DisputeSubtitle dispute={openRow} />}
           actions={
-            <DisputeDrawerActions
-              dispute={openRow}
-              submitting={submitting}
-              onResolve={() => setResolveOpen(true)}
-              onDeny={() => setDenyOpen(true)}
-              onEscalate={() => setEscalateOpen(true)}
-              onRefundConfirmOpenChange={setRefundConfirmOpen}
-            />
+            // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
+            <div className="w-full max-h-[50vh] overflow-y-auto p-1">
+              <AdminDisputeActionAside
+                key={openRow.id}
+                dispute={openRow}
+                runnerHandle={openRow.runnerHandle}
+                onDialogOpenChange={setAsideDialogOpen}
+                className=""
+              />
+            </div>
           }
         >
-          {submitting && <p role="status">{pendingAction(rowId)}</p>}
           <DisputeDetailBody dispute={openRow} />
         </AdminDetailDrawer>
       )}
 
-      {openRow && (
-        <>
-          <AdminResolveDisputeModal
-            submitting={submitting}
-            open={resolveOpen}
-            escDisabled={pendingResolve !== null}
-            onClose={() => {
-              setResolveOpen(false);
-              setPendingResolve(null);
-            }}
-            onContinue={handleContinueResolve}
-            disputeId={openRow.id}
-            orderTotal={openRow.orderSnapshot.total}
-            itemChargeAmount={openRow.itemChargeAmount}
-          />
-          {pendingResolve &&
-            pendingResolve.resolution !== "deny" &&
-            pendingResolve.refundAmount !== null && (
-              <AdminRefundConfirmModal
-                submitting={submitting}
-                open={true}
-                onCancel={handleCancelRefund}
-                onConfirm={handleConfirmRefund}
-                amount={pendingResolve.refundAmount}
-                runnerHandle={openRow.runnerHandle}
-                isFull={pendingResolve.resolution === "refund_full"}
-                paymentMethod={openRow.orderSnapshot.paymentMethod}
-              />
-            )}
-          <AdminDenyDisputeModal
-            submitting={submitting}
-            open={denyOpen}
-            onClose={() => setDenyOpen(false)}
-            onSubmit={handleDeny}
-            disputeId={openRow.id}
-          />
-          <AdminEscalateModal
-            submitting={submitting}
-            open={escalateOpen}
-            onClose={() => setEscalateOpen(false)}
-            onSubmit={handleEscalate}
-            targetLabel={`Escalate ${openRow.id}`}
-            body="Push this dispute to the next review tier. The runner sees the dispute remains open while higher-level review takes place."
-          />
-        </>
-      )}
     </>
   );
 }
@@ -498,70 +359,6 @@ function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
       <span className="text-slate-soft"> · </span>
       Reported {formatLongDate(dispute.reportedAt)}
     </p>
-  );
-}
-
-function DisputeDrawerActions({
-  dispute,
-  submitting,
-  onResolve,
-  onDeny,
-  onEscalate,
-  onRefundConfirmOpenChange,
-}: {
-  dispute: Dispute;
-  submitting: boolean;
-  onResolve: () => void;
-  onDeny: () => void;
-  onEscalate: () => void;
-  onRefundConfirmOpenChange: (open: boolean) => void;
-}) {
-  // Every action needs an open dispute: the server escalates open ones only.
-  const isOpen = dispute.status === "open";
-
-  if (!isOpen) {
-    // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
-    if (dispute.refundStatus === "manual_review") return <div className="w-full max-h-[50vh] overflow-y-auto p-1"><AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={onRefundConfirmOpenChange} /></div>;
-    return (
-      <p className="font-sans text-sm text-slate-soft">
-        This dispute is closed. No further actions are available.
-      </p>
-    );
-  }
-
-  return (
-    <>
-      {isOpen && (
-        <button
-          type="button"
-          onClick={onEscalate}
-          disabled={submitting}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Escalate…
-        </button>
-      )}
-      {isOpen && (
-        <button
-          type="button"
-          onClick={onDeny}
-          disabled={submitting}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Deny…
-        </button>
-      )}
-      {isOpen && (
-        <button
-          type="button"
-          onClick={onResolve}
-          disabled={submitting}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Resolve…
-        </button>
-      )}
-    </>
   );
 }
 

@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
-import { fetchAdminDispute } from "@/lib/api-admin";
 import type { Dispute } from "@/lib/admin-disputes";
 import type { PayoutReport } from "@/lib/admin-payout-reports";
 import type { PaginatedResponse } from "@/types/api";
@@ -159,7 +158,7 @@ it("shows manual-review feedback and refreshes disputes after a rejected refund"
   vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([
     { code: "PAYMENT_FAILED", message: "PayMongo rejected this refund. Review the payment manually." },
   ], 409));
-  vi.spyOn(api, "get").mockResolvedValue({ items: [manualReview], total: 1 });
+  vi.spyOn(api, "get").mockImplementation(async (path) => path === `/admin/disputes/${dispute.id}` ? manualReview : { items: [manualReview], total: 1 });
   const { result } = renderHook(() => ({
     list: useAdminDisputes(),
     detail: useAdminDispute(dispute.id),
@@ -253,23 +252,45 @@ it("scopes report reads to the authenticated photographer and ignores the prior 
   expect(client.getQueryData(payoutReportKeys.photographerList("photographer-a"))).toBeUndefined();
 });
 
-it("finds a direct dispute link beyond the first page and returns null only after exhausting the list", async () => {
-  vi.spyOn(api, "get")
-    .mockResolvedValueOnce({ items: [{ ...dispute, id: "another-dispute" }], total: 2 })
-    .mockResolvedValueOnce({ items: [dispute], total: 2 })
-    .mockResolvedValueOnce({ items: [dispute], total: 1 });
-  expect(await fetchAdminDispute(dispute.id)).toEqual(dispute);
-  expect(api.get).toHaveBeenNthCalledWith(2, "/admin/disputes?offset=1&limit=200");
-  expect(await fetchAdminDispute("missing")).toBeNull();
+it("useAdminDispute fetches one dispute by id", async () => {
+  const get = vi.spyOn(api, "get").mockResolvedValueOnce(dispute);
+  const { result } = renderHook(() => useAdminDispute(dispute.id), { wrapper: Wrapper });
+  await waitFor(() => expect(result.current.data).toEqual(dispute));
+  expect(get).toHaveBeenCalledTimes(1);
+  expect(get).toHaveBeenCalledWith(`/admin/disputes/${dispute.id}`, expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });
 
-it("stops a deep-link lookup from requesting more pages after its query is cancelled", async () => {
-  const response = deferred<unknown>();
-  vi.spyOn(api, "get").mockReturnValueOnce(response.promise);
-  const controller = new AbortController();
-  const pending = fetchAdminDispute(dispute.id, controller.signal);
-  controller.abort();
-  response.resolve({ items: [{ ...dispute, id: "other" }], total: 2 });
-  await expect(pending).rejects.toThrow();
-  expect(api.get).toHaveBeenCalledTimes(1);
+it.each([404, 400])("useAdminDispute returns null on 404, and on 400 for a malformed id (%s)", async (status) => {
+  vi.spyOn(api, "get").mockRejectedValueOnce(new ApiError([{ code: "DISPUTE_NOT_FOUND", message: "Not found" }], status));
+  const { result } = renderHook(() => useAdminDispute("not-a-uuid"), { wrapper: Wrapper });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(result.current.data).toBeNull();
+});
+
+const queuePage: PaginatedResponse<Dispute> = { items: [dispute], total: 1, offset: 0, limit: 50 };
+
+it("after an action every cached queue page refetches", async () => {
+  const pageKey = adminDisputeKeys.page(admin.id, { view: "needs_me" });
+  client.setQueryData(adminDisputeKeys.list(admin.id), [dispute]);
+  client.setQueryData(pageKey, queuePage);
+  vi.spyOn(api, "post").mockResolvedValueOnce(confirmedDispute);
+  const { result } = renderHook(() => useDisputeActions(), { wrapper: Wrapper });
+
+  await act(async () => { expect(await result.current.deny(dispute.id, reason)).toBe(true); });
+
+  // The page shape is left for the refetch, never rewritten as if it were an array.
+  expect(client.getQueryData(pageKey)).toEqual(queuePage);
+  expect(client.getQueryState(pageKey)?.isInvalidated).toBe(true);
+  expect(client.getQueryData(adminDisputeKeys.list(admin.id))).toEqual([confirmedDispute]);
+});
+
+it("a 409 refetches every cached queue page", async () => {
+  const pageKey = adminDisputeKeys.page(admin.id, { view: "refund_run", offset: 50 });
+  client.setQueryData(pageKey, queuePage);
+  vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", message: "Someone else acted on this dispute." }], 409));
+  const { result } = renderHook(() => useDisputeActions(), { wrapper: Wrapper });
+
+  await act(async () => { expect(await result.current.deny(dispute.id, reason)).toBe(false); });
+
+  expect(client.getQueryState(pageKey)?.isInvalidated).toBe(true);
 });

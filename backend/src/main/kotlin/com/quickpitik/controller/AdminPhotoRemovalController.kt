@@ -1,6 +1,7 @@
 package com.quickpitik.controller
 
 import com.quickpitik.dto.removal.*
+import com.quickpitik.entity.RemovalRequestSource
 import com.quickpitik.entity.RemovalRequestStatus
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
@@ -34,9 +35,10 @@ class AdminPhotoRemovalController(
     @GetMapping
     fun list(@AuthenticationPrincipal principal: AuthPrincipal, @RequestParam(required = false) eventId: UUID?,
         @RequestParam(required = false) status: RemovalRequestStatus?, @RequestParam(required = false) needsAction: Boolean?,
-        @RequestParam(required = false) offset: Int?, @RequestParam(required = false) limit: Int?, response: HttpServletResponse): RemovalPage<PhotoRemovalRequestDto> {
+        @RequestParam(required = false) offset: Int?, @RequestParam(required = false) limit: Int?,
+        @RequestParam(required = false) source: RemovalRequestSource?, response: HttpServletResponse): RemovalPage<PhotoRemovalRequestDto> {
         limit(principal, response)
-        return queries.list(principal.userId, eventId, status, needsAction, offset, limit)
+        return queries.list(principal.userId, eventId, status, needsAction, offset, limit, source)
     }
 
     @GetMapping("/{id}")
@@ -100,6 +102,14 @@ class AdminPhotoRemovalController(
         @Valid @RequestBody command: VerifyRemovalCommand, response: HttpServletResponse): PhotoRemovalRequestDto {
         limit(principal, response, Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD)
         return service.verify(principal.userId, id, command)
+    }
+
+    // RD-6: promote, dismiss or demote the items of an open runner case.
+    @PostMapping("/{id}/suggestions")
+    fun suggestions(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID,
+        @Valid @RequestBody command: ReviewSuggestionsCommand, response: HttpServletResponse): PhotoRemovalRequestDto {
+        limit(principal, response, Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD)
+        return service.reviewSuggestions(principal.userId, id, command)
     }
 
     private fun limit(principal: AuthPrincipal, response: HttpServletResponse, policy: String = Bucket4jRateLimiter.POLICY_ORDER_READ) {

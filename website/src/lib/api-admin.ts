@@ -47,7 +47,8 @@ const ADMIN_LIST_LIMIT = 200;
 //   POST   /api/v1/admin/users/{id}/suspend      { reason } → AdminUserRow
 //   POST   /api/v1/admin/users/{id}/unsuspend              → AdminUserRow
 //
-//   GET    /api/v1/admin/disputes?status=&offset=&limit=   → PaginatedResponse<Dispute>
+//   GET    /api/v1/admin/disputes?status=&view=&q=&offset=&limit= → PaginatedResponse<Dispute>
+//   GET    /api/v1/admin/disputes/{id}                     → Dispute (404 when unknown)
 //   POST   /api/v1/admin/disputes/{id}/resolve   { resolution, refundAmount?, reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/deny      { reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/escalate  { reason } → Dispute
@@ -335,7 +336,16 @@ export type AdminDisputeStatusFilter =
   | "open"
   | "resolved"
   | "denied"
-  | "escalated";
+  | "escalated"
+  | "withdrawn";
+
+export type AdminDisputeView = "needs_me" | "overdue" | "refund_run" | "closed" | "all";
+
+export interface AdminDisputePageArgs {
+  view?: AdminDisputeView;
+  q?: string;
+  offset?: number;
+}
 
 export interface AdminDisputeListArgs {
   status?: AdminDisputeStatusFilter;
@@ -362,20 +372,24 @@ export async function fetchAdminDisputes(
   return res.items;
 }
 
-// The backend exposes a paginated list, but no GET /disputes/{id}.
-// Deep links must search beyond the first page before declaring a 404.
+// One server page of a queue view; no limit, so the server's default page size decides.
+export async function fetchAdminDisputePage(
+  { view, q, offset, signal }: AdminDisputePageArgs & { signal?: AbortSignal },
+): Promise<PaginatedResponse<Dispute>> {
+  const p = new URLSearchParams();
+  if (view) p.set("view", view);
+  if (q) p.set("q", q);
+  p.set("offset", String(offset ?? 0));
+  return api.get<PaginatedResponse<Dispute>>(`/admin/disputes?${p.toString()}`, { signal });
+}
+
+// Null on 404, and on 400 (a malformed id fails the server's UUID path variable).
 export async function fetchAdminDispute(disputeId: string, signal?: AbortSignal): Promise<Dispute | null> {
-  let offset = 0;
-  while (true) {
-    signal?.throwIfAborted();
-    const page = await api.get<PaginatedResponse<Dispute>>(
-      `/admin/disputes?${buildDisputesQs({ offset })}`,
-    );
-    signal?.throwIfAborted();
-    const dispute = page.items.find((row) => row.id === disputeId);
-    if (dispute) return dispute;
-    offset += page.items.length;
-    if (page.items.length === 0 || offset >= page.total) return null;
+  try {
+    return await api.get<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}`, { signal });
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 404 || error.status === 400)) return null;
+    throw error;
   }
 }
 
