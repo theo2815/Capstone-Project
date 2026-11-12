@@ -9,7 +9,7 @@ import { formatPrice } from "@/lib/utils";
 
 // AA-I20a: a suspended photographer's photo comes back from GET /me/cart?includeUnavailable=true
 // with available: false. It stays visible (with Remove) but is never priced or checked out.
-const http = vi.hoisted(() => ({ get: vi.fn(async () => ({ items: [], total: 0, offset: 0, limit: 200 })), post: vi.fn(async () => ({})) }));
+const http = vi.hoisted(() => ({ get: vi.fn<(path: string) => Promise<unknown>>(async () => ({ items: [], total: 0, offset: 0, limit: 200 })), post: vi.fn(async () => ({})) }));
 vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api: http }));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/events/race", useSearchParams: () => new URLSearchParams(), useRouter: () => ({ push: vi.fn() }),
@@ -17,7 +17,7 @@ vi.mock("next/navigation", () => ({
 
 afterEach(() => {
   cleanup();
-  useCartStore.setState({ items: [] });
+  useCartStore.setState({ items: [], syncEnabled: false });
 });
 
 function Wrapper({ children }: { children: ReactNode }) {
@@ -40,4 +40,16 @@ it("an unavailable row shows 'No longer available' and is left out of the total 
   const { result } = renderHook(() => useCheckoutWorkflow(true), { wrapper: Wrapper });
   expect(result.current.items.map((i) => i.photoId)).toEqual(["live"]);
   expect(result.current.payable).toBe(125);
+});
+
+it("a signed-in cart re-reads the server on open, so a photo suspended since it was added shows as unavailable", async () => {
+  const row = { photoId: "p1", eventId: "e1", eventName: "Race", bib: "101", price: 125, thumbnailUrl: "" };
+  useCartStore.setState({ items: [row], syncEnabled: true });
+  http.get.mockImplementation(async (path: string) =>
+    path === "/me/cart?includeUnavailable=true" ? [{ ...row, available: false }] : { items: [], total: 0, offset: 0, limit: 200 });
+
+  render(<CartModal isOpen onClose={() => {}} />, { wrapper: Wrapper });
+
+  expect(await screen.findByText("No longer available")).toBeInTheDocument();
+  expect(http.get).toHaveBeenCalledWith("/me/cart?includeUnavailable=true");
 });
