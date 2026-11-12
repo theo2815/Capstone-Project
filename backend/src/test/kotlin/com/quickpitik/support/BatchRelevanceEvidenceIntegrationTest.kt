@@ -4,6 +4,7 @@ import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.entity.PhotoMetadata
 import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.repository.BatchRelevanceRepository
+import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PhotoMetadataRepository
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -23,6 +24,7 @@ class BatchRelevanceEvidenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var batches: BatchRelevanceRepository
     @Autowired private lateinit var metadata: PhotoMetadataRepository
     @Autowired private lateinit var jdbc: JdbcTemplate
+    @Autowired private lateinit var flags: FlagRepository
 
     @Test
     fun `a saved capture time comes back equal through the entity mapping`() {
@@ -148,6 +150,78 @@ class BatchRelevanceEvidenceIntegrationTest : PostgresIntegrationTest() {
 
         assertEquals(0L to 0L, overlap(e, me))
     }
+
+    // ─── PE-2.3: the admin's evidence read ───────────────────────────────
+
+    @Test
+    fun `copy samples come nearest first, leave out trashed photos and keep hidden ones`() {
+        val e = event()
+        val theirs = photo(e, photographer())
+        val me = photographer()
+        val batch = batch(e, me)
+        val far = photo(e, me).also { lookup(it, batch, theirs, 3) }
+        val nearest = photo(e, me).also { lookup(it, batch, theirs, 0) }
+        val exactOnly = photo(e, me).also { lookup(it, batch, exact = theirs) }
+        val hidden = photo(e, me, status = "HIDDEN").also { lookup(it, batch, theirs, 1) }
+        photo(e, me, deleted = true).also { lookup(it, batch, theirs, 0) }
+        photo(e, me, removal = "REVIEW").also { lookup(it, batch, theirs, 0) }
+        photo(e, me, status = "PROCESSING").also { lookup(it, batch, theirs, 0) }
+        photo(e, me).also { lookup(it, batch) } // looked up, nothing found: no sample
+
+        val rows = batches.copySamples(batch, 12)
+        assertEquals(listOf(nearest, hidden, far, exactOnly), rows.map { it.photoId })
+        assertEquals(listOf(0, 1, 3, null), rows.map { it.distance })
+        assertEquals(theirs, rows.first().matchPhotoId)
+        assertEquals("CLEAN", rows.first().pair)
+        assertNull(rows.last().matchPhotoId)
+        assertEquals(theirs, rows.last().exactPhotoId)
+        assertEquals(listOf(nearest, hidden), batches.copySamples(batch, 2).map { it.photoId })
+    }
+
+    @Test
+    fun `batches are found by their flag`() {
+        val me = photographer()
+        val flag = flag(me)
+        val linked = listOf(batch(event(), me, flag), batch(event(), me, flag))
+        batch(event(), me)
+        batch(event(), photographer(), flag(photographer()))
+
+        assertEquals(linked.toSet(), batches.findByFlagId(flag).map { it.id }.toSet())
+    }
+
+    @Test
+    fun `the photos a flag hid are counted per event and restored ones are not`() {
+        val me = photographer()
+        val flag = flag(me)
+        val e1 = event()
+        val e2 = event()
+        hide(flag, photo(e1, me))
+        hide(flag, photo(e1, me))
+        hide(flag, photo(e1, me), restored = true)
+        hide(flag, photo(e2, me))
+        hide(flag(me), photo(e2, me)) // another flag's hide
+
+        val counts = flags.countHiddenPhotosByEvent(flag).associate { it.eventId to it.hidden }
+        assertEquals(mapOf(e1 to 2L, e2 to 1L), counts)
+    }
+
+    private fun batch(event: UUID, photographer: UUID, flag: UUID? = null): UUID = id(
+        "INSERT INTO batch_relevance (event_id, photographer_id, flag_id) VALUES (?, ?, ?)", event, photographer, flag,
+    )
+
+    private fun lookup(photo: UUID, batch: UUID, match: UUID? = null, distance: Int? = null, exact: UUID? = null) = jdbc.update(
+        "INSERT INTO batch_relevance_photos (photo_id, batch_id, looked_up_at, match_photo_id, match_distance, match_pair, exact_photo_id) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        photo, batch, NOW, match, distance, match?.let { "CLEAN" }, exact,
+    )
+
+    private fun flag(photographer: UUID): UUID =
+        id("INSERT INTO flags (target_kind, target_id, reason) VALUES ('user', ?, 'batch_relevance_low')", photographer)
+
+    private fun hide(flag: UUID, photo: UUID, restored: Boolean = false) = jdbc.update(
+        "INSERT INTO flag_hidden_photos (flag_id, photo_id, hidden_at, restored_at) VALUES (?, ?, ?, ?)",
+        flag, photo, NOW, if (restored) NOW else null,
+    )
 
     private fun overlap(event: UUID, photographer: UUID): Pair<Long, Long> =
         batches.bibOverlap(event, photographer).let { it.bibbedPhotos to it.bibOverlapPhotos }

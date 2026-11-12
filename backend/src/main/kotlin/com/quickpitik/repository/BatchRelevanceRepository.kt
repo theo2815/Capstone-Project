@@ -251,6 +251,24 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
     """, nativeQuery = true)
     fun bibOverlap(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): BibOverlap
 
+    // PE-2.3: the batches behind one relevance flag (the admin's evidence read).
+    fun findByFlagId(flagId: UUID): List<BatchRelevance>
+
+    // PE-2.3: a batch's look-up rows that found a match or an exact copy, nearest first. Over
+    // `= batch evidence photo` (as batchCounts), so the samples survive a batch hide.
+    @Query(value = """
+        SELECT r.photo_id AS "photoId", r.match_photo_id AS "matchPhotoId",
+               CAST(r.match_distance AS int) AS "distance", r.match_pair AS "pair", r.exact_photo_id AS "exactPhotoId"
+        FROM batch_relevance_photos r
+        JOIN photos p ON p.id = r.photo_id
+        WHERE r.batch_id = :batchId
+          AND (r.match_photo_id IS NOT NULL OR r.exact_photo_id IS NOT NULL)
+          AND p.deleted_at IS NULL AND p.removal_state = 'NONE' AND p.status IN ('LIVE', 'HIDDEN')
+        ORDER BY r.match_distance NULLS LAST, p.uploaded_at, p.id
+        LIMIT :limit
+    """, nativeQuery = true)
+    fun copySamples(@Param("batchId") batchId: UUID, @Param("limit") limit: Int): List<CopySampleRow>
+
     // R2-23: call first inside each look-up transaction with app.relevance.lookup-timeout; the limit ends
     // with the transaction (SET LOCAL), and a timeout fails only that batch's step.
     @Query(value = "SELECT set_config('statement_timeout', CAST(:ms AS text), true)", nativeQuery = true)
@@ -272,6 +290,14 @@ interface BatchMetadataRow {
     val photoId: UUID
     val state: PhotoMetadataState
     val fields: PhotoMetadataFields?
+}
+
+interface CopySampleRow {
+    val photoId: UUID
+    val matchPhotoId: UUID?
+    val distance: Int?
+    val pair: String?
+    val exactPhotoId: UUID?
 }
 
 interface BibOverlap {
