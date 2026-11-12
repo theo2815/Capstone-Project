@@ -34,15 +34,16 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  // AA-I21: the adviser-signed 1.3 text (sign-off 2026-11-11) passes the production guard.
-  it("passes the production guard with version 1.3", () => {
+  // RD-11: the four runner deletion texts hold ASK OWNER until a later legal
+  // version signs them (AA-0.7 O1); RD-15 part B turns this back into a pass.
+  it("the production guard refuses the legal text while the runner deletion copy holds ASK OWNER text", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
         LEGAL_VERSION,
         "production",
       ),
-    ).not.toThrow();
+    ).toThrow(/ASK OWNER: legal 1.3 wording from RD-15/);
     expect(LEGAL_VERSION).toBe("1.3");
   });
 
