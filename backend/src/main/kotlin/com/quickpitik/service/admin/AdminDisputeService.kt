@@ -9,6 +9,7 @@ import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminDisputeDto
 import com.quickpitik.dto.admin.DisputeActivityEntry
+import com.quickpitik.dto.admin.DisputeDenyReasonDto
 import com.quickpitik.dto.admin.DisputeOrderSnapshotDto
 import com.quickpitik.dto.admin.DisputePhotoSnapshotDto
 import com.quickpitik.dto.admin.ResolveDisputeRequest
@@ -200,14 +201,45 @@ class AdminDisputeService(
      * interpolation. That would have left the identical text visible on
      * /orders, so the two runner surfaces would have disagreed for no gain.
      * Confirmed intended 2026-08-14 — do not "fix" it back.
+     *
+     * DW-4: a `reasonCode` (DisputeDenyReason) is stored as its runner text, then
+     * "Note from our team: <note>" when a note is given; `other` stores the note alone.
      */
-    fun deny(adminId: UUID, disputeId: UUID, reason: String?): AdminDisputeDto {
+    fun deny(adminId: UUID, disputeId: UUID, reason: String?, reasonCode: String? = null, note: String? = null): AdminDisputeDto {
+        val code = reasonCode?.trim()?.takeIf { it.isNotEmpty() }
+        val written = reason?.trim()?.takeIf { it.isNotEmpty() }
+        val noteText = note?.trim()?.takeIf { it.isNotEmpty() }
+        val denyReason = code?.let {
+            DisputeDenyReason.fromCode(it) ?: throw ValidationException(message = "Unknown deny reason", field = "reasonCode")
+        }
+        val text: String? = if (denyReason == null) {
+            if (noteText != null) throw ValidationException(message = "A note needs a deny reason code", field = "note")
+            written
+        } else {
+            if (written != null) {
+                throw ValidationException(message = "Send a deny reason code or a written reason, not both", field = "reason")
+            }
+            when {
+                denyReason.noteRequired ->
+                    noteText ?: throw ValidationException(message = "Write the reason the runner will read", field = "note")
+                noteText == null -> denyReason.runnerText
+                else -> "${denyReason.runnerText} Note from our team: $noteText"
+            }
+        }
         val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: throw
             NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
         if (dispute.refundNeedsReconciliation()) {
             // A parked QR Ph refund whose link was sent: the refund service checks the time and needs a reason.
             if (dispute.refundLinkSentAt != null) {
-                paymongoRefundService.cancelUnclaimedRefund(adminId, disputeId, reason)
+                // A policy reason would read wrongly about an approved refund; only a stale tab sends one here.
+                if (denyReason != null) {
+                    throw ApiException(
+                        status = HttpStatus.CONFLICT,
+                        code = ErrorCodes.INVALID_STATE_TRANSITION,
+                        message = "This refund was approved and its link sent. Refresh to see it.",
+                    )
+                }
+                paymongoRefundService.cancelUnclaimedRefund(adminId, disputeId, text)
                 return hydrateOne(dispute)
             }
             throw ApiException(
@@ -236,7 +268,8 @@ class AdminDisputeService(
             adminId = adminId,
             targetDisputeId = dispute.id,
             decision = "denied",
-            reason = reason,
+            reason = text,
+            meta = denyReason?.let { mapOf("reasonCode" to it.code) },
         )
         if (photographerId != null) {
             adminDecisionLogService.pushMessage(
@@ -251,11 +284,18 @@ class AdminDisputeService(
             dispute = dispute,
             kind = RunnerMessageKind.DISPUTE_DENIED,
             body = "Your refund request for photo ${shortPhotoId(dispute.photoId)} was declined." +
-                (reason?.takeIf { it.isNotBlank() }?.let { " Reason: $it" } ?: ""),
+                (text?.let { " Reason: $it" } ?: ""),
             sourceAdminId = adminId,
             sourceDecisionId = decision.id,
         )
         return hydrateOne(dispute)
+    }
+
+    // Every deny reason (plan 5.4); a fixed list, so no transaction.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun denyReasons(): PaginatedResponse<DisputeDenyReasonDto> {
+        val items = DisputeDenyReason.entries.map { DisputeDenyReasonDto(it.code, it.adminLabel, it.runnerText, it.noteRequired) }
+        return PaginatedResponse.of(items, items.size.toLong(), PaginationParams.of(0, items.size))
     }
 
     fun escalate(adminId: UUID, disputeId: UUID, reason: String?): AdminDisputeDto {

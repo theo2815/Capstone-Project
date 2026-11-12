@@ -4,6 +4,7 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminDisputeDto
 import com.quickpitik.dto.admin.DenyDisputeRequest
+import com.quickpitik.dto.admin.DisputeDenyReasonDto
 import com.quickpitik.dto.admin.EscalateDisputeRequest
 import com.quickpitik.dto.admin.ResolveDisputeRequest
 import com.quickpitik.dto.admin.SendRefundLinkRequest
@@ -42,6 +43,9 @@ class AdminDisputesController(
     ): PaginatedResponse<AdminDisputeDto> =
         adminDisputeService.list(view, status, q, PaginationParams.of(offset, limit))
 
+    @GetMapping("/deny-reasons")
+    fun denyReasons(): PaginatedResponse<DisputeDenyReasonDto> = adminDisputeService.denyReasons()
+
     @GetMapping("/{disputeId}")
     fun get(@PathVariable disputeId: UUID): AdminDisputeDto = adminDisputeService.get(disputeId)
 
@@ -77,7 +81,7 @@ class AdminDisputesController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable disputeId: UUID,
         @Valid @RequestBody body: DenyDisputeRequest,
-    ): AdminDisputeDto = adminDisputeService.deny(principal.userId, disputeId, body.reason)
+    ): AdminDisputeDto = adminDisputeService.deny(principal.userId, disputeId, body.reason, body.reasonCode, body.note)
 
     @PostMapping("/{disputeId}/escalate")
     fun escalate(
