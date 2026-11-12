@@ -115,6 +115,16 @@ up (launch it, then poll `docker info` until it succeeds), then run the suite. "
 Docker was down" is not a verified test; only report an integration test unrun if the daemon
 genuinely won't start on this machine, and say so explicitly.
 
+**Before a PR, run locally:** all of `test`, plus the integration classes your change touches or
+adds (`.\gradlew.bat integrationTest --tests "*Payout*"`). The whole integration suite runs on the
+PR's required `integration` check (`.github/workflows/backend-tests.yml`), so wait for that to go
+green rather than running the whole suite on your machine. Run it locally only when the owner asks
+or CI can't run it.
+
+**One integration run per machine at a time.** Each run holds about 4 GB of memory plus its own
+Postgres container, and two at once slow each other down badly. If `docker ps` shows a
+`testcontainers/ryuk` container, another run is going: wait for it to finish.
+
 ### API docs
 
 With the app running, `http://localhost:8080/swagger-ui.html` (spec at `/v3/api-docs`).
