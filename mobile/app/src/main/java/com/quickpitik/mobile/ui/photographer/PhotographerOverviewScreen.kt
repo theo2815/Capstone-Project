@@ -571,16 +571,7 @@ private fun ApprovedHomeBody(
                 Kicker(text = "Billing", color = SlateSoft)
                 Spacer(modifier = Modifier.height(8.dp))
                 val open = balance.openRequest
-                val (line, tone) = when {
-                    open != null && open.status.uppercase() == "HELD" ->
-                        "Payout held — action needed" to StatusTone.Danger
-                    open != null ->
-                        "Payout ${open.status.lowercase().replace('_', ' ')}" to StatusTone.Warning
-                    balance.unpaidBalance >= balance.minimum ->
-                        "Ready to request" to StatusTone.Approved
-                    else ->
-                        "Balance building" to StatusTone.Neutral
-                }
+                val (line, tone) = billingGlanceLine(balance)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -934,5 +925,19 @@ private fun Sparkline(
             color = color,
             style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
         )
+    }
+}
+
+/** The Home billing card's state line. A payout hold (T8, P16) wins over an open request. */
+internal fun billingGlanceLine(balance: PayoutBalanceDto): Pair<String, StatusTone> {
+    val open = balance.openRequest
+    return when {
+        payoutHoldActive(balance) -> "Payouts on hold" to StatusTone.Warning
+        open != null && open.status.uppercase() == "HELD" ->
+            "Payout held — action needed" to StatusTone.Danger
+        open != null ->
+            "Payout ${open.status.lowercase().replace('_', ' ')}" to StatusTone.Warning
+        balance.unpaidBalance >= balance.minimum -> "Ready to request" to StatusTone.Approved
+        else -> "Balance building" to StatusTone.Neutral
     }
 }
