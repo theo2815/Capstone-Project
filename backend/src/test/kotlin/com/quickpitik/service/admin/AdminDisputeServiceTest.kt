@@ -216,6 +216,118 @@ class AdminDisputeServiceTest {
         assertEquals(now.toInstant(), dispute.resolvedAt!!.toInstant())
     }
 
+    // DW-4: deny by reason code (plan 5.4).
+    private fun openForDeny(adminId: UUID, storedText: String?, meta: Map<String, Any?>?): Dispute {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "denied", storedText, meta))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "denied"))
+        return dispute
+    }
+
+    @Test
+    fun `deny by code stores the policy text the runner will read`() {
+        val adminId = UUID.randomUUID()
+        val text = "You picked the wrong photo. Our refund policy doesn't cover a photo chosen by mistake."
+        val dispute = openForDeny(adminId, text, mapOf("reasonCode" to "wrong_photo"))
+
+        service.deny(adminId, dispute.id, null, reasonCode = " wrong_photo ")
+
+        Mockito.verify(decisionLogService).logDisputeDecision(adminId, dispute.id, "denied", text, mapOf("reasonCode" to "wrong_photo"))
+        assertEquals(DisputeStatus.DENIED, dispute.status)
+    }
+
+    @Test
+    fun `deny by code puts the admin's note after the policy text`() {
+        val adminId = UUID.randomUUID()
+        val text = DisputeDenyReason.PREFERENCE.runnerText + " Note from our team: We checked the angle."
+        val dispute = openForDeny(adminId, text, mapOf("reasonCode" to "preference"))
+
+        service.deny(adminId, dispute.id, null, reasonCode = "preference", note = "  We checked the angle. ")
+
+        Mockito.verify(decisionLogService).logDisputeDecision(adminId, dispute.id, "denied", text, mapOf("reasonCode" to "preference"))
+    }
+
+    @Test
+    fun `deny with other needs a note`() {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+
+        val error = assertFailsWith<ValidationException> {
+            service.deny(UUID.randomUUID(), dispute.id, null, reasonCode = "other", note = "   ")
+        }
+
+        assertEquals("note", error.field)
+        Mockito.verify(disputeRepository, Mockito.never()).findByIdForUpdate(dispute.id)
+    }
+
+    @Test
+    fun `deny with other stores only the note`() {
+        val adminId = UUID.randomUUID()
+        val dispute = openForDeny(adminId, "The photo is of another runner.", mapOf("reasonCode" to "other"))
+
+        service.deny(adminId, dispute.id, null, reasonCode = "other", note = " The photo is of another runner. ")
+
+        Mockito.verify(decisionLogService)
+            .logDisputeDecision(adminId, dispute.id, "denied", "The photo is of another runner.", mapOf("reasonCode" to "other"))
+    }
+
+    @Test
+    fun `a note without a deny code is refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.deny(UUID.randomUUID(), UUID.randomUUID(), "Written reason", note = "extra")
+        }
+        assertEquals("note", error.field)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `an unknown deny code is refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.deny(UUID.randomUUID(), UUID.randomUUID(), null, reasonCode = "too_blurry")
+        }
+        assertEquals("reasonCode", error.field)
+        assertEquals(ErrorCodes.VALIDATION_ERROR, error.code)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `a code and free text together are refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.deny(UUID.randomUUID(), UUID.randomUUID(), "Written reason", reasonCode = "wrong_photo")
+        }
+        assertEquals("reason", error.field)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `the old free-text deny still works`() {
+        val adminId = UUID.randomUUID()
+        val dispute = openForDeny(adminId, "Photo matches the order.", null)
+
+        service.deny(adminId, dispute.id, "Photo matches the order.")
+
+        Mockito.verify(decisionLogService).logDisputeDecision(adminId, dispute.id, "denied", "Photo matches the order.", null)
+        assertEquals(DisputeStatus.DENIED, dispute.status)
+    }
+
+    @Test
+    fun `a deny code on a parked refund whose link was sent answers 409`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.status = DisputeStatus.ESCALATED
+        dispute.refundStatus = "manual_review"
+        dispute.refundLinkSentAt = now.minusDays(5)
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+
+        val error = assertFailsWith<ApiException> { service.deny(adminId, dispute.id, null, reasonCode = "wrong_photo") }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(409, error.status.value())
+        assertEquals("This refund was approved and its link sent. Refresh to see it.", error.message)
+        Mockito.verifyNoInteractions(refundService)
+        Mockito.verify(disputeRepository, Mockito.never()).save(dispute)
+    }
+
     @Test
     fun `escalate locks the dispute before changing its state`() {
         val adminId = UUID.randomUUID()

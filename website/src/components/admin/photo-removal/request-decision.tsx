@@ -75,6 +75,7 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
   const { confirm } = useConfirmation();
   const [drafts, setDrafts] = useState(new Map<string, Draft>());
   const [urgentReason, setUrgentReason] = useState("");
+  const [sharedReason, setSharedReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // A retry of the same action after a failure reuses its command ID; any changed action gets a new one.
@@ -103,13 +104,41 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
 
   const setDraft = (itemId: string, change: Partial<Draft>) =>
     setDrafts((current) => new Map(current).set(itemId, { ...(current.get(itemId) ?? EMPTY), ...change }));
+  // R4 bulk guard: only hidden photos the server counted as one face; an unknown count means other people may be visible.
+  const singleFace = request.source === "RUNNER"
+    ? request.items.filter((item) => item.state === "VERIFIED" && item.otherPeopleVisible === false) : [];
+  const selectSingleFace = () => setDrafts((current) => {
+    const next = new Map(current);
+    for (const item of singleFace) next.set(item.id, { ...(current.get(item.id) ?? EMPTY), decision: "REMOVE", reason: sharedReason });
+    return next;
+  });
+  // The shared reason fills every draft the select-all set to REMOVE.
+  const setShared = (reason: string) => {
+    setSharedReason(reason);
+    setDrafts((current) => {
+      const next = new Map(current);
+      for (const item of singleFace) {
+        const draft = current.get(item.id);
+        if (draft?.decision === "REMOVE") next.set(item.id, { ...draft, reason });
+      }
+      return next;
+    });
+  };
 
   async function submit() {
     if (!canSubmit || !request) return;
     setError(null); setNotice(null);
     if (hasRemove && !(await confirm({
       title: "Authorize removal?",
-      message: "The selected photos come off sale, search and buyer downloads, and their files are queued for erasure. Buyers keep their receipts and refund access.",
+      message: (
+        <div className="space-y-3">
+          <p>The selected photos come off sale, search and buyer downloads, and their files are queued for erasure. Buyers keep their receipts and refund access.</p>
+          <ul className="font-mono tnum text-sm space-y-1">
+            {chosen.filter((entry) => entry.decision === "REMOVE").map(({ item }) => <li key={item.id}>{item.photoIdSnapshot}</li>)}
+          </ul>
+          <p className="text-sm">Check each photo first: the face count can miss people in the background.</p>
+        </div>
+      ),
       confirmLabel: "Authorize removal", danger: true,
     }))) return;
     const body = {
@@ -151,6 +180,20 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
         <p className="text-sm text-slate">QuickPitik decides each photo. An owner&apos;s response is input, not a veto or consent, and silence after the deadline means overdue — never approval.</p>
       </div>
       <ReviewCurrentState request={request} actions={actions} refreshing={detail.isFetching} refresh={detail.refetch} />
+
+      {singleFace.length > 0 && (
+        <div className="space-y-3 rounded-2xl border border-line p-4">
+          <p className="text-sm text-slate">Sets Remove on <span className="tnum">{singleFace.length}</span> hidden photo{singleFace.length === 1 ? "" : "s"} showing one face. Photos with other people, or with no face count, are decided one by one.</p>
+          <div className="space-y-1">
+            <AdminFieldLabel htmlFor="removal-shared-reason">Reason for every selected photo</AdminFieldLabel>
+            <input id="removal-shared-reason" type="text" maxLength={2000} value={sharedReason} disabled={busy || reviewRequired}
+              onChange={(e) => setShared(e.target.value)} className={REMOVAL_INPUT} />
+          </div>
+          <button type="button" disabled={busy || reviewRequired} onClick={selectSingleFace} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+            Select all single-face hidden photos
+          </button>
+        </div>
+      )}
 
       {groupByOwner(request.items, (item) => [item.reviewId, item.ownerNameSnapshot]).map(([key, owner, items]) => {
         const review = key ? reviews.get(key) : undefined;
