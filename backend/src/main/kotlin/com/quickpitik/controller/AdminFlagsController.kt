@@ -4,6 +4,7 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminFlagDto
 import com.quickpitik.dto.admin.FlagActionRequest
+import com.quickpitik.dto.admin.RelevanceEvidenceDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminFlagService
 import org.springframework.security.access.prepost.PreAuthorize
@@ -67,4 +68,9 @@ class AdminFlagsController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable flagId: UUID,
     ): AdminFlagDto = adminFlagService.confirmPayoutHold(principal.userId, flagId)
+
+    // PE-2.3: the Low batches behind a relevance flag, with counts and sample photos.
+    @GetMapping("/{flagId}/relevance")
+    fun relevanceEvidence(@PathVariable flagId: UUID): RelevanceEvidenceDto =
+        adminFlagService.relevanceEvidence(flagId)
 }
