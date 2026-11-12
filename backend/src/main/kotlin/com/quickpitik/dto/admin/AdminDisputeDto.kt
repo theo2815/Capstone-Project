@@ -106,14 +106,26 @@ data class SendRefundLinkRequest(
     val url: String,
 )
 
-// POST /admin/disputes/{id}/deny — body { reason }.
+// POST /admin/disputes/{id}/deny — body { reasonCode, note? } or the legacy { reason }.
 //
 // `reason` is shown to the runner: verbatim in the inbox message body, and as
 // `RunnerDisputeDto.resolutionNote` in the /orders refund timeline. Write it
-// for the customer. See the KDoc on AdminDisputeService.deny.
+// for the customer. See the KDoc on AdminDisputeService.deny. A `reasonCode`
+// (GET /admin/disputes/deny-reasons) is stored as its runner text, plus the note.
 data class DenyDisputeRequest(
     @field:Size(max = 500)
     val reason: String? = null,
+    val reasonCode: String? = null,
+    @field:Size(max = 280)
+    val note: String? = null,
+)
+
+// GET /admin/disputes/deny-reasons — one row per DisputeDenyReason.
+data class DisputeDenyReasonDto(
+    val code: String,
+    val label: String,
+    val runnerText: String,
+    val noteRequired: Boolean,
 )
 
 // POST /admin/disputes/{id}/escalate — body { reason }.

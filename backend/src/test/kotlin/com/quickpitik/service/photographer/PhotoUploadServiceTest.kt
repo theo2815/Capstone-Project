@@ -1389,7 +1389,8 @@ class PhotoUploadServiceTest {
     }
 
     private class SteppingClock(var now: Instant) : Clock() {
-        override fun getZone(): ZoneId = ZoneOffset.UTC
+        // Manila, like the fixtures' event date: withZone returns this, so a UTC zone gave yesterday's date before 08:00 Manila.
+        override fun getZone(): ZoneId = ZoneId.of("Asia/Manila")
         override fun withZone(zone: ZoneId): Clock = this
         override fun instant(): Instant = now
     }

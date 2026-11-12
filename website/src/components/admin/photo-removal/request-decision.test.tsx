@@ -8,7 +8,7 @@ import { admin } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import type { PhotoRemovalRequestDto } from "@/types/photo-removal";
 import { RemovalRequestDecision } from "./request-decision";
-import { openCase, ownerReview, removalItem } from "./removal-fixtures";
+import { openCase, ownerReview, removalItem, runnerCase } from "./removal-fixtures";
 
 vi.mock("@/lib/api-photo-removal");
 const confirm = vi.fn();
@@ -224,4 +224,45 @@ it("shows readable decisions and the deadline time from the server", async () =>
   expect(screen.queryByText(/Decision: RETAIN/)).not.toBeInTheDocument();
   // 03:00 UTC is 11:00 AM in Manila: notice stored, deadline and overdue-since all need the time, not just the day.
   expect(screen.getAllByText(/11:00/)).toHaveLength(3);
+});
+
+// RD-13: a runner case where one hidden photo shows other people.
+const runnerHidden: PhotoRemovalRequestDto = {
+  ...runnerCase,
+  items: [
+    removalItem("s1", "Photographer A", { autoHidden: true, faceCount: 1, otherPeopleVisible: false, ownerResponse: "AGREE" }),
+    removalItem("s2", "Photographer A", { autoHidden: true, faceCount: 1, otherPeopleVisible: false, ownerResponse: "AGREE" }),
+    removalItem("g1", "Photographer A", { autoHidden: true, faceCount: 2, otherPeopleVisible: true, ownerResponse: "AGREE" }),
+    removalItem("c1", "Photographer A", { state: "CANDIDATE", faceCount: 1, otherPeopleVisible: false }),
+  ],
+  reviews: [ownerReview("Photographer A")],
+};
+
+it("select-all skips photos with other people", async () => {
+  const user = userEvent.setup();
+  serverCase = runnerHidden;
+  renderDecision();
+  await user.type(await screen.findByLabelText("Reason for every selected photo"), "Runner verified by live check");
+  await user.click(screen.getByRole("button", { name: "Select all single-face hidden photos" }));
+  expect(screen.getByLabelText("Decision for photo-s1")).toHaveValue("REMOVE");
+  expect(screen.getByLabelText("Decision for photo-s2")).toHaveValue("REMOVE");
+  expect(screen.getByLabelText("Decision for photo-g1")).toHaveValue("");
+  expect(screen.getByLabelText("Reason for photo-s1")).toHaveValue("Runner verified by live check");
+  await user.type(screen.getByLabelText("Reason for every selected photo"), ".");
+  expect(screen.getByLabelText("Reason for photo-s2")).toHaveValue("Runner verified by live check.");
+});
+
+it("the confirm lists every selected photo", async () => {
+  const user = userEvent.setup();
+  serverCase = runnerHidden;
+  vi.mocked(removalApi.decideRemovalRequest).mockResolvedValue({ ...runnerHidden, version: 8 });
+  renderDecision();
+  await user.type(await screen.findByLabelText("Reason for every selected photo"), "Runner verified");
+  await user.click(screen.getByRole("button", { name: "Select all single-face hidden photos" }));
+  await user.click(screen.getByRole("button", { name: "Authorize removal" }));
+  await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+  cleanup();
+  render(<>{confirm.mock.calls[0][0].message}</>);
+  expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(["photo-s1", "photo-s2"]);
+  expect(screen.getByText(/can miss people/)).toBeInTheDocument();
 });
