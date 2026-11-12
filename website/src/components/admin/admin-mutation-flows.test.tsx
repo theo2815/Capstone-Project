@@ -62,7 +62,7 @@ beforeEach(() => {
   useToastStore.getState().clear();
   vi.spyOn(console, "error").mockImplementation(() => {});
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(adminDisputeKeys.list(admin.id), [dispute]);
+  seedDisputes([dispute]);
   client.setQueryData(payoutReportKeys.adminList(admin.id), [report]);
   client.setQueryData(adminPayoutKeys.list(admin.id), []);
 });
@@ -74,6 +74,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// The legacy list (read by sales and the palette) and the queue's first "Needs you" page.
+function seedDisputes(rows: Dispute[], options?: { updatedAt?: number }) {
+  client.setQueryData(adminDisputeKeys.list(admin.id), rows, options);
+  client.setQueryData(adminDisputeKeys.page(admin.id, { view: "needs_me", offset: 0 }), { items: rows, total: rows.length, offset: 0, limit: 50 }, options);
+}
+
 function pendingRequest(method: "post" | "fetch") {
   let reject!: (error: Error) => void;
   vi.spyOn(api, method).mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
@@ -83,7 +89,7 @@ function pendingRequest(method: "post" | "fetch") {
 it("does not show an unknown refund outcome as refunded in the dispute drawer", async () => {
   const pending: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [] };
   fixtures.search = `row=${pending.id}`;
-  client.setQueryData(adminDisputeKeys.list(admin.id), [pending]);
+  seedDisputes([pending]);
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
   const drawer = await screen.findByRole("dialog");
   expect(drawer).toHaveTextContent("Escalated");
@@ -94,7 +100,7 @@ it("does not show an unknown refund outcome as refunded in the dispute drawer", 
 it("lets the refund panel span the drawer footer and scroll on its own", async () => {
   const parked: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [] };
   fixtures.search = `row=${parked.id}`;
-  client.setQueryData(adminDisputeKeys.list(admin.id), [parked]);
+  seedDisputes([parked]);
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
   const footer = (await screen.findByRole("dialog")).querySelector("footer")!;
   const wrapper = footer.firstElementChild!.firstElementChild!;
@@ -107,7 +113,7 @@ it("lets the refund panel span the drawer footer and scroll on its own", async (
 it.each(["requesting", "pending"])("shows no refund panel for an escalated refund still in flight (%s)", async (refundStatus) => {
   const inFlight: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus };
   fixtures.search = `row=${inFlight.id}`;
-  client.setQueryData(adminDisputeKeys.list(admin.id), [inFlight]);
+  seedDisputes([inFlight]);
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
   const drawer = await screen.findByRole("dialog");
   expect(within(drawer).queryByLabelText("Refund link")).not.toBeInTheDocument();
@@ -115,8 +121,8 @@ it.each(["requesting", "pending"])("shows no refund panel for an escalated refun
 
 it.each([false, true])("preserves the selected dispute while loading (stale cache: %s)", async (stale) => {
   fixtures.search = `row=${dispute.id}`;
-  if (stale) client.setQueryData(adminDisputeKeys.list(admin.id), [], { updatedAt: 1 });
-  else client.removeQueries({ queryKey: adminDisputeKeys.list(admin.id) });
+  if (stale) seedDisputes([], { updatedAt: 1 });
+  else client.removeQueries({ queryKey: adminDisputeKeys.lists(admin.id) });
   let resolve!: (value: unknown) => void;
   vi.mocked(api.get).mockReturnValueOnce(new Promise((yes) => { resolve = yes; }));
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
@@ -198,7 +204,7 @@ it.each([
     orderSnapshot: { ...dispute.orderSnapshot, total: 300 },
   };
   fixtures.disputes = [priced];
-  client.setQueryData(adminDisputeKeys.list(admin.id), [priced]);
+  seedDisputes([priced]);
   render(<QueryClientProvider client={client}>{surface === "detail"
     ? <AdminDisputeActionAside dispute={priced} runnerHandle={priced.runnerHandle} />
     : <DisputesQueue />}</QueryClientProvider>);
@@ -310,7 +316,7 @@ it.each(["detail", "queue"])("offers no Escalate on a denied dispute in the %s v
   const user = userEvent.setup();
   const denied: Dispute = { ...dispute, status: "denied" };
   fixtures.disputes = [denied];
-  client.setQueryData(adminDisputeKeys.list(admin.id), [denied]);
+  seedDisputes([denied]);
   render(<QueryClientProvider client={client}>{surface === "detail"
     ? <AdminDisputeActionAside dispute={denied} runnerHandle={denied.runnerHandle} />
     : <DisputesQueue />}</QueryClientProvider>);
