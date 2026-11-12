@@ -1,9 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import {
   type AdminPayoutCycle,
   type AdminPayoutStatus,
   ADMIN_PAYOUT_STATUS_LABEL,
+  PAYOUT_HOLD_REASON,
+  PAYOUT_UNCONFIRMED_FLAG_NOTE,
+  payoutActionsBlockedByHold,
   payoutMethodLabel,
 } from "@/lib/admin-payouts";
 import { formatPrice } from "@/lib/utils";
@@ -129,6 +133,7 @@ export function AdminPayoutRow({
             <span className="text-slate-soft"> · </span>
             {cycle.itemCount} {cycle.itemCount === 1 ? "sale" : "sales"}
           </p>
+          <PayoutFlagLine cycle={cycle} />
           {cycle.status === "held" && cycle.holdReason && (
             <p className="font-sans text-sm text-slate mt-2">
               <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
@@ -197,6 +202,7 @@ export function AdminPayoutRow({
         submitting={submitting}
         status={cycle.status}
         provider={cycle.provider ?? "manual"}
+        blocked={payoutActionsBlockedByHold(cycle)}
         onApprove={(e) => {
           e.stopPropagation();
           onApprove();
@@ -218,6 +224,18 @@ export function AdminPayoutRow({
   );
 }
 
+/** The flag note under a payout's id: a hold, or a warning while the flag is unconfirmed. */
+export function PayoutFlagLine({ cycle }: { cycle: AdminPayoutCycle }) {
+  if (!cycle.relevanceFlagId) return null;
+  return (
+    <p className="font-sans text-sm text-amber-700 mt-2">
+      <Link href={`/admin/flags?row=${cycle.relevanceFlagId}`} className="underline underline-offset-2 hover:text-ink">
+        {cycle.relevanceHold ? PAYOUT_HOLD_REASON : PAYOUT_UNCONFIRMED_FLAG_NOTE}
+      </Link>
+    </p>
+  );
+}
+
 // Inline row actions are the PRIMARY next step per status; the full matrix
 // (reject / mark-failed / mark-returned) lives in the drawer. Buttons match the
 // backend's ensureFrom guards exactly so a shown button never 409s:
@@ -228,11 +246,13 @@ function RowActions({
   submitting,
   status,
   provider,
+  blocked,
   onApprove,
   onHold,
   onMarkPaid,
   onMarkProcessing,
 }: {
+  blocked: boolean;
   status: AdminPayoutStatus;
   submitting: boolean;
   provider: string;
@@ -261,17 +281,17 @@ function RowActions({
   return (
     <div className="mt-4 flex items-center gap-2 flex-wrap">
       {canApprove && (
-        <button type="button" disabled={submitting} onClick={onApprove} className={PILL}>
+        <button type="button" disabled={submitting || blocked} onClick={onApprove} className={PILL}>
           Approve
         </button>
       )}
       {canMarkProcessing && (
-        <button type="button" disabled={submitting} onClick={onMarkProcessing} className={PILL}>
+        <button type="button" disabled={submitting || blocked} onClick={onMarkProcessing} className={PILL}>
           Mark processing
         </button>
       )}
       {canMarkPaid && (
-        <button type="button" disabled={submitting} onClick={onMarkPaid} className={PILL}>
+        <button type="button" disabled={submitting || blocked} onClick={onMarkPaid} className={PILL}>
           Mark paid…
         </button>
       )}

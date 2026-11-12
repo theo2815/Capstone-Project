@@ -75,7 +75,19 @@ export interface AdminPayoutCycle {
   approvedBy: string | null;
   secondApprovedBy: string | null;
   payoutAccount: PayoutAccountSnapshot;
+  /** Open relevance flag on this photographer, if any (PE-2.2). */
+  relevanceFlagId: string | null;
+  /** True once an admin confirmed that flag: approve and pay are refused. */
+  relevanceHold: boolean;
 }
+
+/** Approve, Mark processing and Mark paid are refused by the server while this is true. */
+export function payoutActionsBlockedByHold(cycle: Pick<AdminPayoutCycle, "relevanceHold">): boolean {
+  return cycle.relevanceHold;
+}
+
+export const PAYOUT_HOLD_REASON = "Payouts on hold: open relevance flag";
+export const PAYOUT_UNCONFIRMED_FLAG_NOTE = "Open relevance flag, not yet confirmed";
 
 export const ADMIN_PAYOUT_STATUS_LABEL: Record<AdminPayoutStatus, string> = {
   pending_review: "Pending review",

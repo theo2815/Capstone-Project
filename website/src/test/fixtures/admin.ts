@@ -34,7 +34,7 @@ export const payoutCycle: AdminPayoutCycle = {
   itemCount: 100, method: "gcash", provider: "manual", status: "pending_review",
   submittedAt: "2026-09-10T00:00:00Z", reviewedAt: null, paidAt: null,
   paymentReference: null, holdReason: null, rejectedReason: null, failedReason: null,
-  approvedBy: null, secondApprovedBy: null,
+  approvedBy: null, secondApprovedBy: null, relevanceFlagId: null, relevanceHold: false,
   payoutAccount: { method: "gcash", accountNumber: "09000000000", accountName: "Test Photographer", qr: null },
 };
 
