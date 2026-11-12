@@ -985,3 +985,48 @@ export async function fetchAdminSalesByEvent(
   );
   return res.items;
 }
+
+// ───────────────────────────────────────────── Relevance flags (PE-2.7)
+
+export function fetchFlagRelevance(
+  flagId: string,
+  signal?: AbortSignal,
+): Promise<import("@/lib/admin-flags").RelevanceEvidence> {
+  return api.get(`/admin/flags/${encodeURIComponent(flagId)}/relevance`, { signal });
+}
+
+export function resolveAdminFlag(flagId: string, resolutionNote?: string | null): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/resolve`, { resolutionNote });
+}
+
+export function confirmFlagPayoutHold(flagId: string): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/payout-hold`);
+}
+
+export function hideFlagBatch(
+  flagId: string,
+  eventId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/hide-batch`, {
+    eventId,
+    resolutionNote,
+  });
+}
+
+export function fetchFlagHiddenPhotos(
+  flagId: string,
+  args: { offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-flags").HiddenPhoto>> {
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/flags/${encodeURIComponent(flagId)}/hidden-photos?${p.toString()}`, { signal });
+}
+
+export function restoreFlagHiddenPhoto(flagId: string, photoId: string): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/hidden-photos/${encodeURIComponent(photoId)}/restore`,
+  );
+}
