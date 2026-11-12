@@ -29,6 +29,13 @@ interface PhotoRemovalItemRepository : JpaRepository<PhotoRemovalItem, UUID> {
         AND i.ownerIdSnapshot IN :ownerIds AND i.verificationActorId IS NULL AND i.verifiedAt >= :since
         GROUP BY i.ownerIdSnapshot ORDER BY i.ownerIdSnapshot""")
     fun countRunnerAutoHidesSince(eventId: UUID, ownerIds: Collection<UUID>, since: Instant): List<OwnerCount>
+
+    // RD-5: item counts per (state, admin decision), the input of the runner status and counts.
+    @Query("""SELECT new com.quickpitik.repository.RequestStateCount(i.requestId, i.state, i.adminDecision, count(i))
+        FROM PhotoRemovalItem i WHERE i.requestId IN :ids GROUP BY i.requestId, i.state, i.adminDecision""")
+    fun countStatesByRequestIds(ids: Collection<UUID>): List<RequestStateCount>
 }
 
 data class OwnerCount(val ownerId: UUID, val count: Long)
+data class RequestStateCount(val requestId: UUID, val state: com.quickpitik.entity.RemovalItemState,
+    val decision: com.quickpitik.entity.RemovalDecision?, val count: Long)

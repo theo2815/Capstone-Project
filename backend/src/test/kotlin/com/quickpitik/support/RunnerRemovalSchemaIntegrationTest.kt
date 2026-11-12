@@ -279,4 +279,40 @@ class RunnerRemovalSchemaIntegrationTest : PostgresIntegrationTest() {
         val counts = items.countRunnerAutoHidesSince(event.id, listOf(photographer.id, UUID.randomUUID()), now)
         assertEquals(listOf(OwnerCount(photographer.id, 2)), counts)
     }
+
+    @Test fun `countStatesByRequestIds counts per request, state and admin decision`() {
+        val a = request()
+        item(a, RemovalItemState.VERIFIED)
+        item(a, RemovalItemState.VERIFIED)
+        item(a, RemovalItemState.VERIFIED, RemovalDecision.MORE_EVIDENCE)
+        item(a, RemovalItemState.CANDIDATE)
+        val b = request(on = newEvent())
+        item(b, RemovalItemState.REMOVED, RemovalDecision.REMOVE)
+        item(request(on = newEvent()), RemovalItemState.CANDIDATE) // not asked for
+
+        val counts = items.countStatesByRequestIds(listOf(a.id, b.id)).toSet()
+        assertEquals(setOf(RequestStateCount(a.id, RemovalItemState.VERIFIED, null, 2),
+            RequestStateCount(a.id, RemovalItemState.VERIFIED, RemovalDecision.MORE_EVIDENCE, 1),
+            RequestStateCount(a.id, RemovalItemState.CANDIDATE, null, 1),
+            RequestStateCount(b.id, RemovalItemState.REMOVED, RemovalDecision.REMOVE, 1)), counts)
+    }
+
+    @Test fun `a runner finds only their own runner cases, newest first`() {
+        val other = users.saveAndFlush(User(email = "rd5-other-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Other", role = Role.RUNNER))
+        val older = request(status = RemovalRequestStatus.CANCELLED, closeReason = RunnerRemovalCloseReason.WITHDRAWN)
+        val newer = request(on = newEvent())
+        val support = request(on = newEvent(), source = RemovalRequestSource.SUPPORT) // same requester, support source
+        val theirs = request(on = newEvent(), requester = other)
+        jdbc.update("UPDATE photo_removal_requests SET created_at = ? WHERE id = ?", java.sql.Timestamp.from(now), older.id)
+        jdbc.update("UPDATE photo_removal_requests SET created_at = ? WHERE id = ?", java.sql.Timestamp.from(now.plusSeconds(60)), newer.id)
+
+        val page = requests.findByRequesterUserIdAndSource(runner.id, RemovalRequestSource.RUNNER, com.quickpitik.common.OffsetLimitPageable(
+            com.quickpitik.common.PaginationParams(0, 10), org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt")))
+        assertEquals(listOf(newer.id, older.id), page.content.map { it.id })
+        assertEquals(2, page.totalElements)
+        assertEquals(newer.id, requests.findByIdAndRequesterUserIdAndSource(newer.id, runner.id, RemovalRequestSource.RUNNER)?.id)
+        assertNull(requests.findByIdAndRequesterUserIdAndSource(support.id, runner.id, RemovalRequestSource.RUNNER))
+        assertNull(requests.findByIdAndRequesterUserIdAndSource(theirs.id, runner.id, RemovalRequestSource.RUNNER))
+    }
 }

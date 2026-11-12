@@ -359,4 +359,43 @@ class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
         photos.saveAndFlush(photo)
         assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState)
     }
+
+    // RD-5: a runner case hiding the fixture photo, beside the fixture's support case.
+    private fun runnerCase(): Pair<User, PhotoRemovalRequest> {
+        val runner = users.saveAndFlush(User(email = "availability-runner-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Runner", role = Role.RUNNER))
+        val case = requests.saveAndFlush(PhotoRemovalRequest(eventId = event.id, eventIdSnapshot = event.id,
+            eventNameSnapshot = event.name, requesterUserId = runner.id, requesterContact = runner.email,
+            supportReference = "Runner request", requesterReason = "PRIVACY", publicToOwnerReason = "Privacy removal request",
+            creatorId = runner.id, creationCommandId = UUID.randomUUID(), status = RemovalRequestStatus.OPEN,
+            source = RemovalRequestSource.RUNNER, livenessBand = RunnerLivenessBand.PASS))
+        items.saveAndFlush(PhotoRemovalItem(requestId = case.id, photoIdSnapshot = photo.id, photoId = photo.id,
+            ownerIdSnapshot = owner.id, state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.SELFIE))
+        restrict()
+        assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState)
+        return runner to case
+    }
+
+    @Test fun `withdrawing one of two cases keeps the shared photo hidden`() {
+        val (runner, case) = runnerCase()
+        val result = removals.withdraw(runner.id, case.id, UUID.randomUUID(), case.version)
+        assertEquals("WITHDRAWN", result.status)
+        assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState)
+        assertFalse(photo.id in publicGalleryIds(event.id))
+    }
+
+    @Test fun `withdrawing the only case makes the photo public again`() {
+        items.saveAndFlush(item.apply { state = RemovalItemState.EXCLUDED })
+        val (runner, case) = runnerCase()
+        val key = UUID.randomUUID()
+        val result = removals.withdraw(runner.id, case.id, key, case.version)
+        assertEquals(RemovalState.NONE, photos.findById(photo.id).orElseThrow().removalState)
+        assertEquals(listOf(photo.id), publicGalleryIds(event.id))
+        // After commit the purge closes the case; the same key still replays the withdraw's own result.
+        val saved = requests.findById(case.id).orElseThrow()
+        assertEquals(RemovalRequestStatus.CANCELLED to RunnerRemovalCloseReason.WITHDRAWN, saved.status to saved.closeReason)
+        assertEquals(result, removals.withdraw(runner.id, case.id, key, case.version))
+        assertEquals(listOf("WITHDRAWN"), result.timeline.map { it.step }) // the fixture case has no CREATED row
+        assertFalse(result.canWithdraw)
+    }
 }

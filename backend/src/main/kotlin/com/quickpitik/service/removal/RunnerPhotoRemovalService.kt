@@ -128,22 +128,8 @@ class RunnerPhotoRemovalService(
     private fun statusOf(requestId: UUID): String =
         statusOf(requests.findById(requestId).orElseThrow(), items.findByRequestIdOrderByIdAsc(requestId))
 
-    // shortcut: RD-5's status rules, inline until RD-5 replaces this with RunnerRemovalStatus.of.
-    private fun statusOf(r: PhotoRemovalRequest, all: List<PhotoRemovalItem>): String {
-        val undecided = all.any { it.state == RemovalItemState.CANDIDATE || (it.state == RemovalItemState.VERIFIED && it.adminDecision == null) }
-        val settled = all.any { it.state == RemovalItemState.REMOVAL_AUTHORIZED || it.state == RemovalItemState.REMOVED }
-        return when {
-            r.closeReason == RunnerRemovalCloseReason.WITHDRAWN -> "WITHDRAWN"
-            r.closeReason == RunnerRemovalCloseReason.NO_MATCHES -> "NO_MATCHES_FOUND"
-            r.status == RemovalRequestStatus.DRAFT && all.isEmpty() && RunnerRiskFlag.MATCHING_UNAVAILABLE.name in r.riskFlags -> "PROCESSING"
-            all.any { it.state == RemovalItemState.VERIFIED && it.adminDecision == RemovalDecision.MORE_EVIDENCE } ||
-                (r.livenessBand == RunnerLivenessBand.UNCERTAIN && undecided && !settled) -> "ADDITIONAL_VERIFICATION_REQUIRED"
-            undecided -> "PENDING_ADMIN_REVIEW"
-            all.any { it.state == RemovalItemState.REMOVAL_AUTHORIZED } -> "APPROVED"
-            all.any { it.state == RemovalItemState.REMOVED } -> "COMPLETED"
-            else -> "REJECTED"
-        }
-    }
+    private fun statusOf(r: PhotoRemovalRequest, all: List<PhotoRemovalItem>): String =
+        RunnerRemovalStatus.of(RunnerStatusView(r, all.stateCounts())).name
 
     private fun livenessUnavailable() =
         ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.LIVENESS_UNAVAILABLE, "The live check is not available right now.")
