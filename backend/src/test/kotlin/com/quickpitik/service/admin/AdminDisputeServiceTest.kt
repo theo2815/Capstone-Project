@@ -16,6 +16,11 @@ import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
+import com.quickpitik.repository.DownloadGrantRepository
+import com.quickpitik.repository.RunnerDisputeCount
+import com.quickpitik.dto.admin.RunnerDisputeHistoryDto
+import com.quickpitik.entity.DownloadGrant
+import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
@@ -57,6 +62,7 @@ class AdminDisputeServiceTest {
     private val decisionLogRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
     private val decisionLogService = Mockito.mock(AdminDecisionLogService::class.java)
     private val refundService = Mockito.mock(PaymongoRefundService::class.java)
+    private val downloadGrantRepository = Mockito.mock(DownloadGrantRepository::class.java)
     private val now = OffsetDateTime.parse("2026-11-08T03:00:00Z")
     private val service = AdminDisputeService(
         disputeRepository,
@@ -67,6 +73,7 @@ class AdminDisputeServiceTest {
         eventRepository,
         userRepository,
         settingsRepository,
+        downloadGrantRepository,
         Mockito.mock(StorageService::class.java),
         StorageProperties(),
         decisionLogService,
@@ -91,6 +98,7 @@ class AdminDisputeServiceTest {
             eventRepository,
             userRepository,
             settingsRepository,
+            downloadGrantRepository,
             Mockito.mock(StorageService::class.java),
             StorageProperties(),
             decisionLogService,
@@ -126,6 +134,7 @@ class AdminDisputeServiceTest {
             eventRepository,
             userRepository,
             settingsRepository,
+            downloadGrantRepository,
             Mockito.mock(StorageService::class.java),
             StorageProperties(),
             decisionLogService,
@@ -783,6 +792,105 @@ class AdminDisputeServiceTest {
             assertNull(dto.refundCancelsAt, "status $status on ${order.paymentMethodWire}")
             assertNull(dto.refundLinkExpiresAt, "status $status on ${order.paymentMethodWire}")
         }
+    }
+
+    // --- DW-6: decision facts ---
+
+    private val runnerId = UUID.randomUUID()
+
+    private fun count(runner: UUID, status: String, rows: Long) = object : RunnerDisputeCount {
+        override val runnerId = runner
+        override val statusWire = status
+        override val n = rows
+    }
+
+    private fun grant(dispute: Dispute, downloads: Int, last: OffsetDateTime?) = DownloadGrant(
+        DownloadGrantId(dispute.orderId, dispute.photoId),
+        grantedUntil = now.plusDays(30),
+        lastDownloadedAt = last,
+        downloadCount = downloads,
+    )
+
+    private fun pageOf(vararg disputes: Dispute) {
+        Mockito.`when`(disputeRepository.pageForAdmin(
+            Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
+            Mockito.eq("") ?: "",
+            Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
+        )).thenReturn(PageImpl(disputes.toList()))
+    }
+
+    @Test
+    fun `the dispute shows downloads started and the runner's other requests, not counting itself`() {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        val lastAt = now.minusDays(2)
+        pageOf(dispute)
+        Mockito.`when`(downloadGrantRepository.findAllById(listOf(DownloadGrantId(dispute.orderId, dispute.photoId))))
+            .thenReturn(listOf(grant(dispute, 3, lastAt)))
+        Mockito.`when`(disputeRepository.countByRunnerAndStatus(setOf(runnerId))).thenReturn(listOf(
+            count(runnerId, "open", 1), count(runnerId, "escalated", 1), count(runnerId, "resolved", 2),
+            count(runnerId, "denied", 1), count(runnerId, "withdrawn", 1),
+        ))
+
+        val dto = service.list(null, null, null, PaginationParams.of(0, 10)).items.single()
+
+        assertEquals(3, dto.downloadCount)
+        assertEquals(lastAt.toString(), dto.lastDownloadedAt)
+        // Its own open row is left out: the escalated one is the only other open request.
+        assertEquals(RunnerDisputeHistoryDto(total = 5, refunded = 2, denied = 1, withdrawn = 1, open = 1), dto.runnerHistory)
+        Mockito.verify(downloadGrantRepository, Mockito.never())
+            .findById(Mockito.any(DownloadGrantId::class.java) ?: DownloadGrantId(dispute.orderId, dispute.photoId))
+    }
+
+    @Test
+    fun `get and every action response carry the downloads and the runner history too`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(downloadGrantRepository.findById(DownloadGrantId(dispute.orderId, dispute.photoId)))
+            .thenReturn(Optional.of(grant(dispute, 2, now)))
+        // The database before and after the escalation: this dispute, one other open request, one refunded.
+        Mockito.`when`(disputeRepository.countByRunnerAndStatus(listOf(runnerId)))
+            .thenReturn(listOf(count(runnerId, "open", 2), count(runnerId, "resolved", 1)))
+            .thenReturn(listOf(count(runnerId, "open", 1), count(runnerId, "escalated", 1), count(runnerId, "resolved", 1)))
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "escalated", null))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "escalated"))
+        val expected = RunnerDisputeHistoryDto(total = 2, refunded = 1, denied = 0, withdrawn = 0, open = 1)
+
+        for (dto in listOf(service.get(dispute.id), service.escalate(adminId, dispute.id, null))) {
+            assertEquals(2, dto.downloadCount)
+            assertEquals(now.toString(), dto.lastDownloadedAt)
+            assertEquals(expected, dto.runnerHistory)
+        }
+    }
+
+    @Test
+    fun `a dispute whose runner was deleted shows no history`() {
+        val kept = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        val deleted = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = null, reasonWire = "other")
+        pageOf(kept, deleted)
+        Mockito.`when`(disputeRepository.countByRunnerAndStatus(setOf(runnerId))).thenReturn(listOf(count(runnerId, "open", 1)))
+
+        val items = service.list(null, null, null, PaginationParams.of(0, 10)).items
+
+        assertEquals(RunnerDisputeHistoryDto(total = 0, refunded = 0, denied = 0, withdrawn = 0, open = 0), items[0].runnerHistory)
+        assertNull(items[1].runnerHistory)
+        assertNull(service.hydrateOne(deleted, activity = emptyList(), order = null, photo = null).runnerHistory)
+        Mockito.verify(disputeRepository, Mockito.times(1)).countByRunnerAndStatus(Mockito.anyCollection() ?: emptyList())
+    }
+
+    @Test
+    fun `a refunded photo with no grant shows no download count`() {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other",
+            statusWire = DisputeStatus.RESOLVED.wire).apply { refundStatus = "succeeded" }
+        Mockito.`when`(downloadGrantRepository.findById(DownloadGrantId(dispute.orderId, dispute.photoId))).thenReturn(Optional.empty())
+        Mockito.`when`(disputeRepository.countByRunnerAndStatus(listOf(runnerId))).thenReturn(listOf(count(runnerId, "resolved", 1)))
+
+        val dto = service.hydrateOne(dispute, activity = emptyList(), order = null, photo = null)
+
+        assertNull(dto.downloadCount)
+        assertNull(dto.lastDownloadedAt)
+        assertEquals(RunnerDisputeHistoryDto(total = 0, refunded = 0, denied = 0, withdrawn = 0, open = 0), dto.runnerHistory)
     }
 
     private fun order(total: BigDecimal) = Order(

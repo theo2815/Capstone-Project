@@ -107,9 +107,26 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
         @Param("q") q: String,
         pageable: Pageable,
     ): Page<Dispute>
+
+    // The admin's "this runner's other requests": rows per runner and status (idx_disputes_runner).
+    // The alias is `n`, clear of HQL's `count` keyword.
+    @Query(
+        """
+        SELECT d.runnerId AS runnerId, d.statusWire AS statusWire, COUNT(d) AS n FROM Dispute d
+        WHERE d.runnerId IN :runnerIds
+        GROUP BY d.runnerId, d.statusWire
+        """,
+    )
+    fun countByRunnerAndStatus(@Param("runnerIds") runnerIds: Collection<UUID>): List<RunnerDisputeCount>
 }
 
-private const val CONTAINS_Q = "LIKE LOWER(CONCAT('%', :q, '%'))"
+interface RunnerDisputeCount {
+    val runnerId: UUID
+    val statusWire: String
+    val n: Long
+}
+
+private const val CONTAINS_Q ="LIKE LOWER(CONCAT('%', :q, '%'))"
 
 // The `q` predicates of pageForAdmin, shared by its row and count queries.
 private const val ADMIN_SEARCH = """

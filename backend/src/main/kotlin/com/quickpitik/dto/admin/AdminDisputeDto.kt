@@ -87,6 +87,20 @@ data class AdminDisputeDto(
     val refundBlockedReason: String? = null,
     val refundBlockedMessage: String? = null,
     val paymentPhotoCount: Int? = null,
+    // Downloads started for this photo on this order (null when there is no grant, for example after a full refund).
+    val downloadCount: Int? = null,
+    val lastDownloadedAt: String? = null,
+    // The runner's other requests, this one left out; null only when the runner's account was deleted.
+    val runnerHistory: RunnerDisputeHistoryDto? = null,
+)
+
+// Counted per request (dispute row): refunded = resolved, open = open or escalated.
+data class RunnerDisputeHistoryDto(
+    val total: Int,
+    val refunded: Int,
+    val denied: Int,
+    val withdrawn: Int,
+    val open: Int,
 )
 
 // POST /admin/disputes/{id}/resolve — body { resolution, refundAmount?, reason }.
