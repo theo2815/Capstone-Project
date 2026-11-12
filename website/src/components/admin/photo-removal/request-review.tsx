@@ -1,20 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAdminRemovalActions, useAdminRemovalRequest, useRemovalEvidence, useRemovalPhotos } from "@/hooks/use-photo-removal";
+import { useConfirmation } from "@/hooks/use-confirmation";
 import { FindPhotosControls } from "@/components/events/find-photos-controls";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
 import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { Kicker } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
-import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ApiError } from "@/lib/api";
 import { validateImageFile } from "@/lib/image-utils";
 import { formatLongDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { REMOVAL_INPUT } from "./request-intake";
-import type { PhotoRemovalRequestDto, RemovalMatchResult, RemovalMatchSource, RemovalPhotoDto } from "@/types/photo-removal";
+import type { PhotoRemovalItemDto, PhotoRemovalRequestDto, RemovalMatchResult, RemovalMatchSource, RemovalPhotoDto } from "@/types/photo-removal";
 
 const PAGE = 24;
 const MAX_EVIDENCE_BYTES = 5 * 1024 * 1024;
@@ -41,21 +42,55 @@ export function RemovalRequestReview({ requestId }: { requestId: string }) {
       <CaseHeader request={request} />
       {request.status === "DRAFT"
         ? <DraftWorkspace request={request} refreshing={detail.isFetching} refresh={detail.refetch} />
-        : <VerifiedSummary request={request} />}
+        : isRunner(request)
+          ? <RunnerSuggestions request={request} refreshing={detail.isFetching} refresh={detail.refetch} />
+          : <VerifiedSummary request={request} />}
     </>
   );
 }
 
+// Enum display labels (like FLAG_REASON_LABEL); an unknown code shows as itself.
+const RISK_FLAG_LABEL: Record<string, string> = {
+  LIVENESS_UNCERTAIN: "The live check was uncertain",
+  UNVERIFIED_EMAIL: "Email not verified",
+  PRIOR_REJECTION: "An earlier request from this runner was rejected",
+  POSSIBLY_TRUNCATED: "There may be more matches than were checked",
+  OVER_REQUEST_CAP: "More matches than one request may hide automatically",
+  PHOTOGRAPHER_BUDGET: "A photographer's daily hide limit was reached",
+  AUTO_HIDE_OFF: "Automatic hiding is switched off",
+  GROUP_PHOTOS: "Some matched photos show other people",
+  MATCHING_UNAVAILABLE: "Face matching was unavailable: match by hand",
+};
+const BAND_LABEL = { PASS: "passed", UNCERTAIN: "uncertain" } as const;
+const isRunner = (request: PhotoRemovalRequestDto) => request.source === "RUNNER";
+
 function CaseHeader({ request }: { request: PhotoRemovalRequestDto }) {
+  const runner = isRunner(request);
   return (
     <header className="pb-8 border-b border-line">
-      <Kicker as="p" tnum>Removal case · {formatLongDate(request.createdAt)}</Kicker>
+      <Kicker as="p" tnum>{runner ? "Runner request" : "Removal case"} · {formatLongDate(request.createdAt)}</Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">{request.event.name}</h1>
-      <div className="mt-3 flex flex-wrap items-center gap-2"><AdminStatusPill label={request.status} tone={request.status === "DRAFT" ? "amber" : "ink"} /></div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <AdminStatusPill label={runner ? "Runner" : "Support"} tone={runner ? "ink" : "muted"} />
+        <AdminStatusPill label={request.status} tone={request.status === "DRAFT" ? "amber" : "ink"} />
+      </div>
       <dl className="mt-5 grid gap-3 sm:grid-cols-2 text-sm">
-        <div><dt className="text-slate">Support reference</dt><dd className="text-ink break-words">{request.supportReference}</dd></div>
+        {runner ? (
+          <div>
+            <dt className="text-slate">Requester account</dt>
+            {/* Shown, not a gate (Q6). */}
+            <dd className="text-ink tnum">Account created {formatLongDate(request.requesterAccountCreatedAt)} · Email verified {request.requesterEmailVerified ? "yes" : "no"}</dd>
+            {request.livenessBand && <dd className="text-ink">Live check: {BAND_LABEL[request.livenessBand]}</dd>}
+          </div>
+        ) : <div><dt className="text-slate">Support reference</dt><dd className="text-ink break-words">{request.supportReference}</dd></div>}
         <div><dt className="text-slate">Requester contact</dt><dd className="text-ink break-words">{request.requesterContact}</dd></div>
         <div className="sm:col-span-2"><dt className="text-slate">Reason (admin only)</dt><dd className="text-ink break-words">{request.requesterReason}</dd></div>
+        {runner && !!request.riskFlags?.length && (
+          <div className="sm:col-span-2">
+            <dt className="text-slate">Needs a closer look</dt>
+            {request.riskFlags.map((flag) => <dd key={flag} className="text-amber-700">{RISK_FLAG_LABEL[flag] ?? flag}</dd>)}
+          </div>
+        )}
       </dl>
     </header>
   );
@@ -202,8 +237,11 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
         <h2 id="removal-find" className="font-display text-xl font-extrabold text-ink">Find the runner&apos;s photos</h2>
         {request.evidencePresent && <EvidencePreview requestId={id} />}
         {request.evidencePresent && file && <p className="text-sm text-slate">Searching with a new selfie replaces the one on file and clears earlier matches.</p>}
-        <FindPhotosControls file={file} bib={bib} onFileChange={setFile} onBibChange={setBib} onSearch={() => void search()}
-          busy={busy || reviewRequired} error={searchError} allowPersonalLibrary={false} />
+        {/* A runner case's evidence is its own live-check image: it is never replaced here (R10). */}
+        {isRunner(request)
+          ? !request.evidencePresent && <p className="text-sm text-amber-700">No live-check image was saved for this request. Pick the runner&apos;s photos by hand below, or cancel the case.</p>
+          : <FindPhotosControls file={file} bib={bib} onFileChange={setFile} onBibChange={setBib} onSearch={() => void search()}
+              busy={busy || reviewRequired} error={searchError} allowPersonalLibrary={false} />}
         {request.evidencePresent && !file && (
           <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} disabled={busy || reviewRequired || refreshing} onClick={() => void runMatch(request.version)}>
             Match stored selfie
@@ -289,6 +327,8 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
         </section>
       )}
 
+      {isRunner(request) && !request.evidencePresent && <CancelCase request={request} disabled={busy || refreshing || reviewRequired} />}
+
       {preview && (
         <PhotoPreviewCard mode="review" eventName={request.event.name} index={preview.index + 1} total={preview.items.length}
           photo={{ ...preview.items[preview.index].photo, alt: preview.items[preview.index].photo.alt ?? undefined, photographerHandle: null }}
@@ -357,6 +397,133 @@ function EvidencePreview({ requestId }: { requestId: string }) {
         <p className="text-sm text-slate">Private case evidence. It is not added to anyone&apos;s selfie library.</p>
         {evidence.isError && <p className="text-sm text-amber-700">Preview unavailable.</p>}
       </div>
+    </div>
+  );
+}
+
+// A retry of the same action after a failure reuses its command ID; any changed action gets a new one.
+function useCommandIds() {
+  const commands = useRef(new Map<string, string>());
+  return {
+    commandFor: (fingerprint: string) => {
+      if (!commands.current.has(fingerprint)) commands.current.set(fingerprint, crypto.randomUUID());
+      return commands.current.get(fingerprint)!;
+    },
+    done: (fingerprint: string) => commands.current.delete(fingerprint),
+  };
+}
+
+// R10: a runner case with no saved image can only be matched by hand or cancelled.
+function CancelCase({ request, disabled }: { request: PhotoRemovalRequestDto; disabled: boolean }) {
+  const actions = useAdminRemovalActions();
+  const { confirm } = useConfirmation();
+  const { commandFor, done } = useCommandIds();
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const busy = disabled || actions.cancel.isPending;
+  async function cancel() {
+    if (busy || !reason.trim()) return;
+    if (!(await confirm({
+      title: "Cancel this request?",
+      message: "Nothing is hidden or removed. The runner sees the request as rejected.",
+      confirmLabel: "Cancel case", danger: true,
+    }))) return;
+    setError(null);
+    const body = { expectedVersion: request.version, reason: reason.trim() };
+    const fingerprint = `cancel:${JSON.stringify(body)}`;
+    try {
+      await actions.cancel.mutateAsync({ id: request.id, command: { ...body, commandId: commandFor(fingerprint) } });
+      done(fingerprint);
+    } catch (failure) {
+      setError(errorText(failure));
+    }
+  }
+  return (
+    <section aria-label="Cancel case" className="space-y-3 border-t border-line pt-8">
+      <AdminFieldLabel htmlFor="removal-cancel-reason">Reason for cancelling</AdminFieldLabel>
+      <input id="removal-cancel-reason" type="text" maxLength={2000} value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} className={REMOVAL_INPUT} />
+      <FieldError message={error} id="removal-cancel-error" />
+      <button type="button" disabled={busy || !reason.trim()} onClick={() => void cancel()} className={cn(BTN_DANGER, BTN_SIZE.sm)}>
+        {actions.cancel.isPending ? "Cancelling…" : "Cancel case"}
+      </button>
+    </section>
+  );
+}
+
+type SuggestionAction = "promote" | "dismiss" | "demote";
+
+// RD-6 suggestion review on an open runner case. Promote hides and verifies; dismiss leaves the photo public;
+// demote makes an auto-hidden photo public again as a suggestion. Decisions stay in RemovalRequestDecision.
+function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRemovalRequestDto; refreshing: boolean; refresh: RefreshCase }) {
+  const actions = useAdminRemovalActions();
+  const { commandFor, done } = useCommandIds();
+  const [error, setError] = useState<string | null>(null);
+  const hidden = request.items.filter((item) => item.autoHidden && item.state === "VERIFIED");
+  const suggestions = request.items.filter((item) => item.state === "CANDIDATE");
+  const busy = actions.reviewSuggestions.isPending || refreshing || actions.reviewRequired(request.id) || request.status !== "OPEN";
+
+  async function review(action: SuggestionAction, itemId: string) {
+    if (busy) return;
+    setError(null);
+    const body = { expectedVersion: request.version, promote: [] as string[], dismiss: [] as string[], demote: [] as string[], [action]: [itemId] };
+    const fingerprint = `suggestions:${JSON.stringify(body)}`;
+    try {
+      await actions.reviewSuggestions.mutateAsync({ id: request.id, command: { ...body, commandId: commandFor(fingerprint) } });
+      done(fingerprint);
+    } catch (failure) {
+      setError(errorText(failure));
+    }
+  }
+
+  const row = (item: PhotoRemovalItemDto, buttons: ReactNode) => (
+    <li key={item.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-line p-3 text-sm">
+      <span className="size-16 shrink-0 overflow-hidden rounded-lg bg-bone-deep">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        {item.photo?.photo.imageUrl && <img src={item.photo.photo.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-mono tnum text-ink truncate">{item.photoIdSnapshot}</span>
+        <span className="block text-slate truncate">{ownerOf(item.ownerIdSnapshot, item.ownerNameSnapshot)}</span>
+        {/* Unknown face counts count as other people (the count is a lower bound). */}
+        {(item.otherPeopleVisible ?? true) && <span className="mt-1 inline-block"><AdminStatusPill label="Other people visible" tone="amber" /></span>}
+      </span>
+      <span className="flex flex-wrap gap-2">{buttons}</span>
+    </li>
+  );
+
+  return (
+    <div className="mt-8 space-y-10">
+      <ReviewCurrentState request={request} actions={actions} refreshing={refreshing} refresh={refresh} />
+      <section aria-labelledby="runner-hidden" className="space-y-3">
+        <h2 id="runner-hidden" className="font-display text-xl font-extrabold text-ink">Hidden automatically</h2>
+        <p className="text-sm text-slate">Hidden from sale and search after the runner&apos;s live check. Nothing is deleted until you decide below.</p>
+        {hidden.length === 0 ? <p className="text-sm text-slate">No photos were hidden automatically.</p> : (
+          <ul className="space-y-2">
+            {hidden.map((item) => row(item, item.adminDecision == null && (
+              <button type="button" disabled={busy} onClick={() => void review("demote", item.id)} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+                Make public again, keep as suggestion<span className="sr-only"> for {item.photoIdSnapshot}</span>
+              </button>
+            )))}
+          </ul>
+        )}
+      </section>
+      <section aria-labelledby="runner-suggestions" className="space-y-3">
+        <h2 id="runner-suggestions" className="font-display text-xl font-extrabold text-ink">Suggestions (still public)</h2>
+        <p className="text-sm text-slate">Possible matches that were not hidden. Promote hides a photo and sends it to its photographer for review; dismiss leaves it public.</p>
+        {suggestions.length === 0 ? <p className="text-sm text-slate">No suggestions left.</p> : (
+          <ul className="space-y-2">
+            {suggestions.map((item) => row(item, <>
+              <button type="button" disabled={busy} onClick={() => void review("promote", item.id)} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+                Promote<span className="sr-only"> {item.photoIdSnapshot}</span>
+              </button>
+              <button type="button" disabled={busy} onClick={() => void review("dismiss", item.id)} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+                Dismiss<span className="sr-only"> {item.photoIdSnapshot}</span>
+              </button>
+            </>))}
+          </ul>
+        )}
+      </section>
+      <FieldError message={error} id="runner-suggestions-error" />
     </div>
   );
 }

@@ -10,7 +10,7 @@ import { usePrivateQuerySession } from "./use-private-query-session";
 import type {
   PhotoRemovalRequestDto, PhotographerRemovalRequestDto, RemovalRequestFilters, RemovalPhotoFilters, RemovalPageFilters,
   CreateRemovalRequestCommand, MatchRemovalCommand, VerifyRemovalCommand, CancelRemovalCommand, DecideRemovalCommand,
-  RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand, RunnerRemovalRequestDetailDto,
+  RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand, ReviewSuggestionsCommand, RunnerRemovalRequestDetailDto,
 } from "@/types/photo-removal";
 type RemovalDetail = PhotoRemovalRequestDto | PhotographerRemovalRequestDto | RunnerRemovalRequestDetailDto;
 
@@ -162,7 +162,8 @@ export function useAdminRemovalActions() {
   const decide = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<DecideRemovalCommand>) => context.run(id, () => api.decideRemovalRequest(id, command)) });
   const retryCleanup = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<RetryRemovalCleanupCommand>) => context.run(id, () => api.retryRemovalCleanup(id, command)) });
   const supportUpdate = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<RemovalSupportUpdateCommand>) => context.run(id, () => api.addRemovalSupportUpdate(id, command), false) });
-  return { create, replaceEvidence, match, verify, cancel, decide, retryCleanup, supportUpdate, reviewCurrentState: context.reviewCurrentState, reviewRequired: context.reviewRequired };
+  const reviewSuggestions = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<ReviewSuggestionsCommand>) => context.run(id, () => api.reviewRemovalSuggestions(id, command)) });
+  return { create, replaceEvidence, match, verify, cancel, decide, retryCleanup, supportUpdate, reviewSuggestions, reviewCurrentState: context.reviewCurrentState, reviewRequired: context.reviewRequired };
 }
 export function usePhotographerRemovalActions() {
   const context = useRemovalActionContext("PHOTOGRAPHER");
