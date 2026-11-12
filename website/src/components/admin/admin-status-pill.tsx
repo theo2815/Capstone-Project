@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-export type AdminStatusPillTone = "fresh" | "ink" | "slate" | "muted" | "amber";
+export type AdminStatusPillTone = "fresh" | "ink" | "slate" | "muted" | "amber" | "error";
 
 interface AdminStatusPillProps {
   label: string;
@@ -35,4 +35,5 @@ const TONE_CLASS: Record<AdminStatusPillTone, string> = {
   slate: "border-line text-slate",
   muted: "border-line text-slate-soft",
   amber: "border-amber-600/30 text-amber-700",
+  error: "border-error/30 text-error",
 };

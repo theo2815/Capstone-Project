@@ -116,6 +116,28 @@ export function disputeStatusTone(status: DisputeStatus): "amber" | "fresh" | "i
   }
 }
 
+// What the admin must do next; "closed" shows no chip.
+export const DISPUTE_ATTENTION_LABEL: Record<DisputeAttention, string | null> = {
+  review: "Needs review",
+  escalated: "Escalated: decide",
+  send_link: "Approved: send the refund link",
+  awaiting_claim: "Link sent: waiting for the runner",
+  link_expired: "Link expired: send a new one",
+  check_paymongo: "Check PayMongo",
+  refund_problem: "Refund problem: check PayMongo",
+  refund_in_progress: "Refund in progress",
+  closed: null,
+};
+
+export const DISPUTE_PAYMENT_LABEL: Record<string, string> = {
+  qrph: "QR Ph",
+  gcash: "GCash",
+  maya: "Maya",
+  paymaya: "PayMaya",
+  card: "Card",
+  grabpay: "GrabPay",
+};
+
 export const DISPUTE_REASON_LABEL: Record<DisputeReason, string> = {
   wrong_runner: "Wrong runner in photo",
   low_quality: "Too blurred to recognise",
