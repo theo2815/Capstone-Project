@@ -1372,15 +1372,14 @@ function VerificationStatusPanel() {
     return (
       <div className="border border-line rounded-2xl px-5 py-4 bg-bone-deep/40 mb-8">
         <Kicker as="p">
-          Awaiting review
+          Awaiting your identity check
         </Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
-          We&apos;re looking over your settings.
+          Your studio goes live when your identity check passes.
         </p>
         <p className="font-sans text-sm text-slate mt-2 max-w-md">
-          Reviews take 1–2 business days. You&apos;ll be able to upload as soon
-          as we&apos;re done. Edits below stay live — the admin always sees your
-          latest changes.
+          Seller details below show where your check stands. Your edits stay
+          live meanwhile.
         </p>
         <div className="mt-5">
           <button

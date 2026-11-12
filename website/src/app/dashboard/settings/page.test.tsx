@@ -792,3 +792,13 @@ it.each([
   await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith({ kind, message }));
   expect(usePhotographerSettingsStore.getState().verificationStatus).toBe(status);
 });
+
+// AA-I7: a pending profile approves itself when identity passes; no admin profile review is left to wait for.
+it("a pending profile says it goes live when the identity check passes, not after an admin review", async () => {
+  mockSellerStatus("submitted");
+  usePhotographerSettingsStore.setState({ verificationStatus: "pending" });
+  render(<SettingsPage />);
+  expect(await screen.findByText("Awaiting your identity check")).toBeInTheDocument();
+  expect(screen.queryByText(/business days/)).toBeNull();
+  expect(screen.queryByText(/the admin always sees/)).toBeNull();
+});
