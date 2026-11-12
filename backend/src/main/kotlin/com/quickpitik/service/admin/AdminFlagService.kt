@@ -12,6 +12,8 @@ import com.quickpitik.entity.Flag
 import com.quickpitik.entity.FlagStatus
 import com.quickpitik.entity.FlagTargetKind
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
@@ -21,6 +23,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -38,6 +41,8 @@ class AdminFlagService(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
     private val adminProperties: AdminProperties,
+    private val adminDecisionLogService: AdminDecisionLogService,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
 
     fun ensureEnabled() {
@@ -82,6 +87,14 @@ class AdminFlagService(
     fun hide(adminId: UUID, flagId: UUID, resolutionNote: String?): AdminFlagDto {
         ensureEnabled()
         val flag = loadFlag(flagId)
+        // PE-2.2: `hidden` would silently end a payout hold and break the raise dedupe.
+        if (isRelevanceFlag(flag)) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "A relevance flag is resolved or dismissed, not hidden",
+            )
+        }
         requireStatus(flag, FlagStatus.OPEN, FlagStatus.ESCALATED)
         flag.status = FlagStatus.HIDDEN
         flag.resolutionNote = resolutionNote
@@ -108,6 +121,45 @@ class AdminFlagService(
         return hydrateOne(flag)
     }
 
+    // PE-2.2 (D23): an admin confirms the payout hold on an open relevance flag. The hold
+    // binds while the flag stays open or escalated; resolving or dismissing it ends the hold.
+    fun confirmPayoutHold(adminId: UUID, flagId: UUID): AdminFlagDto {
+        ensureEnabled()
+        val flag = loadFlag(flagId)
+        if (!isRelevanceFlag(flag)) {
+            throw ApiException(
+                status = HttpStatus.CONFLICT,
+                code = ErrorCodes.INVALID_STATE_TRANSITION,
+                message = "Only a relevance flag can hold payouts",
+            )
+        }
+        requireStatus(flag, FlagStatus.OPEN, FlagStatus.ESCALATED)
+        if (flag.payoutHoldAt != null) return hydrateOne(flag) // already held: change nothing
+
+        flag.payoutHoldAt = OffsetDateTime.now()
+        flag.payoutHoldBy = adminId
+        flagRepository.save(flag)
+        val decision = adminDecisionLogService.logUserDecision(
+            adminId = adminId,
+            targetUserId = flag.targetId,
+            decision = "payout_hold_confirmed",
+            reason = "flag ${flag.id}",
+        )
+        // Draft wording (PE-L4 gives the final text, PE-2.12 carries it in).
+        adminDecisionLogService.pushMessage(
+            photographerId = flag.targetId,
+            kind = PhotographerMessageKind.ADMIN_MESSAGE,
+            title = "Payouts on hold",
+            body = "We are reviewing some of the photos you uploaded, so payouts are on hold for now. " +
+                "Your photos and your sales are not removed. An admin will finish the review as soon as they can. " +
+                "Contact support to appeal.",
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+        )
+        eventPublisher.publishEvent(PayoutHoldPlacedEvent(flag.targetId))
+        return hydrateOne(flag)
+    }
+
     private fun close(adminId: UUID, flagId: UUID, resolutionNote: String?, target: FlagStatus): AdminFlagDto {
         ensureEnabled()
         val flag = loadFlag(flagId)
@@ -119,8 +171,21 @@ class AdminFlagService(
         flag.resolvedAt = OffsetDateTime.now()
         flagRepository.save(flag)
         if (wasHidden) restorePhotoIfUnflagged(flag)
+        // PE-2.2 (P11): closing a held relevance flag ends the hold; tell the photographer.
+        if (isRelevanceFlag(flag) && flag.payoutHoldAt != null) {
+            adminDecisionLogService.pushMessage(
+                photographerId = flag.targetId,
+                kind = PhotographerMessageKind.ADMIN_MESSAGE,
+                title = "Payout hold lifted",
+                body = "The review of your uploads is finished. You can request payouts again.",
+                sourceAdminId = adminId,
+            )
+        }
         return hydrateOne(flag)
     }
+
+    private fun isRelevanceFlag(flag: Flag): Boolean =
+        flag.targetKind == FlagTargetKind.USER && flag.reason == SystemFlagReason.BATCH_RELEVANCE_LOW.wire
 
     private fun requireStatus(flag: Flag, vararg allowed: FlagStatus) {
         if (flag.status !in allowed) {
@@ -150,7 +215,11 @@ class AdminFlagService(
 
     private fun loadFlag(flagId: UUID): Flag {
         // Read only the immutable target first, so the flag is hydrated after both locks.
+        // PE-2.2: a relevance flag guards payouts, so its photographer is locked first (user,
+        // then flag), the order the payout steps use (user, then cycle).
         flagRepository.findPhotoId(flagId)?.let { photoRepository.findAllByIdForUpdate(listOf(it)) }
+            ?: flagRepository.findRelevanceUserTarget(flagId, SystemFlagReason.BATCH_RELEVANCE_LOW.wire)
+                ?.let { userRepository.lockById(it) }
         return flagRepository.findByIdForUpdate(flagId)
             ?: throw NotFoundException(code = ErrorCodes.FLAG_NOT_FOUND, message = "Flag not found")
     }
@@ -238,6 +307,7 @@ class AdminFlagService(
                 targetKind = flag.targetKindWire,
                 targetId = flag.targetId,
                 reporterId = flag.reporterId,
+                payoutHoldAt = flag.payoutHoldAt?.toString(),
             )
         }
     }

@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminPayoutAccountSnapshotDto
@@ -16,6 +17,7 @@ import com.quickpitik.dto.admin.GenerateCyclesResultDto
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.dto.earnings.buildCycleId
 import com.quickpitik.dto.earnings.buildWeeklyCycleId
+import com.quickpitik.entity.Flag
 import com.quickpitik.entity.PayoutAccount
 import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
@@ -23,11 +25,13 @@ import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
+import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.AdminDecisionLogRepository
+import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -69,6 +73,8 @@ class AdminPayoutService(
     private val disbursementService: DisbursementService,
     private val payoutRequestService: PayoutRequestService,
     private val transactionTemplate: TransactionTemplate,
+    private val flagRepository: FlagRepository,
+    private val adminProperties: AdminProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -89,8 +95,9 @@ class AdminPayoutService(
     }
 
     fun approve(adminId: UUID, payoutId: String): AdminPayoutCycleDto {
-        val cycle = loadCycle(payoutId)
+        val cycle = loadCycleForAuthorization(payoutId)
         payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminApprove)
+        ensureNoRelevanceHold(cycle)
         cycle.holdReason = null
         val needsTwo = requiresTwoPerson(cycle)
 
@@ -192,6 +199,7 @@ class AdminPayoutService(
         ensureManual(cycle)
         payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkPaid)
         payoutRequestService.assertCovered(cycle)
+        ensureNoRelevanceHold(cycle)
         // AdminMarkPaid allows APPROVED/PROCESSING only — a cycle must be
         // (fully) approved before it can be paid, which also enforces two-person
         // approval for large amounts.
@@ -258,6 +266,7 @@ class AdminPayoutService(
             ensureManual(cycle)
             payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminMarkProcessing)
             payoutRequestService.assertCovered(cycle)
+            ensureNoRelevanceHold(cycle)
             val provider = disbursementService.activeName
             cycle.provider = provider
             val request = if (provider == "manual") null else disbursementRequestFor(cycle)
@@ -409,6 +418,13 @@ class AdminPayoutService(
             scopedKey,
         ) ?: UUID.randomUUID()
 
+        if (action == "approve") {
+            // PE-2.2 (R2-29): approve takes photographer then cycle locks. Take every
+            // photographer lock first, sorted as RefundService.submit sorts them.
+            req.ids.distinct().mapNotNull { payoutCycleRepository.findPhotographerIdById(it) }
+                .distinct().sorted().forEach { userRepository.lockById(it) }
+        }
+
         val results = try {
             req.ids.distinct().sorted().map { id ->
                 try {
@@ -461,10 +477,11 @@ class AdminPayoutService(
     }
 
     private fun bulkApprove(adminId: UUID, payoutId: String, groupId: UUID, idempotencyKey: String) {
-        val cycle = loadCycle(payoutId)
+        val cycle = loadCycleForAuthorization(payoutId)
         if (adminDecisionLogRepository.existsByAdminIdAndIdempotencyKeyAndTargetPayoutId(
                 adminId, idempotencyKey, payoutId,
             )) return
+        ensureNoRelevanceHold(cycle)
         payoutCycleTransitions.ensureAllowed(cycle, PayoutTransition.AdminApprove)
         val needsTwo = requiresTwoPerson(cycle)
         if (needsTwo && cycle.approvedBy == adminId) throw ApiException(
@@ -675,6 +692,19 @@ class AdminPayoutService(
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────
+    // PE-2.2 (D23): approve and the two pay steps stop while a relevance hold is open.
+    // hold, reject, mark-failed and mark-returned move no money out and stay allowed.
+    private fun ensureNoRelevanceHold(cycle: PayoutCycle) {
+        if (payoutRequestService.relevanceHoldOpen(cycle.photographerId)) {
+            throw ApiException(
+                HttpStatus.CONFLICT,
+                ErrorCodes.PAYOUT_ON_HOLD,
+                "This photographer's payouts are on hold (open relevance flag). Resolve or dismiss the flag first. " +
+                    "If the money was already sent, hold the payout and record the reference in the note.",
+            )
+        }
+    }
+
     private fun loadCycle(payoutId: String): PayoutCycle =
         payoutCycleRepository.lockById(payoutId) ?: throw
             NotFoundException(code = ErrorCodes.PAYOUT_NOT_FOUND, message = "Payout cycle not found")
@@ -715,6 +745,9 @@ class AdminPayoutService(
         val accountsByUser = payoutAccountRepository
             .findAllByUserIdInOrderByCreatedAtAsc(photographerIds)
             .groupBy { it.userId }
+        val relevanceFlagsByUser = flagRepository
+            .findOpenByUserTargetsAndReason(photographerIds, SystemFlagReason.BATCH_RELEVANCE_LOW.wire)
+            .groupBy { it.targetId }
         return cycles.map { cycle ->
             val candidates = accountsByUser[cycle.photographerId].orEmpty()
             hydrateOne(
@@ -722,6 +755,7 @@ class AdminPayoutService(
                 user = usersById[cycle.photographerId],
                 settings = settingsById[cycle.photographerId],
                 account = candidates.firstOrNull { it.isPrimary } ?: candidates.firstOrNull(),
+                relevanceFlag = pickRelevanceFlag(relevanceFlagsByUser[cycle.photographerId].orEmpty()),
             )
         }
     }
@@ -732,6 +766,11 @@ class AdminPayoutService(
         settings: PhotographerSettings? = photographerSettingsRepository.findById(cycle.photographerId).orElse(null),
         account: PayoutAccount? = payoutAccountRepository.findByUserIdAndIsPrimaryTrue(cycle.photographerId)
             ?: payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(cycle.photographerId).firstOrNull(),
+        relevanceFlag: Flag? = pickRelevanceFlag(
+            flagRepository.findOpenByUserTargetsAndReason(
+                listOf(cycle.photographerId), SystemFlagReason.BATCH_RELEVANCE_LOW.wire,
+            ),
+        ),
     ): AdminPayoutCycleDto {
         return AdminPayoutCycleDto(
             id = cycle.id,
@@ -755,8 +794,15 @@ class AdminPayoutService(
             secondApprovedBy = cycle.secondApprovedBy?.toString(),
             provider = cycle.provider,
             payoutAccount = snapshotAccount(cycle, account),
+            relevanceFlagId = relevanceFlag?.id,
+            // The same answer PayoutRequestService.relevanceHoldOpen gives the guard.
+            relevanceHold = adminProperties.flagsEnabled && relevanceFlag?.payoutHoldAt != null,
         )
     }
+
+    // One open relevance flag per photographer is the rule; prefer a held one if a race left two.
+    private fun pickRelevanceFlag(flags: List<Flag>): Flag? =
+        flags.firstOrNull { it.payoutHoldAt != null } ?: flags.firstOrNull()
 
     private fun toAdminWireStatus(cycle: PayoutCycle): String {
         return when (cycle.status) {

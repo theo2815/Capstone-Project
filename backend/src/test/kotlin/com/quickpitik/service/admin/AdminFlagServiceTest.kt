@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Flag
@@ -11,28 +12,38 @@ import com.quickpitik.entity.FlagStatus
 import com.quickpitik.entity.FlagTargetKind
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.PhotographerMessage
+import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
+import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.http.HttpStatus
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 // The flag queue mutates photos (hide → HIDDEN, dismiss/resolve of a hidden
@@ -47,6 +58,9 @@ class AdminFlagServiceTest {
     private lateinit var userRepository: UserRepository
     private lateinit var photographerSettingsRepository: PhotographerSettingsRepository
     private lateinit var storageService: StorageService
+    private lateinit var adminDecisionLogRepository: AdminDecisionLogRepository
+    private lateinit var photographerMessageRepository: PhotographerMessageRepository
+    private lateinit var eventPublisher: ApplicationEventPublisher
 
     private val adminId = UUID.randomUUID()
 
@@ -60,13 +74,19 @@ class AdminFlagServiceTest {
         userRepository = Mockito.mock(UserRepository::class.java)
         photographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
+        adminDecisionLogRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
+        photographerMessageRepository = Mockito.mock(PhotographerMessageRepository::class.java)
+        eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
+        Mockito.`when`(adminDecisionLogRepository.save(anyArg())).thenAnswer { it.getArgument(0) }
+        Mockito.`when`(photographerMessageRepository.save(anyArg())).thenAnswer { it.getArgument(0) }
         Mockito.`when`(eventRepository.findAllById(anyArg())).thenReturn(emptyList())
         Mockito.`when`(userRepository.findAllById(anyArg())).thenReturn(emptyList())
         Mockito.`when`(photographerSettingsRepository.findAllById(anyArg())).thenReturn(emptyList())
         Mockito.`when`(photoRepository.findAllById(anyArg())).thenReturn(emptyList())
     }
 
-    private fun service() = AdminFlagService(
+    // The real decision-log service over mock repositories, so the decision row and the note can be read back.
+    private fun service(flagsEnabled: Boolean = true) = AdminFlagService(
         flagRepository,
         photoRepository,
         eventRepository,
@@ -74,7 +94,9 @@ class AdminFlagServiceTest {
         photographerSettingsRepository,
         storageService,
         StorageProperties(),
-        AdminProperties(flagsEnabled = true),
+        AdminProperties(flagsEnabled = flagsEnabled),
+        AdminDecisionLogService(adminDecisionLogRepository, photographerMessageRepository, eventPublisher),
+        eventPublisher,
     )
 
     private fun photo(status: PhotoStatus = PhotoStatus.LIVE, watermarkKey: String? = null) = Photo(
@@ -237,5 +259,155 @@ class AdminFlagServiceTest {
         assertNull(dto.eventId)
         assertNull(dto.photoId)
         assertEquals("user", dto.targetKind)
+    }
+
+    // ─── PE-2.2: the payout hold on a relevance flag ──────────────────────
+    private val photographerId = UUID.randomUUID()
+    private val relevance = SystemFlagReason.BATCH_RELEVANCE_LOW.wire
+
+    private fun relevanceFlag(status: FlagStatus = FlagStatus.OPEN, held: Boolean = false): Flag {
+        val f = Flag(
+            targetKindWire = FlagTargetKind.USER.wire,
+            targetId = photographerId,
+            reason = relevance,
+            statusWire = status.wire,
+            payoutHoldAt = if (held) OffsetDateTime.now().minusDays(1) else null,
+        )
+        Mockito.`when`(flagRepository.findRelevanceUserTarget(f.id, relevance)).thenReturn(photographerId)
+        Mockito.`when`(flagRepository.findByIdForUpdate(f.id)).thenReturn(f)
+        return f
+    }
+
+    private fun savedMessages(): List<PhotographerMessage> {
+        val captor = ArgumentCaptor.forClass(PhotographerMessage::class.java)
+        Mockito.verify(photographerMessageRepository, Mockito.atLeast(0)).save(captor.capture())
+        return captor.allValues
+    }
+
+    @Test
+    fun `confirming a hold stamps who and when, logs a decision and sends one note`() {
+        val f = relevanceFlag()
+
+        val dto = service().confirmPayoutHold(adminId, f.id)
+
+        assertNotNull(f.payoutHoldAt)
+        assertEquals(adminId, f.payoutHoldBy)
+        assertEquals(f.payoutHoldAt.toString(), dto.payoutHoldAt)
+        assertEquals("open", dto.status) // the hold leaves the flag open: closing it ends the hold
+        val decision = ArgumentCaptor.forClass(AdminDecisionLog::class.java)
+        Mockito.verify(adminDecisionLogRepository).save(decision.capture())
+        assertEquals("payout_hold_confirmed", decision.value.decision)
+        assertEquals(photographerId, decision.value.targetUserId)
+        assertEquals("flag ${f.id}", decision.value.reason)
+        val note = savedMessages().single()
+        assertEquals(photographerId, note.photographerId)
+        assertEquals(PhotographerMessageKind.ADMIN_MESSAGE.wire, note.kindWire)
+        assertEquals("Payouts on hold", note.title)
+        assertEquals(adminId, note.sourceAdminId)
+        assertEquals(decision.value.id, note.sourceDecisionId)
+        Mockito.verify(eventPublisher).publishEvent(PayoutHoldPlacedEvent(photographerId))
+    }
+
+    @Test
+    fun `confirming twice changes nothing`() {
+        val f = relevanceFlag(held = true)
+        val stamped = f.payoutHoldAt
+
+        service().confirmPayoutHold(adminId, f.id)
+
+        assertEquals(stamped, f.payoutHoldAt)
+        assertNull(f.payoutHoldBy)
+        Mockito.verify(flagRepository, Mockito.never()).save(anyArg())
+        Mockito.verifyNoInteractions(adminDecisionLogRepository, photographerMessageRepository, eventPublisher)
+    }
+
+    @Test
+    fun `a hold cannot be confirmed on a photo flag, an event flag, another reason or a closed flag`() {
+        val photoFlag = flag(FlagStatus.OPEN).apply { reason = relevance }
+        val eventFlag = targetFlag(FlagTargetKind.EVENT, UUID.randomUUID()).apply { reason = relevance }
+        val otherReason = targetFlag(FlagTargetKind.USER, photographerId)
+        val closed = listOf(FlagStatus.RESOLVED, FlagStatus.DISMISSED, FlagStatus.HIDDEN).map { relevanceFlag(it) }
+
+        for (f in listOf(photoFlag, eventFlag, otherReason) + closed) {
+            val ex = assertFailsWith<ApiException> { service().confirmPayoutHold(adminId, f.id) }
+            assertEquals(HttpStatus.CONFLICT, ex.status)
+            assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+            assertNull(f.payoutHoldAt)
+        }
+        Mockito.verify(flagRepository, Mockito.never()).save(anyArg())
+        Mockito.verifyNoInteractions(adminDecisionLogRepository, photographerMessageRepository, eventPublisher)
+    }
+
+    @Test
+    fun `the confirm is refused while the flags switch is off`() {
+        val f = relevanceFlag()
+        val ex = assertFailsWith<ApiException> { service(flagsEnabled = false).confirmPayoutHold(adminId, f.id) }
+        assertEquals(ErrorCodes.FLAGS_DISABLED, ex.code)
+        assertNull(f.payoutHoldAt)
+    }
+
+    @Test
+    fun `the old hide route refuses a relevance flag`() {
+        val f = relevanceFlag(held = true)
+        val ex = assertFailsWith<ApiException> { service().hide(adminId, f.id, null) }
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        assertEquals("open", f.statusWire)
+        Mockito.verify(flagRepository, Mockito.never()).save(anyArg())
+    }
+
+    @Test
+    fun `every action on a relevance flag locks the photographer before the flag`() {
+        val actions: List<(UUID) -> Unit> = listOf(
+            { id -> service().confirmPayoutHold(adminId, id) },
+            { id -> service().resolve(adminId, id, null) },
+            { id -> service().dismiss(adminId, id, null) },
+            { id -> service().escalate(adminId, id, null) },
+        )
+        for (action in actions) {
+            Mockito.clearInvocations(userRepository, flagRepository)
+            val f = relevanceFlag()
+            action(f.id)
+            val order = Mockito.inOrder(userRepository, flagRepository)
+            order.verify(userRepository).lockById(photographerId)
+            order.verify(flagRepository).findByIdForUpdate(f.id)
+        }
+    }
+
+    @Test
+    fun `resolving or dismissing a held flag sends the lift note once`() {
+        val resolved = relevanceFlag(held = true)
+        service().resolve(adminId, resolved.id, "checked")
+        val dismissed = relevanceFlag(held = true)
+        service().dismiss(adminId, dismissed.id, null)
+        val unheld = relevanceFlag()
+        service().resolve(adminId, unheld.id, null) // no hold, no lift note
+        assertFailsWith<ApiException> { service().resolve(adminId, resolved.id, null) } // already closed
+
+        val notes = savedMessages()
+        assertEquals(2, notes.size)
+        for (note in notes) {
+            assertEquals("Payout hold lifted", note.title)
+            assertEquals("The review of your uploads is finished. You can request payouts again.", note.body)
+            assertEquals(adminId, note.sourceAdminId)
+            assertEquals(photographerId, note.photographerId)
+        }
+    }
+
+    @Test
+    fun `no note names another photographer`() {
+        val (other, _) = photographer("othershots", "Maria Santos")
+        val f = relevanceFlag().apply { note = "event e1 2027-01-10: copy 9/10 · matches ${other.id} othershots" }
+        service().confirmPayoutHold(adminId, f.id)
+        service().resolve(adminId, f.id, null)
+
+        val notes = savedMessages()
+        assertEquals(2, notes.size)
+        for (note in notes) {
+            val text = "${note.title} ${note.body}"
+            for (forbidden in listOf("othershots", "Maria", other.id.toString(), "copied", "copy")) {
+                assertFalse(forbidden in text, "note must not carry '$forbidden': $text")
+            }
+        }
     }
 }

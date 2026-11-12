@@ -1,6 +1,7 @@
 package com.quickpitik.service.earnings
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.entity.PayoutAccount
 import com.quickpitik.entity.PayoutAccountAudit
@@ -10,6 +11,8 @@ import com.quickpitik.entity.PayoutStatusHistory
 import com.quickpitik.entity.PayoutMethod
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.entity.SystemFlagReason
+import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PayoutAccountAuditRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
@@ -47,6 +50,7 @@ class PayoutRequestServiceBalanceTest {
     private lateinit var payoutAccountAuditRepository: PayoutAccountAuditRepository
     private lateinit var payoutStatusHistoryRepository: PayoutStatusHistoryRepository
     private lateinit var payoutStatusRecorder: PayoutStatusRecorder
+    private lateinit var flagRepository: FlagRepository
     private val platformProperties = PlatformProperties()
 
     private val photographerId = UUID.randomUUID()
@@ -63,9 +67,10 @@ class PayoutRequestServiceBalanceTest {
         payoutAccountAuditRepository = Mockito.mock(PayoutAccountAuditRepository::class.java)
         payoutStatusHistoryRepository = Mockito.mock(PayoutStatusHistoryRepository::class.java)
         payoutStatusRecorder = PayoutStatusRecorder(payoutStatusHistoryRepository)
+        flagRepository = Mockito.mock(FlagRepository::class.java)
     }
 
-    private fun service() = PayoutRequestService(
+    private fun service(flagsEnabled: Boolean = true) = PayoutRequestService(
         payoutCycleRepository,
         transactionRepository,
         photographerSettingsRepository,
@@ -76,6 +81,8 @@ class PayoutRequestServiceBalanceTest {
         platformProperties,
         Mockito.mock(UserRepository::class.java),
         Clock.systemUTC(),
+        flagRepository,
+        AdminProperties(flagsEnabled = flagsEnabled),
     )
 
     // Stub the four money sums; each test sets the numbers it cares about.
@@ -318,5 +325,49 @@ class PayoutRequestServiceBalanceTest {
 
         val thrown = assertFailsWith<DataIntegrityViolationException> { service().request(photographerId) }
         assertSame(clash, thrown)
+    }
+
+    // PE-2.2: an admin-confirmed hold on an open relevance flag stops the request.
+    private fun holdOpen(open: Boolean) {
+        Mockito.`when`(flagRepository.existsOpenPayoutHold(photographerId, SystemFlagReason.BATCH_RELEVANCE_LOW.wire))
+            .thenReturn(open)
+    }
+
+    @Test
+    fun `a request is refused with the hold code while a relevance hold is open`() {
+        stubSums(cleared = "1000", lifetime = "1000", paid = "0", reserved = "0")
+        noOpenRequest()
+        holdOpen(true)
+
+        val ex = assertFailsWith<ApiException> { service().request(photographerId) }
+
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.PAYOUT_ON_HOLD, ex.code)
+        assertEquals("Payouts are on hold while we review some of your uploads. Check your inbox for details.", ex.message)
+        Mockito.verify(payoutCycleRepository, Mockito.never()).insert(anyArg<PayoutCycle>())
+    }
+
+    @Test
+    fun `the balance carries the hold reason while the hold is open and none after the flag is closed`() {
+        stubSums(cleared = "1000", lifetime = "1000", paid = "0", reserved = "0")
+        noOpenRequest()
+
+        holdOpen(true)
+        assertEquals("UPLOAD_REVIEW", service().getBalance(photographerId).payoutHoldReason)
+
+        holdOpen(false) // the query matches only open or escalated flags, so a closed flag reads as no hold
+        assertEquals(null, service().getBalance(photographerId).payoutHoldReason)
+    }
+
+    @Test
+    fun `no hold binds while the flags switch is off`() {
+        stubSums(cleared = "1000", lifetime = "1000", paid = "0", reserved = "0")
+        noOpenRequest()
+        holdOpen(true)
+
+        assertEquals(false, service(flagsEnabled = false).relevanceHoldOpen(photographerId))
+        assertEquals(null, service(flagsEnabled = false).getBalance(photographerId).payoutHoldReason)
+        val ex = assertFailsWith<ValidationException> { service(flagsEnabled = false).request(photographerId) }
+        assertEquals(ErrorCodes.PAYOUT_NO_ACCOUNT, ex.code) // got past the hold check
     }
 }

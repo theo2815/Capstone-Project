@@ -728,6 +728,17 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the payout hold confirm is admin only`() {
+        val route = "/api/v1/admin/flags/${UUID.randomUUID()}/payout-hold"
+        for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+            assertEquals(if (token == null) 401 else 403, post(route, "", token).statusCode())
+        }
+        val missing = post(route, "", adminToken())
+        assertEquals(404, missing.statusCode())
+        assertTrue("FLAG_NOT_FOUND" in missing.body(), missing.body())
+    }
+
+    @Test
     fun `a known seller-details storage key is never served from local storage`() {
         val key = "seller-details/${UUID.randomUUID()}/${UUID.randomUUID()}.jpg"
         val path = Path.of("build/test-storage", key)

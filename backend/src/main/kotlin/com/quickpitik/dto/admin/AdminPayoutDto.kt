@@ -46,6 +46,10 @@ data class AdminPayoutCycleDto(
     val secondApprovedBy: String? = null,
     val provider: String = "manual",
     val payoutAccount: AdminPayoutAccountSnapshotDto,
+    // PE-2.2: the photographer's open relevance flag, confirmed or not, and whether
+    // its payout hold binds (exactly when approve and the pay steps would refuse).
+    val relevanceFlagId: UUID? = null,
+    val relevanceHold: Boolean = false,
 )
 
 // POST /admin/payouts/{id}/hold — body { reason }.

@@ -60,4 +60,11 @@ class AdminFlagsController(
         @PathVariable flagId: UUID,
         @RequestBody(required = false) body: FlagActionRequest?,
     ): AdminFlagDto = adminFlagService.escalate(principal.userId, flagId, body?.resolutionNote)
+
+    // PE-2.2: confirm a payout hold on a relevance flag. No body.
+    @PostMapping("/{flagId}/payout-hold")
+    fun confirmPayoutHold(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable flagId: UUID,
+    ): AdminFlagDto = adminFlagService.confirmPayoutHold(principal.userId, flagId)
 }

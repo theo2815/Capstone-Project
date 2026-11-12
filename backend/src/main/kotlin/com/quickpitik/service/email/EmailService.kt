@@ -257,6 +257,30 @@ class EmailService(
         }
     }
 
+    // PE-2.2: an admin put the photographer's payouts on hold while their uploads are reviewed.
+    // Sent AFTER_COMMIT + async via PayoutHoldEmailListener; failures are logged and dropped.
+    // Logs carry no address (relevance logs hold ids only). Draft wording: PE-L4 gives the final text.
+    fun sendPayoutHoldAlert(toEmail: String, name: String) {
+        if (devMode) {
+            log.info("[EMAIL STUB] payout hold alert")
+            return
+        }
+        val sender = "${resendProperties.fromName} <${resendProperties.fromAddress}>"
+        try {
+            val response = resendClient.send(
+                ResendSendEmailRequest(
+                    from = sender,
+                    to = listOf(toEmail),
+                    subject = "Your QuickPitik payouts are on hold",
+                    html = renderPayoutHoldHtml(name),
+                ),
+            )
+            log.info("Payout hold alert sent · resendId={}", response.id)
+        } catch (ex: Exception) {
+            log.error("Payout hold alert failed · err={}", ex.message, ex)
+        }
+    }
+
     // The one-off identity-check notice (AA-I22, wording approved in AA-0.8), sent by the admin
     // identity-notice route. Returns whether Resend took it so the route can count; failures are logged.
     fun sendIdentityCheckNotice(toEmail: String, name: String, startsOn: LocalDate): Boolean {
@@ -322,6 +346,43 @@ class EmailService(
           </p>
           <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
             Questions? Write to quickpitiksupport@gmail.com.
+          </p>
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
+    private fun renderPayoutHoldHtml(name: String): String {
+        val greeting = name.trim().ifBlank { "there" }
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>Your QuickPitik payouts are on hold</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Payouts
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:30px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.1;color:#1a1a1a;">
+            Payouts on hold.
+          </h1>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 12px;">
+            Hi ${escapeHtml(greeting)} — we are reviewing some of the photos you uploaded, so payouts are on hold for now.
+          </p>
+          <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 24px;">
+            Your photos and your sales are not removed. An admin will finish the review as soon as they can.
+          </p>
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:24px 0;" />
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
+            Contact support to appeal.
           </p>
         </td></tr>
       </table>
