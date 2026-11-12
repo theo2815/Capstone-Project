@@ -133,17 +133,6 @@ export function useDisputeActions() {
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-export function useOpenDisputesCount(): number {
-  const serverDisputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
-  return useMemo(
-    () =>
-      serverDisputes.filter(
-        (d) => d.status === "open",
-      ).length,
-    [serverDisputes],
-  );
-}
-
 export function useRefundedThisWeekTotal(): number {
   const serverDisputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   return useMemo(() => {

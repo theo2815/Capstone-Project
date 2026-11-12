@@ -83,6 +83,10 @@ export interface AdminKpis {
   liveEvents: number;
   decisionsThisWeek: number;
   openDisputes: number;
+  /** DW-2: unresolved disputes that need an admin. Optional until the backend ships it. */
+  disputesNeedingAdmin?: number;
+  /** DW-2: how many of those are past their due time. */
+  disputesOverdue?: number;
   openFlags: number;
   pendingPayouts: number;
   /** V46 — photographer-owned events awaiting a decision (new + pricing change). */

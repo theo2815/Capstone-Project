@@ -30,6 +30,8 @@ const EMPTY_KPIS: AdminKpis = {
   liveEvents: 0,
   decisionsThisWeek: 0,
   openDisputes: 0,
+  disputesNeedingAdmin: 0,
+  disputesOverdue: 0,
   openFlags: 0,
   pendingPayouts: 0,
   pendingEventRequests: 0,
@@ -37,6 +39,8 @@ const EMPTY_KPIS: AdminKpis = {
 
 export default function AdminOverviewPage() {
   const kpis = useAdminKpis() ?? EMPTY_KPIS;
+  const needingAdmin = kpis.disputesNeedingAdmin ?? kpis.openDisputes;
+  const overdue = kpis.disputesOverdue ?? 0;
 
   return (
     <>
@@ -57,12 +61,13 @@ export default function AdminOverviewPage() {
           />
           <AdminStatTile
             number="02"
-            kicker="Open disputes"
-            value={kpis.openDisputes}
+            kicker="Disputes needing you"
+            value={needingAdmin}
             caption={
-              kpis.openDisputes === 1
+              (overdue > 0 ? `${overdue} overdue · ` : "") +
+              (needingAdmin === 1
                 ? "refund decision pending"
-                : "refund decisions pending"
+                : "refund decisions pending")
             }
             href={ROUTES.ADMIN_DISPUTES}
           />
