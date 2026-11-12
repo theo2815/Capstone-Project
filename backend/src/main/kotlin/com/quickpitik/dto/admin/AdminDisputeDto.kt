@@ -80,6 +80,13 @@ data class AdminDisputeDto(
     val dueAt: String? = null,
     val overdue: Boolean = false,
     val linkExpiringSoon: Boolean = false,
+    // Whether a full refund can be approved now, and if not why (bought_together | window_closed | no_payment)
+    // with the admin text `prepare` would refuse with. paymentPhotoCount: photos the PayMongo payment covers.
+    // All null once a refund is under way or the dispute is closed; a failed refund can be tried again, so it is filled.
+    val refundable: Boolean? = null,
+    val refundBlockedReason: String? = null,
+    val refundBlockedMessage: String? = null,
+    val paymentPhotoCount: Int? = null,
 )
 
 // POST /admin/disputes/{id}/resolve — body { resolution, refundAmount?, reason }.

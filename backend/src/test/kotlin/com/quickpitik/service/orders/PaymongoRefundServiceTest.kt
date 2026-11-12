@@ -25,6 +25,7 @@ import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -407,6 +408,106 @@ class PaymongoRefundServiceTest {
     }
 
     @Test
+    fun `approving a refund with no settled PayMongo payment is refused`() {
+        val h = couponHarness(paymentStatus = PaymentStatus.PENDING)
+
+        val error = assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals("The order has no settled PayMongo payment to refund.", error.message)
+        assertEquals(ErrorCodes.CONFLICT, error.code)
+        assertRefusedWithoutChanges(h)
+    }
+
+    @Test
+    fun `approving a refund whose settled payment has no PayMongo reference is refused`() {
+        val h = couponHarness(paymentHasRef = false)
+
+        val error = assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals("The settled payment has no PayMongo reference.", error.message)
+        assertEquals(ErrorCodes.CONFLICT, error.code)
+        assertRefusedWithoutChanges(h)
+    }
+
+    // --- DW-3: one rule for "can this be refunded?", shared by prepare and the admin list ---
+
+    private val blockerProps = PaymongoProperties(qrphRefundWindow = Duration.ofDays(30))
+
+    private fun blockerOrder(method: PaymentMethod) = Order(
+        eventId = UUID.randomUUID(),
+        recipientEmail = "runner@example.com",
+        paymentMethodWire = method.wire,
+        status = OrderStatus.FULFILLED,
+        totalPhp = BigDecimal("150.00"),
+    ).also { it.paidAt = paidOn }
+
+    private fun blockerPayment(order: Order, status: PaymentStatus = PaymentStatus.SUCCEEDED) = Payment(
+        orderId = order.id,
+        provider = "paymongo",
+        providerRef = "pi_test",
+        providerPaymentId = "pay_test",
+        amountPhp = order.totalPhp,
+        status = status,
+    )
+
+    @Test
+    fun `refundBlocker says bought_together when the photo is not the whole payment`() {
+        val order = blockerOrder(PaymentMethod.QRPH)
+
+        val blocker = blockerProps.refundBlocker(order, blockerPayment(order), BigDecimal("600.00"), BigDecimal("150.00"), paidOn.plusDays(1))
+
+        assertEquals(RefundBlocker.BOUGHT_TOGETHER, blocker)
+        assertEquals("bought_together", blocker?.wire)
+    }
+
+    @Test
+    fun `refundBlocker says window_closed once PayMongo's window has passed`() {
+        val order = blockerOrder(PaymentMethod.QRPH)
+
+        val blocker = blockerProps.refundBlocker(order, blockerPayment(order), BigDecimal("150.00"), BigDecimal("150.00"), paidOn.plusDays(30))
+
+        assertEquals(RefundBlocker.WINDOW_CLOSED, blocker)
+        assertEquals("window_closed", blocker?.wire)
+    }
+
+    @Test
+    fun `refundBlocker allows a single-photo QR Ph payment inside the window`() {
+        val order = blockerOrder(PaymentMethod.QRPH)
+
+        val blocker = blockerProps.refundBlocker(
+            order, blockerPayment(order), BigDecimal("150.00"), BigDecimal("150.00"), paidOn.plusDays(30).minusSeconds(1),
+        )
+
+        assertNull(blocker)
+    }
+
+    @Test
+    fun `refundBlocker skips the QR Ph rules for a card order`() {
+        val order = blockerOrder(PaymentMethod.CARD)
+
+        // Past the QR Ph window and only part of the payment: neither rule applies to a card refund.
+        val blocker = blockerProps.refundBlocker(order, blockerPayment(order), BigDecimal("600.00"), BigDecimal("150.00"), paidOn.plusDays(60))
+
+        assertNull(blocker)
+    }
+
+    @Test
+    fun `refundBlocker says no_payment when the payment never settled`() {
+        val order = blockerOrder(PaymentMethod.QRPH)
+        val unsettled = listOf(blockerPayment(order, PaymentStatus.PENDING)).settledPaymongo()
+
+        assertEquals(RefundBlocker.NO_SETTLED_PAYMENT, blockerProps.refundBlocker(order, unsettled, null, BigDecimal("150.00"), paidOn))
+        val noRef = blockerPayment(order).also { it.providerRef = null }
+        assertEquals(RefundBlocker.NO_PAYMENT_REF, blockerProps.refundBlocker(order, noRef, null, BigDecimal("150.00"), paidOn))
+        assertEquals("no_payment", RefundBlocker.NO_SETTLED_PAYMENT.wire)
+        assertEquals("no_payment", RefundBlocker.NO_PAYMENT_REF.wire)
+    }
+
+    @Test
     fun `a payment that is not QR Ph still asks PayMongo to refund`() {
         val h = couponHarness(method = PaymentMethod.GCASH)
 
@@ -446,6 +547,8 @@ class PaymongoRefundServiceTest {
         clock: Clock = Clock.systemUTC(),
         window: Duration = Duration.ofDays(30),
         validity: Duration = Duration.ofDays(3),
+        paymentStatus: PaymentStatus = PaymentStatus.SUCCEEDED,
+        paymentHasRef: Boolean = true,
     ): CouponHarness {
         val adminId = UUID.randomUUID()
         val photographerId = UUID.randomUUID()
@@ -464,10 +567,10 @@ class PaymongoRefundServiceTest {
         val payment = Payment(
             orderId = order.id,
             provider = "paymongo",
-            providerRef = providerRef,
+            providerRef = providerRef.takeIf { paymentHasRef },
             providerPaymentId = providerPaymentId,
             amountPhp = order.totalPhp,
-            status = PaymentStatus.SUCCEEDED,
+            status = paymentStatus,
         )
         val disputes = Mockito.mock(DisputeRepository::class.java)
         val orders = Mockito.mock(OrderRepository::class.java)

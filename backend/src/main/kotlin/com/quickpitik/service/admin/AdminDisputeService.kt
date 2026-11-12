@@ -41,6 +41,7 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.orders.PaymongoRefundService
+import com.quickpitik.service.orders.refundBlocker
 import com.quickpitik.service.orders.refundCancelsAt
 import com.quickpitik.service.orders.refundLinkExpiresAt
 import com.quickpitik.service.orders.refundWindowClosesAt
@@ -365,6 +366,10 @@ class AdminDisputeService(
                 },
             )
             .associateBy { it.id }
+        val checkoutByRef = loadCheckouts(
+            disputes.filter { it.refundabilityShown() }
+                .mapNotNullTo(mutableSetOf()) { paymentsByOrder[it.orderId].orEmpty().settledPaymongo()?.providerRef },
+        )
         // One clock read per page (the caller's `now`), so no row crosses a deadline mid-page.
         return disputes.map { d ->
             val order = ordersById[d.orderId]
@@ -380,6 +385,7 @@ class AdminDisputeService(
                 photographerSettings = photo?.photographerId?.let { settingsById[it] },
                 event = (order?.eventId ?: photo?.eventId)?.let { eventsById[it] },
                 now = now,
+                checkoutByRef = checkoutByRef,
             )
         }
     }
@@ -425,6 +431,8 @@ class AdminDisputeService(
             photo?.photographerId?.let { photographerSettingsRepository.findById(it).orElse(null) },
         event: Event? = (order?.eventId ?: photo?.eventId)?.let { eventRepository.findById(it).orElse(null) },
         now: OffsetDateTime = OffsetDateTime.now(clock),
+        // null: load this one dispute's checkout if its refundability is shown.
+        checkoutByRef: Map<String, CheckoutFacts>? = null,
     ): AdminDisputeDto {
         // A runnerId that no longer resolves still reads as "" (deleted user),
         // never as the guest-email fallback — matches the pre-batching logic.
@@ -440,6 +448,13 @@ class AdminDisputeService(
         val eventName = event?.name
         val queue = queueState(dispute, order, paymongoProperties, disputeQueueProperties, now)
         val parkedQrph = order?.takeIf { queue.attention in PARKED_QRPH_ATTENTIONS }
+        val itemCharge = orderItem?.pricePhpAtPurchase?.subtract(orderItem.discountPhp)
+        val shown = itemCharge != null && dispute.refundabilityShown()
+        val checkout = payment?.providerRef?.takeIf { shown }
+            ?.let { ref -> (checkoutByRef ?: loadCheckouts(setOf(ref)))[ref] }
+        // The same rule `prepare` refuses with, for the photo's full charge (plan 5.3).
+        val blocker = itemCharge?.takeIf { shown }
+            ?.let { paymongoProperties.refundBlocker(order, payment, checkout?.total, it, now) }
 
         return AdminDisputeDto(
             id = dispute.id,
@@ -463,7 +478,7 @@ class AdminDisputeService(
             refundLinkExpiresAt = parkedQrph?.let { paymongoProperties.refundLinkExpiresAt(dispute)?.toString() },
             refundWindowClosesAt = parkedQrph?.let { paymongoProperties.refundWindowClosesAt(it).toString() },
             refundCancelsAt = parkedQrph?.let { paymongoProperties.refundCancelsAt(it, dispute).toString() },
-            itemChargeAmount = orderItem?.pricePhpAtPurchase?.subtract(orderItem.discountPhp),
+            itemChargeAmount = itemCharge,
             resolution = dispute.resolutionWire,
             orderSnapshot = DisputeOrderSnapshotDto(
                 total = order?.totalPhp ?: BigDecimal.ZERO,
@@ -485,7 +500,34 @@ class AdminDisputeService(
             dueAt = queue.dueAt?.toString(),
             overdue = queue.overdue,
             linkExpiringSoon = queue.linkExpiringSoon,
+            refundable = if (shown) blocker == null else null,
+            refundBlockedReason = blocker?.wire,
+            refundBlockedMessage = blocker?.message,
+            paymentPhotoCount = checkout?.photoCount,
         )
+    }
+
+    // A refund can still be approved: undecided, and no refund under way (a failed one can be tried again).
+    private fun Dispute.refundabilityShown(): Boolean =
+        (status == DisputeStatus.OPEN || status == DisputeStatus.ESCALATED) &&
+            (refundStatus == null || refundStatus == "failed")
+
+    internal data class CheckoutFacts(val total: BigDecimal, val photoCount: Int)
+
+    // Per PayMongo reference: the sum of every payment sharing it, whatever its status (as `prepare` sums it),
+    // and the photos on those payments' orders. Two queries for the whole page.
+    private fun loadCheckouts(refs: Set<String>): Map<String, CheckoutFacts> {
+        if (refs.isEmpty()) return emptyMap()
+        val payments = paymentRepository.findAllByProviderAndProviderRefIn("paymongo", refs)
+        val orderIds = payments.mapTo(mutableSetOf()) { it.orderId }
+        val photosByOrder = if (orderIds.isEmpty()) emptyMap() else
+            orderItemRepository.findByIdOrderIdIn(orderIds).groupingBy { it.id.orderId }.eachCount()
+        return payments.groupBy { it.providerRef!! }.mapValues { (_, shared) ->
+            CheckoutFacts(
+                total = shared.fold(BigDecimal.ZERO) { sum, it -> sum + it.amountPhp },
+                photoCount = shared.mapTo(mutableSetOf()) { it.orderId }.sumOf { photosByOrder[it] ?: 0 },
+            )
+        }
     }
 
     private fun parseStatus(raw: String): DisputeStatus =
