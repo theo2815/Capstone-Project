@@ -2,6 +2,7 @@ package com.quickpitik.service.removal
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.dto.removal.CancelRemovalCommand
 import com.quickpitik.entity.*
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.*
@@ -109,6 +110,19 @@ class RunnerWithdrawTest {
         assertEquals(RemovalRequestStatus.RESOLVING to RunnerRemovalCloseReason.WITHDRAWN, request.status to request.closeReason)
         assertEquals(RemovalItemState.EXCLUDED, hidden.state)
         verify(availability).refreshRemovalState(setOf(hidden.photoId!!))
+    }
+
+    @Test fun `an admin cancel tells the runner the case changed`() {
+        val admin = User(email = "admin@test.local", passwordHash = "x", name = "Admin", role = Role.ADMIN)
+        `when`(users.findById(admin.id)).thenReturn(java.util.Optional.of(admin))
+        `when`(commands.insertClaim(eqId(commandId), eqId(request.id), anyString(), eqId(admin.id), anyString(), isNull(), anyInstant()))
+            .thenAnswer { inv ->
+                receipt = PhotoRemovalCommand(commandId, request.id, RemovalCommandOperation.CANCEL, admin.id, inv.getArgument(4), claimedAt = now)
+                1
+            }
+        // Only the publish inside the cancel transaction matters here; the mocked queries cannot build the receipt replay.
+        runCatching { service.cancel(admin.id, request.id, CancelRemovalCommand(commandId, 0, "Not a match")) }
+        verify(publisher).publishEvent(removalChangedEvent(request.id, admin.id, now))
     }
 
     @Test fun `withdraw purges the reference image after commit`() {
