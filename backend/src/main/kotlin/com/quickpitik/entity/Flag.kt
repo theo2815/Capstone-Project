@@ -35,7 +35,9 @@ enum class SystemFlagReason {
     PROFILE_IMAGE_FLAGGED, PROFILE_IMAGE_UNCHECKED, PAYOUT_NAME_CHANGED, REPEAT_ACCOUNT_MATCH,
     RACE_CHECK_MISS, RACE_EDIT_HELD, POSSIBLE_DUPLICATE, SAME_BIB_DUPLICATE,
     NO_PROOF_HIDDEN, NO_PROOF_UNINDEXED, REPORT_THRESHOLD_HIDDEN, USER_REPORT,
-    RUNNER_REMOVAL_HELD; // RD-6: a runner request whose auto-hide was held by a cap
+    RUNNER_REMOVAL_HELD, // RD-6: a runner request whose auto-hide was held by a cap
+    // PE-2.1: one USER flag per photographer whose upload batch scored Low (relevance flag mode).
+    BATCH_RELEVANCE_LOW;
 
     val wire: String get() = name.lowercase()
 }
@@ -82,6 +84,13 @@ class Flag(
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
+
+    // PE-2.2: an admin's payout hold on a relevance flag; it ends when the flag closes.
+    @Column(name = "payout_hold_at")
+    var payoutHoldAt: OffsetDateTime? = null,
+
+    @Column(name = "payout_hold_by")
+    var payoutHoldBy: UUID? = null,
 ) {
     var status: FlagStatus
         get() = FlagStatus.fromWire(statusWire)
