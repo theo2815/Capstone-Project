@@ -487,7 +487,7 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
         {/* Unknown face counts count as other people (the count is a lower bound). */}
         {(item.otherPeopleVisible ?? true) && <span className="mt-1 inline-block"><AdminStatusPill label="Other people visible" tone="amber" /></span>}
       </span>
-      <span className="flex flex-wrap gap-2">{buttons}</span>
+      <span className="flex w-full flex-wrap gap-2 sm:w-auto">{buttons}</span>
     </li>
   );
 
