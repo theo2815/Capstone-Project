@@ -23,6 +23,10 @@ interface PhotoRemovalRequestRepository : JpaRepository<PhotoRemovalRequest, UUI
 
     fun findByCreationCommandId(creationCommandId: UUID): PhotoRemovalRequest?
 
+    // RD-5: a runner reads only their own runner cases (another runner's id or a support case is a 404).
+    fun findByIdAndRequesterUserIdAndSource(id: UUID, requesterUserId: UUID, source: com.quickpitik.entity.RemovalRequestSource): PhotoRemovalRequest?
+    fun findByRequesterUserIdAndSource(requesterUserId: UUID, source: com.quickpitik.entity.RemovalRequestSource, pageable: Pageable): Page<PhotoRemovalRequest>
+
     @Query(value = "SELECT count(*) FROM photo_removal_requests r WHERE r.requester_user_id = :userId AND $RUNNER_OPEN_SQL",
         nativeQuery = true)
     fun countOpenRunnerRequests(userId: UUID): Long

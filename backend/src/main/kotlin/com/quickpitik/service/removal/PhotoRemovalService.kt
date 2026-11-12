@@ -52,6 +52,9 @@ class PhotoRemovalService(
     private val properties: PhotoRemovalProperties,
     private val autoHide: RunnerAutoHidePolicy,
 ) {
+    // Stateless over repositories this service already holds; withdraw builds its receipt inside its own transaction.
+    private val runnerQueries = RunnerPhotoRemovalQueryService(requests, items, audit)
+
     @Transactional(propagation = Propagation.NEVER)
     fun decide(adminId: UUID, requestId: UUID, command: DecideRemovalCommand): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, command)
@@ -550,6 +553,43 @@ class PhotoRemovalService(
         return tx.execute { commands.findByCommandId(command.commandId)!!.replay(adminId, requestId, RemovalCommandOperation.CANCEL, hash, mapper) }!!
     }
 
+    /**
+     * RD-5: the runner withdraws their own case until removal is authorized. Photos go public again unless another case
+     * holds them; the case waits in RESOLVING (close reason WITHDRAWN, so the runner may file again) until the purge.
+     */
+    @Transactional(propagation = Propagation.NEVER)
+    fun withdraw(runnerId: UUID, requestId: UUID, commandId: UUID, expectedVersion: Long): RunnerRemovalRequestDetailDto {
+        val hash = commandHash(mapper, WithdrawRunnerRemovalCommand(expectedVersion))
+        fun PhotoRemovalCommand.replayRunner(): RunnerRemovalRequestDetailDto {
+            ensureIdentity(runnerId, requestId, RemovalCommandOperation.CANCEL, hash)
+            if (state != RemovalCommandState.SUCCEEDED || result == null) removalConflict()
+            return mapper.treeToValue(result, RunnerRemovalRequestDetailDto::class.java)
+        }
+        val replay = tx.execute {
+            val request = requests.findForUpdate(requestId)
+                ?.takeIf { it.requesterUserId == runnerId && it.source == RemovalRequestSource.RUNNER } ?: removalNotFound()
+            commands.findByCommandId(commandId)?.let { return@execute it.replayRunner() }
+            transitions.ensureVersion(request, expectedVersion)
+            val selected = items.findByRequestIdOrderByIdAsc(requestId)
+            requireClosable(request, selected)
+            val now = clock.instant()
+            if (commands.insertClaim(commandId, requestId, RemovalCommandOperation.CANCEL.name, runnerId, hash, null, now) == 0)
+                return@execute commands.findByCommandId(commandId)!!.replayRunner()
+            closeCase(request, selected, RemovalActorType.RUNNER, runnerId, commandId, null, RunnerRemovalCloseReason.WITHDRAWN, now)
+            publisher.publishEvent(removalChangedEvent(requestId, runnerId, now))
+            commands.findByCommandId(commandId)!!.apply {
+                result = mapper.valueToTree(runnerQueries.detailOf(request))
+                state = RemovalCommandState.SUCCEEDED
+            }
+            commands.flush()
+            null
+        }
+        if (replay != null) return replay
+        evidence.purgeResolvedEvidence(requestId)
+        // The receipt is the withdraw's own result, before the purge moves the case to CANCELLED.
+        return tx.execute { commands.findByCommandId(commandId)!!.replayRunner() }!!
+    }
+
     /** Transaction A of a runner submit: the case and its evidence key are stored before any upload. */
     fun openRunnerDraft(command: RunnerDraftCommand): RunnerDraft {
         val key = PhotoRemovalEvidenceService.recordedEvidenceKey(command.requestId, command.creationCommandId)
@@ -678,10 +718,8 @@ class PhotoRemovalService(
         }
     }
 
-    // Admin cancel and runner withdraw: only an open case with nothing authorized or removed can close.
     private fun requireClosable(request: PhotoRemovalRequest, selected: List<PhotoRemovalItem>) {
-        if (request.status !in setOf(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN)) removalConflict()
-        if (selected.any { it.state in setOf(RemovalItemState.REMOVAL_AUTHORIZED, RemovalItemState.REMOVED) }) removalConflict()
+        if (!removalClosable(request.status, selected.map { it.state })) removalConflict()
     }
 
     // The caller runs evidence.purgeResolvedEvidence after commit, which moves the case to CANCELLED.

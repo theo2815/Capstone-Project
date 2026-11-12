@@ -448,6 +448,27 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(404, filed.statusCode())
         assertEquals("EVENT_NOT_FOUND", errorCode(filed))
         assertTrue("no-store" in filed.headers().firstValue("Cache-Control").orElse(""))
+
+        // RD-5 list, detail and withdraw: runner only, never cached; an id that is not the runner's own is a 404.
+        val id = UUID.randomUUID()
+        val withdraw = "$root/$id/withdraw"
+        val version = """{"expectedVersion":0}"""
+        for (path in listOf(root, "$root/$id")) {
+            assertEquals(401, get(path).statusCode())
+            for (t in others) assertEquals(403, get(path, t).statusCode())
+        }
+        assertEquals(401, post(withdraw, version).statusCode())
+        for (t in others) assertEquals(403, post(withdraw, version, t).statusCode())
+        val mine = get(root, runner)
+        assertEquals(200, mine.statusCode())
+        assertTrue("no-store" in mine.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals(0, json.readTree(mine.body()).path("data").path("total").asInt(-1))
+        assertEquals(404, get("$root/$id", runner).statusCode())
+        assertEquals("INVALID_IDEMPOTENCY_KEY", errorCode(post(withdraw, version, runner)))
+        val notMine = send(HttpRequest.newBuilder(uri(withdraw)).header("Content-Type", "application/json")
+            .header("Idempotency-Key", UUID.randomUUID().toString()).POST(HttpRequest.BodyPublishers.ofString(version)), runner)
+        assertEquals(404, notMine.statusCode())
+        assertTrue("no-store" in notMine.headers().firstValue("Cache-Control").orElse(""))
     }
 
     @Test
