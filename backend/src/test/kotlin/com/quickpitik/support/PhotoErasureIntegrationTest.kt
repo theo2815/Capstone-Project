@@ -434,6 +434,54 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         assertNull(photos.findById(photo.id).orElseThrow().purgedAt)
     }
 
+    // Staging key cleaned a day ago: its 7-day re-check window ends in about 6 days.
+    private fun receiptCleanedYesterday(): PhotoUploadIntent {
+        val now = OffsetDateTime.now()
+        return intents.saveAndFlush(PhotoUploadIntent(photographerId = owner.id, eventId = event.id,
+            contentHash = UUID.randomUUID().toString().replace("-", "").repeat(2), contentType = "image/jpeg", sizeBytes = 1,
+            stagingKey = "staging/${photo.id}", originalKey = photo.s3Key, state = PhotoUploadIntentState.COMMITTED,
+            resultPhotoId = photo.id, createdAt = now.minusDays(2), putExpiresAt = now.minusDays(2),
+            expiresAt = now.minusDays(2), cleanedAt = now.minusDays(1)))
+    }
+
+    @Test fun `a job held only by the re-check window waits for the window end`() {
+        receiptCleanedYesterday()
+        val job = eraser.request(privacy())
+        assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
+        assertTrue(blobs.isEmpty())
+        val saved = jobs.findById(job).orElseThrow()
+        val windowEnd = saved.manifest.intents.maxOf { it.recheckUntil }
+        assertFalse(saved.nextAttemptAt.isBefore(windowEnd.minusSeconds(1)), "A waiting job was retried before its re-check window ends")
+    }
+
+    @Test fun `a waiting job sleeps until a later cleanup_after when it ends after the stored window`() {
+        val receipt = receiptCleanedYesterday()
+        val job = eraser.request(privacy())
+        val cleanupAfter = OffsetDateTime.now().plusDays(10)
+        jdbc.update("UPDATE photo_upload_intents SET cleanup_after = ? WHERE photo_id = ?", cleanupAfter, receipt.photoId)
+        assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
+        val saved = jobs.findById(job).orElseThrow()
+        assertTrue(saved.manifest.intents.maxOf { it.recheckUntil }.isBefore(cleanupAfter.toInstant()))
+        assertFalse(saved.nextAttemptAt.isBefore(cleanupAfter.toInstant().minusSeconds(1)), "A waiting job woke before its receipt's cleanup_after")
+    }
+
+    @Test fun `a job blocked by unfinished work keeps the short backoff`() {
+        receiptCleanedYesterday()
+        jdbc.update("""INSERT INTO photo_work_outputs (token, photo_id, event_id, generation, kind, provider, expires_at)
+            VALUES (?, ?, ?, 0, 'WATERMARK', 'local', ?)""", UUID.randomUUID(), photo.id, event.id, OffsetDateTime.now().plusHours(1))
+        val job = eraser.request(privacy())
+        assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
+        assertTrue(jobs.findById(job).orElseThrow().nextAttemptAt.isBefore(java.time.Instant.now().plusSeconds(600)))
+    }
+
+    @Test fun `a failed delete inside the window keeps the short backoff`() {
+        receiptCleanedYesterday()
+        failingKey = photo.thumbnailS3Key
+        val job = eraser.request(privacy())
+        assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
+        assertTrue(jobs.findById(job).orElseThrow().nextAttemptAt.isBefore(java.time.Instant.now().plusSeconds(600)))
+    }
+
     @Test fun `privacy tombstone retains the exact byte hash to prevent reupload`() {
         val hash = "a".repeat(64)
         photo.contentHash = hash
