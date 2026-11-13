@@ -291,6 +291,13 @@ it("groups auto-hidden photos and public suggestions with an other-people badge"
   expect(within(suggestions).getAllByRole("listitem")).toHaveLength(1);
 });
 
+it("an auto-hidden photo shows its preview", async () => {
+  serverCase = { ...runnerOpen, items: runnerOpen.items.map((item) => item.id === "h1" ? { ...item, photo: removalPhoto("photo-x", "Photographer A") } : item) };
+  const { container } = renderReview();
+  await screen.findByRole("region", { name: "Hidden automatically" });
+  expect(container.querySelector('img[src="https://cdn.example.test/photo-x.jpg"]')).not.toBeNull();
+});
+
 it("promote sends the expected version to the suggestions endpoint", async () => {
   const user = userEvent.setup();
   serverCase = runnerOpen;
