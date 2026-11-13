@@ -7,12 +7,14 @@ import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.FlagTargetKind
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.SystemFlagReason
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.admin.SystemFlagService
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
@@ -42,6 +44,9 @@ class RaceReportService(
         val event = eventRepository.findById(eventId).orElse(null)
             ?.takeIf { it.deletedAt == null && it.status != EventStatus.DRAFT }
             ?: throw NotFoundException("Event not found", ErrorCodes.EVENT_NOT_FOUND)
+        if (event.submittedBy == reporterId || event.createdBy == reporterId) {
+            throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.FORBIDDEN, "You cannot report your own race")
+        }
         val raised = flags.raise(FlagTargetKind.EVENT, event.id, SystemFlagReason.USER_REPORT, note.trim(), reporterId)
         if (raised && event.eventType != null && event.hiddenAt == null) {
             val reporters = flagRepository.countDistinctReporters(FlagTargetKind.EVENT.wire, event.id)
@@ -63,6 +68,9 @@ class RaceReportService(
             ?.let { userRepository.findById(it.userId).orElse(null) }
             ?.takeIf { it.role == Role.PHOTOGRAPHER }
             ?: throw NotFoundException("Photographer not found", ErrorCodes.USER_NOT_FOUND)
+        if (photographer.id == reporterId) {
+            throw ApiException(HttpStatus.FORBIDDEN, ErrorCodes.FORBIDDEN, "You cannot report your own profile")
+        }
         val raised = flags.raise(FlagTargetKind.USER, photographer.id, SystemFlagReason.USER_REPORT, note.trim(), reporterId)
         return ReportResultDto(alreadyReported = !raised)
     }

@@ -270,6 +270,19 @@ class AdminFlagServiceTest {
     }
 
     @Test
+    fun `a race flag shows the photographer who submitted the race`() {
+        val (submitter, _) = photographer("racecover", "Rita Reyes")
+        val race = Event(slug = "bay-run-2027", name = "Bay Run 2027", date = LocalDate.of(2027, 2, 7), location = "Cebu City", status = EventStatus.ACTIVE, submittedBy = submitter.id)
+        Mockito.`when`(eventRepository.findAllById(anyArg())).thenReturn(listOf(race))
+        val f = targetFlag(FlagTargetKind.EVENT, race.id)
+
+        val dto = service().escalate(adminId, f.id, null)
+
+        assertEquals("racecover", dto.photographerHandle)
+        assertEquals("Rita Reyes", dto.photographerName)
+    }
+
+    @Test
     fun `a user flag shows the photographer handle`() {
         val (user, _) = photographer("juanshots", "Juan Dela Cruz")
         val f = targetFlag(FlagTargetKind.USER, user.id)
