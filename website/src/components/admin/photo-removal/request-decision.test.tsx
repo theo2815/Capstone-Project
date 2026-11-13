@@ -8,7 +8,7 @@ import { admin } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import type { PhotoRemovalRequestDto } from "@/types/photo-removal";
 import { RemovalRequestDecision } from "./request-decision";
-import { openCase, ownerReview, removalItem, runnerCase } from "./removal-fixtures";
+import { openCase, ownerReview, removalItem, removalPhoto, runnerCase } from "./removal-fixtures";
 
 vi.mock("@/lib/api-photo-removal");
 const confirm = vi.fn();
@@ -41,6 +41,14 @@ async function decideItem(user: ReturnType<typeof userEvent.setup>, photoId: str
   await user.selectOptions(await screen.findByLabelText(`Decision for ${photoId}`), decision);
   if (reason) await user.type(screen.getByLabelText(`Reason for ${photoId}`), reason);
 }
+
+// RF-5 (RD-17 F2): no photo is decided by its ID alone.
+it("a decision row shows the photo's preview", async () => {
+  serverCase = { ...mixedCase, items: [removalItem("a1", "Photographer A", { photo: removalPhoto("photo-a1", "Photographer A") })] };
+  const { container } = renderDecision();
+  await screen.findByText("photo-a1");
+  expect(container.querySelector('img[src="https://cdn.example.test/photo-a1.jpg"]')).not.toBeNull();
+});
 
 it("mixedResponsesRequireIndependentDecisions", async () => {
   const user = userEvent.setup();

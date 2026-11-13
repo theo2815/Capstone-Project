@@ -257,6 +257,10 @@ function ItemRow({ item, draft, busy, onChange, onRetry }: {
   const retryable = item.cleanupState === "RETRY_REQUIRED" && (item.state === "REMOVAL_AUTHORIZED" || item.state === "REMOVED");
   return (
     <li className="rounded-xl border border-line p-4 space-y-2 text-sm">
+      <span className="block size-16 overflow-hidden rounded-lg bg-bone-deep">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        {item.photo?.photo.imageUrl && <img src={item.photo.photo.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />}
+      </span>
       <p className="flex flex-wrap items-baseline gap-x-3">
         <span className="font-mono tnum text-ink">{photo}</span>
         <span className="text-ink">{itemStatus(item)}</span>
