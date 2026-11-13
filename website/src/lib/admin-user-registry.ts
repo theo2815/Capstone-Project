@@ -37,6 +37,8 @@ export interface AdminUserRow {
   verificationRevision: number;
   suspendedAt: string | null;
   suspensionReason: string | null;
+  /** Pending and held after an admin reset or reject; only an admin releases it. */
+  adminHold?: boolean;
   settingsSnapshot: PhotographerSettingsSnapshot | null;
 }
 

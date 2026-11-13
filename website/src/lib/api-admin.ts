@@ -252,6 +252,16 @@ export async function rejectUser(
   );
 }
 
+export async function approveUser(
+  userId: string,
+  expectedRevision?: number,
+): Promise<AdminUserRow> {
+  return api.post<AdminUserRow>(
+    `/admin/users/${encodeURIComponent(userId)}/approve`,
+    { expectedRevision },
+  );
+}
+
 export async function resetUserVerification(
   userId: string,
   reason: string,

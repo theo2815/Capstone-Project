@@ -70,12 +70,14 @@ export function PhotographerNotReadyNotice({
   }
 
   if (gate.kind === "pending") {
-    // Q7: no admin profile review; the profile goes live with the identity check.
+    // The profile goes live with the identity check, unless an admin holds it (R-10).
     return (
       <div className="border border-line rounded-2xl px-5 py-5 bg-bone-deep/40">
         <Kicker as="p">Awaiting identity check</Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
-          Your studio goes live when your identity check passes.
+          {gate.awaitingAdmin
+            ? "An admin is reviewing your profile."
+            : "Your studio goes live when your identity check passes."}
         </p>
         <Link
           href={SELLER_DETAILS_HREF}

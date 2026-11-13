@@ -149,7 +149,7 @@ it("names the pending bulk send back and blocks repeat Enter until it settles", 
   await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   await act(async () => { request.resolve(adminUser); });
 });
-// Q7 (AA-I17): profiles approve themselves once identity passes; no admin UI approves a profile.
+// Q7 (AA-I17): profiles approve themselves once identity passes; only a held profile gets an Approve (below).
 it("drawer shows no Approve and E does nothing", async () => {
   navigation.search = `row=${adminUser.userId}`;
   const post = vi.spyOn(api, "post"); mount(true); const user = userEvent.setup();
@@ -158,6 +158,44 @@ it("drawer shows no Approve and E does nothing", async () => {
   expect(within(drawer).queryByRole("button", { name: /approv/i })).toBeNull();
   await user.keyboard("e"); await user.keyboard("E");
   expect(post).not.toHaveBeenCalled();
+});
+const HOLD_LINE = "Held after an admin reset or rejection";
+it("a held profile shows the hold line and an Approve button", async () => {
+  rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  // The real detail answer has no adminHold: the hold must come from the list row.
+  const listGet = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, decisionLog: [] } : listGet(path));
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}`)); await act(async () => {});
+  expect(within(drawer).getByText(HOLD_LINE)).toBeInTheDocument();
+  expect(within(drawer).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+});
+it("a profile that is not held has no hold line and no Approve button", async () => {
+  navigation.search = `row=${adminUser.userId}`; mount(true);
+  const drawer = await screen.findByRole("dialog");
+  expect(within(drawer).queryByText(HOLD_LINE)).toBeNull();
+  expect(within(drawer).queryByRole("button", { name: "Approve" })).toBeNull();
+});
+it("approve waits for the server before showing success and shows the server's error on a conflict", async () => {
+  rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  // The real detail answer has no adminHold: the hold must come from the list row.
+  const listGet = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, decisionLog: [] } : listGet(path));
+  const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
+  mount(true); const user = userEvent.setup();
+  const drawer = await screen.findByRole("dialog");
+  await user.click(within(drawer).getByRole("button", { name: "Approve" }));
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(post).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}/approve`, { expectedRevision: 7 });
+  expect(useToastStore.getState().toasts).toEqual([]);
+  await act(async () => request.resolve({ ...adminUser, adminHold: false }));
+  expect(useToastStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([["success", "Hold released · Test Studio"]]);
+  useToastStore.getState().clear();
+  rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows);
+  post.mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", field: "", message: "This profile is not on hold." }], 409));
+  await user.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(useToastStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([["error", "This profile is not on hold."]]));
 });
 it("bulk bar offers only Send back", async () => {
   mount(true); const user = userEvent.setup();

@@ -18,6 +18,7 @@ describe("useCanUpload", () => {
       verificationStatus: "incomplete",
       verificationMissing: null,
       verificationMissingCodes: null,
+      verificationAwaitingAdmin: false,
       suspendedAt: null,
       suspensionReason: null,
     });
@@ -61,6 +62,19 @@ describe("useCanUpload", () => {
       verificationStatus: "pending",
       verificationMissing: [],
     });
+    const { result } = renderHook(() => useCanUpload());
+    expect(result.current).toEqual({ kind: "pending" });
+  });
+
+  it("a held pending profile tells the photographer an admin is reviewing it", () => {
+    usePhotographerSettingsStore.setState({ verificationStatus: "pending", verificationMissing: [], verificationAwaitingAdmin: true });
+    const { result } = renderHook(() => useCanUpload());
+    expect(result.current).toEqual({ kind: "pending", awaitingAdmin: true });
+  });
+
+  // Withdraw and the settings page's local flip both move the status away from pending without a new server answer.
+  it("a stale hold flag is ignored once the status is no longer pending", () => {
+    usePhotographerSettingsStore.setState({ verificationStatus: "incomplete", verificationMissing: [], verificationAwaitingAdmin: true });
     const { result } = renderHook(() => useCanUpload());
     expect(result.current).toEqual({ kind: "pending" });
   });

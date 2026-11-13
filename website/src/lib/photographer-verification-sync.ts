@@ -42,6 +42,9 @@ export function applyVerification(response: VerificationSubmitResponse): void {
   const next = normaliseStatus(response.status);
   if (next !== state.verificationStatus) state.setVerificationStatus(next);
 
+  const awaiting = response.awaitingAdmin === true;
+  if (awaiting !== state.verificationAwaitingAdmin) state.setVerificationAwaitingAdmin(awaiting);
+
   const nextSuspendedAt = response.suspendedAt ?? null;
   const nextReason = response.suspensionReason ?? null;
   if (

@@ -255,6 +255,8 @@ export interface VerificationSubmitResponse {
   // FE prioritises the suspended state for gating + banner copy.
   suspendedAt?: string | null;
   suspensionReason?: string | null;
+  // Pending and held after an admin reset or reject; optional so an older backend still parses.
+  awaitingAdmin?: boolean;
 }
 
 export async function submitVerification(): Promise<VerificationSubmitResponse> {

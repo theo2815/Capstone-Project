@@ -793,6 +793,17 @@ it.each([
   expect(usePhotographerSettingsStore.getState().verificationStatus).toBe(status);
 });
 
+it("submitting a held profile says an admin is reviewing it", async () => {
+  mockSellerStatus("approved");
+  usePhotographerSettingsStore.setState({ verificationStatus: "incomplete", verificationMissing: [] });
+  vi.mocked(submitVerification).mockResolvedValue({ status: "pending", awaitingAdmin: true } as Awaited<ReturnType<typeof submitVerification>>);
+  render(<SettingsPage />);
+  fireEvent.click(screen.getAllByRole("button", { name: /Submit for review/ })[0]);
+  await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith({ kind: "info", message: "Saved. An admin is reviewing your profile." }));
+  expect(await screen.findByText("An admin is reviewing your profile.")).toBeInTheDocument();
+  expect(screen.queryByText("Your studio goes live when your identity check passes.")).toBeNull();
+});
+
 // AA-I7: a pending profile approves itself when identity passes; no admin profile review is left to wait for.
 it("a pending profile says it goes live when the identity check passes, not after an admin review", async () => {
   mockSellerStatus("submitted");
