@@ -254,6 +254,36 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         assertFalse(jobs.findById(first).orElseThrow().lastError!!.contains("secret"))
     }
 
+    private fun photographerDelete(): UUID {
+        val trashed = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id,
+            s3Key = "erasure/${UUID.randomUUID()}/due", pricePhp = BigDecimal("125"), deletedAt = OffsetDateTime.now()))
+        return eraser.request(PhotoErasureCommand(trashed.id, PhotoErasurePurpose.PHOTOGRAPHER_DELETE,
+            RemovalActorType.PHOTOGRAPHER, owner.id, "Photographer permanent deletion", commandId = UUID.randomUUID()))
+    }
+
+    // PEIT does not empty the table between tests, so compare positions in a large page.
+    private fun duePositions(vararg ids: UUID): List<Int> {
+        val due = jobs.findDue(java.time.Instant.now().plusSeconds(1), org.springframework.data.domain.PageRequest.of(0, 1000))
+        return ids.map { id -> due.indexOf(id).also { assertTrue(it >= 0, "job $id is due") } }
+    }
+
+    @Test fun `a new job is picked before an older one that keeps failing`() {
+        val failing = photographerDelete()
+        jdbc.update("UPDATE photo_erasure_jobs SET attempts = 50, next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 day' WHERE id = ?", failing)
+        val fresh = photographerDelete()
+        val (freshAt, failingAt) = duePositions(fresh, failing)
+        assertTrue(freshAt < failingAt, "new job at $freshAt, failing job at $failingAt")
+    }
+
+    @Test fun `a privacy removal is picked before photographer deletes with fewer attempts`() {
+        val removal = eraser.request(privacy())
+        jdbc.update("UPDATE photo_erasure_jobs SET attempts = 3, next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = ?", removal)
+        val delete = photographerDelete()
+        jdbc.update("UPDATE photo_erasure_jobs SET next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 hour' WHERE id = ?", delete)
+        val (removalAt, deleteAt) = duePositions(removal, delete)
+        assertTrue(removalAt < deleteAt, "privacy removal at $removalAt, photographer delete at $deleteAt")
+    }
+
     @Test fun `sweep resumes a persisted due job without another user request`() {
         val job = eraser.request(privacy())
         assertTrue(sweep.sweepDue(java.time.Instant.now().plusSeconds(1), 100) > 0)
