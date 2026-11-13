@@ -91,10 +91,24 @@ data class RelevanceProperties(
     data class Check(
         val minBatchSize: Int = 30,
         val nearLinePoints: Int = 5,
+        // Photos picked for one sample round; a smaller batch is sampled whole.
+        val sampleSize: Int = 300,
+        // A batch still uploading is checked again once it grew by this many photos.
+        val countTrigger: Int = 500,
+        // Check tick cadence, and the first delay after boot.
+        val tickIntervalMs: Long = 15_000,
+        val maxBatchesPerTick: Int = 3,
+        // How long a claim on a batch holds before another server copy may take it.
+        val claimMinutes: Long = 10,
     ) {
         init {
             require(minBatchSize >= 1) { "minBatchSize must be at least 1" }
             require(nearLinePoints in 0..100) { "nearLinePoints must be 0..100" }
+            require(sampleSize >= 1) { "sampleSize must be at least 1" }
+            require(countTrigger >= 1) { "countTrigger must be at least 1" }
+            require(tickIntervalMs >= 1) { "tickIntervalMs must be at least 1" }
+            require(maxBatchesPerTick >= 1) { "maxBatchesPerTick must be at least 1" }
+            require(claimMinutes >= 1) { "claimMinutes must be at least 1" }
         }
     }
 }

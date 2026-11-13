@@ -143,7 +143,7 @@ ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.durati
 `qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}`,
 face search (2026-10-27): `qp.search.request{mode=oneshot|stored|library|alert}`, `qp.search.selfie.fetch`,
 `qp.search.photo.query`, `qp.ai.error{op,code}`, `qp.indexing.reconciled`, `qp.indexing.released`, `qp.watermark.reconciled`,
-`qp.relevance.lookups`, `qp.relevance.scored{level}`, `qp.relevance.tick` —
+`qp.relevance.lookups`, `qp.relevance.scored{level}`, `qp.relevance.tick`, `qp.relevance.check.tick` —
 plus Hikari/JVM/HTTP-server metrics for free. Each face search also logs one INFO line
 (`face search mode=… total_ms=… r2_ms=… aws_ms=… query_ms=… results=…`); metrics reset on every deploy.
 
@@ -226,6 +226,11 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RELEVANCE_JUNK_DUMP_ABOVE_PERCENT` | `70` | Version 2: a junk share over this percent is in the "over" band (may be "junk dump"); between the two lines is "mixed". Below 100, at least the fits line. |
 | `RELEVANCE_CHECK_MIN_BATCH_SIZE` | `30` | Version 2: a batch with fewer photos is "small" and can only be "fits" or "can't tell". |
 | `RELEVANCE_CHECK_NEAR_LINE_POINTS` | `5` | Version 2: a junk share within this many points of the dump line gets a second sample before the verdict. |
+| `RELEVANCE_CHECK_SAMPLE_SIZE` | `300` | Version 2: photos picked for one sample round of a check; a smaller batch is sampled whole. |
+| `RELEVANCE_CHECK_COUNT_TRIGGER` | `500` | Version 2: a batch still uploading is checked again once it has grown by this many photos since its last check (a quiet batch is checked `RELEVANCE_QUIET_MINUTES` after its newest upload). |
+| `RELEVANCE_CHECK_TICK_INTERVAL_MS` | `15000` | Version 2: cadence of the check tick; also its first delay after boot. With `AI_API_ENABLED` off no check starts. |
+| `RELEVANCE_CHECK_MAX_BATCHES_PER_TICK` | `3` | Version 2: due batches a check tick starts at most. Public events only. |
+| `RELEVANCE_CHECK_CLAIM_MINUTES` | `10` | Version 2: how long one server copy's claim on a batch holds before another copy may take it. |
 | `IDENTITY_GATE_ENABLED` | `false` | Off = today's upload rule (any seller details not REJECTED). On = new uploads need seller details AUTO_APPROVED or APPROVED; MANUAL_REVIEW is refused too, still `403 SELLER_DETAILS_REQUIRED`; photos already reserved still finish (auto-approval AA-I6). |
 | `IDENTITY_GATE_STARTS_ON` | blank | The announced date the identity gate turns on (`YYYY-MM-DD`), sent as `identityGateStartsOn` on the photographer's seller-details responses, and the date the identity notice email names (`POST /admin/identity-notice` refuses while it is blank). Blank = none; an invalid date fails boot. |
 | `IDENTITY_MAX_FAILED_AUTO_CHECKS` | `3` | Failed automatic identity tries (a check the person failed: liveness, face, no face on the ID, ID number or legal name; never an AWS error or AI off) after which every later try, even a pass, goes to an admin with `REPEATED_FAILED_CHECKS`. The count never goes down; admins see it as `failedAutoChecks`. At least 1 (AA review R-8). |
