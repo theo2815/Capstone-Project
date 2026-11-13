@@ -78,6 +78,8 @@ data class AdminUserDetailDto(
     val decisionLog: List<DecisionLogEntryDto>,
     @field:Schema(description = "Photographer review generation; zero before the first submission or decision")
     val verificationRevision: Long = 0,
+    @field:Schema(description = "R-10: same as the row's adminHold, so the drawer works without a list row")
+    val adminHold: Boolean = false,
 )
 
 // POST /admin/users/{id}/reject — body { reason }.

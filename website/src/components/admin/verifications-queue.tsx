@@ -126,8 +126,8 @@ export function VerificationsQueue() {
       candidate.verificationStatus !== "pending" || candidate.suspendedAt !== null
     )
       return null;
-    // The detail answer has no adminHold: read it from the list row.
-    return { ...candidate, adminHold: byId.get(rowId)?.adminHold ?? candidate.adminHold };
+    // The detail answer's adminHold first; an older backend's detail has none, so the list row's.
+    return { ...candidate, adminHold: candidate.adminHold ?? byId.get(rowId)?.adminHold };
   }, [rowId, byId, detail.data, detail.isSuccess]);
 
   useEffect(() => {

@@ -96,6 +96,18 @@ class AdminUserServiceHoldTest {
     }
 
     @Test
+    fun `the detail answer carries the hold, so the drawer needs no list row`() {
+        settings.verificationAdminHold = true
+        Mockito.`when`(userRepository.findById(photographerId)).thenReturn(java.util.Optional.of(
+            User(id = photographerId, email = "p@test.local", passwordHash = "unused", name = "P", role = Role.PHOTOGRAPHER)))
+        Mockito.`when`(settingsRepository.findById(photographerId)).thenReturn(java.util.Optional.of(settings))
+
+        assertTrue(service().detail(photographerId).adminHold)
+        settings.verificationAdminHold = false
+        assertFalse(service().detail(photographerId).adminHold)
+    }
+
+    @Test
     fun `approve on a profile that is not held is a conflict`() {
         val ex = assertFailsWith<ApiException> { service().approveHeld(adminId, photographerId, null) }
         assertEquals(HttpStatus.CONFLICT, ex.status)

@@ -147,6 +147,7 @@ class AdminUserService(
             settingsSnapshot = row.settingsSnapshot,
             decisionLog = log,
             verificationRevision = row.verificationRevision,
+            adminHold = row.adminHold,
         )
     }
 

@@ -162,13 +162,31 @@ it("drawer shows no Approve and E does nothing", async () => {
 const HOLD_LINE = "Held after an admin reset or rejection";
 it("a held profile shows the hold line and an Approve button", async () => {
   rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
-  // The real detail answer has no adminHold: the hold must come from the list row.
+  // An older backend's detail answer has no adminHold: the hold comes from the list row.
   const listGet = vi.mocked(api.get).getMockImplementation()!;
   vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, decisionLog: [] } : listGet(path));
   mount(true);
   const drawer = await screen.findByRole("dialog");
   await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}`)); await act(async () => {});
   expect(within(drawer).getByText(HOLD_LINE)).toBeInTheDocument();
+  expect(within(drawer).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+});
+it("a held profile shows Approve from the detail answer when the list has no row for it", async () => {
+  rows = []; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  const listGet = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, adminHold: true, decisionLog: [] } : listGet(path));
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  expect(await within(drawer).findByRole("button", { name: "Approve" })).toBeInTheDocument();
+  expect(within(drawer).getByText(HOLD_LINE)).toBeInTheDocument();
+});
+it("the detail answer's hold wins over a stale list row", async () => {
+  rows = [{ ...adminUser, adminHold: false }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  const listGet = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, adminHold: true, decisionLog: [] } : listGet(path));
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}`)); await act(async () => {});
   expect(within(drawer).getByRole("button", { name: "Approve" })).toBeInTheDocument();
 });
 it("a profile that is not held has no hold line and no Approve button", async () => {
@@ -179,7 +197,7 @@ it("a profile that is not held has no hold line and no Approve button", async ()
 });
 it("approve waits for the server before showing success and shows the server's error on a conflict", async () => {
   rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
-  // The real detail answer has no adminHold: the hold must come from the list row.
+  // An older backend's detail answer has no adminHold: the hold comes from the list row.
   const listGet = vi.mocked(api.get).getMockImplementation()!;
   vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, decisionLog: [] } : listGet(path));
   const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
