@@ -27,6 +27,14 @@ import software.amazon.awssdk.services.rekognition.model.DeleteCollectionRequest
 import software.amazon.awssdk.services.rekognition.model.DeleteCollectionResponse
 import software.amazon.awssdk.services.rekognition.model.DetectFacesRequest
 import software.amazon.awssdk.services.rekognition.model.DetectFacesResponse
+import software.amazon.awssdk.services.rekognition.model.DetectLabelsFeatureName
+import software.amazon.awssdk.services.rekognition.model.DetectLabelsImageForeground
+import software.amazon.awssdk.services.rekognition.model.DetectLabelsImageProperties
+import software.amazon.awssdk.services.rekognition.model.DetectLabelsImageQuality
+import software.amazon.awssdk.services.rekognition.model.DetectLabelsRequest
+import software.amazon.awssdk.services.rekognition.model.DetectLabelsResponse
+import software.amazon.awssdk.services.rekognition.model.InvalidImageFormatException
+import software.amazon.awssdk.services.rekognition.model.Label
 import software.amazon.awssdk.services.rekognition.model.DetectModerationLabelsRequest
 import software.amazon.awssdk.services.rekognition.model.DetectModerationLabelsResponse
 import software.amazon.awssdk.services.rekognition.model.ModerationLabel
@@ -460,5 +468,96 @@ class RekognitionAiClientTest {
 
         assertEquals(emptyList<ModerationHit>(), client.moderationLabels(bytes, 0.8))
         verify(rek, times(2)).detectModerationLabels(any(DetectModerationLabelsRequest::class.java))
+    }
+
+    // RV-1.3: the Photo Relevance v2 image check (DetectLabels with image properties).
+    private fun quality(sharpness: Float, brightness: Float) =
+        DetectLabelsImageQuality.builder().sharpness(sharpness).brightness(brightness).build()
+
+    private fun labelsResponse(withForeground: Boolean = true) = DetectLabelsResponse.builder()
+        .labels(
+            Label.builder().name("Person").confidence(98.5f).build(),
+            Label.builder().name("Marathon").confidence(72f).build(),
+        )
+        .imageProperties(
+            DetectLabelsImageProperties.builder()
+                .quality(quality(41.5f, 63f))
+                .apply { if (withForeground) foreground(DetectLabelsImageForeground.builder().quality(quality(88f, 55.25f)).build()) }
+                .build(),
+        )
+        .build()
+
+    private fun smallJpeg(width: Int, height: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "jpeg", out)
+        return out.toByteArray()
+    }
+
+    @Test fun `the image check asks for labels and image properties`() {
+        `when`(rek.detectLabels(any(DetectLabelsRequest::class.java))).thenReturn(labelsResponse())
+        client.imageCheck(smallJpeg(200, 100))
+        val req = ArgumentCaptor.forClass(DetectLabelsRequest::class.java)
+        verify(rek).detectLabels(req.capture())
+        assertEquals(setOf(DetectLabelsFeatureName.GENERAL_LABELS, DetectLabelsFeatureName.IMAGE_PROPERTIES), req.value.features().toSet())
+    }
+
+    @Test fun `it maps the foreground and whole-image scores and the labels`() {
+        `when`(rek.detectLabels(any(DetectLabelsRequest::class.java))).thenReturn(labelsResponse())
+        val check = client.imageCheck(smallJpeg(200, 100))
+        assertEquals(
+            ImageCheck(
+                fgSharpness = 88.0, fgBrightness = 55.25, sharpness = 41.5, brightness = 63.0,
+                labels = listOf(LabelHit("Person", 0.985), LabelHit("Marathon", 0.72)),
+            ),
+            check,
+        )
+    }
+
+    @Test fun `a photo with no foreground gives null foreground scores`() {
+        `when`(rek.detectLabels(any(DetectLabelsRequest::class.java))).thenReturn(labelsResponse(withForeground = false))
+        val check = client.imageCheck(smallJpeg(200, 100))
+        assertEquals(null, check.fgSharpness)
+        assertEquals(null, check.fgBrightness)
+        assertEquals(41.5, check.sharpness)
+        assertEquals(63.0, check.brightness)
+    }
+
+    @Test fun `a small file is still shrunk to the fixed size`() {
+        `when`(rek.detectLabels(any(DetectLabelsRequest::class.java))).thenReturn(labelsResponse())
+        val original = smallJpeg(2000, 1500)
+        assertTrue(original.size < 4_500_000, "fixture must be under the inline-safe byte limit")
+        client.imageCheck(original)
+        val req = ArgumentCaptor.forClass(DetectLabelsRequest::class.java)
+        verify(rek).detectLabels(req.capture())
+        val sent = ImageIO.read(ByteArrayInputStream(req.value.image().bytes().asByteArray()))
+        assertEquals(props.maxImageDimension, maxOf(sent.width, sent.height))
+    }
+
+    @Test fun `a throttle is retried once`() {
+        `when`(rek.detectLabels(any(DetectLabelsRequest::class.java))).thenThrow(throttle()).thenReturn(labelsResponse())
+        client.imageCheck(smallJpeg(200, 100))
+        verify(rek, times(2)).detectLabels(any(DetectLabelsRequest::class.java))
+        assertEquals(1.0, registry.counter("qp.ai.throttle.retry", "op", "detectLabels", "code", "ThrottlingException").count())
+    }
+
+    @Test fun `an image AWS rejects becomes a 422`() {
+        `when`(rek.detectLabels(any(DetectLabelsRequest::class.java)))
+            .thenThrow(InvalidImageFormatException.builder().message("bad image").build())
+        val ex = assertThrows<AiApiException> { client.imageCheck(smallJpeg(200, 100)) }
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.status)
+    }
+
+    @Test fun `the image check waits on its own limiter`() {
+        `when`(rek.detectText(any(DetectTextRequest::class.java))).thenReturn(DetectTextResponse.builder().build())
+        `when`(rek.detectLabels(any(DetectLabelsRequest::class.java))).thenReturn(labelsResponse())
+        val paced = RekognitionAiClient(rek, props.copy(maxCallsPerSecond = 1.0), registry)
+        val image = smallJpeg(200, 100)
+        val start = System.nanoTime()
+        paced.bibsRecognize(bytes, "image/jpeg", "b.jpg")
+        paced.imageCheck(image)
+        assertTrue((System.nanoTime() - start) / 1_000_000 < 500, "the first image check must not wait on the text limiter")
+        val second = System.nanoTime()
+        paced.imageCheck(image)
+        assertTrue((System.nanoTime() - second) / 1_000_000 >= 500, "a second image check in the same second must wait for its own bucket")
     }
 }
