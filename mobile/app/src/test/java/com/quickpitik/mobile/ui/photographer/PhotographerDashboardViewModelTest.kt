@@ -3,6 +3,10 @@ package com.quickpitik.mobile.ui.photographer
 import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.WorkManager
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.support.MainDispatcherRule
@@ -10,6 +14,7 @@ import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
 import com.quickpitik.mobile.support.ok
 import com.quickpitik.mobile.support.signInAs
+import com.quickpitik.mobile.worker.PhotoUploadScheduler
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -51,6 +56,8 @@ class PhotographerDashboardViewModelTest {
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
+        WorkManagerTestInitHelper.initializeTestWorkManager(application,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
         signInAs("PHOTOGRAPHER")
         backend.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -69,6 +76,7 @@ class PhotographerDashboardViewModelTest {
         // No Room teardown: this ViewModel has held no AppDatabase reference
         // since the split (ce17a518), so there is nothing here to close.
         viewModels.clear()
+        WorkManagerTestInitHelper.closeWorkDatabase()
         SessionManager.getInstance(application).clearSession()
     }
 
@@ -76,6 +84,8 @@ class PhotographerDashboardViewModelTest {
     private fun model() = PhotographerDashboardViewModel(application).also { viewModels.put("photographer", it) }
     private fun count(method: String, path: String) = seen.count { it.first == method && it.second == path }
     private fun bodies(method: String, path: String) = seen.filter { it.first == method && it.second == path }.map { it.third }
+    private fun uploadWork() =
+        WorkManager.getInstance(application).getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get()
     private fun awaitUntil(check: () -> Boolean) {
         val deadline = System.currentTimeMillis() + 5_000
         while (!check() && System.currentTimeMillis() < deadline) Thread.sleep(5)
@@ -338,6 +348,23 @@ class PhotographerDashboardViewModelTest {
             SellerDetailsCard.ManualReview(paused = true, dueDate = null),
             model().sellerDetailsState.awaitFirst { it != null },
         )
+    }
+
+    @Test fun `an answer that allows uploads enqueues the upload work`() {
+        route("GET /api/v1/me/photographer/seller-details") {
+            ok("""{"status":"approved","reviewState":"approved","uploadsAllowed":true,"identityGateStartsOn":null,"rejectionReason":null}""")
+        }
+        model()
+        awaitUntil { uploadWork().isNotEmpty() }
+    }
+
+    @Test fun `a paused answer enqueues nothing`() {
+        route("GET /api/v1/me/photographer/seller-details") {
+            ok("""{"status":"submitted","reviewState":"manual_review","uploadsAllowed":false,"identityGateStartsOn":null,"rejectionReason":null}""")
+        }
+        model().sellerDetailsState.awaitFirst { it != null }
+        Thread.sleep(300) // the enqueue would land on the scheduler's IO thread just after the state is set
+        assertTrue(uploadWork().isEmpty())
     }
 
     @Test fun `a legacy seller state still shows its rejection card`() {
