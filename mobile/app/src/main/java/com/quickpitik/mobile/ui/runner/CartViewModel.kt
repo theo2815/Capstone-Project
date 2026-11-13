@@ -105,6 +105,11 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         .map { items -> payableItems(items).sumOf { it.price } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
+    // R-17: the pill's badge counts what can be bought; the pill itself still shows while any row is left.
+    val cartCount: StateFlow<Int> = repository.cartItems
+        .map { items -> payableItems(items).size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     // Coupon preview for the checkout sheet (V47/V50). Null until fetched; the net
     // the runner is actually charged is cartTotal − discountTotal. code == null →
     // auto-applied photographer coupons; a typed code overrides. couponPreview.code

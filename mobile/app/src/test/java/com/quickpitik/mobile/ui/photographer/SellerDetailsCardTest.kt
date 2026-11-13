@@ -56,6 +56,18 @@ class SellerDetailsCardTest {
         )
     }
 
+    // R-18: the card's sentence shows "Nov 17, 2026", not the server's "2026-11-17".
+    @Test
+    fun `the due date reads as a short date`() {
+        assertEquals("Nov 17, 2026", sellerDueDateLabel("2026-11-17"))
+        assertEquals("Nov 5, 2026", sellerDueDateLabel("2026-11-05"))
+    }
+
+    @Test
+    fun `an unreadable date is shown as sent`() {
+        assertEquals("next Monday", sellerDueDateLabel("next Monday"))
+    }
+
     @Test
     fun `missing details show the missing card`() {
         assertEquals(SellerDetailsCard.Missing, sellerDetailsCard("missing", null))
