@@ -186,6 +186,17 @@ it("the drawer subtitle has no empty place between two dots when region and city
   const drawer = await screen.findByRole("dialog");
   expect(await within(drawer).findByText(/^@test-studio/)).not.toHaveTextContent(/·\s*·/);
 });
+it("the list row has no leading dot when region and city are blank", async () => {
+  rows = [{ ...adminUser, region: null, city: "" }]; client.setQueryData(key, rows);
+  mount(true);
+  const line = (await screen.findByText(/^Joined/)).closest("p")!;
+  expect(line.textContent!.trim()).toMatch(/^Joined/);
+});
+it("the list row keeps the city and its dot when the region is blank", async () => {
+  rows = [{ ...adminUser, region: "", city: "Cebu" }]; client.setQueryData(key, rows);
+  mount(true);
+  expect((await screen.findByText(/^Joined/)).closest("p")!.textContent!.trim()).toMatch(/^Cebu · Joined/);
+});
 it("the detail answer's hold wins over a stale list row", async () => {
   rows = [{ ...adminUser, adminHold: false }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
   const listGet = vi.mocked(api.get).getMockImplementation()!;

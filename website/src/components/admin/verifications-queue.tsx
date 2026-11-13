@@ -556,8 +556,12 @@ function PendingRow({
                 </p>
               </div>
               <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2">
-                {row.region ?? row.city}
-                <span className="text-slate-soft"> · </span>
+                {(row.region || row.city) && (
+                  <>
+                    {row.region || row.city}
+                    <span className="text-slate-soft"> · </span>
+                  </>
+                )}
                 <span className="tnum">
                   Joined {formatMemberSince(row.createdAt)}
                 </span>
