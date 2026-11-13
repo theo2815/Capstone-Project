@@ -431,8 +431,12 @@ export function VerificationsQueue() {
           subtitle={
             <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
               {openRow.handle ? `@${openRow.handle}` : "No handle yet"}
-              <span className="text-slate-soft"> · </span>
-              {openRow.region ?? openRow.city}
+              {(openRow.region || openRow.city) && (
+                <>
+                  <span className="text-slate-soft"> · </span>
+                  {openRow.region || openRow.city}
+                </>
+              )}
               <span className="text-slate-soft"> · </span>
               <span className="tnum">
                 Joined {formatMemberSince(openRow.createdAt)}
