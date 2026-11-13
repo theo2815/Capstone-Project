@@ -174,6 +174,8 @@ export interface AdminSellerDetails extends AdminSellerDetailsRow {
   revision: number;
   biometricConsentAt: string | null;
   hasIdNumber: boolean;
+  // Automatic tries that failed a check; optional so an older backend still parses.
+  failedAutoChecks?: number;
   repeatMatches: RepeatMatch[];
   // Links that expire after five minutes; only on E4, and each fetch logs a view.
   files: { idFront: string; idBack: string | null; selfie: string; birForm: string | null; livenessReference: string | null } | null;

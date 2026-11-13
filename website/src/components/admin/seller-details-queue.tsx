@@ -38,6 +38,9 @@ const REASON_LABEL: Record<string, string> = {
   PAYOUT_NAME_MISMATCH: "Payout name differs from the legal name",
   REPEAT_ACCOUNT_MATCH: "Same ID number, payout number or phone as another account",
   PREVIOUSLY_REJECTED: "Sent again after an admin rejected it",
+  ID_FORMAT_UNCHECKED: "ID number format not checked for this ID type",
+  ID_NAME_MISMATCH: "Legal name not found on the ID",
+  REPEATED_FAILED_CHECKS: "Passed after repeated failed checks",
 };
 const MATCH_LABEL: Record<string, string> = { ID_NUMBER: "ID number", PAYOUT_NUMBER: "payout number", PHONE: "phone" };
 const FILTERS = [["manual_review", "Needs review"], ["auto_approved", "Auto-approved"], [null, "All"]] as const;
@@ -217,6 +220,7 @@ function Details({ data, payoutNames }: { data: AdminSellerDetails; payoutNames:
     ["Live-selfie consent", data.biometricConsentAt ? formatLongDate(data.biometricConsentAt) : "Not given"],
     ["ID number on file", data.hasIdNumber ? "Yes" : "No"],
   ];
+  if (data.failedAutoChecks) rows.push(["Failed automatic tries", String(data.failedAutoChecks)]);
   if (data.rejectionReason) rows.push(["Last rejection", data.rejectionReason]);
   return (
     <dl className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-x-6 gap-y-2 font-sans text-sm">

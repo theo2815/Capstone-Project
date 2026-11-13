@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from "vitest";
 import { api, ApiError } from "@/lib/api";
@@ -106,6 +106,34 @@ it("shows both scores and the reasons; an unknown reason code renders raw", asyn
   expect(within(dialog).getByText("99.6%")).toBeInTheDocument();
   expect(within(dialog).getByText("Live check score below the bar; SOMETHING_NEW")).toBeInTheDocument();
   expect(within(dialog).getByText("ID number on file")).toBeInTheDocument();
+});
+
+it("the three new reasons show plain labels", async () => {
+  const base = get.getMockImplementation()!;
+  get.mockImplementation(async (path: string) => path === "/admin/seller-details/u1"
+    ? { ...RECORD, reasonCodes: ["ID_FORMAT_UNCHECKED", "ID_NAME_MISMATCH", "REPEATED_FAILED_CHECKS"] }
+    : base(path));
+  const dialog = await openRecord();
+  expect(await within(dialog).findByText(
+    "ID number format not checked for this ID type; Legal name not found on the ID; Passed after repeated failed checks",
+  )).toBeInTheDocument();
+});
+
+it("the failed-try count shows when above zero and is absent at zero", async () => {
+  const base = get.getMockImplementation()!;
+  const serve = (extra: object) => get.mockImplementation(async (path: string) => path === "/admin/seller-details/u1" ? { ...RECORD, ...extra } : base(path));
+  serve({ failedAutoChecks: 2 });
+  const first = await openRecord();
+  expect(await within(first).findByText("Failed automatic tries")).toBeInTheDocument();
+  expect(within(first).getByText("Failed automatic tries").nextElementSibling).toHaveTextContent(/^2$/);
+  cleanup();
+  for (const extra of [{ failedAutoChecks: 0 }, {}]) {
+    serve(extra);
+    const dialog = await openRecord();
+    await within(dialog).findByText("ID number on file");
+    expect(within(dialog).queryByText("Failed automatic tries")).not.toBeInTheDocument();
+    cleanup();
+  }
 });
 
 it("reference image is the first photo", async () => {

@@ -102,6 +102,23 @@ it("a held race edit shows the changed fields", () => {
   expect(screen.getByText("The name or notes use a word an admin needs to check.")).toBeInTheDocument();
   expect(screen.queryByText(/Requested/)).not.toBeInTheDocument();
 });
+const HELD_EDIT = {
+  ...adminEvent, eventType: "ROAD_RACE", reviewStatus: "change_pending", submittedByHandle: "anashoots",
+  pendingChange: { kind: "race_edit", fields: { title: "Cebu City Marathon" }, coverS3Key: "events/x/cover.jpg", requestedBy: "u", requestedAt: "2026-09-09T00:00:00Z" },
+};
+it("a held race edit with a cover link shows the image", () => {
+  client.setQueryData(key, [{ ...HELD_EDIT, heldCoverUrl: "https://r2.example/held-cover.jpg" }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  const img = screen.getByRole("img", { name: `New cover photo for ${adminEvent.name}` });
+  expect(img).toHaveAttribute("src", "https://r2.example/held-cover.jpg");
+  expect(img).toHaveAttribute("loading", "lazy");
+});
+it("a held cover with no link keeps the words", () => {
+  client.setQueryData(key, [{ ...HELD_EDIT, heldCoverUrl: null }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText("A new cover photo")).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: /^New cover photo for/ })).not.toBeInTheDocument();
+});
 it("an Other request shows the race it looks like", () => {
   client.setQueryData(key, [{ ...adminEvent, status: "DRAFT", reviewStatus: "pending", createdByHandle: "anashoots", lookalike: { ...target, strength: "medium" } }]);
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);

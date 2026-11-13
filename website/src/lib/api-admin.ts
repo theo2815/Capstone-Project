@@ -725,6 +725,8 @@ export interface AdminEventRow extends ListEvent {
   checkReasons?: string[];
   hiddenAt?: string | null;
   adminApproved?: boolean;
+  /** Link to the new cover of a held race edit; admin only. */
+  heldCoverUrl?: string | null;
 }
 
 /** AA-R5 held race edit: only the changed fields, never a price. */
