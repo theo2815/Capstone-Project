@@ -41,6 +41,15 @@ class RunnerMessagesService(
         if (inserted == 1) publish(runnerMessageRepository.findById(id).orElseThrow())
     }
 
+    /** RD-9: the new message id, or null when this notice key was already stored. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun pushRemovalUpdate(runnerId: UUID, requestId: UUID, noticeKey: String, title: String, body: String): UUID? {
+        val id = UUID.randomUUID()
+        if (runnerMessageRepository.insertKeyedNotice(id, runnerId, requestId, noticeKey, title, body, OffsetDateTime.now(ZoneOffset.UTC)) == 0) return null
+        publish(runnerMessageRepository.findById(id).orElseThrow())
+        return id
+    }
+
     @Transactional(propagation = Propagation.MANDATORY)
     fun pushMessage(
         runnerId: UUID,

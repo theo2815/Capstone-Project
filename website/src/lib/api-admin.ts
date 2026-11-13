@@ -6,6 +6,7 @@ import type {
 } from "@/store/photographer-settings-store";
 import type {
   Dispute,
+  DisputeDenyReason,
   DisputeResolution,
 } from "@/lib/admin-disputes";
 import type { Flag, FlagStatus } from "@/lib/admin-flags";
@@ -47,7 +48,8 @@ const ADMIN_LIST_LIMIT = 200;
 //   POST   /api/v1/admin/users/{id}/suspend      { reason } → AdminUserRow
 //   POST   /api/v1/admin/users/{id}/unsuspend              → AdminUserRow
 //
-//   GET    /api/v1/admin/disputes?status=&offset=&limit=   → PaginatedResponse<Dispute>
+//   GET    /api/v1/admin/disputes?status=&view=&q=&offset=&limit= → PaginatedResponse<Dispute>
+//   GET    /api/v1/admin/disputes/{id}                     → Dispute (404 when unknown)
 //   POST   /api/v1/admin/disputes/{id}/resolve   { resolution, refundAmount?, reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/deny      { reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/escalate  { reason } → Dispute
@@ -82,6 +84,10 @@ export interface AdminKpis {
   liveEvents: number;
   decisionsThisWeek: number;
   openDisputes: number;
+  /** DW-2: unresolved disputes that need an admin. Optional until the backend ships it. */
+  disputesNeedingAdmin?: number;
+  /** DW-2: how many of those are past their due time. */
+  disputesOverdue?: number;
   openFlags: number;
   pendingPayouts: number;
   /** V46 — photographer-owned events awaiting a decision (new + pricing change). */
@@ -335,7 +341,16 @@ export type AdminDisputeStatusFilter =
   | "open"
   | "resolved"
   | "denied"
-  | "escalated";
+  | "escalated"
+  | "withdrawn";
+
+export type AdminDisputeView = "needs_me" | "overdue" | "refund_run" | "closed" | "all";
+
+export interface AdminDisputePageArgs {
+  view?: AdminDisputeView;
+  q?: string;
+  offset?: number;
+}
 
 export interface AdminDisputeListArgs {
   status?: AdminDisputeStatusFilter;
@@ -362,20 +377,24 @@ export async function fetchAdminDisputes(
   return res.items;
 }
 
-// The backend exposes a paginated list, but no GET /disputes/{id}.
-// Deep links must search beyond the first page before declaring a 404.
+// One server page of a queue view; no limit, so the server's default page size decides.
+export async function fetchAdminDisputePage(
+  { view, q, offset, signal }: AdminDisputePageArgs & { signal?: AbortSignal },
+): Promise<PaginatedResponse<Dispute>> {
+  const p = new URLSearchParams();
+  if (view) p.set("view", view);
+  if (q) p.set("q", q);
+  p.set("offset", String(offset ?? 0));
+  return api.get<PaginatedResponse<Dispute>>(`/admin/disputes?${p.toString()}`, { signal });
+}
+
+// Null on 404, and on 400 (a malformed id fails the server's UUID path variable).
 export async function fetchAdminDispute(disputeId: string, signal?: AbortSignal): Promise<Dispute | null> {
-  let offset = 0;
-  while (true) {
-    signal?.throwIfAborted();
-    const page = await api.get<PaginatedResponse<Dispute>>(
-      `/admin/disputes?${buildDisputesQs({ offset })}`,
-    );
-    signal?.throwIfAborted();
-    const dispute = page.items.find((row) => row.id === disputeId);
-    if (dispute) return dispute;
-    offset += page.items.length;
-    if (page.items.length === 0 || offset >= page.total) return null;
+  try {
+    return await api.get<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}`, { signal });
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 404 || error.status === 400)) return null;
+    throw error;
   }
 }
 
@@ -405,6 +424,21 @@ export async function denyDispute(
   );
 }
 
+export async function fetchDisputeDenyReasons(): Promise<DisputeDenyReason[]> {
+  return (await api.get<PaginatedResponse<DisputeDenyReason>>("/admin/disputes/deny-reasons")).items;
+}
+
+export async function denyDisputeWithCode(
+  disputeId: string,
+  reasonCode: string,
+  note: string | null,
+): Promise<Dispute> {
+  return api.post<Dispute>(
+    `/admin/disputes/${encodeURIComponent(disputeId)}/deny`,
+    note ? { reasonCode, note } : { reasonCode },
+  );
+}
+
 export async function escalateDispute(
   disputeId: string,
   reason: string | null,
@@ -419,8 +453,8 @@ export async function sendRefundLink(disputeId: string, url: string): Promise<Di
   return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/refund-link`, { url });
 }
 
-export async function markRefunded(disputeId: string): Promise<Dispute> {
-  return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/mark-refunded`);
+export async function markRefunded(disputeId: string, refundReference: string): Promise<Dispute> {
+  return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/mark-refunded`, { refundReference });
 }
 
 // ───────────────────────────────────────────── Flags
@@ -950,4 +984,49 @@ export async function fetchAdminSalesByEvent(
     { signal },
   );
   return res.items;
+}
+
+// ───────────────────────────────────────────── Relevance flags (PE-2.7)
+
+export function fetchFlagRelevance(
+  flagId: string,
+  signal?: AbortSignal,
+): Promise<import("@/lib/admin-flags").RelevanceEvidence> {
+  return api.get(`/admin/flags/${encodeURIComponent(flagId)}/relevance`, { signal });
+}
+
+export function resolveAdminFlag(flagId: string, resolutionNote?: string | null): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/resolve`, { resolutionNote });
+}
+
+export function confirmFlagPayoutHold(flagId: string): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/payout-hold`);
+}
+
+export function hideFlagBatch(
+  flagId: string,
+  eventId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/hide-batch`, {
+    eventId,
+    resolutionNote,
+  });
+}
+
+export function fetchFlagHiddenPhotos(
+  flagId: string,
+  args: { offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-flags").HiddenPhoto>> {
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/flags/${encodeURIComponent(flagId)}/hidden-photos?${p.toString()}`, { signal });
+}
+
+export function restoreFlagHiddenPhoto(flagId: string, photoId: string): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/hidden-photos/${encodeURIComponent(photoId)}/restore`,
+  );
 }

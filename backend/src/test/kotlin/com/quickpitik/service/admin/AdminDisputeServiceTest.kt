@@ -1,5 +1,6 @@
 package com.quickpitik.service.admin
 
+import com.quickpitik.config.DisputeQueueProperties
 import com.quickpitik.config.PaymongoProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.common.ErrorCodes
@@ -15,6 +16,11 @@ import com.quickpitik.entity.Payment
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
+import com.quickpitik.repository.DownloadGrantRepository
+import com.quickpitik.repository.RunnerDisputeCount
+import com.quickpitik.dto.admin.RunnerDisputeHistoryDto
+import com.quickpitik.entity.DownloadGrant
+import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
@@ -27,6 +33,8 @@ import com.quickpitik.service.runner.RunnerMessagesService
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.support.testTransactionTemplate
 import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ValidationException
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.data.domain.PageImpl
@@ -54,6 +62,7 @@ class AdminDisputeServiceTest {
     private val decisionLogRepository = Mockito.mock(AdminDecisionLogRepository::class.java)
     private val decisionLogService = Mockito.mock(AdminDecisionLogService::class.java)
     private val refundService = Mockito.mock(PaymongoRefundService::class.java)
+    private val downloadGrantRepository = Mockito.mock(DownloadGrantRepository::class.java)
     private val now = OffsetDateTime.parse("2026-11-08T03:00:00Z")
     private val service = AdminDisputeService(
         disputeRepository,
@@ -64,6 +73,7 @@ class AdminDisputeServiceTest {
         eventRepository,
         userRepository,
         settingsRepository,
+        downloadGrantRepository,
         Mockito.mock(StorageService::class.java),
         StorageProperties(),
         decisionLogService,
@@ -72,6 +82,7 @@ class AdminDisputeServiceTest {
         refundService,
         Mockito.mock(TransactionTemplate::class.java),
         PaymongoProperties(),
+        DisputeQueueProperties(),
         Clock.fixed(now.toInstant(), ZoneOffset.UTC),
     )
 
@@ -87,6 +98,7 @@ class AdminDisputeServiceTest {
             eventRepository,
             userRepository,
             settingsRepository,
+            downloadGrantRepository,
             Mockito.mock(StorageService::class.java),
             StorageProperties(),
             decisionLogService,
@@ -95,6 +107,7 @@ class AdminDisputeServiceTest {
             refunds,
             testTransactionTemplate(),
             PaymongoProperties(),
+            DisputeQueueProperties(),
             Clock.systemUTC(),
         )
         val adminId = UUID.randomUUID()
@@ -121,6 +134,7 @@ class AdminDisputeServiceTest {
             eventRepository,
             userRepository,
             settingsRepository,
+            downloadGrantRepository,
             Mockito.mock(StorageService::class.java),
             StorageProperties(),
             decisionLogService,
@@ -129,6 +143,7 @@ class AdminDisputeServiceTest {
             refunds,
             testTransactionTemplate(),
             PaymongoProperties(),
+            DisputeQueueProperties(),
             Clock.systemUTC(),
         )
         val adminId = UUID.randomUUID()
@@ -136,9 +151,9 @@ class AdminDisputeServiceTest {
         dispute.refundStatus = "succeeded"
         Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
 
-        val dto = withTx.markRefunded(adminId, dispute.id)
+        val dto = withTx.markRefunded(adminId, dispute.id, "ref_9e5899bbf66c4f3485bff833")
 
-        Mockito.verify(refunds).markRefunded(adminId, dispute.id)
+        Mockito.verify(refunds).markRefunded(adminId, dispute.id, "ref_9e5899bbf66c4f3485bff833")
         assertEquals(dispute.id, dto.id)
         assertEquals("succeeded", dto.refundStatus)
     }
@@ -208,6 +223,118 @@ class AdminDisputeServiceTest {
         service.deny(adminId, dispute.id, null)
 
         assertEquals(now.toInstant(), dispute.resolvedAt!!.toInstant())
+    }
+
+    // DW-4: deny by reason code (plan 5.4).
+    private fun openForDeny(adminId: UUID, storedText: String?, meta: Map<String, Any?>?): Dispute {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "denied", storedText, meta))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "denied"))
+        return dispute
+    }
+
+    @Test
+    fun `deny by code stores the policy text the runner will read`() {
+        val adminId = UUID.randomUUID()
+        val text = "You picked the wrong photo. Our refund policy doesn't cover a photo chosen by mistake."
+        val dispute = openForDeny(adminId, text, mapOf("reasonCode" to "wrong_photo"))
+
+        service.deny(adminId, dispute.id, null, reasonCode = " wrong_photo ")
+
+        Mockito.verify(decisionLogService).logDisputeDecision(adminId, dispute.id, "denied", text, mapOf("reasonCode" to "wrong_photo"))
+        assertEquals(DisputeStatus.DENIED, dispute.status)
+    }
+
+    @Test
+    fun `deny by code puts the admin's note after the policy text`() {
+        val adminId = UUID.randomUUID()
+        val text = DisputeDenyReason.PREFERENCE.runnerText + " Note from our team: We checked the angle."
+        val dispute = openForDeny(adminId, text, mapOf("reasonCode" to "preference"))
+
+        service.deny(adminId, dispute.id, null, reasonCode = "preference", note = "  We checked the angle. ")
+
+        Mockito.verify(decisionLogService).logDisputeDecision(adminId, dispute.id, "denied", text, mapOf("reasonCode" to "preference"))
+    }
+
+    @Test
+    fun `deny with other needs a note`() {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+
+        val error = assertFailsWith<ValidationException> {
+            service.deny(UUID.randomUUID(), dispute.id, null, reasonCode = "other", note = "   ")
+        }
+
+        assertEquals("note", error.field)
+        Mockito.verify(disputeRepository, Mockito.never()).findByIdForUpdate(dispute.id)
+    }
+
+    @Test
+    fun `deny with other stores only the note`() {
+        val adminId = UUID.randomUUID()
+        val dispute = openForDeny(adminId, "The photo is of another runner.", mapOf("reasonCode" to "other"))
+
+        service.deny(adminId, dispute.id, null, reasonCode = "other", note = " The photo is of another runner. ")
+
+        Mockito.verify(decisionLogService)
+            .logDisputeDecision(adminId, dispute.id, "denied", "The photo is of another runner.", mapOf("reasonCode" to "other"))
+    }
+
+    @Test
+    fun `a note without a deny code is refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.deny(UUID.randomUUID(), UUID.randomUUID(), "Written reason", note = "extra")
+        }
+        assertEquals("note", error.field)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `an unknown deny code is refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.deny(UUID.randomUUID(), UUID.randomUUID(), null, reasonCode = "too_blurry")
+        }
+        assertEquals("reasonCode", error.field)
+        assertEquals(ErrorCodes.VALIDATION_ERROR, error.code)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `a code and free text together are refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.deny(UUID.randomUUID(), UUID.randomUUID(), "Written reason", reasonCode = "wrong_photo")
+        }
+        assertEquals("reason", error.field)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `the old free-text deny still works`() {
+        val adminId = UUID.randomUUID()
+        val dispute = openForDeny(adminId, "Photo matches the order.", null)
+
+        service.deny(adminId, dispute.id, "Photo matches the order.")
+
+        Mockito.verify(decisionLogService).logDisputeDecision(adminId, dispute.id, "denied", "Photo matches the order.", null)
+        assertEquals(DisputeStatus.DENIED, dispute.status)
+    }
+
+    @Test
+    fun `a deny code on a parked refund whose link was sent answers 409`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.status = DisputeStatus.ESCALATED
+        dispute.refundStatus = "manual_review"
+        dispute.refundLinkSentAt = now.minusDays(5)
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+
+        val error = assertFailsWith<ApiException> { service.deny(adminId, dispute.id, null, reasonCode = "wrong_photo") }
+
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, error.code)
+        assertEquals(409, error.status.value())
+        assertEquals("This refund was approved and its link sent. Refresh to see it.", error.message)
+        Mockito.verifyNoInteractions(refundService)
+        Mockito.verify(disputeRepository, Mockito.never()).save(dispute)
     }
 
     @Test
@@ -310,7 +437,8 @@ class AdminDisputeServiceTest {
         val first = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
         val second = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
         Mockito.`when`(disputeRepository.pageForAdmin(
-            Mockito.isNull(),
+            Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
+            Mockito.eq("") ?: "",
             Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
         ))
             .thenReturn(PageImpl(listOf(first, second)))
@@ -326,7 +454,7 @@ class AdminDisputeServiceTest {
         Mockito.`when`(paymentRepository.findByOrderIdIn(setOf(order.id)))
             .thenReturn(listOf(payment(order.id, "cs_paid", "pay_paid", PaymentStatus.SUCCEEDED)))
 
-        val page = service.list(null, PaginationParams.of(0, 10))
+        val page = service.list(null, null, null, PaginationParams.of(0, 10))
         assertEquals(listOf(BigDecimal("100.00"), BigDecimal("127.50")), page.items.map { it.itemChargeAmount })
         assertEquals(listOf("pay_paid", "pay_paid"), page.items.map { it.paymentId })
         Mockito.verify(orderItemRepository).findByIdOrderIdIn(setOf(order.id))
@@ -397,7 +525,161 @@ class AdminDisputeServiceTest {
         Mockito.verifyNoInteractions(decisionLogService)
     }
 
+    @Test
+    fun `get returns one dispute with its attention and due time`() {
+        val order = qrphOrder()
+        val requested = now.minusHours(10)
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.refundStatus = "manual_review"
+        dispute.refundRequestedAt = requested
+        Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
+        Mockito.`when`(orderRepository.findById(order.id)).thenReturn(Optional.of(order))
+        Mockito.`when`(orderItemRepository.findById(OrderItemId(order.id, dispute.photoId))).thenReturn(Optional.empty())
+        Mockito.`when`(photoRepository.findById(dispute.photoId)).thenReturn(Optional.empty())
+
+        val dto = service.get(dispute.id)
+
+        assertEquals(dispute.id, dto.id)
+        assertEquals(requested.toString(), dto.refundRequestedAt)
+        // Paid 2026-10-01, so PayMongo's window closed 2026-10-31, before the 48 h send deadline: due at the close.
+        assertEquals("send_link", dto.attention)
+        assertEquals(paidOn.plusDays(30).toString(), dto.dueAt)
+        assertEquals(true, dto.overdue)
+        assertEquals(false, dto.linkExpiringSoon)
+        assertEquals(paidOn.plusDays(30).toString(), dto.refundWindowClosesAt)
+    }
+
+    @Test
+    fun `get answers 404 for an unknown dispute`() {
+        val id = UUID.randomUUID()
+        Mockito.`when`(disputeRepository.findById(id)).thenReturn(Optional.empty())
+
+        val error = assertFailsWith<NotFoundException> { service.get(id) }
+
+        assertEquals(ErrorCodes.DISPUTE_NOT_FOUND, error.code)
+    }
+
     private val paidOn = OffsetDateTime.parse("2026-10-01T00:00:00Z")
+
+    // The in-memory views (plan 5.2). `now` is Sun 2026-11-08 11:00 Manila.
+    private val qrph = qrphOrder()
+    private val fresh = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+        openedAt = now.minusHours(1)) // review, due Thu 2026-11-12 00:00 Manila: not overdue
+    private val stale = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+        openedAt = now.minusDays(10)) // review, overdue
+    private val escalated = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+        statusWire = DisputeStatus.ESCALATED.wire, openedAt = now.minusHours(2)) // not overdue
+    private val inProgress = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other",
+        openedAt = now.minusDays(20)).apply {
+        refundStatus = "requesting"
+        refundRequestedAt = now.minusHours(1)
+    }
+    private val parked = Dispute(orderId = qrph.id, photoId = UUID.randomUUID(), reasonWire = "other",
+        statusWire = DisputeStatus.ESCALATED.wire, openedAt = now.minusDays(30)).apply {
+        refundStatus = "manual_review" // send_link, due when PayMongo's window closed on 2026-10-31: overdue
+        refundRequestedAt = now.minusHours(10)
+    }
+
+    private fun unresolved(vararg disputes: Dispute) {
+        Mockito.`when`(disputeRepository.pageForAdmin(listOf("open", "escalated"), "", Pageable.unpaged()))
+            .thenReturn(PageImpl(disputes.toList()))
+        Mockito.`when`(orderRepository.findAllById(Mockito.anyIterable())).thenReturn(listOf(qrph))
+    }
+
+    private fun ids(view: String, offset: Int = 0, limit: Int = 50) =
+        service.list(view, null, null, PaginationParams.of(offset, limit)).let { page -> page.items.map { it.id } to page.total }
+
+    @Test
+    fun `needs_me lists unresolved disputes by due time and leaves out refunds in progress`() {
+        unresolved(fresh, inProgress, stale, parked, escalated)
+
+        val (items, total) = ids("needs_me")
+
+        // fresh and escalated share Thursday's due time; the one opened first comes first.
+        assertEquals(listOf(parked.id, stale.id, escalated.id, fresh.id), items)
+        assertEquals(4, total)
+    }
+
+    @Test
+    fun `overdue keeps only past-due disputes`() {
+        unresolved(fresh, inProgress, stale, parked, escalated)
+
+        assertEquals(listOf(parked.id, stale.id) to 2L, ids("overdue"))
+    }
+
+    @Test
+    fun `refund_run keeps only parked QR Ph refunds`() {
+        unresolved(fresh, inProgress, stale, parked, escalated)
+
+        assertEquals(listOf(parked.id) to 1L, ids("refund_run"))
+    }
+
+    @Test
+    fun `paging slices the sorted list and reports the full total`() {
+        unresolved(fresh, stale, parked)
+
+        assertEquals(listOf(stale.id) to 3L, ids("needs_me", offset = 1, limit = 1))
+    }
+
+    @Test
+    fun `an offset past the end returns no items and the full total`() {
+        unresolved(fresh, stale, parked)
+
+        assertEquals(emptyList<UUID>() to 3L, ids("needs_me", offset = 10))
+    }
+
+    @Test
+    fun `list trims a pasted PayMongo ID before it reaches the repository`() {
+        Mockito.`when`(disputeRepository.pageForAdmin(
+            Mockito.anyCollection() ?: emptyList(),
+            Mockito.anyString() ?: "",
+            Mockito.any(Pageable::class.java) ?: Pageable.unpaged(),
+        )).thenReturn(PageImpl(emptyList()))
+
+        service.list(null, null, "  pay_AbC123\n", PaginationParams.of(0, 10))
+
+        Mockito.verify(disputeRepository).pageForAdmin(
+            Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
+            Mockito.eq("pay_AbC123") ?: "",
+            Mockito.any(Pageable::class.java) ?: Pageable.unpaged(),
+        )
+    }
+
+    @Test
+    fun `view and status together are refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.list("needs_me", "open", null, PaginationParams.of(0, 10))
+        }
+
+        assertEquals(ErrorCodes.VALIDATION_ERROR, error.code)
+        assertEquals("view", error.field)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `an unknown view is refused`() {
+        val error = assertFailsWith<ValidationException> {
+            service.list("everything", null, null, PaginationParams.of(0, 10))
+        }
+
+        assertEquals(ErrorCodes.VALIDATION_ERROR, error.code)
+        assertEquals("view", error.field)
+        Mockito.verifyNoInteractions(disputeRepository)
+    }
+
+    @Test
+    fun `queueCounts counts open, escalated and parked refunds but not refunds in progress`() {
+        unresolved(fresh, inProgress, parked, escalated)
+
+        assertEquals(3, service.queueCounts().needsAdmin)
+    }
+
+    @Test
+    fun `queueCounts overdue counts only past-due ones`() {
+        unresolved(fresh, inProgress, stale, parked, escalated)
+
+        assertEquals(DisputeQueueCounts(needsAdmin = 4, overdue = 2), service.queueCounts())
+    }
 
     private fun qrphOrder() = Order(
         eventId = UUID.randomUUID(),
@@ -436,6 +718,61 @@ class AdminDisputeServiceTest {
         assertEquals(sentAt.plusDays(3).toString(), dto.refundLinkExpiresAt)
     }
 
+    // --- DW-3: refundability shown up front ---
+
+    @Test
+    fun `an open QR Ph dispute bought with three other photos shows refundable false, bought_together, its admin message and a photo count of 4`() {
+        // Paid two days ago, so PayMongo's window is still open and only the whole-payment rule blocks it.
+        val order = qrphOrder().also { it.totalPhp = BigDecimal("600.00"); it.paidAt = now.minusDays(2) }
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        val paid = payment(order.id, "pi_four", "pay_four", PaymentStatus.SUCCEEDED).also { it.amountPhp = BigDecimal("600.00") }
+        val fourItems = listOf(item(dispute, "150.00", "0.00")) +
+            List(3) { OrderItem(OrderItemId(order.id, UUID.randomUUID()), BigDecimal("150.00")) }
+        Mockito.`when`(disputeRepository.pageForAdmin(
+            Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
+            Mockito.eq("") ?: "",
+            Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
+        )).thenReturn(PageImpl(listOf(dispute)))
+        Mockito.`when`(orderRepository.findAllById(setOf(order.id))).thenReturn(listOf(order))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(setOf(order.id))).thenReturn(fourItems)
+        Mockito.`when`(paymentRepository.findByOrderIdIn(setOf(order.id))).thenReturn(listOf(paid))
+        Mockito.`when`(paymentRepository.findAllByProviderAndProviderRefIn("paymongo", setOf("pi_four"))).thenReturn(listOf(paid))
+        Mockito.`when`(photoRepository.findAllById(setOf(dispute.photoId))).thenReturn(emptyList())
+        Mockito.`when`(userRepository.findAllById(emptySet())).thenReturn(emptyList())
+        Mockito.`when`(settingsRepository.findAllById(emptySet())).thenReturn(emptyList())
+        Mockito.`when`(eventRepository.findAllById(setOf(order.eventId))).thenReturn(emptyList())
+        Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(dispute.id))).thenReturn(emptyList())
+
+        val dto = service.list(null, null, null, PaginationParams.of(0, 10)).items.single()
+
+        assertEquals(false, dto.refundable)
+        assertEquals("bought_together", dto.refundBlockedReason)
+        assertEquals("PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead.", dto.refundBlockedMessage)
+        assertEquals(4, dto.paymentPhotoCount)
+    }
+
+    @Test
+    fun `an approved refund shows no refundability`() {
+        val order = qrphOrder()
+        val dispute = Dispute(orderId = order.id, photoId = UUID.randomUUID(), reasonWire = "other")
+        dispute.statusWire = "escalated"
+        dispute.refundStatus = "manual_review"
+        Mockito.`when`(orderItemRepository.findById(OrderItemId(order.id, dispute.photoId)))
+            .thenReturn(Optional.of(item(dispute, "150.00", "0.00")))
+        Mockito.`when`(paymentRepository.findByOrderId(order.id))
+            .thenReturn(listOf(payment(order.id, "pi_one", "pay_one", PaymentStatus.SUCCEEDED)))
+
+        val dto = service.hydrateOne(dispute, activity = emptyList(), order = order, photo = null)
+
+        assertNull(dto.refundable)
+        assertNull(dto.refundBlockedReason)
+        assertNull(dto.refundBlockedMessage)
+        assertNull(dto.paymentPhotoCount)
+        Mockito.verify(paymentRepository, Mockito.never()).findAllByProviderAndProviderRefIn(
+            Mockito.anyString() ?: "", Mockito.anyCollection<String>() ?: emptyList(),
+        )
+    }
+
     @Test
     fun `hydrate leaves the refund dates null unless a QR Ph refund waits for a manual refund`() {
         val qrph = qrphOrder()
@@ -455,6 +792,105 @@ class AdminDisputeServiceTest {
             assertNull(dto.refundCancelsAt, "status $status on ${order.paymentMethodWire}")
             assertNull(dto.refundLinkExpiresAt, "status $status on ${order.paymentMethodWire}")
         }
+    }
+
+    // --- DW-6: decision facts ---
+
+    private val runnerId = UUID.randomUUID()
+
+    private fun count(runner: UUID, status: String, rows: Long) = object : RunnerDisputeCount {
+        override val runnerId = runner
+        override val statusWire = status
+        override val n = rows
+    }
+
+    private fun grant(dispute: Dispute, downloads: Int, last: OffsetDateTime?) = DownloadGrant(
+        DownloadGrantId(dispute.orderId, dispute.photoId),
+        grantedUntil = now.plusDays(30),
+        lastDownloadedAt = last,
+        downloadCount = downloads,
+    )
+
+    private fun pageOf(vararg disputes: Dispute) {
+        Mockito.`when`(disputeRepository.pageForAdmin(
+            Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
+            Mockito.eq("") ?: "",
+            Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
+        )).thenReturn(PageImpl(disputes.toList()))
+    }
+
+    @Test
+    fun `the dispute shows downloads started and the runner's other requests, not counting itself`() {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        val lastAt = now.minusDays(2)
+        pageOf(dispute)
+        Mockito.`when`(downloadGrantRepository.findAllById(listOf(DownloadGrantId(dispute.orderId, dispute.photoId))))
+            .thenReturn(listOf(grant(dispute, 3, lastAt)))
+        Mockito.`when`(disputeRepository.countByRunnerAndStatus(setOf(runnerId))).thenReturn(listOf(
+            count(runnerId, "open", 1), count(runnerId, "escalated", 1), count(runnerId, "resolved", 2),
+            count(runnerId, "denied", 1), count(runnerId, "withdrawn", 1),
+        ))
+
+        val dto = service.list(null, null, null, PaginationParams.of(0, 10)).items.single()
+
+        assertEquals(3, dto.downloadCount)
+        assertEquals(lastAt.toString(), dto.lastDownloadedAt)
+        // Its own open row is left out: the escalated one is the only other open request.
+        assertEquals(RunnerDisputeHistoryDto(total = 5, refunded = 2, denied = 1, withdrawn = 1, open = 1), dto.runnerHistory)
+        Mockito.verify(downloadGrantRepository, Mockito.never())
+            .findById(Mockito.any(DownloadGrantId::class.java) ?: DownloadGrantId(dispute.orderId, dispute.photoId))
+    }
+
+    @Test
+    fun `get and every action response carry the downloads and the runner history too`() {
+        val adminId = UUID.randomUUID()
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
+        Mockito.`when`(disputeRepository.findByIdForUpdate(dispute.id)).thenReturn(dispute)
+        Mockito.`when`(downloadGrantRepository.findById(DownloadGrantId(dispute.orderId, dispute.photoId)))
+            .thenReturn(Optional.of(grant(dispute, 2, now)))
+        // The database before and after the escalation: this dispute, one other open request, one refunded.
+        Mockito.`when`(disputeRepository.countByRunnerAndStatus(listOf(runnerId)))
+            .thenReturn(listOf(count(runnerId, "open", 2), count(runnerId, "resolved", 1)))
+            .thenReturn(listOf(count(runnerId, "open", 1), count(runnerId, "escalated", 1), count(runnerId, "resolved", 1)))
+        Mockito.`when`(decisionLogService.logDisputeDecision(adminId, dispute.id, "escalated", null))
+            .thenReturn(AdminDecisionLog(adminId = adminId, targetDisputeId = dispute.id, decision = "escalated"))
+        val expected = RunnerDisputeHistoryDto(total = 2, refunded = 1, denied = 0, withdrawn = 0, open = 1)
+
+        for (dto in listOf(service.get(dispute.id), service.escalate(adminId, dispute.id, null))) {
+            assertEquals(2, dto.downloadCount)
+            assertEquals(now.toString(), dto.lastDownloadedAt)
+            assertEquals(expected, dto.runnerHistory)
+        }
+    }
+
+    @Test
+    fun `a dispute whose runner was deleted shows no history`() {
+        val kept = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other")
+        val deleted = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = null, reasonWire = "other")
+        pageOf(kept, deleted)
+        Mockito.`when`(disputeRepository.countByRunnerAndStatus(setOf(runnerId))).thenReturn(listOf(count(runnerId, "open", 1)))
+
+        val items = service.list(null, null, null, PaginationParams.of(0, 10)).items
+
+        assertEquals(RunnerDisputeHistoryDto(total = 0, refunded = 0, denied = 0, withdrawn = 0, open = 0), items[0].runnerHistory)
+        assertNull(items[1].runnerHistory)
+        assertNull(service.hydrateOne(deleted, activity = emptyList(), order = null, photo = null).runnerHistory)
+        Mockito.verify(disputeRepository, Mockito.times(1)).countByRunnerAndStatus(Mockito.anyCollection() ?: emptyList())
+    }
+
+    @Test
+    fun `a refunded photo with no grant shows no download count`() {
+        val dispute = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), runnerId = runnerId, reasonWire = "other",
+            statusWire = DisputeStatus.RESOLVED.wire).apply { refundStatus = "succeeded" }
+        Mockito.`when`(downloadGrantRepository.findById(DownloadGrantId(dispute.orderId, dispute.photoId))).thenReturn(Optional.empty())
+        Mockito.`when`(disputeRepository.countByRunnerAndStatus(listOf(runnerId))).thenReturn(listOf(count(runnerId, "resolved", 1)))
+
+        val dto = service.hydrateOne(dispute, activity = emptyList(), order = null, photo = null)
+
+        assertNull(dto.downloadCount)
+        assertNull(dto.lastDownloadedAt)
+        assertEquals(RunnerDisputeHistoryDto(total = 0, refunded = 0, denied = 0, withdrawn = 0, open = 0), dto.runnerHistory)
     }
 
     private fun order(total: BigDecimal) = Order(

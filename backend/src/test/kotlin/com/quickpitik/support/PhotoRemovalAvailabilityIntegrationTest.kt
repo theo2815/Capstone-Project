@@ -28,6 +28,9 @@ import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.data.domain.PageRequest
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.bean.override.mockito.MockitoBean
+import org.springframework.test.context.event.ApplicationEvents
+import org.springframework.test.context.event.RecordApplicationEvents
+import com.quickpitik.websocket.PhotosHiddenEvent
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -43,6 +46,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import kotlin.test.*
 
+@RecordApplicationEvents
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
     @LocalServerPort var port: Int = 0
@@ -65,6 +69,8 @@ class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var tokens: OrderAccessTokenService
     @Autowired lateinit var tx: TransactionTemplate
     @Autowired lateinit var jdbc: JdbcTemplate
+    @Autowired lateinit var recorded: ApplicationEvents
+    @Autowired lateinit var removals: com.quickpitik.service.removal.PhotoRemovalService
     @MockitoBean lateinit var storage: StorageService
     @MockitoBean lateinit var provider: AiApiClient
     @MockitoBean lateinit var paymongo: PaymongoClient
@@ -145,6 +151,13 @@ class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
             { assertEquals(0, mapper.toDetailDto(event).photoCount) },
             { assertEquals(1, mapper.toAdminListDto(event).photoCount) },
         )
+    }
+
+    @Test fun `restricting a photo announces it hidden for its event`() {
+        restrict()
+
+        val hidden = recorded.stream(PhotosHiddenEvent::class.java).toList()
+        assertEquals(listOf(PhotosHiddenEvent(event.id, listOf(photo.id))), hidden)
     }
 
     @Test fun `directPhotoLookupCannotBypassRestriction`() {
@@ -259,6 +272,115 @@ class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
         assertNull(photos.findById(photo.id).orElseThrow().purgedAt)
     }
 
+    // RD-4: the fixture's support item is released first, so only the runner case can hide the photo.
+    private fun runnerOnly(): User {
+        item.state = RemovalItemState.EXCLUDED
+        items.saveAndFlush(item)
+        return users.saveAndFlush(User(email = "runner-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Runner", role = Role.RUNNER, emailVerifiedAt = OffsetDateTime.now()))
+    }
+
+    @Test fun `a runner case hides its auto-band photos on every public path`() {
+        val (_, result) = removals.runnerCase(runnerOnly(), event, matched(photo to 0.995))
+        assertEquals(1 to 0, result.hiddenCount to result.suggestedCount)
+        val buyer = users.saveAndFlush(User(email = "cart-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Buyer", role = Role.RUNNER))
+        val eventId = event.id
+        assertAll(
+            { assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState) },
+            { assertEquals(emptyList<UUID>(), publicGalleryIds(eventId)) },
+            { assertEquals(emptyList<UUID>(), publicFaceMatchIds(eventId)) },
+            { assertTrue(photos.searchForEvent(eventId, PhotoStatus.LIVE, "123", page).isEmpty) },
+            { assertTrue(photos.findPhotographerLibraryByStatus(eventId, owner.id, PhotoStatus.LIVE, page).isEmpty) },
+            { assertFalse(photos.findNearestByPhash(photo.phash!!).any { it[1] == eventId }) },
+            { assertEquals(0, mapper.toListDto(event).photoCount) },
+            { assertFailsWith<NotFoundException> { carts.add(buyer.id, photo.id, eventId) } },
+            { assertNotNull(runCatching { checkout.create(null, CreateOrderRequest(items = listOf(CreateOrderItem(photo.id, eventId)),
+                paymentMethod = "gcash", recipientEmail = "new-buyer@test.local"), UUID.randomUUID().toString()) }.exceptionOrNull()) },
+        )
+        event.pricingMode = EventPricingMode.FREE
+        events.saveAndFlush(event)
+        jdbc.update("INSERT INTO event_photographer(event_id, photographer_id, metadata_public) VALUES (?, ?, true)", event.id, owner.id)
+        assertAll(
+            { assertFailsWith<NotFoundException> { photoService.freeDownload(event.id, photo.id) } },
+            { assertFailsWith<NotFoundException> { metadata.getPublic(photo.id) } },
+        )
+    }
+
+    @Test fun `a promoted suggestion is hidden on every public path`() {
+        val (id, result) = removals.runnerCase(runnerOnly(), event, matched(photo to 0.95))
+        assertEquals(0 to 1, result.hiddenCount to result.suggestedCount)
+        val admin = users.saveAndFlush(User(email = "promote-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Admin", role = Role.ADMIN))
+        val suggestion = items.findByRequestIdOrderByIdAsc(id).single()
+        removals.reviewSuggestions(admin.id, id, com.quickpitik.dto.removal.ReviewSuggestionsCommand(UUID.randomUUID(),
+            requests.findById(id).orElseThrow().version, promote = listOf(suggestion.id)))
+        val buyer = users.saveAndFlush(User(email = "cart-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Buyer", role = Role.RUNNER))
+        val eventId = event.id
+        assertAll(
+            { assertEquals(RemovalItemState.VERIFIED to admin.id, items.findById(suggestion.id).orElseThrow().let { it.state to it.verificationActorId }) },
+            { assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState) },
+            { assertEquals(emptyList<UUID>(), publicGalleryIds(eventId)) },
+            { assertEquals(emptyList<UUID>(), publicFaceMatchIds(eventId)) },
+            { assertTrue(photos.searchForEvent(eventId, PhotoStatus.LIVE, "123", page).isEmpty) },
+            { assertEquals(0, mapper.toListDto(event).photoCount) },
+            { assertFailsWith<NotFoundException> { carts.add(buyer.id, photo.id, eventId) } },
+            { assertFailsWith<NotFoundException> { metadata.getPublic(photo.id) } },
+        )
+    }
+
+    @Test fun `a runner case's suggested photos stay public`() {
+        val (id, result) = removals.runnerCase(runnerOnly(), event, matched(photo to 0.95))
+        assertEquals(0 to 1, result.hiddenCount to result.suggestedCount)
+        assertEquals(RemovalState.NONE, photos.findById(photo.id).orElseThrow().removalState)
+        assertEquals(listOf(photo.id), publicGalleryIds(event.id))
+        assertEquals(RemovalItemState.CANDIDATE, items.findByRequestIdOrderByIdAsc(id).single().state)
+        assertEquals(RemovalRequestStatus.OPEN, requests.findById(id).orElseThrow().status)
+    }
+
+    @Test fun `a runner case on event A never touches event B photos`() {
+        val other = events.saveAndFlush(Event(slug = "availability-b-${UUID.randomUUID()}", name = "Other run",
+            date = LocalDate.of(2026, 10, 6), location = "Cebu", status = EventStatus.ACTIVE))
+        val elsewhere = photos.saveAndFlush(Photo(eventId = other.id, photographerId = owner.id,
+            s3Key = "synthetic/${UUID.randomUUID()}.jpg", pricePhp = BigDecimal("125")))
+        val (id, _) = removals.runnerCase(runnerOnly(), event, matched(photo to 0.995, elsewhere to 0.999))
+        assertEquals(RemovalState.NONE, photos.findById(elsewhere.id).orElseThrow().removalState)
+        assertEquals(listOf(photo.id), items.findByRequestIdOrderByIdAsc(id).map { it.photoIdSnapshot })
+    }
+
+    @Test fun `a paid buyer still downloads during a runner case`() {
+        val order = orders.saveAndFlush(Order(eventId = event.id, recipientEmail = "buyer@test.local",
+            paymentMethodWire = "gcash", status = OrderStatus.PAID, totalPhp = BigDecimal("125")))
+        orderItems.saveAndFlush(OrderItem(id = OrderItemId(order.id, photo.id), pricePhpAtPurchase = BigDecimal("125")))
+        grants.saveAndFlush(DownloadGrant(id = DownloadGrantId(order.id, photo.id), grantedUntil = OffsetDateTime.now().plusDays(1)))
+        removals.runnerCase(runnerOnly(), event, matched(photo to 0.995))
+        assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState)
+        assertEquals(200, existingPaidBuyerDownloadDuringReview(order).status)
+    }
+
+    @Test fun `an uncertain band files an OPEN case with every match as CANDIDATE and LIVENESS_UNCERTAIN`() {
+        val (id, result) = removals.runnerCase(runnerOnly(), event, matched(photo to 0.999), RunnerLivenessBand.UNCERTAIN)
+        val case = requests.findById(id).orElseThrow()
+        assertEquals(0 to 1, result.hiddenCount to result.suggestedCount)
+        assertEquals(RemovalRequestStatus.OPEN, case.status)
+        assertTrue(RunnerRiskFlag.LIVENESS_UNCERTAIN.name in case.riskFlags)
+        assertFalse(RunnerRiskFlag.MATCHING_UNAVAILABLE.name in case.riskFlags)
+        assertEquals(RemovalState.NONE, photos.findById(photo.id).orElseThrow().removalState)
+    }
+
+    @Test fun `no matches closes the case as NO_MATCHES and purges the image`() {
+        val draft = removals.openRunner(runnerOnly(), event)
+        val result = removals.completeRunnerCase(draft.requestId, matched())
+        val case = requests.findById(draft.requestId).orElseThrow()
+        assertTrue(result.closedNoMatches)
+        assertEquals(RunnerRemovalCloseReason.NO_MATCHES, case.closeReason)
+        assertEquals(RemovalRequestStatus.CANCELLED, case.status)
+        assertNull(case.evidenceKey)
+        assertEquals(emptyList<String>(), case.outstandingEvidenceKeys)
+        Mockito.verify(storage).delete(draft.evidenceKey)
+    }
+
     @Test fun `a resolved retention exception remains restricted and stale saves cannot release it`() {
         item.state = RemovalItemState.RETAINED_RESTRICTED
         item.retentionReviewAt = java.time.Instant.now().plusSeconds(3600)
@@ -271,5 +393,44 @@ class PhotoRemovalAvailabilityIntegrationTest : PostgresIntegrationTest() {
         photo.altText = "A stale processing save"
         photos.saveAndFlush(photo)
         assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState)
+    }
+
+    // RD-5: a runner case hiding the fixture photo, beside the fixture's support case.
+    private fun runnerCase(): Pair<User, PhotoRemovalRequest> {
+        val runner = users.saveAndFlush(User(email = "availability-runner-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Runner", role = Role.RUNNER))
+        val case = requests.saveAndFlush(PhotoRemovalRequest(eventId = event.id, eventIdSnapshot = event.id,
+            eventNameSnapshot = event.name, requesterUserId = runner.id, requesterContact = runner.email,
+            supportReference = "Runner request", requesterReason = "PRIVACY", publicToOwnerReason = "Privacy removal request",
+            creatorId = runner.id, creationCommandId = UUID.randomUUID(), status = RemovalRequestStatus.OPEN,
+            source = RemovalRequestSource.RUNNER, livenessBand = RunnerLivenessBand.PASS))
+        items.saveAndFlush(PhotoRemovalItem(requestId = case.id, photoIdSnapshot = photo.id, photoId = photo.id,
+            ownerIdSnapshot = owner.id, state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.SELFIE))
+        restrict()
+        assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState)
+        return runner to case
+    }
+
+    @Test fun `withdrawing one of two cases keeps the shared photo hidden`() {
+        val (runner, case) = runnerCase()
+        val result = removals.withdraw(runner.id, case.id, UUID.randomUUID(), case.version)
+        assertEquals("WITHDRAWN", result.status)
+        assertEquals(RemovalState.REVIEW, photos.findById(photo.id).orElseThrow().removalState)
+        assertFalse(photo.id in publicGalleryIds(event.id))
+    }
+
+    @Test fun `withdrawing the only case makes the photo public again`() {
+        items.saveAndFlush(item.apply { state = RemovalItemState.EXCLUDED })
+        val (runner, case) = runnerCase()
+        val key = UUID.randomUUID()
+        val result = removals.withdraw(runner.id, case.id, key, case.version)
+        assertEquals(RemovalState.NONE, photos.findById(photo.id).orElseThrow().removalState)
+        assertEquals(listOf(photo.id), publicGalleryIds(event.id))
+        // After commit the purge closes the case; the same key still replays the withdraw's own result.
+        val saved = requests.findById(case.id).orElseThrow()
+        assertEquals(RemovalRequestStatus.CANCELLED to RunnerRemovalCloseReason.WITHDRAWN, saved.status to saved.closeReason)
+        assertEquals(result, removals.withdraw(runner.id, case.id, key, case.version))
+        assertEquals(listOf("WITHDRAWN"), result.timeline.map { it.step }) // the fixture case has no CREATED row
+        assertFalse(result.canWithdraw)
     }
 }

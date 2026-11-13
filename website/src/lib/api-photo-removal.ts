@@ -3,7 +3,9 @@ import type {
   RemovalPage, RemovalPhotoDto, PhotoRemovalRequestDto, PhotographerRemovalRequestDto, RemovalHistoryDto,
   RemovalMatchResult, RemovalRequestFilters, RemovalPhotoFilters, RemovalPageFilters,
   CreateRemovalRequestCommand, MatchRemovalCommand, VerifyRemovalCommand, CancelRemovalCommand,
-  DecideRemovalCommand, RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand,
+  DecideRemovalCommand, RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand, ReviewSuggestionsCommand,
+  RunnerRemovalReason, RunnerRemovalEligibility, RunnerLivenessSession, RunnerSubmitResult,
+  StartRunnerLivenessCommand, SubmitRunnerRemovalCommand, RunnerRemovalRequestDto, RunnerRemovalRequestDetailDto,
 } from "@/types/photo-removal";
 
 const adminPath = "/admin/photo-removal-requests";
@@ -50,6 +52,9 @@ export function cancelRemovalRequest(id: string, command: CancelRemovalCommand):
 export function decideRemovalRequest(id: string, command: DecideRemovalCommand): Promise<PhotoRemovalRequestDto> {
   return api.post(`${casePath(id)}/decisions`, command);
 }
+export function reviewRemovalSuggestions(id: string, body: ReviewSuggestionsCommand): Promise<PhotoRemovalRequestDto> {
+  return api.post(`${casePath(id)}/suggestions`, body);
+}
 export function retryRemovalCleanup(id: string, command: RetryRemovalCleanupCommand): Promise<PhotoRemovalRequestDto> {
   return api.post(`${casePath(id)}/retry-cleanup`, command);
 }
@@ -64,4 +69,29 @@ export function getPhotographerRemovalRequest(id: string, signal?: AbortSignal):
 }
 export function respondToRemovalRequest(id: string, command: RespondToRemovalCommand): Promise<PhotographerRemovalRequestDto> {
   return api.post(`${photographerPath}/${encodeURIComponent(id)}/responses`, command);
+}
+
+// Runner self-serve deletion (RD-11). The search image is the live check's own
+// reference image, read by the server: the client never sends a photo here.
+const runnerPath = "/me/runner/photo-removal-requests";
+export function listRunnerRemovalReasons(signal?: AbortSignal): Promise<RunnerRemovalReason[]> {
+  return api.get(`${runnerPath}/reasons`, { signal });
+}
+export function getRunnerRemovalEligibility(eventId: string, signal?: AbortSignal): Promise<RunnerRemovalEligibility> {
+  return api.get(`${runnerPath}/eligibility?eventId=${encodeURIComponent(eventId)}`, { signal });
+}
+export function startRunnerLiveness(body: StartRunnerLivenessCommand): Promise<RunnerLivenessSession> {
+  return api.post(`${runnerPath}/liveness-session`, body);
+}
+export function submitRunnerRemoval(body: SubmitRunnerRemovalCommand, idempotencyKey: string): Promise<RunnerSubmitResult> {
+  return api.post(runnerPath, body, { headers: { "Idempotency-Key": idempotencyKey } });
+}
+export function listRunnerRemovalRequests(filters: RemovalPageFilters = {}, signal?: AbortSignal): Promise<RemovalPage<RunnerRemovalRequestDto>> {
+  return api.get(filtered(runnerPath, filters), { signal });
+}
+export function getRunnerRemovalRequest(id: string, signal?: AbortSignal): Promise<RunnerRemovalRequestDetailDto> {
+  return api.get(`${runnerPath}/${encodeURIComponent(id)}`, { signal });
+}
+export function withdrawRunnerRemoval(id: string, expectedVersion: number, idempotencyKey: string): Promise<RunnerRemovalRequestDetailDto> {
+  return api.post(`${runnerPath}/${encodeURIComponent(id)}/withdraw`, { expectedVersion }, { headers: { "Idempotency-Key": idempotencyKey } });
 }

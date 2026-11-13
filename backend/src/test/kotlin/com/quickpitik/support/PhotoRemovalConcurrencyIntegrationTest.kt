@@ -540,4 +540,40 @@ class PhotoRemovalConcurrencyIntegrationTest : PostgresIntegrationTest() {
             { assertEquals("polled-person", targets["prior_person"]) },
         )
     }
+
+    // RD-4: the photographer's daily auto-hide cap is read under the owner's row lock, so two runners cannot both pass it.
+    @Test fun `two runners at 44 used plus 6 each for one photographer end with exactly 50 auto-hidden`() {
+        val removals = context.getBean(com.quickpitik.service.removal.PhotoRemovalService::class.java)
+        fun runner() = users.saveAndFlush(User(email = "runner-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Runner", role = Role.RUNNER, emailVerifiedAt = java.time.OffsetDateTime.now()))
+        val earlier = requests.saveAndFlush(PhotoRemovalRequest(eventId = event.id, eventIdSnapshot = event.id,
+            eventNameSnapshot = event.name, requesterUserId = runner().id, requesterContact = "runner@test.local",
+            supportReference = "Runner request", requesterReason = "Privacy", publicToOwnerReason = "Privacy removal request",
+            creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID(), source = RemovalRequestSource.RUNNER,
+            status = RemovalRequestStatus.RESOLVED))
+        repeat(44) {
+            items.save(PhotoRemovalItem(requestId = earlier.id, photoIdSnapshot = UUID.randomUUID(), ownerIdSnapshot = owner.id,
+                state = RemovalItemState.EXCLUDED, matchSource = RemovalMatchSource.SELFIE, verifiedAt = Instant.now()))
+        }
+        items.flush()
+        val batches = (1..2).map { (1..6).map { photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id,
+            s3Key = "synthetic/${UUID.randomUUID()}.jpg", pricePhp = BigDecimal("125"))) } }
+        val drafts = batches.map { removals.openRunner(runner(), event) }
+        val start = java.util.concurrent.CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val futures = drafts.zip(batches).map { (draft, batch) -> pool.submit<com.quickpitik.service.removal.RunnerCaseResult> {
+                start.await()
+                removals.completeRunnerCase(draft.requestId, matched(*batch.map { it to 0.995 }.toTypedArray()))
+            } }
+            start.countDown()
+            val done = futures.map { it.get(30, java.util.concurrent.TimeUnit.SECONDS) }
+            assertEquals(listOf(0, 6), done.map { it.hiddenCount }.sorted())
+            assertEquals(listOf(0, 6), done.map { it.suggestedCount }.sorted())
+            val today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Manila")).atStartOfDay(java.time.ZoneId.of("Asia/Manila")).toInstant()
+            assertEquals(50L, items.countRunnerAutoHidesSince(event.id, listOf(owner.id), today).single().count)
+            val held = drafts[done.indexOfFirst { it.hiddenCount == 0 }].requestId
+            assertTrue(RunnerRiskFlag.PHOTOGRAPHER_BUDGET.name in requests.findById(held).orElseThrow().riskFlags)
+        } finally { pool.shutdownNow() }
+    }
 }

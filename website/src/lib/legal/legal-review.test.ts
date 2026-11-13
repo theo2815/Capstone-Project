@@ -34,17 +34,15 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  // AA-I14 adds the identity copy with ASK OWNER text; AA-I21's final commit turns
-  // this back into "passes the production guard with version 1.3".
-  it("the production guard refuses the legal text while the identity copy holds ASK OWNER text", () => {
+  it("passes the production guard with version 1.5", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
         LEGAL_VERSION,
         "production",
       ),
-    ).toThrow(/ASK OWNER/);
-    expect(LEGAL_VERSION).toBe("1.2");
+    ).not.toThrow();
+    expect(LEGAL_VERSION).toBe("1.5");
   });
 
   it("says both selfie and bib searches ask for a tick first (BT-1, S10)", () => {
@@ -102,7 +100,7 @@ describe("seller checks text (SC-2a)", () => {
 
   it("says admins compare by eye and names the seller-check photos in storage", () => {
     const privacy = text(PRIVACY_POLICY.sections);
-    expect(privacy).toContain("we never run face recognition on them");
+    expect(privacy).toContain("an admin compares your photos by eye");
     expect(privacy).toContain("seller-check photos");
     expect(privacy).toContain("Photographer seller-check details and photos");
     expect(privacy).toContain("Seller-check details and photos you gave us are kept as legal records.");
@@ -111,5 +109,91 @@ describe("seller checks text (SC-2a)", () => {
   it("no seller passage still says the checks are optional", () => {
     const all = [text(PRIVACY_POLICY.sections), text(TERMS_OF_SERVICE.sections)].join("\n");
     expect(all).not.toMatch(/Seller checks we may ask for|we may ask for your full name|if we asked for them/);
+  });
+});
+
+// AA-I21: the adviser-signed 1.3 text (AA-0.7 draft, signed 2026-11-11). Its
+// runner-deletion parts came in 1.4 with RD-11 (owner answer O1, RD-15 part B).
+describe("legal 1.3 text (AA-I21)", () => {
+  it("explains the seller checks: live selfie in Malaysia, ID number kept as a fingerprint", () => {
+    const checks = section(PRIVACY_POLICY, "seller-checks");
+    expect(checks).toContain("run by AWS in Malaysia");
+    expect(checks).toContain("we keep only a fingerprint of it");
+    expect(checks).toContain("Only an admin can reject them");
+    expect(section(PRIVACY_POLICY, "what-we-collect")).not.toContain("we never run face recognition on them");
+    expect(section(PRIVACY_POLICY, "who-receives-it")).toContain("the live checks in AWS's Malaysia region");
+  });
+
+  it("names the moderation checks and race events in the Terms", () => {
+    expect(section(TERMS_OF_SERVICE, "photographers")).toContain("Details that pass every check are approved automatically");
+    expect(section(TERMS_OF_SERVICE, "events-and-watermarks")).toContain("**Race events**");
+    expect(section(TERMS_OF_SERVICE, "buying-photos")).toContain("up to twice the race price");
+    expect(section(TERMS_OF_SERVICE, "what-quickpitik-may-do")).toContain("Buyers keep the photos they already bought.");
+  });
+
+  it("fills the identity copy with the signed text and links the seller checks", () => {
+    for (const line of [LEGAL_COPY.identityNotice, LEGAL_COPY.identityTickLabel, LEGAL_COPY.identityAdminInstead]) {
+      expect(line).not.toContain("[ASK OWNER");
+    }
+    expect(LEGAL_COPY.identityNotice).toContain("#seller-checks)");
+  });
+
+});
+
+// RD-15 part B: the runner-deletion parts of the signed 1.3 draft, shipped as 1.4 (O1).
+describe("legal 1.4 text (RD-15)", () => {
+  it("explains the deletion live check, where it runs and how long the image is kept", () => {
+    const face = section(PRIVACY_POLICY, "face-matching");
+    expect(face).toContain("**Deletion requests with a live check.**");
+    expect(face).toContain("When someone asks us by email to remove photos of them");
+    expect(section(PRIVACY_POLICY, "who-receives-it")).toContain("the live checks (for seller checks and deletion requests) in Malaysia");
+    expect(section(PRIVACY_POLICY, "how-long-we-keep-it")).toContain("Photo removal evidence, including the live-check image");
+    expect(section(PRIVACY_POLICY, "photos-of-you")).toContain("**With a runner account:**");
+    expect(section(PRIVACY_POLICY, "on-your-device")).toContain("(a seller check or a deletion request)");
+    expect(section(TERMS_OF_SERVICE, "photo-removal")).toContain("runner accounts can also ask on the website with a live check");
+  });
+
+  it("fills the four runner deletion texts with the signed wording", () => {
+    expect(JSON.stringify(LEGAL_COPY)).not.toContain("[ASK OWNER");
+    expect(LEGAL_COPY.runnerDeletionMailSubject).toBe("Photo deletion request");
+    expect(LEGAL_COPY.runnerDeletionTickLabel).toBe("I agree to the live check and to this face search. The photos I'm asking about are of me.");
+    expect(LEGAL_COPY.runnerDeletionNotice).toMatch(/^To find photos of you, we run a short live check/);
+    expect(LEGAL_COPY.runnerDeletionEmailInstead).toContain("subject=Photo%20deletion%20request)");
+  });
+});
+
+// PE-2.5: the payout hold and the upload checks in the Terms and the Privacy Policy, version 1.5.
+// Wording: PE-L4 texts T10 to T13, R-a and R-b (owner, 2026-11-12).
+describe("legal 1.5 text (PE-2.5)", () => {
+  it("lets the Terms put payouts on hold while uploads are reviewed, and says how the photographer is told", () => {
+    const payouts = section(TERMS_OF_SERVICE, "photographers");
+    expect(payouts).toContain("put your payouts on hold");
+    expect(payouts).toContain("Your earnings stay in your balance.");
+    expect(payouts).toContain("in your QuickPitik inbox when a hold starts and when it ends");
+    expect(payouts).not.toContain("by email when it starts");
+    expect(payouts).toContain("withhold 1% tax");
+  });
+
+  it("lists the hold among what QuickPitik may do, with the 'and' on the last item", () => {
+    const mayDo = section(TERMS_OF_SERVICE, "what-quickpitik-may-do");
+    expect(mayDo).toContain("hold a photographer's payouts");
+    expect(mayDo).toContain("hide a race event from the Events page, or list it again;\n");
+    expect(mayDo).not.toContain("list it again; and");
+  });
+
+  it("lists the hold e-mail and tells who sees the check results", () => {
+    const how = section(PRIVACY_POLICY, "how-we-use-it");
+    expect(how).toContain("an alert when a photographer's payouts are put on hold,");
+    expect(how).toContain("we may send the photographer a message in their inbox");
+    expect(how).toContain("an admin may see both photographers' names and sample photos side by side");
+    expect(how).toContain("the photographer is told in their inbox when a hold starts and when it ends");
+    expect(how).not.toContain("A person reviews them before any photo is hidden");
+  });
+
+  it("names upload checks among what admins see and keeps their results in the retention table", () => {
+    expect(section(PRIVACY_POLICY, "who-receives-it")).toContain("reports, upload checks and removal requests");
+    expect(section(PRIVACY_POLICY, "how-long-we-keep-it")).toContain(
+      "Results of automatic checks on uploads, and admin reviews of them",
+    );
   });
 });

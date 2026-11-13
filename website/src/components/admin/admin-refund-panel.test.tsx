@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import * as utils from "@/lib/utils";
 import type { Dispute } from "@/lib/admin-disputes";
 import { adminDisputeKeys } from "@/hooks/use-admin-disputes";
@@ -11,6 +11,7 @@ import { useToastStore } from "@/store/toast-store";
 import { admin, dispute } from "@/test/fixtures/admin";
 import { formatLongDate, formatSalesDate } from "@/lib/format";
 import { AdminDisputeActionAside } from "./admin-dispute-action-aside";
+import { AdminRefundPanel } from "./admin-refund-panel";
 import { AdminRefundConfirmModal } from "./admin-refund-confirm-modal";
 import { DisputesQueue } from "./disputes-queue";
 
@@ -31,6 +32,8 @@ const parked: Dispute = {
   paymentRef: "cs_xyz",
   orderSnapshot: { ...dispute.orderSnapshot, paymentMethod: "qrph" },
 };
+
+const REF = "ref_9e5899bbf66c4f3485bff833";
 
 let client: QueryClient;
 beforeEach(() => {
@@ -258,6 +261,7 @@ describe("manual refund panel", () => {
     renderAside(parked);
     await user.click(screen.getByRole("button", { name: "Mark refunded" }));
     const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
+    await user.type(within(dialog).getByLabelText("PayMongo refund reference"), REF);
     await user.click(within(dialog).getByRole("button", { name: "Mark refunded" }));
     expect(screen.getByRole("dialog", { name: "Mark refunded" })).toBeInTheDocument();
     expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["error"]);
@@ -283,7 +287,7 @@ describe("manual refund panel", () => {
     render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
     const drawer = await screen.findByRole("dialog");
     await user.click(within(drawer).getByRole("button", { name: "Mark refunded" }));
-    act(() => { client.setQueryData(adminDisputeKeys.list(admin.id), [{ ...parked, status: "resolved", refundStatus: "succeeded" }]); });
+    act(() => { client.setQueryData(adminDisputeKeys.page(admin.id, { view: "needs_me", offset: 0 }), { items: [{ ...parked, status: "resolved", refundStatus: "succeeded" }], total: 1, offset: 0, limit: 50 }); });
     await waitFor(() => expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument());
     await user.keyboard("{Escape}");
     expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument();
@@ -298,9 +302,79 @@ describe("manual refund panel", () => {
     expect(post).not.toHaveBeenCalled();
     const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
     expect(dialog).toHaveTextContent("Only do this after PayMongo shows this payment as Refunded.");
+    await user.type(within(dialog).getByLabelText("PayMongo refund reference"), REF);
     await user.click(within(dialog).getByRole("button", { name: "Mark refunded" }));
-    expect(post).toHaveBeenCalledWith(`/admin/disputes/${parked.id}/mark-refunded`);
+    expect(post).toHaveBeenCalledWith(`/admin/disputes/${parked.id}/mark-refunded`, { refundReference: REF });
     expect(lastToast()?.kind).toBe("success");
+  });
+
+  it("Mark refunded needs the PayMongo reference and sends it trimmed", async () => {
+    const user = userEvent.setup();
+    const post = vi.spyOn(api, "post").mockResolvedValueOnce({ ...parked, status: "resolved", refundStatus: "succeeded" });
+    renderAside(parked);
+    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
+    const submit = within(dialog).getByRole("button", { name: "Mark refunded" });
+    expect(submit).toBeDisabled();
+    expect(dialog).toHaveTextContent("Copy it from the refund in the PayMongo dashboard.");
+    const field = within(dialog).getByLabelText("PayMongo refund reference");
+    await user.type(field, "pay_abc123");
+    await user.click(submit);
+    expect(post).not.toHaveBeenCalled();
+    expect(dialog).toHaveTextContent("Paste the refund reference from the PayMongo dashboard.");
+    await user.clear(field);
+    await user.type(field, `  ${REF}  `);
+    await user.click(submit);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith(`/admin/disputes/${parked.id}/mark-refunded`, { refundReference: REF });
+  });
+
+  it("a refund with no pay_ ID offers the checkout reference to copy", async () => {
+    const user = userEvent.setup();
+    const copy = vi.spyOn(utils, "copyToClipboard").mockResolvedValue(true);
+    renderAside({ ...parked, paymentId: null });
+    expect(screen.getByText(/Order total/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy checkout reference" }));
+    expect(copy).toHaveBeenCalledWith("cs_xyz");
+    expect(lastToast()).toMatchObject({ kind: "success", message: "Checkout reference copied" });
+  });
+
+  it("a refund past PayMongo's window with no link sent says it cancels itself", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-21T00:00:00Z"));
+    renderAside({ ...parked, refundWindowClosesAt: "2026-11-20T00:00:00Z", refundCancelsAt: "2026-11-27T00:00:00Z" });
+    expect(screen.getByText("PayMongo's refund window closed. This refund cancels itself within the hour. Mark it refunded only if you already refunded it in PayMongo.")).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("a 400 from the server shows its field message and keeps the input", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "post").mockRejectedValueOnce(
+      new ApiError([{ code: "VALIDATION_ERROR", message: "That is the payment ID. Paste the refund's reference.", field: "refundReference" }], 400),
+    );
+    renderAside(parked);
+    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
+    await user.type(within(dialog).getByLabelText("PayMongo refund reference"), REF);
+    await user.click(within(dialog).getByRole("button", { name: "Mark refunded" }));
+    expect(await within(dialog).findByText("That is the payment ID. Paste the refund's reference.")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("PayMongo refund reference")).toHaveValue(REF);
+  });
+
+  it("Esc on the Mark refunded dialog leaves the drawer open", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    render(
+      <QueryClientProvider client={client}>
+        <AdminRefundPanel dispute={parked} onConfirmOpenChange={onOpen} />
+      </QueryClientProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    expect(onOpen).toHaveBeenLastCalledWith(true);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Mark refunded" })).not.toBeInTheDocument();
+    expect(onOpen).toHaveBeenLastCalledWith(false);
+    expect(screen.getByText("pay_abc123")).toBeInTheDocument();
   });
 
   it("disables every panel button while an action is pending", async () => {

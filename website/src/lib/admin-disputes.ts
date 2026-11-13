@@ -1,4 +1,15 @@
-export type DisputeStatus = "open" | "resolved" | "denied" | "escalated";
+export type DisputeStatus = "open" | "resolved" | "denied" | "escalated" | "withdrawn";
+// Server-derived "what this dispute needs now" (backend DisputeAttention wire values).
+export type DisputeAttention =
+  | "review"
+  | "escalated"
+  | "send_link"
+  | "awaiting_claim"
+  | "link_expired"
+  | "check_paymongo"
+  | "refund_problem"
+  | "refund_in_progress"
+  | "closed";
 export type DisputeReason =
   | "wrong_runner"
   | "low_quality"
@@ -73,7 +84,85 @@ export interface Dispute {
   // Server-side audit trail — every admin action ever taken on this
   // dispute, newest first. Persisted by the backend across sessions.
   activity?: DisputeActivityEntry[];
+  // Due times worked out by the server on read (DW-1); older responses omit them.
+  refundRequestedAt?: string | null;
+  attention?: DisputeAttention;
+  dueAt?: string | null;
+  overdue?: boolean;
+  linkExpiringSoon?: boolean;
+  // Can a full refund be approved now (DW-3)? Wire codes match the deny reason codes bought_together / window_closed.
+  refundable?: boolean | null;
+  refundBlockedReason?: "bought_together" | "window_closed" | "no_payment" | null;
+  refundBlockedMessage?: string | null;
+  paymentPhotoCount?: number | null;
+  // Decision facts (DW-6). downloadCount null: no download record (for example after a full refund); lastDownloadedAt goes with it.
+  downloadCount?: number | null;
+  lastDownloadedAt?: string | null;
+  // The runner's other requests, counted per request; null only when the runner was deleted.
+  runnerHistory?: RunnerDisputeHistory | null;
 }
+
+export interface RunnerDisputeHistory {
+  total: number;
+  refunded: number;
+  denied: number;
+  withdrawn: number;
+  open: number;
+}
+
+// One row of GET /admin/disputes/deny-reasons; the server owns the list and the runner text.
+export interface DisputeDenyReason {
+  code: string;
+  label: string;
+  runnerText: string;
+  noteRequired: boolean;
+}
+
+export const DISPUTE_STATUS_LABEL: Record<DisputeStatus, string> = {
+  open: "Open",
+  resolved: "Resolved",
+  denied: "Denied",
+  escalated: "Escalated",
+  withdrawn: "Withdrawn",
+};
+
+// Values match AdminStatusPillTone; lib stays free of component imports.
+export function disputeStatusTone(status: DisputeStatus): "amber" | "fresh" | "ink" | "slate" | "muted" {
+  switch (status) {
+    case "open":
+      return "amber";
+    case "resolved":
+      return "fresh";
+    case "denied":
+      return "ink";
+    case "escalated":
+      return "slate";
+    case "withdrawn":
+      return "muted";
+  }
+}
+
+// What the admin must do next; "closed" shows no chip.
+export const DISPUTE_ATTENTION_LABEL: Record<DisputeAttention, string | null> = {
+  review: "Needs review",
+  escalated: "Escalated: decide",
+  send_link: "Approved: send the refund link",
+  awaiting_claim: "Link sent: waiting for the runner",
+  link_expired: "Link expired: send a new one",
+  check_paymongo: "Check PayMongo",
+  refund_problem: "Refund problem: check PayMongo",
+  refund_in_progress: "Refund in progress",
+  closed: null,
+};
+
+export const DISPUTE_PAYMENT_LABEL: Record<string, string> = {
+  qrph: "QR Ph",
+  gcash: "GCash",
+  maya: "Maya",
+  paymaya: "PayMaya",
+  card: "Card",
+  grabpay: "GrabPay",
+};
 
 export const DISPUTE_REASON_LABEL: Record<DisputeReason, string> = {
   wrong_runner: "Wrong runner in photo",

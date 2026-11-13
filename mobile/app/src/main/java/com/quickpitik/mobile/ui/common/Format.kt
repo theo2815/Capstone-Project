@@ -17,6 +17,10 @@ import java.util.concurrent.ConcurrentHashMap
 fun peso(amount: Double, decimals: Int = 2): String =
     String.format(Locale.US, "₱%,.${decimals}f", amount)
 
+/** "From ₱125" chip on a race whose photographers charge different prices (AA-R14 priceVaries); null otherwise. */
+internal fun fromPrice(priceVaries: Boolean?, floor: Double?): String? =
+    if (priceVaries == true && floor != null) "From ${peso(floor, 0)}" else null
+
 /** "1,234" regardless of the phone's region, like peso(). Int and Long: photo/sales counts are both. */
 fun count(n: Int): String = String.format(Locale.US, "%,d", n)
 fun count(n: Long): String = String.format(Locale.US, "%,d", n)

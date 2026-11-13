@@ -1,12 +1,16 @@
 package com.quickpitik.controller
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminDisputeDto
+import com.quickpitik.dto.admin.DisputeDenyReasonDto
 import com.quickpitik.dto.admin.DisputeOrderSnapshotDto
 import com.quickpitik.dto.admin.DisputePhotoSnapshotDto
 import com.quickpitik.entity.Role
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.GlobalExceptionHandler
+import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.admin.AdminDisputeService
@@ -24,6 +28,7 @@ import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActions
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -161,8 +166,42 @@ class AdminDisputesControllerTest {
         Mockito.verifyNoInteractions(service)
     }
 
+    @Test
+    fun `GET a dispute by id is for admins only`() {
+        for (role in listOf(Role.RUNNER, Role.PHOTOGRAPHER)) {
+            signIn(role)
+            mvc.perform(get("/api/v1/admin/disputes/{id}", disputeId)).andExpect(status().isForbidden)
+        }
+        Mockito.verifyNoInteractions(service)
+
+        signIn(Role.ADMIN)
+        Mockito.`when`(service.get(disputeId)).thenReturn(dto())
+        mvc.perform(get("/api/v1/admin/disputes/{id}", disputeId))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.id").value(disputeId.toString()))
+    }
+
+    @Test
+    fun `GET an unknown dispute answers 404 in the envelope`() {
+        signIn(Role.ADMIN)
+        Mockito.`when`(service.get(disputeId))
+            .thenThrow(NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found"))
+
+        mvc.perform(get("/api/v1/admin/disputes/{id}", disputeId))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.success").value(false))
+            .andExpect(jsonPath("$.errors[0].code").value(ErrorCodes.DISPUTE_NOT_FOUND))
+    }
+
     private fun markRefunded(): ResultActions =
         mvc.perform(post("/api/v1/admin/disputes/{id}/mark-refunded", disputeId))
+
+    private fun markRefundedWith(body: String): ResultActions =
+        mvc.perform(
+            post("/api/v1/admin/disputes/{id}/mark-refunded", disputeId)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content(body),
+        )
 
     @Test
     fun `a non-admin cannot mark a refund refunded`() {
@@ -178,19 +217,31 @@ class AdminDisputesControllerTest {
     fun `an admin marks a refund refunded through the service after taking a rate-limit slot`() {
         signIn(Role.ADMIN)
         allowRate()
-        Mockito.`when`(service.markRefunded(adminId, disputeId)).thenReturn(dto())
+        Mockito.`when`(service.markRefunded(adminId, disputeId, "ref_9e5899bbf66c4f3485bff833")).thenReturn(dto())
 
-        markRefunded().andExpect(status().isOk).andExpect(jsonPath("$.id").value(disputeId.toString()))
+        markRefundedWith("""{"refundReference":"ref_9e5899bbf66c4f3485bff833"}""")
+            .andExpect(status().isOk).andExpect(jsonPath("$.id").value(disputeId.toString()))
 
         Mockito.verify(limiter).tryAcquire(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, adminId.toString())
-        Mockito.verify(service, Mockito.times(1)).markRefunded(adminId, disputeId)
+        Mockito.verify(service, Mockito.times(1)).markRefunded(adminId, disputeId, "ref_9e5899bbf66c4f3485bff833")
+    }
+
+    @Test
+    fun `a mark-refunded POST with no body reaches the service with a null reference`() {
+        signIn(Role.ADMIN)
+        allowRate()
+        Mockito.`when`(service.markRefunded(adminId, disputeId, null)).thenReturn(dto())
+
+        markRefunded().andExpect(status().isOk)
+
+        Mockito.verify(service).markRefunded(adminId, disputeId, null)
     }
 
     @Test
     fun `marking a dispute that is not in manual review refunded is a 409`() {
         signIn(Role.ADMIN)
         allowRate()
-        Mockito.`when`(service.markRefunded(adminId, disputeId))
+        Mockito.`when`(service.markRefunded(adminId, disputeId, null))
             .thenThrow(ConflictException(message = "Not in manual review", code = ErrorCodes.CONFLICT))
 
         markRefunded().andExpect(status().isConflict)
@@ -205,6 +256,57 @@ class AdminDisputesControllerTest {
         markRefunded().andExpect(status().isTooManyRequests)
 
         Mockito.verifyNoInteractions(service)
+    }
+
+    @Test
+    fun `view and q reach the service`() {
+        signIn(Role.ADMIN)
+        val params = PaginationParams.of(50, 25)
+        Mockito.`when`(service.list("needs_me", null, " pay_AbC ", params))
+            .thenReturn(PaginatedResponse.of(listOf(dto()), 51, params))
+
+        mvc.perform(
+            get("/api/v1/admin/disputes")
+                .param("view", "needs_me").param("q", " pay_AbC ").param("offset", "50").param("limit", "25"),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.items[0].id").value(disputeId.toString()))
+            .andExpect(jsonPath("$.total").value(51))
+
+        Mockito.verify(service).list("needs_me", null, " pay_AbC ", params)
+    }
+
+    @Test
+    fun `the deny reasons are served to admins, not runners`() {
+        for (role in listOf(Role.RUNNER, Role.PHOTOGRAPHER)) {
+            signIn(role)
+            mvc.perform(get("/api/v1/admin/disputes/deny-reasons")).andExpect(status().isForbidden)
+        }
+        Mockito.verifyNoInteractions(service)
+
+        signIn(Role.ADMIN)
+        val reasons = listOf(DisputeDenyReasonDto("wrong_photo", "Picked the wrong photo", "You picked the wrong photo.", false))
+        Mockito.`when`(service.denyReasons()).thenReturn(PaginatedResponse.of(reasons, 1, PaginationParams.of(0, 1)))
+
+        mvc.perform(get("/api/v1/admin/disputes/deny-reasons"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.items[0].code").value("wrong_photo"))
+            .andExpect(jsonPath("$.items[0].label").value("Picked the wrong photo"))
+            .andExpect(jsonPath("$.items[0].noteRequired").value(false))
+            .andExpect(jsonPath("$.total").value(1))
+    }
+
+    @Test
+    fun `deny passes reasonCode and note through`() {
+        signIn(Role.ADMIN)
+        Mockito.`when`(service.deny(adminId, disputeId, null, "preference", "We checked the angle.")).thenReturn(dto())
+
+        mvc.perform(
+            post("/api/v1/admin/disputes/{id}/deny", disputeId).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reasonCode\":\"preference\",\"note\":\"We checked the angle.\"}"),
+        ).andExpect(status().isOk)
+
+        Mockito.verify(service).deny(adminId, disputeId, null, "preference", "We checked the angle.")
     }
 
     @Test

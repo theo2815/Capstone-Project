@@ -13,6 +13,11 @@ import com.quickpitik.mobile.data.remote.SellerDetailsDto
 import com.quickpitik.mobile.data.remote.apiCall
 import com.quickpitik.mobile.data.remote.uiMessage
 import com.quickpitik.mobile.data.remote.WsState
+import com.quickpitik.mobile.data.remote.ApiResponseEnvelope
+import com.quickpitik.mobile.data.remote.JoinRaceRequest
+import com.quickpitik.mobile.data.remote.RaceCandidateDto
+import com.quickpitik.mobile.data.remote.RaceCreateResultDto
+import com.quickpitik.mobile.data.remote.RaceTypesDto
 import com.quickpitik.mobile.worker.PhotoUploadScheduler
 import com.quickpitik.mobile.worker.UploadPausedNotice
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +53,15 @@ sealed class EventFormState {
     data class Error(val message: String) : EventFormState()
 }
 
+sealed class RaceFormState {
+    object Idle : RaceFormState()
+    data class Submitting(val duplicate: Duplicate? = null) : RaceFormState()
+    data class Duplicate(val outcome: String, val candidates: List<RaceCandidateDto>, val error: String? = null) : RaceFormState()
+    data class Created(val result: RaceCreateResultDto) : RaceFormState()
+    data class PendingReview(val result: RaceCreateResultDto) : RaceFormState()
+    data class Error(val message: String) : RaceFormState()
+}
+
 sealed class CouponUiState {
     object Loading : CouponUiState()
     // coupon == null → none set yet (backend answers success + null data).
@@ -69,6 +83,10 @@ data class OwnedEventFormInput(
     val watermarkPolicy: String? = null,
     val withdrawPendingChange: Boolean = false,
     val coverUri: String? = null,
+    val eventType: String? = null,
+    val regionCode: String? = null,
+    val provinceCode: String? = null,
+    val confirmDifferentFrom: String? = null,
 )
 
 sealed class SharePhotosState {
@@ -172,6 +190,11 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     // Owned-event authoring (V46).
     private val _eventFormState = MutableStateFlow<EventFormState>(EventFormState.Idle)
     val eventFormState: StateFlow<EventFormState> = _eventFormState
+    private val _raceFormState = MutableStateFlow<RaceFormState>(RaceFormState.Idle)
+    val raceFormState: StateFlow<RaceFormState> = _raceFormState
+    private var raceRequestJob: Job? = null
+    private val _raceTypes = MutableStateFlow<RaceTypesDto?>(null)
+    val raceTypes: StateFlow<RaceTypesDto?> = _raceTypes
     // Edit prefill: full detail (description/organizer/price) the list summary lacks.
     private val _eventEditTarget = MutableStateFlow<com.quickpitik.mobile.data.remote.PhotographerEventDetailDto?>(null)
     val eventEditTarget: StateFlow<com.quickpitik.mobile.data.remote.PhotographerEventDetailDto?> = _eventEditTarget
@@ -286,7 +309,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                             photoCount = eventDto.photoCount,
                             salesCount = 0,
                             revenueKept = 0.0,
-                            bannerUrl = eventDto.bannerUrl
+                            bannerUrl = eventDto.bannerUrl,
+                            pricePerPhoto = eventDto.pricePerPhoto,
+                            priceVaries = eventDto.priceVaries,
                         )
                     }
                     _publicEventsState.value = EventsState.Success(publicList)
@@ -299,6 +324,68 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         }
 
     // --- Owned-event authoring (V46) ---
+
+    fun loadRaceTypes() {
+        viewModelScope.launch {
+            _raceTypes.value = apiCall("Couldn't load race types.") {
+                RetrofitClient.apiService.getRaceTypes()
+            }.getOrNull()
+        }
+    }
+
+    fun submitRace(input: OwnedEventFormInput, confirmDifferentFrom: String? = null) {
+        val errors = raceFormErrors(input)
+        if (errors.isNotEmpty()) {
+            _raceFormState.value = RaceFormState.Error(errors.joinToString(" "))
+            return
+        }
+        raceRequest { token ->
+            val parts = buildEventParts(input.copy(
+                visibility = null, pricingMode = null, pricePerPhoto = null, watermarkPolicy = null,
+                confirmDifferentFrom = confirmDifferentFrom,
+            ))
+            RetrofitClient.apiService.createRace(token, parts)
+        }
+    }
+
+    fun joinRace(eventId: String, typedName: String) = raceRequest { token ->
+        RetrofitClient.apiService.joinRace(token, eventId, JoinRaceRequest(typedName))
+    }
+
+    fun dismissRaceDuplicate() {
+        if (_raceFormState.value !is RaceFormState.Submitting) _raceFormState.value = RaceFormState.Idle
+    }
+
+    private fun raceRequest(request: suspend (String) -> ApiResponseEnvelope<RaceCreateResultDto>) {
+        if (_raceFormState.value is RaceFormState.Submitting) return
+        val duplicate = _raceFormState.value as? RaceFormState.Duplicate
+        _raceFormState.value = RaceFormState.Submitting(duplicate)
+        raceRequestJob = viewModelScope.launch(Dispatchers.IO) {
+            val token = sessionManager.getAccessToken()
+            if (token == null) {
+                _raceFormState.value = RaceFormState.Error("No valid session. Please log in again.")
+                return@launch
+            }
+            apiCall("Couldn't save the race.") { request("Bearer $token") }
+                .onSuccess { result ->
+                    val candidates = result.candidates.orEmpty()
+                    _raceFormState.value = when {
+                        result.outcome in setOf("match", "candidates") && candidates.isNotEmpty() && candidates.all { !it.id.isNullOrBlank() } ->
+                            RaceFormState.Duplicate(result.outcome!!, candidates)
+                        result.event != null && (result.outcome == "pending_review" ||
+                            result.outcome == "joined" && result.event.reviewStatus == "pending") -> RaceFormState.PendingReview(result)
+                        result.event != null && result.outcome in setOf("created", "joined") -> RaceFormState.Created(result)
+                        else -> RaceFormState.Error("Couldn't read the race result. Please try again.")
+                    }
+                    if (_raceFormState.value is RaceFormState.Created || _raceFormState.value is RaceFormState.PendingReview) {
+                        fetchEvents()
+                        fetchPublicEvents()
+                    }
+                }.onFailure {
+                    _raceFormState.value = duplicate?.copy(error = it.uiMessage) ?: RaceFormState.Error(it.uiMessage)
+                }
+        }
+    }
 
     // eventId == null → create (POST); else edit (PATCH, only the non-null fields
     // in `input` are sent). On success refetch the list so review chips update.
@@ -344,6 +431,10 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
         text("pricingMode", input.pricingMode)
         text("pricePerPhoto", input.pricePerPhoto)
         text("watermarkPolicy", input.watermarkPolicy)
+        text("eventType", input.eventType)
+        text("regionCode", input.regionCode)
+        text("provinceCode", input.provinceCode)
+        text("confirmDifferentFrom", input.confirmDifferentFrom)
         if (input.withdrawPendingChange) {
             parts.add(MultipartBody.Part.createFormData("withdrawPendingChange", "true"))
         }
@@ -372,7 +463,9 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
     }
 
     fun resetEventForm() {
+        raceRequestJob?.cancel()
         _eventFormState.value = EventFormState.Idle
+        _raceFormState.value = RaceFormState.Idle
         _eventEditTarget.value = null
     }
 

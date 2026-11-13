@@ -118,6 +118,7 @@ import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
+import com.quickpitik.mobile.ui.common.fromPrice
 import com.quickpitik.mobile.ui.theme.SuccessGreen
 import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
@@ -1177,8 +1178,7 @@ private fun PublicEventPickerList(
             is EventsState.Success -> {
                 val today = LocalDate.now(java.time.ZoneId.of("Asia/Manila"))
                 val allPickerEvents = remember(state.events, assignedEvents, today) {
-                    (state.events + assignedEvents)
-                        .distinctBy { it.id }
+                    uploadPickerEvents(state.events, assignedEvents)
                         .sortedWith(
                             compareByDescending<PhotographerEventSummaryDto> { canUploadToEvent(it, today) }
                                 .thenByDescending { it.date }
@@ -1297,7 +1297,7 @@ private fun EventPickerCard(
     val isClosed = !canUploadToEvent(event) && !isUpcoming
     val isLive = canUploadToEvent(event)
 
-    val stateLabel = when {
+    val stateLabel = raceUploadNotice(event) ?: when {
         event.ownedByMe && event.reviewStatus == "pending" -> "AWAITING APPROVAL"
         event.ownedByMe && event.reviewStatus == "rejected" -> "CHANGES REQUESTED"
         isUpcoming -> "OPENS ON ${eventDateLabel(event.date)}"
@@ -1361,6 +1361,10 @@ private fun EventPickerCard(
                     color = Slate,
                     style = Typography.bodyMedium
                 )
+                fromPrice(event.priceVaries, event.pricePerPhoto)?.let {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    StatusChip(text = it, tone = StatusTone.Neutral)
+                }
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1410,5 +1414,18 @@ private fun EventPickerCard(
             }
         }
     }
+}
+
+internal fun uploadPickerEvents(
+    publicEvents: List<PhotographerEventSummaryDto>,
+    assignedEvents: List<PhotographerEventSummaryDto>,
+): List<PhotographerEventSummaryDto> {
+    val publicById = publicEvents.associateBy { it.id }
+    val covered = assignedEvents.map { event ->
+        val public = publicById[event.id]
+        event.copy(pricePerPhoto = public?.pricePerPhoto ?: event.pricePerPhoto,
+            priceVaries = public?.priceVaries ?: event.priceVaries)
+    }
+    return (covered + publicEvents).distinctBy { it.id }
 }
 

@@ -8,6 +8,9 @@ import java.util.UUID
 // insertion: ImageIO has no XMP writer and a dependency for ~30 lines is not
 // worth it.
 object JpegXmp {
+    // The marker PE-1.4 reads back from uploads; one home for writer and reader.
+    const val QUICKPITIK_NS = "https://quickpitik.com/ns/1.0/"
+    const val PHOTO_ID_PROPERTY = "photoId"
 
     fun creditPacket(name: String, handle: String?, photoId: UUID, year: Int): String {
         val creator = esc(name)
@@ -21,7 +24,7 @@ object JpegXmp {
         )
         return "<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" +
             """<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmpRights="http://ns.adobe.com/xap/1.0/rights/" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" xmlns:plus="http://ns.useplus.org/ldf/xmp/1.0/" xmlns:quickpitik="https://quickpitik.com/ns/1.0/" photoshop:Credit="QuickPitik" photoshop:Instructions="$INSTRUCTIONS" xmpRights:Marked="True" xmpRights:WebStatement="https://quickpitik.com/verify" plus:DataMining="http://ns.useplus.org/ldf/vocab/DMI-PROHIBITED-AIGENAI" quickpitik:photoId="$photoId"$handleAttr>
+<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmpRights="http://ns.adobe.com/xap/1.0/rights/" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" xmlns:plus="http://ns.useplus.org/ldf/xmp/1.0/" xmlns:quickpitik="$QUICKPITIK_NS" photoshop:Credit="QuickPitik" photoshop:Instructions="$INSTRUCTIONS" xmpRights:Marked="True" xmpRights:WebStatement="https://quickpitik.com/verify" plus:DataMining="http://ns.useplus.org/ldf/vocab/DMI-PROHIBITED-AIGENAI" quickpitik:$PHOTO_ID_PROPERTY="$photoId"$handleAttr>
 <dc:creator><rdf:Seq><rdf:li>$creator</rdf:li></rdf:Seq></dc:creator>
 <dc:rights><rdf:Alt><rdf:li xml:lang="x-default">$rights</rdf:li></rdf:Alt></dc:rights>
 <xmpRights:UsageTerms><rdf:Alt><rdf:li xml:lang="x-default">$terms</rdf:li></rdf:Alt></xmpRights:UsageTerms>

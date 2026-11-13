@@ -107,6 +107,8 @@ object ErrorCodes {
     const val PAYOUT_ACCOUNT_COOLDOWN = "PAYOUT_ACCOUNT_COOLDOWN"
     const val PAYOUT_SECOND_APPROVER_REQUIRED = "PAYOUT_SECOND_APPROVER_REQUIRED"
     const val PAYOUT_NOT_COVERED = "PAYOUT_NOT_COVERED"
+    // PE-2.2: an admin confirmed a payout hold on the photographer's open relevance flag (HTTP 409).
+    const val PAYOUT_ON_HOLD = "PAYOUT_ON_HOLD"
     // Sensitive action needs a fresh password re-entry (step-up). Only enforced
     // when PAYOUT_STEP_UP_ENABLED is on; the client answers by POSTing /me/reauth
     // and retrying with the X-Step-Up header.

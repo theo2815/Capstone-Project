@@ -13,6 +13,8 @@ import { useSellerDetails } from "@/hooks/use-seller-details";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import {
+  formatGateDate,
+  identityNoticeDate,
   isValidIdNumber,
   isValidPhone,
   reviewStateOf,
@@ -47,6 +49,7 @@ export function SellerDetailsSlab() {
   const [resending, setResending] = useState(false);
   const details = query.data;
   const state = details ? reviewStateOf(details) : null;
+  const noticeDate = identityNoticeDate(details);
   const onFile = state === "manual_review" || state === "auto_approved" || state === "approved";
   const saved = (next: SellerDetails) => queryClient.setQueryData(queryKey, next);
 
@@ -59,6 +62,12 @@ export function SellerDetailsSlab() {
           Privacy Policy
         </Link>
       </p>
+      {noticeDate && (
+        <p className="mt-4 max-w-xl font-sans text-sm text-ink">
+          From {formatGateDate(noticeDate)}, you need a passed identity check to upload new photos. Until then, uploads
+          work as they do now.
+        </p>
+      )}
       <div className="mt-8 max-w-xl">
         {query.isPending ? (
           <Skeleton className="h-24 w-full rounded-2xl" />

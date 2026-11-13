@@ -12,6 +12,7 @@ import com.quickpitik.mobile.data.remote.OrderListItemDto
 import com.quickpitik.mobile.data.remote.OrderResponse
 import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.QrPhPaymentDto
+import com.quickpitik.mobile.data.remote.payableItems
 import com.quickpitik.mobile.data.repository.CartRepository
 import com.quickpitik.mobile.data.repository.CartRepositoryImpl
 import kotlinx.coroutines.CancellationException
@@ -101,7 +102,7 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     val cartItems: StateFlow<List<CartItemDto>> = repository.cartItems
 
     val cartTotal: StateFlow<Double> = repository.cartItems
-        .map { items -> items.sumOf { it.price } }
+        .map { items -> payableItems(items).sumOf { it.price } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     // Coupon preview for the checkout sheet (V47/V50). Null until fetched; the net
@@ -231,7 +232,7 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
     // typed code the backend 400s — surface the message and KEEP the previous
     // preview so the shown total never jumps back up to list price.
     fun previewCoupon(code: String?) {
-        val photoIds = cartItems.value.map { it.photoId }
+        val photoIds = payableItems(cartItems.value).map { it.photoId }
         if (photoIds.isEmpty()) {
             _couponPreview.value = null
             return
@@ -264,7 +265,7 @@ class CartViewModel(application: Application) : AndroidViewModel(application) {
         // server-side without a code. couponPreview.code is the typed code that
         // produced the current preview (null for auto-only).
         val couponCode = _couponPreview.value?.code
-        val photoIds = cartItems.value.map { it.photoId }
+        val photoIds = payableItems(cartItems.value).map { it.photoId }
 
         viewModelScope.launch {
             val generation = sessionManager.authChanges.value

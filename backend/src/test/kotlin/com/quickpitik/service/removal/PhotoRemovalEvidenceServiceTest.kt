@@ -76,6 +76,26 @@ class PhotoRemovalEvidenceServiceTest {
         assertEquals(RemovalEvidenceCleanupState.RETRY_REQUIRED, request.evidenceCleanupState)
     }
 
+    @Test fun `replace refuses a runner case`() {
+        val runnerCase = PhotoRemovalRequest(eventIdSnapshot = request.eventIdSnapshot, eventNameSnapshot = "Synthetic run",
+            requesterContact = "runner@test.local", supportReference = "Runner request", requesterReason = "Privacy",
+            publicToOwnerReason = "Privacy request", creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID(),
+            source = RemovalRequestSource.RUNNER)
+        `when`(requests.findForUpdate(runnerCase.id)).thenReturn(runnerCase)
+        val error = assertFailsWith<ApiException> { service.replace(request.creatorId, runnerCase.id, UUID.randomUUID(), 0, image()) }
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT to "CONFLICT", error.status to error.code)
+        verifyNoInteractions(storage)
+    }
+
+    @Test fun `the system evidence write leaves CANDIDATE items alone`() {
+        val key = PhotoRemovalEvidenceService.recordedEvidenceKey(request.id, request.creationCommandId)
+        assertEquals("photo-removal/${request.id}/evidence/${request.creationCommandId}", key)
+        service.putSystemEvidence(key, image())
+        verify(storage).put(eq(key) ?: key, any(ByteArray::class.java) ?: byteArrayOf(), eq("image/png") ?: "")
+        // Unlike an admin replace, it opens no transaction and never touches the case's items or receipts.
+        verifyNoInteractions(items, requests, commands, transactionManager)
+    }
+
     @Test fun `cancelRetainsCleanupWorkOnStorageFailure`() {
         request.status = RemovalRequestStatus.RESOLVING
         request.evidenceKey = "photo-removal/${request.id}/evidence/${UUID.randomUUID()}"
@@ -166,7 +186,7 @@ class PhotoRemovalIntakeUnitTest {
         mock(PhotoRemovalHistoryRecorder::class.java), PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.systemUTC(), mock(org.springframework.context.ApplicationEventPublisher::class.java),
         mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
         mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
-        mock(PhotoRemovalHistoryRepository::class.java), PhotoRemovalProperties())
+        mock(PhotoRemovalHistoryRepository::class.java), PhotoRemovalProperties(), mock(RunnerAutoHidePolicy::class.java))
     init {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
         `when`(users.findById(adminId)).thenReturn(Optional.of(User(email = "admin@test.local", passwordHash = "unused", name = "Admin", role = Role.ADMIN)))

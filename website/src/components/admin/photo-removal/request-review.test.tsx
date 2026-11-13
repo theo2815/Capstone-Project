@@ -9,7 +9,8 @@ import { useAuthStore } from "@/store/auth-store";
 import type { PhotoRemovalRequestDto, RemovalMatchResult } from "@/types/photo-removal";
 import { RemovalRequestReview } from "./request-review";
 import { RemovalRequestDecision } from "./request-decision";
-import { draftCase, removalPhoto } from "./removal-fixtures";
+import { draftCase, removalItem, removalPhoto, runnerCase } from "./removal-fixtures";
+import { formatLongDate } from "@/lib/format";
 
 vi.mock("@/lib/api-photo-removal");
 
@@ -247,4 +248,95 @@ it("names photo thumbnails by position, never by the raw photo ID", async () => 
   expect(labels.length).toBeGreaterThan(0);
   for (const label of labels) expect(label).toMatch(/^Preview photo \d+ of \d+$/);
   expect(labels).toContain("Preview photo 1 of 4");
+});
+
+// RD-13: runner cases.
+const runnerOpen: PhotoRemovalRequestDto = {
+  ...runnerCase,
+  items: [
+    removalItem("h1", "Photographer A", { autoHidden: true, verificationActorId: null, faceCount: 1, otherPeopleVisible: false }),
+    removalItem("h2", "Photographer A", { verificationActorId: null, faceCount: 3, otherPeopleVisible: true, autoHidden: true }),
+    removalItem("c1", "Photographer B", { state: "CANDIDATE", verificationActorId: null, verifiedAt: null, faceCount: 1, otherPeopleVisible: false }),
+  ],
+};
+
+it("the review shows account age and email verified", async () => {
+  serverCase = runnerOpen;
+  renderReview();
+  expect(await screen.findByText(`Account created ${formatLongDate("2026-09-01T00:00:00Z")} · Email verified yes`)).toBeVisible();
+  serverCase = { ...runnerOpen, requesterEmailVerified: false };
+  cleanup(); client.clear();
+  renderReview();
+  expect(await screen.findByText(/Email verified no/)).toBeVisible();
+});
+
+it("the band shows words, never a number", async () => {
+  serverCase = { ...runnerOpen, livenessBand: "UNCERTAIN", riskFlags: ["LIVENESS_UNCERTAIN", "SOMETHING_NEW"] };
+  renderReview();
+  const band = await screen.findByText(/^Live check:/);
+  expect(band).toHaveTextContent("Live check: uncertain");
+  expect(band.textContent).not.toMatch(/\d/);
+  expect(screen.getByText("The live check was uncertain")).toBeVisible();
+  expect(screen.getByText("SOMETHING_NEW")).toBeVisible();
+  expect(screen.queryByText("LIVENESS_UNCERTAIN")).toBeNull();
+});
+
+it("groups auto-hidden photos and public suggestions with an other-people badge", async () => {
+  serverCase = runnerOpen;
+  renderReview();
+  const hidden = await screen.findByRole("region", { name: "Hidden automatically" });
+  const suggestions = screen.getByRole("region", { name: "Suggestions (still public)" });
+  expect(within(hidden).getAllByRole("listitem")).toHaveLength(2);
+  expect(within(hidden).getAllByText("Other people visible")).toHaveLength(1);
+  expect(within(suggestions).getAllByRole("listitem")).toHaveLength(1);
+});
+
+it("promote sends the expected version to the suggestions endpoint", async () => {
+  const user = userEvent.setup();
+  serverCase = runnerOpen;
+  vi.mocked(removalApi.reviewRemovalSuggestions).mockImplementation(async () => { serverCase = { ...runnerOpen, version: 8 }; return serverCase; });
+  renderReview();
+  await user.click(await screen.findByRole("button", { name: "Promote photo-c1" }));
+  await waitFor(() => {
+    expect(removalApi.getAdminRemovalRequest).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Dismiss photo-c1" })).toBeEnabled();
+  });
+  await waitFor(() => expect(removalApi.reviewRemovalSuggestions).toHaveBeenCalledTimes(1));
+  const [id, body] = vi.mocked(removalApi.reviewRemovalSuggestions).mock.calls[0];
+  expect(id).toBe("case-1");
+  expect(body).toEqual({ commandId: expect.any(String), expectedVersion: 7, promote: ["c1"], dismiss: [], demote: [] });
+  await user.click(screen.getByRole("button", { name: "Dismiss photo-c1" }));
+  await waitFor(() => expect(removalApi.reviewRemovalSuggestions).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(removalApi.reviewRemovalSuggestions).mock.calls[1][1]).toMatchObject({ expectedVersion: 8, dismiss: ["c1"] });
+});
+
+it("demote is offered only on auto-hidden photos", async () => {
+  serverCase = { ...runnerOpen, items: [...runnerOpen.items,
+    removalItem("v1", "Photographer B", { autoHidden: false }),
+    removalItem("d1", "Photographer B", { autoHidden: true, adminDecision: "MORE_EVIDENCE" })] };
+  renderReview();
+  await screen.findByRole("region", { name: "Hidden automatically" });
+  const demotes = screen.getAllByRole("button", { name: /^Make public again, keep as suggestion/ }).map((b) => b.textContent);
+  expect(demotes).toHaveLength(2);
+  expect(demotes.join()).toMatch(/photo-h1.*photo-h2/);
+  expect(screen.queryByRole("button", { name: /^Promote photo-h1/ })).toBeNull();
+});
+
+it("runner cases have no evidence replace", async () => {
+  serverCase = { ...runnerCase, status: "DRAFT", riskFlags: ["MATCHING_UNAVAILABLE"] };
+  const { container } = renderReview();
+  expect(await screen.findByRole("button", { name: "Match stored selfie" })).toBeVisible();
+  expect(container.querySelector('input[type="file"]')).toBeNull();
+  expect(screen.queryByText("Upload a selfie")).toBeNull();
+});
+
+it("a runner case without evidence offers only manual verify or cancel", async () => {
+  serverCase = { ...runnerCase, status: "DRAFT", evidencePresent: false, evidenceCleanupState: "NONE" };
+  const { container } = renderReview();
+  expect(await screen.findByRole("button", { name: "Cancel case" })).toBeDisabled();
+  expect(container.querySelector('input[type="file"]')).toBeNull();
+  expect(screen.queryByRole("button", { name: "Match stored selfie" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Search" })).toBeNull();
+  expect(await screen.findByRole("checkbox", { name: /photo-orphan/ })).toBeVisible();
+  expect(removalApi.getRemovalEvidence).not.toHaveBeenCalled();
 });

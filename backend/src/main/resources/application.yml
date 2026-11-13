@@ -37,7 +37,8 @@ spring:
     scheduling:
       # Boot default is 1 thread, which let a slow indexing reconcile sweep
       # starve the reaper / batch drain / poll / photos-ready sweeps.
-      pool-size: 6
+      pool:
+        size: 6
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -133,7 +134,7 @@ app:
   # (V91). No env var on purpose: it changes with the text, in code. The
   # website's LEGAL_VERSION must equal it; "-draft" until the owner approves.
   legal:
-    current-version: "1.2"
+    current-version: "1.5"
   admin:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
@@ -290,6 +291,9 @@ app:
       prc: ${ID_NUMBER_FORMAT_PRC:}
       postal: ${ID_NUMBER_FORMAT_POSTAL:}
       voters: ${ID_NUMBER_FORMAT_VOTERS:}
+    # POST /admin/identity-notice (AA-I22) mails one photographer at a time, at most this many a second.
+    # [NOT MEASURED: Resend's rate limit]
+    notice-send-per-second: ${IDENTITY_NOTICE_SEND_PER_SECOND:2}
   races:
     # AA-R1 (auto-approval Plan 2): shared race events. Off = today's flow; on lets
     # photographers create, join and edit races and set a race price.
@@ -320,7 +324,9 @@ app:
       hide-threshold: ${RACE_REPORT_HIDE_THRESHOLD:3} # distinct accounts; [NOT MEASURED]
   relevance:
     # PE-1 photo-to-event relevance. off = the sweep does nothing (kill switch);
-    # shadow = relevance rows only. Nothing is hidden or held automatically.
+    # shadow = relevance rows only; flag = a Low batch also opens or extends one admin
+    # flag per photographer (PE-2.1; acts as shadow while app.admin.flags-enabled is off).
+    # Nothing is hidden or held automatically.
     mode: ${RELEVANCE_MODE:off}
     sweep-interval-ms: ${RELEVANCE_SWEEP_INTERVAL_MS:60000}
     quiet-minutes: ${RELEVANCE_QUIET_MINUTES:10}
@@ -328,6 +334,7 @@ app:
     max-batches-per-tick: ${RELEVANCE_MAX_BATCHES_PER_TICK:5}
     rescore-minutes: ${RELEVANCE_RESCORE_MINUTES:60}
     settle-days: ${RELEVANCE_SETTLE_DAYS:7}
+    lookup-timeout: ${RELEVANCE_LOOKUP_TIMEOUT:5s}
     copy:
       tight-distance: ${RELEVANCE_COPY_TIGHT_DISTANCE:4} # [NOT MEASURED: PE-0]
       weak-distance: ${RELEVANCE_COPY_WEAK_DISTANCE:8} # [NOT MEASURED: PE-0]
@@ -512,6 +519,12 @@ app:
       refund-link-allowed-prefixes: ${PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES:https://transfer.paymongo.com/}
       qrph-refund-window: ${PAYMONGO_QRPH_REFUND_WINDOW:P30D}
       refund-link-validity: ${PAYMONGO_REFUND_LINK_VALIDITY:P3D}
+  disputes:
+    # Deadlines behind each admin dispute's due time (DisputeQueueProperties).
+    review-business-days: ${DISPUTE_REVIEW_BUSINESS_DAYS:3}
+    refund-send-within: ${DISPUTE_REFUND_SEND_WITHIN:PT48H}
+    link-expiring-soon: ${DISPUTE_LINK_EXPIRING_SOON:PT24H}
+    refund-stuck-after: ${DISPUTE_REFUND_STUCK_AFTER:PT24H}
   email:
     resend:
       # Resend transactional email wiring. Free-tier dev sender

@@ -61,7 +61,7 @@ class PhotoMetadataSchedulingIsolationIntegrationTest : PostgresIntegrationTest(
     }
 
     @Test
-    fun `another test context cannot schedule recovery of this fixture but manual recovery still works`() {
+    fun `a test context starts no timers but manual recovery still works`() {
         val event = events.save(Event(slug = "scheduler-${UUID.randomUUID()}", name = "Run", date = LocalDate.now(), location = "Cebu", status = EventStatus.ACTIVE))
         val photo = photos.save(Photo(eventId = event.id, s3Key = "original-${UUID.randomUUID()}", pricePhp = BigDecimal.ONE, status = PhotoStatus.LIVE))
         metadata.save(PhotoMetadata(photoId = photo.id, originalFilename = "camera.jpg", originalSizeBytes = 42))
@@ -71,7 +71,7 @@ class PhotoMetadataSchedulingIsolationIntegrationTest : PostgresIntegrationTest(
 
         val foreignPool = AsyncConfig().metadataProcessingExecutor()
         val foreignStorage = Mockito.mock(StorageService::class.java) // No object in the other context's storage.
-        val foreignWorker = PhotoMetadataService(metadata, photos, coverage, extractor, foreignStorage, watermarkPool, properties, transactions, clock, foreignPool, suspension)
+        val foreignWorker = PhotoMetadataService(metadata, photos, coverage, extractor, foreignStorage, watermarkPool, properties, transactions, clock, foreignPool, suspension, com.quickpitik.config.RelevanceProperties())
         val scheduled = mutableListOf<Runnable>()
         val scheduler = Mockito.mock(TaskScheduler::class.java) { invocation ->
             when {
@@ -83,18 +83,24 @@ class PhotoMetadataSchedulingIsolationIntegrationTest : PostgresIntegrationTest(
                 else -> Mockito.RETURNS_DEFAULTS.answer(invocation)
             }
         }
-        val tickProbe = TickProbe()
 
         try {
+            AnnotationConfigApplicationContext().use { control ->
+                control.register(ControlContext::class.java)
+                control.registerBean("taskScheduler", TaskScheduler::class.java, Supplier { scheduler })
+                control.registerBean(TickProbe::class.java, Supplier { TickProbe() })
+                control.refresh()
+            }
+            assertEquals(1, scheduled.size, "Without the isolation the fake scheduler must receive the probe's timer")
+            scheduled.clear()
+
             AnnotationConfigApplicationContext().use { foreignContext ->
                 foreignContext.register(ForeignContext::class.java)
                 foreignContext.registerBean("taskScheduler", TaskScheduler::class.java, Supplier { scheduler })
                 foreignContext.registerBean(PhotoMetadataService::class.java, Supplier { foreignWorker })
-                foreignContext.registerBean(TickProbe::class.java, Supplier { tickProbe })
+                foreignContext.registerBean(TickProbe::class.java, Supplier { TickProbe() })
                 foreignContext.refresh()
-                scheduled.forEach(Runnable::run) // A deterministic scheduler tick, without waiting for a timer.
-                awaitIdle(foreignPool)
-                assertEquals(1, tickProbe.ticks, "The controlled scheduler must actually fire its registered tasks")
+                assertTrue(scheduled.isEmpty(), "A test context must start no timer, not even the probe's")
 
                 val untouched = metadata.findById(photo.id).orElseThrow()
                 assertEquals(PhotoMetadataState.PENDING, untouched.state, "Foreign scheduler changed fixture ${photo.id}, size=${untouched.originalSizeBytes}")
@@ -123,9 +129,12 @@ class PhotoMetadataSchedulingIsolationIntegrationTest : PostgresIntegrationTest(
     @Import(MetadataRecoveryTestIsolation::class)
     class ForeignContext
 
+    // Not a @TestConfiguration, so Spring Boot does not add it to this class's own context.
+    @EnableScheduling
+    class ControlContext
+
     class TickProbe {
-        var ticks = 0
         @Scheduled(fixedDelay = 60000)
-        fun tick() { ticks++ }
+        fun tick() {}
     }
 }

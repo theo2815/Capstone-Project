@@ -71,7 +71,7 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
     number: "11",
     href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
     label: "Photo removals",
-    body: "Runner privacy requests from support. Find their photos across every photographer in one event and verify which to hide.",
+    body: "Runner requests and support requests. Review what was hidden or suggested, find their photos across every photographer in one event and verify which to hide.",
   },
 ];
 

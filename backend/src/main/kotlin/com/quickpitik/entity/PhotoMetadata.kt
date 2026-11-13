@@ -50,6 +50,10 @@ class PhotoMetadata(
 
     @Column(name = "lease_until")
     var leaseUntil: OffsetDateTime? = null,
+
+    // PE-1.4: QuickPitik's own photo id read from an upload's XMP; evidence only, never in the DTO.
+    @Column(name = "xmp_photo_id")
+    var xmpPhotoId: UUID? = null,
 )
 
 enum class PhotoMetadataState { PENDING, PROCESSING, READY, EMPTY, FAILED, UNAVAILABLE }

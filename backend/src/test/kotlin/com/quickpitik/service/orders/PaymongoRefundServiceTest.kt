@@ -25,6 +25,7 @@ import com.quickpitik.entity.PaymentMethod
 import com.quickpitik.entity.PaymentStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
@@ -407,6 +408,106 @@ class PaymongoRefundServiceTest {
     }
 
     @Test
+    fun `approving a refund with no settled PayMongo payment is refused`() {
+        val h = couponHarness(paymentStatus = PaymentStatus.PENDING)
+
+        val error = assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals("The order has no settled PayMongo payment to refund.", error.message)
+        assertEquals(ErrorCodes.CONFLICT, error.code)
+        assertRefusedWithoutChanges(h)
+    }
+
+    @Test
+    fun `approving a refund whose settled payment has no PayMongo reference is refused`() {
+        val h = couponHarness(paymentHasRef = false)
+
+        val error = assertFailsWith<ConflictException> {
+            h.service.request(h.adminId, h.dispute.id, DisputeResolution.REFUND_FULL, null, null)
+        }
+
+        assertEquals("The settled payment has no PayMongo reference.", error.message)
+        assertEquals(ErrorCodes.CONFLICT, error.code)
+        assertRefusedWithoutChanges(h)
+    }
+
+    // --- DW-3: one rule for "can this be refunded?", shared by prepare and the admin list ---
+
+    private val blockerProps = PaymongoProperties(qrphRefundWindow = Duration.ofDays(30))
+
+    private fun blockerOrder(method: PaymentMethod) = Order(
+        eventId = UUID.randomUUID(),
+        recipientEmail = "runner@example.com",
+        paymentMethodWire = method.wire,
+        status = OrderStatus.FULFILLED,
+        totalPhp = BigDecimal("150.00"),
+    ).also { it.paidAt = paidOn }
+
+    private fun blockerPayment(order: Order, status: PaymentStatus = PaymentStatus.SUCCEEDED) = Payment(
+        orderId = order.id,
+        provider = "paymongo",
+        providerRef = "pi_test",
+        providerPaymentId = "pay_test",
+        amountPhp = order.totalPhp,
+        status = status,
+    )
+
+    @Test
+    fun `refundBlocker says bought_together when the photo is not the whole payment`() {
+        val order = blockerOrder(PaymentMethod.QRPH)
+
+        val blocker = blockerProps.refundBlocker(order, blockerPayment(order), BigDecimal("600.00"), BigDecimal("150.00"), paidOn.plusDays(1))
+
+        assertEquals(RefundBlocker.BOUGHT_TOGETHER, blocker)
+        assertEquals("bought_together", blocker?.wire)
+    }
+
+    @Test
+    fun `refundBlocker says window_closed once PayMongo's window has passed`() {
+        val order = blockerOrder(PaymentMethod.QRPH)
+
+        val blocker = blockerProps.refundBlocker(order, blockerPayment(order), BigDecimal("150.00"), BigDecimal("150.00"), paidOn.plusDays(30))
+
+        assertEquals(RefundBlocker.WINDOW_CLOSED, blocker)
+        assertEquals("window_closed", blocker?.wire)
+    }
+
+    @Test
+    fun `refundBlocker allows a single-photo QR Ph payment inside the window`() {
+        val order = blockerOrder(PaymentMethod.QRPH)
+
+        val blocker = blockerProps.refundBlocker(
+            order, blockerPayment(order), BigDecimal("150.00"), BigDecimal("150.00"), paidOn.plusDays(30).minusSeconds(1),
+        )
+
+        assertNull(blocker)
+    }
+
+    @Test
+    fun `refundBlocker skips the QR Ph rules for a card order`() {
+        val order = blockerOrder(PaymentMethod.CARD)
+
+        // Past the QR Ph window and only part of the payment: neither rule applies to a card refund.
+        val blocker = blockerProps.refundBlocker(order, blockerPayment(order), BigDecimal("600.00"), BigDecimal("150.00"), paidOn.plusDays(60))
+
+        assertNull(blocker)
+    }
+
+    @Test
+    fun `refundBlocker says no_payment when the payment never settled`() {
+        val order = blockerOrder(PaymentMethod.QRPH)
+        val unsettled = listOf(blockerPayment(order, PaymentStatus.PENDING)).settledPaymongo()
+
+        assertEquals(RefundBlocker.NO_SETTLED_PAYMENT, blockerProps.refundBlocker(order, unsettled, null, BigDecimal("150.00"), paidOn))
+        val noRef = blockerPayment(order).also { it.providerRef = null }
+        assertEquals(RefundBlocker.NO_PAYMENT_REF, blockerProps.refundBlocker(order, noRef, null, BigDecimal("150.00"), paidOn))
+        assertEquals("no_payment", RefundBlocker.NO_SETTLED_PAYMENT.wire)
+        assertEquals("no_payment", RefundBlocker.NO_PAYMENT_REF.wire)
+    }
+
+    @Test
     fun `a payment that is not QR Ph still asks PayMongo to refund`() {
         val h = couponHarness(method = PaymentMethod.GCASH)
 
@@ -446,6 +547,8 @@ class PaymongoRefundServiceTest {
         clock: Clock = Clock.systemUTC(),
         window: Duration = Duration.ofDays(30),
         validity: Duration = Duration.ofDays(3),
+        paymentStatus: PaymentStatus = PaymentStatus.SUCCEEDED,
+        paymentHasRef: Boolean = true,
     ): CouponHarness {
         val adminId = UUID.randomUUID()
         val photographerId = UUID.randomUUID()
@@ -464,10 +567,10 @@ class PaymongoRefundServiceTest {
         val payment = Payment(
             orderId = order.id,
             provider = "paymongo",
-            providerRef = providerRef,
+            providerRef = providerRef.takeIf { paymentHasRef },
             providerPaymentId = providerPaymentId,
             amountPhp = order.totalPhp,
-            status = PaymentStatus.SUCCEEDED,
+            status = paymentStatus,
         )
         val disputes = Mockito.mock(DisputeRepository::class.java)
         val orders = Mockito.mock(OrderRepository::class.java)
@@ -900,6 +1003,8 @@ class PaymongoRefundServiceTest {
         }
     }
 
+    private val refundRef = "ref_9e5899bbf66c4f3485bff833"
+
     private fun markRefundedHarness(): CouponHarness {
         val h = parkedHarness()
         h.dispute.resolution = DisputeResolution.REFUND_FULL
@@ -913,7 +1018,7 @@ class PaymongoRefundServiceTest {
     fun `marking a parked refund refunded completes it once and keeps the link`() {
         val h = markRefundedHarness()
 
-        h.service.markRefunded(h.adminId, h.dispute.id)
+        h.service.markRefunded(h.adminId, h.dispute.id, refundRef)
 
         assertEquals("succeeded", h.dispute.refundStatus)
         assertEquals(DisputeStatus.RESOLVED, h.dispute.status)
@@ -930,7 +1035,7 @@ class PaymongoRefundServiceTest {
     fun `marking the only photo of an order refunded makes the order REFUNDED`() {
         val h = markRefundedHarness()
 
-        h.service.markRefunded(h.adminId, h.dispute.id)
+        h.service.markRefunded(h.adminId, h.dispute.id, refundRef)
 
         assertEquals(OrderStatus.REFUNDED, h.order.status)
     }
@@ -946,7 +1051,7 @@ class PaymongoRefundServiceTest {
             ),
         )
 
-        h.service.markRefunded(h.adminId, h.dispute.id)
+        h.service.markRefunded(h.adminId, h.dispute.id, refundRef)
 
         assertEquals(OrderStatus.FULFILLED, h.order.status)
     }
@@ -959,7 +1064,7 @@ class PaymongoRefundServiceTest {
         Mockito.`when`(h.decisions.logDisputeDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(decision)
 
-        h.service.markRefunded(h.adminId, h.dispute.id)
+        h.service.markRefunded(h.adminId, h.dispute.id, refundRef)
 
         assertTrue(approvingAdmin != h.adminId)
         Mockito.verify(h.decisions, Mockito.times(1)).logDisputeDecision(
@@ -967,7 +1072,7 @@ class PaymongoRefundServiceTest {
             h.dispute.id,
             "resolved",
             null,
-            mapOf("resolution" to "refund_full", "refundAmount" to "127.50", "providerRefundId" to null),
+            mapOf("resolution" to "refund_full", "refundAmount" to "127.50", "providerRefundId" to refundRef),
             null,
         )
         Mockito.verify(h.decisions).pushMessage(
@@ -994,9 +1099,9 @@ class PaymongoRefundServiceTest {
     fun `marking a refund refunded a second time changes nothing`() {
         val h = markRefundedHarness()
 
-        h.service.markRefunded(h.adminId, h.dispute.id)
+        h.service.markRefunded(h.adminId, h.dispute.id, refundRef)
         val refundedAt = h.dispute.refundedAt
-        h.service.markRefunded(UUID.randomUUID(), h.dispute.id)
+        h.service.markRefunded(UUID.randomUUID(), h.dispute.id, refundRef)
 
         assertEquals(refundedAt, h.dispute.refundedAt)
         Mockito.verify(h.minting, Mockito.times(1)).mintRefund(anyArg(), anyArg(), anyArg())
@@ -1014,7 +1119,7 @@ class PaymongoRefundServiceTest {
             val h = markRefundedHarness()
             h.dispute.refundStatus = state
 
-            assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id) }
+            assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id, refundRef) }
 
             assertEquals(state, h.dispute.refundStatus)
             Mockito.verifyNoInteractions(h.minting)
@@ -1028,7 +1133,7 @@ class PaymongoRefundServiceTest {
         val h = markRefundedHarness()
         h.dispute.refundAmountPhp = null
 
-        assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id) }
+        assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id, refundRef) }
 
         assertEquals("manual_review", h.dispute.refundStatus)
         Mockito.verifyNoInteractions(h.minting)
@@ -1036,10 +1141,118 @@ class PaymongoRefundServiceTest {
     }
 
     @Test
+    fun `mark refunded stores the PayMongo refund reference`() {
+        val h = markRefundedHarness()
+
+        h.service.markRefunded(h.adminId, h.dispute.id, refundRef)
+
+        assertEquals(refundRef, h.dispute.providerRefundId)
+        assertEquals("succeeded", h.dispute.refundStatus)
+    }
+
+    @Test
+    fun `a reference pasted with spaces and a newline is stored trimmed`() {
+        val h = markRefundedHarness()
+
+        h.service.markRefunded(h.adminId, h.dispute.id, "  $refundRef \n")
+
+        assertEquals(refundRef, h.dispute.providerRefundId)
+    }
+
+    @Test
+    fun `mark refunded refuses a reference already used on another dispute`() {
+        val h = markRefundedHarness()
+        val other = Dispute(orderId = UUID.randomUUID(), photoId = UUID.randomUUID(), reasonWire = "other")
+        Mockito.`when`(h.disputes.findByProviderRefundId(refundRef)).thenReturn(other)
+
+        val error = assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id, refundRef) }
+
+        assertEquals("That PayMongo refund reference is already recorded on another refund request.", error.message)
+        assertNull(h.dispute.providerRefundId)
+        assertEquals("manual_review", h.dispute.refundStatus)
+        Mockito.verifyNoInteractions(h.minting)
+    }
+
+    @Test
+    fun `mark refunded refuses a different reference on a refund that already has one`() {
+        for (completed in listOf(false, true)) {
+            val h = markRefundedHarness()
+            h.dispute.providerRefundId = "ref_aaaaaaaaaaaaaaaaaaaaaaaa"
+            if (completed) {
+                h.dispute.status = DisputeStatus.RESOLVED
+                h.dispute.refundedAt = OffsetDateTime.now()
+            }
+
+            val error = assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id, refundRef) }
+
+            assertEquals("This refund already has PayMongo reference ref_aaaaaaaaaaaaaaaaaaaaaaaa.", error.message)
+            assertEquals("ref_aaaaaaaaaaaaaaaaaaaaaaaa", h.dispute.providerRefundId)
+            Mockito.verifyNoInteractions(h.minting)
+        }
+    }
+
+    @Test
+    fun `a unique-index clash at commit answers the same 409, not a 500`() {
+        val h = markRefundedHarness()
+        Mockito.`when`(h.disputes.save(Mockito.any(Dispute::class.java)))
+            .thenThrow(org.springframework.dao.DataIntegrityViolationException("uq_disputes_provider_refund_id"))
+
+        val error = assertFailsWith<ConflictException> { h.service.markRefunded(h.adminId, h.dispute.id, refundRef) }
+
+        assertEquals("That PayMongo refund reference is already recorded on another refund request.", error.message)
+    }
+
+    @Test
+    fun `mark refunded refuses a missing, blank, too long, spaced or URL reference and changes nothing`() {
+        val bad = listOf(null, "", "   ", "ref_" + "a".repeat(97), "ref_abc def", "https://dashboard.paymongo.com/refunds/ref_9e5899bbf66c4f3485bff833")
+        for (value in bad) {
+            val h = markRefundedHarness()
+
+            val error = assertFailsWith<ValidationException>("for [$value]") { h.service.markRefunded(h.adminId, h.dispute.id, value) }
+
+            assertEquals("refundReference", error.field)
+            assertEquals("Paste the refund reference from the PayMongo dashboard.", error.message)
+            assertNothingMarked(h)
+        }
+    }
+
+    @Test
+    fun `mark refunded refuses the payment's own pay_, cs_ or pi_ ID as the reference`() {
+        for (value in listOf("pay_9e5899bbf66c4f3485bff833", "cs_9e5899bbf66c4f3485bff833", "pi_9e5899bbf66c4f3485bff833")) {
+            val h = markRefundedHarness()
+
+            val error = assertFailsWith<ValidationException> { h.service.markRefunded(h.adminId, h.dispute.id, value) }
+
+            assertEquals("refundReference", error.field)
+            assertEquals("That is the payment ID. Paste the refund's reference.", error.message)
+            assertNothingMarked(h)
+        }
+    }
+
+    @Test
+    fun `mark refunded refuses a reference without PayMongo's refund prefix`() {
+        val h = markRefundedHarness()
+
+        val error = assertFailsWith<ValidationException> { h.service.markRefunded(h.adminId, h.dispute.id, "9e5899bbf66c4f3485bff833") }
+
+        assertEquals("refundReference", error.field)
+        assertEquals("Paste the refund reference from the PayMongo dashboard.", error.message)
+        assertNothingMarked(h)
+    }
+
+    private fun assertNothingMarked(h: CouponHarness) {
+        Mockito.verify(h.disputes, Mockito.never()).findByIdForUpdate(h.dispute.id)
+        Mockito.verify(h.disputes, Mockito.never()).save(Mockito.any(Dispute::class.java))
+        assertNull(h.dispute.providerRefundId)
+        assertEquals("manual_review", h.dispute.refundStatus)
+        Mockito.verifyNoInteractions(h.minting)
+    }
+
+    @Test
     fun `marking a missing dispute refunded is a 404`() {
         val h = markRefundedHarness()
 
-        assertFailsWith<NotFoundException> { h.service.markRefunded(h.adminId, UUID.randomUUID()) }
+        assertFailsWith<NotFoundException> { h.service.markRefunded(h.adminId, UUID.randomUUID(), refundRef) }
 
         Mockito.verifyNoInteractions(h.minting)
     }
@@ -1270,7 +1483,7 @@ class PaymongoRefundServiceTest {
     fun `a refund whose link was claimed can still be marked refunded after the auto-cancel time`() {
         val h = cancelHarness(paidOn.plusDays(40), linkSentAt = paidOn.plusDays(10))
 
-        h.service.markRefunded(h.adminId, h.dispute.id)
+        h.service.markRefunded(h.adminId, h.dispute.id, refundRef)
 
         assertEquals("succeeded", h.dispute.refundStatus)
         assertEquals(DisputeStatus.RESOLVED, h.dispute.status)

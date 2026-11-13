@@ -1,6 +1,7 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.Role
+import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.User
 import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
@@ -33,6 +34,18 @@ interface UserRepository : JpaRepository<User, UUID> {
     // AA-I12a: which of these users are suspended (PhotographerSuspension).
     @Query("SELECT u.id FROM User u WHERE u.id IN :ids AND u.suspendedAt IS NOT NULL")
     fun findSuspendedIdsIn(@Param("ids") ids: Collection<UUID>): List<UUID>
+
+    // AA-I22: photographers the identity notice goes to: not suspended (a closed photographer account is
+    // anonymised and suspended) and with no seller record in a passed state.
+    @Query(
+        """
+        SELECT u FROM User u
+        WHERE u.role = com.quickpitik.entity.Role.PHOTOGRAPHER AND u.suspendedAt IS NULL
+          AND NOT EXISTS (SELECT 1 FROM SellerDetails s WHERE s.userId = u.id AND s.status IN :passed)
+        ORDER BY u.createdAt ASC, u.id ASC
+        """,
+    )
+    fun findIdentityNoticeRecipients(@Param("passed") passed: Collection<SellerDetailsStatus>): List<User>
 
     // Admin user list with optional role / search filters. Status filtering
     // (pending / approved / incomplete / suspended) is applied service-side

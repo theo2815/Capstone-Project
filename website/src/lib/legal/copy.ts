@@ -8,6 +8,7 @@ export const DELETION_MAIL_SUBJECT = "Account deletion request";
 export const FACE_NOTICE_VERSION = 2;
 // The bib-search notice (task BT-1, review S10); raising it asks everyone again.
 export const BIB_NOTICE_VERSION = 1;
+const RUNNER_DELETION_MAIL_SUBJECT = "Photo deletion request";
 
 export const LEGAL_COPY = {
   signupTickLabel: `I am 18 or older, I agree to the [Terms of Service](${ROUTES.TERMS}) and I have read the [Privacy Policy](${ROUTES.PRIVACY}).`,
@@ -18,10 +19,14 @@ export const LEGAL_COPY = {
   bibNotice: `To find your photos, we look for this bib number in this event's photos. Search only for your own photos, your child's, or those of someone who agreed. [How search works](${ROUTES.PRIVACY}#face-matching)`,
   bibTickLabel: "I agree. This is my bib number, my child's, or I have the runner's permission.",
   checkoutLine: `By paying, you agree to the [Terms of Service (including refunds)](${ROUTES.TERMS}#refunds).`,
-  // AA-I14: the live-selfie step. The drafts are the owner's 2026-11-08 wording; AA-I21
-  // replaces each with the adviser-signed 1.3 text, and the production build refuses them until then.
-  identityNotice: "[ASK OWNER: adviser confirms with legal 1.3. Draft: We use a short live video selfie to check that you are a real person and that you match your ID. Amazon Web Services processes it in Malaysia and Singapore for us. We keep one still image from it, privately, with your ID photos. It is never used for photo search.]",
-  identityTickLabel: "[ASK OWNER: adviser confirms with legal 1.3. Draft: I agree to the live selfie check and to QuickPitik keeping one still image from it with my ID photos.]",
-  identityAdminInstead: "[ASK OWNER: adviser confirms with legal 1.3. Draft: Prefer not to? Have an admin check your ID instead. This takes longer.]",
+  // The live-selfie step (AA-I14), adviser-signed legal 1.3 text (AA-I21).
+  identityNotice: `We use a short live video selfie to check that you are a real person and that you match your ID. Amazon Web Services processes it in Malaysia and Singapore for us. We keep one still image from it, privately, with your ID photos. It is never used for photo search. [How seller checks work](${ROUTES.PRIVACY}#seller-checks)`,
+  identityTickLabel: "I agree to the live selfie check and to QuickPitik keeping one still image from it with my ID photos.",
+  identityAdminInstead: "Prefer not to? Have an admin check your ID instead. This takes longer.",
+  // The runner deletion request page (RD-11), signed text shipped in legal 1.4 (RD-15).
+  runnerDeletionNotice: `To find photos of you, we run a short live check with your camera (Amazon Rekognition Face Liveness, run by AWS in Malaysia) and use one still image from it to search only this event's photos (AWS in Singapore). We keep that image with your request and delete it when the request closes. [How photo deletion works](${ROUTES.PRIVACY}#face-matching)`,
+  runnerDeletionTickLabel: `I agree to the live check and to this face search. The photos I'm asking about are of me.`,
+  runnerDeletionEmailInstead: `Rather not use the camera, or asking for someone else? Email [${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(RUNNER_DELETION_MAIL_SUBJECT)}) instead.`,
+  runnerDeletionMailSubject: RUNNER_DELETION_MAIL_SUBJECT,
   deletionText: `To delete your account, email [${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(DELETION_MAIL_SUBJECT)}) from your account's email address. We'll do it within ${DELETION_WINDOW}. Some purchase records are kept, as the [Privacy Policy](${ROUTES.PRIVACY}#deletion) explains.`,
 } as const;

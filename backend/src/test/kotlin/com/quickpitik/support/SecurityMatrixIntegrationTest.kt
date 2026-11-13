@@ -357,6 +357,18 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertTrue(responses.last().headers().firstValue("Retry-After").isPresent)
     }
 
+    // RD-6: admin only. (The admin bucket is the media-write one the intake test drains, so no admin row here.)
+    @Test
+    fun `runner suggestion review is admin only`() {
+        val path = "/api/v1/admin/photo-removal-requests/${UUID.randomUUID()}/suggestions"
+        val body = """{"commandId":"${UUID.randomUUID()}","expectedVersion":0,"dismiss":["${UUID.randomUUID()}"]}"""
+        assertEquals(401, post(path, body).statusCode())
+        for (t in listOf(register(Role.RUNNER), register(Role.PHOTOGRAPHER))) assertEquals(403, post(path, body, t).statusCode())
+        val list = "/api/v1/admin/photo-removal-requests?source=RUNNER"
+        assertEquals(401, get(list).statusCode())
+        assertEquals(403, get(list, register(Role.RUNNER)).statusCode())
+    }
+
     @Test
     fun `removal gallery browsing is not bound by the face-search policy`() {
         val token = adminToken()
@@ -437,6 +449,38 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertTrue("no-store" in started.headers().firstValue("Cache-Control").orElse(""))
         // No consent tick: rejected at the edge.
         assertEquals(400, post(start, body.replace("true", "false"), runner).statusCode())
+
+        // RD-4 submit: runner only, a required Idempotency-Key, never cached; an unknown event stops before any AWS call.
+        val submit = """{"sessionId":"sess","eventId":"${UUID.randomUUID()}","reasonCode":"PRIVACY"}"""
+        assertEquals(401, post(root, submit).statusCode())
+        for (t in others) assertEquals(403, post(root, submit, t).statusCode())
+        assertEquals("INVALID_IDEMPOTENCY_KEY", errorCode(post(root, submit, runner)))
+        val filed = send(HttpRequest.newBuilder(uri(root)).header("Content-Type", "application/json")
+            .header("Idempotency-Key", UUID.randomUUID().toString()).POST(HttpRequest.BodyPublishers.ofString(submit)), runner)
+        assertEquals(404, filed.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(filed))
+        assertTrue("no-store" in filed.headers().firstValue("Cache-Control").orElse(""))
+
+        // RD-5 list, detail and withdraw: runner only, never cached; an id that is not the runner's own is a 404.
+        val id = UUID.randomUUID()
+        val withdraw = "$root/$id/withdraw"
+        val version = """{"expectedVersion":0}"""
+        for (path in listOf(root, "$root/$id")) {
+            assertEquals(401, get(path).statusCode())
+            for (t in others) assertEquals(403, get(path, t).statusCode())
+        }
+        assertEquals(401, post(withdraw, version).statusCode())
+        for (t in others) assertEquals(403, post(withdraw, version, t).statusCode())
+        val mine = get(root, runner)
+        assertEquals(200, mine.statusCode())
+        assertTrue("no-store" in mine.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals(0, json.readTree(mine.body()).path("data").path("total").asInt(-1))
+        assertEquals(404, get("$root/$id", runner).statusCode())
+        assertEquals("INVALID_IDEMPOTENCY_KEY", errorCode(post(withdraw, version, runner)))
+        val notMine = send(HttpRequest.newBuilder(uri(withdraw)).header("Content-Type", "application/json")
+            .header("Idempotency-Key", UUID.randomUUID().toString()).POST(HttpRequest.BodyPublishers.ofString(version)), runner)
+        assertEquals(404, notMine.statusCode())
+        assertTrue("no-store" in notMine.headers().firstValue("Cache-Control").orElse(""))
     }
 
     @Test
@@ -681,6 +725,47 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         ))
         assertEquals(400, post("$root/$sellerId/reject", """{"revision":1,"reason":"  "}""", admin).statusCode())
         assertEquals(404, get("$root/${UUID.randomUUID()}", admin).statusCode())
+    }
+
+    @Test
+    fun `the payout hold confirm is admin only`() {
+        val route = "/api/v1/admin/flags/${UUID.randomUUID()}/payout-hold"
+        for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+            assertEquals(if (token == null) 401 else 403, post(route, "", token).statusCode())
+        }
+        val missing = post(route, "", adminToken())
+        assertEquals(404, missing.statusCode())
+        assertTrue("FLAG_NOT_FOUND" in missing.body(), missing.body())
+    }
+
+    @Test
+    fun `the batch hide, its list and the single restore are admin only`() {
+        val flag = UUID.randomUUID()
+        val routes = listOf(
+            "POST" to "/api/v1/admin/flags/$flag/hide-batch",
+            "GET" to "/api/v1/admin/flags/$flag/hidden-photos",
+            "POST" to "/api/v1/admin/flags/$flag/hidden-photos/${UUID.randomUUID()}/restore",
+        )
+        for ((method, route) in routes) {
+            for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+                val response = if (method == "GET") get(route, token) else post(route, """{"eventId":"${UUID.randomUUID()}"}""", token)
+                assertEquals(if (token == null) 401 else 403, response.statusCode(), "$method $route")
+            }
+            val missing = if (method == "GET") get(route, adminToken()) else post(route, """{"eventId":"${UUID.randomUUID()}"}""", adminToken())
+            assertEquals(404, missing.statusCode(), "$method $route")
+            assertTrue("FLAG_NOT_FOUND" in missing.body(), missing.body())
+        }
+    }
+
+    @Test
+    fun `the relevance evidence read is admin only`() {
+        val route = "/api/v1/admin/flags/${UUID.randomUUID()}/relevance"
+        for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+            assertEquals(if (token == null) 401 else 403, get(route, token).statusCode())
+        }
+        val missing = get(route, adminToken())
+        assertEquals(404, missing.statusCode())
+        assertTrue("FLAG_NOT_FOUND" in missing.body(), missing.body())
     }
 
     @Test

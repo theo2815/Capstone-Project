@@ -635,6 +635,99 @@ class PhotoRemovalAdminIntegrationTest : PostgresIntegrationTest() {
         verify(storage, never()).put(anyString(), any(ByteArray::class.java) ?: byteArrayOf(), anyString())
     }
 
+    // RD-6: runner cases, built directly the way RD-4's submit leaves them.
+    private fun runnerCase(status: RemovalRequestStatus = RemovalRequestStatus.OPEN): PhotoRemovalRequest {
+        val runner = user(Role.RUNNER)
+        return requests.saveAndFlush(PhotoRemovalRequest(eventId = event.id, eventIdSnapshot = event.id, eventNameSnapshot = event.name,
+            requesterUserId = runner.id, requesterContact = runner.email, supportReference = "Runner request", requesterReason = "PRIVACY",
+            publicToOwnerReason = "Privacy removal request", creatorId = runner.id, creationCommandId = UUID.randomUUID(),
+            status = status, source = RemovalRequestSource.RUNNER, livenessBand = RunnerLivenessBand.PASS))
+    }
+    private fun ownedPhoto(owner: User, faces: Short? = 1) = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id,
+        s3Key = "synthetic/${UUID.randomUUID()}.jpg", pricePhp = BigDecimal("125")).apply { faceCount = faces })
+    private fun runnerItem(case: PhotoRemovalRequest, photo: Photo, state: RemovalItemState, review: PhotoRemovalReview? = null) =
+        items.saveAndFlush(PhotoRemovalItem(requestId = case.id, photoIdSnapshot = photo.id, photoId = photo.id,
+            ownerIdSnapshot = photo.photographerId, reviewId = review?.id, state = state, matchSource = RemovalMatchSource.SELFIE,
+            matchScore = 0.995, verifiedAt = if (state == RemovalItemState.VERIFIED) Instant.now() else null))
+    private fun reviewFor(case: PhotoRemovalRequest, owner: User) =
+        reviews.saveAndFlush(PhotoRemovalReview(requestId = case.id, ownerIdSnapshot = owner.id, ownerId = owner.id))
+    private fun version(case: PhotoRemovalRequest) = requests.findById(case.id).orElseThrow().version
+    private fun removeAll(case: PhotoRemovalRequest, vararg selected: PhotoRemovalItem) = DecideRemovalCommand(UUID.randomUUID(), version(case),
+        selected.map { RemovalItemDecision(it.id, RemovalDecision.REMOVE, "Synthetic decision") }, urgentReason = "Synthetic urgent review")
+
+    @Autowired lateinit var notifier: PhotoRemovalNotifier
+    @Autowired lateinit var photographerMessages: PhotographerMessageRepository
+
+    @Test fun `promote into a notified review stores a second photographer message with a new deadline`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val case = runnerCase()
+        val review = reviewFor(case, owner)
+        runnerItem(case, ownedPhoto(owner), RemovalItemState.VERIFIED, review) // an auto-hide the owner is told about
+        notifier.attempt(review.id)
+        val first = reviews.findById(review.id).orElseThrow()
+        assertNotNull(first.deadline)
+        val suggestion = runnerItem(case, ownedPhoto(owner), RemovalItemState.CANDIDATE)
+
+        service.reviewSuggestions(admin.id, case.id, ReviewSuggestionsCommand(UUID.randomUUID(), version(case), promote = listOf(suggestion.id)))
+
+        val again = reviews.findById(review.id).orElseThrow()
+        assertTrue(again.deadline!! > first.deadline!!)
+        assertNotEquals(first.notifiedMessageId, again.notifiedMessageId)
+        val notices = photographerMessages.findByPhotographerIdOrderByCreatedAtDescIdAsc(owner.id)
+            .filter { it.kind == PhotographerMessageKind.PHOTO_REMOVAL_REQUEST }
+        assertEquals(2, notices.size)
+        assertEquals(review.id, items.findById(suggestion.id).orElseThrow().reviewId)
+    }
+
+    @Test fun `the list filters by source`() {
+        val support = create()
+        val runner = runnerCase()
+        val runners = queries.list(admin.id, event.id, null, null, 0, 50, RemovalRequestSource.RUNNER).items
+        assertEquals(listOf(runner.id), runners.map { it.id })
+        assertEquals(RemovalRequestSource.RUNNER to RunnerLivenessBand.PASS, runners.single().source to runners.single().livenessBand)
+        assertEquals(listOf(support.id), queries.list(admin.id, event.id, null, null, 0, 50, RemovalRequestSource.SUPPORT).items.map { it.id })
+        assertEquals(2, queries.list(admin.id, event.id, null, null, 0, 50).items.size)
+        val page = mapper.readTree(get("/api/v1/admin/photo-removal-requests?eventId=${event.id}&source=RUNNER", admin).response.body())
+        assertEquals(listOf(runner.id.toString()), page.path("data").path("items").map { it.path("id").asText() })
+    }
+
+    @Test fun `needsAction finds a case with only suggestions`() {
+        val case = runnerCase()
+        runnerItem(case, ownedPhoto(user(Role.PHOTOGRAPHER)), RemovalItemState.CANDIDATE)
+        assertTrue(case.id in queries.list(admin.id, event.id, null, true, 0, 50).items.map { it.id })
+        assertFalse(case.id in queries.list(admin.id, event.id, null, false, 0, 50).items.map { it.id })
+    }
+
+    @Test fun `bulk REMOVE with a group photo is refused, one at a time is allowed`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val case = runnerCase()
+        val review = reviewFor(case, owner)
+        val group = runnerItem(case, ownedPhoto(owner, faces = 3), RemovalItemState.VERIFIED, review)
+        val solo = runnerItem(case, ownedPhoto(owner, faces = 1), RemovalItemState.VERIFIED, review)
+        val detail = queries.adminDetail(admin.id, case.id)
+        assertEquals(mapOf(group.id to true, solo.id to false), detail.items.associate { it.id to it.otherPeopleVisible })
+        assertEquals(3, detail.items.single { it.id == group.id }.faceCount)
+
+        val refused = assertFailsWith<ApiException> { service.decide(admin.id, case.id, removeAll(case, group, solo)) }
+        assertEquals(400 to "Decide photos with other people one at a time", refused.status.value() to refused.message)
+        assertEquals(RemovalItemState.VERIFIED, items.findById(group.id).orElseThrow().state)
+
+        service.decide(admin.id, case.id, removeAll(case, group))
+        // Accepted; with storage mocked the in-request cleanup may already have erased it (REMOVED).
+        assertEquals(RemovalDecision.REMOVE, items.findById(group.id).orElseThrow().adminDecision)
+        assertNull(items.findById(solo.id).orElseThrow().adminDecision)
+    }
+
+    @Test fun `support cases keep bulk REMOVE`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val case = requests.findById(create().id).orElseThrow().apply { status = RemovalRequestStatus.OPEN }.let { requests.saveAndFlush(it) }
+        val review = reviewFor(case, owner)
+        val a = runnerItem(case, ownedPhoto(owner, faces = 4), RemovalItemState.VERIFIED, review)
+        val b = runnerItem(case, ownedPhoto(owner, faces = null), RemovalItemState.VERIFIED, review)
+        service.decide(admin.id, case.id, removeAll(case, a, b))
+        assertEquals(listOf(RemovalDecision.REMOVE, RemovalDecision.REMOVE), listOf(a, b).map { items.findById(it.id).orElseThrow().adminDecision })
+    }
+
     private fun upload(path: String, bytes: ByteArray, command: String, version: String): Response {
         val boundary = "task4-${UUID.randomUUID()}"
         val output = ByteArrayOutputStream()

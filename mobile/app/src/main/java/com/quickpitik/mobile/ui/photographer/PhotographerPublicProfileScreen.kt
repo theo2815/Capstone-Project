@@ -59,6 +59,8 @@ import com.quickpitik.mobile.data.remote.PhotoDto
 import com.quickpitik.mobile.data.remote.PhotographerEventCoverageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.common.PhotoPreview
+import com.quickpitik.mobile.ui.common.ReportAction
+import com.quickpitik.mobile.ui.common.ReportTarget
 import com.quickpitik.mobile.ui.common.PhotoPreviewMode
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.gridTileUrl
@@ -180,6 +182,10 @@ fun PhotographerPublicProfileScreen(
                         append("Member since ${profile.memberSince ?: "2026"}")
                     }
                     Text(sub, style = Typography.bodySmall, color = SlateSoft)
+                    // Not on your own profile preview (website: no Report link for the owner).
+                    if (!ownerReview) {
+                        profile.handle?.let { ReportAction(ReportTarget.Photographer(it)) }
+                    }
 
                     if (!profile.bio.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(16.dp))

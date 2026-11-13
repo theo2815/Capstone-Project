@@ -2,7 +2,10 @@ package com.quickpitik.mobile.ui.runner
 
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
+import com.google.gson.Gson
 import com.quickpitik.mobile.data.local.SessionManager
+import com.quickpitik.mobile.data.remote.CartItemDto
+import com.quickpitik.mobile.data.remote.payableItems
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
 import com.quickpitik.mobile.support.awaitFirst
@@ -301,6 +304,33 @@ class CartViewModelTest {
         assertEquals(2, previews().size)
     }
 
+    // AA-I20b: a suspended photographer's photo comes back from GET /me/cart?includeUnavailable=true
+    // with available: false. It stays in the cart (with Remove) but is never priced or checked out.
+    @Test fun `item with available=false is excluded from the total`() {
+        cart = UNAVAILABLE_CART
+        val vm = newVm()
+        assertEquals(100.0, vm.cartTotal.awaitFirst { it > 0.0 }, 0.0)
+        assertEquals(2, vm.cartItems.value.size)
+        assertTrue(fullPaths.toString(), fullPaths.any { it == "/api/v1/me/cart?includeUnavailable=true" })
+    }
+
+    @Test fun `cart item without available counts as available`() {
+        val old = Gson().fromJson(CART, Array<CartItemDto>::class.java).toList()
+        assertNull(old.first().available)
+        assertEquals(listOf("p1", "p2"), payableItems(old).map { it.photoId })
+    }
+
+    @Test fun `checkout and the coupon preview send only the available items`() {
+        cart = UNAVAILABLE_CART
+        val vm = newVm()
+        vm.previewAndWait(null)
+        assertTrue(previews().single(), previews().single().contains(""""photoIds":["p1"]"""))
+        vm.checkout(null)
+        vm.checkoutState.awaitFirst { it is CheckoutState.AwaitingQr }
+        val body = orderBodies().single()
+        assertTrue(body, body.contains("\"p1\"") && !body.contains("\"p2\""))
+    }
+
     // Signs the runner out and a different runner in on the same phone, the way
     // MainActivity's sign-out and the login screen do.
     private fun switchAccount() = SessionManager.getInstance(application).run {
@@ -420,6 +450,7 @@ class CartViewModelTest {
         const val DETAIL = """{"id":"o1","eventId":"e1","photoIds":["p1"],"total":100.0,"paymentMethod":"GCASH","paidAt":null,"eventName":null,"eventSlug":null,"status":"PAID","photos":[]}"""
         const val DISPUTE = """{"id":"d1","photoId":"p1","reason":"OTHER","note":"","status":"WITHDRAWN","openedAt":"2026-09-11T00:00:00Z"}"""
         const val CART = """[{"photoId":"p1","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":"B-1","eventName":"Run","eventSlug":"run","tone":null,"time":null},{"photoId":"p2","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null}]"""
+        const val UNAVAILABLE_CART = """[{"photoId":"p1","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":"B-1","eventName":"Run","eventSlug":"run","tone":null,"time":null,"available":true},{"photoId":"p2","eventId":"e1","thumbnailUrl":null,"price":150.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null,"available":false}]"""
         fun qrOrder(expiresAt: String = "2099-01-01T00:00:00Z", returnToken: String? = null): String {
             val token = returnToken?.let { "\"$it\"" } ?: "null"
             return """{"id":"o1","status":"PENDING","items":[{"photoId":"p1","price":100.0}],"totalAmount":200.0,"checkoutTotalAmount":250.0,"paymentMethod":"qrph","createdAt":"2026-09-11T00:00:00Z",""" +

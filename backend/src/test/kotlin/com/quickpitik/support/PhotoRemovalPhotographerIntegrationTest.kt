@@ -439,4 +439,23 @@ class PhotoRemovalPhotographerIntegrationTest : PostgresIntegrationTest() {
             }
         }
     }
+
+    // R8 (RD-4): a runner's suggestion stays with the admin; the photographer sees only the photo hidden for review.
+    @Test fun `a photographer's case view lists no suggestions`() {
+        val owner = user(); val hidden = photo(owner); val suggested = photo(owner)
+        val (id, result) = service.runnerCase(user(Role.RUNNER), event, matched(hidden to 0.995, suggested to 0.95))
+        fixtureCases += id
+        assertEquals(1 to 1, result.hiddenCount to result.suggestedCount)
+        val view = get(owner, id)
+        assertEquals(200, view.statusCode())
+        assertEquals(listOf(hidden.id.toString()), data(view)["items"].map { it["photoIdSnapshot"].asText() })
+        // A demoted item (back to CANDIDATE, its review kept) leaves the photographer's view too.
+        items.findByRequestIdOrderByIdAsc(id).single { it.photoIdSnapshot == hidden.id }.apply { state = RemovalItemState.CANDIDATE; items.saveAndFlush(this) }
+        assertEquals(404, get(owner, id).statusCode())
+        // An owner with only suggestions is never shown the case.
+        val other = user(); val onlySuggested = photo(other)
+        val (second, _) = service.runnerCase(user(Role.RUNNER), event, matched(onlySuggested to 0.95))
+        fixtureCases += second
+        assertEquals(404, get(other, second).statusCode())
+    }
 }

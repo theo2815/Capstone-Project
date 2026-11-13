@@ -4,7 +4,9 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminDisputeDto
 import com.quickpitik.dto.admin.DenyDisputeRequest
+import com.quickpitik.dto.admin.DisputeDenyReasonDto
 import com.quickpitik.dto.admin.EscalateDisputeRequest
+import com.quickpitik.dto.admin.MarkRefundedRequest
 import com.quickpitik.dto.admin.ResolveDisputeRequest
 import com.quickpitik.dto.admin.SendRefundLinkRequest
 import com.quickpitik.security.AuthPrincipal
@@ -34,14 +36,19 @@ class AdminDisputesController(
 
     @GetMapping
     fun list(
+        @RequestParam(required = false) view: String?,
         @RequestParam(required = false) status: String?,
         @RequestParam(required = false) q: String?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
-    ): PaginatedResponse<AdminDisputeDto> {
-        @Suppress("UNUSED_VARIABLE") val _q = q
-        return adminDisputeService.list(status, PaginationParams.of(offset, limit))
-    }
+    ): PaginatedResponse<AdminDisputeDto> =
+        adminDisputeService.list(view, status, q, PaginationParams.of(offset, limit))
+
+    @GetMapping("/deny-reasons")
+    fun denyReasons(): PaginatedResponse<DisputeDenyReasonDto> = adminDisputeService.denyReasons()
+
+    @GetMapping("/{disputeId}")
+    fun get(@PathVariable disputeId: UUID): AdminDisputeDto = adminDisputeService.get(disputeId)
 
     @PostMapping("/{disputeId}/resolve")
     fun resolve(
@@ -65,9 +72,10 @@ class AdminDisputesController(
     fun markRefunded(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable disputeId: UUID,
+        @RequestBody(required = false) body: MarkRefundedRequest?,
     ): AdminDisputeDto {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
-        return adminDisputeService.markRefunded(principal.userId, disputeId)
+        return adminDisputeService.markRefunded(principal.userId, disputeId, body?.refundReference)
     }
 
     @PostMapping("/{disputeId}/deny")
@@ -75,7 +83,7 @@ class AdminDisputesController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable disputeId: UUID,
         @Valid @RequestBody body: DenyDisputeRequest,
-    ): AdminDisputeDto = adminDisputeService.deny(principal.userId, disputeId, body.reason)
+    ): AdminDisputeDto = adminDisputeService.deny(principal.userId, disputeId, body.reason, body.reasonCode, body.note)
 
     @PostMapping("/{disputeId}/escalate")
     fun escalate(

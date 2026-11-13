@@ -140,7 +140,7 @@ class SystemFlagServiceTest {
 
     @Test
     fun `every reason fits the 40-character column`() {
-        assertEquals(12, SystemFlagReason.entries.size)
+        assertEquals(14, SystemFlagReason.entries.size) // RD-6 runner_removal_held, PE-2.1 batch_relevance_low
         assertTrue(SystemFlagReason.entries.all { it.wire.length <= 40 && it.wire == it.name.lowercase() })
     }
 }

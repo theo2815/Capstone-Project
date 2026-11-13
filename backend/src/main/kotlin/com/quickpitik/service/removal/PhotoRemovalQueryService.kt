@@ -66,7 +66,8 @@ class PhotoRemovalQueryService(
     internal fun photographerSnapshot(photographerId: UUID, requestId: UUID): OwnerSnapshot {
         // A later item snapshot may safely carry an older version; the reverse permits stale edits.
         val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
-        val owned = items.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId)
+        // R8: a suggestion stays with the admin until promoted.
+        val owned = items.findByRequestIdAndOwnerIdSnapshotOrderByIdAsc(requestId, photographerId).filter { it.state != RemovalItemState.CANDIDATE }
         if (owned.isEmpty()) removalNotFound()
         val pendingOwnerReviews = items.findPendingOwnerReviewItemIds(requestId).toSet()
         val current = photos.findAllById(owned.mapNotNull { it.photoId }).associateBy { it.id }
@@ -227,13 +228,17 @@ class PhotoRemovalQueryService(
         val groups = reviews.findByRequestIdOrderByIdAsc(requestId)
         val detail = request.toAdminDto(selected, groups)
         val pendingOwnerReviews = items.findPendingOwnerReviewItemIds(requestId).toSet()
+        val faces = photos.findAllById(selected.mapNotNull { it.photoId }).associate { it.id to it.faceCount }
         val hydrated = detail.items.map { item ->
             val job = item.cleanupJobId?.let { jobs.findById(it).orElse(null) }
+            val face = selected.single { it.id == item.id }.photoId?.let { faces[it] }
             item.copy(cleanupState = job?.outcome?.name ?: if (selected.single { it.id == item.id }.photoId == null) "UNCONFIRMED" else null,
                 state = if (item.state == RemovalItemState.REMOVED && !job.confirms(item.photoIdSnapshot)) RemovalItemState.REMOVAL_AUTHORIZED else item.state,
                 reviewOwnerId = groups.find { it.id == item.reviewId }?.ownerIdSnapshot,
-                ownerReviewPending = item.id in pendingOwnerReviews)
+                ownerReviewPending = item.id in pendingOwnerReviews,
+                faceCount = face?.toInt(), otherPeopleVisible = otherPeopleVisible(face))
         }
+        val requester = request.requesterUserId?.let { users.findById(it).orElse(null) }
         val reopened = hydrated.any { it.state == RemovalItemState.REMOVAL_AUTHORIZED } && request.status == RemovalRequestStatus.RESOLVED
         return detail.copy(items = hydrated, status = if (reopened) RemovalRequestStatus.RESOLVING else detail.status,
             resolvedAt = detail.resolvedAt.takeUnless { reopened },
@@ -242,14 +247,18 @@ class PhotoRemovalQueryService(
                 pendingOwnerReviews = pendingOwnerReviews.size.toLong()),
             guestBuyerRemovalNotices = history.findGuestBuyerNotices(requestId).map {
                 GuestBuyerRemovalNoticeDto(it.noticeId, it.orderId, it.photoId, it.occurredAt, it.status, it.recipientEmail)
-            })
+            },
+            requesterEmailVerified = requester?.let { it.emailVerifiedAt != null },
+            requesterAccountCreatedAt = requester?.createdAt?.toInstant())
     }
 
-    fun list(adminId: UUID, eventId: UUID?, status: RemovalRequestStatus?, needsAction: Boolean?, offset: Int?, limit: Int?): RemovalPage<PhotoRemovalRequestDto> {
+    fun list(adminId: UUID, eventId: UUID?, status: RemovalRequestStatus?, needsAction: Boolean?, offset: Int?, limit: Int?,
+             source: RemovalRequestSource? = null): RemovalPage<PhotoRemovalRequestDto> {
         val params = removalPagination(offset, limit)
         val filter = Specification<PhotoRemovalRequest> { root, query, cb ->
             val predicates = mutableListOf<jakarta.persistence.criteria.Predicate>()
             eventId?.let { predicates += cb.equal(root.get<UUID>("eventIdSnapshot"), it) }
+            source?.let { predicates += cb.equal(root.get<RemovalRequestSource>("source"), it) }
             val pending = query!!.subquery(UUID::class.java)
             val pendingItem = pending.from(PhotoRemovalItem::class.java)
             val confirmed = pending.subquery(UUID::class.java)
@@ -320,7 +329,16 @@ internal fun PhotoRemovalRequest.toAdminDto(items: List<PhotoRemovalItem>, revie
         items.map { PhotoRemovalItemDto(it.id, it.photoIdSnapshot, it.ownerIdSnapshot, it.ownerNameSnapshot, it.reviewId, it.state,
             it.matchSource, it.matchScore, it.verificationActorId, it.verifiedAt, it.verificationReason, it.ownerResponse,
             it.ownerResponseReason, it.ownerRespondedAt, it.adminDecision, it.adminDecisionReason, it.adminDecisionActorId,
-            it.adminDecidedAt, it.retentionReviewAt, it.cleanupJobId, null) },
+            it.adminDecidedAt, it.retentionReviewAt, it.cleanupJobId, null, autoHidden = it.autoHiddenIn(this)) },
         reviews.map { PhotoRemovalReviewDto(it.id, it.ownerIdSnapshot, it.notifiedMessageId, it.notifiedAt, it.deadline,
-            it.overdue, it.overdueAt, it.unavailableReason) })
+            it.overdue, it.overdueAt, it.unavailableReason) },
+        source = source, livenessBand = livenessBand, riskFlags = riskFlags.toList(), reasonCode = reasonCode,
+        consentVersion = consentVersion)
 }
+
+/** RD-6: hidden by the system on a runner request (no verifying admin). */
+internal fun PhotoRemovalItem.autoHiddenIn(request: PhotoRemovalRequest) = request.source == RemovalRequestSource.RUNNER &&
+    state == RemovalItemState.VERIFIED && verificationActorId == null
+
+/** RD-6: a lower bound on the faces read (§ 1), so an unknown count counts as other people. */
+internal fun otherPeopleVisible(faceCount: Short?) = faceCount == null || faceCount >= 2

@@ -115,6 +115,16 @@ up (launch it, then poll `docker info` until it succeeds), then run the suite. "
 Docker was down" is not a verified test; only report an integration test unrun if the daemon
 genuinely won't start on this machine, and say so explicitly.
 
+**Before a PR, run locally:** all of `test`, plus the integration classes your change touches or
+adds (`.\gradlew.bat integrationTest --tests "*Payout*"`). The whole integration suite runs on the
+PR's required `integration` check (`.github/workflows/backend-tests.yml`), so wait for that to go
+green rather than running the whole suite on your machine. Run it locally only when the owner asks
+or CI can't run it.
+
+**One integration run per machine at a time.** Each run holds about 4 GB of memory plus its own
+Postgres container, and two at once slow each other down badly. If `docker ps` shows a
+`testcontainers/ryuk` container, another run is going: wait for it to finish.
+
 ### API docs
 
 With the app running, `http://localhost:8080/swagger-ui.html` (spec at `/v3/api-docs`).
@@ -132,7 +142,8 @@ ADMIN bearer. `qp.*` metrics: `qp.upload.duration`, `qp.upload.validation.durati
 `qp.watermark.cache{result}`, `qp.watermark.outcome{outcome}` (live/failed/transport, 2026-08-28),
 `qp.removal.erasure{outcome}`, `qp.removal.erasure.open`, `qp.removal.evidence{outcome}`,
 face search (2026-10-27): `qp.search.request{mode=oneshot|stored|library|alert}`, `qp.search.selfie.fetch`,
-`qp.search.photo.query`, `qp.ai.error{op,code}`, `qp.indexing.reconciled`, `qp.watermark.reconciled` —
+`qp.search.photo.query`, `qp.ai.error{op,code}`, `qp.indexing.reconciled`, `qp.indexing.released`, `qp.watermark.reconciled`,
+`qp.relevance.lookups`, `qp.relevance.scored{level}`, `qp.relevance.tick` —
 plus Hikari/JVM/HTTP-server metrics for free. Each face search also logs one INFO line
 (`face search mode=… total_ms=… r2_ms=… aws_ms=… query_ms=… results=…`); metrics reset on every deploy.
 
@@ -192,13 +203,14 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RACE_REPORT_HIDE_THRESHOLD` | `3` | Distinct accounts whose reports hide an unproven race. Not yet measured. |
 | `RACE_PRICE_CEILING_MULTIPLIER` | `2.0` | A photographer's own race price may go up to this times the race price (`PUT /me/photographer/events/{id}/price`, AA-R11). Owner decision D3. |
 | `RACE_PRICE_COOLDOWN` | `PT24H` | How long after a race price change the photographer must wait before the next one. Not yet measured. |
-| `RELEVANCE_MODE` | `off` | Photo-to-event relevance (PE-1) rollout and kill switch: `off` = the sweep does nothing; `shadow` = it writes relevance rows only. Never hides, holds or deletes. Independent of `AI_API_ENABLED`. Owner sets it. |
+| `RELEVANCE_MODE` | `off` | Photo-to-event relevance (PE-1) rollout and kill switch: `off` = the sweep does nothing; `shadow` = it writes relevance rows only; `flag` = a Low batch also opens or extends one admin flag per photographer (reason `batch_relevance_low`) and a date-rule Low may send the photographer one inbox note; behaves as `shadow` while `ADMIN_FLAGS_ENABLED` is off. Never hides, holds or deletes. Independent of `AI_API_ENABLED`. Owner sets it; an unknown value stops boot. |
 | `RELEVANCE_SWEEP_INTERVAL_MS` | `60000` | Cadence of the relevance sweep; also its first delay after boot. |
 | `RELEVANCE_QUIET_MINUTES` | `10` | A photographer's batch in an event is scored this long after their newest upload. |
 | `RELEVANCE_LOOKUPS_PER_TICK` | `100` | Copy look-ups per sweep tick, all batches together (1–1000). |
 | `RELEVANCE_MAX_BATCHES_PER_TICK` | `5` | Due batches read per sweep tick. |
 | `RELEVANCE_RESCORE_MINUTES` | `60` | Wait before re-scoring a batch that was still processing or reading EXIF. |
 | `RELEVANCE_SETTLE_DAYS` | `7` | After uploads close, stop waiting for late EXIF after this many days. |
+| `RELEVANCE_LOOKUP_TIMEOUT` | `5s` | Statement timeout of one copy look-up transaction; a slower one fails that batch's step and the next tick tries again. |
 | `RELEVANCE_COPY_TIGHT_DISTANCE` | `4` | pHash bits (0–64) within which an earlier photo by another photographer is a copy hit. Not yet measured (PE-0). |
 | `RELEVANCE_COPY_WEAK_DISTANCE` | `8` | Upper end of the weak-evidence band (≥ tight distance). Not yet measured (PE-0). |
 | `RELEVANCE_COPY_MIN_HITS` | `3` | Copy hits a batch needs before the copy rule can mark it Low. Not yet measured (PE-0). |
@@ -207,7 +219,8 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RELEVANCE_DATE_MIN_DATED_PHOTOS` | `10` | Photos with a capture time a batch needs before the date rule can mark it Low. Not yet measured (PE-0). |
 | `RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT` | `80` | Percent (1–100) of dated photos outside the window for Low. Not yet measured (PE-0). |
 | `IDENTITY_GATE_ENABLED` | `false` | Off = today's upload rule (any seller details not REJECTED). On = new uploads need seller details AUTO_APPROVED or APPROVED; MANUAL_REVIEW is refused too, still `403 SELLER_DETAILS_REQUIRED`; photos already reserved still finish (auto-approval AA-I6). |
-| `IDENTITY_GATE_STARTS_ON` | blank | The announced date the identity gate turns on (`YYYY-MM-DD`), sent as `identityGateStartsOn` on the photographer's seller-details responses. Blank = none; an invalid date fails boot. |
+| `IDENTITY_GATE_STARTS_ON` | blank | The announced date the identity gate turns on (`YYYY-MM-DD`), sent as `identityGateStartsOn` on the photographer's seller-details responses, and the date the identity notice email names (`POST /admin/identity-notice` refuses while it is blank). Blank = none; an invalid date fails boot. |
+| `IDENTITY_NOTICE_SEND_PER_SECOND` | `2` | How many identity-notice mails `POST /admin/identity-notice` sends a second (one at a time; 1-1000). Keep it under Resend's rate limit [NOT MEASURED] (auto-approval AA-I22). |
 | `LIVENESS_REGION` | `ap-southeast-5` | Region for AWS Face Liveness (session create, result read, the browser's STS keys). Needs IAM `rekognition:CreateFaceLivenessSession` + `GetFaceLivenessSessionResults` there. |
 | `LIVENESS_MIN_CONFIDENCE` | `95` | 0–100 liveness score an automatic identity pass needs. Strict until measured (AA-0.4). |
 | `FACE_MIN_SIMILARITY` | `99` | 0–100 CompareFaces similarity (live selfie vs ID front) an automatic pass needs. Strict until measured (AA-0.4). Not the runner face-search threshold. |
@@ -237,9 +250,13 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RUNNER_REMOVAL_PHOTOGRAPHER_DAILY` | `50` | Most auto-hides per photographer per event per day across runner requests; past it that photographer's matches become suggestions. |
 | `RUNNER_REMOVAL_CANDIDATE_LIMIT` | `50` | Most face matches a runner request asks the provider for (1-4096). |
 | `RUNNER_REMOVAL_EMAIL_CLAIM_STALE_AFTER` | `PT10M` | How long an email send claim may sit before the runner/photographer email sweeps retry it. |
-| `PHOTO_REMOVAL_EMAIL_SWEEP_INTERVAL` | `PT15M` | How often the sweep re-sends photographer removal emails whose send claim went stale and was never delivered (last 24 hours only). |
+| `PHOTO_REMOVAL_EMAIL_SWEEP_INTERVAL` | `PT15M` | How often the sweeps re-send photographer and runner removal emails whose send claim went stale and was never delivered (last 24 hours only). |
 | `RUNNER_REMOVAL_CHECKS_PER_DAY` | `3` | Live checks one account may start per Manila day (shared with the seller check). `0` closes runner deletion intake (kill switch). |
 | `RUNNER_REMOVAL_MAX_OPEN` | `3` | Open deletion requests one runner may have at once (1 or more). |
+| `DISPUTE_REVIEW_BUSINESS_DAYS` | `3` | Business days (Mon-Fri, Manila; holidays not skipped) an admin has to review an open or escalated dispute; drives its due time and overdue flag. |
+| `DISPUTE_REFUND_SEND_WITHIN` | `PT48H` | After a QR Ph refund is approved, how long the admin has to send the PayMongo refund link (earlier if PayMongo's refund window closes first). |
+| `DISPUTE_LINK_EXPIRING_SOON` | `PT24H` | A sent refund link is flagged "expiring soon" this long before it stops working. |
+| `DISPUTE_REFUND_STUCK_AFTER` | `PT24H` | An in-flight PayMongo refund older than this becomes a refund problem the admin must check. |
 | `DB_POOL_SIZE` | `10` | Hikari `maximum-pool-size`. |
 | `LOG_LEVEL_APP` | `INFO` | `com.quickpitik` log level (set `DEBUG` for local debugging). |
 | `API_DOCS_ENABLED` | `true` | Serves `/swagger-ui.html` + `/v3/api-docs`. **Set `false` in production** — a full route inventory is free reconnaissance. |

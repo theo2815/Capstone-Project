@@ -88,7 +88,7 @@ function buildSteps(
       number: "02",
       title: "Submit for verification",
       body:
-        "We'll look over your settings and approve within 1–2 business days. Uploads unlock as soon as we're done.",
+        "Submit your settings. Your studio goes live as soon as your identity check passes.",
       status:
         gate.kind === "incomplete"
           ? "locked"
