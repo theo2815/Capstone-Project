@@ -4,7 +4,9 @@ import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
+import com.quickpitik.service.ai.RekognitionAiClient
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.stereotype.Component
 
 // The one place that turns the relevance settings into what may run now (plan section 5.2).
@@ -13,9 +15,12 @@ class RelevanceSwitch(
     relevance: RelevanceProperties,
     admin: AdminProperties,
     aiApi: AiApiProperties,
+    private val rekognition: ObjectProvider<RekognitionAiClient>? = null,
 ) {
     val cutoffsSet: Boolean = relevance.junk.blurCutoff != null && relevance.junk.darkCutoff != null
     val aiEnabled: Boolean = aiApi.enabled
+    // The label check is on the Rekognition client only; with app.ai.provider=ai-api the bean is absent.
+    val canMeasure: Boolean get() = aiEnabled && rekognition?.getIfAvailable() != null
 
     // Version 1's flag mode until RV-1.10 retires it (P2). With the admin flags switch off nobody could
     // see or close a flag, so it raises none.

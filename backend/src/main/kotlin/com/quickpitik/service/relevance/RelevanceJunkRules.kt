@@ -55,6 +55,18 @@ internal fun band(batchPhotos: Int, sampled: Int, counts: SampleCounts, p: Relev
     else -> CaseBand.MIXED
 }
 
+// A photo with a measure error, or never measured (no label confidence stored), is left out.
+internal fun sampleCounts(scores: List<PhotoScores>, p: RelevanceProperties): SampleCounts {
+    val measured = scores.filter { it.measureError == null && it.personConf != null }
+    return SampleCounts(
+        measured = measured.size,
+        blurry = measured.count { isBlurry(it, p) == true },
+        dark = measured.count { isDark(it, p) == true },
+        notRace = measured.count { isNotRace(it, p) == true },
+        junk = measured.count { isJunk(it, p) == true },
+    )
+}
+
 // The share is within nearLinePoints of the dump line: take a second sample (G5).
 internal fun nearDumpLine(counts: SampleCounts, p: RelevanceProperties): Boolean =
     counts.measured > 0 &&

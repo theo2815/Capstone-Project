@@ -330,6 +330,117 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         @Param("uploadAt") uploadAt: OffsetDateTime,
         @Param("photos") photos: Int,
     ): Int
+
+    // RV-1.6 (plan 5.8, invariant 12): the four things the due query checks, read again before each later step.
+    @Query(value = """
+        SELECT EXISTS (SELECT 1 FROM batch_relevance br
+                       JOIN events e ON e.id = br.event_id AND e.deleted_at IS NULL AND e.hidden_at IS NULL
+                                    AND e.visibility = 'PUBLIC'
+                       JOIN users u ON u.id = br.photographer_id AND u.suspended_at IS NULL
+                       WHERE br.id = :id)
+    """, nativeQuery = true)
+    fun stillAllowed(@Param("id") id: UUID): Boolean
+
+    // RV-1.6 (S1): the case's sampled photos with no measurement and no error yet, in photo id order. A photo
+    // measured by an earlier check has its row already and is skipped. Trashed or removal photos are left out.
+    @Query(value = """
+        SELECT s.photo_id AS "photoId", p.s3_key AS "s3Key"
+        FROM relevance_case_photos s
+        JOIN photos p ON p.id = s.photo_id AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+        LEFT JOIN relevance_photo_checks r ON r.photo_id = s.photo_id
+        WHERE s.case_id = :caseId AND r.measured_at IS NULL AND r.measure_error IS NULL
+        ORDER BY s.photo_id
+        LIMIT :limit
+    """, nativeQuery = true)
+    fun nextToMeasure(@Param("caseId") caseId: UUID, @Param("limit") limit: Int): List<PhotoToMeasure>
+
+    // RV-1.6: one photo's DetectLabels scores, written only while the caller holds the batch's claim (R5). Fills
+    // the measurement columns only, so the words mark of RV-1.2 survives. Returns 0 for a lost claim.
+    @Modifying
+    @Query(value = """
+        INSERT INTO relevance_photo_checks
+            (photo_id, batch_id, measured_at, fg_sharpness, fg_brightness, sharpness, brightness, person_conf, race_conf)
+        SELECT :photoId, b.id, :now, CAST(:fgSharpness AS double precision), CAST(:fgBrightness AS double precision),
+               CAST(:sharpness AS double precision), CAST(:brightness AS double precision), :personConf, :raceConf
+        FROM batch_relevance b WHERE b.id = :batchId AND b.check_claim = :token
+        ON CONFLICT (photo_id) DO UPDATE SET
+            measured_at = EXCLUDED.measured_at, fg_sharpness = EXCLUDED.fg_sharpness,
+            fg_brightness = EXCLUDED.fg_brightness, sharpness = EXCLUDED.sharpness, brightness = EXCLUDED.brightness,
+            person_conf = EXCLUDED.person_conf, race_conf = EXCLUDED.race_conf
+    """, nativeQuery = true)
+    fun saveMeasurement(
+        @Param("photoId") photoId: UUID,
+        @Param("batchId") batchId: UUID,
+        @Param("token") token: UUID,
+        @Param("now") now: OffsetDateTime,
+        @Param("fgSharpness") fgSharpness: Double?,
+        @Param("fgBrightness") fgBrightness: Double?,
+        @Param("sharpness") sharpness: Double?,
+        @Param("brightness") brightness: Double?,
+        @Param("personConf") personConf: Double,
+        @Param("raceConf") raceConf: Double,
+    ): Int
+
+    // RV-1.6 (G4): a photo that can never be measured (BAD_IMAGE, NO_FILE). Never junk; left out of the share.
+    @Modifying
+    @Query(value = """
+        INSERT INTO relevance_photo_checks (photo_id, batch_id, measure_error)
+        SELECT :photoId, b.id, :error FROM batch_relevance b WHERE b.id = :batchId AND b.check_claim = :token
+        ON CONFLICT (photo_id) DO UPDATE SET measure_error = EXCLUDED.measure_error
+    """, nativeQuery = true)
+    fun saveMeasureError(
+        @Param("photoId") photoId: UUID,
+        @Param("batchId") batchId: UUID,
+        @Param("token") token: UUID,
+        @Param("error") error: String,
+    ): Int
+
+    // RV-1.6: a throttle, server error or timeout. The photo is tried again next tick; at :maxTries it is given up.
+    @Modifying
+    @Query(value = """
+        INSERT INTO relevance_photo_checks (photo_id, batch_id, measure_tries, measure_error)
+        SELECT :photoId, b.id, 1, CASE WHEN :maxTries <= 1 THEN 'GAVE_UP' END
+        FROM batch_relevance b WHERE b.id = :batchId AND b.check_claim = :token
+        ON CONFLICT (photo_id) DO UPDATE SET
+            measure_tries = relevance_photo_checks.measure_tries + 1,
+            measure_error = CASE WHEN relevance_photo_checks.measure_tries + 1 >= :maxTries THEN 'GAVE_UP'
+                                 ELSE relevance_photo_checks.measure_error END
+    """, nativeQuery = true)
+    fun saveMeasureRetry(
+        @Param("photoId") photoId: UUID,
+        @Param("batchId") batchId: UUID,
+        @Param("token") token: UUID,
+        @Param("maxTries") maxTries: Int,
+    ): Int
+
+    // RV-1.6: the stored scores of the case's sample (trashed and removal photos left out); junk is decided from
+    // them at read time (RelevanceJunkRules). An unmeasured photo comes back with every score null.
+    @Query(value = """
+        SELECT r.fg_sharpness AS "fgSharpness", r.fg_brightness AS "fgBrightness", r.sharpness AS "sharpness",
+               r.brightness AS "brightness", r.person_conf AS "personConf", r.race_conf AS "raceConf",
+               r.measure_error AS "measureError"
+        FROM relevance_case_photos s
+        JOIN photos p ON p.id = s.photo_id AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+        LEFT JOIN relevance_photo_checks r ON r.photo_id = s.photo_id
+        WHERE s.case_id = :caseId
+    """, nativeQuery = true)
+    fun sampleScores(@Param("caseId") caseId: UUID): List<PhotoScoresRow>
+}
+
+// RV-1.6: one sampled photo to measure; s3Key is the original, never the watermarked preview.
+interface PhotoToMeasure {
+    val photoId: UUID
+    val s3Key: String
+}
+
+interface PhotoScoresRow {
+    val fgSharpness: Double?
+    val fgBrightness: Double?
+    val sharpness: Double?
+    val brightness: Double?
+    val personConf: Double?
+    val raceConf: Double?
+    val measureError: String?
 }
 
 // RV-1.5 (plan 5.8). A batch is due when its event is public, not hidden and not deleted, its photographer is

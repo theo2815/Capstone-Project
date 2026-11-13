@@ -90,4 +90,19 @@ class RelevanceJunkRulesTest {
         assertFalse(nearDumpLine(counts(100, 76), p))
         assertFalse(nearDumpLine(counts(0, 0), p))
     }
+
+    @Test fun `sample counts leave out photos that could not be measured`() {
+        val scores = listOf(
+            good,
+            good.copy(fgSharpness = 1.0),
+            good.copy(brightness = 1.0),
+            good.copy(fgSharpness = 1.0, brightness = 1.0),
+            good.copy(personConf = 0.1, raceConf = 0.1),
+            good.copy(fgSharpness = 1.0, measureError = "GAVE_UP"),
+            PhotoScores(null, null, null, null, null, null, measureError = null),
+        )
+        assertEquals(SampleCounts(measured = 5, blurry = 2, dark = 2, notRace = 1, junk = 4), sampleCounts(scores, p))
+        assertEquals(SampleCounts(measured = 5, blurry = 0, dark = 0, notRace = 1, junk = 1), sampleCounts(scores, unset),
+            "with the cut-offs unset only the label rule counts")
+    }
 }

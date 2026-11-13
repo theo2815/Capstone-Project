@@ -100,6 +100,11 @@ data class RelevanceProperties(
         val maxBatchesPerTick: Int = 3,
         // How long a claim on a batch holds before another server copy may take it.
         val claimMinutes: Long = 10,
+        // Sampled photos measured per tick (one DetectLabels call each), on `workers` threads of their own.
+        val measuresPerTick: Int = 60,
+        val workers: Int = 2,
+        // A photo that hits a throttle, 5xx or timeout this many times is given up (GAVE_UP), never junk.
+        val measureMaxTries: Int = 5,
     ) {
         init {
             require(minBatchSize >= 1) { "minBatchSize must be at least 1" }
@@ -109,6 +114,9 @@ data class RelevanceProperties(
             require(tickIntervalMs >= 1) { "tickIntervalMs must be at least 1" }
             require(maxBatchesPerTick >= 1) { "maxBatchesPerTick must be at least 1" }
             require(claimMinutes >= 1) { "claimMinutes must be at least 1" }
+            require(measuresPerTick >= 1) { "measuresPerTick must be at least 1" }
+            require(workers >= 1) { "workers must be at least 1" }
+            require(measureMaxTries >= 1) { "measureMaxTries must be at least 1" }
         }
     }
 }

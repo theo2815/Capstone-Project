@@ -30,7 +30,8 @@ class RelevancePropertiesTest {
         assertEquals(RelevanceProperties.Junk(blurCutoff = null, darkCutoff = null, labelMinConfidence = 0.6,
             raceLabels = listOf("Running", "Marathon", "Road"), fitsBelowPercent = 10, dumpAbovePercent = 70), p.junk)
         assertEquals(RelevanceProperties.Check(minBatchSize = 30, nearLinePoints = 5, sampleSize = 300, countTrigger = 500,
-            tickIntervalMs = 15_000, maxBatchesPerTick = 3, claimMinutes = 10), p.check)
+            tickIntervalMs = 15_000, maxBatchesPerTick = 3, claimMinutes = 10, measuresPerTick = 60, workers = 2,
+            measureMaxTries = 5), p.check)
     }
 
     @Test fun `the yml binds every key and names its env override`() {
@@ -52,6 +53,7 @@ class RelevancePropertiesTest {
             "RELEVANCE_CHECK_MIN_BATCH_SIZE:30", "RELEVANCE_CHECK_NEAR_LINE_POINTS:5",
             "RELEVANCE_CHECK_SAMPLE_SIZE:300", "RELEVANCE_CHECK_COUNT_TRIGGER:500", "RELEVANCE_CHECK_TICK_INTERVAL_MS:15000",
             "RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3", "RELEVANCE_CHECK_CLAIM_MINUTES:10",
+            "RELEVANCE_CHECK_MEASURES_PER_TICK:60", "RELEVANCE_CHECK_WORKERS:2", "RELEVANCE_CHECK_MEASURE_MAX_TRIES:5",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
     }
 
@@ -105,6 +107,9 @@ class RelevancePropertiesTest {
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(tickIntervalMs = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(maxBatchesPerTick = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(claimMinutes = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(measuresPerTick = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(workers = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(measureMaxTries = 0) }
     }
 
     @Test fun `a tight distance above the weak distance is refused`() {
