@@ -4,6 +4,7 @@ import com.quickpitik.common.IdempotencyKey
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminPhotographerSettingsDto
+import com.quickpitik.dto.admin.ApproveUserRequest
 import com.quickpitik.dto.admin.AdminUserDetailDto
 import com.quickpitik.dto.admin.AdminUserRowDto
 import com.quickpitik.dto.admin.RejectUserRequest
@@ -59,6 +60,14 @@ class AdminUsersController(
         @PathVariable userId: UUID,
         @Valid @RequestBody body: RejectUserRequest,
     ): AdminUserRowDto = adminUserService.reject(principal.userId, userId, body.reason, body.expectedRevision)
+
+    @PostMapping("/{userId}/approve")
+    @Operation(description = "Release a PENDING photographer held after an admin reset or reject (R-10); 409 CONFLICT otherwise. It approves at once when identity has passed. Optional expectedRevision rejects stale review generations with 409.")
+    fun approve(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable userId: UUID,
+        @Valid @RequestBody(required = false) body: ApproveUserRequest?,
+    ): AdminUserRowDto = adminUserService.approveHeld(principal.userId, userId, body?.expectedRevision)
 
     @PostMapping("/{userId}/reset-verification")
     @Operation(description = "Reset a PENDING, APPROVED or legacy REJECTED photographer. Optional expectedRevision rejects stale review generations with 409.")

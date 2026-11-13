@@ -51,6 +51,25 @@ class WordListCheckerTest {
     }
 
     @Test
+    fun `a listed word with one Cyrillic look-alike letter still hits`() {
+        // second letter is Cyrillic a (U+0430), not Latin a
+        val word = "g\u0430go"
+        assertEquals(listOf(word), checker.hits(word, setOf(WordList.BAD_WORDS)))
+    }
+
+    @Test
+    fun `a name written wholly in another script has no hit`() {
+        assertTrue(checker.hits("\u041c\u0430\u0440\u0430\u0444\u043e\u043d \ud55c\uad6d \u4e2d\u6587", WordList.entries.toSet()).isEmpty())
+    }
+
+    @Test
+    fun `a mixed-script word is not a race word`() {
+        // "marathon" with a Cyrillic a is not folded into the race or non-race lists
+        assertTrue(checker.hits("m\u0430rathon", setOf(WordList.RACE_WORDS)).isEmpty())
+        assertTrue(checker.hits("m\u0430rathon", setOf(WordList.NON_RACE_WORDS)).isEmpty())
+    }
+
+    @Test
     fun `every list file loads and is non-empty`() {
         // One known entry from each of the five files (an empty file fails construction).
         assertEquals(listOf("fuck"), checker.hits("fuck", setOf(WordList.BAD_WORDS))) // en

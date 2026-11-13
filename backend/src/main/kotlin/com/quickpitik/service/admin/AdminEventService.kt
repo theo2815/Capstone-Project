@@ -694,7 +694,12 @@ class AdminEventService(
                 changes["pricePerPhoto"] = mapOf("from" to oldPriceStr, "to" to newPriceStr)
                 before["pricePerPhoto"] = oldPriceStr
                 after["pricePerPhoto"] = newPriceStr
-                racePriceService.applyFloor(event, newPrice, adminId)
+                // The native re-pricing flushes an earlier rename, so a name clash can surface here.
+                try {
+                    racePriceService.applyFloor(event, newPrice, adminId)
+                } catch (ex: DataIntegrityViolationException) {
+                    RaceEventService.rethrowRaceDuplicate(ex, "Another race already has this name on this date.")
+                }
                 event.pricePerPhoto = newPrice
             }
         }

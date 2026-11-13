@@ -37,6 +37,7 @@ import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.auth.RefreshTokenService
+import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.runner.RunnerMessagesService
@@ -66,6 +67,7 @@ class AdminUserService(
     private val adminActionCommandService: AdminActionCommandService,
     private val photographerMessageRepository: com.quickpitik.repository.PhotographerMessageRepository,
     private val runnerMessageRepository: com.quickpitik.repository.RunnerMessageRepository,
+    private val photographerSettingsService: PhotographerSettingsService,
 ) {
 
     @Transactional(readOnly = true)
@@ -145,6 +147,7 @@ class AdminUserService(
             settingsSnapshot = row.settingsSnapshot,
             decisionLog = log,
             verificationRevision = row.verificationRevision,
+            adminHold = row.adminHold,
         )
     }
 
@@ -222,6 +225,7 @@ class AdminUserService(
         // with the rejection reason carried in the decision log.
         s.verificationStatus = VerificationStatus.INCOMPLETE
         s.verificationRevision++
+        s.verificationAdminHold = true // R-10
         photographerSettingsRepository.save(s)
         val decision = adminDecisionLogService.logUserDecision(
             adminId = adminId,
@@ -246,6 +250,7 @@ class AdminUserService(
         requireVerificationState(s, VerificationStatus.PENDING, VerificationStatus.APPROVED, VerificationStatus.REJECTED)
         s.verificationStatus = VerificationStatus.INCOMPLETE
         s.verificationRevision++
+        s.verificationAdminHold = true // R-10
         photographerSettingsRepository.save(s)
         val decision = adminDecisionLogService.logUserDecision(
             adminId = adminId,
@@ -260,6 +265,25 @@ class AdminUserService(
             sourceAdminId = adminId,
             sourceDecisionId = decision.id,
         )
+        return hydrateRow(user, s)
+    }
+
+    // R-10: releases a profile held by a reject or reset. APPROVED is still written only by approveIfReady,
+    // so a profile whose identity has not passed stays PENDING and approves itself once it passes.
+    fun approveHeld(adminId: UUID, userId: UUID, expectedRevision: Long? = null): AdminUserRowDto {
+        val (user, settings) = lockUserAndSettings(userId)
+        val s = requirePhotographerSettings(user, settings, persistIfMissing = false)
+        requireVerificationRevision(s, expectedRevision)
+        if (s.verificationStatus != VerificationStatus.PENDING || !s.verificationAdminHold) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.CONFLICT,
+                "Only a pending profile held after a reset or reject can be approved here")
+        }
+        s.verificationAdminHold = false
+        photographerSettingsRepository.save(s)
+        val approved = photographerSettingsService.approveIfReady(userId)
+        // "approved" is the website's decision type; the reason says when the profile stays pending.
+        adminDecisionLogService.logUserDecision(adminId = adminId, targetUserId = userId, decision = "approved",
+            reason = if (approved) null else "Hold released; goes live when the identity check passes")
         return hydrateRow(user, s)
     }
 
@@ -543,6 +567,7 @@ class AdminUserService(
             suspensionReason = user.suspensionReason,
             settingsSnapshot = snapshot,
             verificationRevision = settings?.verificationRevision ?: 0,
+            adminHold = settings?.verificationAdminHold == true,
         )
     }
 

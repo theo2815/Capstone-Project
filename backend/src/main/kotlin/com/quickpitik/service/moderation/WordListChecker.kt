@@ -28,10 +28,19 @@ class WordListChecker internal constructor(dir: String) {
     /** Distinct normalised entries found in [text]; empty = clean. */
     fun hits(text: String, lists: Set<WordList>): List<String> {
         val tokens = tokens(text)
-        return lists.flatMap { entries.getValue(it) }
-            .filter { entry -> tokens.windowed(entry.size).any { it == entry } }
-            .map { it.joinToString(" ") }
-            .distinct()
+        // R-15: a Latin word with look-alike letters from another alphabet is a bad-word hit (bad-word lists only).
+        val mixed = if (WordList.BAD_WORDS in lists) tokens.filter(::mixesLatinWithOtherScript) else emptyList()
+        return (
+            lists.flatMap { entries.getValue(it) }
+                .filter { entry -> tokens.windowed(entry.size).any { it == entry } }
+                .map { it.joinToString(" ") } + mixed
+            ).distinct()
+    }
+
+    private fun mixesLatinWithOtherScript(token: String): Boolean {
+        val scripts = token.codePoints().mapToObj { Character.UnicodeScript.of(it) }.toList().toSet() -
+            setOf(Character.UnicodeScript.COMMON, Character.UnicodeScript.INHERITED)
+        return Character.UnicodeScript.LATIN in scripts && scripts.size > 1
     }
 
     private fun load(path: String): List<List<String>> {

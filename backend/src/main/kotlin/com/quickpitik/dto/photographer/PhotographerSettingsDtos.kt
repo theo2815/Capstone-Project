@@ -139,6 +139,8 @@ data class VerificationSubmitResponseDto(
     val missingCodes: List<String>? = null,
     val suspendedAt: String? = null,
     val suspensionReason: String? = null,
+    // R-10: PENDING and held after an admin reset or reject; only an admin's approve releases it.
+    val awaitingAdmin: Boolean = false,
 )
 
 // The 8 required settings a photographer must fill before submitting for

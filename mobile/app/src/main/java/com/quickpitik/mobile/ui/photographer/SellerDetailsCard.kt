@@ -20,7 +20,9 @@ import com.quickpitik.mobile.ui.theme.Kicker
 import com.quickpitik.mobile.ui.theme.QpCard
 import com.quickpitik.mobile.ui.theme.Typography
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.util.Locale
 
 /** What the seller-details card shows; null means no card (verified, unknown, or the read failed). */
 sealed class SellerDetailsCard {
@@ -47,6 +49,11 @@ internal fun sellerDetailsCard(
     )
     else -> null
 }
+
+/** R-18: the gate date as "Nov 17, 2026"; text that is not an ISO date is shown as sent. */
+internal fun sellerDueDateLabel(iso: String): String = try {
+    LocalDate.parse(iso).format(DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US))
+} catch (_: DateTimeParseException) { iso }
 
 // SC-3: the form lives on the website (plan § 3.9), so the card only explains and links there.
 @Composable
@@ -76,7 +83,7 @@ fun SellerDetailsCardView(card: SellerDetailsCard, onReturn: () -> Unit, modifie
                     "Your seller details were not accepted: ${card.reason ?: "no reason given"}. Send them again on quickpitik.com."
                 is SellerDetailsCard.ManualReview -> when {
                     card.paused -> "An admin is checking your seller details. Uploads resume when they approve."
-                    card.dueDate != null -> "Before ${card.dueDate}, take the live selfie check on quickpitik.com to keep uploading."
+                    card.dueDate != null -> "Before ${sellerDueDateLabel(card.dueDate)}, take the live selfie check on quickpitik.com to keep uploading."
                     else -> "An admin is checking your seller details. You can upload meanwhile."
                 }
             },

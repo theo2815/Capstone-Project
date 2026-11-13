@@ -48,8 +48,11 @@ class DuplicateMatcher(
         if (daysApart > dateToleranceDays) return 0.0
 
         val inputTokens = keyTokens(input.name)
-        var score = (setOf(nameKey(candidate.name)) + candidate.aliasKeys)
-            .maxOf { jaccard(inputTokens, it.split(' ').filter(String::isNotEmpty).toSet()) }
+        val keys = (setOf(nameKey(candidate.name)) + candidate.aliasKeys)
+            .map { it.split(' ').filter(String::isNotEmpty).toSet() }
+        var score = keys.maxOf { jaccard(inputTokens, it) }
+        // A name wholly inside another (two or more words) is a similar race, never a strong one by itself.
+        val contained = keys.any { contains(inputTokens, it) }
 
         if (!input.organizerName.isNullOrBlank() && !candidate.organizerName.isNullOrBlank() &&
             jaccard(keyTokens(input.organizerName), keyTokens(candidate.organizerName)) >= ORGANIZER_OVERLAP
@@ -58,6 +61,7 @@ class DuplicateMatcher(
         }
         if (daysApart >= 1) score -= ONE_DAY_PENALTY
         score = score.coerceIn(0.0, 1.0)
+        if (contained) score = maxOf(score, Math.nextDown(strongScore))
         // Two known, different provinces: never strong, at most an admin decision.
         if (input.provinceCode != null && candidate.provinceCode != null && input.provinceCode != candidate.provinceCode) {
             score = minOf(score, Math.nextDown(strongScore))
@@ -83,9 +87,39 @@ class DuplicateMatcher(
             .filter { it.isNotEmpty() && it !in FILLER && !DROPPED.matches(it) }
             .toSet()
 
+    /** Shared words over all words, where a word with one wrong, added or missing letter counts as shared. */
     private fun jaccard(a: Set<String>, b: Set<String>): Double {
-        val union = a union b
-        return if (union.isEmpty()) 0.0 else (a intersect b).size.toDouble() / union.size
+        val union = a.size + b.size - matched(a, b)
+        return if (union == 0) 0.0 else matched(a, b).toDouble() / union
+    }
+
+    /** How many words of [a] have a distinct matching word in [b]. */
+    private fun matched(a: Set<String>, b: Set<String>): Int {
+        val free = b.toMutableList()
+        return a.count { x -> free.firstOrNull { sameWord(x, it) }?.let(free::remove) != null }
+    }
+
+    private fun contains(a: Set<String>, b: Set<String>): Boolean {
+        val shorter = if (a.size <= b.size) a else b
+        return shorter.size >= 2 && matched(shorter, if (shorter === a) b else a) == shorter.size
+    }
+
+    private fun sameWord(x: String, y: String): Boolean {
+        if (x == y) return true
+        if (x.length < MIN_TYPO_LENGTH || y.length < MIN_TYPO_LENGTH || abs(x.length - y.length) > 1) return false
+        var i = 0
+        var j = 0
+        var edits = 0
+        while (i < x.length && j < y.length) {
+            if (x[i] == y[j]) { i++; j++; continue }
+            if (++edits > 1) return false
+            when {
+                x.length == y.length -> { i++; j++ }
+                x.length > y.length -> i++
+                else -> j++
+            }
+        }
+        return edits + (x.length - i) + (y.length - j) <= 1
     }
 
     private companion object {
@@ -97,6 +131,8 @@ class DuplicateMatcher(
             "the", "a", "an", "of", "and", "at", "in", "sa", "ng",
             "annual", "edition", "official", "presents", "presented", "by",
         )
+        // Both words need this many letters before one wrong letter is forgiven ("Maraton"); "fun"/"sun" stay apart.
+        const val MIN_TYPO_LENGTH = 5
         const val ORGANIZER_OVERLAP = 0.5
         const val ORGANIZER_BONUS = 0.1
         const val ONE_DAY_PENALTY = 0.05

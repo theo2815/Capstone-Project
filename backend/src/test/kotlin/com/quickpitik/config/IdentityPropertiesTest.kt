@@ -27,6 +27,11 @@ class IdentityPropertiesTest {
     }
 
     @Test
+    fun `a limit below one fails boot`() {
+        assertFailsWith<IllegalArgumentException> { IdentityProperties(maxFailedAutoChecks = 0) }
+    }
+
+    @Test
     fun `application yml binds the secret and one format env per id type`() {
         val env = StandardEnvironment()
         env.propertySources.addFirst(MapPropertySource("test", mapOf("ID_NUMBER_FORMAT_DRIVERS_LICENSE" to "[A-Z]\\d{10}")))
@@ -35,6 +40,7 @@ class IdentityPropertiesTest {
         val bound = Binder.get(env).bind("app.identity", IdentityProperties::class.java).get()
 
         assertEquals("dev-only-id-number-hmac-secret", bound.idNumberHmacSecret)
+        assertEquals(3, bound.maxFailedAutoChecks)
         assertEquals(SellerIdType.entries.toSet(), bound.idNumberFormats.keys)
         assertEquals("[A-Z]\\d{10}", bound.idNumberFormats[SellerIdType.DRIVERS_LICENSE])
         assertTrue(bound.idNumberFormats.filterKeys { it != SellerIdType.DRIVERS_LICENSE }.values.all { it.isBlank() })

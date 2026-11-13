@@ -50,6 +50,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
   "img-src 'self' data: blob: https: http://localhost:8080",
   "font-src 'self' data:",
+  // The wss host below is the liveness region (backend LIVENESS_REGION): a new region means changing it, the browser role's region, and redeploying the website.
   `connect-src 'self' ${API_ORIGIN} ${WS_ORIGIN} https://accounts.google.com/gsi/ wss://streaming-rekognition.ap-southeast-5.amazonaws.com${R2_UPLOAD_ORIGIN ? ` ${R2_UPLOAD_ORIGIN}` : ""}`,
   "frame-src 'self' https://accounts.google.com/gsi/",
   "frame-ancestors 'none'",

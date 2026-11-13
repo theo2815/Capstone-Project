@@ -9,6 +9,8 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.service.admin.SystemFlagService
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.RekognitionAiClient
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.stereotype.Service
 import java.time.Instant
@@ -26,8 +28,16 @@ class ImageModerationService(
     private val aiApiProperties: AiApiProperties,
     private val props: ModerationProperties,
     private val rekognition: ObjectProvider<RekognitionAiClient>,
+    private val rateLimiter: RateLimiter,
 ) {
     private val blocked = props.imageBlockedLabels.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+
+    // R-14: the billed check, capped per user per day. Over the cap: UNCHECKED, no AWS call (the caller flags it).
+    // shortcut: in-memory daily cap, resets on deploy; move to a stored count if abuse is seen
+    fun checkFor(userId: UUID, imageBytes: ByteArray): ImageModerationResult {
+        if (!rateLimiter.tryAcquire(Bucket4jRateLimiter.POLICY_IMAGE_MODERATION_DAILY, userId.toString()).allowed) return UNCHECKED
+        return check(imageBytes)
+    }
 
     fun check(imageBytes: ByteArray): ImageModerationResult {
         if (!aiApiProperties.enabled) return UNCHECKED
@@ -64,7 +74,7 @@ object ProfileImageModeration {
         what: String,
         bytes: ByteArray,
     ): ImageModerationVerdict {
-        val result = moderation.check(bytes)
+        val result = moderation.checkFor(userId, bytes)
         if (result.verdict != ImageModerationVerdict.FLAGGED) return result.verdict
         val note = "$what: ${result.labels.joinToString(", ")}"
         if (!flags.raise(FlagTargetKind.USER, userId, SystemFlagReason.PROFILE_IMAGE_FLAGGED, note)) {

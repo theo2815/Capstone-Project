@@ -34,6 +34,8 @@ class IdentityChecks(
     val consentAt: OffsetDateTime? = null,
     /** The keyed hash of the typed ID number (AA-I4); null when none was typed. The raw number is never kept. */
     val idNumberHmac: String? = null,
+    /** The typed number's hash under every [SellerIdType], in entries order, for the repeat match (R-1); empty when none was typed. */
+    val idNumberMatchHmacs: List<String> = emptyList(),
 )
 
 /**
@@ -51,16 +53,20 @@ class IdentityCheckService(
     /**
      * [sessionId] null = "Have an admin check instead": no OCR, but a typed [idNumber] is still hashed (AA-I5).
      * A malformed [idNumber] is refused before the session is used. [idFront] is read at most once.
+     * [legalName] must be printed on the ID front when its text is read (R-2).
      */
-    fun run(userId: UUID, sessionId: String?, idType: SellerIdType, idNumber: String?, idFront: () -> ByteArray): IdentityChecks {
+    fun run(
+        userId: UUID, sessionId: String?, idType: SellerIdType, idNumber: String?, legalName: String, idFront: () -> ByteArray,
+    ): IdentityChecks {
         val number = idNumber?.takeIf { it.isNotBlank() }?.let { normaliseIdNumber(idType, it) }
         val hmac = number?.let { idNumberHmac(idType, it) }
-        if (sessionId == null) return IdentityChecks(listOf(SellerReasonCode.DECLINED), idNumberHmac = hmac)
+        val matchHmacs = number?.let { n -> SellerIdType.entries.map { idNumberHmac(it, n) } }.orEmpty()
+        if (sessionId == null) return IdentityChecks(listOf(SellerReasonCode.DECLINED), idNumberHmac = hmac, idNumberMatchHmacs = matchHmacs)
         val session = livenessSessionService.requireOpen(userId, sessionId, PURPOSE, null)
         // Claim before reading (AA-I2's order): a parallel submit with the same session stops here, unbilled.
         if (!livenessSessionService.claim(userId, sessionId, PURPOSE, null)) throw LivenessSessionService.invalidSession()
         fun checks(reasons: List<SellerReasonCode>, confidence: Float? = null, similarity: Float? = null, image: ByteArray? = null) =
-            IdentityChecks(reasons, confidence?.score(), similarity?.score(), image, sessionId, session.createdAt, hmac)
+            IdentityChecks(reasons, confidence?.score(), similarity?.score(), image, sessionId, session.createdAt, hmac, matchHmacs)
         val front by lazy(idFront)
 
         val client = identityClient.getIfAvailable()
@@ -89,7 +95,19 @@ class IdentityCheckService(
             compare.facesOnTarget == 0 -> reasons += SellerReasonCode.NO_FACE_ON_ID
             similarity == null || similarity < identityProperties.faceMinSimilarity -> reasons += SellerReasonCode.FACE_MISMATCH
         }
-        idNumberReason(client, number) { front }?.takeUnless { it in reasons }?.let { reasons += it }
+        // The ID front's text, read once for the number and the name; null = no number typed, or an AWS error.
+        val lines = number?.let {
+            try {
+                client.detectLines(front)
+            } catch (ex: SdkException) {
+                null
+            }
+        }
+        idNumberReason(number, lines)?.takeUnless { it in reasons }?.let { reasons += it }
+        // A legal-name word the card does not print: an admin compares them, never a refusal (R-2).
+        if (!lines.isNullOrEmpty() && !NameMatch.onCard(legalName, lines)) reasons += SellerReasonCode.ID_NAME_MISMATCH
+        // No format for this type: a card word ("REPUBLIC") would pass the line match, so an admin checks (R-1).
+        if (number != null && identityProperties.idNumberPatterns[idType] == null) reasons += SellerReasonCode.ID_FORMAT_UNCHECKED
         return checks(reasons, confidence, similarity, result.referenceImage)
     }
 
@@ -112,18 +130,12 @@ class IdentityCheckService(
     }
 
     /** The number must sit whole in one line of the ID front: never a part of it, never pieced across lines (review F8). */
-    private fun idNumberReason(client: RekognitionIdentityClient, number: String?, front: () -> ByteArray): SellerReasonCode? {
-        if (number == null) return SellerReasonCode.ID_NUMBER_UNREADABLE
-        val lines = try {
-            client.detectLines(front())
-        } catch (ex: SdkException) {
-            return SellerReasonCode.AI_ERROR
-        }
-        return when {
-            lines.isEmpty() -> SellerReasonCode.ID_NUMBER_UNREADABLE
-            lines.none { lineHolds(it, number) } -> SellerReasonCode.ID_NUMBER_MISMATCH
-            else -> null
-        }
+    private fun idNumberReason(number: String?, lines: List<String>?): SellerReasonCode? = when {
+        number == null -> SellerReasonCode.ID_NUMBER_UNREADABLE
+        lines == null -> SellerReasonCode.AI_ERROR
+        lines.isEmpty() -> SellerReasonCode.ID_NUMBER_UNREADABLE
+        lines.none { lineHolds(it, number) } -> SellerReasonCode.ID_NUMBER_MISMATCH
+        else -> null
     }
 
     companion object {

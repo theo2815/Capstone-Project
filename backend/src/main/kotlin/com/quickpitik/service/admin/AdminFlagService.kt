@@ -427,10 +427,10 @@ class AdminFlagService(
         val eventIds = (photosById.values.map { it.eventId } + targetEventIds).distinct()
         val eventsById = if (eventIds.isNotEmpty()) eventRepository.findAllById(eventIds).associateBy { it.id } else emptyMap()
 
-        // The photographer behind each flag: the photo's owner, the event's creator, or the flagged user.
+        // The photographer behind each flag: the photo's owner, the event's creator (or, for a race, its submitter), or the flagged user.
         fun ownerOf(flag: Flag): UUID? = when (flag.targetKind) {
             FlagTargetKind.PHOTO -> photosById[flag.targetId]?.photographerId
-            FlagTargetKind.EVENT -> eventsById[flag.targetId]?.createdBy
+            FlagTargetKind.EVENT -> eventsById[flag.targetId]?.let { it.createdBy ?: it.submittedBy }
             FlagTargetKind.USER -> flag.targetId
         }
 

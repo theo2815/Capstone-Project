@@ -320,6 +320,19 @@ class CartViewModelTest {
         assertEquals(listOf("p1", "p2"), payableItems(old).map { it.photoId })
     }
 
+    // R-17: the pill's number counts only rows that can be bought, so it never reads "1" beside ₱0.
+    @Test fun `the cart count leaves out unavailable rows`() {
+        cart = UNAVAILABLE_CART
+        val vm = newVm()
+        assertEquals(1, vm.cartCount.awaitFirst { it > 0 })
+        assertEquals(2, vm.cartItems.value.size)
+    }
+
+    @Test fun `a row without the available field counts`() {
+        val vm = newVm()
+        assertEquals(2, vm.cartCount.awaitFirst { it > 0 })
+    }
+
     @Test fun `checkout and the coupon preview send only the available items`() {
         cart = UNAVAILABLE_CART
         val vm = newVm()

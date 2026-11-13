@@ -11,6 +11,7 @@ import com.quickpitik.entity.Role
 import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
@@ -20,6 +21,7 @@ import com.quickpitik.service.admin.SystemFlagService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.http.HttpStatus
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
@@ -216,6 +218,37 @@ class RaceReportServiceTest {
             assertEquals(ErrorCodes.USER_NOT_FOUND, ex.code)
         }
         assertTrue(raised.isEmpty())
+    }
+
+    @Test
+    fun `a photographer cannot report a race they submitted`() {
+        val e = event().also { it.submittedBy = ME }
+        val ex = assertFailsWith<ApiException> { service().reportEvent(ME, e.id, NOTE) }
+        assertEquals(HttpStatus.FORBIDDEN, ex.status)
+        assertEquals(ErrorCodes.FORBIDDEN, ex.code)
+        Mockito.verify(flags, Mockito.never()).raise(anyArg(), anyArg(), anyArg(), Mockito.any(), Mockito.any())
+    }
+
+    @Test
+    fun `a creator cannot report their own event`() {
+        val e = event().also { it.createdBy = ME }
+        val ex = assertFailsWith<ApiException> { service().reportEvent(ME, e.id, NOTE) }
+        assertEquals(HttpStatus.FORBIDDEN, ex.status)
+        assertEquals(ErrorCodes.FORBIDDEN, ex.code)
+        Mockito.verify(flags, Mockito.never()).raise(anyArg(), anyArg(), anyArg(), Mockito.any(), Mockito.any())
+    }
+
+    @Test
+    fun `a photographer cannot report their own profile`() {
+        val me = User(id = ME, email = "me@test.local", passwordHash = "x", name = "Me", role = Role.PHOTOGRAPHER)
+        Mockito.`when`(settingsRepository.findByHandleIgnoreCase("my.handle")).thenReturn(
+            PhotographerSettings(userId = me.id, verificationStatus = VerificationStatus.APPROVED),
+        )
+        Mockito.`when`(userRepository.findById(me.id)).thenReturn(Optional.of(me))
+        val ex = assertFailsWith<ApiException> { service().reportPhotographer(ME, "my.handle", NOTE) }
+        assertEquals(HttpStatus.FORBIDDEN, ex.status)
+        assertEquals(ErrorCodes.FORBIDDEN, ex.code)
+        Mockito.verify(flags, Mockito.never()).raise(anyArg(), anyArg(), anyArg(), Mockito.any(), Mockito.any())
     }
 
     private fun <T> anyArg(): T = Mockito.any()

@@ -8,6 +8,7 @@ import com.quickpitik.entity.RepeatMatch
 import com.quickpitik.entity.RepeatMatchKind
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.SellerReasonCode
+import com.quickpitik.repository.ID_NUMBER_LOCK_KEY
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.service.liveness.LivenessSessionService
@@ -18,7 +19,12 @@ import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -30,6 +36,8 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var entityManager: EntityManager
     @Autowired private lateinit var livenessSessions: LivenessSessionService
     @Autowired private lateinit var payoutRepository: PayoutAccountRepository
+    @Autowired private lateinit var dataSource: DataSource
+    @Autowired private lateinit var transactionManager: PlatformTransactionManager
 
     private fun photographer(): UUID = jdbc.queryForObject(
         "INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Seller Test', 'PHOTOGRAPHER') RETURNING id",
@@ -197,14 +205,54 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
 
     // AA-I5: the three repeat-account lookups, each leaving out the caller.
     @Test
-    fun `id number hash lookup finds the other accounts and leaves out the caller`() {
-        val hmac = UUID.randomUUID().toString().replace("-", "")
-        val (me, twin, stranger) = List(3) { photographer().also(::insert) }
+    fun `id number hash lookup finds accounts under any of the hashes and leaves out the caller`() {
+        val (hmac, otherTypeHmac) = List(2) { UUID.randomUUID().toString().replace("-", "") }
+        val (me, twin, otherType, stranger) = List(4) { photographer().also(::insert) }
         jdbc.update("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id IN (?, ?)", hmac, me, twin)
+        // R-1: the same number stored under another ID type's hash.
+        jdbc.update("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id = ?", otherTypeHmac, otherType)
         jdbc.update("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id = ?", "x$hmac".take(64), stranger)
 
-        assertEquals(listOf(twin), repository.findUserIdsByIdNumberHmac(hmac, me))
+        assertEquals(setOf(twin, otherType), repository.findUserIdsByIdNumberHmacIn(listOf(hmac, otherTypeHmac), me).toSet())
     }
+
+    // R-9: the second submit of a number waits for the first to commit, then its lookup sees the first.
+    @Test
+    fun `a second transaction waits for the id number lock until the first ends`() {
+        val hmac = UUID.randomUUID().toString().replace("-", "")
+        val (first, second) = List(2) { photographer().also(::insert) }
+        val pool = Executors.newSingleThreadExecutor()
+        val pause = dataSource.connection.apply { autoCommit = false }
+        try {
+            pause.prepareStatement("SELECT pg_advisory_xact_lock($ID_NUMBER_LOCK_KEY, hashtext(?))").use { it.setString(1, hmac); it.execute() }
+            pause.prepareStatement("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id = ?").use {
+                it.setString(1, hmac); it.setObject(2, first); it.executeUpdate()
+            }
+            val lookup = pool.submit<List<UUID>> {
+                TransactionTemplate(transactionManager).execute {
+                    repository.lockIdNumber(hmac)
+                    repository.findUserIdsByIdNumberHmacIn(listOf(hmac), second)
+                }
+            }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            while (waitingOnIdNumberLock() < 1) {
+                check(System.nanoTime() < deadline) { "the second transaction never queued on the id number lock" }
+                Thread.sleep(20)
+            }
+            assertFalse(lookup.isDone)
+            pause.commit() // ends the first transaction: the lock goes and its row is visible
+
+            assertEquals(listOf(first), lookup.get(30, TimeUnit.SECONDS))
+        } finally {
+            pause.close()
+            pool.shutdownNow()
+        }
+    }
+
+    private fun waitingOnIdNumberLock(): Int = jdbc.queryForObject(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 2 AND classid::bigint = ? AND NOT granted",
+        Int::class.java, ID_NUMBER_LOCK_KEY,
+    )!!
 
     @Test
     fun `phone key lookup finds the other accounts and leaves out the caller`() {

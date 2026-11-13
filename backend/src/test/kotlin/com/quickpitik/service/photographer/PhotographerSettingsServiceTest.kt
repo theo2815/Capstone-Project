@@ -569,6 +569,23 @@ class PhotographerSettingsServiceTest {
     }
 
     @Test
+    fun `a profile an admin reset does not approve itself on resubmit`() {
+        val settings = completeSettings().apply {
+            verificationStatus = VerificationStatus.INCOMPLETE; verificationAdminHold = true
+        }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        val answer = service().submitVerification(userId)
+
+        assertEquals("pending", answer.status)
+        assertEquals(true, answer.awaitingAdmin)
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertEquals(false, service().approveIfReady(userId))
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
     fun `auto approval pushes the approved message with no admin`() {
         stubVerification(completeSettings().apply { verificationStatus = VerificationStatus.PENDING })
         identity(SellerDetailsStatus.AUTO_APPROVED)
@@ -601,7 +618,7 @@ class PhotographerSettingsServiceTest {
     }.toByteArray()
 
     private fun verdict(v: ImageModerationVerdict, vararg labels: String) =
-        Mockito.`when`(moderation.check(anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
+        Mockito.`when`(moderation.checkFor(anyArg(), anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
 
     @Test
     fun `a flagged cover is refused with IMAGE_NOT_ALLOWED, nothing stored, PROFILE_IMAGE_FLAGGED raised`() {
@@ -655,7 +672,7 @@ class PhotographerSettingsServiceTest {
         service().uploadWatermark(userId, imageBytes("png"), "image/png")
 
         val checked = org.mockito.ArgumentCaptor.forClass(ByteArray::class.java)
-        Mockito.verify(moderation).check(checked.capture() ?: byteArrayOf())
+        Mockito.verify(moderation).checkFor(anyArg(), checked.capture() ?: byteArrayOf())
         val stored = org.mockito.ArgumentCaptor.forClass(ByteArray::class.java)
         Mockito.verify(storageService).put(anyArg(), stored.capture() ?: byteArrayOf(), Mockito.eq("image/png") ?: "")
         assertEquals(listOf<Byte>(-119, 80, 78, 71), checked.value.take(4))

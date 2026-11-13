@@ -142,6 +142,8 @@ class EventDtoMapper(
         checkReasons = event.checkReasons.orEmpty().map { it.name },
         hiddenAt = event.hiddenAt,
         adminApproved = event.adminApprovedAt != null,
+        heldCoverUrl = RaceEdit.heldCover(event.pendingChange)
+            ?.let { storageService.presignedGetUrl(it, storageProperties.presignedTtl.cover) },
     )
 
     fun resolveBannerUrl(event: Event): String? =

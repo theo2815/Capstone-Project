@@ -6,6 +6,7 @@ import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import {
   BTN_DANGER,
+  BTN_PRIMARY,
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
@@ -55,7 +56,7 @@ import { useRegions } from "@/hooks/use-regions";
 // Phase 3 adds the focus-mode drawer. Click a pending row → drawer with
 // the full review surface (photographer header, completeness panel,
 // Reject in the footer). Profiles approve themselves once identity
-// passes (Q7), so no admin surface approves one. With at least one row selected, the row
+// passes (Q7); only a profile held after a reset or reject gets an Approve. With at least one row selected, the row
 // click toggles the checkbox instead of opening the drawer; the chevron
 // on the right always opens. URL state via ?row=<userId> so refresh and
 // browser-back behave; the drawer mirrors the chip route pattern.
@@ -77,7 +78,7 @@ export function VerificationsQueue() {
   const effective = users.data ?? EMPTY_ADMIN_USERS;
   const { isPending: loading, refetch } = users;
   const error = users.error?.message;
-  const { reject, verifyBatch, isPending: actionPending } = useAdminUserActions();
+  const { reject, approveHeld, verifyBatch, isPending: actionPending } = useAdminUserActions();
   const { showToast } = useToast();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -125,7 +126,8 @@ export function VerificationsQueue() {
       candidate.verificationStatus !== "pending" || candidate.suspendedAt !== null
     )
       return null;
-    return candidate;
+    // The detail answer's adminHold first; an older backend's detail has none, so the list row's.
+    return { ...candidate, adminHold: candidate.adminHold ?? byId.get(rowId)?.adminHold };
   }, [rowId, byId, detail.data, detail.isSuccess]);
 
   useEffect(() => {
@@ -262,6 +264,14 @@ export function VerificationsQueue() {
         showToast({ kind: "info", message: `Sent back · ${row.brandName ?? row.name}` });
         setDrawerRejectOpen(false); setRowId("");
       }
+  }
+
+  async function handleApproveHeld() {
+    if (!openRow) return;
+    const row = openRow;
+    if (await approveHeld(row.userId, row.verificationRevision)) {
+      showToast({ kind: "success", message: `Hold released · ${row.brandName ?? row.name}` });
+    }
   }
 
   // Drawer verb: R opens the reject reason modal. Disabled while the
@@ -430,17 +440,35 @@ export function VerificationsQueue() {
             </p>
           }
           actions={
-            <button
-              type="button"
-              disabled={submitting}
-              aria-busy={submitting}
-              onClick={() => openRejection(false)}
-              className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
-            >
-              Reject…
-            </button>
+            <>
+              {openRow.adminHold && (
+                <button
+                  type="button"
+                  disabled={submitting}
+                  aria-busy={submitting}
+                  onClick={handleApproveHeld}
+                  className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
+                >
+                  Approve
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={submitting}
+                aria-busy={submitting}
+                onClick={() => openRejection(false)}
+                className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
+              >
+                Reject…
+              </button>
+            </>
           }
         >
+          {openRow.adminHold && (
+            <p className="font-sans text-sm text-ink-soft mb-4">
+              Held after an admin reset or rejection
+            </p>
+          )}
           <VerificationDetailBody row={openRow} />
         </AdminDetailDrawer>
       )}

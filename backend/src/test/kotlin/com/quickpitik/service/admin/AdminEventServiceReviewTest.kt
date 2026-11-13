@@ -62,6 +62,7 @@ class AdminEventServiceReviewTest {
     private val raceEvents: com.quickpitik.service.events.RaceEventService = Mockito.mock(com.quickpitik.service.events.RaceEventService::class.java)
     private val settingsRepo: PhotographerSettingsRepository = Mockito.mock(PhotographerSettingsRepository::class.java)
     private val users: UserRepository = Mockito.mock(UserRepository::class.java)
+    private val storage: StorageService = Mockito.mock(StorageService::class.java)
 
     @BeforeEach
     fun setUp() {
@@ -82,7 +83,7 @@ class AdminEventServiceReviewTest {
             eventRepository,
             photoRepository,
             decisions,
-            EventDtoMapper(Mockito.mock(StorageService::class.java), StorageProperties(), photoRepository,
+            EventDtoMapper(storage, StorageProperties(), photoRepository,
                 Mockito.mock(com.quickpitik.repository.EventPhotographerRepository::class.java)),
             covers,
             com.quickpitik.service.events.EventFaceExpiry(eventRepository, provider, aiProperties, java.time.Clock.systemUTC(), transactions),
@@ -327,6 +328,28 @@ class AdminEventServiceReviewTest {
         assertNull(row.lookalike)
         assertFalse(row.adminApproved)
         assertNull(row.hiddenAt)
+    }
+
+    // AF-10 (R-5): a held edit's new cover is only a key in pendingChange; the admin row signs it like the live cover.
+    @Test
+    fun `a held race edit with a new cover carries a signed link`() {
+        val race = heldRace()
+        queueOf(race)
+        Mockito.`when`(storage.presignedGetUrl("events/covers/held.jpg", StorageProperties().presignedTtl.cover))
+            .thenReturn("https://signed.test/held")
+
+        val row = service.list(stateFilter = null, review = "queue", params = PaginationParams.of(0, 20)).items.single()
+
+        assertEquals("https://signed.test/held", row.heldCoverUrl)
+    }
+
+    @Test
+    fun `a row with no held cover has no link`() {
+        queueOf(live().apply { reviewStatus = EventReviewStatus.CHANGE_PENDING; coverS3Key = "events/covers/live.jpg" })
+
+        val row = service.list(stateFilter = null, review = "queue", params = PaginationParams.of(0, 20)).items.single()
+
+        assertNull(row.heldCoverUrl)
     }
 
     @Test

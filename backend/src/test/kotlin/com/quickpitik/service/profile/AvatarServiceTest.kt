@@ -131,7 +131,7 @@ class AvatarServiceTest {
     private fun realMapper() = UserDtoMapper(storageService, StorageProperties())
 
     private fun verdict(v: ImageModerationVerdict, vararg labels: String) =
-        Mockito.`when`(moderation.check(anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
+        Mockito.`when`(moderation.checkFor(anyArg(), anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
 
     @Test
     fun `a flagged photographer avatar is refused with IMAGE_NOT_ALLOWED, nothing stored, PROFILE_IMAGE_FLAGGED raised`() {

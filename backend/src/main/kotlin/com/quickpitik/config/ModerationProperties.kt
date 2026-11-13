@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 // when its name or its parent's name is listed, so one list covers taxonomy v6 and v7.
 @ConfigurationProperties(prefix = "app.moderation")
 data class ModerationProperties(
-    // 0-1 like the other thresholds; sent to AWS as ×100. [NOT MEASURED: set from AA-0.5]
+    // 0-1 like the other thresholds; sent to AWS as ×100. Settled by AA-0.5 (2026-11-08): 0.8 holds on race photos; the true-positive side is not tested.
     val imageMinConfidence: Double = 0.8,
     val imageBlockedLabels: List<String> = listOf(
         "Explicit Nudity", "Explicit", "Non-Explicit Nudity of Intimate parts and Kissing",

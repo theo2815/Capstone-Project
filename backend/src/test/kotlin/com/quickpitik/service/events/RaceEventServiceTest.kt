@@ -207,6 +207,42 @@ class RaceEventServiceTest {
         Mockito.verifyNoInteractions(covers)
     }
 
+    // AF-10 (R-6): a candidate still waiting for an admin has not been looked at; its cover is not shown to the next photographer.
+    private fun candidateWith(status: EventReviewStatus): Event {
+        val near = existing("Cebu Marathon").apply { reviewStatus = status }
+        Mockito.`when`(events.findRaceCandidates(anyArg(), anyArg())).thenReturn(listOf(near))
+        Mockito.`when`(mapper.resolveBannerUrl(near)).thenReturn("https://signed.test/cover")
+        return near
+    }
+
+    @Test
+    fun `a candidate still waiting for an admin carries no cover link`() {
+        candidateWith(EventReviewStatus.PENDING)
+
+        val result = service().create(me, request(), cover)
+
+        assertEquals("candidates", result.outcome)
+        assertNull(result.candidates.single().bannerUrl)
+    }
+
+    @Test
+    fun `an approved candidate keeps its cover link`() {
+        candidateWith(EventReviewStatus.APPROVED)
+
+        val result = service().create(me, request(), cover)
+
+        assertEquals("https://signed.test/cover", result.candidates.single().bannerUrl)
+    }
+
+    @Test
+    fun `the admin duplicate list keeps the link`() {
+        candidateWith(EventReviewStatus.PENDING)
+
+        val found = service().findDuplicates(RaceInput("Cebu City Marathon 2026", raceDate, "CEB", null))
+
+        assertEquals("https://signed.test/cover", found.single().bannerUrl)
+    }
+
     @Test
     fun `mine is different stores a pending draft pointing at the candidate and raises a flag`() {
         val near = existing("Cebu Marathon")

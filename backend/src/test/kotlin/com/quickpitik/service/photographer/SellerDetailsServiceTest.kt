@@ -130,7 +130,7 @@ class SellerDetailsServiceTest {
         Mockito.`when`(sessions.claim(userId, SESSION, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null)).thenReturn(true)
         Mockito.`when`(identityClient.livenessResult(SESSION)).thenReturn(LivenessResult(LivenessSessionStatus.SUCCEEDED, 99.5f, reference))
         Mockito.`when`(identityClient.compareFaces(anyArg(), anyArg())).thenReturn(FaceCompareResult(1, 99.8f))
-        Mockito.`when`(identityClient.detectLines(anyArg())).thenReturn(listOf("REPUBLIC OF THE PHILIPPINES", ID_NUMBER))
+        Mockito.`when`(identityClient.detectLines(anyArg())).thenReturn(listOf("REPUBLIC OF THE PHILIPPINES", "DELA CRUZ, JUAN ANDRES", ID_NUMBER))
     }
 
     private lateinit var sessions: LivenessSessionService
@@ -139,20 +139,25 @@ class SellerDetailsServiceTest {
     private val reference = byteArrayOf(9, 9, 9)
 
     @Suppress("UNCHECKED_CAST")
-    private fun identityChecks(): IdentityCheckService {
+    private fun identityChecks(aiEnabled: Boolean = true): IdentityCheckService {
         val provider = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionIdentityClient>
         Mockito.`when`(provider.getIfAvailable()).thenReturn(identityClient)
-        return IdentityCheckService(sessions, provider, AiApiProperties(enabled = true), IdentityProperties())
+        return IdentityCheckService(sessions, provider, AiApiProperties(enabled = aiEnabled), identityFormats)
     }
+
+    // A set format for every type: with none, every live check would go to an admin (R-1).
+    private val identityFormats = IdentityProperties(idNumberFormats = SellerIdType.entries.associateWith { "[A-Z0-9]{4,30}" })
+    private fun matchHashes(normalised: String) = SellerIdType.entries.map { identityChecks().idNumberHmac(it, normalised) }
 
     // The real decision-log and identity-check services over mocks, so tests read what they would write.
     private fun service(
         identity: IdentityProperties = IdentityProperties(),
         profiles: PhotographerSettingsService = Mockito.mock(PhotographerSettingsService::class.java),
+        aiEnabled: Boolean = true,
     ) = SellerDetailsService(
         repository, userRepository, storage, TransactionTemplate(txManager), clock,
         decisionLog(),
-        StorageProperties(), identityChecks(), payoutRepository, identity, profiles,
+        StorageProperties(), identityChecks(aiEnabled), payoutRepository, identity, profiles,
     )
 
     private fun decisionLog() =
@@ -910,6 +915,7 @@ class SellerDetailsServiceTest {
 
     /** A MANUAL_REVIEW record that already holds a reference image from an earlier live check. */
     private fun reviewRecord(vararg reasons: SellerReasonCode) = existing(SellerDetailsStatus.MANUAL_REVIEW).apply {
+        legalName = "Juan Dela Cruz" // printed on the fixture's ID front
         livenessReferenceKey = "seller-details/$userId/old-reference.jpg"
         reasonCodes = reasons.toList()
         Mockito.`when`(storage.getBytes(idFrontKey)).thenReturn(jpeg())
@@ -997,6 +1003,81 @@ class SellerDetailsServiceTest {
         assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
         assertEquals(5L, row.revision)
         assertEquals("auto_approved", dto.reviewState)
+    }
+
+    @Test
+    fun `a submitted legal name that is not on the id front goes to manual review naming it`() {
+        service().submit(userId, form(livenessSessionId = SESSION).apply { legalName = "Maria Santos" })
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.ID_NAME_MISMATCH), row.reasonCodes)
+    }
+
+    @Test
+    fun `live check compares the stored legal name with the id front`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED).apply { legalName = "Maria Santos" }
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+
+        assertEquals(listOf(SellerReasonCode.ID_NAME_MISMATCH), saved().reasonCodes)
+    }
+
+    // ─── R-8: repeated failed tries go to an admin ───
+
+    /** [failures] live checks that fail the face match, then one that passes, all on one MANUAL_REVIEW record. */
+    private fun passAfterFailedTries(failures: Int): SellerDetails {
+        val row = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(row))
+        Mockito.`when`(identityClient.compareFaces(anyArg(), anyArg())).thenReturn(FaceCompareResult(1, 50f))
+        repeat(failures) {
+            service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+            assertEquals(listOf(SellerReasonCode.FACE_MISMATCH), row.reasonCodes)
+        }
+        Mockito.`when`(identityClient.compareFaces(anyArg(), anyArg())).thenReturn(FaceCompareResult(1, 99.8f))
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+        return row
+    }
+
+    @Test
+    fun `a passing live check after three failed tries goes to an admin`() {
+        val row = passAfterFailedTries(3)
+
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.REPEATED_FAILED_CHECKS), row.reasonCodes)
+        assertEquals(3, row.failedAutoChecks)
+    }
+
+    @Test
+    fun `a passing live check after two failed tries is approved`() {
+        val row = passAfterFailedTries(2)
+
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+        assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
+        assertEquals(2, row.failedAutoChecks)
+    }
+
+    @Test
+    fun `an aws error or ai off does not count as a failed try`() {
+        val row = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(row))
+        Mockito.doThrow(SdkClientException.create("aws down")).`when`(identityClient).livenessResult(SESSION)
+        repeat(3) { service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER)) }
+        assertEquals(listOf(SellerReasonCode.AI_ERROR), row.reasonCodes)
+        repeat(3) { service(aiEnabled = false).liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER)) }
+        assertEquals(listOf(SellerReasonCode.AI_DISABLED), row.reasonCodes)
+        assertEquals(0, row.failedAutoChecks)
+
+        Mockito.doReturn(LivenessResult(LivenessSessionStatus.SUCCEEDED, 99.5f, reference)).`when`(identityClient).livenessResult(SESSION)
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+    }
+
+    @Test
+    fun `the admin detail shows the failed-try count`() {
+        assertEquals(2, existing().apply { failedAutoChecks = 2 }.toAdminDto("seller@test.local").failedAutoChecks)
     }
 
     @Test
@@ -1145,7 +1226,7 @@ class SellerDetailsServiceTest {
 
     @Test
     fun `same id hash on another account goes to manual review naming it`() {
-        Mockito.`when`(repository.findUserIdsByIdNumberHmac(anyArg(), Mockito.eq(userId) ?: userId)).thenReturn(listOf(other))
+        Mockito.`when`(repository.findUserIdsByIdNumberHmacIn(anyArg(), Mockito.eq(userId) ?: userId)).thenReturn(listOf(other))
 
         val dto = service().submit(userId, form(livenessSessionId = SESSION))
 
@@ -1153,11 +1234,49 @@ class SellerDetailsServiceTest {
         assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
         assertEquals(listOf(SellerReasonCode.REPEAT_ACCOUNT_MATCH), row.reasonCodes)
         assertEquals(listOf(RepeatMatch(other, listOf(RepeatMatchKind.ID_NUMBER))), row.repeatMatches)
-        // Matched on the hash being saved, and under the user lock.
+        // Matched on the number's hash under every type, the saved one among them, and under the user lock.
+        val hashes = matchHashes("N0112345678")
+        assertTrue(row.idNumberHmac in hashes)
         val order = Mockito.inOrder(userRepository, repository)
         order.verify(userRepository).lockById(userId)
-        order.verify(repository).findUserIdsByIdNumberHmac(row.idNumberHmac!!, userId)
+        order.verify(repository).findUserIdsByIdNumberHmacIn(hashes, userId)
         assertEquals("manual_review", dto.reviewState)
+    }
+
+    @Test
+    fun `the same id number under another id type on another account goes to manual review naming it`() {
+        val passportHash = identityChecks().idNumberHmac(SellerIdType.PASSPORT, "N0112345678")
+        // Like the database: only the other account's row, stored under the passport hash, matches.
+        Mockito.`when`(repository.findUserIdsByIdNumberHmacIn(anyArg(), Mockito.eq(userId) ?: userId))
+            .thenAnswer { if (passportHash in it.getArgument<List<String>>(0)) listOf(other) else emptyList() }
+
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.REPEAT_ACCOUNT_MATCH), row.reasonCodes)
+        assertEquals(listOf(RepeatMatch(other, listOf(RepeatMatchKind.ID_NUMBER))), row.repeatMatches)
+        assertNotEquals(passportHash, row.idNumberHmac) // stored under the chosen type, as before
+    }
+
+    // R-9: two accounts submitting one number at once take turns, so the second sees the first.
+    @Test
+    fun `the id number lock is taken before the repeat lookup`() {
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val hashes = matchHashes("N0112345678")
+        val order = Mockito.inOrder(userRepository, repository)
+        order.verify(userRepository).lockById(userId)
+        order.verify(repository).lockIdNumber(hashes.first())
+        order.verify(repository).findUserIdsByIdNumberHmacIn(hashes, userId)
+    }
+
+    @Test
+    fun `no typed number takes no id lock`() {
+        service().submit(userId, form(idNumber = null))
+
+        saved()
+        Mockito.verify(repository, Mockito.never()).lockIdNumber(anyArg())
     }
 
     @Test
@@ -1199,7 +1318,7 @@ class SellerDetailsServiceTest {
 
     @Test
     fun `a repeat match never refuses the submit`() {
-        Mockito.`when`(repository.findUserIdsByIdNumberHmac(anyArg(), Mockito.eq(userId) ?: userId)).thenReturn(listOf(other))
+        Mockito.`when`(repository.findUserIdsByIdNumberHmacIn(anyArg(), Mockito.eq(userId) ?: userId)).thenReturn(listOf(other))
         Mockito.`when`(repository.findUserIdsByPhoneKey("9171234567", userId)).thenReturn(listOf(other, UUID.randomUUID()))
 
         val dto = service().submit(userId, form())
@@ -1216,7 +1335,7 @@ class SellerDetailsServiceTest {
         val old = reviewRecord(SellerReasonCode.DECLINED)
         Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
         Mockito.`when`(repository.findUserIdsByPhoneKey("9170000000", userId)).thenReturn(listOf(other))
-        Mockito.`when`(payoutRepository.findAllByUserIdOrderByCreatedAtAsc(userId)).thenReturn(listOf(payout(name = "Old Name")))
+        Mockito.`when`(payoutRepository.findAllByUserIdOrderByCreatedAtAsc(userId)).thenReturn(listOf(payout(name = "Juan Dela Cruz")))
 
         service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
 

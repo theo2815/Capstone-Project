@@ -252,6 +252,16 @@ export async function rejectUser(
   );
 }
 
+export async function approveUser(
+  userId: string,
+  expectedRevision?: number,
+): Promise<AdminUserRow> {
+  return api.post<AdminUserRow>(
+    `/admin/users/${encodeURIComponent(userId)}/approve`,
+    { expectedRevision },
+  );
+}
+
 export async function resetUserVerification(
   userId: string,
   reason: string,
@@ -725,6 +735,8 @@ export interface AdminEventRow extends ListEvent {
   checkReasons?: string[];
   hiddenAt?: string | null;
   adminApproved?: boolean;
+  /** Link to the new cover of a held race edit; admin only. */
+  heldCoverUrl?: string | null;
 }
 
 /** AA-R5 held race edit: only the changed fields, never a price. */

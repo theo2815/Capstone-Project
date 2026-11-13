@@ -5,14 +5,17 @@ import com.quickpitik.repository.UserRepository
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.JdbcTemplate
+import java.time.LocalDate
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /** AA-I22: who the identity notice goes to. */
 class IdentityNoticeRepositoryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired private lateinit var users: UserRepository
 
+    private val startsOn = LocalDate.of(2026, 12, 7)
     private val tag = UUID.randomUUID().toString().take(8)
 
     private fun user(name: String, role: String = "PHOTOGRAPHER", suspended: Boolean = false): UUID = jdbc.queryForObject(
@@ -42,9 +45,26 @@ class IdentityNoticeRepositoryIntegrationTest : PostgresIntegrationTest() {
         user("admin", role = "ADMIN")
 
         val passed = SellerDetailsStatus.entries.filter { it.passesIdentity() }
-        val names = users.findIdentityNoticeRecipients(passed).filter { it.email.endsWith("-$tag@test.local") }.map { it.name }
+        val names = users.findIdentityNoticeRecipients(passed, startsOn).filter { it.email.endsWith("-$tag@test.local") }.map { it.name }
 
         assertEquals(setOf("none", "review", "rejected"), names.toSet())
         assertEquals(3, names.size)
+    }
+
+    @Test
+    fun `the claim marks a user once and the recipient query then leaves them out`() {
+        val id = user("claimed")
+        val passed = SellerDetailsStatus.entries.filter { it.passesIdentity() }
+        fun listed(on: LocalDate) = users.findIdentityNoticeRecipients(passed, on).any { it.id == id }
+
+        // no outer transaction here: a missing @Transactional on the claim fails in this test
+        assertEquals(1, users.claimIdentityNotice(id, startsOn))
+        assertEquals(0, users.claimIdentityNotice(id, startsOn))
+        assertTrue(!listed(startsOn))
+        assertTrue(listed(startsOn.plusDays(7)))
+
+        assertEquals(1, users.claimIdentityNotice(id, startsOn.plusDays(7)))
+        users.clearIdentityNotice(id, startsOn.plusDays(7))
+        assertTrue(listed(startsOn.plusDays(7)))
     }
 }

@@ -939,9 +939,12 @@ async function submitForReview(opts: {
     }
     if (response.status === "pending") {
       opts.setStatus("pending");
+      usePhotographerSettingsStore.getState().setVerificationAwaitingAdmin(response.awaitingAdmin === true);
       opts.showToast({
         kind: "info",
-        message: "Saved. Your studio goes live when your identity check passes.",
+        message: response.awaitingAdmin
+          ? "Saved. An admin is reviewing your profile."
+          : "Saved. Your studio goes live when your identity check passes.",
       });
       return { submitted: true };
     }
@@ -1280,6 +1283,7 @@ function useAllRequiredFilled(): boolean {
 function VerificationStatusPanel() {
   const { editing, canEdit, beginEdit } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
+  const awaitingAdmin = usePhotographerSettingsStore((s) => s.verificationAwaitingAdmin);
   const seller = useSellerDetails().query.data;
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
@@ -1375,7 +1379,9 @@ function VerificationStatusPanel() {
           Awaiting your identity check
         </Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
-          Your studio goes live when your identity check passes.
+          {awaitingAdmin
+            ? "An admin is reviewing your profile."
+            : "Your studio goes live when your identity check passes."}
         </p>
         <p className="font-sans text-sm text-slate mt-2 max-w-md">
           Seller details below show where your check stands. Your edits stay

@@ -257,7 +257,7 @@ app:
     # AA-I11: photographer avatar, cover and watermark go through AWS
     # DetectModerationLabels (Rekognition, ap-southeast-1) before they are stored.
     # AI off or an AWS error = accepted + an admin flag; a blocked label = refused.
-    # 0-1 like the other thresholds (sent as x100). [NOT MEASURED: set from AA-0.5]
+    # 0-1 like the other thresholds (sent as x100). Settled by AA-0.5 (2026-11-08): 0.8 holds on race photos; the true-positive side is not tested.
     image-min-confidence: ${MODERATION_IMAGE_MIN_CONFIDENCE:0.8}
     # A label is blocked when its name or parent name is listed (taxonomy v6 + v7).
     # Swimwear, Alcohol, Tobacco, Drugs, Gambling, Rude Gestures stay off on purpose
@@ -269,20 +269,25 @@ app:
     # The announced turn-on date (YYYY-MM-DD) shown to photographers; blank = none. An invalid date fails boot.
     gate-starts-on: ${IDENTITY_GATE_STARTS_ON:}
     # AWS Face Liveness sessions (create + read results) run here; CompareFaces stays in ap-southeast-1.
+    # The website's security policy allows only wss://streaming-rekognition.ap-southeast-5.amazonaws.com:
+    # a new region means changing website/next.config.ts and the browser role's region, and redeploying the website.
     liveness-region: ${LIVENESS_REGION:ap-southeast-5}
     # 0-100 (AWS's scale). Strict until measured. [NOT MEASURED: set from AA-0.4]
     liveness-min-confidence: ${LIVENESS_MIN_CONFIDENCE:95}
     face-min-similarity: ${FACE_MIN_SIMILARITY:99}
     # Live checks per photographer per Manila day (the durable rate limit for C1).
     liveness-attempts-per-day: ${LIVENESS_ATTEMPTS_PER_DAY:3}
+    # Failed automatic tries (a check the person failed, never an AWS fault) after which every later try,
+    # even a pass, goes to an admin as REPEATED_FAILED_CHECKS (R-8). At least 1.
+    max-failed-auto-checks: ${IDENTITY_MAX_FAILED_AUTO_CHECKS:3}
     # IAM role quickpitik-liveness-browser (AA-0.2). Blank = the live check answers 503.
     liveness-role-arn: ${LIVENESS_ROLE_ARN:}
     liveness-credential-seconds: ${LIVENESS_CREDENTIAL_SECONDS:900}
     # The typed ID number is stored only as HMAC-SHA256(this, "<ID_TYPE>:<number>") (AA-I4).
     # Production refuses the dev value. Never rotate it casually: older rows stop matching.
     id-number-hmac-secret: ${ID_NUMBER_HMAC_SECRET:dev-only-id-number-hmac-secret}
-    # A regex over the normalised number (uppercase, no spaces or dashes). Blank = no format check.
-    # [NOT MEASURED: set from AA-0.5]
+    # A regex over the normalised number (uppercase, no spaces or dashes). Blank = an admin checks this ID type.
+    # [NOT MEASURED: set from the AA-0.5 ID run]
     id-number-formats:
       philsys: ${ID_NUMBER_FORMAT_PHILSYS:}
       drivers-license: ${ID_NUMBER_FORMAT_DRIVERS_LICENSE:}
@@ -292,16 +297,16 @@ app:
       postal: ${ID_NUMBER_FORMAT_POSTAL:}
       voters: ${ID_NUMBER_FORMAT_VOTERS:}
     # POST /admin/identity-notice (AA-I22) mails one photographer at a time, at most this many a second.
-    # [NOT MEASURED: Resend's rate limit]
+    # Settled: Resend's limit is about 2 requests a second (ResendClient).
     notice-send-per-second: ${IDENTITY_NOTICE_SEND_PER_SECOND:2}
   races:
     # AA-R1 (auto-approval Plan 2): shared race events. Off = today's flow; on lets
     # photographers create, join and edit races and set a race price.
     self-serve-enabled: ${SELF_SERVE_RACES_ENABLED:false}
-    # A new race's date must fall within this window around today. [NOT MEASURED]
+    # A new race's date must fall within this window around today. Settled by the owner (fraud review): decided, not measured; tune after real races.
     date-window-past-days: ${RACE_DATE_WINDOW_PAST_DAYS:3}
     date-window-ahead-days: ${RACE_DATE_WINDOW_AHEAD_DAYS:90}
-    # Races one photographer may create per Manila day before review. [NOT MEASURED]
+    # Races one photographer may create per Manila day before review. Settled (fraud review, P2-Q3): decided, not measured; tune after real races.
     daily-create-cap: ${RACE_DAILY_CREATE_CAP:3}
     duplicate:
       # Tuned on the AA-R2 Cebu race-name fixture (2026-11-08).
@@ -310,18 +315,18 @@ app:
       date-tolerance-days: ${RACE_DUP_DATE_TOLERANCE_DAYS:1}
     proof:
       min-photographers: ${RACE_PROOF_MIN_PHOTOGRAPHERS:2}
-      # [NOT MEASURED: set from AA-0.6 review SQL 1]
+      # Settled for launch (AA-0.6, 2026-11-08): keep 20; re-run AA-0.6 query 4 after the first real races.
       min-indexed-photos: ${RACE_PROOF_MIN_INDEXED_PHOTOS:20}
       min-bib-share: ${RACE_PROOF_MIN_BIB_SHARE:0.30}
       # Below this share of indexed photos the proof sweep only flags. [NOT MEASURED]
       min-indexed-share: ${RACE_PROOF_MIN_INDEXED_SHARE:0.5}
       sweep-interval-ms: ${RACE_PROOF_SWEEP_INTERVAL_MS:3600000}
-      # Comma list; for these types a failed bib rule only flags. [NOT MEASURED: set from AA-0.5 cycling read rate]
+      # Comma list; for these types a failed bib rule only flags. Interim (P2-Q10). [NOT MEASURED: set from the AA-0.5 cycling run]
       bib-flag-only-types: ${RACE_PROOF_BIB_FLAG_ONLY_TYPES:CYCLING}
     same-bib:
-      min-shared-bibs: ${RACE_SAME_BIB_MIN_SHARED:30} # [NOT MEASURED]
+      min-shared-bibs: ${RACE_SAME_BIB_MIN_SHARED:30} # settled (fraud review): decided, not measured
     reports:
-      hide-threshold: ${RACE_REPORT_HIDE_THRESHOLD:3} # distinct accounts; [NOT MEASURED]
+      hide-threshold: ${RACE_REPORT_HIDE_THRESHOLD:3} # distinct accounts; settled (fraud review): decided, not measured
   relevance:
     # Photo relevance kill switch, read through RelevanceSwitch. off = nothing runs;
     # record-only = relevance rows and admin alerts only; auto-hide = may hide, but runs as
@@ -452,11 +457,15 @@ app:
     report:
       capacity: 10
       refill-period: PT1H
+    # Billed profile-image checks per user per day (AF-8); over it the image is stored unchecked.
+    image-moderation-daily:
+      capacity: 30
+      refill-period: PT24H
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     # AA-R11: a photographer's own race price is between the race price and this times it (owner D3).
     race-price-ceiling-multiplier: ${RACE_PRICE_CEILING_MULTIPLIER:2.0}
-    # Wait between two race price changes. [NOT MEASURED]
+    # Wait between two race price changes. Settled (fraud review, backend decisions): decided, not measured.
     race-price-cooldown: ${RACE_PRICE_COOLDOWN:PT24H}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
     # Largest photographer coupon (whole percent of the photographer's share).

@@ -592,12 +592,15 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
             val key = raceKey()
             val selfServe = race(key, photographer())
             val admin = race(key, submittedBy = null)
-            val cols = jdbcTemplate.queryForList(
-                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'events'",
-                String::class.java, schema,
+            fun columns(table: String) = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ?",
+                String::class.java, schema, table,
             ).joinToString(", ") { "\"$it\"" }
-            // submitted_by points at public.users, so the copy drops it into the schema's own users first.
-            jdbcTemplate.update("INSERT INTO $schema.users SELECT * FROM public.users WHERE id = ?", selfServe.submittedBy)
+            val cols = columns("events")
+            // submitted_by points at public.users, so the copy drops it into the schema's own users first;
+            // only the V100 columns, as later migrations add more to public.users (V104).
+            val userCols = columns("users")
+            jdbcTemplate.update("INSERT INTO $schema.users ($userCols) SELECT $userCols FROM public.users WHERE id = ?", selfServe.submittedBy)
             assertEquals(2, jdbcTemplate.update(
                 "INSERT INTO $schema.events ($cols) SELECT $cols FROM public.events WHERE id IN (?, ?)", selfServe.id, admin.id,
             ))

@@ -51,7 +51,7 @@ class ProfileImageModerationIntegrationTest : PostgresIntegrationTest() {
     ).id
 
     private fun verdict(v: ImageModerationVerdict, vararg labels: String) {
-        `when`(moderation.check(any() ?: byteArrayOf())).thenAnswer {
+        `when`(moderation.checkFor(any() ?: UUID.randomUUID(), any() ?: byteArrayOf())).thenAnswer {
             txOpenDuringCheck += TransactionSynchronizationManager.isActualTransactionActive()
             ImageModerationResult(v, labels.toList())
         }

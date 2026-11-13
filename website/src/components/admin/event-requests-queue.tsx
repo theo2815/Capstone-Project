@@ -333,7 +333,22 @@ function HeldRaceEdit({ row, change }: { row: AdminEventRow; change: RaceEditCha
       {change.coverS3Key && (
         <div>
           <dt className={DETAIL_LABEL}>Cover</dt>
-          <dd className="mt-1 font-sans text-sm text-ink">A new cover photo</dd>
+          <dd className="mt-1 font-sans text-sm text-ink">
+            {row.heldCoverUrl ? (
+              <div className="w-full sm:w-56 aspect-[16/9] rounded-xl overflow-hidden border border-line bg-bone-deep">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={row.heldCoverUrl}
+                  alt={`New cover photo for ${row.name}`}
+                  loading="lazy"
+                  decoding="async"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            ) : (
+              "A new cover photo"
+            )}
+          </dd>
         </div>
       )}
     </dl>

@@ -421,7 +421,8 @@ class PhotographerSettingsService(
         val settings = photographerSettingsRepository.findById(userId).orElse(null)
         val status = settings?.verificationStatus ?: VerificationStatus.INCOMPLETE
         val incomplete = collectMissing(userId, settings)
-        return buildVerificationResponse(userId, status, missing = incomplete.missing)
+        return buildVerificationResponse(userId, status, missing = incomplete.missing,
+            held = settings?.verificationAdminHold == true)
     }
 
     // ─── Verification withdraw ────────────────────────────────────────────
@@ -462,7 +463,7 @@ class PhotographerSettingsService(
         }
         if (settings.verificationStatus == VerificationStatus.PENDING) {
             approveIfReady(userId) // a repeat submit while PENDING re-checks (P1-N2)
-            return buildVerificationResponse(userId, settings.verificationStatus)
+            return buildVerificationResponse(userId, settings.verificationStatus, held = settings.verificationAdminHold)
         }
         // Approved with identity passed: a new round would only approve again, so nothing changes.
         if (settings.verificationStatus == VerificationStatus.APPROVED && identityPassed(userId)) {
@@ -488,7 +489,7 @@ class PhotographerSettingsService(
             ),
         )
         approveIfReady(userId)
-        return buildVerificationResponse(userId, settings.verificationStatus)
+        return buildVerificationResponse(userId, settings.verificationStatus, held = settings.verificationAdminHold)
     }
 
     /**
@@ -499,6 +500,7 @@ class PhotographerSettingsService(
     fun approveIfReady(userId: UUID): Boolean {
         val settings = lockVerificationSettings(userId)
         if (settings.verificationStatus != VerificationStatus.PENDING) return false
+        if (settings.verificationAdminHold) return false // R-10: after a reset or reject only an admin releases it
         if (!collectMissing(userId, settings).isComplete) return false
         if (!identityPassed(userId)) return false
         settings.verificationStatus = VerificationStatus.APPROVED
@@ -523,6 +525,7 @@ class PhotographerSettingsService(
         userId: UUID,
         status: VerificationStatus,
         missing: List<MissingRequirement>? = null,
+        held: Boolean = false,
     ): VerificationSubmitResponseDto {
         val user = userRepository.findById(userId).orElse(null)
         return VerificationSubmitResponseDto(
@@ -531,6 +534,7 @@ class PhotographerSettingsService(
             missingCodes = missing?.map { it.name },
             suspendedAt = user?.suspendedAt?.toString(),
             suspensionReason = user?.suspensionReason,
+            awaitingAdmin = held && status == VerificationStatus.PENDING,
         )
     }
 

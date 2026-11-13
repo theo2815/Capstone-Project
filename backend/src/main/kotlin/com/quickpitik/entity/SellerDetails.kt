@@ -98,6 +98,10 @@ class SellerDetails(
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "repeat_matches", nullable = false, columnDefinition = "jsonb")
     var repeatMatches: List<RepeatMatch> = emptyList(),
+
+    /** Automatic tries that failed a check the person failed (not an AWS fault); never goes down (R-8, V104). */
+    @Column(name = "failed_auto_checks", nullable = false)
+    var failedAutoChecks: Int = 0,
 ) {
     fun fileKeys(): List<String> = listOfNotNull(idFrontKey, idBackKey, selfieKey, birFormKey, livenessReferenceKey)
 }

@@ -100,7 +100,7 @@ class SellerDetailsService(
         val selfie = jpeg(required(sent(form.selfie), "selfie"), "selfie")
         val birForm = sent(form.birForm)?.let { jpeg(it, "birForm") }
 
-        val checks = identityCheckService.run(userId, form.livenessSessionId?.trim()?.ifEmpty { null }, idType, form.idNumber) { idFront }
+        val checks = identityCheckService.run(userId, form.livenessSessionId?.trim()?.ifEmpty { null }, idType, form.idNumber, legalName) { idFront }
         return persist(userId, listOf(idFront, idBack, selfie, birForm, checks.referenceImage)) { existing, keys, now ->
             val (frontKey, backKey, selfieKey, birKey, referenceKey) = keys
             val row = existing ?: SellerDetails(
@@ -135,7 +135,7 @@ class SellerDetailsService(
         val current = sellerDetailsRepository.findById(userId).orElse(null)
         if (current?.status != SellerDetailsStatus.MANUAL_REVIEW) throw notInReview()
         val revision = current.revision
-        val checks = identityCheckService.run(userId, request.livenessSessionId!!.trim(), current.idType, request.idNumber) {
+        val checks = identityCheckService.run(userId, request.livenessSessionId!!.trim(), current.idType, request.idNumber, current.legalName) {
             storageService.getBytes(current.idFrontKey)
         }
         return persist(userId, listOf(checks.referenceImage)) { existing, (referenceKey), now ->
@@ -148,15 +148,16 @@ class SellerDetailsService(
 
     /**
      * Runs inside the save transaction, under the user lock. Repeat accounts and a payout holder name
-     * that differs from the legal name route to an admin, never refuse (AA-I5). Two accounts submitting
-     * the same ID at once can miss each other: each holds only its own lock (accepted).
+     * that differs from the legal name route to an admin, never refuse (AA-I5). A lock on the ID number
+     * (after the user lock, so no deadlock) makes a second account submitting it at once wait, then see the first (R-9).
      */
     private fun SellerDetails.applyChecks(
         checks: IdentityChecks, referenceKey: String?, previouslyRejected: Boolean, now: OffsetDateTime,
     ): SellerDetails = apply {
         val payouts = payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(userId)
-        val hits = checks.idNumberHmac?.let { hmac ->
-            sellerDetailsRepository.findUserIdsByIdNumberHmac(hmac, userId).map { it to RepeatMatchKind.ID_NUMBER }
+        val hits = checks.idNumberMatchHmacs.takeIf { it.isNotEmpty() }?.let { hmacs ->
+            sellerDetailsRepository.lockIdNumber(hmacs.first()) // same key whatever ID type was picked
+            sellerDetailsRepository.findUserIdsByIdNumberHmacIn(hmacs, userId).map { it to RepeatMatchKind.ID_NUMBER }
         }.orEmpty() + (if (payouts.isEmpty()) emptyList() else {
             payoutAccountRepository.findUserIdsByAccountNumbers(payouts.map { it.accountNumber }, userId)
                 .map { it to RepeatMatchKind.PAYOUT_NUMBER }
@@ -166,7 +167,10 @@ class SellerDetailsService(
             SellerReasonCode.REPEAT_ACCOUNT_MATCH.takeIf { repeatMatches.isNotEmpty() },
             SellerReasonCode.PAYOUT_NAME_MISMATCH.takeIf { payouts.any { !NameMatch.same(legalName, it.accountName) } },
             SellerReasonCode.PREVIOUSLY_REJECTED.takeIf { previouslyRejected },
+            // The count before this try (R-8); it never goes down.
+            SellerReasonCode.REPEATED_FAILED_CHECKS.takeIf { failedAutoChecks >= identityProperties.maxFailedAutoChecks },
         )
+        if (checks.reasons.any { it in PERSON_FAILED }) failedAutoChecks += 1
         status = IdentityCheckService.statusFor(reasons)
         reasonCodes = reasons.ifEmpty { listOf(SellerReasonCode.PASSED) }
         livenessSessionId = checks.sessionId
@@ -406,6 +410,11 @@ class SellerDetailsService(
         private val SUPPORTED_TYPES = setOf("image/jpeg", "image/png", "image/webp")
         private val PHONE_SEPARATORS = Regex("[\\s.()\\-]")
         private val PHONE_SHAPE = Regex("\\+?\\d+")
+        // Checks the person failed. An AWS fault, AI off, an unreadable card or a missing format is never held against them (R-8).
+        private val PERSON_FAILED = setOf(
+            SellerReasonCode.LIVENESS_LOW, SellerReasonCode.FACE_MISMATCH, SellerReasonCode.NO_FACE_ON_ID,
+            SellerReasonCode.ID_NUMBER_MISMATCH, SellerReasonCode.ID_NAME_MISMATCH,
+        )
 
         /** The § 3.4 phone rule: returns the number as typed (trimmed) when valid, else null. */
         fun validPhone(raw: String?): String? {

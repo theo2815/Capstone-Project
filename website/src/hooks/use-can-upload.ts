@@ -8,7 +8,7 @@ export type UploadGateState =
   | { kind: "ok" }
   | { kind: "suspended"; reason: string | null }
   | { kind: "incomplete"; missing: string[]; missingLabel: string }
-  | { kind: "pending" }
+  | { kind: "pending"; awaitingAdmin?: boolean }
   // Profile approved, but the server's upload gate refuses the seller details (AA-I15).
   | { kind: "identity"; reviewState: ReviewState };
 
@@ -24,10 +24,15 @@ export type UploadGateState =
 // flips suspendedAt. Identity reads the server's `uploadsAllowed` as is; while
 // the seller-details read loads or fails nothing extra is blocked (the server
 // still gates the upload itself).
+const pendingGate = (awaitingAdmin: boolean): UploadGateState =>
+  awaitingAdmin ? { kind: "pending", awaitingAdmin } : { kind: "pending" };
+
 export function useCanUpload(): UploadGateState {
   const seller = useSellerDetails().query.data;
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
   const missing = usePhotographerSettingsStore((s) => s.verificationMissing);
+  // The hold only counts while pending: withdraw and local status flips leave the stored flag stale.
+  const awaitingAdmin = usePhotographerSettingsStore((s) => s.verificationAwaitingAdmin && s.verificationStatus === "pending");
   const suspendedAt = usePhotographerSettingsStore((s) => s.suspendedAt);
   const suspensionReason = usePhotographerSettingsStore(
     (s) => s.suspensionReason,
@@ -48,7 +53,7 @@ export function useCanUpload(): UploadGateState {
   // photographer: pending stays pending, anything else guides to settings.
   if (missing === null) {
     return status === "pending"
-      ? { kind: "pending" }
+      ? pendingGate(awaitingAdmin)
       : { kind: "incomplete", missing: [], missingLabel: "your settings" };
   }
 
@@ -59,5 +64,5 @@ export function useCanUpload(): UploadGateState {
   // Every required field is filled but the account isn't approved yet —
   // awaiting admin review (the settings page's own panel carries the submit
   // CTA when the photographer hasn't submitted).
-  return { kind: "pending" };
+  return pendingGate(awaitingAdmin);
 }

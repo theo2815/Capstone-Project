@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchAdminUsers, fetchAdminUserDetail, fetchAdminPhotographerSettings,
-  rejectUser, suspendUser, unsuspendUser, resetUserVerification,
+  approveUser, rejectUser, suspendUser, unsuspendUser, resetUserVerification,
   sendAdminMessage, fetchAdminCommand, type SendAdminMessageInput,
   type AdminUserDetail,
 } from "@/lib/api-admin";
@@ -151,6 +151,8 @@ export function useAdminUserActions() {
       isPending: (ids: string[]) => mutation.isPending(ids.map((id) => ({ kind: "user", id }))),
       pendingAction: (id: string) => mutation.pendingAction([{ kind: "user", id }]),
       reject: (id: string, reason: string, revision?: number) => run(id, "Sending back…", () => rejectUser(id, reason, revision), "reject"),
+      // Only for a profile held after a reset or reject; the server answers 409 otherwise.
+      approveHeld: (id: string, revision?: number) => run(id, "Approving…", () => approveUser(id, revision), "approve"),
       suspend: (id: string, reason: string) => run(id, "suspend", () => suspendUser(id, reason)),
       unsuspend: (id: string) => run(id, "Unsuspending…", () => unsuspendUser(id), "unsuspend"),
       resetVerification: (id: string, reason: string, revision?: number) => run(id, "Resetting verification…", () => resetUserVerification(id, reason, revision), "reset verification"),
