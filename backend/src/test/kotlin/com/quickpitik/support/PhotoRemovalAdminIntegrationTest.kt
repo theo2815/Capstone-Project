@@ -18,6 +18,7 @@ import org.mockito.Mockito.*
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.data.domain.PageRequest
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.springframework.transaction.support.TransactionSynchronizationManager
@@ -677,6 +678,25 @@ class PhotoRemovalAdminIntegrationTest : PostgresIntegrationTest() {
             .filter { it.kind == PhotographerMessageKind.PHOTO_REMOVAL_REQUEST }
         assertEquals(2, notices.size)
         assertEquals(review.id, items.findById(suggestion.id).orElseThrow().reviewId)
+    }
+
+    @Test fun `demote then promote stores one review notice`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val case = runnerCase()
+        val review = reviewFor(case, owner)
+        val hidden = runnerItem(case, ownedPhoto(owner), RemovalItemState.VERIFIED, review) // auto-hidden, then the owner is told
+        notifier.attempt(review.id)
+        val first = reviews.findById(review.id).orElseThrow()
+
+        service.reviewSuggestions(admin.id, case.id, ReviewSuggestionsCommand(UUID.randomUUID(), version(case), demote = listOf(hidden.id)))
+        service.reviewSuggestions(admin.id, case.id, ReviewSuggestionsCommand(UUID.randomUUID(), version(case), promote = listOf(hidden.id)))
+
+        val notices = history.findByRequestIdOrderByOccurredAtAscIdAsc(case.id, PageRequest.of(0, 100))
+            .filter { it.reviewId == review.id && it.action == RemovalHistoryActions.NOTICE_STORED && "kind" !in it.metadata }
+        assertEquals(1, notices.size)
+        val again = reviews.findById(review.id).orElseThrow()
+        assertEquals(first.notifiedMessageId to first.deadline, again.notifiedMessageId to again.deadline)
+        assertEquals(review.id, items.findById(hidden.id).orElseThrow().reviewId)
     }
 
     @Test fun `the list filters by source`() {
