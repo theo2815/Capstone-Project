@@ -501,6 +501,37 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, tx.execute { relevance.ensureBatch(s.event, s.photographer) })
     }
 
+    // RV-1.1: every version 2 relevance table hangs off batch_relevance, so the script's one DELETE covers them.
+    @Test
+    fun `anonymising a photographer removes their version 2 relevance rows`() {
+        val s = seedStudio()
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", s.event, s.photographer)
+        jdbc.update("INSERT INTO batch_relevance_words (batch_id, word, photos) VALUES (?, 'CEBU', 1)", batch)
+        jdbc.update("INSERT INTO relevance_photo_checks (photo_id, batch_id, words_counted_at) VALUES (?, ?, now())", s.soldPhoto, batch)
+        val case = id(
+            "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage) " +
+                "VALUES (?, 'QUIET', TIMESTAMPTZ '2003-02-03 04:05:06+00', 40, 'APPLIED')",
+            batch,
+        )
+        jdbc.update("INSERT INTO relevance_case_photos (case_id, photo_id, round) VALUES (?, ?, 1)", case, s.soldPhoto)
+        jdbc.update(
+            "INSERT INTO relevance_alerts (batch_id, case_id, kind, dedupe_key, would_have) VALUES (?, ?, 'BIG_HIDE', ?, true)",
+            batch, case, "rv-del-${UUID.randomUUID()}",
+        )
+
+        val result = anonymise(s.photographer, confirm = "yes")
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertEquals(0, count(
+            "SELECT (SELECT count(*) FROM batch_relevance_words WHERE batch_id = ?) " +
+                "+ (SELECT count(*) FROM relevance_photo_checks WHERE batch_id = ?) " +
+                "+ (SELECT count(*) FROM relevance_cases WHERE batch_id = ?) " +
+                "+ (SELECT count(*) FROM relevance_case_photos WHERE case_id = ?) " +
+                "+ (SELECT count(*) FROM relevance_alerts WHERE batch_id = ?)",
+            batch, batch, batch, case, batch,
+        ))
+    }
+
     private fun assertRefusedUnchanged(photographer: UUID) {
         val before = email(photographer)
         val result = anonymise(photographer, confirm = "yes")

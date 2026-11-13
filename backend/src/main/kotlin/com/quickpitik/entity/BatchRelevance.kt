@@ -53,4 +53,11 @@ class BatchRelevance(
     // PE-2.1: the relevance flag this batch raised or extended, and when.
     @Column(name = "flag_id") var flagId: UUID? = null,
     @Column(name = "flagged_at") var flaggedAt: OffsetDateTime? = null,
+    // RV-1.1 (version 2): the check claim, what the last check covered, and when rare words were purged.
+    @Column(name = "check_claim") var checkClaim: UUID? = null,
+    @Column(name = "check_claim_until") var checkClaimUntil: OffsetDateTime? = null,
+    @Column(name = "check_served_at") var checkServedAt: OffsetDateTime? = null,
+    @Column(name = "checked_upload_at") var checkedUploadAt: OffsetDateTime? = null,
+    @Column(name = "checked_photos") var checkedPhotos: Int? = null,
+    @Column(name = "words_purged_at") var wordsPurgedAt: OffsetDateTime? = null,
 )
