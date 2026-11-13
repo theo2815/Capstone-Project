@@ -35,7 +35,8 @@ data class CreateOrderItem(
     val photoId: UUID,
     val eventId: UUID,
     // The price the client showed (AA-R14). Sent and different from the live
-    // price → 409 CART_ITEM_PRICE_CHANGED; old clients omit it and pay as today.
+    // price → 409 CART_ITEM_PRICE_CHANGED. Old clients omit it: a signed-in buyer is
+    // then checked against the stored cart price (AF-12), a guest pays the live price.
     val expectedPricePhp: BigDecimal? = null,
 )
 

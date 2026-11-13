@@ -22,6 +22,8 @@ import com.quickpitik.dto.orders.PaymongoPaymentMethodResponseEnvelope
 import com.quickpitik.dto.orders.PaymongoPaymentMethodRequest
 import com.quickpitik.dto.orders.PaymongoPaymentResource
 import com.quickpitik.dto.orders.PaymongoQrCode
+import com.quickpitik.entity.CartItemEntity
+import com.quickpitik.entity.CartItemId
 import com.quickpitik.entity.DownloadGrant
 import com.quickpitik.entity.DownloadGrantId
 import com.quickpitik.entity.Event
@@ -813,13 +815,84 @@ class OrderServiceCheckoutTest {
         Mockito.verifyNoInteractions(paymongoClient)
     }
 
-    @Test
-    fun `an order without expected prices is charged as today`() {
-        stubProvider()
+    // AF-12 (review R-4): an old client sends no price; a signed-in buyer's stored
+    // cart price still guards against a rise, once, and the refusal moves it up.
+    private fun signedInBuyer(): User {
+        val user = User(email = email, passwordHash = "unused", name = "Runner", role = Role.RUNNER)
+        Mockito.`when`(userRepository.findById(user.id)).thenReturn(Optional.of(user))
+        return user
+    }
 
-        val response = service.create(null, request(), key)
+    private fun cartRowAt(user: User, price: String): CartItemEntity {
+        val row = CartItemEntity(CartItemId(user.id, photo.id), eventId, BigDecimal(price))
+        Mockito.`when`(cartItemRepository.findByUserId(user.id)).thenReturn(listOf(row))
+        Mockito.`when`(cartItemRepository.raisePriceAtAdd(eqArg(user.id), eqArg(photo.id), anyArg())).thenAnswer { call ->
+            row.pricePhpAtAdd = call.getArgument(2)
+            1
+        }
+        return row
+    }
+
+    @Test
+    fun `no expected price and a cart row below the live price answers CART_ITEM_PRICE_CHANGED, writes no order and refreshes the stored price`() {
+        val user = signedInBuyer()
+        val row = cartRowAt(user, "100.00")
+
+        val error = assertFailsWith<ConflictException> { service.create(user.id, request(), key) }
+
+        assertEquals(ErrorCodes.CART_ITEM_PRICE_CHANGED, error.code)
+        assertEquals("Photo price changed from ₱100.00 to ₱125.00. Refresh your cart and try again.", error.message)
+        assertTrue(savedOrders.isEmpty())
+        Mockito.verifyNoInteractions(paymongoClient)
+        assertEquals(0, BigDecimal("125.00").compareTo(row.pricePhpAtAdd))
+    }
+
+    @Test
+    fun `the next try after that refusal checks out at the live price`() {
+        val user = signedInBuyer()
+        cartRowAt(user, "100.00")
+        stubProvider()
+        assertFailsWith<ConflictException> { service.create(user.id, request(), key) }
+
+        val response = service.create(user.id, request(), key)
 
         assertEquals(BigDecimal("125.00"), response.totalAmount)
+    }
+
+    @Test
+    fun `no expected price and no cart row is charged the live price`() {
+        stubProvider()
+        assertEquals(BigDecimal("125.00"), service.create(null, request(), key).totalAmount)
+
+        val user = signedInBuyer()
+        Mockito.`when`(cartItemRepository.findByUserId(user.id)).thenReturn(emptyList())
+        assertEquals(BigDecimal("125.00"), service.create(user.id, request(), UUID.randomUUID().toString()).totalAmount)
+        Mockito.verify(cartItemRepository, Mockito.never()).raisePriceAtAdd(anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `no expected price and a price drop checks out`() {
+        val user = signedInBuyer()
+        val row = cartRowAt(user, "150.00")
+        stubProvider()
+
+        val response = service.create(user.id, request(), key)
+
+        assertEquals(BigDecimal("125.00"), response.totalAmount)
+        assertEquals(0, BigDecimal("150.00").compareTo(row.pricePhpAtAdd))
+        Mockito.verify(cartItemRepository, Mockito.never()).raisePriceAtAdd(anyArg(), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a sent expected price is checked as before and refreshes nothing`() {
+        val user = signedInBuyer()
+        cartRowAt(user, "100.00")
+        val stale = CreateOrderItem(photo.id, eventId, expectedPricePhp = BigDecimal("100.00"))
+
+        val error = assertFailsWith<ConflictException> { service.create(user.id, request(items = listOf(stale)), key) }
+
+        assertEquals(ErrorCodes.CART_ITEM_PRICE_CHANGED, error.code)
+        Mockito.verify(cartItemRepository, Mockito.never()).raisePriceAtAdd(anyArg(), anyArg(), anyArg())
     }
 
     @Test
@@ -1244,6 +1317,7 @@ class OrderServiceCheckoutTest {
         assertEquals(OrderStatus.FULFILLED, response.status)
         assertEquals(OrderStatus.FULFILLED, statusAtCartClear)
         assertEquals(false, cartClearWasTransactional)
+        Mockito.verify(cartItemRepository).findByUserId(user.id) // AF-12: no expected price, so the stored price is read
         Mockito.verify(cartItemRepository).deleteByUserIdAndPhotoId(user.id, photo.id)
         Mockito.verifyNoMoreInteractions(cartItemRepository)
         Mockito.verifyNoInteractions(paymongoClient)

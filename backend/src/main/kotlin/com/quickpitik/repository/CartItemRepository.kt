@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 import java.util.UUID
 
 interface CartItemRepository : JpaRepository<CartItemEntity, CartItemId> {
@@ -18,6 +19,19 @@ interface CartItemRepository : JpaRepository<CartItemEntity, CartItemId> {
     @Transactional
     @Query("DELETE FROM CartItemEntity c WHERE c.id.userId = :userId AND c.id.photoId = :photoId")
     fun deleteByUserIdAndPhotoId(@Param("userId") userId: UUID, @Param("photoId") photoId: UUID): Int
+
+    /** AF-12: moves a stored price up to the live one; never down, never another buyer's row. */
+    @Modifying
+    @Transactional
+    @Query(
+        "UPDATE CartItemEntity c SET c.pricePhpAtAdd = :live " +
+            "WHERE c.id.userId = :userId AND c.id.photoId = :photoId AND c.pricePhpAtAdd < :live",
+    )
+    fun raisePriceAtAdd(
+        @Param("userId") userId: UUID,
+        @Param("photoId") photoId: UUID,
+        @Param("live") live: BigDecimal,
+    ): Int
 
     @Modifying
     @Transactional
