@@ -180,6 +180,12 @@ it("a held profile shows Approve from the detail answer when the list has no row
   expect(await within(drawer).findByRole("button", { name: "Approve" })).toBeInTheDocument();
   expect(within(drawer).getByText(HOLD_LINE)).toBeInTheDocument();
 });
+it("the drawer subtitle has no empty place between two dots when region and city are blank", async () => {
+  rows = [{ ...adminUser, region: null, city: "" }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  expect(await within(drawer).findByText(/^@test-studio/)).not.toHaveTextContent(/·\s*·/);
+});
 it("the detail answer's hold wins over a stale list row", async () => {
   rows = [{ ...adminUser, adminHold: false }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
   const listGet = vi.mocked(api.get).getMockImplementation()!;

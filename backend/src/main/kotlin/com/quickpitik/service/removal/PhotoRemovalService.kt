@@ -597,7 +597,11 @@ class PhotoRemovalService(
                 val review = ownerId?.let { id -> existing ?: reviews.saveAndFlush(PhotoRemovalReview(requestId = requestId,
                     ownerIdSnapshot = id, ownerId = id)).also { byOwner[id] = it } }
                 // A notified owner must be told again, with a new notice and a fresh response clock (reverifyOwner's reset).
-                val renotify = existing != null && (existing.notifiedAt != null || existing.unavailableReason != null)
+                // Not for a photo the latest notice already listed: a SUGGESTED row after it can only be a demote (submit writes them first).
+                val alreadyListed = existing?.notifiedAt?.let {
+                    audit.existsByRequestIdAndItemIdAndActionAndOccurredAtAfter(requestId, item.id, RemovalHistoryActions.SUGGESTED, it)
+                } == true
+                val renotify = existing != null && (existing.notifiedAt != null || existing.unavailableReason != null) && !alreadyListed
                 if (renotify) existing!!.apply {
                     notifiedAt = null; notifiedMessageId = null; deadline = null; overdue = false; overdueAt = null
                     unavailableReason = null; notificationNextAttemptAt = now
