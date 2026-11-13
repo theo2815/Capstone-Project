@@ -139,10 +139,10 @@ class SellerDetailsServiceTest {
     private val reference = byteArrayOf(9, 9, 9)
 
     @Suppress("UNCHECKED_CAST")
-    private fun identityChecks(): IdentityCheckService {
+    private fun identityChecks(aiEnabled: Boolean = true): IdentityCheckService {
         val provider = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionIdentityClient>
         Mockito.`when`(provider.getIfAvailable()).thenReturn(identityClient)
-        return IdentityCheckService(sessions, provider, AiApiProperties(enabled = true), identityFormats)
+        return IdentityCheckService(sessions, provider, AiApiProperties(enabled = aiEnabled), identityFormats)
     }
 
     // A set format for every type: with none, every live check would go to an admin (R-1).
@@ -153,10 +153,11 @@ class SellerDetailsServiceTest {
     private fun service(
         identity: IdentityProperties = IdentityProperties(),
         profiles: PhotographerSettingsService = Mockito.mock(PhotographerSettingsService::class.java),
+        aiEnabled: Boolean = true,
     ) = SellerDetailsService(
         repository, userRepository, storage, TransactionTemplate(txManager), clock,
         decisionLog(),
-        StorageProperties(), identityChecks(), payoutRepository, identity, profiles,
+        StorageProperties(), identityChecks(aiEnabled), payoutRepository, identity, profiles,
     )
 
     private fun decisionLog() =
@@ -1021,6 +1022,62 @@ class SellerDetailsServiceTest {
         service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
 
         assertEquals(listOf(SellerReasonCode.ID_NAME_MISMATCH), saved().reasonCodes)
+    }
+
+    // ─── R-8: repeated failed tries go to an admin ───
+
+    /** [failures] live checks that fail the face match, then one that passes, all on one MANUAL_REVIEW record. */
+    private fun passAfterFailedTries(failures: Int): SellerDetails {
+        val row = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(row))
+        Mockito.`when`(identityClient.compareFaces(anyArg(), anyArg())).thenReturn(FaceCompareResult(1, 50f))
+        repeat(failures) {
+            service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+            assertEquals(listOf(SellerReasonCode.FACE_MISMATCH), row.reasonCodes)
+        }
+        Mockito.`when`(identityClient.compareFaces(anyArg(), anyArg())).thenReturn(FaceCompareResult(1, 99.8f))
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+        return row
+    }
+
+    @Test
+    fun `a passing live check after three failed tries goes to an admin`() {
+        val row = passAfterFailedTries(3)
+
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.REPEATED_FAILED_CHECKS), row.reasonCodes)
+        assertEquals(3, row.failedAutoChecks)
+    }
+
+    @Test
+    fun `a passing live check after two failed tries is approved`() {
+        val row = passAfterFailedTries(2)
+
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+        assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
+        assertEquals(2, row.failedAutoChecks)
+    }
+
+    @Test
+    fun `an aws error or ai off does not count as a failed try`() {
+        val row = reviewRecord(SellerReasonCode.DECLINED)
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(row))
+        Mockito.doThrow(SdkClientException.create("aws down")).`when`(identityClient).livenessResult(SESSION)
+        repeat(3) { service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER)) }
+        assertEquals(listOf(SellerReasonCode.AI_ERROR), row.reasonCodes)
+        repeat(3) { service(aiEnabled = false).liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER)) }
+        assertEquals(listOf(SellerReasonCode.AI_DISABLED), row.reasonCodes)
+        assertEquals(0, row.failedAutoChecks)
+
+        Mockito.doReturn(LivenessResult(LivenessSessionStatus.SUCCEEDED, 99.5f, reference)).`when`(identityClient).livenessResult(SESSION)
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+    }
+
+    @Test
+    fun `the admin detail shows the failed-try count`() {
+        assertEquals(2, existing().apply { failedAutoChecks = 2 }.toAdminDto("seller@test.local").failedAutoChecks)
     }
 
     @Test

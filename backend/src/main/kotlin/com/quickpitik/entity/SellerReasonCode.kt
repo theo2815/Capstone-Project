@@ -20,4 +20,6 @@ enum class SellerReasonCode {
     ID_FORMAT_UNCHECKED,
     // A word of the typed legal name is not printed on the ID front: an admin compares them (R-2).
     ID_NAME_MISMATCH,
+    // The record already holds app.identity.max-failed-auto-checks failed tries: an admin looks, even at a pass (R-8).
+    REPEATED_FAILED_CHECKS,
 }

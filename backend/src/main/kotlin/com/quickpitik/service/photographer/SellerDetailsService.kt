@@ -167,7 +167,10 @@ class SellerDetailsService(
             SellerReasonCode.REPEAT_ACCOUNT_MATCH.takeIf { repeatMatches.isNotEmpty() },
             SellerReasonCode.PAYOUT_NAME_MISMATCH.takeIf { payouts.any { !NameMatch.same(legalName, it.accountName) } },
             SellerReasonCode.PREVIOUSLY_REJECTED.takeIf { previouslyRejected },
+            // The count before this try (R-8); it never goes down.
+            SellerReasonCode.REPEATED_FAILED_CHECKS.takeIf { failedAutoChecks >= identityProperties.maxFailedAutoChecks },
         )
+        if (checks.reasons.any { it in PERSON_FAILED }) failedAutoChecks += 1
         status = IdentityCheckService.statusFor(reasons)
         reasonCodes = reasons.ifEmpty { listOf(SellerReasonCode.PASSED) }
         livenessSessionId = checks.sessionId
@@ -407,6 +410,11 @@ class SellerDetailsService(
         private val SUPPORTED_TYPES = setOf("image/jpeg", "image/png", "image/webp")
         private val PHONE_SEPARATORS = Regex("[\\s.()\\-]")
         private val PHONE_SHAPE = Regex("\\+?\\d+")
+        // Checks the person failed. An AWS fault, AI off, an unreadable card or a missing format is never held against them (R-8).
+        private val PERSON_FAILED = setOf(
+            SellerReasonCode.LIVENESS_LOW, SellerReasonCode.FACE_MISMATCH, SellerReasonCode.NO_FACE_ON_ID,
+            SellerReasonCode.ID_NUMBER_MISMATCH, SellerReasonCode.ID_NAME_MISMATCH,
+        )
 
         /** The § 3.4 phone rule: returns the number as typed (trimmed) when valid, else null. */
         fun validPhone(raw: String?): String? {

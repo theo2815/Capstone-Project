@@ -275,6 +275,9 @@ app:
     face-min-similarity: ${FACE_MIN_SIMILARITY:99}
     # Live checks per photographer per Manila day (the durable rate limit for C1).
     liveness-attempts-per-day: ${LIVENESS_ATTEMPTS_PER_DAY:3}
+    # Failed automatic tries (a check the person failed, never an AWS fault) after which every later try,
+    # even a pass, goes to an admin as REPEATED_FAILED_CHECKS (R-8). At least 1.
+    max-failed-auto-checks: ${IDENTITY_MAX_FAILED_AUTO_CHECKS:3}
     # IAM role quickpitik-liveness-browser (AA-0.2). Blank = the live check answers 503.
     liveness-role-arn: ${LIVENESS_ROLE_ARN:}
     liveness-credential-seconds: ${LIVENESS_CREDENTIAL_SECONDS:900}

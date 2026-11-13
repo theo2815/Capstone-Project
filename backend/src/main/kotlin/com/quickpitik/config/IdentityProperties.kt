@@ -19,6 +19,8 @@ data class IdentityProperties(
     val faceMinSimilarity: Double = 99.0,
     // Sessions per photographer per Manila day.
     val livenessAttemptsPerDay: Int = 3,
+    // Failed automatic tries after which every later try goes to an admin (R-8; owner question Q6).
+    val maxFailedAutoChecks: Int = 3,
     // Role the backend assumes for the browser's keys (AA-0.2). Blank = 503 LIVENESS_UNAVAILABLE.
     val livenessRoleArn: String = "",
     val livenessCredentialSeconds: Int = 900,
@@ -39,6 +41,7 @@ data class IdentityProperties(
         require(livenessMinConfidence in 0.0..100.0) { "app.identity.liveness-min-confidence must be within 0..100" }
         require(faceMinSimilarity in 0.0..100.0) { "app.identity.face-min-similarity must be within 0..100" }
         require(livenessAttemptsPerDay >= 1) { "app.identity.liveness-attempts-per-day must be at least 1" }
+        require(maxFailedAutoChecks >= 1) { "app.identity.max-failed-auto-checks must be at least 1" }
         // STS minimum 900 s; the role's MaxSessionDuration is the default 3600 s.
         require(livenessCredentialSeconds in 900..3600) { "app.identity.liveness-credential-seconds must be within 900..3600" }
         require(noticeSendPerSecond in 1..1000) { "app.identity.notice-send-per-second must be within 1..1000" }

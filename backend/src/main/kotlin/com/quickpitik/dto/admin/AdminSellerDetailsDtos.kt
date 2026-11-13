@@ -66,6 +66,8 @@ data class AdminSellerDetailsDto(
     // Only whether a number was given: the raw number is never stored and its hash never leaves the server.
     val hasIdNumber: Boolean,
     val repeatMatches: List<RepeatMatchDto>,
+    // Automatic tries that failed a check (R-8); REPEATED_FAILED_CHECKS appears once it reaches the limit.
+    val failedAutoChecks: Int,
     val files: SellerDetailsFilesDto? = null,
     val linksExpireAt: OffsetDateTime? = null,
 )
@@ -114,6 +116,7 @@ fun SellerDetails.toAdminDto(
         biometricConsentAt = biometricConsentAt,
         hasIdNumber = idNumberHmac != null,
         repeatMatches = repeatMatches,
+        failedAutoChecks = failedAutoChecks,
         files = files,
         linksExpireAt = linksExpireAt,
     )
