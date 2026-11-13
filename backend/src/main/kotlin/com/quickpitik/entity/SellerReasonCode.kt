@@ -18,4 +18,6 @@ enum class SellerReasonCode {
     PREVIOUSLY_REJECTED,
     // The number was found on the card, but its ID type has no format set: an admin checks it (R-1).
     ID_FORMAT_UNCHECKED,
+    // A word of the typed legal name is not printed on the ID front: an admin compares them (R-2).
+    ID_NAME_MISMATCH,
 }

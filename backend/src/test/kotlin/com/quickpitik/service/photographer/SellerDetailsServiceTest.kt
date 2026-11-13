@@ -130,7 +130,7 @@ class SellerDetailsServiceTest {
         Mockito.`when`(sessions.claim(userId, SESSION, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null)).thenReturn(true)
         Mockito.`when`(identityClient.livenessResult(SESSION)).thenReturn(LivenessResult(LivenessSessionStatus.SUCCEEDED, 99.5f, reference))
         Mockito.`when`(identityClient.compareFaces(anyArg(), anyArg())).thenReturn(FaceCompareResult(1, 99.8f))
-        Mockito.`when`(identityClient.detectLines(anyArg())).thenReturn(listOf("REPUBLIC OF THE PHILIPPINES", ID_NUMBER))
+        Mockito.`when`(identityClient.detectLines(anyArg())).thenReturn(listOf("REPUBLIC OF THE PHILIPPINES", "DELA CRUZ, JUAN ANDRES", ID_NUMBER))
     }
 
     private lateinit var sessions: LivenessSessionService
@@ -914,6 +914,7 @@ class SellerDetailsServiceTest {
 
     /** A MANUAL_REVIEW record that already holds a reference image from an earlier live check. */
     private fun reviewRecord(vararg reasons: SellerReasonCode) = existing(SellerDetailsStatus.MANUAL_REVIEW).apply {
+        legalName = "Juan Dela Cruz" // printed on the fixture's ID front
         livenessReferenceKey = "seller-details/$userId/old-reference.jpg"
         reasonCodes = reasons.toList()
         Mockito.`when`(storage.getBytes(idFrontKey)).thenReturn(jpeg())
@@ -1001,6 +1002,25 @@ class SellerDetailsServiceTest {
         assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
         assertEquals(5L, row.revision)
         assertEquals("auto_approved", dto.reviewState)
+    }
+
+    @Test
+    fun `a submitted legal name that is not on the id front goes to manual review naming it`() {
+        service().submit(userId, form(livenessSessionId = SESSION).apply { legalName = "Maria Santos" })
+
+        val row = saved()
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, row.status)
+        assertEquals(listOf(SellerReasonCode.ID_NAME_MISMATCH), row.reasonCodes)
+    }
+
+    @Test
+    fun `live check compares the stored legal name with the id front`() {
+        val old = reviewRecord(SellerReasonCode.DECLINED).apply { legalName = "Maria Santos" }
+        Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
+
+        service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
+
+        assertEquals(listOf(SellerReasonCode.ID_NAME_MISMATCH), saved().reasonCodes)
     }
 
     @Test
@@ -1238,7 +1258,7 @@ class SellerDetailsServiceTest {
         val old = reviewRecord(SellerReasonCode.DECLINED)
         Mockito.`when`(repository.findById(userId)).thenReturn(Optional.of(old))
         Mockito.`when`(repository.findUserIdsByPhoneKey("9170000000", userId)).thenReturn(listOf(other))
-        Mockito.`when`(payoutRepository.findAllByUserIdOrderByCreatedAtAsc(userId)).thenReturn(listOf(payout(name = "Old Name")))
+        Mockito.`when`(payoutRepository.findAllByUserIdOrderByCreatedAtAsc(userId)).thenReturn(listOf(payout(name = "Juan Dela Cruz")))
 
         service().liveCheck(userId, LiveCheckRequest(SESSION, ID_NUMBER))
 

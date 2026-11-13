@@ -100,7 +100,7 @@ class SellerDetailsService(
         val selfie = jpeg(required(sent(form.selfie), "selfie"), "selfie")
         val birForm = sent(form.birForm)?.let { jpeg(it, "birForm") }
 
-        val checks = identityCheckService.run(userId, form.livenessSessionId?.trim()?.ifEmpty { null }, idType, form.idNumber) { idFront }
+        val checks = identityCheckService.run(userId, form.livenessSessionId?.trim()?.ifEmpty { null }, idType, form.idNumber, legalName) { idFront }
         return persist(userId, listOf(idFront, idBack, selfie, birForm, checks.referenceImage)) { existing, keys, now ->
             val (frontKey, backKey, selfieKey, birKey, referenceKey) = keys
             val row = existing ?: SellerDetails(
@@ -135,7 +135,7 @@ class SellerDetailsService(
         val current = sellerDetailsRepository.findById(userId).orElse(null)
         if (current?.status != SellerDetailsStatus.MANUAL_REVIEW) throw notInReview()
         val revision = current.revision
-        val checks = identityCheckService.run(userId, request.livenessSessionId!!.trim(), current.idType, request.idNumber) {
+        val checks = identityCheckService.run(userId, request.livenessSessionId!!.trim(), current.idType, request.idNumber, current.legalName) {
             storageService.getBytes(current.idFrontKey)
         }
         return persist(userId, listOf(checks.referenceImage)) { existing, (referenceKey), now ->

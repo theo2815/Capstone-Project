@@ -16,6 +16,12 @@ object NameMatch {
         return shorter.isNotEmpty() && (shorter == longer || (shorter.size >= 2 && longer.containsAll(shorter)))
     }
 
+    /** Is every word of [legalName] (at least two) printed somewhere on the ID front's [lines], in any order (R-2)? */
+    fun onCard(legalName: String, lines: List<String>): Boolean {
+        val name = words(legalName)
+        return name.size >= 2 && lines.flatMap(::words).containsAll(name)
+    }
+
     private fun words(name: String): Set<String> =
         Normalizer.normalize(name, Normalizer.Form.NFD).replace(MARKS, "").lowercase()
             .split(NON_LETTERS).filter { it.length > 1 }.toSet()
