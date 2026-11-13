@@ -98,6 +98,15 @@ class DuplicateMatcherTest {
     }
 
     @Test
+    fun `a longer typed name around an existing shorter one also scores medium`() {
+        val input = RaceInput("Cebu Marathon presented by Acme Bank Foundation", day, provinceCode = null, organizerName = null)
+        val result = matcher.classify(input, listOf(candidate("Cebu Marathon")))
+
+        assertTrue(result.strong.isEmpty())
+        assertEquals(1, result.medium.size)
+    }
+
+    @Test
     fun `one shared word out of two is not containment`() {
         val input = RaceInput("Cebu Marathon", day, provinceCode = null, organizerName = null)
 

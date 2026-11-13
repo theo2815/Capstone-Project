@@ -128,9 +128,12 @@ class OrderService(
         } catch (stale: StaleCartPrice) {
             // The reservation transaction has rolled back, so this refresh is
             // a transaction of its own: inside it, it would roll back too.
-            transactionTemplate.executeWithoutResult {
-                stale.rows.forEach { (photoId, live) -> cartItemRepository.raisePriceAtAdd(userId!!, photoId, live) }
-            }
+            // A failed refresh must not turn the refusal into a 500; the buyer is refused again next try.
+            runCatching {
+                transactionTemplate.executeWithoutResult {
+                    stale.rows.forEach { (photoId, live) -> cartItemRepository.raisePriceAtAdd(userId!!, photoId, live) }
+                }
+            }.onFailure { log.warn("Could not refresh stored cart prices for user {}", userId, it) }
             throw stale.conflict
         }
 

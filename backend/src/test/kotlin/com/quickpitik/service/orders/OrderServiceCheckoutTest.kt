@@ -860,6 +860,45 @@ class OrderServiceCheckoutTest {
     }
 
     @Test
+    fun `a two-photo cart where one price rose is refused once for that photo and raises only its row`() {
+        val user = signedInBuyer()
+        val other = Photo(eventId = eventId, s3Key = "photos/other.jpg", pricePhp = BigDecimal("200.00"))
+        val risen = CartItemEntity(CartItemId(user.id, photo.id), eventId, BigDecimal("100.00"))
+        val same = CartItemEntity(CartItemId(user.id, other.id), eventId, BigDecimal("200.00"))
+        Mockito.`when`(photoRepository.findAllByIdForUpdate(anyArg())).thenReturn(listOf(photo, other))
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(photo, other))
+        Mockito.`when`(cartItemRepository.findByUserId(user.id)).thenReturn(listOf(risen, same))
+        Mockito.`when`(cartItemRepository.raisePriceAtAdd(eqArg(user.id), eqArg(photo.id), anyArg())).thenAnswer { call ->
+            risen.pricePhpAtAdd = call.getArgument(2)
+            1
+        }
+        stubProvider()
+        val both = request(items = listOf(CreateOrderItem(photo.id, eventId), CreateOrderItem(other.id, eventId)))
+
+        val error = assertFailsWith<ConflictException> { service.create(user.id, both, key) }
+
+        assertEquals(ErrorCodes.CART_ITEM_PRICE_CHANGED, error.code)
+        assertEquals("Photo price changed from ₱100.00 to ₱125.00. Refresh your cart and try again.", error.message)
+        Mockito.verify(cartItemRepository).raisePriceAtAdd(eqArg(user.id), eqArg(photo.id), anyArg())
+        Mockito.verify(cartItemRepository, Mockito.never()).raisePriceAtAdd(anyArg(), eqArg(other.id), anyArg())
+        assertEquals(0, BigDecimal("200.00").compareTo(same.pricePhpAtAdd))
+        assertEquals(BigDecimal("325.00"), service.create(user.id, both, key).totalAmount)
+    }
+
+    @Test
+    fun `a failing stored-price raise still answers CART_ITEM_PRICE_CHANGED, not a server error`() {
+        val user = signedInBuyer()
+        cartRowAt(user, "100.00")
+        Mockito.`when`(cartItemRepository.raisePriceAtAdd(anyArg(), anyArg(), anyArg())).thenThrow(IllegalStateException("database down"))
+
+        val error = assertFailsWith<ConflictException> { service.create(user.id, request(), key) }
+
+        assertEquals(ErrorCodes.CART_ITEM_PRICE_CHANGED, error.code)
+        assertTrue(savedOrders.isEmpty())
+        Mockito.verifyNoInteractions(paymongoClient)
+    }
+
+    @Test
     fun `no expected price and no cart row is charged the live price`() {
         stubProvider()
         assertEquals(BigDecimal("125.00"), service.create(null, request(), key).totalAmount)
