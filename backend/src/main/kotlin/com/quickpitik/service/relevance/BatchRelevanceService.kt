@@ -1,6 +1,7 @@
 package com.quickpitik.service.relevance
 
 import com.quickpitik.config.AdminProperties
+import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.entity.BatchRelevance
@@ -45,24 +46,20 @@ class BatchRelevanceService(
     private val adminProperties: AdminProperties,
     private val adminDecisionLogService: AdminDecisionLogService,
     private val eventRepository: EventRepository,
+    // Spring injects the bean; the default lets the existing tests build the service from props alone.
+    private val switch: RelevanceSwitch = RelevanceSwitch(props, adminProperties, AiApiProperties()),
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     // P9: with the admin flags switch off nobody could see or close a flag, so flag mode acts as shadow.
-    private val raising = props.mode == RelevanceMode.FLAG && adminProperties.flagsEnabled
-
-    init {
-        if (props.mode == RelevanceMode.FLAG && !adminProperties.flagsEnabled) {
-            log.warn("RELEVANCE_MODE=flag with ADMIN_FLAGS_ENABLED off: relevance runs as shadow, no flag is raised")
-        }
-    }
+    private val raising = switch.v1Flagging
 
     @Scheduled(
         initialDelayString = "\${app.relevance.sweep-interval-ms:60000}",
         fixedDelayString = "\${app.relevance.sweep-interval-ms:60000}",
     )
     fun sweep() {
-        if (props.mode == RelevanceMode.OFF) return
+        if (switch.mode == RelevanceMode.OFF) return
         val now = clock.postgresTimestamp()
         val today = LocalDate.now(clock.withZone(EventDtoMapper.PH_ZONE))
         val cutoffs = uploadCutoffs(today)

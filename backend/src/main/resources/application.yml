@@ -323,10 +323,12 @@ app:
     reports:
       hide-threshold: ${RACE_REPORT_HIDE_THRESHOLD:3} # distinct accounts; [NOT MEASURED]
   relevance:
-    # PE-1 photo-to-event relevance. off = the sweep does nothing (kill switch);
-    # shadow = relevance rows only; flag = a Low batch also opens or extends one admin
-    # flag per photographer (PE-2.1; acts as shadow while app.admin.flags-enabled is off).
-    # Nothing is hidden or held automatically.
+    # Photo relevance kill switch, read through RelevanceSwitch. off = nothing runs;
+    # record-only = relevance rows and admin alerts only; auto-hide = may hide, but runs as
+    # record-only until app.admin.flags-enabled is on and both junk cut-offs are set.
+    # Old names still boot: shadow = record-only; flag = version 1's flag mode (a Low batch
+    # also opens or extends one admin flag; acts as shadow while app.admin.flags-enabled is off).
+    # An unknown value stops the boot.
     mode: ${RELEVANCE_MODE:off}
     sweep-interval-ms: ${RELEVANCE_SWEEP_INTERVAL_MS:60000}
     quiet-minutes: ${RELEVANCE_QUIET_MINUTES:10}
@@ -344,6 +346,10 @@ app:
       window-days: ${RELEVANCE_DATE_WINDOW_DAYS:2} # [NOT MEASURED: PE-0]
       min-dated-photos: ${RELEVANCE_DATE_MIN_DATED_PHOTOS:10} # [NOT MEASURED: PE-0]
       outside-share-percent: ${RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT:80} # [NOT MEASURED: PE-0]
+    junk:
+      # 0-100. Empty = not set; auto-hide stays record-only until both are set.
+      blur-cutoff: ${RELEVANCE_JUNK_BLUR_CUTOFF:} # [NOT MEASURED: O7]
+      dark-cutoff: ${RELEVANCE_JUNK_DARK_CUTOFF:} # [NOT MEASURED: O7]
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
