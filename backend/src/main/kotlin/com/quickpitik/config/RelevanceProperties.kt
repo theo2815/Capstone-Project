@@ -25,6 +25,7 @@ data class RelevanceProperties(
     val copy: Copy = Copy(),
     val date: Date = Date(),
     val junk: Junk = Junk(),
+    val check: Check = Check(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -68,10 +69,32 @@ data class RelevanceProperties(
     data class Junk(
         val blurCutoff: Double? = null,
         val darkCutoff: Double? = null,
+        // Not a race: neither Person nor any race label reaches this confidence (0-1).
+        val labelMinConfidence: Double = 0.6,
+        val raceLabels: List<String> = listOf("Running", "Marathon", "Road"),
+        // Junk share of the measured sample: under fitsBelowPercent is UNDER, over dumpAbovePercent is OVER.
+        val fitsBelowPercent: Int = 10,
+        val dumpAbovePercent: Int = 70,
     ) {
         init {
             require(blurCutoff == null || blurCutoff in 0.0..100.0) { "blurCutoff must be 0..100" }
             require(darkCutoff == null || darkCutoff in 0.0..100.0) { "darkCutoff must be 0..100" }
+            require(labelMinConfidence in 0.0..1.0) { "labelMinConfidence must be 0..1" }
+            require(raceLabels.isNotEmpty()) { "raceLabels must not be empty" }
+            require(fitsBelowPercent in 1..dumpAbovePercent && dumpAbovePercent < 100) {
+                "need 1 <= fitsBelowPercent <= dumpAbovePercent < 100"
+            }
+        }
+    }
+
+    // Version 2 checks. A batch under minBatchSize is SMALL; a share within nearLinePoints of the dump line gets a second sample.
+    data class Check(
+        val minBatchSize: Int = 30,
+        val nearLinePoints: Int = 5,
+    ) {
+        init {
+            require(minBatchSize >= 1) { "minBatchSize must be at least 1" }
+            require(nearLinePoints in 0..100) { "nearLinePoints must be 0..100" }
         }
     }
 }
