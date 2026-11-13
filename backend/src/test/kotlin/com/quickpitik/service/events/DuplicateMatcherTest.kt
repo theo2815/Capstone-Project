@@ -8,7 +8,8 @@ import kotlin.test.assertTrue
 
 class DuplicateMatcherTest {
 
-    private val matcher = DuplicateMatcher(strongScore = 0.85, mediumScore = 0.5, dateToleranceDays = 1)
+    private val STRONG = 0.85
+    private val matcher = DuplicateMatcher(strongScore = STRONG, mediumScore = 0.5, dateToleranceDays = 1)
     private val day = LocalDate.of(2027, 1, 10)
 
     private fun candidate(name: String, date: LocalDate = day, province: String? = null, aliases: Set<String> = emptySet()) =
@@ -57,11 +58,56 @@ class DuplicateMatcherTest {
 
     @Test
     fun `a shared organizer lifts a medium name match`() {
+        // "Cebu Night Run" sits wholly inside "Cebu City Night Run" (floored just under strong), so the
+        // organizer tips it over: strong through overlap plus bonus, as before.
         val input = RaceInput("Cebu Night Run", day, provinceCode = null, organizerName = "CCM Organizing Committee")
         val noOrganizer = matcher.score(input, candidate("Cebu City Night Run"))
         val sameOrganizer = matcher.score(input, candidate("Cebu City Night Run").copy(organizerName = "CCM Organizing Committee"))
 
-        assertEquals(noOrganizer + 0.1, sameOrganizer, 1e-9)
+        assertTrue(noOrganizer < STRONG)
+        assertTrue(sameOrganizer >= STRONG, "organizer bonus must keep the pair strong, got $sameOrganizer")
+
+        // Away from the floor the bonus is the plain +0.1.
+        val other = RaceInput("Cebu Night Run Series", day, provinceCode = null, organizerName = "CCM Organizing Committee")
+        val plain = matcher.score(other, candidate("Cebu Run Night Fest"))
+        val bonus = matcher.score(other, candidate("Cebu Run Night Fest").copy(organizerName = "CCM Organizing Committee"))
+        assertEquals(plain + 0.1, bonus, 1e-9)
+    }
+
+    @Test
+    fun `one wrong letter in a long word still scores strong`() {
+        val input = RaceInput("Cebu Maraton", day, provinceCode = "cebu", organizerName = null)
+
+        assertTrue(matcher.score(input, candidate("Cebu Marathon", province = "cebu")) >= 0.85)
+    }
+
+    @Test
+    fun `a short word gets no letter tolerance`() {
+        val input = RaceInput("Cebu Fun Run", day, provinceCode = null, organizerName = null)
+
+        assertTrue(matcher.score(input, candidate("Cebu Sun Run")) < 0.85)
+    }
+
+    @Test
+    fun `a name wholly inside a longer name scores medium, never strong`() {
+        val input = RaceInput("Cebu Marathon", day, provinceCode = null, organizerName = null)
+        val result = matcher.classify(input, listOf(candidate("Cebu Marathon presented by Acme Bank Foundation")))
+
+        assertTrue(result.strong.isEmpty())
+        assertEquals(1, result.medium.size)
+    }
+
+    @Test
+    fun `one shared word out of two is not containment`() {
+        val input = RaceInput("Cebu Marathon", day, provinceCode = null, organizerName = null)
+
+        assertTrue(matcher.score(input, candidate("Cebu Fun Run")) < 0.5)
+        assertTrue(matcher.score(RaceInput("Marathon", day, null, null), candidate("Cebu City Marathon")) < 0.5)
+    }
+
+    @Test
+    fun `the name key is exact, a typo gives a different key`() {
+        assertTrue(matcher.nameKey("Cebu Maraton") != matcher.nameKey("Cebu Marathon"))
     }
 
     @Test
