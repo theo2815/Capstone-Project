@@ -8,6 +8,7 @@ import jakarta.persistence.Id
 import jakarta.persistence.PreUpdate
 import jakarta.persistence.Table
 import org.hibernate.annotations.DynamicUpdate
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -89,6 +90,10 @@ class User(
 
     @Column(name = "terms_accepted_at")
     var termsAcceptedAt: OffsetDateTime? = null,
+
+    // Start date of the identity notice this user was last mailed for (V104); see IdentityNoticeService.
+    @Column(name = "identity_notice_sent_for")
+    var identityNoticeSentFor: LocalDate? = null,
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),

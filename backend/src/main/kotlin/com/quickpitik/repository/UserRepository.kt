@@ -8,9 +8,12 @@ import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
+import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDate
 import java.util.UUID
 
 @Repository
@@ -42,10 +45,29 @@ interface UserRepository : JpaRepository<User, UUID> {
         SELECT u FROM User u
         WHERE u.role = com.quickpitik.entity.Role.PHOTOGRAPHER AND u.suspendedAt IS NULL
           AND NOT EXISTS (SELECT 1 FROM SellerDetails s WHERE s.userId = u.id AND s.status IN :passed)
+          AND (u.identityNoticeSentFor IS NULL OR u.identityNoticeSentFor <> :startsOn)
         ORDER BY u.createdAt ASC, u.id ASC
         """,
     )
-    fun findIdentityNoticeRecipients(@Param("passed") passed: Collection<SellerDetailsStatus>): List<User>
+    fun findIdentityNoticeRecipients(
+        @Param("passed") passed: Collection<SellerDetailsStatus>,
+        @Param("startsOn") startsOn: LocalDate,
+    ): List<User>
+
+    // Each commits on its own (the notice service has no transaction): a claim is saved before its mail goes out.
+    // Returns 1 only for the caller that marked the user, 0 if this start date was already marked.
+    @Modifying
+    @Transactional
+    @Query(
+        "UPDATE User u SET u.identityNoticeSentFor = :startsOn WHERE u.id = :id " +
+            "AND (u.identityNoticeSentFor IS NULL OR u.identityNoticeSentFor <> :startsOn)",
+    )
+    fun claimIdentityNotice(@Param("id") id: UUID, @Param("startsOn") startsOn: LocalDate): Int
+
+    @Modifying
+    @Transactional
+    @Query("UPDATE User u SET u.identityNoticeSentFor = NULL WHERE u.id = :id AND u.identityNoticeSentFor = :startsOn")
+    fun clearIdentityNotice(@Param("id") id: UUID, @Param("startsOn") startsOn: LocalDate): Int
 
     // Admin user list with optional role / search filters. Status filtering
     // (pending / approved / incomplete / suspended) is applied service-side
