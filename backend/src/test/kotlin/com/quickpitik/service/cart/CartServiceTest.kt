@@ -314,6 +314,39 @@ class CartServiceTest {
         assertEquals(BigDecimal("150.00"), item.price)
     }
 
+    // AF-18 F5: an old app shows the live price; a drop it was shown becomes the stored price.
+    @Test
+    fun `list lowers a stored price above the live price and answers the lowered one`() {
+        val open = event(EventStatus.ACTIVE)
+        val dropped = photo(open.id, price = BigDecimal("80.00"))
+        val row = CartItemEntity(id = CartItemId(userId, dropped.id), eventId = open.id, pricePhpAtAdd = BigDecimal("100.00"))
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(row))
+        stub(listOf(dropped), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        val item = service.list(userId).single()
+
+        Mockito.verify(cartItemRepository).lowerPriceAtAdd(userId, dropped.id, BigDecimal("80.00"))
+        assertEquals(BigDecimal("80.00"), item.priceAtAdd)
+    }
+
+    @Test
+    fun `list never touches a stored price at or below the live price`() {
+        val open = event(EventStatus.ACTIVE)
+        val raised = photo(open.id, price = BigDecimal("150.00"))
+        val same = photo(open.id, price = BigDecimal("125.00"))
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(
+            CartItemEntity(id = CartItemId(userId, raised.id), eventId = open.id, pricePhpAtAdd = BigDecimal("125.00")),
+            CartItemEntity(id = CartItemId(userId, same.id), eventId = open.id, pricePhpAtAdd = BigDecimal("125.00")),
+        ))
+        stub(listOf(raised, same), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        service.list(userId)
+
+        Mockito.verify(cartItemRepository, Mockito.never()).lowerPriceAtAdd(anyArg(), anyArg(), anyArg())
+    }
+
     private fun items(vararg pairs: Pair<UUID, UUID>) = pairs.map { (photoId, eventId) -> MergeCartItem(photoId, eventId) }
 
     private fun stub(photos: List<Photo>, events: List<Event>) {

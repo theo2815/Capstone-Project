@@ -34,6 +34,7 @@ class CheckoutStalePriceIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var users: UserRepository
     @Autowired lateinit var carts: CartItemRepository
     @Autowired lateinit var checkout: OrderService
+    @Autowired lateinit var cart: com.quickpitik.service.cart.CartService
     @Autowired lateinit var jdbc: JdbcTemplate
     @MockitoBean lateinit var storage: StorageService
     @MockitoBean lateinit var provider: AiApiClient
@@ -86,6 +87,36 @@ class CheckoutStalePriceIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, carts.raisePriceAtAdd(buyer.id, photo.id, BigDecimal("125.00")), "equal price is left alone")
         assertEquals(0, carts.raisePriceAtAdd(buyer.id, photo.id, BigDecimal("110.00")), "a lower live price never lowers it")
         assertEquals(0, BigDecimal("125.00").compareTo(stored(buyer.id)))
+    }
+
+    @Test fun `the lowering query lowers a higher stored price only, and only for that buyer`() {
+        val other = users.saveAndFlush(User(email = "stale-other-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Other", role = Role.RUNNER))
+        cartRow(buyer.id, "125.00")
+        cartRow(other.id, "125.00")
+
+        assertEquals(1, carts.lowerPriceAtAdd(buyer.id, photo.id, BigDecimal("80.00")))
+
+        assertEquals(0, BigDecimal("80.00").compareTo(stored(buyer.id)))
+        assertEquals(0, BigDecimal("125.00").compareTo(stored(other.id)))
+        assertEquals(0, carts.lowerPriceAtAdd(buyer.id, photo.id, BigDecimal("90.00")), "a higher live price never raises it")
+        assertEquals(0, BigDecimal("80.00").compareTo(stored(buyer.id)))
+    }
+
+    // AF-18 F5: added at 125, the old app's cart showed 80, the price went back to 125.
+    @Test fun `a drop shown by the cart read makes the rise back a refusal for an old app`() {
+        cartRow(buyer.id, "125.00")
+        Mockito.`when`(storage.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+        jdbc.update("UPDATE photos SET price_php = 80.00 WHERE id = ?", photo.id)
+
+        assertEquals(0, BigDecimal("80.00").compareTo(cart.list(buyer.id).single().price))
+        assertEquals(0, BigDecimal("80.00").compareTo(stored(buyer.id)))
+
+        jdbc.update("UPDATE photos SET price_php = 125.00 WHERE id = ?", photo.id)
+        val error = assertFailsWith<ConflictException> { pay() }
+        assertEquals("Photo price changed from ₱80.00 to ₱125.00. Refresh your cart and try again.", error.message)
+        pay()
+        assertEquals(1, orderCount(buyer.id))
     }
 
     @Test fun `after a refused checkout with no expected price the stored price is the live price`() {

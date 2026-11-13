@@ -761,7 +761,8 @@ class OrderService(
     // AA-R14: never charge a price the runner was not shown. An omitted
     // expectedPricePhp (old clients) is checked against the signed-in buyer's
     // stored cart price instead (AF-12): a rise is refused once, and `create`
-    // then moves the stored price up. No cart row (a guest) is charged live.
+    // then moves the stored price up; a cart read moves it down to a lower live
+    // price (AF-18 F5). No cart row (a guest) is charged live.
     private fun requireExpectedPrices(userId: UUID?, items: List<CreateOrderItem>, photos: Map<UUID, Photo>) {
         val stored = if (userId != null && items.any { it.expectedPricePhp == null }) {
             cartItemRepository.findByUserId(userId).associate { it.id.photoId to it.pricePhpAtAdd }

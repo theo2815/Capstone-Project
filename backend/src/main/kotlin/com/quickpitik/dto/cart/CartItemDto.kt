@@ -16,7 +16,7 @@ data class CartItemDto(
     val time: String? = null,
     /** False only for a suspended photographer's photo, and only on `GET /me/cart?includeUnavailable=true`. */
     val available: Boolean = true,
-    /** The price when the photo was added (AA-R14); clients show "went up from ₱priceAtAdd" while `price` is higher. */
+    /** The price when the photo was added, or a lower price the cart showed since (AF-18 F5); clients show "went up from ₱priceAtAdd" while `price` is higher (AA-R14). */
     val priceAtAdd: BigDecimal,
 )
 

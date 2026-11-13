@@ -33,6 +33,19 @@ interface CartItemRepository : JpaRepository<CartItemEntity, CartItemId> {
         @Param("live") live: BigDecimal,
     ): Int
 
+    /** AF-18 F5: moves a stored price down to a lower live price the cart answer shows; never up. */
+    @Modifying
+    @Transactional
+    @Query(
+        "UPDATE CartItemEntity c SET c.pricePhpAtAdd = :live " +
+            "WHERE c.id.userId = :userId AND c.id.photoId = :photoId AND c.pricePhpAtAdd > :live",
+    )
+    fun lowerPriceAtAdd(
+        @Param("userId") userId: UUID,
+        @Param("photoId") photoId: UUID,
+        @Param("live") live: BigDecimal,
+    ): Int
+
     @Modifying
     @Transactional
     @Query("DELETE FROM CartItemEntity c WHERE c.id.userId = :userId")

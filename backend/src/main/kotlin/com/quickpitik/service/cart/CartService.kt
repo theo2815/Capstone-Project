@@ -37,8 +37,8 @@ class CartService(
     /**
      * A suspended photographer's photo drops out of the list (its row is kept, so it comes back on
      * unsuspend), or shows with `available = false` when the client asks (AA-I12b, C13).
+     * Not read-only: a live price below the stored one moves the stored one down (AF-18 F5, `hydrate`).
      */
-    @Transactional(readOnly = true)
     fun list(userId: UUID, includeUnavailable: Boolean = false): List<CartItemDto> {
         val rows = cartItemRepository.findByUserId(userId)
         if (rows.isEmpty()) return emptyList()
@@ -172,7 +172,14 @@ class CartService(
             val available = photo.photographerId !in suspended
             if (!available && !includeUnavailable) return@mapNotNull null
             val event = events[row.eventId]
-            row.toDto(photo, event, available)
+            // AF-18 F5: an old app (no expectedPricePhp) shows this lower live price, so it becomes the stored
+            // one; a rise back is then refused at checkout. The query never raises it, unlike a JPA save.
+            if (row.pricePhpAtAdd > photo.pricePhp) {
+                cartItemRepository.lowerPriceAtAdd(row.id.userId, row.id.photoId, photo.pricePhp)
+                row.toDto(photo, event, available).copy(priceAtAdd = photo.pricePhp)
+            } else {
+                row.toDto(photo, event, available)
+            }
         }
     }
 
