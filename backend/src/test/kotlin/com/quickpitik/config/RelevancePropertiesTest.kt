@@ -1,13 +1,16 @@
 package com.quickpitik.config
 
 import org.junit.jupiter.api.Test
+import org.springframework.boot.context.properties.bind.BindException
 import org.springframework.boot.context.properties.bind.Binder
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource
 import org.springframework.boot.env.YamlPropertySourceLoader
 import org.springframework.core.env.StandardEnvironment
 import org.springframework.core.io.ClassPathResource
 import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RelevancePropertiesTest {
@@ -24,6 +27,7 @@ class RelevancePropertiesTest {
         assertEquals(Duration.ofSeconds(5), p.lookupTimeout)
         assertEquals(RelevanceProperties.Copy(tightDistance = 4, weakDistance = 8, minHits = 3, minHitSharePercent = 5), p.copy)
         assertEquals(RelevanceProperties.Date(windowDays = 2, minDatedPhotos = 10, outsideSharePercent = 80), p.date)
+        assertEquals(RelevanceProperties.Junk(blurCutoff = null, darkCutoff = null), p.junk)
     }
 
     @Test fun `the yml binds every key and names its env override`() {
@@ -39,7 +43,42 @@ class RelevancePropertiesTest {
             "RELEVANCE_SETTLE_DAYS:7", "RELEVANCE_LOOKUP_TIMEOUT:5s", "RELEVANCE_COPY_TIGHT_DISTANCE:4", "RELEVANCE_COPY_WEAK_DISTANCE:8",
             "RELEVANCE_COPY_MIN_HITS:3", "RELEVANCE_COPY_MIN_HIT_SHARE_PERCENT:5", "RELEVANCE_DATE_WINDOW_DAYS:2",
             "RELEVANCE_DATE_MIN_DATED_PHOTOS:10", "RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT:80",
+            "RELEVANCE_JUNK_BLUR_CUTOFF:}", "RELEVANCE_JUNK_DARK_CUTOFF:}",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
+    }
+
+    private fun bind(vararg pairs: Pair<String, String>): RelevanceProperties =
+        Binder(MapConfigurationPropertySource(pairs.associate { "app.relevance.${it.first}" to it.second }))
+            .bindOrCreate("app.relevance", RelevanceProperties::class.java)
+
+    @Test fun `record-only and auto-hide bind`() {
+        assertEquals(RelevanceMode.RECORD_ONLY, bind("mode" to "record-only").mode)
+        assertEquals(RelevanceMode.AUTO_HIDE, bind("mode" to "auto-hide").mode)
+        assertEquals(RelevanceMode.OFF, bind("mode" to "off").mode)
+    }
+
+    @Test fun `the old names shadow and flag still bind`() {
+        assertEquals(RelevanceMode.SHADOW, bind("mode" to "shadow").mode)
+        assertEquals(RelevanceMode.FLAG, bind("mode" to "flag").mode)
+    }
+
+    @Test fun `an unknown mode stops the boot`() {
+        assertFailsWith<BindException> { bind("mode" to "hide-everything") }
+    }
+
+    @Test fun `an empty cut-off binds as not set`() {
+        val p = bind("junk.blur-cutoff" to "", "junk.dark-cutoff" to "")
+        assertNull(p.junk.blurCutoff)
+        assertNull(p.junk.darkCutoff)
+        assertEquals(RelevanceProperties.Junk(blurCutoff = 42.5, darkCutoff = 0.0),
+            bind("junk.blur-cutoff" to "42.5", "junk.dark-cutoff" to "0").junk)
+    }
+
+    @Test fun `a cut-off above 100 is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(blurCutoff = 100.1) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(darkCutoff = 101.0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(blurCutoff = -0.1) }
+        assertFailsWith<BindException> { bind("junk.dark-cutoff" to "250") }
     }
 
     @Test fun `a tight distance above the weak distance is refused`() {
