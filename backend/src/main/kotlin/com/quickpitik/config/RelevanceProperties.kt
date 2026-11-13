@@ -7,8 +7,7 @@ import java.time.Duration
 // Thresholds are placeholders until PE-0 measures them (PE-1.7).
 @ConfigurationProperties(prefix = "app.relevance")
 data class RelevanceProperties(
-    // Kill switch: off = the sweep does nothing; shadow = relevance rows only; flag = a Low batch also
-    // opens or extends one admin flag per photographer (only while app.admin.flags-enabled is on).
+    // Kill switch. Read it through RelevanceSwitch, which turns it into what may run now.
     val mode: RelevanceMode = RelevanceMode.OFF,
     // Tick cadence, and the first delay after boot.
     val sweepIntervalMs: Long = 60_000,
@@ -25,6 +24,7 @@ data class RelevanceProperties(
     val lookupTimeout: Duration = Duration.ofSeconds(5),
     val copy: Copy = Copy(),
     val date: Date = Date(),
+    val junk: Junk = Junk(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -62,10 +62,26 @@ data class RelevanceProperties(
             require(outsideSharePercent in 1..100) { "outsideSharePercent must be 1..100" }
         }
     }
+
+    // Version 2 junk cut-offs (0-100 scores). No default until the calibration run (O7); while either is
+    // unset, auto-hide runs as record-only.
+    data class Junk(
+        val blurCutoff: Double? = null,
+        val darkCutoff: Double? = null,
+    ) {
+        init {
+            require(blurCutoff == null || blurCutoff in 0.0..100.0) { "blurCutoff must be 0..100" }
+            require(darkCutoff == null || darkCutoff in 0.0..100.0) { "darkCutoff must be 0..100" }
+        }
+    }
 }
 
 enum class RelevanceMode {
     OFF,
+    RECORD_ONLY,
+    AUTO_HIDE,
+    // Old names, kept so a server with the old variable still boots: shadow runs as record-only, flag as
+    // version 1's flag mode (RelevanceSwitch).
     SHADOW,
     FLAG,
 }
