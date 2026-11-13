@@ -279,8 +279,10 @@ class AdminUserService(
         }
         s.verificationAdminHold = false
         photographerSettingsRepository.save(s)
-        adminDecisionLogService.logUserDecision(adminId = adminId, targetUserId = userId, decision = "approved")
-        photographerSettingsService.approveIfReady(userId)
+        val approved = photographerSettingsService.approveIfReady(userId)
+        // "approved" is the website's decision type; the reason says when the profile stays pending.
+        adminDecisionLogService.logUserDecision(adminId = adminId, targetUserId = userId, decision = "approved",
+            reason = if (approved) null else "Hold released; goes live when the identity check passes")
         return hydrateRow(user, s)
     }
 

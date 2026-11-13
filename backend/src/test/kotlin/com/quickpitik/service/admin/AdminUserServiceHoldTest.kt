@@ -91,6 +91,8 @@ class AdminUserServiceHoldTest {
         assertFalse(settings.verificationAdminHold)
         assertEquals("pending", row.verificationStatus)
         Mockito.verify(photographerSettingsService).approveIfReady(photographerId)
+        Mockito.verify(decisionLog).logUserDecision(adminId, photographerId, "approved",
+            "Hold released; goes live when the identity check passes", null, null)
     }
 
     @Test
