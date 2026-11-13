@@ -368,7 +368,11 @@ class RaceEventService(
         }
         if (declared != null && found.any { it.candidate.id == declared }) return null
         val strength = if (outcome == "match") "strong" else "medium"
-        return RaceCreateResultDto(outcome = outcome, candidates = found.map { candidateDto(scan.events.getValue(it.candidate.id), strength) })
+        return RaceCreateResultDto(outcome = outcome, candidates = found.map {
+            val e = scan.events.getValue(it.candidate.id)
+            // A race still waiting for an admin has not been looked at: its cover is not shown to the next photographer.
+            candidateDto(e, strength, showCover = e.reviewStatus != EventReviewStatus.PENDING)
+        })
     }
 
     /**
@@ -485,8 +489,8 @@ class RaceEventService(
             "occurredAt" to now.toString(),
         )))
 
-    private fun candidateDto(e: Event, strength: String) = RaceCandidateDto(e.id, e.slug, e.name, e.date, e.location,
-        e.regionCode, e.provinceCode, e.organizerName, e.eventType?.name, eventDtoMapper.resolveBannerUrl(e), e.reviewStatus.wire,
+    private fun candidateDto(e: Event, strength: String, showCover: Boolean = true) = RaceCandidateDto(e.id, e.slug, e.name, e.date, e.location,
+        e.regionCode, e.provinceCode, e.organizerName, e.eventType?.name, if (showCover) eventDtoMapper.resolveBannerUrl(e) else null, e.reviewStatus.wire,
         strength)
 
     private fun validate(req: CreateRaceRequest): Draft {

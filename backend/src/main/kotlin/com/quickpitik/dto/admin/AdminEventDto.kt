@@ -64,6 +64,8 @@ data class AdminListEventDto(
     val checkReasons: List<String> = emptyList(),
     val hiddenAt: OffsetDateTime? = null,
     val adminApproved: Boolean = false,
+    @field:Schema(description = "Signed link to the new cover of a held race edit; null when the edit holds no new cover", nullable = true)
+    val heldCoverUrl: String? = null,
 )
 
 // PATCH /admin/events/{id}/listing — show or hide a photographer event on /events.
