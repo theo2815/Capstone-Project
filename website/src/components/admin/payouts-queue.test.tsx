@@ -320,3 +320,17 @@ it("the flag link in a row does not open the drawer or toggle selection, and Ent
   expect(navigation.replace).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it("an admin shortcut key pressed on the flag link still reaches the page", () => {
+  rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }]; client.setQueryData(key, rows);
+  mount();
+  const link = screen.getByRole("link", { name: "Payouts on hold: open relevance flag" });
+  const seen = vi.fn();
+  window.addEventListener("keydown", seen);
+  try {
+    fireEvent.keyDown(link, { key: "j" });
+    expect(seen).toHaveBeenCalledTimes(1);
+  } finally {
+    window.removeEventListener("keydown", seen);
+  }
+});
