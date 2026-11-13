@@ -40,7 +40,7 @@ const REASON_LABEL: Record<string, string> = {
   PREVIOUSLY_REJECTED: "Sent again after an admin rejected it",
   ID_FORMAT_UNCHECKED: "ID number format not checked for this ID type",
   ID_NAME_MISMATCH: "Legal name not found on the ID",
-  REPEATED_FAILED_CHECKS: "Passed after repeated failed checks",
+  REPEATED_FAILED_CHECKS: "Several failed automatic checks before this one",
 };
 const MATCH_LABEL: Record<string, string> = { ID_NUMBER: "ID number", PAYOUT_NUMBER: "payout number", PHONE: "phone" };
 const FILTERS = [["manual_review", "Needs review"], ["auto_approved", "Auto-approved"], [null, "All"]] as const;

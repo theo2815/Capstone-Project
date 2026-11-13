@@ -115,8 +115,20 @@ it("the three new reasons show plain labels", async () => {
     : base(path));
   const dialog = await openRecord();
   expect(await within(dialog).findByText(
-    "ID number format not checked for this ID type; Legal name not found on the ID; Passed after repeated failed checks",
+    "ID number format not checked for this ID type; Legal name not found on the ID; Several failed automatic checks before this one",
   )).toBeInTheDocument();
+});
+
+it("a try that failed again with the repeat code never says Passed", async () => {
+  const base = get.getMockImplementation()!;
+  get.mockImplementation(async (path: string) => path === "/admin/seller-details/u1"
+    ? { ...RECORD, reasonCodes: ["FACE_MISMATCH", "REPEATED_FAILED_CHECKS"] }
+    : base(path));
+  const dialog = await openRecord();
+  expect(await within(dialog).findByText(
+    "Live face does not match the ID photo; Several failed automatic checks before this one",
+  )).toBeInTheDocument();
+  expect(within(dialog).queryByText(/Passed/)).not.toBeInTheDocument();
 });
 
 it("the failed-try count shows when above zero and is absent at zero", async () => {
