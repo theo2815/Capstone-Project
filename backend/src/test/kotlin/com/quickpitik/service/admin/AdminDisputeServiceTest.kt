@@ -151,9 +151,9 @@ class AdminDisputeServiceTest {
         dispute.refundStatus = "succeeded"
         Mockito.`when`(disputeRepository.findById(dispute.id)).thenReturn(Optional.of(dispute))
 
-        val dto = withTx.markRefunded(adminId, dispute.id)
+        val dto = withTx.markRefunded(adminId, dispute.id, "ref_9e5899bbf66c4f3485bff833")
 
-        Mockito.verify(refunds).markRefunded(adminId, dispute.id)
+        Mockito.verify(refunds).markRefunded(adminId, dispute.id, "ref_9e5899bbf66c4f3485bff833")
         assertEquals(dispute.id, dto.id)
         assertEquals("succeeded", dto.refundStatus)
     }
