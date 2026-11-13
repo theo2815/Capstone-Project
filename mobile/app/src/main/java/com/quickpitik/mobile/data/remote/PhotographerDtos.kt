@@ -186,6 +186,9 @@ data class PayoutBalanceDto(
     // ISO timestamp; non-null while a recent payout-account change still bars
     // requests. The wallet shows a paused banner + disables Request until it passes.
     val accountCooldownUntil: String? = null,
+    // Non-null (a code such as UPLOAD_REVIEW) while an admin holds this
+    // photographer's payouts; clients show fixed copy for any value. Missing = no hold.
+    val payoutHoldReason: String? = null,
     val minimum: Double,
     val hasOpenRequest: Boolean,
     val openRequest: PhotographerPayoutDto?,

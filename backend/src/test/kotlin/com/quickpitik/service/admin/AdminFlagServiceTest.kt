@@ -33,6 +33,7 @@ import com.quickpitik.repository.CopySampleRow
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.HiddenPhotoCount
+import com.quickpitik.repository.HiddenPhotoRow
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
@@ -78,6 +79,11 @@ class AdminFlagServiceTest {
     private val adminId = UUID.randomUUID()
 
     private fun <T> anyArg(): T = Mockito.any()
+
+    private fun <T> eqArg(value: T): T {
+        Mockito.eq(value)
+        return value
+    }
 
     @BeforeEach
     fun setUp() {
@@ -619,6 +625,231 @@ class AdminFlagServiceTest {
         val notFound = assertFailsWith<NotFoundException> { service().relevanceEvidence(missing) }
         assertEquals(ErrorCodes.FLAG_NOT_FOUND, notFound.code)
         val off = assertFailsWith<ApiException> { service(flagsEnabled = false).relevanceEvidence(missing) }
+        assertEquals(ErrorCodes.FLAGS_DISABLED, off.code)
+    }
+
+    // ─── PE-2.4: hide a whole batch, restore one photo, one restore rule ───
+
+    private fun batchFlag(status: FlagStatus = FlagStatus.OPEN): Flag = relevanceFlag(status).also { linkedBatch(it) }
+
+    private fun held(f: Flag, p: Photo) {
+        Mockito.`when`(flagRepository.isRecorded(f.id, p.id)).thenReturn(true)
+        Mockito.`when`(photoRepository.findById(p.id)).thenReturn(Optional.of(p))
+    }
+
+    private fun conflict(block: () -> Unit) {
+        val ex = assertFailsWith<ApiException> { block() }
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+    }
+
+    @Test
+    fun `hiding a batch records and hides every live and processing photo of that event and leaves other events alone`() {
+        val f = batchFlag()
+        val ids = listOf(UUID.randomUUID(), UUID.randomUUID())
+        Mockito.`when`(flagRepository.recordBatchHide(anyArg(), anyArg(), anyArg(), anyArg())).thenReturn(2)
+        Mockito.`when`(flagRepository.unrestoredPhotoIds(f.id)).thenReturn(ids)
+
+        service().hideBatch(adminId, f.id, race.id, "copies")
+
+        val order = Mockito.inOrder(userRepository, flagRepository, photoRepository)
+        order.verify(userRepository).lockById(photographerId)
+        order.verify(flagRepository).findByIdForUpdate(f.id)
+        order.verify(flagRepository).recordBatchHide(eqArg(f.id), eqArg(race.id), eqArg(photographerId), anyArg())
+        order.verify(photoRepository).lockIdsForUpdate(ids) // user, flag, photos (R2-04)
+        order.verify(photoRepository).hideRecordedForFlag(f.id)
+        val decision = ArgumentCaptor.forClass(AdminDecisionLog::class.java)
+        Mockito.verify(adminDecisionLogRepository).save(decision.capture())
+        assertEquals("batch_hidden", decision.value.decision)
+        assertEquals(photographerId, decision.value.targetUserId)
+        assertEquals(mapOf("flagId" to f.id, "eventId" to race.id, "count" to 2), decision.value.meta)
+    }
+
+    @Test
+    fun `a batch can be hidden only from an open relevance flag linked to that event`() {
+        val resolved = batchFlag(FlagStatus.RESOLVED)
+        conflict { service().hideBatch(adminId, resolved.id, race.id, null) }
+        val open = batchFlag()
+        conflict { service().hideBatch(adminId, open.id, UUID.randomUUID(), null) } // an event no batch of this flag names
+        val photoFlag = flag(FlagStatus.OPEN)
+        conflict { service().hideBatch(adminId, photoFlag.id, race.id, null) }
+        Mockito.verify(flagRepository, Mockito.never()).recordBatchHide(anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).hideRecordedForFlag(anyArg())
+        val off = assertFailsWith<ApiException> { service(flagsEnabled = false).hideBatch(adminId, open.id, race.id, null) }
+        assertEquals(ErrorCodes.FLAGS_DISABLED, off.code)
+    }
+
+    @Test
+    fun `hiding a batch leaves the flag open so the hold stays`() {
+        val f = batchFlag(FlagStatus.ESCALATED)
+        f.payoutHoldAt = OffsetDateTime.now().minusDays(1)
+
+        val dto = service().hideBatch(adminId, f.id, race.id, null)
+
+        assertEquals("escalated", dto.status)
+        assertNotNull(f.payoutHoldAt)
+        assertNull(f.resolvedAt)
+        Mockito.verify(flagRepository, Mockito.never()).save(anyArg())
+    }
+
+    @Test
+    fun `restoring one photo brings it back and leaves the rest hidden`() {
+        val f = batchFlag()
+        val p = photo(PhotoStatus.HIDDEN, watermarkKey = "wm.jpg")
+        held(f, p)
+        Mockito.`when`(flagRepository.markRestored(eqArg(f.id), eqArg(p.id), anyArg())).thenReturn(1)
+
+        service().restoreHiddenPhoto(adminId, f.id, p.id)
+
+        Mockito.verify(photoRepository).unhideForFlag(p.id, PhotoStatus.LIVE)
+        Mockito.verify(photoRepository, Mockito.never()).unhideRecordedForFlag(anyArg())
+        Mockito.verify(flagRepository, Mockito.never()).markAllRestored(anyArg(), anyArg())
+        val decision = ArgumentCaptor.forClass(AdminDecisionLog::class.java)
+        Mockito.verify(adminDecisionLogRepository).save(decision.capture())
+        assertEquals("photo_restored", decision.value.decision)
+        assertEquals(mapOf("flagId" to f.id, "photoId" to p.id), decision.value.meta)
+    }
+
+    @Test
+    fun `a restored photo with no preview goes back to processing`() {
+        val f = batchFlag()
+        val p = photo(PhotoStatus.HIDDEN)
+        held(f, p)
+        Mockito.`when`(flagRepository.markRestored(eqArg(f.id), eqArg(p.id), anyArg())).thenReturn(1)
+
+        service().restoreHiddenPhoto(adminId, f.id, p.id)
+
+        Mockito.verify(photoRepository).unhideForFlag(p.id, PhotoStatus.PROCESSING)
+        Mockito.verify(photoRepository, Mockito.never()).unhideForFlag(p.id, PhotoStatus.LIVE)
+    }
+
+    @Test
+    fun `a photo also hidden by a photo flag stays hidden when the batch lets go`() {
+        val f = batchFlag()
+        val p = photo(PhotoStatus.HIDDEN, watermarkKey = "wm.jpg")
+        held(f, p)
+        Mockito.`when`(flagRepository.markRestored(eqArg(f.id), eqArg(p.id), anyArg())).thenReturn(1)
+        Mockito.`when`(
+            flagRepository.existsByTargetKindWireAndTargetIdAndStatusWireAndIdNot(FlagTargetKind.PHOTO.wire, p.id, FlagStatus.HIDDEN.wire, f.id),
+        ).thenReturn(true)
+
+        service().restoreHiddenPhoto(adminId, f.id, p.id)
+
+        Mockito.verify(photoRepository, Mockito.never()).unhideForFlag(anyArg(), anyArg())
+        Mockito.verify(flagRepository).markRestored(eqArg(f.id), eqArg(p.id), anyArg()) // the batch still lets go
+    }
+
+    @Test
+    fun `dismissing a photo flag does not un-hide a photo a batch still holds`() {
+        val p = photo(PhotoStatus.HIDDEN, watermarkKey = "wm.jpg")
+        val f = flag(FlagStatus.HIDDEN, p)
+        noOtherHiddenFlag(f)
+        Mockito.`when`(flagRepository.existsOtherBatchHold(p.id, f.id)).thenReturn(true)
+
+        service().dismiss(adminId, f.id, null)
+
+        Mockito.verify(photoRepository, Mockito.never()).unhideForFlag(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a photo hidden by a photo flag before the batch hide stays hidden when that photo flag is dismissed`() {
+        // The batch recorded the already-hidden photo (recordBatchHide takes every status), so the rule finds its row.
+        val p = photo(PhotoStatus.HIDDEN, watermarkKey = "wm.jpg")
+        val f = flag(FlagStatus.HIDDEN, p)
+        noOtherHiddenFlag(f)
+        Mockito.`when`(flagRepository.existsOtherBatchHold(p.id, f.id)).thenReturn(true)
+
+        service().resolve(adminId, f.id, null)
+
+        Mockito.verify(flagRepository).existsOtherBatchHold(p.id, f.id)
+        Mockito.verify(photoRepository, Mockito.never()).unhideForFlag(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `dismissing the relevance flag restores the batch and resolving keeps it hidden`() {
+        val dismissed = batchFlag()
+        val ids = listOf(UUID.randomUUID())
+        Mockito.`when`(flagRepository.unrestoredPhotoIds(dismissed.id)).thenReturn(ids)
+
+        service().dismiss(adminId, dismissed.id, "false alarm")
+
+        val order = Mockito.inOrder(photoRepository, flagRepository)
+        order.verify(photoRepository).lockIdsForUpdate(ids)
+        order.verify(photoRepository).unhideRecordedForFlag(dismissed.id)
+        order.verify(flagRepository).markAllRestored(eqArg(dismissed.id), anyArg())
+
+        val resolved = batchFlag()
+        service().resolve(adminId, resolved.id, null)
+
+        Mockito.verify(photoRepository, Mockito.never()).unhideRecordedForFlag(resolved.id)
+        Mockito.verify(flagRepository, Mockito.never()).markAllRestored(eqArg(resolved.id), anyArg())
+    }
+
+    @Test
+    fun `a photo restores after the flag was resolved`() {
+        val f = batchFlag(FlagStatus.RESOLVED)
+        val p = photo(PhotoStatus.HIDDEN, watermarkKey = "wm.jpg")
+        held(f, p)
+        Mockito.`when`(flagRepository.markRestored(eqArg(f.id), eqArg(p.id), anyArg())).thenReturn(1)
+
+        val dto = service().restoreHiddenPhoto(adminId, f.id, p.id)
+
+        assertEquals("resolved", dto.status)
+        Mockito.verify(photoRepository).unhideForFlag(p.id, PhotoStatus.LIVE)
+    }
+
+    @Test
+    fun `an unrecorded photo is refused`() {
+        val f = batchFlag()
+        val p = photo(PhotoStatus.HIDDEN)
+        Mockito.`when`(flagRepository.isRecorded(f.id, p.id)).thenReturn(false)
+
+        conflict { service().restoreHiddenPhoto(adminId, f.id, p.id) }
+
+        Mockito.verify(flagRepository, Mockito.never()).markRestored(anyArg(), anyArg(), anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).unhideForFlag(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a second restore changes nothing`() {
+        val f = batchFlag()
+        val p = photo(PhotoStatus.LIVE, watermarkKey = "wm.jpg")
+        held(f, p)
+        Mockito.`when`(flagRepository.markRestored(eqArg(f.id), eqArg(p.id), anyArg())).thenReturn(0)
+
+        val dto = service().restoreHiddenPhoto(adminId, f.id, p.id)
+
+        assertEquals(f.id, dto.id)
+        Mockito.verify(photoRepository, Mockito.never()).unhideForFlag(anyArg(), anyArg())
+        Mockito.verifyNoInteractions(adminDecisionLogRepository)
+    }
+
+    @Test
+    fun `the hidden photo list pages the recorded photos with their restore state`() {
+        val f = batchFlag()
+        val hiddenAt = java.time.Instant.parse("2027-01-15T02:00:00Z")
+        val restoredAt = java.time.Instant.parse("2027-01-16T02:00:00Z")
+        fun row(key: String?, restored: java.time.Instant?) = Mockito.mock(HiddenPhotoRow::class.java).also {
+            Mockito.`when`(it.photoId).thenReturn(UUID.randomUUID())
+            Mockito.`when`(it.eventId).thenReturn(race.id)
+            Mockito.`when`(it.thumbnailKey).thenReturn(key)
+            Mockito.`when`(it.hiddenAt).thenReturn(hiddenAt)
+            Mockito.`when`(it.restoredAt).thenReturn(restored)
+        }
+        val rows = listOf(row("wm-1.jpg", null), row(null, restoredAt))
+        Mockito.`when`(flagRepository.existsById(f.id)).thenReturn(true)
+        Mockito.`when`(flagRepository.pageHiddenPhotos(eqArg(f.id), anyArg())).thenReturn(org.springframework.data.domain.PageImpl(rows))
+        Mockito.`when`(storageService.presignedGetUrl(eqArg("wm-1.jpg"), anyArg())).thenReturn("https://signed/wm-1")
+
+        val page = service().listHiddenPhotos(f.id, PaginationParams.of(0, 10))
+
+        assertEquals(2L, page.total)
+        assertEquals("https://signed/wm-1", page.items[0].thumbnailUrl)
+        assertEquals(hiddenAt.toString(), page.items[0].hiddenAt)
+        assertNull(page.items[0].restoredAt)
+        assertNull(page.items[1].thumbnailUrl)
+        assertEquals(restoredAt.toString(), page.items[1].restoredAt)
+        val off = assertFailsWith<ApiException> { service(flagsEnabled = false).listHiddenPhotos(f.id, PaginationParams.of(0, 10)) }
         assertEquals(ErrorCodes.FLAGS_DISABLED, off.code)
     }
 }

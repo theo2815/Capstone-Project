@@ -467,6 +467,9 @@ private fun BreakdownStat(
     }
 }
 
+/** Any non-null reason is a hold: the backend may add reasons later (PE-2.2). */
+internal fun payoutHoldActive(balance: PayoutBalanceDto): Boolean = balance.payoutHoldReason != null
+
 @Composable
 private fun WalletSlab(
     balance: PayoutBalanceDto,
@@ -579,6 +582,29 @@ private fun WalletSlab(
             }
         }
 
+        // Payout hold (PE-2.2) — texts T7/T8 of the PE-L4 wording, as on the website billing page.
+        val holdActive = payoutHoldActive(balance)
+        if (holdActive) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(BadgeShape)
+                    .background(WarningOrange.copy(alpha = 0.08f))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Kicker(text = "Payouts on hold", color = WarningOrange)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "We are reviewing some of your uploads, so you can't request a payout " +
+                        "until the review is finished. Your earnings stay in your balance. " +
+                        "Check your inbox for details, or contact support.",
+                    color = Slate,
+                    style = Typography.bodySmall,
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
 
         val hasOpen = balance.hasOpenRequest || balance.openRequest != null
@@ -601,12 +627,13 @@ private fun WalletSlab(
                     else -> "Request payout"
                 },
                 onClick = { confirmRequest = true },
-                enabled = canWithdraw && !isProcessing && !cooldownActive,
+                enabled = canWithdraw && !isProcessing && !cooldownActive && !holdActive,
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = when {
+                    holdActive -> "On hold while we review some of your uploads."
                     !hasAccount ->
                         "Set up a payout account in Settings to request payouts."
                     !hasQr -> "Upload your payout account QR in Settings before requesting."

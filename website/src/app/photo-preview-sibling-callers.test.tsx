@@ -34,7 +34,8 @@ vi.mock("@/hooks/use-admin-disputes", async () => {
   const items = [{ ...dispute, photoSnapshot: { ...dispute.photoSnapshot, thumbnailUrl: "https://photos.test/admin.jpg" } }];
   return {
     EMPTY_DISPUTES: [], useAdminDisputes: () => ({ data: items, isPending: false, isError: false, isSuccess: true, isFetching: false }),
-    useDisputeActions: () => ({ resolve: vi.fn(), deny: vi.fn(), escalate: vi.fn(), isPending: () => false, pendingAction: () => null }),
+    useDisputeActions: () => ({ resolve: vi.fn(), deny: vi.fn(), denyWithCode: vi.fn(), escalate: vi.fn(), isPending: () => false, pendingAction: () => null }),
+    useDisputeDenyReasons: () => ({ data: [], isPending: false, isError: false }),
     useAdminDispute: () => ({ data: undefined, isSuccess: false }),
     useAdminDisputePage: () => ({ data: { items, total: 1, offset: 0, limit: 50 }, isPending: false, isError: false, isSuccess: true, isPlaceholderData: false }),
   };

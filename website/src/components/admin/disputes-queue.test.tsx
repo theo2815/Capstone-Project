@@ -63,7 +63,7 @@ it("the drawer holds the admin actions aside", async () => {
   renderQueue();
   const drawer = await screen.findByRole("dialog");
   const aside = within(drawer).getByRole("complementary", { name: "Admin actions" });
-  expect(within(aside).getByRole("button", { name: "Resolve…" })).toBeInTheDocument();
+  expect(within(aside).getByRole("button", { name: "Approve refund…" })).toBeInTheDocument();
   expect(within(aside).getByRole("button", { name: "Deny…" })).toBeInTheDocument();
   expect(within(aside).getByRole("button", { name: "Escalate…" })).toBeInTheDocument();
 });
@@ -87,7 +87,7 @@ it("a failed refund row still offers the decision buttons, so the admin can try 
   fixtures.search = `row=${failed.id}`;
   renderQueue();
   const aside = within(await screen.findByRole("dialog")).getByRole("complementary", { name: "Admin actions" });
-  expect(within(aside).getByRole("button", { name: "Resolve…" })).toBeEnabled();
+  expect(within(aside).getByRole("button", { name: "Approve refund…" })).toBeEnabled();
   expect(within(aside).getByRole("button", { name: "Deny…" })).toBeEnabled();
 });
 
@@ -151,4 +151,75 @@ it("an overdue dispute shows the overdue chip", async () => {
   const card = screen.getByRole("button", { name: `Open dispute ${late.id}` });
   expect(card).toHaveTextContent("Overdue · 2d");
   expect(card).toHaveTextContent("Needs review");
+});
+
+it("Esc on the Deny opened from Approve closes Deny and leaves the drawer open", async () => {
+  const user = userEvent.setup();
+  const blocked: Dispute = { ...dispute, refundable: false, refundBlockedReason: "window_closed", refundBlockedMessage: "Window closed." };
+  client.setQueryData(firstPageKey, page([blocked]));
+  vi.mocked(api.get).mockImplementation(async (path) => {
+    if (path === "/admin/disputes/deny-reasons") {
+      return page([{ code: "window_closed", label: "Window closed", runnerText: "Window closed.", noteRequired: false }] as never);
+    }
+    return page([blocked]);
+  });
+  fixtures.search = `row=${blocked.id}`;
+  renderQueue();
+  const drawer = await screen.findByRole("dialog");
+  await user.click(within(drawer).getByRole("button", { name: "Approve refund…" }));
+  await user.click(within(screen.getByRole("dialog", { name: `Resolve ${blocked.id}` })).getByRole("button", { name: "Deny with this reason" }));
+  expect(screen.getByRole("dialog", { name: `Deny ${blocked.id}` })).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: `Deny ${blocked.id}` })).not.toBeInTheDocument());
+  expect(screen.getByRole("dialog")).toHaveTextContent(blocked.id);
+  expect(fixtures.router.replace).not.toHaveBeenCalled();
+});
+
+async function openDrawerFor(d: Dispute) {
+  client.setQueryData(firstPageKey, page([d]));
+  fixtures.search = `row=${d.id}`;
+  renderQueue();
+  return screen.findByRole("dialog");
+}
+
+it("the drawer shows downloads started and the runner's other requests", async () => {
+  const drawer = await openDrawerFor({
+    ...dispute, itemChargeAmount: 110, paymentPhotoCount: 3, refundable: true,
+    downloadCount: 4, lastDownloadedAt: "2026-09-09T05:00:00Z",
+    runnerHistory: { total: 5, refunded: 2, denied: 1, withdrawn: 1, open: 1 },
+  });
+  expect(within(drawer).getByText("This photo's charge").nextSibling).toHaveTextContent("110");
+  expect(within(drawer).getByText("Payment covered").nextSibling).toHaveTextContent("3 photos");
+  expect(within(drawer).getByText("Can it be refunded?").nextSibling).toHaveTextContent("Yes");
+  expect(within(drawer).getByText("Downloads started").nextSibling).toHaveTextContent("4");
+  expect(drawer).toHaveTextContent("Counts download starts; retries and share attempts count again.");
+  const other = within(drawer).getByText("This runner's other requests").nextSibling;
+  expect(other).toHaveTextContent("5 total · 2 refunded · 1 declined · 1 withdrawn · 1 open");
+});
+
+it("a dispute with no downloads says so", async () => {
+  const none = await openDrawerFor({ ...dispute, downloadCount: 0 });
+  expect(within(none).getByText("Downloads started").nextSibling).toHaveTextContent("No downloads yet");
+  cleanup();
+  const noRecord = await openDrawerFor({ ...dispute, downloadCount: null });
+  expect(within(noRecord).getByText("Downloads started").nextSibling).toHaveTextContent("No download record");
+});
+
+it("a deleted runner shows no history", async () => {
+  const drawer = await openDrawerFor({ ...dispute, runnerHandle: "a@b.com", runnerHistory: null });
+  expect(within(drawer).getByText("This runner's other requests").nextSibling).toHaveTextContent("Runner deleted");
+});
+
+it("an unrefundable dispute says why in the drawer", async () => {
+  const drawer = await openDrawerFor({
+    ...dispute, refundable: false, refundBlockedReason: "no_payment", refundBlockedMessage: "No payment is on file.",
+  });
+  expect(within(drawer).getByText("Can it be refunded?").nextSibling).toHaveTextContent("No: No payment is on file.");
+});
+
+it("the drawer labels the order total as the order total", async () => {
+  const drawer = await openDrawerFor({ ...dispute, itemChargeAmount: 40, orderSnapshot: { ...dispute.orderSnapshot, total: 330 } });
+  expect(within(drawer).getByText("Order total")).toBeInTheDocument();
+  expect(drawer).toHaveTextContent(/Order total.*330/);
+  expect(within(drawer).queryByText("Total")).not.toBeInTheDocument();
 });

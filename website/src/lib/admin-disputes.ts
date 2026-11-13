@@ -90,6 +90,32 @@ export interface Dispute {
   dueAt?: string | null;
   overdue?: boolean;
   linkExpiringSoon?: boolean;
+  // Can a full refund be approved now (DW-3)? Wire codes match the deny reason codes bought_together / window_closed.
+  refundable?: boolean | null;
+  refundBlockedReason?: "bought_together" | "window_closed" | "no_payment" | null;
+  refundBlockedMessage?: string | null;
+  paymentPhotoCount?: number | null;
+  // Decision facts (DW-6). downloadCount null: no download record (for example after a full refund); lastDownloadedAt goes with it.
+  downloadCount?: number | null;
+  lastDownloadedAt?: string | null;
+  // The runner's other requests, counted per request; null only when the runner was deleted.
+  runnerHistory?: RunnerDisputeHistory | null;
+}
+
+export interface RunnerDisputeHistory {
+  total: number;
+  refunded: number;
+  denied: number;
+  withdrawn: number;
+  open: number;
+}
+
+// One row of GET /admin/disputes/deny-reasons; the server owns the list and the runner text.
+export interface DisputeDenyReason {
+  code: string;
+  label: string;
+  runnerText: string;
+  noteRequired: boolean;
 }
 
 export const DISPUTE_STATUS_LABEL: Record<DisputeStatus, string> = {

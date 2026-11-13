@@ -494,6 +494,38 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     )
     fun unhideForFlag(@Param("id") id: UUID, @Param("target") target: PhotoStatus): Int
 
+    // PE-2.4: the whole-batch hide. The ids are the flag's recorded, un-restored photos. Conditional like
+    // hideForFlag, so a row the pipeline is writing is not clobbered.
+    @Modifying
+    @Query(
+        value = """
+        UPDATE photos SET status = 'HIDDEN'
+        WHERE status IN ('LIVE', 'PROCESSING')
+          AND id IN (SELECT photo_id FROM flag_hidden_photos WHERE flag_id = :flagId AND restored_at IS NULL)
+        """,
+        nativeQuery = true,
+    )
+    fun hideRecordedForFlag(@Param("flagId") flagId: UUID): Int
+
+    // PE-2.4: the bulk restore (a dismissed relevance flag). Same target split as unhideForFlag. The last two
+    // conditions = AdminFlagService.stillHeldHidden: another hidden photo flag or another flag's batch hide
+    // keeps the photo hidden.
+    @Modifying
+    @Query(
+        value = """
+        UPDATE photos p
+        SET status = CASE WHEN p.watermark_s3_key IS NULL THEN 'PROCESSING' ELSE 'LIVE' END, processing_attempts = 0
+        WHERE p.status = 'HIDDEN'
+          AND p.id IN (SELECT photo_id FROM flag_hidden_photos WHERE flag_id = :flagId AND restored_at IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM flags f WHERE f.target_kind = 'photo' AND f.target_id = p.id
+                          AND f.status = 'hidden' AND f.id <> :flagId)
+          AND NOT EXISTS (SELECT 1 FROM flag_hidden_photos o WHERE o.photo_id = p.id
+                          AND o.flag_id <> :flagId AND o.restored_at IS NULL)
+        """,
+        nativeQuery = true,
+    )
+    fun unhideRecordedForFlag(@Param("flagId") flagId: UUID): Int
+
     // Nearest stored fingerprint by Hamming distance, for POST
     // /public/photos/verify. The upload is compared against all three
     // registered hashes — marked frame, clean frame, clean centre crop (V43;
