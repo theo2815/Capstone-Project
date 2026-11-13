@@ -1202,6 +1202,26 @@ class SellerDetailsServiceTest {
         assertNotEquals(passportHash, row.idNumberHmac) // stored under the chosen type, as before
     }
 
+    // R-9: two accounts submitting one number at once take turns, so the second sees the first.
+    @Test
+    fun `the id number lock is taken before the repeat lookup`() {
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val hashes = matchHashes("N0112345678")
+        val order = Mockito.inOrder(userRepository, repository)
+        order.verify(userRepository).lockById(userId)
+        order.verify(repository).lockIdNumber(hashes.first())
+        order.verify(repository).findUserIdsByIdNumberHmacIn(hashes, userId)
+    }
+
+    @Test
+    fun `no typed number takes no id lock`() {
+        service().submit(userId, form(idNumber = null))
+
+        saved()
+        Mockito.verify(repository, Mockito.never()).lockIdNumber(anyArg())
+    }
+
     @Test
     fun `shared payout number and phone merge into one match`() {
         Mockito.`when`(payoutRepository.findAllByUserIdOrderByCreatedAtAsc(userId)).thenReturn(listOf(payout()))

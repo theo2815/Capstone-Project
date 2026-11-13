@@ -31,4 +31,11 @@ interface SellerDetailsRepository : JpaRepository<SellerDetails, UUID> {
 
     @Query("SELECT s.userId FROM SellerDetails s WHERE s.phoneKey = :phoneKey AND s.userId <> :excludeUserId")
     fun findUserIdsByPhoneKey(@Param("phoneKey") phoneKey: String, @Param("excludeUserId") excludeUserId: UUID): List<UUID>
+
+    // R-9: held until the transaction ends, so two accounts submitting one ID number take turns at the repeat lookup.
+    @Query(value = "SELECT CAST(pg_advisory_xact_lock($ID_NUMBER_LOCK_KEY, hashtext(:hmac)) AS text)", nativeQuery = true)
+    fun lockIdNumber(@Param("hmac") hmac: String): String?
 }
+
+// Two-key advisory lock namespace for ID numbers (the race-creation lock is the one-key 78301).
+const val ID_NUMBER_LOCK_KEY = 78302
