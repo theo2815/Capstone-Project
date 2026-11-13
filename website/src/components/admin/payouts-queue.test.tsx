@@ -1,4 +1,4 @@
-import { act, cleanup, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -265,4 +265,72 @@ it("retains a mark-paid form through step-up cancellation, invalid credentials, 
   expect(client.getQueryData(key)).toEqual(rows);
   expect(useAuthStore.getState().isAuthenticated).toBe(true);
   expect(useToastStore.getState().toasts.at(-1)?.message).toContain("Paid");
+});
+
+it("a held photographer's payout names the flag and disables approve and mark paid", async () => {
+  const user = userEvent.setup();
+  rows = [
+    { ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true },
+    { ...payoutCycle, id: "cycle-2", status: "approved", relevanceFlagId: "flag-1", relevanceHold: true },
+  ]; client.setQueryData(key, rows);
+  mount();
+  expect(screen.getAllByText("Payouts on hold: open relevance flag")).toHaveLength(2);
+  expect(screen.getAllByRole("link", { name: /relevance flag/i })[0]).toHaveAttribute("href", "/admin/flags?row=flag-1");
+  expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Mark processing" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Mark paid…" })).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: "Hold…" })[0]).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Open payout cycle-2" }));
+  const drawer = screen.getByRole("dialog");
+  expect(within(drawer).getByRole("button", { name: "Mark paid…" })).toBeDisabled();
+  expect(within(drawer).getByRole("button", { name: "Hold…" })).toBeEnabled();
+  expect(within(drawer).getByRole("button", { name: "Reject…" })).toBeEnabled();
+});
+it("an unconfirmed flag shows a warning and leaves the buttons on", () => {
+  rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: false }]; client.setQueryData(key, rows);
+  mount();
+  expect(screen.getByText("Open relevance flag, not yet confirmed")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+});
+it("the bulk bar refuses approve while a selected payout is on hold, and E does nothing in the drawer", async () => {
+  const user = userEvent.setup();
+  rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }, { ...payoutCycle, id: "cycle-2" }];
+  client.setQueryData(key, rows);
+  const post = vi.spyOn(api, "post");
+  mount();
+  await user.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
+  await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-2" }));
+  expect(screen.getByText("Some selected payouts are on hold: open relevance flag")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Approve \d/ })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
+  await user.keyboard("e");
+  expect(post).not.toHaveBeenCalled();
+});
+
+it("the flag link in a row does not open the drawer or toggle selection, and Enter on it is not cancelled", async () => {
+  const user = userEvent.setup();
+  rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }]; client.setQueryData(key, rows);
+  mount();
+  const link = screen.getByRole("link", { name: "Payouts on hold: open relevance flag" });
+  await user.click(link);
+  expect(navigation.replace).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` })).not.toBeChecked();
+  expect(fireEvent.keyDown(link, { key: "Enter" })).toBe(true);
+  expect(navigation.replace).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("an admin shortcut key pressed on the flag link still reaches the page", () => {
+  rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }]; client.setQueryData(key, rows);
+  mount();
+  const link = screen.getByRole("link", { name: "Payouts on hold: open relevance flag" });
+  const seen = vi.fn();
+  window.addEventListener("keydown", seen);
+  try {
+    fireEvent.keyDown(link, { key: "j" });
+    expect(seen).toHaveBeenCalledTimes(1);
+  } finally {
+    window.removeEventListener("keydown", seen);
+  }
 });
