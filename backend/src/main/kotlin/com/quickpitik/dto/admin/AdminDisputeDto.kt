@@ -120,6 +120,10 @@ data class SendRefundLinkRequest(
     val url: String,
 )
 
+// POST /admin/disputes/{id}/mark-refunded - body { refundReference }, the PayMongo refund ID pasted from the dashboard.
+// Not validated here: the service trims it first, so the checks live there.
+data class MarkRefundedRequest(val refundReference: String? = null)
+
 // POST /admin/disputes/{id}/deny — body { reasonCode, note? } or the legacy { reason }.
 //
 // `reason` is shown to the runner: verbatim in the inbox message body, and as

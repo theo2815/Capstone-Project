@@ -61,6 +61,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 
 @Import(RefundPayoutCoverageIntegrationTest.ClockConfig::class)
 class RefundPayoutCoverageIntegrationTest : PostgresIntegrationTest() {
@@ -210,7 +211,7 @@ class RefundPayoutCoverageIntegrationTest : PostgresIntegrationTest() {
         )
         assertMoney("0", transactions.sumCleared(fixture.photographer.id, NOW.minusDays(7)))
 
-        paymongoRefunds.markRefunded(clickingAdmin.id, dispute.id)
+        paymongoRefunds.markRefunded(clickingAdmin.id, dispute.id, "ref_9e5899bbf66c4f3485bff833")
 
         assertMoney("0", transactions.sumCleared(fixture.photographer.id, NOW.minusDays(7)))
         assertEquals(1, refundRowCount(fixture))
@@ -219,10 +220,41 @@ class RefundPayoutCoverageIntegrationTest : PostgresIntegrationTest() {
         assertEquals("succeeded", done.refundStatus)
         assertEquals(OrderStatus.REFUNDED, orders.findById(fixture.order.id).orElseThrow().status)
 
-        paymongoRefunds.markRefunded(clickingAdmin.id, dispute.id)
+        paymongoRefunds.markRefunded(clickingAdmin.id, dispute.id, "ref_9e5899bbf66c4f3485bff833")
 
         assertMoney("0", transactions.sumCleared(fixture.photographer.id, NOW.minusDays(7)))
         assertEquals(1, refundRowCount(fixture))
+    }
+
+    @Test
+    fun `a second dispute given the same reference answers 409`() {
+        val first = sale(amount = "1000", paidAt = NOW.minusDays(8))
+        val second = sale(amount = "600", paidAt = NOW.minusDays(8))
+        val admin = admin()
+        fun parked(f: SaleFixture, amount: String) = disputes.saveAndFlush(
+            Dispute(
+                orderId = f.order.id,
+                photoId = f.photo.id,
+                runnerId = f.runner.id,
+                reasonWire = "other",
+                statusWire = DisputeStatus.ESCALATED.wire,
+                refundStatus = "manual_review",
+                refundAmountPhp = BigDecimal(amount),
+                refundRequestedBy = admin.id,
+                openedAt = NOW.minusDays(2),
+            ).apply { resolution = DisputeResolution.REFUND_FULL },
+        )
+        val one = parked(first, "1000")
+        val two = parked(second, "600")
+        // Rows persist across tests in this class, so this one needs its own reference.
+        val reference = "ref_" + java.util.UUID.randomUUID().toString().replace("-", "").take(24)
+        paymongoRefunds.markRefunded(admin.id, one.id, reference)
+
+        assertFailsWith<ConflictException> { paymongoRefunds.markRefunded(admin.id, two.id, reference) }
+
+        val untouched = disputes.findById(two.id).orElseThrow()
+        assertEquals("manual_review", untouched.refundStatus)
+        assertNull(untouched.providerRefundId)
     }
 
     private fun refundRowCount(fixture: SaleFixture): Int =

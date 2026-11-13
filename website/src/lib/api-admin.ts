@@ -453,8 +453,8 @@ export async function sendRefundLink(disputeId: string, url: string): Promise<Di
   return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/refund-link`, { url });
 }
 
-export async function markRefunded(disputeId: string): Promise<Dispute> {
-  return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/mark-refunded`);
+export async function markRefunded(disputeId: string, refundReference: string): Promise<Dispute> {
+  return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/mark-refunded`, { refundReference });
 }
 
 // ───────────────────────────────────────────── Flags
