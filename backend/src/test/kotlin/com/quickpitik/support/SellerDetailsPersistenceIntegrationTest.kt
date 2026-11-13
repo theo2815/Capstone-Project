@@ -197,13 +197,15 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
 
     // AA-I5: the three repeat-account lookups, each leaving out the caller.
     @Test
-    fun `id number hash lookup finds the other accounts and leaves out the caller`() {
-        val hmac = UUID.randomUUID().toString().replace("-", "")
-        val (me, twin, stranger) = List(3) { photographer().also(::insert) }
+    fun `id number hash lookup finds accounts under any of the hashes and leaves out the caller`() {
+        val (hmac, otherTypeHmac) = List(2) { UUID.randomUUID().toString().replace("-", "") }
+        val (me, twin, otherType, stranger) = List(4) { photographer().also(::insert) }
         jdbc.update("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id IN (?, ?)", hmac, me, twin)
+        // R-1: the same number stored under another ID type's hash.
+        jdbc.update("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id = ?", otherTypeHmac, otherType)
         jdbc.update("UPDATE photographer_seller_details SET id_number_hmac = ? WHERE user_id = ?", "x$hmac".take(64), stranger)
 
-        assertEquals(listOf(twin), repository.findUserIdsByIdNumberHmac(hmac, me))
+        assertEquals(setOf(twin, otherType), repository.findUserIdsByIdNumberHmacIn(listOf(hmac, otherTypeHmac), me).toSet())
     }
 
     @Test

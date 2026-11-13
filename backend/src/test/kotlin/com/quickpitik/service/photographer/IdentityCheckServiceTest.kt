@@ -64,7 +64,10 @@ class IdentityCheckServiceTest {
         lines("REPUBLIC OF THE PHILIPPINES", "N01-12-345678")
     }
 
-    private fun service(aiEnabled: Boolean = true, props: IdentityProperties = IdentityProperties()) =
+    // A set format for the default type: with none, a found number goes to an admin (R-1).
+    private val withFormat = IdentityProperties(idNumberFormats = mapOf(SellerIdType.DRIVERS_LICENSE to "[A-Z0-9]{4,30}"))
+
+    private fun service(aiEnabled: Boolean = true, props: IdentityProperties = withFormat) =
         IdentityCheckService(sessions, provider, AiApiProperties(enabled = aiEnabled), props)
 
     private fun lines(vararg text: String) {
@@ -174,11 +177,40 @@ class IdentityCheckServiceTest {
     }
 
     @Test
-    fun `a type with no format skips the format check`() {
+    fun `a type with no format sends a matching number to an admin`() {
         val strict = service(props = IdentityProperties(idNumberFormats = mapOf(SellerIdType.PASSPORT to "P\\d{7}[A-Z]")))
         lines("1234")
 
-        assertEquals(emptyList(), strict.run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, "1234") { idFront }.reasons)
+        assertEquals(listOf(SellerReasonCode.ID_FORMAT_UNCHECKED), strict.run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, "1234") { idFront }.reasons)
+    }
+
+    @Test
+    fun `a word on the card typed as the id number goes to an admin when the type has no format`() {
+        val checks = service(props = IdentityProperties()).run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, "REPUBLIC") { idFront }
+
+        assertEquals(listOf(SellerReasonCode.ID_FORMAT_UNCHECKED), checks.reasons)
+        assertEquals(SellerDetailsStatus.MANUAL_REVIEW, IdentityCheckService.statusFor(checks.reasons))
+    }
+
+    @Test
+    fun `a word on the card breaks a set format and is refused`() {
+        val strict = service(props = IdentityProperties(idNumberFormats = mapOf(SellerIdType.DRIVERS_LICENSE to "[A-Z]\\d{10}")))
+
+        val error = assertFailsWith<ValidationException> { strict.run(userId, sessionId, SellerIdType.DRIVERS_LICENSE, "REPUBLIC") { idFront } }
+
+        assertEquals("idNumber", error.field)
+        verify(sessions, never()).claim(anyArg(), anyArg(), anyArg(), Mockito.any())
+    }
+
+    @Test
+    fun `the match list holds the hash of the number under every id type`() {
+        val checks = run(idNumber = "n01-12 345678")
+
+        assertEquals(SellerIdType.entries.map { hmac(it, "N0112345678") }, checks.idNumberMatchHmacs)
+        assertEquals(7, checks.idNumberMatchHmacs.toSet().size)
+        assertEquals(hmac(SellerIdType.DRIVERS_LICENSE, "N0112345678"), checks.idNumberHmac)
+        assertEquals(checks.idNumberMatchHmacs, run(session = null).idNumberMatchHmacs) // the declined path matches too
+        assertEquals(emptyList(), run(idNumber = null).idNumberMatchHmacs)
     }
 
     @Test

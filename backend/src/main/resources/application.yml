@@ -281,7 +281,7 @@ app:
     # The typed ID number is stored only as HMAC-SHA256(this, "<ID_TYPE>:<number>") (AA-I4).
     # Production refuses the dev value. Never rotate it casually: older rows stop matching.
     id-number-hmac-secret: ${ID_NUMBER_HMAC_SECRET:dev-only-id-number-hmac-secret}
-    # A regex over the normalised number (uppercase, no spaces or dashes). Blank = no format check.
+    # A regex over the normalised number (uppercase, no spaces or dashes). Blank = an admin checks this ID type.
     # [NOT MEASURED: set from AA-0.5]
     id-number-formats:
       philsys: ${ID_NUMBER_FORMAT_PHILSYS:}

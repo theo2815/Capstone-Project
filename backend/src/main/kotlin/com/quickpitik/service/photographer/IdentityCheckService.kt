@@ -34,6 +34,8 @@ class IdentityChecks(
     val consentAt: OffsetDateTime? = null,
     /** The keyed hash of the typed ID number (AA-I4); null when none was typed. The raw number is never kept. */
     val idNumberHmac: String? = null,
+    /** The typed number's hash under every [SellerIdType], in entries order, for the repeat match (R-1); empty when none was typed. */
+    val idNumberMatchHmacs: List<String> = emptyList(),
 )
 
 /**
@@ -55,12 +57,13 @@ class IdentityCheckService(
     fun run(userId: UUID, sessionId: String?, idType: SellerIdType, idNumber: String?, idFront: () -> ByteArray): IdentityChecks {
         val number = idNumber?.takeIf { it.isNotBlank() }?.let { normaliseIdNumber(idType, it) }
         val hmac = number?.let { idNumberHmac(idType, it) }
-        if (sessionId == null) return IdentityChecks(listOf(SellerReasonCode.DECLINED), idNumberHmac = hmac)
+        val matchHmacs = number?.let { n -> SellerIdType.entries.map { idNumberHmac(it, n) } }.orEmpty()
+        if (sessionId == null) return IdentityChecks(listOf(SellerReasonCode.DECLINED), idNumberHmac = hmac, idNumberMatchHmacs = matchHmacs)
         val session = livenessSessionService.requireOpen(userId, sessionId, PURPOSE, null)
         // Claim before reading (AA-I2's order): a parallel submit with the same session stops here, unbilled.
         if (!livenessSessionService.claim(userId, sessionId, PURPOSE, null)) throw LivenessSessionService.invalidSession()
         fun checks(reasons: List<SellerReasonCode>, confidence: Float? = null, similarity: Float? = null, image: ByteArray? = null) =
-            IdentityChecks(reasons, confidence?.score(), similarity?.score(), image, sessionId, session.createdAt, hmac)
+            IdentityChecks(reasons, confidence?.score(), similarity?.score(), image, sessionId, session.createdAt, hmac, matchHmacs)
         val front by lazy(idFront)
 
         val client = identityClient.getIfAvailable()
@@ -90,6 +93,8 @@ class IdentityCheckService(
             similarity == null || similarity < identityProperties.faceMinSimilarity -> reasons += SellerReasonCode.FACE_MISMATCH
         }
         idNumberReason(client, number) { front }?.takeUnless { it in reasons }?.let { reasons += it }
+        // No format for this type: a card word ("REPUBLIC") would pass the line match, so an admin checks (R-1).
+        if (number != null && identityProperties.idNumberPatterns[idType] == null) reasons += SellerReasonCode.ID_FORMAT_UNCHECKED
         return checks(reasons, confidence, similarity, result.referenceImage)
     }
 

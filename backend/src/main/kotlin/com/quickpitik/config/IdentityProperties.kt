@@ -24,7 +24,7 @@ data class IdentityProperties(
     val livenessCredentialSeconds: Int = 900,
     // Keys the stored ID-number hash (AA-I4). Never rotate it casually: older rows stop matching (AA-I5).
     val idNumberHmacSecret: String = "dev-only-id-number-hmac-secret",
-    // A regex over the normalised number, per ID type. Blank = no format check. [NOT MEASURED: set from AA-0.5]
+    // A regex over the normalised number, per ID type. Blank = an admin checks this ID type. [NOT MEASURED: set from AA-0.5]
     val idNumberFormats: Map<SellerIdType, String> = emptyMap(),
     // The identity notice (AA-I22) sends one mail at a time, at most this many a second. [NOT MEASURED: Resend's limit]
     val noticeSendPerSecond: Int = 2,

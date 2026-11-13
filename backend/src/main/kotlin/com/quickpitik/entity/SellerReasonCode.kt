@@ -16,4 +16,6 @@ enum class SellerReasonCode {
     PAYOUT_NAME_MISMATCH,
     REPEAT_ACCOUNT_MATCH,
     PREVIOUSLY_REJECTED,
+    // The number was found on the card, but its ID type has no format set: an admin checks it (R-1).
+    ID_FORMAT_UNCHECKED,
 }

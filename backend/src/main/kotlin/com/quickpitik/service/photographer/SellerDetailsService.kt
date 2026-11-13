@@ -155,8 +155,8 @@ class SellerDetailsService(
         checks: IdentityChecks, referenceKey: String?, previouslyRejected: Boolean, now: OffsetDateTime,
     ): SellerDetails = apply {
         val payouts = payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(userId)
-        val hits = checks.idNumberHmac?.let { hmac ->
-            sellerDetailsRepository.findUserIdsByIdNumberHmac(hmac, userId).map { it to RepeatMatchKind.ID_NUMBER }
+        val hits = checks.idNumberMatchHmacs.takeIf { it.isNotEmpty() }?.let { hmacs ->
+            sellerDetailsRepository.findUserIdsByIdNumberHmacIn(hmacs, userId).map { it to RepeatMatchKind.ID_NUMBER }
         }.orEmpty() + (if (payouts.isEmpty()) emptyList() else {
             payoutAccountRepository.findUserIdsByAccountNumbers(payouts.map { it.accountNumber }, userId)
                 .map { it to RepeatMatchKind.PAYOUT_NUMBER }
