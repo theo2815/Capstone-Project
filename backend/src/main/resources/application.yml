@@ -355,6 +355,13 @@ app:
       # 0-100. Empty = not set; auto-hide stays record-only until both are set.
       blur-cutoff: ${RELEVANCE_JUNK_BLUR_CUTOFF:} # [NOT MEASURED: O7]
       dark-cutoff: ${RELEVANCE_JUNK_DARK_CUTOFF:} # [NOT MEASURED: O7]
+      label-min-confidence: ${RELEVANCE_JUNK_LABEL_MIN_CONFIDENCE:0.6} # 0-1 [NOT MEASURED: O7]
+      race-labels: ${RELEVANCE_JUNK_RACE_LABELS:Running,Marathon,Road} # [NOT MEASURED: O7]
+      fits-below-percent: ${RELEVANCE_JUNK_FITS_BELOW_PERCENT:10}
+      dump-above-percent: ${RELEVANCE_JUNK_DUMP_ABOVE_PERCENT:70}
+    check:
+      min-batch-size: ${RELEVANCE_CHECK_MIN_BATCH_SIZE:30}
+      near-line-points: ${RELEVANCE_CHECK_NEAR_LINE_POINTS:5}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

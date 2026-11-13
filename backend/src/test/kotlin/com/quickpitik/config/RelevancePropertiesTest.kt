@@ -27,7 +27,9 @@ class RelevancePropertiesTest {
         assertEquals(Duration.ofSeconds(5), p.lookupTimeout)
         assertEquals(RelevanceProperties.Copy(tightDistance = 4, weakDistance = 8, minHits = 3, minHitSharePercent = 5), p.copy)
         assertEquals(RelevanceProperties.Date(windowDays = 2, minDatedPhotos = 10, outsideSharePercent = 80), p.date)
-        assertEquals(RelevanceProperties.Junk(blurCutoff = null, darkCutoff = null), p.junk)
+        assertEquals(RelevanceProperties.Junk(blurCutoff = null, darkCutoff = null, labelMinConfidence = 0.6,
+            raceLabels = listOf("Running", "Marathon", "Road"), fitsBelowPercent = 10, dumpAbovePercent = 70), p.junk)
+        assertEquals(RelevanceProperties.Check(minBatchSize = 30, nearLinePoints = 5), p.check)
     }
 
     @Test fun `the yml binds every key and names its env override`() {
@@ -44,6 +46,9 @@ class RelevancePropertiesTest {
             "RELEVANCE_COPY_MIN_HITS:3", "RELEVANCE_COPY_MIN_HIT_SHARE_PERCENT:5", "RELEVANCE_DATE_WINDOW_DAYS:2",
             "RELEVANCE_DATE_MIN_DATED_PHOTOS:10", "RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT:80",
             "RELEVANCE_JUNK_BLUR_CUTOFF:}", "RELEVANCE_JUNK_DARK_CUTOFF:}",
+            "RELEVANCE_JUNK_LABEL_MIN_CONFIDENCE:0.6", "RELEVANCE_JUNK_RACE_LABELS:Running,Marathon,Road",
+            "RELEVANCE_JUNK_FITS_BELOW_PERCENT:10", "RELEVANCE_JUNK_DUMP_ABOVE_PERCENT:70",
+            "RELEVANCE_CHECK_MIN_BATCH_SIZE:30", "RELEVANCE_CHECK_NEAR_LINE_POINTS:5",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
     }
 
@@ -79,6 +84,16 @@ class RelevancePropertiesTest {
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(darkCutoff = 101.0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(blurCutoff = -0.1) }
         assertFailsWith<BindException> { bind("junk.dark-cutoff" to "250") }
+    }
+
+    @Test fun `junk shares out of order, a confidence above one or no race labels are refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(fitsBelowPercent = 71, dumpAbovePercent = 70) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(fitsBelowPercent = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(dumpAbovePercent = 100) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(labelMinConfidence = 60.0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(raceLabels = emptyList()) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(minBatchSize = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(nearLinePoints = -1) }
     }
 
     @Test fun `a tight distance above the weak distance is refused`() {
