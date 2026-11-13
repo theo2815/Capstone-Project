@@ -4,7 +4,10 @@ import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
+import com.quickpitik.service.ai.RekognitionAiClient
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
+import org.springframework.beans.factory.ObjectProvider
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -64,5 +67,18 @@ class RelevanceSwitchTest {
 
     @Test fun `ai enabled follows the ai switch`() {
         assertFalse(switch(RelevanceMode.RECORD_ONLY, aiEnabled = false).aiEnabled)
+    }
+
+    @Test fun `measuring needs AI on and the Rekognition client`() {
+        @Suppress("UNCHECKED_CAST")
+        fun provider(client: RekognitionAiClient?) = (Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>)
+            .also { Mockito.`when`(it.getIfAvailable()).thenReturn(client) }
+        fun switch(aiEnabled: Boolean, client: RekognitionAiClient?) = RelevanceSwitch(RelevanceProperties(mode = RelevanceMode.RECORD_ONLY),
+            AdminProperties(), AiApiProperties(enabled = aiEnabled), provider(client))
+        val client = Mockito.mock(RekognitionAiClient::class.java)
+
+        assertTrue(switch(aiEnabled = true, client = client).canMeasure)
+        assertFalse(switch(aiEnabled = false, client = client).canMeasure)
+        assertFalse(switch(aiEnabled = true, client = null).canMeasure, "the ai-api provider has no label check")
     }
 }

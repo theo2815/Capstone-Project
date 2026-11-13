@@ -367,6 +367,9 @@ app:
       tick-interval-ms: ${RELEVANCE_CHECK_TICK_INTERVAL_MS:15000}
       max-batches-per-tick: ${RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3}
       claim-minutes: ${RELEVANCE_CHECK_CLAIM_MINUTES:10}
+      measures-per-tick: ${RELEVANCE_CHECK_MEASURES_PER_TICK:60}
+      workers: ${RELEVANCE_CHECK_WORKERS:2}
+      measure-max-tries: ${RELEVANCE_CHECK_MEASURE_MAX_TRIES:5}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
