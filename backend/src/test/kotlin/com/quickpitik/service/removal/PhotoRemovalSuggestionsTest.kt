@@ -35,6 +35,7 @@ class PhotoRemovalSuggestionsTest {
     private val availability = mock(PhotoAvailabilityService::class.java)
     private val queries = mock(PhotoRemovalQueryService::class.java)
     private val recorder = mock(PhotoRemovalHistoryRecorder::class.java)
+    private val audit = mock(PhotoRemovalHistoryRepository::class.java)
     private val manager = mock(PlatformTransactionManager::class.java)
     private val mapper = jacksonObjectMapper().findAndRegisterModules()
     private val now = Instant.parse("2026-11-12T03:00:00Z")
@@ -57,7 +58,7 @@ class PhotoRemovalSuggestionsTest {
         TransactionTemplate(manager), mapper, Clock.fixed(now, ZoneOffset.UTC), mock(org.springframework.context.ApplicationEventPublisher::class.java),
         mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
         mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
-        mock(PhotoRemovalHistoryRepository::class.java), com.quickpitik.config.PhotoRemovalProperties(), mock(RunnerAutoHidePolicy::class.java))
+        audit, com.quickpitik.config.PhotoRemovalProperties(), mock(RunnerAutoHidePolicy::class.java))
 
     init {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
@@ -135,6 +136,20 @@ class PhotoRemovalSuggestionsTest {
         assertEquals("5", row.metadata["noticeVersion"])
         verify(notifier).attempt(notified.id)
         assertEquals(1, savedReviews.size) // no second review for the same owner
+    }
+
+    @Test fun `re-promoting a photo demoted after the owner's notice keeps the review and sends no new notice`() {
+        val notifiedAt = now.minusSeconds(3600)
+        val deadline = now.plusSeconds(71 * 3600)
+        val notified = PhotoRemovalReview(requestId = request.id, ownerIdSnapshot = ownerA, ownerId = ownerA, notifiedMessageId = UUID.randomUUID(),
+            notifiedAt = notifiedAt, deadline = deadline).also { savedReviews += it }
+        val c = item(photo(ownerA), RemovalItemState.CANDIDATE) // auto-hidden, listed in that notice, then demoted
+        `when`(audit.existsByRequestIdAndItemIdAndActionAndOccurredAtAfter(request.id, c.id,RemovalHistoryActions.SUGGESTED, notifiedAt)).thenReturn(true)
+        service.reviewSuggestions(adminId, request.id, command(promote = listOf(c)))
+        assertEquals(notified.id, c.reviewId)
+        assertEquals(notifiedAt to deadline, notified.notifiedAt to notified.deadline)
+        assertNull(history().single { it.itemId == c.id }.metadata["kind"])
+        verify(notifier, never()).attempt(notified.id)
     }
 
     @Test fun `dismiss leaves the photo public`() {
