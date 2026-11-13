@@ -618,7 +618,7 @@ class PhotographerSettingsServiceTest {
     }.toByteArray()
 
     private fun verdict(v: ImageModerationVerdict, vararg labels: String) =
-        Mockito.`when`(moderation.check(anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
+        Mockito.`when`(moderation.checkFor(anyArg(), anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
 
     @Test
     fun `a flagged cover is refused with IMAGE_NOT_ALLOWED, nothing stored, PROFILE_IMAGE_FLAGGED raised`() {
@@ -672,7 +672,7 @@ class PhotographerSettingsServiceTest {
         service().uploadWatermark(userId, imageBytes("png"), "image/png")
 
         val checked = org.mockito.ArgumentCaptor.forClass(ByteArray::class.java)
-        Mockito.verify(moderation).check(checked.capture() ?: byteArrayOf())
+        Mockito.verify(moderation).checkFor(anyArg(), checked.capture() ?: byteArrayOf())
         val stored = org.mockito.ArgumentCaptor.forClass(ByteArray::class.java)
         Mockito.verify(storageService).put(anyArg(), stored.capture() ?: byteArrayOf(), Mockito.eq("image/png") ?: "")
         assertEquals(listOf<Byte>(-119, 80, 78, 71), checked.value.take(4))

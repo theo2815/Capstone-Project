@@ -449,6 +449,10 @@ app:
     report:
       capacity: 10
       refill-period: PT1H
+    # Billed profile-image checks per user per day (AF-8); over it the image is stored unchecked.
+    image-moderation-daily:
+      capacity: 30
+      refill-period: PT24H
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
     # AA-R11: a photographer's own race price is between the race price and this times it (owner D3).
