@@ -34,6 +34,7 @@ import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.runner.RunnerMessagesService
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -142,21 +143,55 @@ class PaymongoRefundService(
     }
 
     // PayMongo's dashboard shows the parked payment as Refunded: finish it like an API refund that succeeded.
-    // A second click finds it already completed and changes nothing. The log row names the admin who clicked.
-    fun markRefunded(adminId: UUID, disputeId: UUID) {
-        transactionTemplate.executeWithoutResult {
-            val dispute = disputeRepository.findByIdForUpdate(disputeId)
-                ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
-            if (isCompletedRefund(dispute)) return@executeWithoutResult
-            if (dispute.refundStatus != MANUAL_REVIEW) {
-                throw checkoutConflict("This dispute is not waiting for a manual refund.")
+    // The admin pastes the dashboard's refund reference; it is stored as provider_refund_id (unique) so one PayMongo
+    // refund cannot close two disputes. A second click with the same reference finds it completed and changes nothing.
+    // The log row names the admin who clicked.
+    fun markRefunded(adminId: UUID, disputeId: UUID, refundReference: String?) {
+        val reference = validRefundReference(refundReference)
+        try {
+            transactionTemplate.executeWithoutResult {
+                val dispute = disputeRepository.findByIdForUpdate(disputeId)
+                    ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
+                val stored = dispute.providerRefundId
+                if (stored != null && stored != reference) {
+                    throw checkoutConflict("This refund already has PayMongo reference $stored.")
+                }
+                if (isCompletedRefund(dispute)) return@executeWithoutResult
+                if (dispute.refundStatus != MANUAL_REVIEW) {
+                    throw checkoutConflict("This dispute is not waiting for a manual refund.")
+                }
+                if (dispute.resolution == null || dispute.refundAmountPhp == null) {
+                    throw checkoutConflict("This dispute has no approved refund amount.")
+                }
+                if (disputeRepository.findByProviderRefundId(reference) != null) throw referenceTaken()
+                dispute.providerRefundId = reference
+                completeSucceededRefund(dispute, adminId)
             }
-            if (dispute.resolution == null || dispute.refundAmountPhp == null) {
-                throw checkoutConflict("This dispute has no approved refund amount.")
-            }
-            completeSucceededRefund(dispute, adminId)
+        } catch (_: DataIntegrityViolationException) {
+            // Two admins pasted one reference at once: the unique index refused the second commit.
+            throw referenceTaken()
         }
     }
+
+    private fun validRefundReference(raw: String?): String {
+        val reference = raw?.trim().orEmpty()
+        if (PAYMENT_ID_PREFIXES.any { reference.startsWith(it) }) {
+            throw ValidationException(
+                message = "That is the payment ID. Paste the refund's reference.",
+                field = "refundReference",
+            )
+        }
+        if (!REFUND_REFERENCE.matches(reference)) {
+            throw ValidationException(
+                message = "Paste the refund reference from the PayMongo dashboard.",
+                field = "refundReference",
+            )
+        }
+        return reference
+    }
+
+    private fun referenceTaken(): ConflictException =
+        checkoutConflict("That PayMongo refund reference is already recorded on another refund request.")
 
     fun handleWebhook(providerRefundId: String, status: String): Boolean =
         transactionTemplate.execute {
@@ -667,6 +702,9 @@ class PaymongoRefundService(
         const val FAILED = "failed"
         const val MANUAL_REVIEW = "manual_review"
         const val CANCELLED = "cancelled"
+        val PAYMENT_ID_PREFIXES = listOf("pay_", "cs_", "pi_")
+        // PayMongo refund IDs start with ref_; the rest is 1-100 safe characters in total.
+        val REFUND_REFERENCE = Regex("ref_[A-Za-z0-9_-]{1,96}")
         val IN_FLIGHT_STATUSES = listOf(REQUESTING, "pending", "processing")
         val PROVIDER_RETRY_WINDOW: Duration = Duration.ofHours(23)
         const val BATCH_SIZE = 100

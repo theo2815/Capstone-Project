@@ -140,8 +140,13 @@ export function useDisputeActions() {
       escalate: async (id: string, reason: string | null) => !!(await run(id, "Escalating…", "escalate", () => escalateDispute(id, reason))),
       sendRefundLink: async (id: string, url: string) =>
         !!(await run(id, "Sending link…", "send the refund link for this", () => sendRefundLink(id, url))),
-      markRefunded: async (id: string) =>
-        !!(await run(id, "Marking refunded…", "record the refund on this", () => markRefunded(id))),
+      // onFieldError gets the server's message when it refuses the reference, so the form can show it on the field.
+      markRefunded: async (id: string, refundReference: string, onFieldError?: (message: string) => void) =>
+        !!(await run(id, "Marking refunded…", "record the refund on this", () => markRefunded(id, refundReference).catch((error) => {
+          const entry = error instanceof ApiError ? error.errors.find((e) => e.field === "refundReference") : undefined;
+          if (entry) onFieldError?.(entry.message);
+          throw error;
+        }))),
     };
 }
 

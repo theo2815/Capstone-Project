@@ -185,8 +185,8 @@ class AdminDisputeService(
     }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    fun markRefunded(adminId: UUID, disputeId: UUID): AdminDisputeDto {
-        paymongoRefundService.markRefunded(adminId, disputeId)
+    fun markRefunded(adminId: UUID, disputeId: UUID, refundReference: String?): AdminDisputeDto {
+        paymongoRefundService.markRefunded(adminId, disputeId, refundReference)
         return transactionTemplate.execute {
             val dispute = disputeRepository.findById(disputeId).orElseThrow {
                 NotFoundException(code = ErrorCodes.DISPUTE_NOT_FOUND, message = "Dispute not found")
