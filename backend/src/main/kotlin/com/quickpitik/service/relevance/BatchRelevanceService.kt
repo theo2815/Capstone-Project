@@ -187,14 +187,14 @@ class BatchRelevanceService(
         ).first { it.reporterId == null }.id
         row.flaggedAt = now
         if (wrongEventNote) {
-            // Draft wording; PE-L4 approves the final text (PE-2.12). Names no other photographer (D18, C6).
+            // PE-L4 text T1 (approved 2026-11-12). Names no other photographer (D18, C6).
             val event = eventRepository.findById(row.eventId).orElseThrow()
             adminDecisionLogService.pushMessage(
                 photographerId = row.photographerId,
                 kind = PhotographerMessageKind.ADMIN_MESSAGE,
-                body = "Many of the photos you uploaded to ${event.name} were taken on dates far from the event's date " +
-                    "(${batch.eventDate}). Your photos stay on sale. An admin will take a look. " +
-                    "If they belong to a different event, contact support.",
+                body = "Many of the photos you uploaded to ${event.name} have camera dates far from the event's date " +
+                    "(${batch.eventDate}). For now they stay on sale, and an admin will take a look. " +
+                    "If your camera's clock was set wrong, or the photos belong to a different event, contact support.",
                 title = "Check the event for some uploads",
             )
         }

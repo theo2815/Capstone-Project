@@ -96,14 +96,14 @@ class StudioEarningsViewModelTest {
 
     @Test fun `a request refused for a hold shows the backend's reason and refreshes the wallet`() {
         route("POST $PAYOUTS/request") {
-            MockResponse().setResponseCode(409).setBody(error("PAYOUT_ON_HOLD", "Payouts are on hold while we review some of your uploads. Check your inbox for details."))
+            MockResponse().setResponseCode(409).setBody(error("PAYOUT_ON_HOLD", "Payouts are on hold while we review some of your uploads. Check your inbox for details, or contact support."))
         }
         val vm = model()
         vm.earningsUiState.awaitFirst { it is EarningsUiState.Success } // the cold start is done
         val earningsBefore = count("GET", EARNINGS)
         vm.submitPayoutRequest()
         assertEquals(
-            "Error: Payouts are on hold while we review some of your uploads. Check your inbox for details.",
+            "Error: Payouts are on hold while we review some of your uploads. Check your inbox for details, or contact support.",
             vm.payoutActionState.awaitFirst { it != null && it != "processing" },
         )
         awaitUntil { count("GET", EARNINGS) == earningsBefore + 1 }

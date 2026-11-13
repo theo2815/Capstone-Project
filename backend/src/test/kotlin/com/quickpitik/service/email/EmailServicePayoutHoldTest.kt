@@ -31,7 +31,14 @@ class EmailServicePayoutHoldTest {
         assertEquals("Your QuickPitik payouts are on hold", request.subject)
         assertTrue(request.html.contains("&lt;b&gt;Juan&lt;/b&gt;"), request.html)
         assertFalse(request.html.contains("<b>Juan"), request.html)
-        assertTrue(request.html.contains("Contact support to appeal."), request.html)
+        for (text in listOf(
+            "so your payouts are on hold until an admin finishes the review.",
+            "Your earnings stay in your balance. An admin may also take some of these photos off sale during the review. " +
+                "You will also find this message in your QuickPitik inbox.",
+            "Contact support within 14 days to appeal.",
+        )) {
+            assertTrue(request.html.contains(text), "missing: $text")
+        }
         for (forbidden in listOf("copied", "copy", "another photographer")) {
             assertFalse(request.html.contains(forbidden), "the alert must not say '$forbidden'")
         }

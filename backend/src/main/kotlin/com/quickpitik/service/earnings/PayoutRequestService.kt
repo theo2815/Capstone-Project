@@ -136,7 +136,7 @@ class PayoutRequestService(
             throw ApiException(
                 status = HttpStatus.CONFLICT,
                 code = ErrorCodes.PAYOUT_ON_HOLD,
-                message = "Payouts are on hold while we review some of your uploads. Check your inbox for details.",
+                message = "Payouts are on hold while we review some of your uploads. Check your inbox for details, or contact support.",
             )
         }
 
