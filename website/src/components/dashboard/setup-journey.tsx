@@ -68,6 +68,8 @@ function buildSteps(
   gate: UploadGateState,
   uploaded: number,
 ): readonly SetupStep[] {
+  // A held profile (reset or rejected) waits for an admin, not the identity check.
+  const held = gate.kind === "pending" && gate.awaitingAdmin === true;
   return [
     {
       number: "01",
@@ -87,8 +89,9 @@ function buildSteps(
     {
       number: "02",
       title: "Submit for verification",
-      body:
-        "Submit your settings. Your studio goes live as soon as your identity check passes.",
+      body: held
+        ? "An admin is reviewing your profile."
+        : "Submit your settings. Your studio goes live as soon as your identity check passes.",
       status:
         gate.kind === "incomplete"
           ? "locked"
@@ -96,7 +99,7 @@ function buildSteps(
             ? "active"
             : "done",
       hint:
-        gate.kind === "pending"
+        gate.kind === "pending" && !held
           ? "Your settings look good — submit them for review when you're ready."
           : undefined,
       cta:
