@@ -222,6 +222,20 @@ class PhotoRemovalQueryService(
             throw ApiException(HttpStatus.SERVICE_UNAVAILABLE, ErrorCodes.UPLOAD_STORAGE_UNAVAILABLE, "Photo review storage is unavailable")
         }
     }
+    // Previews are signed here, after the transaction, never in adminDetail: it also builds stored command receipts.
+    @Transactional(propagation = Propagation.NEVER)
+    fun adminView(adminId: UUID, requestId: UUID): PhotoRemovalRequestDto {
+        val (detail, rows) = tx.execute {
+            val detail = adminDetail(adminId, requestId)
+            detail to reviewPhotos(requestId, photos.findAllById(detail.items.map { it.photoIdSnapshot }))
+        }!!
+        val shown = try { rows.associate { it.dto.photo.id to present(it) } } catch (error: ApiException) {
+            log.warn("Admin removal case {} opened without previews: storage unavailable", requestId)
+            return detail
+        }
+        return detail.copy(items = detail.items.map { it.copy(photo = shown[it.photoIdSnapshot]) })
+    }
+
     fun adminDetail(adminId: UUID, requestId: UUID): PhotoRemovalRequestDto {
         val request = requests.findById(requestId).orElse(null) ?: removalNotFound()
         val selected = items.findByRequestIdOrderByIdAsc(requestId)
@@ -303,6 +317,10 @@ class PhotoRemovalQueryService(
         return RemovalPage(rows.map { RemovalHistoryDto(it.id, it.requestId, it.itemId, it.reviewId, it.photoIdSnapshot,
             it.actorType, it.actorIdSnapshot, it.action, it.fromState, it.toState, it.reason, it.occurredAt, it.commandId, it.metadata) },
             history.countByRequestId(requestId), params.offset, params.limit)
+    }
+
+    private companion object {
+        private val log = org.slf4j.LoggerFactory.getLogger(PhotoRemovalQueryService::class.java)
     }
 }
 

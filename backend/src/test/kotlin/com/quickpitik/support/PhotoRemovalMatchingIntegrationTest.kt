@@ -267,6 +267,39 @@ class PhotoRemovalMatchingIntegrationTest : PostgresIntegrationTest() {
         verify(storage, times(page.items.size)).exists(anyString())
     }
 
+    // RF-5 (RD-17 F2): the admin case page shows each photo.
+    @Test fun `admin case detail carries signed previews`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val a = photo(owner, "preview-a"); val b = photo(owner, "preview-b")
+        val case = verifiedCase(a, b)
+        assertEquals(mapOf(a.id to "https://synthetic.test/preview", b.id to "https://synthetic.test/preview"), previews(detail(case.id)))
+    }
+
+    @Test fun `no preview for a removed photo`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val kept = photo(owner, "kept"); val removed = photo(owner, "removed")
+        val case = verifiedCase(kept, removed)
+        jdbc.update("UPDATE photos SET removal_state = 'REMOVED' WHERE id = ?", removed.id)
+        assertEquals(mapOf(kept.id to "https://synthetic.test/preview", removed.id to null), previews(detail(case.id)))
+    }
+
+    @Test fun `case detail still opens without previews when storage fails`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val case = verifiedCase(photo(owner, "down-a"), photo(owner, "down-b"))
+        `when`(storage.exists(anyString())).thenThrow(IllegalStateException("synthetic storage outage"))
+        val previews = previews(detail(case.id))
+        assertEquals(2, previews.size)
+        assertTrue(previews.values.all { it == null })
+    }
+
+    @Test fun `stored receipts carry no signed link`() {
+        val case = verifiedCase(photo(user(Role.PHOTOGRAPHER), "receipt"))
+        detail(case.id)
+        val receipts = jdbc.queryForList("SELECT result::text FROM photo_removal_commands WHERE request_id = ? AND operation = 'VERIFY'", String::class.java, case.id)
+        assertEquals(1, receipts.size)
+        assertFalse(receipts.single().contains("synthetic.test"), receipts.single())
+    }
+
     @Test fun `cache stores only latest server provenance and exact committed version`() {
         val photo = photo(user(Role.PHOTOGRAPHER), "candidate")
         provider(FacesSearchResult(listOf(FaceMatch("candidate", similarity = 0.88))))
@@ -398,6 +431,17 @@ class PhotoRemovalMatchingIntegrationTest : PostgresIntegrationTest() {
         return evidence.replace(admin.id, case.id, UUID.randomUUID(), case.version, image())
     }
     private fun current(id: UUID) = queries.adminDetail(admin.id, id)
+    private fun verifiedCase(vararg targets: Photo): PhotoRemovalRequestDto {
+        provider(FacesSearchResult(targets.map { FaceMatch(it.facePersons.single().aiPersonId, similarity = 0.95) }))
+        val case = case()
+        match(case)
+        return service.verify(admin.id, case.id, VerifyRemovalCommand(UUID.randomUUID(), current(case.id).version, "Ticket", "Checked",
+            targets.map { VerifyRemovalSelection(it.id, RemovalMatchSource.SELFIE) }))
+    }
+    private fun detail(id: UUID) = page(send(HttpRequest.newBuilder(URI("http://localhost:$port/api/v1/admin/photo-removal-requests/$id")).GET(), admin))
+    private fun previews(detail: JsonNode) = detail["items"].associate {
+        UUID.fromString(it["photoIdSnapshot"].asText()) to it.path("photo").path("photo").path("imageUrl").textValue()
+    }
     private fun event() = events.saveAndFlush(Event(slug = "matching-${UUID.randomUUID()}", name = "Synthetic event", date = LocalDate.of(2026, 10, 6), location = "Cebu", status = EventStatus.ACTIVE, visibility = EventVisibility.UNLISTED))
     private fun user(role: Role) = users.saveAndFlush(User(email = "matching-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Synthetic $role", role = role))
     private fun photo(owner: User?, person: String, status: PhotoStatus = PhotoStatus.LIVE, bib: String = "183") = photos.saveAndFlush(Photo(

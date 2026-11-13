@@ -44,7 +44,7 @@ class AdminPhotoRemovalController(
     @GetMapping("/{id}")
     fun detail(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable id: UUID, response: HttpServletResponse): PhotoRemovalRequestDto {
         limit(principal, response)
-        return queries.adminDetail(principal.userId, id)
+        return queries.adminView(principal.userId, id)
     }
 
     @GetMapping("/{id}/history")
