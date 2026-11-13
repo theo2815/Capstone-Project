@@ -13,6 +13,7 @@ data class IdentityProperties(
     // The announced turn-on date, shown to photographers (C3); blank = none. An invalid date fails boot.
     val gateStartsOn: LocalDate? = null,
     // Face Liveness only (AA-0.1); every other Rekognition call stays in app.ai.rekognition.region.
+    // The website's security policy allows only the ap-southeast-5 streaming host; see application.yml.
     val livenessRegion: String = "ap-southeast-5",
     // Strict until measured (review F6). [NOT MEASURED: set from AA-0.4]
     val livenessMinConfidence: Double = 95.0,
@@ -26,9 +27,9 @@ data class IdentityProperties(
     val livenessCredentialSeconds: Int = 900,
     // Keys the stored ID-number hash (AA-I4). Never rotate it casually: older rows stop matching (AA-I5).
     val idNumberHmacSecret: String = "dev-only-id-number-hmac-secret",
-    // A regex over the normalised number, per ID type. Blank = an admin checks this ID type. [NOT MEASURED: set from AA-0.5]
+    // A regex over the normalised number, per ID type. Blank = an admin checks this ID type. [NOT MEASURED: set from the AA-0.5 ID run]
     val idNumberFormats: Map<SellerIdType, String> = emptyMap(),
-    // The identity notice (AA-I22) sends one mail at a time, at most this many a second. [NOT MEASURED: Resend's limit]
+    // The identity notice (AA-I22) sends one mail at a time, at most this many a second. Settled: Resend's limit is about 2 requests a second.
     val noticeSendPerSecond: Int = 2,
 ) {
     /** Compiled once, so an invalid regex fails boot. */
