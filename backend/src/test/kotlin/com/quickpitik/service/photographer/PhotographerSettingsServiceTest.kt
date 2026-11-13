@@ -569,6 +569,23 @@ class PhotographerSettingsServiceTest {
     }
 
     @Test
+    fun `a profile an admin reset does not approve itself on resubmit`() {
+        val settings = completeSettings().apply {
+            verificationStatus = VerificationStatus.INCOMPLETE; verificationAdminHold = true
+        }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        val answer = service().submitVerification(userId)
+
+        assertEquals("pending", answer.status)
+        assertEquals(true, answer.awaitingAdmin)
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertEquals(false, service().approveIfReady(userId))
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
     fun `auto approval pushes the approved message with no admin`() {
         stubVerification(completeSettings().apply { verificationStatus = VerificationStatus.PENDING })
         identity(SellerDetailsStatus.AUTO_APPROVED)

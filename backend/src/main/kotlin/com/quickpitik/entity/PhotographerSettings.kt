@@ -99,6 +99,10 @@ class PhotographerSettings(
     @Column(name = "verification_revision", nullable = false)
     var verificationRevision: Long = 0,
 
+    // R-10: set by an admin reject or reset; the next submit then waits for an admin's approve.
+    @Column(name = "verification_admin_hold", nullable = false)
+    var verificationAdminHold: Boolean = false,
+
     @Column(name = "member_since", nullable = false, updatable = false)
     val memberSince: LocalDate = LocalDate.now(ZoneId.of("Asia/Manila")),
 

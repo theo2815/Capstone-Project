@@ -37,7 +37,8 @@ class AdminUserServiceMessageTest {
             Mockito.mock(AdminDecisionLogRepository::class.java), Mockito.mock(RegionsService::class.java),
             adminDecisionLogService, Mockito.mock(StorageService::class.java), StorageProperties(),
             Mockito.mock(UserDtoMapper::class.java), runnerMessagesService,
-            Mockito.mock(RefreshTokenService::class.java), commands, photographerMessages, runnerMessages)
+            Mockito.mock(RefreshTokenService::class.java), commands, photographerMessages, runnerMessages,
+            Mockito.mock(com.quickpitik.service.photographer.PhotographerSettingsService::class.java))
     }
 
     @Test
