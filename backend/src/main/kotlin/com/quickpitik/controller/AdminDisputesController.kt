@@ -6,6 +6,7 @@ import com.quickpitik.dto.admin.AdminDisputeDto
 import com.quickpitik.dto.admin.DenyDisputeRequest
 import com.quickpitik.dto.admin.DisputeDenyReasonDto
 import com.quickpitik.dto.admin.EscalateDisputeRequest
+import com.quickpitik.dto.admin.MarkRefundedRequest
 import com.quickpitik.dto.admin.ResolveDisputeRequest
 import com.quickpitik.dto.admin.SendRefundLinkRequest
 import com.quickpitik.security.AuthPrincipal
@@ -71,9 +72,10 @@ class AdminDisputesController(
     fun markRefunded(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable disputeId: UUID,
+        @RequestBody(required = false) body: MarkRefundedRequest?,
     ): AdminDisputeDto {
         rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
-        return adminDisputeService.markRefunded(principal.userId, disputeId)
+        return adminDisputeService.markRefunded(principal.userId, disputeId, body?.refundReference)
     }
 
     @PostMapping("/{disputeId}/deny")

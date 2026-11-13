@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AdminTextarea } from "@/components/admin/admin-form-fields";
-import { AdminConfirmModal, AdminFormModal } from "@/components/admin/admin-form-modal";
+import { AdminTextInput, AdminTextarea } from "@/components/admin/admin-form-fields";
+import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
@@ -16,8 +16,11 @@ const sm = BTN_SIZE.sm;
 // PayMongo cannot refund QR Ph through its API, so a parked refund
 // (refundStatus "manual_review") is finished by hand: the admin makes a
 // refund link in the PayMongo dashboard, sends it to the runner here, then
-// marks the refund done. The server checks the link's prefix against config,
-// so the browser only requires a non-empty value.
+// marks the refund done by pasting PayMongo's refund reference. The server
+// checks the link's prefix against config and the reference's shape; the
+// browser pre-checks the reference so an obvious slip never leaves the page.
+const REFUND_REF_PATTERN = /^ref_[A-Za-z0-9_-]+$/;
+const REFUND_REF_MESSAGE = "Paste the refund reference from the PayMongo dashboard.";
 export function AdminRefundPanel({
   dispute,
   onConfirmOpenChange,
@@ -32,6 +35,8 @@ export function AdminRefundPanel({
   const [url, setUrl] = useState("");
   const [replacing, setReplacing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [refundRef, setRefundRef] = useState("");
+  const [refundRefError, setRefundRefError] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   // The cleanup also clears the host flag if the panel unmounts with a dialog open.
@@ -47,11 +52,13 @@ export function AdminRefundPanel({
   const linkSent = !!dispute.refundLinkSentAt;
   const checkPaymongo = linkSent && isRefundLinkExpired(dispute.refundCancelsAt);
 
-  async function handleCopy(text: string) {
+  const windowClosed = !linkSent && isRefundLinkExpired(dispute.refundWindowClosesAt);
+
+  async function handleCopy(text: string, label: string) {
     const ok = await copyToClipboard(text);
     showToast(ok
-      ? { kind: "success", message: "Payment ID copied" }
-      : { kind: "error", message: "Could not copy. Select the payment ID and copy it by hand." });
+      ? { kind: "success", message: `${label} copied` }
+      : { kind: "error", message: `Could not copy. Select the ${label.toLowerCase()} and copy it by hand.` });
   }
 
   async function handleSend() {
@@ -67,9 +74,16 @@ export function AdminRefundPanel({
   }
 
   async function handleMarkRefunded() {
-    if (busy) return;
-    if (!(await markRefunded(dispute.id))) return;
+    const ref = refundRef.trim();
+    if (busy || !ref) return;
+    if (ref.length > 100 || !REFUND_REF_PATTERN.test(ref)) {
+      setRefundRefError(REFUND_REF_MESSAGE);
+      return;
+    }
+    setRefundRefError(null);
+    if (!(await markRefunded(dispute.id, ref, setRefundRefError))) return;
     setConfirmOpen(false);
+    setRefundRef("");
     showToast({ kind: "success", message: `Marked refunded · ${dispute.id}` });
   }
 
@@ -90,7 +104,7 @@ export function AdminRefundPanel({
           <p className="text-ink">Payment ID</p>
           <div className="flex items-center justify-between gap-3">
             <span className="font-mono tnum break-all text-ink">{dispute.paymentId}</span>
-            <button type="button" aria-label="Copy payment ID" onClick={() => handleCopy(dispute.paymentId!)} disabled={busy} className={`${BTN_GHOST} ${sm}`}>
+            <button type="button" aria-label="Copy payment ID" onClick={() => handleCopy(dispute.paymentId!, "Payment ID")} disabled={busy} className={`${BTN_GHOST} ${sm}`}>
               Copy
             </button>
           </div>
@@ -99,8 +113,16 @@ export function AdminRefundPanel({
         <p>
           Search these in PayMongo.{" "}
           <span className="font-mono tnum break-all text-ink">{dispute.paymentRef ?? "—"}</span>
+          {dispute.paymentRef && (
+            <>
+              {" "}
+              <button type="button" aria-label="Copy checkout reference" onClick={() => handleCopy(dispute.paymentRef!, "Checkout reference")} disabled={busy} className={`${BTN_GHOST} ${sm}`}>
+                Copy
+              </button>
+            </>
+          )}
           {" · "}
-          <span className="tnum text-ink">{formatPrice(dispute.orderSnapshot.total)}</span>
+          Order total <span className="tnum text-ink">{formatPrice(dispute.orderSnapshot.total)}</span>
           {" · "}
           <span data-testid="refund-paid-at" className="tnum">{formatSalesDate(dispute.orderSnapshot.paidAt)}</span>
         </p>
@@ -111,6 +133,11 @@ export function AdminRefundPanel({
           <p>
             PayMongo window closes {formatLongDate(dispute.refundWindowClosesAt)}. A refund with a sent link is never
             cancelled automatically: after {formatLongDate(dispute.refundCancelsAt)}, check PayMongo.
+          </p>
+        ) : windowClosed ? (
+          <p>
+            PayMongo&apos;s refund window closed. This refund cancels itself within the hour. Mark it refunded only if you
+            already refunded it in PayMongo.
           </p>
         ) : (
           <p>
@@ -192,19 +219,26 @@ export function AdminRefundPanel({
         />
       </AdminFormModal>
 
-      <AdminConfirmModal
+      <AdminFormModal
         open={confirmOpen}
         submitting={busy}
         pendingLabel="Marking refunded…"
         onClose={() => setConfirmOpen(false)}
-        onConfirm={handleMarkRefunded}
+        onSubmit={handleMarkRefunded}
         title="Mark refunded"
-        confirmLabel="Mark refunded"
+        intro="Only do this after PayMongo shows this payment as Refunded."
+        submitLabel="Mark refunded"
+        submitDisabled={!refundRef.trim()}
       >
-        <p className="font-sans text-sm text-ink-soft">
-          Only do this after PayMongo shows this payment as Refunded.
-        </p>
-      </AdminConfirmModal>
+        <AdminTextInput
+          id={`refund-reference-${dispute.id}`}
+          label="PayMongo refund reference"
+          value={refundRef}
+          onChange={(v) => { setRefundRef(v); setRefundRefError(null); }}
+        />
+        {refundRefError && <p role="alert" className="font-sans text-sm text-error">{refundRefError}</p>}
+        <p className="font-sans text-sm text-ink-soft">Copy it from the refund in the PayMongo dashboard.</p>
+      </AdminFormModal>
     </div>
   );
 }

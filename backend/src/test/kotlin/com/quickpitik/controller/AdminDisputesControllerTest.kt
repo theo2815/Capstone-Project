@@ -196,6 +196,13 @@ class AdminDisputesControllerTest {
     private fun markRefunded(): ResultActions =
         mvc.perform(post("/api/v1/admin/disputes/{id}/mark-refunded", disputeId))
 
+    private fun markRefundedWith(body: String): ResultActions =
+        mvc.perform(
+            post("/api/v1/admin/disputes/{id}/mark-refunded", disputeId)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content(body),
+        )
+
     @Test
     fun `a non-admin cannot mark a refund refunded`() {
         for (role in listOf(Role.RUNNER, Role.PHOTOGRAPHER)) {
@@ -210,19 +217,31 @@ class AdminDisputesControllerTest {
     fun `an admin marks a refund refunded through the service after taking a rate-limit slot`() {
         signIn(Role.ADMIN)
         allowRate()
-        Mockito.`when`(service.markRefunded(adminId, disputeId)).thenReturn(dto())
+        Mockito.`when`(service.markRefunded(adminId, disputeId, "ref_9e5899bbf66c4f3485bff833")).thenReturn(dto())
 
-        markRefunded().andExpect(status().isOk).andExpect(jsonPath("$.id").value(disputeId.toString()))
+        markRefundedWith("""{"refundReference":"ref_9e5899bbf66c4f3485bff833"}""")
+            .andExpect(status().isOk).andExpect(jsonPath("$.id").value(disputeId.toString()))
 
         Mockito.verify(limiter).tryAcquire(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, adminId.toString())
-        Mockito.verify(service, Mockito.times(1)).markRefunded(adminId, disputeId)
+        Mockito.verify(service, Mockito.times(1)).markRefunded(adminId, disputeId, "ref_9e5899bbf66c4f3485bff833")
+    }
+
+    @Test
+    fun `a mark-refunded POST with no body reaches the service with a null reference`() {
+        signIn(Role.ADMIN)
+        allowRate()
+        Mockito.`when`(service.markRefunded(adminId, disputeId, null)).thenReturn(dto())
+
+        markRefunded().andExpect(status().isOk)
+
+        Mockito.verify(service).markRefunded(adminId, disputeId, null)
     }
 
     @Test
     fun `marking a dispute that is not in manual review refunded is a 409`() {
         signIn(Role.ADMIN)
         allowRate()
-        Mockito.`when`(service.markRefunded(adminId, disputeId))
+        Mockito.`when`(service.markRefunded(adminId, disputeId, null))
             .thenThrow(ConflictException(message = "Not in manual review", code = ErrorCodes.CONFLICT))
 
         markRefunded().andExpect(status().isConflict)

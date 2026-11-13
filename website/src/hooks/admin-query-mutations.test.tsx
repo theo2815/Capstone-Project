@@ -45,7 +45,7 @@ function useActionRunner(action: string) {
       case "deny dispute": return disputes.deny(dispute.id, reason);
       case "escalate dispute": return disputes.escalate(dispute.id, reason);
       case "send refund link": return disputes.sendRefundLink(dispute.id, refundLink);
-      case "mark refunded": return disputes.markRefunded(dispute.id);
+      case "mark refunded": return disputes.markRefunded(dispute.id, "ref_9e5899bbf66c4f3485bff833");
       case "acknowledge report": return reports.acknowledge(report.id, reason);
       default: return reports.resolve(report.id, reason);
     }
@@ -57,7 +57,7 @@ const cases = [
   { action: "deny dispute", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/deny`, payload: { reason }, base: dispute, confirmed: { ...confirmedDispute, status: "denied" as const, resolution: "deny" as const, refundAmount: null }, domain: "disputes" },
   { action: "escalate dispute", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/escalate`, payload: { reason }, base: dispute, confirmed: { ...dispute, status: "escalated" as const, activity: [{ ...confirmedDispute.activity![0], decision: "escalated" as const }] }, domain: "disputes" },
   { action: "send refund link", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/refund-link`, payload: { url: refundLink }, base: dispute, confirmed: linkSentDispute, domain: "disputes" },
-  { action: "mark refunded", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/mark-refunded`, payload: undefined, base: linkSentDispute, confirmed: { ...linkSentDispute, status: "resolved" as const, refundStatus: "succeeded" }, domain: "disputes" },
+  { action: "mark refunded", method: "post" as const, endpoint: `/admin/disputes/${dispute.id}/mark-refunded`, payload: { refundReference: "ref_9e5899bbf66c4f3485bff833" }, base: linkSentDispute, confirmed: { ...linkSentDispute, status: "resolved" as const, refundStatus: "succeeded" }, domain: "disputes" },
   { action: "acknowledge report", method: "fetch" as const, endpoint: `/admin/payouts/reports/${report.id}/acknowledge`, payload: { method: "PATCH", body: JSON.stringify({ reply: reason }) }, base: report, confirmed: { ...report, status: "acknowledged" as const, acknowledgeReply: reason, acknowledgedAt: "2026-09-10T01:02:03Z" }, domain: "reports" },
   { action: "resolve report", method: "fetch" as const, endpoint: `/admin/payouts/reports/${report.id}/resolve`, payload: { method: "PATCH", body: JSON.stringify({ resolutionNote: reason }) }, base: report, confirmed: confirmedReport, domain: "reports" },
 ];
