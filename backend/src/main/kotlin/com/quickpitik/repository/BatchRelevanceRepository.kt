@@ -273,6 +273,94 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
     // with the transaction (SET LOCAL), and a timeout fails only that batch's step.
     @Query(value = "SELECT set_config('statement_timeout', CAST(:ms AS text), true)", nativeQuery = true)
     fun setLocalStatementTimeout(@Param("ms") ms: Long): String
+
+    // RV-1.5: the batches due for a version 2 check (plan 5.8), least recently served first. No live claim.
+    @Query(value = "SELECT $CHECK_DUE_COLUMNS $CHECK_DUE_FROM" + """
+          AND (br.check_claim_until IS NULL OR br.check_claim_until < :now)
+        ORDER BY br.check_served_at ASC NULLS FIRST, ep.last_upload_at ASC
+        LIMIT :limit
+    """, nativeQuery = true)
+    fun findCheckDue(
+        @Param("quietCutoff") quietCutoff: OffsetDateTime,
+        @Param("now") now: OffsetDateTime,
+        @Param("countTrigger") countTrigger: Int,
+        @Param("limit") limit: Int,
+    ): List<CheckDue>
+
+    // RV-1.5: the same rules for one batch the caller holds the claim on, read again after the claim so a
+    // due list read before another copy started the check starts nothing (plan 5.8).
+    @Query(value = "SELECT $CHECK_DUE_COLUMNS $CHECK_DUE_FROM AND br.id = :id AND br.check_claim = :token",
+        nativeQuery = true)
+    fun findCheckDueFor(
+        @Param("id") id: UUID,
+        @Param("token") token: UUID,
+        @Param("quietCutoff") quietCutoff: OffsetDateTime,
+        @Param("countTrigger") countTrigger: Int,
+    ): CheckDue?
+
+    // R5: one changed row means the claim is the caller's. It only stops two server copies working at once.
+    @Modifying
+    @Query(value = """
+        UPDATE batch_relevance SET check_claim = :token, check_claim_until = :until, check_served_at = :now
+        WHERE id = :id AND (check_claim_until IS NULL OR check_claim_until < :now)
+    """, nativeQuery = true)
+    fun claimCheck(
+        @Param("id") id: UUID,
+        @Param("token") token: UUID,
+        @Param("until") until: OffsetDateTime,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    @Modifying
+    @Query(value = """
+        UPDATE batch_relevance SET check_claim = NULL, check_claim_until = NULL
+        WHERE id = :id AND check_claim = :token
+    """, nativeQuery = true)
+    fun releaseCheck(@Param("id") id: UUID, @Param("token") token: UUID): Int
+
+    // The upload and photo count a started check covers; the due rules compare the next upload with them.
+    @Modifying
+    @Query(value = """
+        UPDATE batch_relevance SET checked_upload_at = :uploadAt, checked_photos = :photos
+        WHERE id = :id AND check_claim = :token
+    """, nativeQuery = true)
+    fun markChecked(
+        @Param("id") id: UUID,
+        @Param("token") token: UUID,
+        @Param("uploadAt") uploadAt: OffsetDateTime,
+        @Param("photos") photos: Int,
+    ): Int
+}
+
+// RV-1.5 (plan 5.8). A batch is due when its event is public, not hidden and not deleted, its photographer is
+// not suspended, no case of it is in flight, and either it went quiet with a newest upload not yet checked
+// (QUIET) or it is still uploading and grew by :countTrigger photos since its last check (COUNT).
+// event_photographer.photo_count is what the check records, so the COUNT rule compares like with like.
+private const val CHECK_DUE_COLUMNS = """
+    br.id AS "batchId", ep.event_id AS "eventId", ep.photographer_id AS "photographerId",
+    ep.last_upload_at AS "lastUploadAt", ep.photo_count AS "photoCount",
+    CASE WHEN ep.last_upload_at <= :quietCutoff THEN 'QUIET' ELSE 'COUNT' END AS "trigger"
+"""
+
+private const val CHECK_DUE_FROM = """
+    FROM event_photographer ep
+    JOIN events e ON e.id = ep.event_id AND e.deleted_at IS NULL AND e.hidden_at IS NULL AND e.visibility = 'PUBLIC'
+    JOIN users u ON u.id = ep.photographer_id AND u.suspended_at IS NULL
+    LEFT JOIN batch_relevance br ON br.event_id = ep.event_id AND br.photographer_id = ep.photographer_id
+    WHERE NOT EXISTS (SELECT 1 FROM relevance_cases c
+                      WHERE c.batch_id = br.id AND c.stage IN ('SAMPLING', 'DECIDING', 'DECIDED'))
+      AND ((ep.last_upload_at <= :quietCutoff AND br.checked_upload_at IS DISTINCT FROM ep.last_upload_at)
+           OR (ep.last_upload_at > :quietCutoff AND ep.photo_count - COALESCE(br.checked_photos, 0) >= :countTrigger))
+"""
+
+// lastUploadAt keeps microseconds: the QUIET rule compares it with checked_upload_at for equality.
+interface CheckDue {
+    val batchId: UUID?
+    val eventId: UUID
+    val photographerId: UUID
+    val lastUploadAt: Instant
+    val photoCount: Int
+    val trigger: String
 }
 
 interface BatchCounts {

@@ -362,6 +362,11 @@ app:
     check:
       min-batch-size: ${RELEVANCE_CHECK_MIN_BATCH_SIZE:30}
       near-line-points: ${RELEVANCE_CHECK_NEAR_LINE_POINTS:5}
+      sample-size: ${RELEVANCE_CHECK_SAMPLE_SIZE:300}
+      count-trigger: ${RELEVANCE_CHECK_COUNT_TRIGGER:500}
+      tick-interval-ms: ${RELEVANCE_CHECK_TICK_INTERVAL_MS:15000}
+      max-batches-per-tick: ${RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3}
+      claim-minutes: ${RELEVANCE_CHECK_CLAIM_MINUTES:10}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

@@ -29,7 +29,8 @@ class RelevancePropertiesTest {
         assertEquals(RelevanceProperties.Date(windowDays = 2, minDatedPhotos = 10, outsideSharePercent = 80), p.date)
         assertEquals(RelevanceProperties.Junk(blurCutoff = null, darkCutoff = null, labelMinConfidence = 0.6,
             raceLabels = listOf("Running", "Marathon", "Road"), fitsBelowPercent = 10, dumpAbovePercent = 70), p.junk)
-        assertEquals(RelevanceProperties.Check(minBatchSize = 30, nearLinePoints = 5), p.check)
+        assertEquals(RelevanceProperties.Check(minBatchSize = 30, nearLinePoints = 5, sampleSize = 300, countTrigger = 500,
+            tickIntervalMs = 15_000, maxBatchesPerTick = 3, claimMinutes = 10), p.check)
     }
 
     @Test fun `the yml binds every key and names its env override`() {
@@ -49,6 +50,8 @@ class RelevancePropertiesTest {
             "RELEVANCE_JUNK_LABEL_MIN_CONFIDENCE:0.6", "RELEVANCE_JUNK_RACE_LABELS:Running,Marathon,Road",
             "RELEVANCE_JUNK_FITS_BELOW_PERCENT:10", "RELEVANCE_JUNK_DUMP_ABOVE_PERCENT:70",
             "RELEVANCE_CHECK_MIN_BATCH_SIZE:30", "RELEVANCE_CHECK_NEAR_LINE_POINTS:5",
+            "RELEVANCE_CHECK_SAMPLE_SIZE:300", "RELEVANCE_CHECK_COUNT_TRIGGER:500", "RELEVANCE_CHECK_TICK_INTERVAL_MS:15000",
+            "RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3", "RELEVANCE_CHECK_CLAIM_MINUTES:10",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
     }
 
@@ -94,6 +97,14 @@ class RelevancePropertiesTest {
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(raceLabels = emptyList()) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(minBatchSize = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(nearLinePoints = -1) }
+    }
+
+    @Test fun `check sample, trigger, tick and claim values below one are refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(sampleSize = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(countTrigger = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(tickIntervalMs = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(maxBatchesPerTick = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(claimMinutes = 0) }
     }
 
     @Test fun `a tight distance above the weak distance is refused`() {
