@@ -73,7 +73,7 @@ export function PhotographerNotReadyNotice({
     // The profile goes live with the identity check, unless an admin holds it (R-10).
     return (
       <div className="border border-line rounded-2xl px-5 py-5 bg-bone-deep/40">
-        <Kicker as="p">Awaiting identity check</Kicker>
+        <Kicker as="p">{gate.awaitingAdmin ? "Awaiting admin review" : "Awaiting identity check"}</Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
           {gate.awaitingAdmin
             ? "An admin is reviewing your profile."
