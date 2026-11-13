@@ -467,8 +467,9 @@ class BatchRelevanceServiceTest {
         service(flagMode).score(b, today)
         val body = ArgumentCaptor.forClass(String::class.java)
         Mockito.verify(decisions).pushMessage(anyArg(), anyArg(), body.capture() ?: "", Mockito.isNull(), Mockito.isNull(), Mockito.anyString(), Mockito.isNull())
-        assertEquals("Many of the photos you uploaded to Sugbo Night Run were taken on dates far from the event's date " +
-            "(${b.eventDate}). Your photos stay on sale. An admin will take a look. If they belong to a different event, contact support.", body.value)
+        assertEquals("Many of the photos you uploaded to Sugbo Night Run have camera dates far from the event's date " +
+            "(${b.eventDate}). For now they stay on sale, and an admin will take a look. " +
+            "If your camera's clock was set wrong, or the photos belong to a different event, contact support.", body.value)
         assertFalse("photographer" in body.value.lowercase() || "cop" in body.value.lowercase())
     }
 

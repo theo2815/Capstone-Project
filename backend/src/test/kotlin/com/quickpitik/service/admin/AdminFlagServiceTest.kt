@@ -325,6 +325,12 @@ class AdminFlagServiceTest {
         assertEquals(photographerId, note.photographerId)
         assertEquals(PhotographerMessageKind.ADMIN_MESSAGE.wire, note.kindWire)
         assertEquals("Payouts on hold", note.title)
+        assertEquals(
+            "We are reviewing some of the photos you uploaded, so your payouts are on hold until an admin finishes the review. " +
+                "Your earnings stay in your balance. An admin may also take some of these photos off sale during the review. " +
+                "Contact support within 14 days to appeal.",
+            note.body,
+        )
         assertEquals(adminId, note.sourceAdminId)
         assertEquals(decision.value.id, note.sourceDecisionId)
         Mockito.verify(eventPublisher).publishEvent(PayoutHoldPlacedEvent(photographerId))
@@ -410,7 +416,11 @@ class AdminFlagServiceTest {
         assertEquals(2, notes.size)
         for (note in notes) {
             assertEquals("Payout hold lifted", note.title)
-            assertEquals("The review of your uploads is finished. You can request payouts again.", note.body)
+            assertEquals(
+                "The review of your uploads is finished, and your payouts are no longer on hold. " +
+                    "If you have questions about the result, contact support within 14 days.",
+                note.body,
+            )
             assertEquals(adminId, note.sourceAdminId)
             assertEquals(photographerId, note.photographerId)
         }

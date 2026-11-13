@@ -343,7 +343,7 @@ class PayoutRequestServiceBalanceTest {
 
         assertEquals(HttpStatus.CONFLICT, ex.status)
         assertEquals(ErrorCodes.PAYOUT_ON_HOLD, ex.code)
-        assertEquals("Payouts are on hold while we review some of your uploads. Check your inbox for details.", ex.message)
+        assertEquals("Payouts are on hold while we review some of your uploads. Check your inbox for details, or contact support.", ex.message)
         Mockito.verify(payoutCycleRepository, Mockito.never()).insert(anyArg<PayoutCycle>())
     }
 
