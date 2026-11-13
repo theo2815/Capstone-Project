@@ -259,7 +259,7 @@ class EmailService(
 
     // PE-2.2: an admin put the photographer's payouts on hold while their uploads are reviewed.
     // Sent AFTER_COMMIT + async via PayoutHoldEmailListener; failures are logged and dropped.
-    // Logs carry no address (relevance logs hold ids only). Draft wording: PE-L4 gives the final text.
+    // Logs carry no address (relevance logs hold ids only). PE-L4 text T3 (approved 2026-11-12).
     fun sendPayoutHoldAlert(toEmail: String, name: String) {
         if (devMode) {
             log.info("[EMAIL STUB] payout hold alert")
@@ -375,14 +375,14 @@ class EmailService(
             Payouts on hold.
           </h1>
           <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 12px;">
-            Hi ${escapeHtml(greeting)} — we are reviewing some of the photos you uploaded, so payouts are on hold for now.
+            Hi ${escapeHtml(greeting)} — we are reviewing some of the photos you uploaded, so your payouts are on hold until an admin finishes the review.
           </p>
           <p style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 24px;">
-            Your photos and your sales are not removed. An admin will finish the review as soon as they can.
+            Your earnings stay in your balance. An admin may also take some of these photos off sale during the review. You will also find this message in your QuickPitik inbox.
           </p>
           <hr style="border:none;border-top:1px solid #e5e2d8;margin:24px 0;" />
           <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">
-            Contact support to appeal.
+            Contact support within 14 days to appeal.
           </p>
         </td></tr>
       </table>

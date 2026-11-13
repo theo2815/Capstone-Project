@@ -158,14 +158,14 @@ class AdminFlagService(
             decision = "payout_hold_confirmed",
             reason = "flag ${flag.id}",
         )
-        // Draft wording (PE-L4 gives the final text, PE-2.12 carries it in).
+        // PE-L4 text T2 (approved 2026-11-12).
         adminDecisionLogService.pushMessage(
             photographerId = flag.targetId,
             kind = PhotographerMessageKind.ADMIN_MESSAGE,
             title = "Payouts on hold",
-            body = "We are reviewing some of the photos you uploaded, so payouts are on hold for now. " +
-                "Your photos and your sales are not removed. An admin will finish the review as soon as they can. " +
-                "Contact support to appeal.",
+            body = "We are reviewing some of the photos you uploaded, so your payouts are on hold until an admin finishes the review. " +
+                "Your earnings stay in your balance. An admin may also take some of these photos off sale during the review. " +
+                "Contact support within 14 days to appeal.",
             sourceAdminId = adminId,
             sourceDecisionId = decision.id,
         )
@@ -257,7 +257,8 @@ class AdminFlagService(
                 photographerId = flag.targetId,
                 kind = PhotographerMessageKind.ADMIN_MESSAGE,
                 title = "Payout hold lifted",
-                body = "The review of your uploads is finished. You can request payouts again.",
+                body = "The review of your uploads is finished, and your payouts are no longer on hold. " +
+                    "If you have questions about the result, contact support within 14 days.",
                 sourceAdminId = adminId,
             )
         }
