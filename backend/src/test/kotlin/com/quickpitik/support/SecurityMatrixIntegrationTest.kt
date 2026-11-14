@@ -58,6 +58,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     private lateinit var paymongoProperties: PaymongoProperties
 
     @Autowired
+    private lateinit var legalProperties: com.quickpitik.config.LegalProperties
+
+    @Autowired
     private lateinit var authService: AuthService
 
     @Autowired
@@ -166,6 +169,17 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals("FORBIDDEN", errorCode(forbidden))
         assertEquals(200, get("/api/v1/admin/users", admin).statusCode())
         assertEquals(200, get("/actuator/metrics", admin).statusCode())
+    }
+
+    // RV-L4: any signed-in user may accept the Terms; nobody else.
+    @Test
+    fun `terms acceptance needs a sign-in`() {
+        val body = """{"version":"${legalProperties.currentVersion}"}"""
+        assertEquals(401, post("/api/v1/me/terms-acceptance", body).statusCode())
+        val accepted = post("/api/v1/me/terms-acceptance", body, register(Role.PHOTOGRAPHER))
+        assertEquals(200, accepted.statusCode(), accepted.body())
+        assertEquals(legalProperties.currentVersion, json.readTree(accepted.body()).path("data").path("termsVersion").asText())
+        assertFalse(json.readTree(accepted.body()).path("data").path("termsAcceptanceRequired").asBoolean(true))
     }
 
     // RV-1.10: the Photo Relevance page's routes, with one real case and alert so the admin's answer is 200.

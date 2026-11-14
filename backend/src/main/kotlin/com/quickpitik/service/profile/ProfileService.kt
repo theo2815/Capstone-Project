@@ -1,9 +1,11 @@
 package com.quickpitik.service.profile
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.dto.auth.UserDto
 import com.quickpitik.dto.profile.PasswordChangeRequest
 import com.quickpitik.dto.profile.ProfileUpdateRequest
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
@@ -12,9 +14,12 @@ import com.quickpitik.service.auth.LoginAttemptService
 import com.quickpitik.service.auth.PasswordValidator
 import com.quickpitik.service.auth.RefreshTokenService
 import com.quickpitik.service.auth.throwAccountLocked
+import org.springframework.http.HttpStatus
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Clock
+import java.time.OffsetDateTime
 import java.util.UUID
 
 /**
@@ -38,7 +43,23 @@ class ProfileService(
     private val refreshTokenService: RefreshTokenService,
     private val userDtoMapper: UserDtoMapper,
     private val loginAttemptService: LoginAttemptService,
+    private val legalProperties: LegalProperties,
+    private val clock: Clock,
 ) {
+    // RV-L4 (plan 5.14): any signed-in user accepts the current Terms. The server stamps its own version.
+    fun acceptTerms(userId: UUID, version: String): UserDto {
+        val user = userRepository.findById(userId).orElseThrow {
+            UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "User not found")
+        }
+        if (version != legalProperties.currentVersion) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.CONSENT_VERSION_MISMATCH,
+                "The Terms were updated. Please reload the page and read them again.")
+        }
+        user.recordTermsAcceptance(legalProperties.currentVersion, OffsetDateTime.now(clock))
+        userRepository.save(user)
+        return userDtoMapper.toDto(user)
+    }
+
     fun updateName(userId: UUID, request: ProfileUpdateRequest): UserDto {
         val name = request.name.trim()
         if (name.isEmpty()) {

@@ -1,8 +1,11 @@
 package com.quickpitik.service.profile
 
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.auth.UserDto
+import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
+import com.quickpitik.service.auth.atLeast
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 
@@ -19,6 +22,7 @@ import org.springframework.stereotype.Service
 class UserDtoMapper(
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
+    private val legalProperties: LegalProperties,
 ) {
     fun toDto(user: User): UserDto = UserDto(
         id = user.id,
@@ -29,7 +33,16 @@ class UserDtoMapper(
         emailVerified = user.emailVerifiedAt != null,
         hasGoogleAuth = user.googleSub != null,
         createdAt = user.createdAt,
+        termsVersion = user.termsVersion,
+        legalCurrentVersion = legalProperties.currentVersion,
+        termsAcceptanceRequired = termsAcceptanceRequired(user),
     )
+
+    // RV-L4 (P5): only a photographer, only when a minimum is set, and only below it.
+    private fun termsAcceptanceRequired(user: User): Boolean {
+        val min = legalProperties.minVersionOrNull() ?: return false
+        return user.role == Role.PHOTOGRAPHER && !atLeast(user.termsVersion, min)
+    }
 
     fun resolveAvatarUrl(user: User): String? {
         val key = user.avatarS3Key
