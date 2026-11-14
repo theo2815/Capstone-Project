@@ -482,6 +482,53 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
     @Modifying
     @Query(value = "DELETE FROM relevance_photo_checks WHERE photo_id = :photoId", nativeQuery = true)
     fun deletePhotoCheck(@Param("photoId") photoId: UUID): Int
+
+    // RV-1.8a (plan 5.9, G13): the batch's most common words, each on at least :minSharePercent of its counted
+    // photos (the purge's own line, so a word the purge would keep is never left out here).
+    @Query(value = """
+        SELECT w.word AS "word", w.photos AS "photos"
+        FROM batch_relevance_words w
+        WHERE w.batch_id = :batchId
+          AND w.photos * 100 >= :minSharePercent * (SELECT count(*) FROM relevance_photo_checks r
+                                                    WHERE r.batch_id = :batchId AND r.words_counted_at IS NOT NULL)
+        ORDER BY w.photos DESC, w.word
+        LIMIT :limit
+    """, nativeQuery = true)
+    fun topWords(@Param("batchId") batchId: UUID, @Param("minSharePercent") minSharePercent: Int, @Param("limit") limit: Int): List<WordCount>
+
+    // RV-1.8a (P13): for each of :words, how many other batches of the event have it on at least :minSharePercent of
+    // their counted photos. One batch is one photographer, so a photographer who prints signs counts once.
+    @Query(value = """
+        SELECT w.word AS "word", CAST(count(*) AS int) AS "photographers"
+        FROM batch_relevance br
+        JOIN batch_relevance_words w ON w.batch_id = br.id
+        WHERE br.event_id = :eventId AND br.id <> :exceptBatchId
+          AND w.word = ANY (CAST(:words AS text[]))
+          AND w.photos * 100 >= :minSharePercent * (SELECT count(*) FROM relevance_photo_checks r
+                                                    WHERE r.batch_id = br.id AND r.words_counted_at IS NOT NULL)
+        GROUP BY w.word
+    """, nativeQuery = true)
+    fun eventWords(
+        @Param("eventId") eventId: UUID,
+        @Param("exceptBatchId") exceptBatchId: UUID,
+        @Param("words") words: Array<String>,
+        @Param("minSharePercent") minSharePercent: Int,
+    ): List<WordPhotographers>
+
+    // RV-1.8a: the event's other photographers that have a batch (batch_relevance is one row per photographer).
+    @Query(value = "SELECT CAST(count(*) AS int) FROM batch_relevance WHERE event_id = :eventId AND id <> :exceptBatchId",
+        nativeQuery = true)
+    fun otherPhotographers(@Param("eventId") eventId: UUID, @Param("exceptBatchId") exceptBatchId: UUID): Int
+}
+
+interface WordCount {
+    val word: String
+    val photos: Int
+}
+
+interface WordPhotographers {
+    val word: String
+    val photographers: Int
 }
 
 // RV-1.6: one sampled photo to measure; s3Key is the original, never the watermarked preview.

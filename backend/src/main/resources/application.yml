@@ -373,6 +373,8 @@ app:
     words:
       # Once a batch has settled (settle-days after its final scoring), words on under this share of its photos are deleted.
       min-share-percent: ${RELEVANCE_WORDS_MIN_SHARE_PERCENT:3}
+      # Version 2: at most this many of a batch's words (each on at least min-share-percent of its photos) go into the summary sent to the model.
+      top-n: ${RELEVANCE_WORDS_TOP_N:30}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
