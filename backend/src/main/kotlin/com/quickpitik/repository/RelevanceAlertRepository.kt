@@ -48,6 +48,12 @@ interface RelevanceAlertRepository : JpaRepository<RelevanceAlert, UUID> {
     @Query(value = "UPDATE relevance_alerts SET seen_at = :now, seen_by = :adminId WHERE id = :id AND seen_at IS NULL",
         nativeQuery = true)
     fun markSeen(@Param("id") alertId: UUID, @Param("adminId") adminId: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // RV-2.5a: "keep hidden" marks every unseen alert of the case seen, keeping an earlier admin's stamp.
+    @Modifying
+    @Query(value = "UPDATE relevance_alerts SET seen_at = :now, seen_by = :adminId WHERE case_id = :caseId AND seen_at IS NULL",
+        nativeQuery = true)
+    fun markCaseSeen(@Param("caseId") caseId: UUID, @Param("adminId") adminId: UUID, @Param("now") now: OffsetDateTime): Int
 }
 
 private const val ALERT_ROW = """a.id AS "alertId", a.case_id AS "caseId", br.event_id AS "eventId", e.name AS "eventName",

@@ -547,7 +547,8 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
             s.photographer, case, s.event)
         val hold = id("INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at) VALUES (?, ?, 'AUTO', ?, now())", batch, s.soldPhoto, case)
         assertRefusedUnchanged(s.photographer)
-        assertTrue("restore or keep the hidden batch first" in anonymise(s.photographer, confirm = "yes").stderr)
+        assertTrue("restore the batch or each hidden photo first" in anonymise(s.photographer, confirm = "yes").stderr)
+        assertTrue("keeping a batch hidden does not clear this" in anonymise(s.photographer, confirm = "yes").stderr)
 
         jdbc.update("UPDATE flag_hidden_photos SET restored_at = now(), restored_by = 'ADMIN' WHERE id = ?", hold)
         val appeal = id("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason) VALUES (?, ?, ?, 'mine')", case, batch, s.photographer)

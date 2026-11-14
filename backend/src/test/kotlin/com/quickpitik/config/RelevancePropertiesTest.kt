@@ -39,6 +39,11 @@ class RelevancePropertiesTest {
         assertEquals(RelevanceProperties.Alerts(bigHidePhotos = 500), p.alerts)
         assertEquals(RelevanceProperties.Hide(chunkSize = 1000, chunksPerTick = 10), p.hide)
         assertEquals(RelevanceProperties.Scan(photosPerTurn = 200, maxBatchesPerTick = 2, yieldAbove = 0), p.scan)
+        assertEquals(RelevanceProperties.Restore(sweepMinutes = 60), p.restore)
+    }
+
+    @Test fun `a restore sweep window below one minute is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Restore(sweepMinutes = 0) }
     }
 
     @Test fun `scan photos or batches below one, or a negative yield, are refused`() {
@@ -80,6 +85,7 @@ class RelevancePropertiesTest {
             "RELEVANCE_LLM_RETRY_BACKOFF:1s", "RELEVANCE_LLM_MAX_TOKENS:4096", "RELEVANCE_ALERTS_BIG_HIDE_PHOTOS:500",
             "RELEVANCE_HIDE_CHUNK_SIZE:1000", "RELEVANCE_HIDE_CHUNKS_PER_TICK:10",
             "RELEVANCE_SCAN_PHOTOS_PER_TURN:200", "RELEVANCE_SCAN_MAX_BATCHES_PER_TICK:2", "RELEVANCE_SCAN_YIELD_ABOVE:0",
+            "RELEVANCE_RESTORE_SWEEP_MINUTES:60",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
     }
 

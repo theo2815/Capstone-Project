@@ -407,6 +407,9 @@ app:
       photos-per-turn: ${RELEVANCE_SCAN_PHOTOS_PER_TURN:200}
       max-batches-per-tick: ${RELEVANCE_SCAN_MAX_BATCHES_PER_TICK:2}
       yield-above: ${RELEVANCE_SCAN_YIELD_ABOVE:0}
+    restore:
+      # Version 2: minutes after an admin's batch restore during which the tick finishes holds a running hide left behind.
+      sweep-minutes: ${RELEVANCE_RESTORE_SWEEP_MINUTES:60}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

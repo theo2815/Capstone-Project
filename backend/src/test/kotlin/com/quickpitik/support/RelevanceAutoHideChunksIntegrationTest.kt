@@ -83,10 +83,12 @@ class RelevanceAutoHideChunksIntegrationTest : PostgresIntegrationTest() {
     private val bytes = byteArrayOf(4, 5, 6)
 
     @BeforeEach fun stubs() {
-        Mockito.`when`(storage.open(anyArg())).thenAnswer { ByteArrayInputStream(bytes) }
-        Mockito.`when`(storage.exists(anyArg())).thenReturn(true)
-        Mockito.`when`(storage.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://synthetic.test/image")
-        Mockito.`when`(resend.send(anyArg())).thenReturn(com.quickpitik.dto.email.ResendSendEmailResponse("re_synthetic"))
+        // do...when records no call while stubbing, so a background job using the shared mocks cannot take a stub
+        // (one run saw storage.open answer null, RV-2.5a review 3).
+        Mockito.doAnswer { ByteArrayInputStream(bytes) }.`when`(storage).open(anyArg())
+        Mockito.doReturn(true).`when`(storage).exists(anyArg())
+        Mockito.doReturn("https://synthetic.test/image").`when`(storage).presignedGetUrl(anyArg(), anyArg())
+        Mockito.doReturn(com.quickpitik.dto.email.ResendSendEmailResponse("re_synthetic")).`when`(resend).send(anyArg())
     }
     private fun <T> anyArg(): T = Mockito.any()
 

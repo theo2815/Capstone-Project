@@ -17,8 +17,9 @@
 -- The script refuses (error, no change) until both are true, while an unpaid order still
 -- holds one of their photos (a late payment would add a sale), while an open or escalated
 -- relevance flag is on the account (an admin resolves or dismisses it first), while a photo
--- relevance hold of a batch is not restored or an appeal is open (an admin closes the case
--- first: the run keeps the sold photos, hidden or not), and while the
+-- relevance hold of a batch is not restored or an appeal is open (an admin restores the batch or
+-- each hidden photo and decides the appeal first; "keep hidden" does not clear it: the run keeps
+-- the sold photos, hidden or not), and while the
 -- id is not an existing PHOTOGRAPHER. Read the counts in the error to tell the photographer
 -- what is left.
 --
@@ -121,7 +122,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM flag_hidden_photos h JOIN batch_relevance br ON br.id = h.batch_id
                WHERE br.photographer_id = uid AND h.restored_at IS NULL)
        OR EXISTS (SELECT 1 FROM relevance_appeals WHERE photographer_id = uid AND status = 'OPEN') THEN
-        RAISE EXCEPTION 'Refused: photographer % has a photo relevance case with hidden photos or an open appeal; an admin must restore or keep the hidden batch first and decide the appeal', uid;
+        RAISE EXCEPTION 'Refused: photographer % has photos held by a photo relevance case or an open appeal; an admin must restore the batch or each hidden photo first (keeping a batch hidden does not clear this) and decide the appeal', uid;
     END IF;
     -- "Sold" as PhotographerPhotoService.isSold: a download grant, or a paid order line.
     SELECT count(*) INTO unsold FROM photos p

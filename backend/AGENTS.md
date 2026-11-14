@@ -249,6 +249,7 @@ All env vars have dev-friendly defaults in `application.yml` so the app boots ou
 | `RELEVANCE_ALERTS_BIG_HIDE_PHOTOS` | `500` | Version 2: a hide of at least this many photos in one batch raises one stored admin alert (in record-only, the hide that would have happened: the whole batch, or the sample's junk share of it). |
 | `RELEVANCE_HIDE_CHUNK_SIZE` | `1000` | Version 2 auto-hide: photos hidden per chunk, each chunk its own short transaction (1 to 1000; no statement binds more ids). |
 | `RELEVANCE_HIDE_CHUNKS_PER_TICK` | `10` | Version 2 auto-hide: chunks per case in one check tick; the rest of a batch is hidden on the next ticks. |
+| `RELEVANCE_RESTORE_SWEEP_MINUTES` | `60` | Version 2 auto-hide: for this many minutes after an admin restores a batch, the check tick finishes any hold a running hide chunk left behind; after that a leftover needs a second click on restore. At least 1. |
 | `RELEVANCE_SCAN_PHOTOS_PER_TURN` | `200` | Version 2 auto-hide full scan: photos measured (one DetectLabels call each) per case in one turn. |
 | `RELEVANCE_SCAN_MAX_BATCHES_PER_TICK` | `2` | Version 2 auto-hide full scan: cases that get a turn per check tick, least recently served first. |
 | `RELEVANCE_SCAN_YIELD_ABOVE` | `0` | Version 2 auto-hide full scan: a tick skips scanning while upload indexing on this server copy has more than this many active plus queued tasks. |
