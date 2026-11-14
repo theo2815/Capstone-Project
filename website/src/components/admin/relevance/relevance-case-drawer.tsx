@@ -6,6 +6,7 @@ import {
   actionLabel,
   alertKindLabel,
   bandLabel,
+  evidenceLabel,
   isWouldHave,
   sampleLabel,
   verdictLabel,
@@ -67,7 +68,7 @@ export function RelevanceCaseBody({ detail }: { detail: RelevanceCaseDetail }) {
         <Kicker as="p" tone="soft">Model&apos;s reason · admins only</Kicker>
         <p className="font-sans text-sm md:text-base text-ink-soft whitespace-pre-line">{detail.adminReason ?? "No reason recorded."}</p>
         {detail.evidenceUsed.length > 0 && (
-          <p className={labelCls}>Evidence used: {detail.evidenceUsed.join(", ")}</p>
+          <p className={labelCls}>Evidence used: {detail.evidenceUsed.map(evidenceLabel).join(", ")}</p>
         )}
       </section>
 
@@ -82,7 +83,6 @@ export function RelevanceCaseBody({ detail }: { detail: RelevanceCaseDetail }) {
           <Field label="Not a race" value={n(detail.notRace)} />
           <Field label="Junk" value={row.junkPercent === null ? n(detail.junk) : `${n(detail.junk)} (${row.junkPercent}%)`} />
           <Field label="Words read" value={`${n(detail.wordsPhotos)} of ${n(row.batchPhotos)} photos`} />
-          <Field label="Stage" value={detail.stage} />
           <Field label="Junk band" value={bandLabel(detail.band)} />
         </dl>
       </section>
@@ -101,7 +101,7 @@ export function RelevanceCaseBody({ detail }: { detail: RelevanceCaseDetail }) {
       )}
 
       <Samples title="Junk samples" samples={detail.junkSamples} empty="No sampled photo counts as junk." />
-      <Samples title="Clean samples" samples={detail.cleanSamples} empty="No sampled photo passed every rule." />
+      <Samples title="Clean samples" samples={detail.cleanSamples} empty="No sampled photo is listed as clean or not judged." />
 
       {detail.alerts.length > 0 && (
         <section className="space-y-3">

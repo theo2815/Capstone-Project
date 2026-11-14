@@ -51,14 +51,27 @@ it("the tab comes from the URL and changing it keeps the row closed", async () =
   const user = userEvent.setup();
   fixtures.search = "tab=cant_tell";
   mount();
-  expect(screen.getByRole("tab", { name: "Can't tell" })).toHaveAttribute("aria-selected", "true");
-  await screen.findByText("Cebu City Marathon 2003");
+  expect(screen.getByRole("button", { name: "Can't tell" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(await screen.findByRole("button", { name: /Cebu City Marathon 2003/ }));
   expect(api.get).toHaveBeenCalledWith(expect.stringContaining("tab=cant_tell"), expect.anything());
-  await user.click(screen.getByRole("tab", { name: "All" }));
+  expect(fixtures.router.replace).toHaveBeenLastCalledWith("/admin/relevance?tab=cant_tell&row=c1", { scroll: false });
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "All" }));
   expect(fixtures.router.replace).toHaveBeenLastCalledWith("/admin/relevance?tab=all", { scroll: false });
   await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining("tab=all"), expect.anything()));
-  expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("a URL with both tab and row selects that tab and opens that case", async () => {
+  fixtures.search = "tab=all&row=c1";
+  mount();
+  expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute("aria-pressed", "false");
+  const drawer = await screen.findByRole("dialog");
+  expect(within(drawer).getByText("Case · c1")).toBeInTheDocument();
+  expect(await within(drawer).findByRole("heading", { name: "Cebu City Marathon 2003" })).toBeInTheDocument();
+  expect(api.get).toHaveBeenCalledWith("/admin/relevance/cases/c1", expect.anything());
 });
 
 it("a record-only case is labelled would have hidden and shows no action", async () => {
@@ -70,6 +83,9 @@ it("a record-only case is labelled would have hidden and shows no action", async
   expect(await within(drawer).findByText(/Would have hidden: Hide the whole batch/)).toBeInTheDocument();
   expect(within(drawer).getByText(/Record-only: nothing was hidden/)).toBeInTheDocument();
   expect(within(drawer).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Close"]);
+  // Server codes read as words: the evidence gets a label, and the stage (always APPLIED here) is not shown.
+  expect(within(drawer).getByText("Evidence used: Junk share")).toBeInTheDocument();
+  expect(within(drawer).queryByText("APPLIED")).not.toBeInTheDocument();
   // A clean sample whose cut-offs are unset is "not judged", and a sample with no preview says it is gone.
   expect(within(drawer).getByText("Not judged")).toBeInTheDocument();
   expect(within(drawer).getByRole("img", { name: /no longer available/ })).toBeInTheDocument();

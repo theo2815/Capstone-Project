@@ -126,6 +126,16 @@ const BAND_LABEL: Record<string, string> = {
   UNKNOWN: "Unknown (a cut-off is unset or too few photos were measured)",
 };
 
+// The evidence the model said it used (plan 5.9, `evidence_used`).
+const EVIDENCE_LABEL: Record<string, string> = {
+  junk_share: "Junk share",
+  copy_rule: "Copy rule",
+  date_rule: "Date rule",
+  batch_words: "Words on the batch",
+  event_words: "Words on other photographers' batches",
+  words_suspicious: "Words that looked like instructions",
+};
+
 // An unknown value from a newer server shows as its raw text, never a crash.
 const label = (map: Record<string, string>, value: string | null): string | null =>
   value === null ? null : (map[value] ?? value);
@@ -134,7 +144,8 @@ export const verdictLabel = (v: string | null) => label(VERDICT_LABEL, v) ?? "No
 export const verdictNoteLabel = (n: string | null) => label(NOTE_LABEL, n);
 export const actionLabel = (a: string | null) => label(ACTION_LABEL, a);
 export const alertKindLabel = (k: string) => label(ALERT_LABEL, k) ?? k;
-export const bandLabel = (b: string | null) => label(BAND_LABEL, b) ?? "Not worked out";
+export const evidenceLabel = (e: string) => label(EVIDENCE_LABEL, e) ?? e;
+export const bandLabel =(b: string | null) => label(BAND_LABEL, b) ?? "Not worked out";
 
 /** Applied in record-only with a hide recorded: nothing was hidden. The server works it out. */
 export const isWouldHave = (row: Pick<RelevanceCaseRow, "wouldHave">) => row.wouldHave;

@@ -34,7 +34,14 @@ export function RelevanceCases() {
 
   return (
     <div className="pt-6 md:pt-8 space-y-6">
-      <RelevanceTabBar tab={tab} onChange={setTab} />
+      <RelevanceTabBar
+        tab={tab}
+        onChange={(next) => {
+          // A new view starts with no case open.
+          setRowId("");
+          setTab(next);
+        }}
+      />
 
       {list.isLoading ? (
         <p role="status" className="font-sans text-sm text-slate-soft">Loading cases…</p>
