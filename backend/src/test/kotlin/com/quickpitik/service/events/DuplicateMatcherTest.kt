@@ -89,6 +89,13 @@ class DuplicateMatcherTest {
     }
 
     @Test
+    fun `a different first letter is a different word, not a typo`() {
+        val input = RaceInput("Cebu Light Run", day, provinceCode = null, organizerName = null)
+
+        assertTrue(matcher.classify(input, listOf(candidate("Cebu Night Run"))).strong.isEmpty())
+    }
+
+    @Test
     fun `a name wholly inside a longer name scores medium, never strong`() {
         val input = RaceInput("Cebu Marathon", day, provinceCode = null, organizerName = null)
         val result = matcher.classify(input, listOf(candidate("Cebu Marathon presented by Acme Bank Foundation")))
