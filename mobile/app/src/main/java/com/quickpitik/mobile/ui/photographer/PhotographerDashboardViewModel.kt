@@ -798,7 +798,8 @@ class PhotographerDashboardViewModel(application: Application) : AndroidViewMode
                     _verificationState.value = VerificationUiState.Success(response.data)
                     _verificationActionState.value = ActionState.Done(when (response.data.status) {
                         "approved" -> "Your studio is live."
-                        "pending" -> "Saved. Your studio goes live when your identity check passes."
+                        "pending" -> if (response.data.awaitingAdmin) "Saved. An admin is reviewing your profile."
+                            else "Saved. Your studio goes live when your identity check passes."
                         else -> "Submitted for admin review!"
                     })
                 } else {

@@ -151,6 +151,7 @@ fun PhotographerOverviewScreen(
     }
     val chipText = when {
         isApproved -> "Studio live"
+        summary.awaitingAdmin -> "Waiting for admin review"
         currentStatus == "pending" -> "Waiting for identity check"
         isRejected || currentStatus == "rejected" -> "Changes needed"
         else -> "Setup pending · $completedCount of ${setupItems.size}"
@@ -214,6 +215,7 @@ fun PhotographerOverviewScreen(
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = when {
+                    summary.awaitingAdmin -> "An admin is reviewing your profile."
                     currentStatus == "pending" ->
                         "Your studio goes live when your identity check passes."
                     isRejected || currentStatus == "rejected" ->
@@ -334,6 +336,8 @@ internal data class VerificationSummary(
     val isRejected: Boolean,
     val rejectionReason: String?,
     val missingCodes: List<String>,
+    // Pending, but an admin reset or rejected it: only an admin's approve releases it (R-10).
+    val awaitingAdmin: Boolean,
 )
 
 internal fun verificationSummary(
@@ -364,6 +368,7 @@ internal fun verificationSummary(
             verification == null || status == "approved" || status == "pending" -> emptyList()
             else -> SETUP_CODES_ALL
         },
+        awaitingAdmin = status == "pending" && verification?.awaitingAdmin == true,
     )
 }
 
