@@ -81,4 +81,16 @@ class RelevanceSwitchTest {
         assertFalse(switch(aiEnabled = false, client = client).canMeasure)
         assertFalse(switch(aiEnabled = true, client = null).canMeasure, "the ai-api provider has no label check")
     }
+
+    @Test fun `deciding needs measuring and a model key`() {
+        @Suppress("UNCHECKED_CAST")
+        val provider = (Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>)
+            .also { Mockito.`when`(it.getIfAvailable()).thenReturn(Mockito.mock(RekognitionAiClient::class.java)) }
+        fun switch(aiEnabled: Boolean, key: String) = RelevanceSwitch(RelevanceProperties(mode = RelevanceMode.RECORD_ONLY,
+            llm = RelevanceProperties.Llm(apiKey = key)), AdminProperties(), AiApiProperties(enabled = aiEnabled), provider)
+
+        assertTrue(switch(aiEnabled = true, key = "sk-ant-x").canDecide)
+        assertFalse(switch(aiEnabled = true, key = "").canDecide, "no key, no call")
+        assertFalse(switch(aiEnabled = false, key = "sk-ant-x").canDecide, "AI off gates every paid call")
+    }
 }

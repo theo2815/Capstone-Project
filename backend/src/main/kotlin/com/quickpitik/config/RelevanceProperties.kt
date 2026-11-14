@@ -27,6 +27,7 @@ data class RelevanceProperties(
     val junk: Junk = Junk(),
     val check: Check = Check(),
     val words: Words = Words(),
+    val llm: Llm = Llm(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -131,6 +132,28 @@ data class RelevanceProperties(
             require(minSharePercent in 1..100) { "minSharePercent must be 1..100" }
             require(topN in 1..100) { "topN must be 1..100" }
         }
+    }
+
+    // Version 2 verdict: the model behind the check (O6, Anthropic direct). A blank apiKey means no call is ever made.
+    // maxAttempts counts the first call; retryBackoff is the wait before each retry of a 429, 5xx or timeout.
+    data class Llm(
+        val apiKey: String = "",
+        val baseUrl: String = "https://api.anthropic.com",
+        val model: String = "claude-sonnet-5-5",
+        val connectTimeout: Duration = Duration.ofSeconds(5),
+        val readTimeout: Duration = Duration.ofSeconds(30),
+        val maxAttempts: Int = 3,
+        val retryBackoff: Duration = Duration.ofSeconds(1),
+    ) {
+        init {
+            require(maxAttempts in 1..5) { "maxAttempts must be 1..5" }
+            require(connectTimeout >= Duration.ofMillis(1) && readTimeout >= Duration.ofMillis(1)) { "timeouts must be at least 1ms" }
+            require(!retryBackoff.isNegative) { "retryBackoff must not be negative" }
+        }
+
+        // The key is a secret: keep it out of any log line that prints the settings.
+        override fun toString() = "Llm(apiKey=${if (apiKey.isBlank()) "<unset>" else "<set>"}, baseUrl=$baseUrl, model=$model, " +
+            "connectTimeout=$connectTimeout, readTimeout=$readTimeout, maxAttempts=$maxAttempts, retryBackoff=$retryBackoff)"
     }
 }
 

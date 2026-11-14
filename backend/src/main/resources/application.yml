@@ -375,6 +375,17 @@ app:
       min-share-percent: ${RELEVANCE_WORDS_MIN_SHARE_PERCENT:3}
       # Version 2: at most this many of a batch's words (each on at least min-share-percent of its photos) go into the summary sent to the model.
       top-n: ${RELEVANCE_WORDS_TOP_N:30}
+    llm:
+      # Version 2 verdict: the Claude Messages API (O6, Anthropic direct). Blank key = no call is ever made. Secret: never log it.
+      # Not ANTHROPIC_API_KEY: many developer shells already hold one, and a local run must not pick it up.
+      api-key: ${RELEVANCE_LLM_API_KEY:}
+      base-url: ${RELEVANCE_LLM_BASE_URL:https://api.anthropic.com}
+      model: ${RELEVANCE_LLM_MODEL:claude-sonnet-5-5}
+      connect-timeout: ${RELEVANCE_LLM_CONNECT_TIMEOUT:5s}
+      read-timeout: ${RELEVANCE_LLM_READ_TIMEOUT:30s}
+      # Tries per verdict, the first included (1 to 5); a 429, 5xx or timeout is retried after retry-backoff.
+      max-attempts: ${RELEVANCE_LLM_MAX_ATTEMPTS:3}
+      retry-backoff: ${RELEVANCE_LLM_RETRY_BACKOFF:1s}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

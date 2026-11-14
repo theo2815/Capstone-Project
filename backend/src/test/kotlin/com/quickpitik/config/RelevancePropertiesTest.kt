@@ -33,6 +33,9 @@ class RelevancePropertiesTest {
             tickIntervalMs = 15_000, maxBatchesPerTick = 3, claimMinutes = 10, measuresPerTick = 60, workers = 2,
             measureMaxTries = 5), p.check)
         assertEquals(RelevanceProperties.Words(minSharePercent = 3, topN = 30), p.words)
+        assertEquals(RelevanceProperties.Llm(apiKey = "", baseUrl = "https://api.anthropic.com", model = "claude-sonnet-5-5",
+            connectTimeout = Duration.ofSeconds(5), readTimeout = Duration.ofSeconds(30), maxAttempts = 3,
+            retryBackoff = Duration.ofSeconds(1)), p.llm)
     }
 
     @Test fun `the yml binds every key and names its env override`() {
@@ -56,6 +59,9 @@ class RelevancePropertiesTest {
             "RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3", "RELEVANCE_CHECK_CLAIM_MINUTES:10",
             "RELEVANCE_CHECK_MEASURES_PER_TICK:60", "RELEVANCE_CHECK_WORKERS:2", "RELEVANCE_CHECK_MEASURE_MAX_TRIES:5",
             "RELEVANCE_WORDS_MIN_SHARE_PERCENT:3", "RELEVANCE_WORDS_TOP_N:30",
+            "RELEVANCE_LLM_API_KEY:}","RELEVANCE_LLM_BASE_URL:https://api.anthropic.com", "RELEVANCE_LLM_MODEL:claude-sonnet-5-5",
+            "RELEVANCE_LLM_CONNECT_TIMEOUT:5s", "RELEVANCE_LLM_READ_TIMEOUT:30s", "RELEVANCE_LLM_MAX_ATTEMPTS:3",
+            "RELEVANCE_LLM_RETRY_BACKOFF:1s",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
     }
 
@@ -133,6 +139,14 @@ class RelevancePropertiesTest {
     @Test fun `a top-n of words outside one to a hundred is refused`() {
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Words(topN = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Words(topN = 101) }
+    }
+
+    @Test fun `model tries outside one to five, or a zero timeout, are refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(maxAttempts = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(maxAttempts = 6) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(readTimeout = Duration.ZERO) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(connectTimeout = Duration.ZERO) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(retryBackoff = Duration.ofMillis(-1)) }
     }
 
     @Test fun `intervals and tick counts below one, or too many look-ups, are refused`() {
