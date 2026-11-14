@@ -101,7 +101,7 @@ class RaceEventService(
         val reasons = checksFor(draft.input, null, photographerId, req.description).toMutableSet()
         stopOutcome(scan(draft.input, null), declared)?.let { return it }
         // Past the cap the cover is not sent to moderation (review F34); the admin still sees it.
-        if (cover != null && RaceCheckReason.DAILY_CAP !in reasons) reasons += coverReasons(cover.bytes)
+        if (cover != null && RaceCheckReason.DAILY_CAP !in reasons) reasons += coverReasons(photographerId, cover.bytes)
 
         val eventId = UUID.randomUUID()
         val coverKey = cover?.let { eventCoverService.upload(eventId, it.bytes, it.contentType) }
@@ -137,7 +137,7 @@ class RaceEventService(
         accessGuard.requireApproved(photographerId, "editing a race")
         // Authority and field checks first, so a refused edit moderates and uploads nothing.
         transactionTemplate.execute { editOf(lockForEdit(eventId, photographerId), req) }
-        val coverMiss = cover?.let { coverReasons(it.bytes) }.orEmpty()
+        val coverMiss = cover?.let { coverReasons(photographerId, it.bytes) }.orEmpty()
         val coverKey = cover?.let { eventCoverService.upload(eventId, it.bytes, it.contentType) }
         val obsolete = mutableListOf<String>()
         var stored = false
@@ -384,7 +384,7 @@ class RaceEventService(
         val reasons = textChecks(input.name, input.organizerName, description).toMutableList()
         if (outOfWindow(input.date)) reasons += RaceCheckReason.DATE_OUT_OF_WINDOW
         if (overDailyCap(photographerId)) reasons += RaceCheckReason.DAILY_CAP
-        if (cover != null && RaceCheckReason.DAILY_CAP !in reasons) reasons += coverReasons(cover)
+        if (cover != null && RaceCheckReason.DAILY_CAP !in reasons) reasons += coverReasons(photographerId, cover)
         return reasons
     }
 
@@ -404,11 +404,13 @@ class RaceEventService(
         return date < today.minusDays(raceProperties.dateWindowPastDays) || date > today.plusDays(raceProperties.dateWindowAheadDays)
     }
 
-    private fun coverReasons(cover: ByteArray): List<RaceCheckReason> = when (imageModerationService.check(cover).verdict) {
-        ImageModerationVerdict.CLEAN -> emptyList()
-        ImageModerationVerdict.FLAGGED -> listOf(RaceCheckReason.COVER_FLAGGED)
-        ImageModerationVerdict.UNCHECKED -> listOf(RaceCheckReason.COVER_UNCHECKED)
-    }
+    // The same per-user daily cap as profile images: past it the cover is UNCHECKED and an admin looks, no AWS call.
+    private fun coverReasons(photographerId: UUID, cover: ByteArray): List<RaceCheckReason> =
+        when (imageModerationService.checkFor(photographerId, cover).verdict) {
+            ImageModerationVerdict.CLEAN -> emptyList()
+            ImageModerationVerdict.FLAGGED -> listOf(RaceCheckReason.COVER_FLAGGED)
+            ImageModerationVerdict.UNCHECKED -> listOf(RaceCheckReason.COVER_UNCHECKED)
+        }
 
     private fun overDailyCap(photographerId: UUID): Boolean {
         val midnight = LocalDate.now(clock.withZone(EventDtoMapper.PH_ZONE)).atStartOfDay(EventDtoMapper.PH_ZONE).toOffsetDateTime()

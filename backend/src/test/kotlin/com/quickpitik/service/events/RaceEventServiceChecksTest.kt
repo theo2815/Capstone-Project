@@ -85,7 +85,7 @@ class RaceEventServiceChecksTest {
         Mockito.`when`(covers.upload(anyLike(UUID.randomUUID()), anyLike(ByteArray(0)), anyArg())).thenReturn(coverKey)
         Mockito.`when`(events.findRaceCandidates(anyArg(), anyArg())).thenReturn(emptyList())
         Mockito.`when`(events.saveAndFlush(anyArg<Event>())).thenAnswer { it.getArgument<Event>(0).also { e -> saved = e } }
-        Mockito.`when`(moderation.check(anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.CLEAN))
+        Mockito.`when`(moderation.checkFor(anyLike(me), anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.CLEAN))
         Mockito.`when`(flags.raise(anyLike(FlagTargetKind.USER), anyLike(me), anyLike(SystemFlagReason.RACE_CHECK_MISS), anyArg(), anyArg()))
             .thenReturn(true)
         // Small stand-in lists: "run"/"marathon" are race words, "wedding" a non-race word, "damn" a bad word.
@@ -175,7 +175,7 @@ class RaceEventServiceChecksTest {
 
     @Test
     fun `AI off cover goes pending with COVER_UNCHECKED, never refused`() {
-        Mockito.`when`(moderation.check(anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.UNCHECKED))
+        Mockito.`when`(moderation.checkFor(anyLike(me), anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.UNCHECKED))
 
         assertPending(service().create(me, request(), cover), RaceCheckReason.COVER_UNCHECKED)
         assertEquals(coverKey, saved!!.coverS3Key, "the admin needs the cover to decide")
@@ -183,7 +183,7 @@ class RaceEventServiceChecksTest {
 
     @Test
     fun `a flagged cover goes pending with COVER_FLAGGED`() {
-        Mockito.`when`(moderation.check(anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.FLAGGED))
+        Mockito.`when`(moderation.checkFor(anyLike(me), anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.FLAGGED))
 
         assertPending(service().create(me, request(), cover), RaceCheckReason.COVER_FLAGGED)
     }
@@ -213,7 +213,7 @@ class RaceEventServiceChecksTest {
     @Test
     fun `a race that tips over the cap inside the lock keeps its cover result and also gets DAILY_CAP`() {
         Mockito.`when`(events.countRacesSubmittedSince(eqArg(me), anyLike(OffsetDateTime.now()))).thenReturn(2, 3)
-        Mockito.`when`(moderation.check(anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.UNCHECKED))
+        Mockito.`when`(moderation.checkFor(anyLike(me), anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.UNCHECKED))
 
         // Reasons come in RaceCheckReason order.
         assertPending(service().create(me, request(), cover), RaceCheckReason.DAILY_CAP, RaceCheckReason.COVER_UNCHECKED)
