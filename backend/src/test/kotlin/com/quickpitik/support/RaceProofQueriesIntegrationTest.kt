@@ -5,6 +5,7 @@ import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoBibEmbed
+import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.RaceType
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
@@ -37,13 +38,15 @@ class RaceProofQueriesIntegrationTest : PostgresIntegrationTest() {
     fun `counts and shared bibs match hand-built rows`() {
         val bib = bibPrefix()
         val race = race(DAY)
-        val (a, b, c) = List(3) { photographer() }
+        val (a, b, c, d) = List(4) { photographer() }
         photo(race, a, IndexingStatus.INDEXED, "${bib}1")
         photo(race, a, IndexingStatus.INDEXED, "${bib}2", "${bib}3")
         photo(race, a, IndexingStatus.INDEXED)
         photo(race, a, IndexingStatus.SKIPPED)
         photo(race, b, IndexingStatus.PENDING)
         photo(race, c, IndexingStatus.INDEXED, "${bib}4", deleted = true)
+        // An admin hid it for a flag: it proves nothing.
+        photo(race, d, IndexingStatus.INDEXED, "${bib}5", hidden = true)
 
         val counts = photos.raceProofCounts(race.id)
         assertEquals(2, counts.photographers)
@@ -123,7 +126,9 @@ class RaceProofQueriesIntegrationTest : PostgresIntegrationTest() {
         ),
     )
 
-    private fun photo(event: Event, owner: User, status: IndexingStatus, vararg bibs: String, deleted: Boolean = false) {
+    private fun photo(
+        event: Event, owner: User, status: IndexingStatus, vararg bibs: String, deleted: Boolean = false, hidden: Boolean = false,
+    ) {
         photos.saveAndFlush(
             Photo(
                 eventId = event.id,
@@ -133,6 +138,7 @@ class RaceProofQueriesIntegrationTest : PostgresIntegrationTest() {
                 deletedAt = if (deleted) OffsetDateTime.now() else null,
             ).also { p ->
                 p.indexingStatus = status
+                if (hidden) p.status = PhotoStatus.HIDDEN
                 bibs.forEach { p.bibs.add(PhotoBibEmbed(it, BigDecimal("0.9"))) }
             },
         )

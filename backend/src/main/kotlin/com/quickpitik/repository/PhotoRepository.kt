@@ -972,13 +972,13 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         pageable: Pageable,
     ): List<Photo>
 
-    // AA-R8 race proof: who and what a race's non-deleted photos show.
+    // AA-R8 race proof: who and what a race's non-deleted photos show. HIDDEN (an admin hid it for a flag) proves nothing.
     @Query(value = """
         SELECT COUNT(DISTINCT p.photographer_id) AS "photographers", COUNT(*) AS "total",
                COUNT(*) FILTER (WHERE p.indexing_status = 'INDEXED') AS "indexed",
                COUNT(*) FILTER (WHERE p.indexing_status = 'INDEXED'
                    AND EXISTS (SELECT 1 FROM photo_bibs b WHERE b.photo_id = p.id)) AS "withBib"
-        FROM photos p WHERE p.event_id = :eventId AND p.deleted_at IS NULL
+        FROM photos p WHERE p.event_id = :eventId AND p.deleted_at IS NULL AND p.status <> 'HIDDEN'
     """, nativeQuery = true)
     fun raceProofCounts(@Param("eventId") eventId: UUID): RaceProofCounts
 
