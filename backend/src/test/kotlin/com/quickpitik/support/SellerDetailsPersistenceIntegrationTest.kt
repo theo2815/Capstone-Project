@@ -9,6 +9,8 @@ import com.quickpitik.entity.RepeatMatchKind
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.SellerReasonCode
 import com.quickpitik.repository.ID_NUMBER_LOCK_KEY
+import com.quickpitik.repository.PAYOUT_NUMBER_LOCK_KEY
+import com.quickpitik.repository.PHONE_KEY_LOCK_KEY
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.service.liveness.LivenessSessionService
@@ -249,10 +251,40 @@ class SellerDetailsPersistenceIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
-    private fun waitingOnIdNumberLock(): Int = jdbc.queryForObject(
+    private fun waitingOnIdNumberLock(): Int = waitingOn(ID_NUMBER_LOCK_KEY)
+
+    private fun waitingOn(namespace: Int): Int = jdbc.queryForObject(
         "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 2 AND classid::bigint = ? AND NOT granted",
-        Int::class.java, ID_NUMBER_LOCK_KEY,
+        Int::class.java, namespace,
     )!!
+
+    // The same-moment gap of R-9 for the phone and the payout number: a second holder of the same value waits.
+    @Test
+    fun `the phone key and payout number locks make a second transaction wait until the first ends`() {
+        assertSecondWaits(PHONE_KEY_LOCK_KEY) { repository.lockPhoneKey(it) }
+        assertSecondWaits(PAYOUT_NUMBER_LOCK_KEY) { payoutRepository.lockAccountNumber(it) }
+    }
+
+    private fun assertSecondWaits(namespace: Int, lock: (String) -> Unit) {
+        val value = UUID.randomUUID().toString()
+        val pool = Executors.newSingleThreadExecutor()
+        val first = dataSource.connection.apply { autoCommit = false }
+        try {
+            first.prepareStatement("SELECT pg_advisory_xact_lock($namespace, hashtext(?))").use { it.setString(1, value); it.execute() }
+            val second = pool.submit { TransactionTemplate(transactionManager).execute { lock(value) } }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            while (waitingOn(namespace) < 1) {
+                check(System.nanoTime() < deadline) { "the second transaction never queued on lock $namespace" }
+                Thread.sleep(20)
+            }
+            assertFalse(second.isDone)
+            first.commit() // the first transaction ends, so the second gets the lock
+            second.get(30, TimeUnit.SECONDS)
+        } finally {
+            first.close()
+            pool.shutdownNow()
+        }
+    }
 
     @Test
     fun `phone key lookup finds the other accounts and leaves out the caller`() {

@@ -149,12 +149,14 @@ class SellerDetailsService(
     /**
      * Runs inside the save transaction, under the user lock. Repeat accounts and a payout holder name
      * that differs from the legal name route to an admin, never refuse (AA-I5). A lock on the ID number
-     * (after the user lock, so no deadlock) makes a second account submitting it at once wait, then see the first (R-9).
+     * (after the user lock, so no deadlock) makes a second account submitting it at once wait, then see the first (R-9);
+     * a lock on the phone key, taken first, does the same for the phone.
      */
     private fun SellerDetails.applyChecks(
         checks: IdentityChecks, referenceKey: String?, previouslyRejected: Boolean, now: OffsetDateTime,
     ): SellerDetails = apply {
         val payouts = payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(userId)
+        sellerDetailsRepository.lockPhoneKey(phoneKey) // always before the ID lock: one order, no deadlock
         val hits = checks.idNumberMatchHmacs.takeIf { it.isNotEmpty() }?.let { hmacs ->
             sellerDetailsRepository.lockIdNumber(hmacs.first()) // same key whatever ID type was picked
             sellerDetailsRepository.findUserIdsByIdNumberHmacIn(hmacs, userId).map { it to RepeatMatchKind.ID_NUMBER }

@@ -131,6 +131,8 @@ class PayoutAccountService(
     // A number shared with another account sends the record to manual review (D5, P1-N11), even
     // when it had passed; the revision bump makes a stale admin decision fail.
     private fun matchPayoutNumber(userId: UUID, account: PayoutAccount) {
+        // Every save takes it, with or without seller details, so a same-moment save of the number waits, then sees this one.
+        payoutAccountRepository.lockAccountNumber(account.accountNumber)
         val details = sellerDetailsToCheck(userId) ?: return
         val others = payoutAccountRepository.findUserIdsByAccountNumbers(listOf(account.accountNumber), userId)
         if (others.isEmpty()) return
