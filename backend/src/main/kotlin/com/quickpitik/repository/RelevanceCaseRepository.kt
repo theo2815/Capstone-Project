@@ -192,9 +192,13 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun findWholeBatchHides(): List<HoldTarget>
 
     // RV-2.3a (A.4, S3, P14, P18): current auto-hide cases whose full scan is queued or running, least recently served first.
+    // Only batches still allowed (invariant 12, the conditions of BatchRelevanceRepository.stillAllowed), so a batch that
+    // is not allowed takes no turn slot; its case stays as it is (G9) and the scan goes on once it is allowed again.
     @Query(value = """
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+        JOIN events e ON e.id = br.event_id AND e.deleted_at IS NULL AND e.hidden_at IS NULL AND e.visibility = 'PUBLIC'
+        JOIN users u ON u.id = br.photographer_id AND u.suspended_at IS NULL
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.scan_state IN ('QUEUED', 'RUNNING')
         ORDER BY c.scan_served_at ASC NULLS FIRST, c.applied_at, c.id
         LIMIT :limit

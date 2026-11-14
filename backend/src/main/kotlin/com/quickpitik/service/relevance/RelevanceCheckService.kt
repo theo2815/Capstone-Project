@@ -70,6 +70,7 @@ class RelevanceCheckService(
     @Qualifier("imageProcessing") private val imageProcessing: TaskExecutor,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+    @Volatile private var unreadablePoolLogged = false
 
     // Part 2 A.4, RV-2.3a: the full scan of a Fits or Mixed auto-hide case. No cursor: each turn measures up to
     // photos-per-turn photos of the batch that have no measurement yet, so later uploads are picked up and a photo that
@@ -77,7 +78,13 @@ class RelevanceCheckService(
     internal fun scanTurns() {
         if (switch.mode != RelevanceMode.AUTO_HIDE || !switch.canMeasure) return
         // R6: yield to upload indexing on this server copy, which shares the processor, memory and downloads.
-        val load = (imageProcessing as? ThreadPoolTaskExecutor)?.let { it.activeCount + it.threadPoolExecutor.queue.size } ?: 0
+        // A pool that cannot be read counts as busy, so a wrapped or replaced bean never lets the scan crowd out uploads.
+        val pool = imageProcessing as? ThreadPoolTaskExecutor
+        if (pool == null && !unreadablePoolLogged) {
+            unreadablePoolLogged = true
+            log.warn("Relevance scan cannot read the imageProcessing pool ({}); scanning is paused", imageProcessing.javaClass.name)
+        }
+        val load = pool?.let { it.activeCount + it.threadPoolExecutor.queue.size } ?: Int.MAX_VALUE
         if (load > props.scan.yieldAbove) {
             registry.counter("qp.relevance.scan.yielded").increment()
             return
@@ -101,6 +108,8 @@ class RelevanceCheckService(
         val claimed = transactions.execute { batches.claimCheck(row.batchId, token, now.plusMinutes(props.check.claimMinutes), now) }
         if (claimed != 1) return
         try {
+            // The event may have turned Private after the list was read: skip the turn, pay nothing, close nothing (G9).
+            if (!batches.stillAllowed(row.batchId)) return
             if (transactions.execute { cases.startScanTurn(row.caseId, now) } != 1) return
             val todo = batches.nextUnmeasured(row.eventId, row.photographerId, props.scan.photosPerTurn)
             if (todo.isNotEmpty()) {
@@ -131,11 +140,12 @@ class RelevanceCheckService(
         if (switch.mode == RelevanceMode.AUTO_HIDE) reconcileHolds()
         // G2: with AI off nothing is measured and no check starts, so batches stay "not checked".
         if (switch.canMeasure) continueSampling()
-        // Samples run before scans (A.4); scanTurns checks the mode and canMeasure itself.
-        scanTurns()
         // O6: no model call without AI on and a key.
         if (switch.canDecide) decideCases()
         if (switch.aiEnabled) startChecks()
+        // Last, because it waits for every photo it measures and would delay every other step; samples run before scans
+        // (A.4). scanTurns checks the mode and canMeasure itself.
+        scanTurns()
     }
 
     private fun applyDecided() {

@@ -230,13 +230,59 @@ class RelevanceScanIntegrationTest : PostgresIntegrationTest() {
         Mockito.verify(client, Mockito.times(3)).imageCheck(anyArg())
     }
 
+    @Test
+    fun `a scan skips a batch whose event went private and closes nothing`() {
+        // Two batches no longer allowed, served first by the rotation if they were listed; one public batch.
+        val private = batch(photos = 2).also { jdbc.update("UPDATE events SET visibility = 'UNLISTED' WHERE id = ?", it.event) }
+        val suspended = batch(photos = 2).also { jdbc.update("UPDATE users SET suspended_at = ? WHERE id = ?", NOW, it.photographer) }
+        val public = batch(photos = 2)
+        val cp = case(private, appliedAt = NOW.minusMinutes(3))
+        val cs = case(suspended, appliedAt = NOW.minusMinutes(2))
+        case(public, appliedAt = NOW.minusMinutes(1))
+        val holdsBefore = jdbc.queryForObject("SELECT count(*) FROM flag_hidden_photos", Long::class.java)
+
+        service(maxBatchesPerTick = 2).scanTurns()
+
+        assertEquals(listOf(0, 0, 2), listOf(private, suspended, public).map(::measured), "only the public batch takes a turn")
+        for (c in listOf(cp, cs)) {
+            assertEquals(listOf("APPLIED", "AUTO_HIDE", "NONE", "QUEUED", null), row(c, "stage", "applied_mode", "action", "scan_state", "scan_served_at"))
+        }
+        assertEquals(holdsBefore, jdbc.queryForObject("SELECT count(*) FROM flag_hidden_photos", Long::class.java))
+    }
+
+    @Test
+    fun `a batch that turns private between the list and the claim is not measured`() {
+        val b = batch(photos = 2)
+        val c = case(b)
+        // The event goes Private just as the turn takes the batch claim.
+        val flipping = Mockito.mock(BatchRelevanceRepository::class.java) { inv ->
+            if (inv.method.name == "claimCheck" && inv.arguments[0] == b.id) {
+                jdbc.update("UPDATE events SET visibility = 'UNLISTED' WHERE id = ?", b.event)
+            }
+            try { inv.method.invoke(batches, *inv.arguments) } catch (e: java.lang.reflect.InvocationTargetException) { throw e.targetException }
+        }
+
+        service(batchRepo = flipping).scanTurns()
+
+        Mockito.verify(client, Mockito.never()).imageCheck(anyArg())
+        assertEquals(0, measured(b))
+        assertEquals(listOf("APPLIED", "AUTO_HIDE", "NONE", "QUEUED", null), row(c, "stage", "applied_mode", "action", "scan_state", "scan_served_at"))
+        assertEquals(null, jdbc.queryForObject("SELECT check_claim FROM batch_relevance WHERE id = ?", UUID::class.java, b.id), "the claim is released")
+        assertEquals(0L, holds.countLiveHolds(b.id, "AUTO"))
+    }
+
     private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
 
     private fun props(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, photosPerTurn: Int = 200, maxBatchesPerTick: Int = 2) =
         RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0),
             scan = RelevanceProperties.Scan(photosPerTurn = photosPerTurn, maxBatchesPerTick = maxBatchesPerTick))
 
-    private fun service(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, photosPerTurn: Int = 200, maxBatchesPerTick: Int = 2): RelevanceCheckService {
+    private fun service(
+        mode: RelevanceMode = RelevanceMode.AUTO_HIDE,
+        photosPerTurn: Int = 200,
+        maxBatchesPerTick: Int = 2,
+        batchRepo: BatchRelevanceRepository = batches,
+    ): RelevanceCheckService {
         val props = props(mode, photosPerTurn, maxBatchesPerTick)
         @Suppress("UNCHECKED_CAST")
         val provider = (Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>)
@@ -244,11 +290,11 @@ class RelevanceScanIntegrationTest : PostgresIntegrationTest() {
         val storage = Mockito.mock(StorageService::class.java)
         Mockito.`when`(storage.getBytes(anyArg())).thenReturn(byteArrayOf(1, 2, 3))
         val registry = SimpleMeterRegistry()
-        val measurer = RelevanceMeasurer(batches, storage, provider, SyncTaskExecutor(), props, Clock.systemUTC(), tx, registry)
+        val measurer = RelevanceMeasurer(batchRepo, storage, provider, SyncTaskExecutor(), props, Clock.systemUTC(), tx, registry)
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = true), provider)
-        return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, registry, measurer,
+        return RelevanceCheckService(batchRepo, cases, props, switch, Clock.systemUTC(), tx, registry, measurer,
             Mockito.mock(AnthropicClient::class.java), events, alerts, Mockito.mock(ApplicationEventPublisher::class.java),
-            LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"), holds, photos, decisions, SyncTaskExecutor())
+            LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"), holds, photos, decisions, IDLE_POOL)
     }
 
     private fun batch(photos: Int): Batch {
@@ -302,5 +348,7 @@ class RelevanceScanIntegrationTest : PostgresIntegrationTest() {
     private companion object {
         val NOW: OffsetDateTime = OffsetDateTime.parse("2008-03-04T05:06:07.123456Z")
         val SAMPLED_AT: OffsetDateTime = NOW.minusDays(1)
+        // An idle upload-indexing pool: the scan never yields to it.
+        val IDLE_POOL = org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor().apply { initialize() }
     }
 }

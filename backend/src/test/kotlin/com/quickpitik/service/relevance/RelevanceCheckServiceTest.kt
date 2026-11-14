@@ -56,6 +56,36 @@ class RelevanceCheckServiceTest {
     private val rekognition = (Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>)
         .also { Mockito.`when`(it.getIfAvailable()).thenReturn(Mockito.mock(RekognitionAiClient::class.java)) }
     private val cutoffs = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0)
+    private val idlePool = org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor().apply { initialize() }
+
+    // RV-2.3a review: the scan waits for every photo it measures, so it is the tick's last step and delays nothing else.
+    @Test
+    fun `the scan is the last step of the tick`() {
+        val auto = service(mode = RelevanceMode.AUTO_HIDE, key = "sk-test", admin = AdminProperties(flagsEnabled = true))
+
+        auto.tick()
+
+        val order = Mockito.inOrder(cases, batches)
+        order.verify(cases).findDecided(Mockito.anyInt())
+        order.verify(cases).findWholeBatchHides()
+        order.verify(cases).findSampling(anyArg(), Mockito.anyInt())
+        order.verify(cases).findDeciding(anyArg(), anyArg(), Mockito.anyInt())
+        order.verify(batches).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
+        order.verify(cases).findScans(Mockito.anyInt())
+    }
+
+    // An upload-indexing pool the scan cannot read counts as busy, so a misconfigured bean never lets the scan crowd out uploads.
+    @Test
+    fun `an unreadable upload-indexing pool counts as busy`() {
+        val unreadable = service(mode = RelevanceMode.AUTO_HIDE, admin = AdminProperties(flagsEnabled = true),
+            imageProcessing = org.springframework.core.task.SyncTaskExecutor())
+
+        unreadable.scanTurns()
+        unreadable.scanTurns()
+
+        Mockito.verify(cases, Mockito.never()).findScans(Mockito.anyInt())
+        assertEquals(2.0, registry.counter("qp.relevance.scan.yielded").count())
+    }
 
     private fun service(
         mode: RelevanceMode = RelevanceMode.RECORD_ONLY,
@@ -63,7 +93,7 @@ class RelevanceCheckServiceTest {
         junk: RelevanceProperties.Junk = cutoffs,
         key: String = "",
         admin: AdminProperties = AdminProperties(),
-        imageProcessing: org.springframework.core.task.TaskExecutor = org.springframework.core.task.SyncTaskExecutor(),
+        imageProcessing: org.springframework.core.task.TaskExecutor = idlePool,
     ): RelevanceCheckService {
         val props = RelevanceProperties(mode = mode, junk = junk, llm = RelevanceProperties.Llm(apiKey = key))
         val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), rekognition)
