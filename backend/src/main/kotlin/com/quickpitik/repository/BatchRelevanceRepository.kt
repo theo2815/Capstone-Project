@@ -425,6 +425,63 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         WHERE s.case_id = :caseId
     """, nativeQuery = true)
     fun sampleScores(@Param("caseId") caseId: UUID): List<PhotoScoresRow>
+
+    // RV-1.2 (plan 5.5, R5): marks the photo's words as counted. 1 the first time, 0 on a re-read, so the caller
+    // adds a photo's words once. A row the measuring wrote first keeps its scores.
+    @Modifying
+    @Query(value = """
+        INSERT INTO relevance_photo_checks (photo_id, batch_id, words_counted_at)
+        VALUES (:photoId, :batchId, :now)
+        ON CONFLICT (photo_id) DO UPDATE SET words_counted_at = EXCLUDED.words_counted_at
+        WHERE relevance_photo_checks.words_counted_at IS NULL
+    """, nativeQuery = true)
+    fun markWordsCounted(@Param("photoId") photoId: UUID, @Param("batchId") batchId: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // RV-1.2: one photo's distinct words, sorted by the caller and again here, so two indexing threads lock the
+    // count rows in the same order and cannot deadlock.
+    @Modifying
+    @Query(value = """
+        INSERT INTO batch_relevance_words (batch_id, word, photos)
+        SELECT :batchId, w, 1 FROM unnest(CAST(:words AS text[])) AS w ORDER BY w
+        ON CONFLICT (batch_id, word) DO UPDATE SET photos = batch_relevance_words.photos + 1
+    """, nativeQuery = true)
+    fun addWords(@Param("batchId") batchId: UUID, @Param("words") words: Array<String>): Int
+
+    // RV-1.2 (R11): N of "words from N of M photos".
+    @Query(value = "SELECT count(*) FROM relevance_photo_checks WHERE batch_id = :batchId AND words_counted_at IS NOT NULL",
+        nativeQuery = true)
+    fun countWordPhotos(@Param("batchId") batchId: UUID): Long
+
+    // RV-1.2 (G14): for up to :limit batches finally scored on or before :settledBefore and not yet purged, deletes
+    // the words on under :minSharePercent of the batch's counted photos, then stamps the batch so it is purged once.
+    // Returns the batches stamped.
+    @Modifying
+    @Query(value = """
+        WITH due AS (
+            SELECT br.id,
+                   (SELECT count(*) FROM relevance_photo_checks r
+                    WHERE r.batch_id = br.id AND r.words_counted_at IS NOT NULL) AS counted
+            FROM batch_relevance br
+            WHERE br.final_scored_at <= :settledBefore AND br.words_purged_at IS NULL
+            ORDER BY br.final_scored_at, br.id
+            LIMIT :limit
+        ), purged AS (
+            DELETE FROM batch_relevance_words w USING due
+            WHERE w.batch_id = due.id AND w.photos * 100 < :minSharePercent * due.counted
+        )
+        UPDATE batch_relevance br SET words_purged_at = :now FROM due WHERE br.id = due.id
+    """, nativeQuery = true)
+    fun purgeRareWords(
+        @Param("minSharePercent") minSharePercent: Int,
+        @Param("settledBefore") settledBefore: OffsetDateTime,
+        @Param("limit") limit: Int,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    // RV-1.2: a completed erasure removes the photo's words mark and measurement.
+    @Modifying
+    @Query(value = "DELETE FROM relevance_photo_checks WHERE photo_id = :photoId", nativeQuery = true)
+    fun deletePhotoCheck(@Param("photoId") photoId: UUID): Int
 }
 
 // RV-1.6: one sampled photo to measure; s3Key is the original, never the watermarked preview.

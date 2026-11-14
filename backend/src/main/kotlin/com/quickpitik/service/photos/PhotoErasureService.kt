@@ -39,6 +39,7 @@ class PhotoErasureService(
     private val json: ObjectMapper,
     private val clock: Clock,
     private val metrics: MeterRegistry,
+    private val relevance: BatchRelevanceRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -225,6 +226,7 @@ class PhotoErasureService(
                     metadata.findById(photo.id).orElse(null)?.let(metadata::delete)
                     photo.facePersons.clear()
                     photo.bibs.clear()
+                    relevance.deletePhotoCheck(photo.id) // RV-1.2: a kept tombstone keeps no words mark or scores
                     photos.saveAndFlush(photo)
                     intents.scheduleCleanupForResultPhoto(photo.id, OffsetDateTime.now(clock))
                     if (job.retainTombstone) photos.minimizeErasedPhoto(photo.id, OffsetDateTime.now(clock))

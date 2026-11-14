@@ -44,6 +44,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var uploads: com.quickpitik.service.photographer.PhotoUploadService
     @Autowired lateinit var settings: PhotographerSettingsRepository
     @Autowired lateinit var registry: io.micrometer.core.instrument.MeterRegistry
+    @Autowired lateinit var relevance: com.quickpitik.repository.BatchRelevanceRepository
     @Autowired lateinit var dataSource: javax.sql.DataSource
     @MockBean lateinit var storage: StorageService
     lateinit var owner: User
@@ -360,6 +361,9 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         photo.indexedProvider = "ai_api"
         photos.saveAndFlush(photo)
         metadata.saveAndFlush(PhotoMetadata(photo.id, originalFilename = "private-name.jpg"))
+        tx.execute { relevance.ensureBatch(photo.eventId, photo.photographerId!!) }
+        jdbc.update("INSERT INTO relevance_photo_checks (photo_id, batch_id, words_counted_at) VALUES (?, ?, now())",
+            photo.id, relevance.findByEventIdAndPhotographerId(photo.eventId, photo.photographerId!!)!!.id)
         val job = eraser.request(privacy())
         assertEquals(PhotoErasureOutcome.RETRY_REQUIRED, eraser.attempt(job))
         assertTrue(blobs.isEmpty())
@@ -381,7 +385,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
             com.quickpitik.config.AiApiProperties(enabled = true), fence, json, tx, java.time.Clock.systemUTC())
         val retry = PhotoErasureService(photos, jobs, intents, items, orderItems, grants, coverage, events, metadata,
             storage, faceService, com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
-            tx, json, java.time.Clock.systemUTC(), registry)
+            tx, json, java.time.Clock.systemUTC(), registry, relevance)
         assertEquals(PhotoErasureOutcome.COMPLETE, retry.attempt(job))
         assertFalse(metadata.existsById(photo.id))
         val tombstone = photos.findById(photo.id).orElseThrow()
@@ -389,6 +393,8 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         assertTrue(tombstone.bibs.isEmpty())
         assertTrue(tombstone.facePersons.isEmpty())
         assertTrue(photos.faceWorkForPhoto(event.id, photo.id).all { it.facesErasedAt != null })
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_photo_checks WHERE photo_id = ?", Int::class.java, photo.id),
+            "an erased photo loses its relevance check row")
     }
 
     @Test fun `existing future staging recheck is retained even after the original cleanup horizon`() {
@@ -561,7 +567,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         val later = java.time.Clock.offset(java.time.Clock.systemUTC(), java.time.Duration.ofDays(10))
         val resumed = PhotoErasureService(photos, jobs, intents, items, orderItems, grants, coverage, events, metadata,
             storage, faceErasure, com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
-            tx, json, later, registry)
+            tx, json, later, registry, relevance)
         assertEquals(PhotoErasureOutcome.COMPLETE, resumed.attempt(job))
         assertFalse(receipt.stagingKey in blobs)
         assertFalse(receipt.originalKey in blobs)

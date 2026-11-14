@@ -370,6 +370,9 @@ app:
       measures-per-tick: ${RELEVANCE_CHECK_MEASURES_PER_TICK:60}
       workers: ${RELEVANCE_CHECK_WORKERS:2}
       measure-max-tries: ${RELEVANCE_CHECK_MEASURE_MAX_TRIES:5}
+    words:
+      # Once a batch has settled (settle-days after its final scoring), words on under this share of its photos are deleted.
+      min-share-percent: ${RELEVANCE_WORDS_MIN_SHARE_PERCENT:3}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

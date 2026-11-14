@@ -18,6 +18,7 @@ import com.quickpitik.service.photos.PhotoWorkKind
 import com.quickpitik.entity.RemovalState
 import com.quickpitik.entity.FaceProvider
 import com.quickpitik.service.photos.PhotoFaceErasureService
+import com.quickpitik.service.relevance.RelevanceWordWriter
 import com.quickpitik.websocket.PhotoIndexedEvent
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -50,6 +51,7 @@ class PhotoIndexingService(
     private val workFence: PhotoWorkFence,
     private val faceErasure: PhotoFaceErasureService,
     private val eventFaceExpiry: EventFaceExpiry,
+    private val wordWriter: RelevanceWordWriter,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -83,8 +85,12 @@ class PhotoIndexingService(
             resolved = !outcome.facesUnresolved
 
             // Phase C — short write transaction.
-            transactionTemplate.execute {
-                if (workFence.isCurrent(claim)) writeOutcome(photoId, outcome)
+            val written = transactionTemplate.execute {
+                workFence.isCurrent(claim) && writeOutcome(photoId, outcome)
+            } == true
+            // RV-1.2: after the commit, so the words can never undo or fail the outcome.
+            if (written && outcome.bibsOk) {
+                photo.photographerId?.let { wordWriter.record(photoId, photo.eventId, it, outcome.words) }
             }
         } catch (ex: Exception) {
             // The outcome's own attempt bump rolled back with it; record one here (class name only, never provider text).
@@ -117,6 +123,7 @@ class PhotoIndexingService(
         val facesUnresolved: Boolean = false,
         val facesThrottled: Boolean = false,
         val faceCount: Int? = null,
+        val words: List<String> = emptyList(),
     )
 
     private fun runInference(photo: Photo, claim: PhotoWorkClaim): InferenceOutcome {
@@ -212,6 +219,7 @@ class PhotoIndexingService(
         var bibs: Map<String, BigDecimal> = emptyMap()
         var bibsOk = false
         var bibsTransport = false
+        var words: List<String> = emptyList()
         try {
             val result = meterRegistry.timer("qp.ai.call", "op", "bib").recordCallable {
                 aiApiClient.bibsRecognize(inline, contentType, filename)
@@ -225,6 +233,7 @@ class PhotoIndexingService(
                 .groupBy { it.bib_number.trim().uppercase() }
                 .filterKeys { it.isNotEmpty() && it.length <= MAX_BIB_LENGTH }
                 .mapValues { (_, detections) -> BigDecimal.valueOf(detections.maxOf { it.confidence }) }
+            words = result.words
             bibsOk = true
         } catch (ex: Exception) {
             log.warn("Bib recognize failed for photo {}: {}", photo.id, ex.message)
@@ -243,6 +252,7 @@ class PhotoIndexingService(
             facesUnresolved = facesUnresolved,
             facesThrottled = facesThrottled,
             faceCount = faceCount,
+            words = words,
         )
     }
 
@@ -256,15 +266,16 @@ class PhotoIndexingService(
         ).increment()
     }
 
-    private fun writeOutcome(photoId: UUID, outcome: InferenceOutcome) {
-        val photo = photoRepository.findById(photoId).orElse(null) ?: return
-        if (photo.deletionStartedAt != null) return
-        if (photo.removalState != RemovalState.NONE) return
+    // True when this outcome was stored.
+    private fun writeOutcome(photoId: UUID, outcome: InferenceOutcome): Boolean {
+        val photo = photoRepository.findById(photoId).orElse(null) ?: return false
+        if (photo.deletionStartedAt != null) return false
+        if (photo.removalState != RemovalState.NONE) return false
         if (photo.indexingStatus == IndexingStatus.INDEXED ||
             photo.indexingStatus == IndexingStatus.SKIPPED
         ) {
             // The output ledger retains our result for shared cleanup.
-            return
+            return false
         }
 
         if (outcome.bytesUnavailable != null) {
@@ -276,7 +287,7 @@ class PhotoIndexingService(
             photo.indexedAt = null
             photoRepository.save(photo)
             recordOutcome("failed")
-            return
+            return true
         }
 
         if (!outcome.facesOk && !outcome.bibsOk && outcome.facesTransport && outcome.bibsTransport) {
@@ -290,7 +301,7 @@ class PhotoIndexingService(
             photoRepository.save(photo)
             recordOutcome("pending_transport")
             log.warn("Indexing {}: provider unreachable; back to PENDING, attempt not consumed", photoId)
-            return
+            return true
         }
 
         // A busy minute at AWS is not a bad photo: the PARTIAL (bibs kept) is re-driven by the sweep.
@@ -350,6 +361,7 @@ class PhotoIndexingService(
                 ),
             )
         }
+        return true
     }
 
     // ai-api validates by magic bytes, not Content-Type, but the multipart part

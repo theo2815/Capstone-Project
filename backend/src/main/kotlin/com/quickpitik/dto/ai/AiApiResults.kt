@@ -51,6 +51,8 @@ data class FaceMatch(
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class BibsRecognizeResult(
     val detections: List<BibDetection> = emptyList(),
+    // RV-1.2: the raw text of every other WORD read (Rekognition only), cleaned by RelevanceWords.
+    val words: List<String> = emptyList(),
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

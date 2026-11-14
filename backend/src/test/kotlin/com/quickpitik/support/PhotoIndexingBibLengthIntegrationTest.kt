@@ -58,7 +58,8 @@ class PhotoIndexingBibLengthIntegrationTest : PostgresIntegrationTest() {
             BibDetection("A".repeat(21), 0.95), BibDetection("1234", 0.92))))
         val indexer = PhotoIndexingService(photos, storage, provider, AiApiProperties(enabled = true),
             AiProperties(AiProvider.AI_API), Mockito.mock(ApplicationEventPublisher::class.java), tx, SimpleMeterRegistry(),
-            fence, Mockito.mock(PhotoFaceErasureService::class.java), Mockito.mock(EventFaceExpiry::class.java))
+            fence, Mockito.mock(PhotoFaceErasureService::class.java), Mockito.mock(EventFaceExpiry::class.java),
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceWordWriter::class.java))
 
         indexer.index(photo.id)
 

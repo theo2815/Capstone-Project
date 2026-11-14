@@ -180,20 +180,20 @@ class RekognitionAiClient(
         val min = minChars ?: props.bibMinChars
         val request = DetectTextRequest.builder().image(imageOf(file)).build()
         val resp = throttleRetried("detectText") { rekognition.detectText(request) }
-        val detections = resp.textDetections()
-            // WORD granularity: a bib is a single token. LINE would merge a bib
-            // with neighbouring sponsor text.
-            .filter { it.type() == TextTypes.WORD }
-            .mapNotNull { td ->
-                val raw = td.detectedText()?.trim().orEmpty()
-                val digits = raw.count(Char::isDigit)
-                if (raw.isNotEmpty() && digits >= min && raw.all { it.isLetterOrDigit() || it == '-' }) {
-                    BibDetection(bib_number = raw.uppercase(), confidence = (td.confidence() ?: 0f).toDouble() / 100.0)
-                } else {
-                    null
-                }
+        val detections = mutableListOf<BibDetection>()
+        val words = mutableListOf<String>()
+        // WORD granularity: a bib is a single token. LINE would merge a bib
+        // with neighbouring sponsor text. Every other word is kept for RV-1.2.
+        resp.textDetections().filter { it.type() == TextTypes.WORD }.forEach { td ->
+            val raw = td.detectedText()?.trim().orEmpty()
+            val digits = raw.count(Char::isDigit)
+            if (raw.isNotEmpty() && digits >= min && raw.all { it.isLetterOrDigit() || it == '-' }) {
+                detections += BibDetection(bib_number = raw.uppercase(), confidence = (td.confidence() ?: 0f).toDouble() / 100.0)
+            } else if (raw.isNotEmpty()) {
+                words += raw
             }
-        BibsRecognizeResult(detections = detections)
+        }
+        BibsRecognizeResult(detections = detections, words = words)
     }
 
     // AA-I11: profile-image moderation. Not on FaceBibProvider: Rekognition-only.

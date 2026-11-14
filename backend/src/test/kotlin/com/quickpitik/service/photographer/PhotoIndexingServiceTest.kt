@@ -103,7 +103,7 @@ class PhotoIndexingServiceTest {
             jpegBytes
         }
         val indexer = PhotoIndexingService(photoRepo, storage, aiClient, props(), AiProperties(AiProvider.REKOGNITION),
-            publisher, template(), SimpleMeterRegistry(), realFence, cleanup, faceExpiry)
+            publisher, template(), SimpleMeterRegistry(), realFence, cleanup, faceExpiry, wordWriter)
 
         indexer.index(p.id)
 
@@ -212,6 +212,7 @@ class PhotoIndexingServiceTest {
     private lateinit var faceErasure: com.quickpitik.service.photos.PhotoFaceErasureService
     private lateinit var faceExpiry: com.quickpitik.service.events.EventFaceExpiry
     private fun <T> anyArg(): T = Mockito.any()
+    private val wordWriter = Mockito.mock(com.quickpitik.service.relevance.RelevanceWordWriter::class.java)
 
     // FF D8 FF → sniffed as image/jpeg by PhotoIndexingService.sniffContentType.
     private val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0x00)
@@ -248,7 +249,7 @@ class PhotoIndexingServiceTest {
         faceExpiry = Mockito.mock(com.quickpitik.service.events.EventFaceExpiry::class.java)
         service = PhotoIndexingService(
             photoRepo, storage, aiClient, props(), AiProperties(AiProvider.AI_API), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
-            faceExpiry,
+            faceExpiry, wordWriter,
         )
     }
 
@@ -397,6 +398,69 @@ class PhotoIndexingServiceTest {
 
     private fun stubBibsReturns(p: Photo, result: BibsRecognizeResult) {
         Mockito.`when`(aiClient.bibsRecognize(jpegBytes, "image/jpeg", "${p.id}.jpg")).thenReturn(result)
+    }
+
+    // RV-1.2: the words of the text read go to the relevance writer only after the outcome has committed.
+    private fun indexer(manager: PlatformTransactionManager, writer: com.quickpitik.service.relevance.RelevanceWordWriter) =
+        PhotoIndexingService(photoRepo, storage, aiClient, props(), AiProperties(AiProvider.AI_API), publisher,
+            TransactionTemplate(manager), SimpleMeterRegistry(), workFence, faceErasure, faceExpiry, writer)
+
+    private fun manager() = Mockito.mock(PlatformTransactionManager::class.java).also {
+        Mockito.`when`(it.getTransaction(Mockito.any())).thenReturn(SimpleTransactionStatus())
+    }
+
+    @Test
+    fun `the words go to the writer after the outcome commits`() {
+        val p = photo().also { it.photographerId = UUID.randomUUID() }
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("1234", 0.92)), words = listOf("Cebu", "Marathon")))
+        val manager = manager()
+
+        indexer(manager, wordWriter).index(p.id)
+
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        val order = Mockito.inOrder(photoRepo, manager, wordWriter)
+        order.verify(photoRepo).save(p)
+        order.verify(manager).commit(anyArg())
+        order.verify(wordWriter).record(p.id, p.eventId, p.photographerId!!, listOf("Cebu", "Marathon"))
+    }
+
+    @Test
+    fun `a failed text read writes no words`() {
+        val p = photo().also { it.photographerId = UUID.randomUUID() }
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        Mockito.`when`(aiClient.bibsRecognize(jpegBytes, "image/jpeg", "${p.id}.jpg"))
+            .thenThrow(AiApiException(HttpStatus.BAD_GATEWAY, "AI_API_ERROR", "boom"))
+
+        indexer(manager(), wordWriter).index(p.id)
+
+        assertEquals(IndexingStatus.PARTIAL, p.indexingStatus)
+        Mockito.verifyNoInteractions(wordWriter)
+    }
+
+    @Test
+    fun `a writer failure does not undo or fail the indexing outcome`() {
+        val p = photo().also { it.photographerId = UUID.randomUUID() }
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList(), words = listOf("Cebu")))
+        val relevance = Mockito.mock(com.quickpitik.repository.BatchRelevanceRepository::class.java)
+        Mockito.`when`(relevance.ensureBatch(p.eventId, p.photographerId!!)).thenThrow(RuntimeException("db down"))
+        val writer = com.quickpitik.service.relevance.RelevanceWordWriter(relevance,
+            com.quickpitik.service.relevance.RelevanceSwitch(
+                com.quickpitik.config.RelevanceProperties(mode = com.quickpitik.config.RelevanceMode.RECORD_ONLY),
+                com.quickpitik.config.AdminProperties(), props()),
+            template(), java.time.Clock.systemUTC())
+        val manager = manager()
+
+        indexer(manager, writer).index(p.id)
+
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        Mockito.verify(photoRepo).save(p)
+        Mockito.verify(manager, Mockito.never()).rollback(anyArg())
+        Mockito.verify(relevance).ensureBatch(p.eventId, p.photographerId!!)
     }
 
     @Test
@@ -579,7 +643,7 @@ class PhotoIndexingServiceTest {
         Mockito.`when`(photoRepo.findById(p.id)).thenReturn(Optional.of(p))
         val disabled = PhotoIndexingService(
             photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
-            faceExpiry,
+            faceExpiry, wordWriter,
         )
 
         disabled.index(p.id)

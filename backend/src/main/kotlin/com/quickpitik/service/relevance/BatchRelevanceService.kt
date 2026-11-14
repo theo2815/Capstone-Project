@@ -61,6 +61,14 @@ class BatchRelevanceService(
     fun sweep() {
         if (switch.mode == RelevanceMode.OFF) return
         val now = clock.postgresTimestamp()
+        // RV-1.2 (G14): before the due list, because a settled batch is never due again.
+        try {
+            transactions.execute {
+                repository.purgeRareWords(props.words.minSharePercent, now.minusDays(props.settleDays), props.maxBatchesPerTick, now)
+            }
+        } catch (ex: Exception) {
+            log.warn("Relevance word purge failed (retried next tick): {}", ex.javaClass.simpleName)
+        }
         val today = LocalDate.now(clock.withZone(EventDtoMapper.PH_ZONE))
         val cutoffs = uploadCutoffs(today)
         val due = repository.findDueBatches(now.minusMinutes(props.quietMinutes), now.minusMinutes(props.rescoreMinutes),
