@@ -169,7 +169,7 @@ class SellerDetailsService(
             SellerReasonCode.REPEAT_ACCOUNT_MATCH.takeIf { repeatMatches.isNotEmpty() },
             SellerReasonCode.PAYOUT_NAME_MISMATCH.takeIf { payouts.any { !NameMatch.same(legalName, it.accountName) } },
             SellerReasonCode.PREVIOUSLY_REJECTED.takeIf { previouslyRejected },
-            // The count before this try (R-8); it never goes down.
+            // The count before this try (R-8); only an admin approval clears it.
             SellerReasonCode.REPEATED_FAILED_CHECKS.takeIf { failedAutoChecks >= identityProperties.maxFailedAutoChecks },
         )
         if (checks.reasons.any { it in PERSON_FAILED }) failedAutoChecks += 1
@@ -299,6 +299,7 @@ class SellerDetailsService(
         row.status = SellerDetailsStatus.APPROVED
         row.reviewedAt = OffsetDateTime.now(clock)
         row.reviewedBy = adminId
+        row.failedAutoChecks = 0 // an admin has seen this person; a later resubmission starts a fresh count
         sellerDetailsRepository.save(row)
         adminDecisionLogService.logUserDecision(
             adminId = adminId, targetUserId = userId, decision = "seller_details_approved", meta = mapOf("revision" to revision),
