@@ -107,6 +107,8 @@ class DuplicateMatcher(
     private fun sameWord(x: String, y: String): Boolean {
         if (x == y) return true
         if (x.length < MIN_TYPO_LENGTH || y.length < MIN_TYPO_LENGTH || abs(x.length - y.length) > 1) return false
+        // A typo keeps the first letter; "Night"/"Light" are two words, not one misspelt.
+        if (x[0] != y[0]) return false
         var i = 0
         var j = 0
         var edits = 0
