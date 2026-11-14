@@ -123,6 +123,26 @@ class AdminDecisionLogService(
             ),
         )
 
+    // RV-2.1 (G17): a decision the system made with no admin (an automatic hide or hold). The row has no admin and
+    // automatic = true; the database refuses a row with neither.
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun logAutomaticUserDecision(
+        targetUserId: UUID,
+        decision: String,
+        reason: String? = null,
+        meta: Map<String, Any?>? = null,
+    ): AdminDecisionLog =
+        adminDecisionLogRepository.save(
+            AdminDecisionLog(
+                adminId = null,
+                targetUserId = targetUserId,
+                decision = decision,
+                reason = reason,
+                meta = meta,
+                automatic = true,
+            ),
+        )
+
     @Transactional(propagation = Propagation.MANDATORY)
     fun pushMessage(
         photographerId: UUID,

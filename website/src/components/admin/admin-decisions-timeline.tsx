@@ -37,6 +37,7 @@ export function AdminDecisionsTimeline({
         decision: entry.decision,
         when: `${formatDecidedAt(entry.decidedAt)}${renderMetaSuffix(entry)}`,
         adminName: entry.adminName ?? null,
+        automatic: entry.automatic === true,
         reason: entry.reason,
       }))
     : (recentQuery.data ?? []).slice(0, limit).map((d) => ({
@@ -45,6 +46,7 @@ export function AdminDecisionsTimeline({
         decision: d.decision,
         when: formatDecidedAt(d.decidedAt),
         adminName: d.adminName,
+        automatic: d.automatic === true,
         reason: d.reason,
       }));
 
@@ -64,7 +66,7 @@ export function AdminDecisionsTimeline({
               {row.title}
             </p>
             <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
-              {row.when} · by {row.adminName ?? "unknown admin"}
+              {row.when} · {row.automatic ? "automatic" : `by ${row.adminName ?? "unknown admin"}`}
             </p>
             {row.reason && (
               <p className="font-sans text-sm text-slate mt-1">
@@ -89,6 +91,8 @@ interface TimelineRow {
   decision: string;
   when: string;
   adminName: string | null;
+  /** No admin acted: the system decided (Photo Relevance). */
+  automatic: boolean;
   reason: string | null;
 }
 

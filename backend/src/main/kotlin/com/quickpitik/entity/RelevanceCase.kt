@@ -12,6 +12,7 @@ enum class CaseStage { SAMPLING, DECIDING, DECIDED, APPLIED, CLOSED }
 enum class CaseVerdict { FITS, MIXED, JUNK_DUMP, WRONG_EVENT, COPIED, CANT_TELL }
 enum class CaseBand { UNDER, MIXED, OVER, SMALL, UNKNOWN }
 enum class CaseAction { NONE, HIDE_JUNK, HIDE_ALL }
+enum class ScanState { NONE, QUEUED, RUNNING, FINISHED }
 
 // RV-1.1 (Photo Relevance v2): one check of one batch (V105 relevance_cases). Written only by
 // service/relevance. A batch has at most one case in SAMPLING, DECIDING or DECIDED, and at most one
@@ -67,4 +68,18 @@ class RelevanceCase(
     @Column(name = "applied_at") var appliedAt: OffsetDateTime? = null,
     @Column(name = "closed_at") var closedAt: OffsetDateTime? = null,
     @Column(name = "close_reason", length = 24) var closeReason: String? = null,
+    // RV-2.1 (V106): what acting needs. Nothing writes these yet.
+    @Column(name = "hidden_photos", nullable = false) var hiddenPhotos: Int = 0,
+    @Column(name = "hide_finished_at") var hideFinishedAt: OffsetDateTime? = null,
+    @Column(name = "scan_state", nullable = false, length = 8) var scanState: String = ScanState.NONE.name,
+    @Column(name = "scan_served_at") var scanServedAt: OffsetDateTime? = null,
+    @Column(name = "scan_finished_at") var scanFinishedAt: OffsetDateTime? = null,
+    @Column(name = "scan_measured") var scanMeasured: Int? = null,
+    @Column(name = "scan_junk") var scanJunk: Int? = null,
+    @Column(name = "scan_blurry") var scanBlurry: Int? = null,
+    @Column(name = "flipped_at") var flippedAt: OffsetDateTime? = null,
+    @Column(name = "notice_at") var noticeAt: OffsetDateTime? = null,
+    @Column(name = "confirmed_at") var confirmedAt: OffsetDateTime? = null,
+    @Column(name = "closed_by") var closedBy: UUID? = null,
+    @Column(name = "hold_flag_id") var holdFlagId: UUID? = null,
 )

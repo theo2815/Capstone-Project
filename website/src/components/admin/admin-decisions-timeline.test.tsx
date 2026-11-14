@@ -90,6 +90,26 @@ it("shows who made each decision on a photographer's page", async () => {
   expect(screen.getByText(/by unknown admin/)).toBeTruthy();
 });
 
+it("shows a decision no admin made as automatic, in both lists", async () => {
+  vi.spyOn(api, "get").mockResolvedValue(paged([
+    row({ decision: "relevance_hidden", adminId: null, adminName: null, automatic: true }),
+  ]));
+  renderTimeline({ recent: true });
+  expect(await screen.findByText(/· automatic/)).toBeTruthy();
+  expect(screen.queryByText(/unknown admin/)).toBeNull();
+  cleanup();
+
+  vi.spyOn(api, "get").mockResolvedValue({
+    ...adminUser,
+    decisionLog: [
+      { userId: adminUser.userId, decision: "suspended", reason: null, decidedAt: "2026-10-27T09:30:00Z", adminId: null, adminName: null, automatic: true },
+    ],
+  });
+  renderTimeline({ userId: adminUser.userId });
+  expect(await screen.findByText(/· automatic/)).toBeTruthy();
+  expect(screen.queryByText(/unknown admin/)).toBeNull();
+});
+
 it("passes a custom limit to the request", async () => {
   const get = vi.spyOn(api, "get").mockResolvedValue(paged([row({})]));
   renderTimeline({ recent: true, limit: 20 });

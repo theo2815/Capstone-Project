@@ -115,7 +115,7 @@ class AdminUserService(
         // multi-kilobyte range. Deeper history can move to its own
         // GET /admin/users/{id}/decisions?offset&limit if the FE asks.
         val entries = adminDecisionLogRepository.findForUserCapped(userId, PageRequest.of(0, DECISION_LOG_DETAIL_CAP))
-        val adminNames = userRepository.findAllById(entries.map { it.adminId }.toSet())
+        val adminNames = userRepository.findAllById(entries.mapNotNull { it.adminId }.toSet())
             .associate { it.id to it.name.ifBlank { it.email } }
         val log = entries
             .map {
@@ -126,7 +126,8 @@ class AdminUserService(
                     decidedAt = it.decidedAt,
                     meta = it.meta,
                     adminId = it.adminId,
-                    adminName = adminNames[it.adminId],
+                    adminName = it.adminId?.let(adminNames::get),
+                    automatic = it.automatic,
                 )
             }
         val row = hydrateRow(user, settings)
