@@ -26,6 +26,7 @@ data class RelevanceProperties(
     val date: Date = Date(),
     val junk: Junk = Junk(),
     val check: Check = Check(),
+    val words: Words = Words(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -117,6 +118,16 @@ data class RelevanceProperties(
             require(measuresPerTick >= 1) { "measuresPerTick must be at least 1" }
             require(workers >= 1) { "workers must be at least 1" }
             require(measureMaxTries >= 1) { "measureMaxTries must be at least 1" }
+        }
+    }
+
+    // Version 2 words read off the photos (G14): once a batch settles, words on under this share of its counted
+    // photos are deleted.
+    data class Words(
+        val minSharePercent: Int = 3,
+    ) {
+        init {
+            require(minSharePercent in 1..100) { "minSharePercent must be 1..100" }
         }
     }
 }

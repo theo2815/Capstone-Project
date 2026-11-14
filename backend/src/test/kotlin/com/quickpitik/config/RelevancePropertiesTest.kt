@@ -32,6 +32,7 @@ class RelevancePropertiesTest {
         assertEquals(RelevanceProperties.Check(minBatchSize = 30, nearLinePoints = 5, sampleSize = 300, countTrigger = 500,
             tickIntervalMs = 15_000, maxBatchesPerTick = 3, claimMinutes = 10, measuresPerTick = 60, workers = 2,
             measureMaxTries = 5), p.check)
+        assertEquals(RelevanceProperties.Words(minSharePercent = 3), p.words)
     }
 
     @Test fun `the yml binds every key and names its env override`() {
@@ -54,6 +55,7 @@ class RelevancePropertiesTest {
             "RELEVANCE_CHECK_SAMPLE_SIZE:300", "RELEVANCE_CHECK_COUNT_TRIGGER:500", "RELEVANCE_CHECK_TICK_INTERVAL_MS:15000",
             "RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3", "RELEVANCE_CHECK_CLAIM_MINUTES:10",
             "RELEVANCE_CHECK_MEASURES_PER_TICK:60", "RELEVANCE_CHECK_WORKERS:2", "RELEVANCE_CHECK_MEASURE_MAX_TRIES:5",
+            "RELEVANCE_WORDS_MIN_SHARE_PERCENT:3",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
     }
 
@@ -124,6 +126,8 @@ class RelevancePropertiesTest {
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Copy(minHitSharePercent = 101) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Date(outsideSharePercent = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Date(outsideSharePercent = 101) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Words(minSharePercent = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Words(minSharePercent = 101) }
     }
 
     @Test fun `intervals and tick counts below one, or too many look-ups, are refused`() {

@@ -172,6 +172,23 @@ class BatchRelevanceServiceTest {
     }
 
     @Test
+    fun `the purge runs on a tick where no batch is due`() {
+        due() // empty
+        service().sweep()
+        // settle-days (7) before the clock, at most max-batches-per-tick (5) batches, words under 3%.
+        Mockito.verify(repository).purgeRareWords(3, OffsetDateTime.parse("2001-06-03T02:00Z"), 5,
+            OffsetDateTime.parse("2001-06-10T02:00Z"))
+    }
+
+    @Test
+    fun `a failed purge does not stop the sweep`() {
+        Mockito.`when`(repository.purgeRareWords(Mockito.anyInt(), anyArg(), Mockito.anyInt(), anyArg())).thenThrow(RuntimeException("db"))
+        due()
+        service().sweep()
+        Mockito.verify(repository).findDueBatches(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyBoolean())
+    }
+
+    @Test
     fun `a tick spends at most the look-up budget across batches`() {
         val a = batch(); val b = batch(); val c = batch()
         pending[a.eventId] = 60; pending[b.eventId] = 60; pending[c.eventId] = 10

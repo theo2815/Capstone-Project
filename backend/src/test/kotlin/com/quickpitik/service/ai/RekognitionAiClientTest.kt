@@ -321,6 +321,23 @@ class RekognitionAiClientTest {
     }
 
     @Test
+    fun `the text read returns bibs and the other words apart`() {
+        `when`(rek.detectText(any(DetectTextRequest::class.java))).thenReturn(
+            DetectTextResponse.builder().textDetections(
+                TextDetection.builder().type(TextTypes.WORD).detectedText("1234").confidence(99f).build(),
+                TextDetection.builder().type(TextTypes.WORD).detectedText(" Cebu ").confidence(97f).build(),
+                TextDetection.builder().type(TextTypes.LINE).detectedText("CEBU MARATHON").confidence(99f).build(),
+                TextDetection.builder().type(TextTypes.WORD).detectedText("Marathon").confidence(95f).build(),
+                TextDetection.builder().type(TextTypes.WORD).detectedText("7").confidence(90f).build(),
+            ).build(),
+        )
+        val result = client.bibsRecognize(bytes, "image/jpeg", "p.jpg", minChars = 2)
+        assertEquals(listOf("1234"), result.detections.map { it.bib_number })
+        // Raw, trimmed and not yet cleaned (RelevanceWords cleans); a word that became a bib is not a word.
+        assertEquals(listOf("Cebu", "Marathon", "7"), result.words)
+    }
+
+    @Test
     fun `detect faces maps count and normalizes confidence`() {
         `when`(rek.detectFaces(any(DetectFacesRequest::class.java))).thenReturn(
             DetectFacesResponse.builder().faceDetails(

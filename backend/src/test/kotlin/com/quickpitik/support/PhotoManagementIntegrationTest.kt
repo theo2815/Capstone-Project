@@ -74,7 +74,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
             com.quickpitik.service.photos.PhotoErasureService(photos, erasureJobs, uploadIntents, removalItems,
                 items, grants, coverage, events, metadata, storage, faceErasure,
                 com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(), tx, json, clock,
-                io.micrometer.core.instrument.simple.SimpleMeterRegistry()), accessGuard)
+                io.micrometer.core.instrument.simple.SimpleMeterRegistry(), Mockito.mock(com.quickpitik.repository.BatchRelevanceRepository::class.java)), accessGuard)
 
     @Test fun `delete acknowledgement with retained derivative must not report physical erasure`() {
         manager.trash(owner.id, event.id, listOf(photo.id))
@@ -273,7 +273,7 @@ class PhotoManagementIntegrationTest : PostgresIntegrationTest() {
             snapshot
         }
         Mockito.`when`(wrappedPhotos.save(anyArg<Photo>())).thenAnswer { photos.save(it.getArgument<Photo>(0)) }
-        val indexer = PhotoIndexingService(wrappedPhotos, Mockito.mock(StorageService::class.java), Mockito.mock(FaceBibProvider::class.java), AiApiProperties(enabled = false), AiProperties(), Mockito.mock(ApplicationEventPublisher::class.java), tx, SimpleMeterRegistry(), Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java), Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java), Mockito.mock(com.quickpitik.service.events.EventFaceExpiry::class.java))
+        val indexer = PhotoIndexingService(wrappedPhotos, Mockito.mock(StorageService::class.java), Mockito.mock(FaceBibProvider::class.java), AiApiProperties(enabled = false), AiProperties(), Mockito.mock(ApplicationEventPublisher::class.java), tx, SimpleMeterRegistry(), Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java), Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java), Mockito.mock(com.quickpitik.service.events.EventFaceExpiry::class.java), Mockito.mock(com.quickpitik.service.relevance.RelevanceWordWriter::class.java))
         Mockito.`when`(wrappedPhotos.skipIndexing(photo.id)).thenAnswer { photos.skipIndexing(photo.id) }
         indexer.index(photo.id)
         assertNotNull(photos.findById(photo.id).orElseThrow().deletedAt, "Background full-entity save resurrected the trashed photo")
