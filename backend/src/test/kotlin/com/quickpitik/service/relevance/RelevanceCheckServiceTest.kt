@@ -47,6 +47,8 @@ class RelevanceCheckServiceTest {
     private val events = Mockito.mock(EventRepository::class.java)
     private val alerts = Mockito.mock(RelevanceAlertRepository::class.java)
     private val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+    private val holds = Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java)
+    private val decisionLog = Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java)
     private val registry = SimpleMeterRegistry()
     private val clock = Clock.fixed(Instant.parse("2002-03-04T05:06:07Z"), ZoneOffset.UTC)
     private val now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC)
@@ -64,7 +66,8 @@ class RelevanceCheckServiceTest {
         val props = RelevanceProperties(mode = mode, junk = junk, llm = RelevanceProperties.Llm(apiKey = key))
         val switch = RelevanceSwitch(props, AdminProperties(), AiApiProperties(enabled = aiEnabled), rekognition)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
-            client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"))
+            client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"),
+            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog)
     }
 
     private fun due(batchId: UUID = UUID.randomUUID()): CheckDue = object : CheckDue {

@@ -214,7 +214,10 @@ class RelevanceApplyIntegrationTest : PostgresIntegrationTest() {
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = flagsEnabled), AiApiProperties(enabled = aiEnabled))
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
-            Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"))
+            Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"),
+            Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java),
+            Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
+            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java))
     }
 
     // A public shared race's batch, quiet, checked and scored by version 1 for its newest upload.

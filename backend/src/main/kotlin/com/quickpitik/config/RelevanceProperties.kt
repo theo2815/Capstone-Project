@@ -29,6 +29,7 @@ data class RelevanceProperties(
     val words: Words = Words(),
     val llm: Llm = Llm(),
     val alerts: Alerts = Alerts(),
+    val hide: Hide = Hide(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -173,6 +174,18 @@ data class RelevanceProperties(
     ) {
         init {
             require(bigHidePhotos >= 1) { "bigHidePhotos must be at least 1" }
+        }
+    }
+
+    // Version 2 automatic hide (part 2, A.2, R10): photos per chunk, each its own short transaction, and chunks per case
+    // a tick. A chunk binds at most chunkSize ids in one statement, so it stays at most 1,000 (review focus 9).
+    data class Hide(
+        val chunkSize: Int = 1000,
+        val chunksPerTick: Int = 10,
+    ) {
+        init {
+            require(chunkSize in 1..1000) { "chunkSize must be 1..1000" }
+            require(chunksPerTick >= 1) { "chunksPerTick must be at least 1" }
         }
     }
 }

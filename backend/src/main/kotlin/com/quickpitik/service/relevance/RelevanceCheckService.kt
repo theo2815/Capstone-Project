@@ -14,9 +14,13 @@ import com.quickpitik.entity.RelevanceCase
 import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.CheckDue
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.HoldTarget
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.repository.RelevanceCaseRepository
+import com.quickpitik.repository.RelevanceHoldRepository
 import com.quickpitik.repository.SamplingCase
+import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.auth.atLeast
 import com.quickpitik.service.events.postgresTimestamp
 import com.quickpitik.websocket.AdminInboxEvent
@@ -56,6 +60,9 @@ class RelevanceCheckService(
     private val alerts: RelevanceAlertRepository,
     private val publisher: ApplicationEventPublisher,
     private val legal: LegalProperties,
+    private val holds: RelevanceHoldRepository,
+    private val photos: PhotoRepository,
+    private val decisionLog: AdminDecisionLogService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -67,6 +74,8 @@ class RelevanceCheckService(
         if (switch.mode == RelevanceMode.OFF) return
         // Database only, so it runs with AI off (G15).
         applyDecided()
+        // Database only too. Record-only never hides (P18), so the holds follow a target only in auto-hide.
+        if (switch.mode == RelevanceMode.AUTO_HIDE) reconcileHolds()
         // G2: with AI off nothing is measured and no check starts, so batches stay "not checked".
         if (switch.canMeasure) continueSampling()
         // O6: no model call without AI on and a key.
@@ -157,13 +166,7 @@ class RelevanceCheckService(
         val raise = if (consented) listOfNotNull((AlertKind.COPIED to case.batchPhotos).takeIf { verdict == CaseVerdict.COPIED })
             else wouldHaveAlerts(case, verdict, action)
         return raise.filter { (kind, photos) ->
-            val alertId = UUID.randomUUID()
-            val stored = alerts.raise(alertId, case.batchId, case.id, kind.name, "${kind.name.lowercase()}:${case.id}",
-                mode == RelevanceMode.RECORD_ONLY, photos, now) == 1
-            // Published inside the transaction: NotificationBroadcaster sends it after the commit, and drops it on a rollback.
-            if (stored) publisher.publishEvent(AdminInboxEvent(payload = mapOf("type" to "relevance_alert",
-                "entityId" to alertId.toString(), "actorId" to case.id.toString(), "occurredAt" to now.toString())))
-            stored
+            raiseAlert(case.batchId, case.id, kind, photos, mode == RelevanceMode.RECORD_ONLY, now)
         }.map { it.first }
     }
 
@@ -179,6 +182,70 @@ class RelevanceCheckService(
             (AlertKind.BIG_HIDE to photos).takeIf { action != CaseAction.NONE && photos >= props.alerts.bigHidePhotos },
             (AlertKind.COPIED to photos).takeIf { verdict == CaseVerdict.COPIED },
         )
+    }
+
+    // Part 2 A.2, RV-2.2b: a current auto-hide case with target HIDE_ALL holds and hides every photo of its batch, a
+    // chunk at a time, so photos uploaded after the hide join it on the next tick (R7). Only cases applied in auto-hide
+    // are read (P18). Going Private or a suspension later lifts nothing (G9), so "still allowed?" is not checked here.
+    // shortcut: every whole-batch auto-hide case is visited each tick (one cheap insert when nothing is left); add a
+    // rotation like the check's if they ever number in the thousands.
+    internal fun reconcileHolds() {
+        val now = clock.postgresTimestamp()
+        for (target in cases.findWholeBatchHides()) {
+            try {
+                hideBatch(target, now)
+            } catch (ex: Exception) {
+                log.warn("Relevance hide step failed case={} (retried next tick): {}", target.caseId, ex.message)
+            }
+        }
+    }
+
+    // Up to chunks-per-tick chunks, each its own short transaction that touches only hold rows and photos: hold up to
+    // chunk-size photos, lock them in id order, hide the live and processing ones by one conditional update.
+    private fun hideBatch(target: HoldTarget, now: OffsetDateTime) {
+        repeat(props.hide.chunksPerTick) {
+            val held = transactions.execute {
+                // A plain read: the case may have been superseded since the list was read.
+                if (!cases.isWholeBatchHide(target.caseId)) return@execute -1
+                val ids = holds.hideChunk(target.batchId, target.caseId, target.eventId, target.photographerId, AUTO, now,
+                    props.hide.chunkSize)
+                if (ids.isNotEmpty()) {
+                    photos.lockIdsForUpdate(ids)
+                    holds.hidePhotos(ids)
+                }
+                ids.size
+            } ?: -1
+            if (held < 0) return
+            if (held == 0) {
+                if (!target.hideFinished) finishHide(target, now)
+                return
+            }
+        }
+    }
+
+    // The first pass that finds nothing left: stamp the case once, log one automatic decision and raise the big-hide
+    // alert at the real count. A separate short transaction, after the photo chunks (lock order, part 1 section 2).
+    private fun finishHide(target: HoldTarget, now: OffsetDateTime) {
+        val raised = transactions.execute {
+            val hidden = holds.countLiveHolds(target.batchId, AUTO).toInt()
+            if (cases.finishHide(target.caseId, hidden, now) != 1) return@execute false
+            decisionLog.logAutomaticUserDecision(target.photographerId, "batch_auto_hidden",
+                meta = mapOf("caseId" to target.caseId.toString(), "eventId" to target.eventId.toString(), "photos" to hidden))
+            log.info("Relevance hide finished case={} photos={}", target.caseId, hidden)
+            hidden >= props.alerts.bigHidePhotos &&
+                raiseAlert(target.batchId, target.caseId, AlertKind.BIG_HIDE, hidden, wouldHave = false, now)
+        }
+        if (raised == true) registry.counter("qp.relevance.alerts", "kind", AlertKind.BIG_HIDE.name.lowercase()).increment()
+    }
+
+    // One stored admin alert, kept from doubling by its key; the live ping goes out after the commit.
+    private fun raiseAlert(batchId: UUID, caseId: UUID, kind: AlertKind, photos: Int, wouldHave: Boolean, now: OffsetDateTime): Boolean {
+        val alertId = UUID.randomUUID()
+        val stored = alerts.raise(alertId, batchId, caseId, kind.name, "${kind.name.lowercase()}:$caseId", wouldHave, photos, now) == 1
+        // Published inside the transaction: NotificationBroadcaster sends it after the commit, and drops it on a rollback.
+        if (stored) publisher.publishEvent(AdminInboxEvent(payload = mapOf("type" to "relevance_alert",
+            "entityId" to alertId.toString(), "actorId" to caseId.toString(), "occurredAt" to now.toString())))
+        return stored
     }
 
     private fun continueSampling() {
@@ -381,6 +448,8 @@ class RelevanceCheckService(
 
     private companion object {
         const val RULES = "RULES"
+        // The automatic hold kind in flag_hidden_photos.held_by (V106).
+        const val AUTO = "AUTO"
         const val MODEL_COLUMN = 60
         // Verdict notes of a check that got no usable answer (plan 5.11).
         val FAILED_CALL = setOf("CALL_FAILED", "CUT_OFF", "BAD_JSON", "UNKNOWN_VALUE")

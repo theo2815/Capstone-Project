@@ -52,4 +52,19 @@ class AdminDecisionLogKpiIntegrationTest : PostgresIntegrationTest() {
             .associate { it[0].toString() to (it[1] as Number).toLong() }
         assertEquals(mapOf(LocalDate.of(2001, 1, 3).toString() to 2L), byDay)
     }
+
+    @Test
+    fun `automatic rows do not count as admin decisions`() {
+        // A week of its own, so the other test's rows are not counted.
+        val auto = day.plusDays(14)
+        val admin = users.save(
+            User(email = "kpi-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "KPI Test Admin", role = Role.ADMIN),
+        )
+        decisions.save(AdminDecisionLog(adminId = admin.id, decision = "approved", decidedAt = auto))
+        // RV-2.2b: the automatic hide of a batch (no admin).
+        decisions.save(AdminDecisionLog(adminId = null, decision = "batch_auto_hidden", decidedAt = auto, automatic = true))
+
+        assertEquals(1, decisions.countLogicalDecisionsBetween(auto.minusDays(1), auto.plusDays(1)))
+        assertEquals(listOf(1L), decisions.decisionCountsByDayBetween(auto.minusDays(1), auto.plusDays(1)).map { (it[1] as Number).toLong() })
+    }
 }
