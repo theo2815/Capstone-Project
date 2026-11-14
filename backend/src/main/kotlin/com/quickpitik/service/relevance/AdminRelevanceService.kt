@@ -9,19 +9,32 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.RelevanceAlertDto
 import com.quickpitik.dto.admin.RelevanceCaseDetailDto
 import com.quickpitik.dto.admin.RelevanceCaseRowDto
+import com.quickpitik.dto.admin.RelevanceHiddenPhotoDto
+import com.quickpitik.dto.admin.RelevancePhotoRestoreDto
+import com.quickpitik.dto.admin.RelevanceRestoreDto
 import com.quickpitik.dto.admin.RelevanceSampleDto
 import com.quickpitik.dto.admin.RelevanceWordDto
 import com.quickpitik.dto.admin.toDto
+import com.quickpitik.entity.CaseAction
+import com.quickpitik.entity.CaseStage
+import com.quickpitik.entity.RelevanceCase
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
+import org.springframework.http.HttpStatus
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.BatchRelevanceRepository
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.repository.RelevanceCaseRepository
+import com.quickpitik.repository.RelevanceHoldRepository
 import com.quickpitik.repository.SamplePhotoRow
+import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.events.postgresTimestamp
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.util.UUID
 
@@ -37,7 +50,104 @@ class AdminRelevanceService(
     private val storage: StorageService,
     private val storageProperties: StorageProperties,
     private val clock: Clock,
+    private val holds: RelevanceHoldRepository,
+    private val photos: PhotoRepository,
+    private val decisionLog: AdminDecisionLogService,
+    private val transactions: TransactionTemplate,
 ) {
+
+    // RV-2.5a (G10): the admin restores the batch. The current case is closed RESTORED_BY_ADMIN (it never counts and stays
+    // the batch's comparator, P21) with the admin's decision; then every live automatic and admin hold of the batch is
+    // restored in this request, a chunk per short transaction, in any mode (the tick returns first while the mode is
+    // off). Photographer holds and flags are never touched. Calling it again on the restored case finishes what was left
+    // and logs nothing more, as long as no newer case is current.
+    // shortcut: a very large batch restores inside one request (chunk-size holds per transaction, so a dropped connection
+    // loses no finished chunk); a second click finishes it, and in auto-hide the tick's sweep does. Move it to a job
+    // if such requests start to time out.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    fun restore(adminId: UUID, caseId: UUID, note: String?): RelevanceRestoreDto {
+        val now = clock.postgresTimestamp()
+        val batchId = transactions.execute {
+            val case = load(caseId)
+            when {
+                case.stage == CaseStage.APPLIED.name -> {
+                    if (cases.closeByAdmin(case.id, RESTORED_BY_ADMIN, adminId, now) != 1) throw wrongState()
+                    logDecision(adminId, case, "relevance_restored", note)
+                }
+                case.stage == CaseStage.CLOSED.name && case.closeReason == RESTORED_BY_ADMIN && cases.currentFor(case.batchId) == null -> Unit
+                else -> throw wrongState()
+            }
+            case.batchId
+        }!!
+        var restored = 0
+        while (true) {
+            // A newer case that became current meanwhile owns the holds from now on.
+            val n = transactions.execute {
+                if (cases.currentFor(batchId) != null) 0 else unhide(holds.restoreByAdminChunk(batchId, now, props.hide.chunkSize))
+            }!!
+            if (n == 0) break
+            restored += n
+        }
+        return RelevanceRestoreDto(caseId, restored)
+    }
+
+    // RV-2.5a: the admin keeps a hiding case as it is: its unseen alerts are marked seen and the decision logged. Nothing
+    // else changes; the case is not confirmed early (that is RV-4.1's job).
+    @Transactional
+    fun keepHidden(adminId: UUID, caseId: UUID, note: String?): RelevanceCaseRowDto {
+        val case = load(caseId)
+        if (case.stage != CaseStage.APPLIED.name || case.action == null || case.action == CaseAction.NONE.name) throw wrongState()
+        alerts.markCaseSeen(case.id, adminId, clock.postgresTimestamp())
+        logDecision(adminId, case, "relevance_kept_hidden", note)
+        return cases.caseRow(caseId)!!.toDto()
+    }
+
+    // RV-2.5a: one photo of the current case's batch comes back by the one restore rule; another hold or a hidden photo
+    // flag may still keep it, and the answer says so. Its rows take the case, so this case never hides it again.
+    @Transactional
+    fun restorePhoto(adminId: UUID, caseId: UUID, photoId: UUID): RelevancePhotoRestoreDto {
+        val case = load(caseId)
+        if (case.stage != CaseStage.APPLIED.name) throw wrongState()
+        val batch = batches.findById(case.batchId).orElseThrow()
+        holds.photoStatusInBatch(photoId, batch.eventId, batch.photographerId)
+            ?: throw NotFoundException("Photo not found in this batch", ErrorCodes.PHOTO_NOT_FOUND)
+        unhide(holds.restorePhotoByAdmin(case.batchId, photoId, case.id, clock.postgresTimestamp()))
+        logDecision(adminId, case, "relevance_photo_restored", null, photoId)
+        return RelevancePhotoRestoreDto(photoId, holds.photoStatusInBatch(photoId, batch.eventId, batch.photographerId)!!)
+    }
+
+    // RV-2.5a: the batch's holds, restored ones included, newest first, with preview thumbnails (never the original).
+    fun hiddenPhotos(caseId: UUID, page: PaginationParams): PaginatedResponse<RelevanceHiddenPhotoDto> {
+        val case = load(caseId)
+        val result = holds.pageBatchHolds(case.batchId, OffsetLimitPageable(page))
+        return PaginatedResponse.of(result.content.map {
+            RelevanceHiddenPhotoDto(it.photoId, it.heldBy, it.hiddenAt?.toString(), it.restoredAt?.toString(), it.restoredBy,
+                it.status, (it.watermarkKey ?: it.thumbnailKey)?.let { key -> storage.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail) })
+        }, result.totalElements, page)
+    }
+
+    private fun load(caseId: UUID): RelevanceCase = cases.findById(caseId).orElseThrow {
+        NotFoundException("Relevance case not found", ErrorCodes.RELEVANCE_CASE_NOT_FOUND)
+    }
+
+    // The holds were just stamped restored: lock their photos in id order, then un-hide by the one restore rule.
+    private fun unhide(ids: List<UUID>): Int {
+        if (ids.isNotEmpty()) {
+            photos.lockIdsForUpdate(ids)
+            holds.unhideReleased(ids)
+        }
+        return ids.size
+    }
+
+    private fun logDecision(adminId: UUID, case: RelevanceCase, decision: String, note: String?, photoId: UUID? = null) {
+        val batch = batches.findById(case.batchId).orElseThrow()
+        decisionLog.logUserDecision(adminId, batch.photographerId, decision, note?.trim()?.ifBlank { null },
+            meta = mapOf("caseId" to case.id.toString(), "eventId" to batch.eventId.toString()) +
+                (photoId?.let { mapOf("photoId" to it.toString()) } ?: emptyMap()))
+    }
+
+    private fun wrongState() = ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+        "This action does not fit the case's current state")
 
     fun listCases(tab: String, page: PaginationParams): PaginatedResponse<RelevanceCaseRowDto> {
         if (tab !in TABS) throw ValidationException("tab must be one of ${TABS.joinToString()}", field = "tab")
@@ -111,6 +221,7 @@ class AdminRelevanceService(
 
     private companion object {
         val TABS = listOf("hidden", "appeals", "cant_tell", "all")
+        const val RESTORED_BY_ADMIN = "RESTORED_BY_ADMIN"
         // As many as the flags page shows (AdminFlagService EVIDENCE_SAMPLES).
         const val SAMPLES = 12
     }

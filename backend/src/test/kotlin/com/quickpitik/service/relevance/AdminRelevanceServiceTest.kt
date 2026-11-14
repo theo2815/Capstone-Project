@@ -34,8 +34,11 @@ class AdminRelevanceServiceTest {
     private val storage = Mockito.mock(StorageService::class.java)
     private val now: Instant = Instant.parse("2003-04-05T06:07:08.123456Z")
     private val props = RelevanceProperties(junk = RelevanceProperties.Junk(blurCutoff = 40.0, darkCutoff = 5.0))
+    private val holds = Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java)
+    private val decisionLog = Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java)
     private val service = AdminRelevanceService(cases, alerts, batches, props, storage, StorageProperties(),
-        Clock.fixed(now, ZoneOffset.UTC))
+        Clock.fixed(now, ZoneOffset.UTC), holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
+        decisionLog, com.quickpitik.support.testTransactionTemplate())
 
     @Test
     fun `the hidden tab lists cases with an action, marked would-have in record-only`() {
@@ -159,6 +162,39 @@ class AdminRelevanceServiceTest {
             override val seenAt = seen
         }
     }
+
+    // RV-2.5a: each action refuses before it writes anything.
+    @Test
+    fun `restore refuses an unknown case`() {
+        val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.NotFoundException> {
+            service.restore(UUID.randomUUID(), UUID.randomUUID(), null)
+        }
+        assertEquals(com.quickpitik.common.ErrorCodes.RELEVANCE_CASE_NOT_FOUND, ex.code)
+        Mockito.verifyNoInteractions(holds, decisionLog)
+    }
+
+    @Test
+    fun `keep hidden refuses a current case that hides nothing`() {
+        val case = appliedCase(action = "NONE")
+        val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> { service.keepHidden(UUID.randomUUID(), case.id, null) }
+        assertEquals(com.quickpitik.common.ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verifyNoInteractions(decisionLog)
+    }
+
+    @Test
+    fun `a single restore refuses a case that is not current`() {
+        val case = appliedCase(action = "HIDE_ALL").apply { stage = "CLOSED"; closeReason = "SUPERSEDED" }
+        val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> {
+            service.restorePhoto(UUID.randomUUID(), case.id, UUID.randomUUID())
+        }
+        assertEquals(com.quickpitik.common.ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verifyNoInteractions(holds, decisionLog)
+    }
+
+    private fun appliedCase(action: String): RelevanceCase =
+        RelevanceCase(batchId = UUID.randomUUID(), trigger = "QUIET", uploadAt = OffsetDateTime.now(), batchPhotos = 40).apply {
+            stage = "APPLIED"; appliedMode = "AUTO_HIDE"; this.action = action
+        }.also { Mockito.`when`(cases.findById(it.id)).thenReturn(Optional.of(it)) }
 
     private fun anyPageable(): Pageable = Mockito.any(Pageable::class.java) ?: Pageable.unpaged()
     private fun anyDuration(): Duration = Mockito.any(Duration::class.java) ?: Duration.ZERO

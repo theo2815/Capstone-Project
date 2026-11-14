@@ -271,6 +271,30 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun finishHide(@Param("id") id: UUID, @Param("photos") photos: Int, @Param("now") now: OffsetDateTime): Int
 
+    // RV-2.5a (G10): an admin closes the current case; closed_by names the admin.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET stage = 'CLOSED', closed_at = :now, close_reason = :reason, closed_by = :adminId
+        WHERE id = :id AND stage = 'APPLIED'
+    """, nativeQuery = true)
+    fun closeByAdmin(
+        @Param("id") id: UUID,
+        @Param("reason") reason: String,
+        @Param("adminId") adminId: UUID,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    // RV-2.5a: batches an admin restored that have no current case and still a live automatic or admin hold (a hide
+    // chunk that outran the restore, or a restore request that broke off). Read from the cases, proved per batch by EXISTS.
+    @Query(value = """
+        SELECT DISTINCT c.batch_id FROM relevance_cases c
+        WHERE c.stage = 'CLOSED' AND c.close_reason = 'RESTORED_BY_ADMIN'
+          AND NOT EXISTS (SELECT 1 FROM relevance_cases n WHERE n.batch_id = c.batch_id AND n.stage = 'APPLIED')
+          AND EXISTS (SELECT 1 FROM flag_hidden_photos h
+                      WHERE h.batch_id = c.batch_id AND h.held_by IN ('AUTO', 'ADMIN') AND h.restored_at IS NULL)
+    """, nativeQuery = true)
+    fun findAdminRestoresLeft(): List<UUID>
+
     // RV-2.2a (P4): a case auto-hide could not act on because the photographer has not accepted the minimum Terms.
     @Modifying
     @Query(value = "UPDATE relevance_cases SET verdict_note = 'NO_CONSENT' WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'RECORD_ONLY'", nativeQuery = true)

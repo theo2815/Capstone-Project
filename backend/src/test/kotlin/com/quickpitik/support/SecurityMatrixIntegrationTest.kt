@@ -214,9 +214,14 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'COPIED', 'RECORD_ONLY', 'HIDE_ALL', ?, ?, ?)", batch, at, at, at, at)
         val alert = id("INSERT INTO relevance_alerts (batch_id, case_id, kind, dedupe_key, would_have, photos, created_at) VALUES (?, ?, 'COPIED', ?, true, 40, ?)",
             batch, case, "copied:$case", at)
+        val photo = id("INSERT INTO photos (event_id, photographer_id, s3_key, price_php, status) VALUES (?, ?, ?, 125, 'LIVE')",
+            event, photographer, "matrix/${UUID.randomUUID()}")
         val reads = listOf("/api/v1/admin/relevance/cases?tab=hidden", "/api/v1/admin/relevance/cases/$case",
-            "/api/v1/admin/relevance/alerts?unseen=true")
+            "/api/v1/admin/relevance/alerts?unseen=true", "/api/v1/admin/relevance/cases/$case/hidden-photos")
         val seen = "/api/v1/admin/relevance/alerts/$alert/seen"
+        // RV-2.5a: the case actions, in an order the admin's calls all succeed (restore closes the case, so it is last).
+        val actions = listOf(seen, "/api/v1/admin/relevance/cases/$case/keep-hidden",
+            "/api/v1/admin/relevance/cases/$case/photos/$photo/restore", "/api/v1/admin/relevance/cases/$case/restore")
         val runner = register(Role.RUNNER)
         val seller = register(Role.PHOTOGRAPHER)
         val admin = adminToken()
@@ -226,10 +231,13 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             assertEquals(403, get(path, runner).statusCode(), path)
             assertEquals(403, get(path, seller).statusCode(), path)
         }
-        assertEquals(403, post(seen, "", runner).statusCode())
-        assertEquals(403, post(seen, "", seller).statusCode())
+        for (path in actions) {
+            assertEquals(401, post(path, "{}").statusCode(), path)
+            assertEquals(403, post(path, "{}", runner).statusCode(), path)
+            assertEquals(403, post(path, "{}", seller).statusCode(), path)
+        }
         for (path in reads) assertEquals(200, get(path, admin).statusCode(), path)
-        assertEquals(200, post(seen, "", admin).statusCode())
+        for (path in actions) assertEquals(200, post(path, "{}", admin).statusCode(), path)
     }
 
     @Test
