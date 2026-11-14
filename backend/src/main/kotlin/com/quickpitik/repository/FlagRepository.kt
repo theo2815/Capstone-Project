@@ -147,11 +147,12 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
     )
     fun markAllRestored(@Param("flagId") flagId: UUID, @Param("now") now: OffsetDateTime): Int
 
-    // Half of AdminFlagService.stillHeldHidden: another flag's batch hide still holds this photo.
+    // Half of AdminFlagService.stillHeldHidden: another hold row (another flag's batch hide, or since V106 a
+    // batch hold with no flag) still holds this photo. IS DISTINCT FROM, so a NULL flag_id counts as "other".
     @Query(
         value = """
         SELECT count(*) > 0 FROM flag_hidden_photos
-        WHERE photo_id = :photoId AND flag_id <> :flagId AND restored_at IS NULL
+        WHERE photo_id = :photoId AND flag_id IS DISTINCT FROM :flagId AND restored_at IS NULL
         """,
         nativeQuery = true,
     )

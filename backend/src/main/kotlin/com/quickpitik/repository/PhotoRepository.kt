@@ -508,8 +508,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     fun hideRecordedForFlag(@Param("flagId") flagId: UUID): Int
 
     // PE-2.4: the bulk restore (a dismissed relevance flag). Same target split as unhideForFlag. The last two
-    // conditions = AdminFlagService.stillHeldHidden: another hidden photo flag or another flag's batch hide
-    // keeps the photo hidden.
+    // conditions = AdminFlagService.stillHeldHidden: another hidden photo flag or another hold row (a flag's
+    // batch hide, or a V106 batch hold with a NULL flag_id, hence IS DISTINCT FROM) keeps the photo hidden.
     @Modifying
     @Query(
         value = """
@@ -520,7 +520,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND NOT EXISTS (SELECT 1 FROM flags f WHERE f.target_kind = 'photo' AND f.target_id = p.id
                           AND f.status = 'hidden' AND f.id <> :flagId)
           AND NOT EXISTS (SELECT 1 FROM flag_hidden_photos o WHERE o.photo_id = p.id
-                          AND o.flag_id <> :flagId AND o.restored_at IS NULL)
+                          AND o.flag_id IS DISTINCT FROM :flagId AND o.restored_at IS NULL)
         """,
         nativeQuery = true,
     )

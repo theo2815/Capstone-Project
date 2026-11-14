@@ -53,4 +53,6 @@ export interface DecisionLogEntry {
   adminId?: string | null;
   /** Null when the admin account no longer exists. */
   adminName?: string | null;
+  /** True when no admin acted: the system decided (Photo Relevance). */
+  automatic?: boolean;
 }

@@ -16,7 +16,9 @@
 --     still open (D20). Money still inside the 7-day clearing window counts as owed.
 -- The script refuses (error, no change) until both are true, while an unpaid order still
 -- holds one of their photos (a late payment would add a sale), while an open or escalated
--- relevance flag is on the account (an admin resolves or dismisses it first), and while the
+-- relevance flag is on the account (an admin resolves or dismisses it first), while a photo
+-- relevance hold of a batch is not restored or an appeal is open (an admin closes the case
+-- first: the run keeps the sold photos, hidden or not), and while the
 -- id is not an existing PHOTOGRAPHER. Read the counts in the error to tell the photographer
 -- what is left.
 --
@@ -29,7 +31,7 @@
 --     and their audit rows; photographer messages; leftover upload intents; saved selfies,
 --     saved events, cart and photo alerts (if they used runner features); live-selfie
 --     sessions (liveness_sessions); photo relevance checks (batch_relevance, with their
---     looked-up photo rows).
+--     looked-up photo rows, cases, holds and appeals); relevance strikes (relevance_strikes).
 --   photographer_settings: handle becomes deleted-<id without dashes> (40 characters, longer
 --     than the app lets anyone choose); brand name, bio, place, cover and watermark cleared.
 --   Their remaining (sold) photos go to the bin, so nobody can buy them any more; buyers keep
@@ -115,6 +117,12 @@ BEGIN
                AND reason = 'batch_relevance_low' AND status IN ('open', 'escalated')) THEN
         RAISE EXCEPTION 'Refused: photographer % is under an upload review; close the relevance flag first (resolve or dismiss)', uid;
     END IF;
+    -- RV-2.1: the same for Photo Relevance v2. The run keeps the sold photos, so a hide or an appeal must end first.
+    IF EXISTS (SELECT 1 FROM flag_hidden_photos h JOIN batch_relevance br ON br.id = h.batch_id
+               WHERE br.photographer_id = uid AND h.restored_at IS NULL)
+       OR EXISTS (SELECT 1 FROM relevance_appeals WHERE photographer_id = uid AND status = 'OPEN') THEN
+        RAISE EXCEPTION 'Refused: photographer % has a photo relevance case with hidden photos or an open appeal; an admin must restore or keep the hidden batch first and decide the appeal', uid;
+    END IF;
     -- "Sold" as PhotographerPhotoService.isSold: a download grant, or a paid order line.
     SELECT count(*) INTO unsold FROM photos p
     WHERE p.photographer_id = uid AND p.purged_at IS NULL
@@ -158,7 +166,8 @@ UNION ALL SELECT 'saved_events', count(*) FROM saved_events WHERE user_id = :'qp
 UNION ALL SELECT 'cart_items', count(*) FROM cart_items WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'event_photo_alerts', count(*) FROM event_photo_alerts WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'liveness_sessions', count(*) FROM liveness_sessions WHERE user_id = :'qp_user_id'
-UNION ALL SELECT 'batch_relevance', count(*) FROM batch_relevance WHERE photographer_id = :'qp_user_id';
+UNION ALL SELECT 'batch_relevance', count(*) FROM batch_relevance WHERE photographer_id = :'qp_user_id'
+UNION ALL SELECT 'relevance_strikes', count(*) FROM relevance_strikes WHERE photographer_id = :'qp_user_id';
 
 \echo '== Kept (rows), and the personal data that stays on them'
 SELECT 'photos (sold; binned by the run)' AS kept, count(*) AS rows, 'credit in already-made previews' AS personal_data_kept FROM photos WHERE photographer_id = :'qp_user_id' AND purged_at IS NULL
@@ -230,6 +239,8 @@ BEGIN
     DELETE FROM liveness_sessions WHERE user_id = uid;
     -- A deadlock error here means the relevance sweep was scoring this account: ROLLBACK and run again.
     DELETE FROM batch_relevance WHERE photographer_id = uid;
+    -- Strikes have no link to the batch row (they outlive it), so they go by photographer.
+    DELETE FROM relevance_strikes WHERE photographer_id = uid;
     UPDATE photographer_coupons SET active = false, updated_at = now() WHERE photographer_id = uid;
     -- Bin what is left (only sold photos pass the checks) and lower the counts, as trash() does.
     WITH binned AS (

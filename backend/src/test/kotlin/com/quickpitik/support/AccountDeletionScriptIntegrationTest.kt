@@ -532,6 +532,35 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         ))
     }
 
+    // RV-2.1: the script bins the sold photos and keeps them, so a live batch hold or an open appeal must be closed by
+    // an admin first; strikes have no link to the batch row, so the script deletes them itself.
+    @Test
+    fun `a live batch hold or an open appeal refuses the deletion, and the run deletes the strikes`() {
+        val s = seedStudio()
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", s.event, s.photographer)
+        val case = id(
+            "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage) " +
+                "VALUES (?, 'QUIET', TIMESTAMPTZ '2003-02-03 04:05:06+00', 40, 'APPLIED')",
+            batch,
+        )
+        jdbc.update("INSERT INTO relevance_strikes (photographer_id, case_id, event_id, verdict, confirmed_at) VALUES (?, ?, ?, 'JUNK_DUMP', now())",
+            s.photographer, case, s.event)
+        val hold = id("INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at) VALUES (?, ?, 'AUTO', ?, now())", batch, s.soldPhoto, case)
+        assertRefusedUnchanged(s.photographer)
+        assertTrue("restore or keep the hidden batch first" in anonymise(s.photographer, confirm = "yes").stderr)
+
+        jdbc.update("UPDATE flag_hidden_photos SET restored_at = now(), restored_by = 'ADMIN' WHERE id = ?", hold)
+        val appeal = id("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason) VALUES (?, ?, ?, 'mine')", case, batch, s.photographer)
+        assertRefusedUnchanged(s.photographer)
+        jdbc.update("UPDATE relevance_appeals SET status = 'LOST' WHERE id = ?", appeal)
+
+        val result = anonymise(s.photographer, confirm = "yes")
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertEquals(0, count("SELECT count(*) FROM relevance_strikes WHERE photographer_id = ?", s.photographer))
+        assertEquals(0, count("SELECT count(*) FROM relevance_appeals WHERE batch_id = ?", batch))
+    }
+
     private fun assertRefusedUnchanged(photographer: UUID) {
         val before = email(photographer)
         val result = anonymise(photographer, confirm = "yes")

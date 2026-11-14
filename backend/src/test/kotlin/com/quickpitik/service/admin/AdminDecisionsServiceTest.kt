@@ -99,6 +99,20 @@ class AdminDecisionsServiceTest {
         assertNull(row.targetId)
     }
 
+    // RV-2.1 (G17): a row no admin made has no admin id and no admin name, and says it is automatic.
+    @Test
+    fun `recent marks an automatic row and looks up only its target`() {
+        val userId = UUID.randomUUID()
+        stub(listOf(AdminDecisionLog(adminId = null, targetUserId = userId, decision = "relevance_hidden", automatic = true)))
+        Mockito.`when`(users.findAllById(setOf(userId))).thenReturn(emptyList())
+
+        val row = service.recent(20).items.single()
+
+        assertNull(row.adminId)
+        assertNull(row.adminName)
+        assertEquals(true, row.automatic)
+    }
+
     @Test
     fun `recent defaults to 20 and clamps the limit between 1 and 100`() {
         stub(emptyList())

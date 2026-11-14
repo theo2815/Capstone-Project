@@ -16,10 +16,13 @@ data class AdminDecisionDto(
     val targetId: String?,
     @field:Schema(description = "Display name (else e-mail) of a user target; null for other targets or a deleted user")
     val targetName: String?,
-    val adminId: UUID,
-    @field:Schema(description = "Admin display name, else e-mail; null when the admin account no longer exists")
+    @field:Schema(description = "Null on an automatic row")
+    val adminId: UUID?,
+    @field:Schema(description = "Admin display name, else e-mail; null when the admin account no longer exists or the row is automatic")
     val adminName: String?,
+    @field:Schema(description = "True when no admin acted: the system decided (Photo Relevance)")
+    val automatic: Boolean = false,
 )
 
 fun AdminDecisionLog.toDto(targetType: String?, targetId: String?, targetName: String?, adminName: String?) =
-    AdminDecisionDto(id, decision, reason, decidedAt, targetType, targetId, targetName, adminId, adminName)
+    AdminDecisionDto(id, decision, reason, decidedAt, targetType, targetId, targetName, adminId, adminName, automatic)

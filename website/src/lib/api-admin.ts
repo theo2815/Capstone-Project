@@ -115,8 +115,11 @@ export interface RecentAdminDecision {
   targetId: string | null;
   /** Name (else e-mail) of a user target; null for other targets or a deleted user. */
   targetName: string | null;
-  adminId: string;
+  /** Null on an automatic row. */
+  adminId: string | null;
   adminName: string | null;
+  /** True when no admin acted: the system decided (Photo Relevance). */
+  automatic?: boolean;
 }
 
 export async function fetchRecentAdminDecisions(
