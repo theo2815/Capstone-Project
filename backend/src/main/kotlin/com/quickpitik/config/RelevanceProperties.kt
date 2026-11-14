@@ -181,8 +181,8 @@ enum class RelevanceMode {
     OFF,
     RECORD_ONLY,
     AUTO_HIDE,
-    // Old names, kept so a server with the old variable still boots: shadow runs as record-only, flag as
-    // version 1's flag mode (RelevanceSwitch).
+    // Old names, kept so a server with the old variable still boots: shadow runs as record-only; flag is
+    // retired (RV-1.10, P2) and also runs as record-only (RelevanceSwitch).
     SHADOW,
     FLAG,
 }

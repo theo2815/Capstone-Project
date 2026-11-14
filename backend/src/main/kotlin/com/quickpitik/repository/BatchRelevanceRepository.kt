@@ -36,9 +36,7 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
 
     // The batches the sweep should work on (plan 5.4). Quiet for :quietCutoff, then one of: no row yet;
     // a different newest upload than the one scored; the event's date edited since scoring; or, before
-    // the final pass, unsettled work or closed uploads once :rescoreCutoff has passed; or, when
-    // :raiseUnflagged (flag mode with the flags switch on), a Low batch not yet linked to a flag, such as one
-    // that went Low in shadow mode (PE-2.1, plan 5.9). Uploads close
+    // the final pass, unsettled work or closed uploads once :rescoreCutoff has passed. Uploads close
     // (PhotoUploadService.gate) after date + 3 days for a shared race and one month for a
     // photographer's own event; the caller passes both cutoff dates from today in Manila.
     @Query(value = """
@@ -56,8 +54,7 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
                OR (br.final_scored_at IS NULL AND br.scored_at <= :rescoreCutoff
                    AND (br.metadata_pending > 0 OR br.photos_processing > 0
                         OR (e.created_by IS NULL AND e.date <= :adminClosedOnOrBefore)
-                        OR (e.created_by IS NOT NULL AND e.date <= :ownerClosedOnOrBefore)))
-               OR (:raiseUnflagged AND br.level = 'LOW' AND br.flag_id IS NULL))
+                        OR (e.created_by IS NOT NULL AND e.date <= :ownerClosedOnOrBefore))))
         ORDER BY br.last_swept_at ASC NULLS FIRST, ep.last_upload_at ASC
         LIMIT :limit
     """, nativeQuery = true)
@@ -67,21 +64,7 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         @Param("adminClosedOnOrBefore") adminClosedOnOrBefore: LocalDate,
         @Param("ownerClosedOnOrBefore") ownerClosedOnOrBefore: LocalDate,
         @Param("limit") limit: Int,
-        @Param("raiseUnflagged") raiseUnflagged: Boolean,
     ): List<DueBatch>
-
-    // R2-10: another photographer's batch in the event whose capture dates fit the current event date.
-    // Without one, a date-Low batch may mean the event's date is wrong, so no automatic note is sent.
-    @Query(value = """
-        SELECT EXISTS (SELECT 1 FROM batch_relevance
-                       WHERE event_id = :eventId AND photographer_id <> :photographerId
-                         AND scored_event_date = :eventDate AND date_low = false)
-    """, nativeQuery = true)
-    fun existsOtherDateClear(
-        @Param("eventId") eventId: UUID,
-        @Param("photographerId") photographerId: UUID,
-        @Param("eventDate") eventDate: LocalDate,
-    ): Boolean
 
     // The scoring lock (plan 5.3): two instances never score one batch at once.
     @Lock(LockModeType.PESSIMISTIC_WRITE)

@@ -1,10 +1,13 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.RelevanceCase
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -173,10 +176,76 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     @Modifying
     @Query(value = "UPDATE relevance_cases SET copy_low = :copyLow, date_low = :dateLow WHERE id = :id AND stage = 'APPLIED'", nativeQuery = true)
     fun copyRuleResults(@Param("id") id: UUID, @Param("copyLow") copyLow: Boolean?, @Param("dateLow") dateLow: Boolean?): Int
+
+    // RV-1.10 (plan 5.11): one tab of the admin page, current cases only, newest first. :tab is 'hidden' (an action
+    // other than NONE), 'cant_tell' or 'all'; the service checks it.
+    @Query(value = "SELECT $CASE_ROW $CASE_FROM WHERE c.stage = 'APPLIED' AND $CASE_TAB ORDER BY c.applied_at DESC, c.id",
+        countQuery = "SELECT count(*) $CASE_FROM WHERE c.stage = 'APPLIED' AND $CASE_TAB", nativeQuery = true)
+    fun pageCurrentCases(@Param("tab") tab: String, pageable: Pageable): Page<RelevanceCaseRow>
+
+    @Query(value = "SELECT $CASE_ROW $CASE_FROM WHERE c.id = :id", nativeQuery = true)
+    fun caseRow(@Param("id") id: UUID): RelevanceCaseRow?
+
+    // RV-1.10: the case's measured sample photos (trashed, removal and failed photos left out) with their stored scores
+    // and preview keys, never the original's key (G19). Junk or clean is decided from the scores (RelevanceJunkRules).
+    @Query(value = """
+        SELECT s.photo_id AS "photoId", p.watermark_s3_key AS "watermarkKey", p.thumbnail_s3_key AS "thumbnailKey",
+               r.fg_sharpness AS "fgSharpness", r.fg_brightness AS "fgBrightness", r.sharpness AS "sharpness",
+               r.brightness AS "brightness", r.person_conf AS "personConf", r.race_conf AS "raceConf"
+        FROM relevance_case_photos s
+        JOIN photos p ON p.id = s.photo_id AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+        JOIN relevance_photo_checks r ON r.photo_id = s.photo_id AND r.measured_at IS NOT NULL AND r.measure_error IS NULL
+        WHERE s.case_id = :caseId
+        ORDER BY s.round, s.photo_id
+    """, nativeQuery = true)
+    fun measuredSample(@Param("caseId") caseId: UUID): List<SamplePhotoRow>
 }
 
 private const val HOLDS_CLAIM =
     "AND EXISTS (SELECT 1 FROM batch_relevance b WHERE b.id = c.batch_id AND b.check_claim = :token)"
+
+private const val CASE_ROW = """c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", e.name AS "eventName",
+    ps.handle AS "photographerHandle", u.name AS "photographerName", c.verdict AS "verdict", c.verdict_note AS "verdictNote",
+    c.action AS "action", c.applied_mode AS "appliedMode", c.batch_photos AS "batchPhotos", c.measured AS "measured",
+    c.junk AS "junk", c.decided_at AS "decidedAt""""
+
+private const val CASE_FROM = """FROM relevance_cases c
+    JOIN batch_relevance br ON br.id = c.batch_id
+    JOIN events e ON e.id = br.event_id
+    JOIN users u ON u.id = br.photographer_id
+    LEFT JOIN photographer_settings ps ON ps.user_id = br.photographer_id"""
+
+private const val CASE_TAB =
+    "(:tab = 'all' OR (:tab = 'hidden' AND c.action <> 'NONE') OR (:tab = 'cant_tell' AND c.verdict = 'CANT_TELL'))"
+
+interface RelevanceCaseRow {
+    val caseId: UUID
+    val batchId: UUID
+    val eventId: UUID
+    val eventName: String
+    val photographerHandle: String?
+    val photographerName: String
+    val verdict: String?
+    val verdictNote: String?
+    val action: String?
+    val appliedMode: String?
+    val batchPhotos: Int
+    val measured: Int?
+    val junk: Int?
+    val decidedAt: Instant?
+}
+
+interface SamplePhotoRow {
+    val photoId: UUID
+    val watermarkKey: String?
+    val thumbnailKey: String?
+    val fgSharpness: Double?
+    val fgBrightness: Double?
+    val sharpness: Double?
+    val brightness: Double?
+    val personConf: Double?
+    val raceConf: Double?
+}
 
 interface SamplingCase {
     val caseId: UUID

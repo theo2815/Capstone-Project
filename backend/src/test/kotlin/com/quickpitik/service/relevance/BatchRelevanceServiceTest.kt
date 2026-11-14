@@ -5,27 +5,15 @@ import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.entity.BatchRelevance
-import com.quickpitik.entity.Event
-import com.quickpitik.entity.Flag
-import com.quickpitik.entity.FlagStatus
-import com.quickpitik.entity.FlagTargetKind
 import com.quickpitik.entity.PhotoMetadataState
-import com.quickpitik.entity.PhotographerMessageKind
-import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.repository.BatchCounts
 import com.quickpitik.repository.BatchMetadataRow
 import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.BibOverlap
 import com.quickpitik.repository.DueBatch
-import com.quickpitik.repository.EventRepository
-import com.quickpitik.repository.FlagRepository
-import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.admin.AdminDecisionLogService
-import com.quickpitik.service.admin.SystemFlagService
 import com.quickpitik.support.testTransactionTemplate
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
-import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.Clock
@@ -33,7 +21,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
-import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -52,16 +39,10 @@ class BatchRelevanceServiceTest {
     private val lookups = mutableListOf<Pair<UUID, Int>>()
     private val stamped = mutableListOf<UUID>()
 
-    private val systemFlags = Mockito.mock(SystemFlagService::class.java)
-    private val flags = Mockito.mock(FlagRepository::class.java)
-    private val users = Mockito.mock(UserRepository::class.java)
-    private val decisions = Mockito.mock(AdminDecisionLogService::class.java)
-    private val events = Mockito.mock(EventRepository::class.java)
-    private val flagMode = RelevanceProperties(mode = RelevanceMode.FLAG)
 
     private fun service(props: RelevanceProperties = RelevanceProperties(mode = RelevanceMode.SHADOW), flagsEnabled: Boolean = true) =
         BatchRelevanceService(repository, props, clock, testTransactionTemplate(), registry,
-            systemFlags, flags, users, AdminProperties(flagsEnabled = flagsEnabled), decisions, events)
+            AdminProperties(flagsEnabled = flagsEnabled))
 
     private fun batch(shared: Boolean = true, date: LocalDate = today): DueBatch {
         val b = object : DueBatch {
@@ -93,50 +74,7 @@ class BatchRelevanceServiceTest {
     }
 
     private fun due() {
-        Mockito.`when`(repository.findDueBatches(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyBoolean())).thenReturn(batches)
-    }
-
-    // A Low batch by the copy rule (tight 3 of 60) or by the date rule (9 of 10 outside).
-    private fun lowBatch(byDate: Boolean = false): DueBatch {
-        val b = batch()
-        if (byDate) metadata(b, 10, 9) else setCounts(b, counts(tight = 3, looked = 60))
-        return b
-    }
-
-    // The open relevance flag raise or appendNote leaves behind, as the link query finds it.
-    private fun openFlag(b: DueBatch): Flag {
-        val flag = Flag(targetKindWire = "user", targetId = b.photographerId, reason = "batch_relevance_low")
-        Mockito.`when`(flags.findByTargetKindWireAndTargetIdAndReasonAndStatusWireIn(
-            "user", b.photographerId, "batch_relevance_low", listOf("open", "escalated"))).thenReturn(listOf(flag))
-        return flag
-    }
-
-    private fun linkedTo(b: DueBatch, status: FlagStatus, resolvedAt: OffsetDateTime? = null): Flag {
-        val flag = Flag(targetKindWire = "user", targetId = b.photographerId, reason = "batch_relevance_low",
-            statusWire = status.wire, resolvedAt = resolvedAt)
-        rows.getValue(b.eventId).flagId = flag.id
-        Mockito.`when`(flags.findById(flag.id)).thenReturn(Optional.of(flag))
-        return flag
-    }
-
-    private fun event(b: DueBatch, name: String = "Cebu City Marathon") {
-        val event = Mockito.mock(Event::class.java)
-        Mockito.`when`(event.name).thenReturn(name)
-        Mockito.`when`(events.findById(b.eventId)).thenReturn(Optional.of(event))
-    }
-
-    private fun neverFlagged() {
-        Mockito.verify(systemFlags, Mockito.never()).raise(anyArg(), anyArg(), anyArg(), Mockito.anyString(), Mockito.any())
-        Mockito.verify(systemFlags, Mockito.never()).appendNote(anyArg(), anyArg(), anyArg(), Mockito.anyString())
-    }
-
-    private fun noteSent(): Boolean =
-        Mockito.mockingDetails(decisions).invocations.any { it.method.name == "pushMessage" }
-
-    private fun raiseNote(): String {
-        val note = ArgumentCaptor.forClass(String::class.java)
-        Mockito.verify(systemFlags).raise(eqArg(FlagTargetKind.USER), anyArg(), eqArg(SystemFlagReason.BATCH_RELEVANCE_LOW), note.capture() ?: "", Mockito.isNull())
-        return note.value
+        Mockito.`when`(repository.findDueBatches(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(batches)
     }
 
     private fun counts(tight: Long = 0, looked: Long = 0, processing: Long = 0, indexed: Long = 0, exact: Long = 0) = object : BatchCounts {
@@ -185,7 +123,7 @@ class BatchRelevanceServiceTest {
         Mockito.`when`(repository.purgeRareWords(Mockito.anyInt(), anyArg(), Mockito.anyInt(), anyArg())).thenThrow(RuntimeException("db"))
         due()
         service().sweep()
-        Mockito.verify(repository).findDueBatches(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyBoolean())
+        Mockito.verify(repository).findDueBatches(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt())
     }
 
     @Test
@@ -363,151 +301,6 @@ class BatchRelevanceServiceTest {
         assertEquals(1.0, registry.get("qp.relevance.scored").tag("level", "low").counter().count())
         assertEquals(1L, registry.get("qp.relevance.tick").timer().count())
         Mockito.verify(repository).setLocalStatementTimeout(5000)
-    }
-
-    // ---- PE-2.1 flag mode (plan 5.9, R2-10, R2-35) ----
-
-    private fun raises(result: Boolean) {
-        Mockito.`when`(systemFlags.raise(anyArg(), anyArg(), anyArg(), Mockito.anyString(), Mockito.isNull())).thenReturn(result)
-    }
-
-    @Test
-    fun `flag mode raises one user flag for a low batch and links the batch to it`() {
-        val b = lowBatch(); raises(true); val flag = openFlag(b)
-        service(flagMode).score(b, today)
-        val row = rows.getValue(b.eventId)
-        assertEquals(flag.id, row.flagId)
-        assertEquals(OffsetDateTime.now(clock), row.flaggedAt)
-        assertEquals("event ${b.eventId} ${b.eventDate}: copy 3/60, dated outside 0/0, exact 0, xmp 0", raiseNote())
-        Mockito.verify(systemFlags, Mockito.never()).appendNote(anyArg(), anyArg(), anyArg(), Mockito.anyString())
-    }
-
-    @Test
-    fun `a second low batch of the same photographer adds a note to the open flag and links to it`() {
-        val b = lowBatch(); raises(false); val flag = openFlag(b)
-        service(flagMode).score(b, today)
-        Mockito.verify(systemFlags).appendNote(eqArg(FlagTargetKind.USER), eqArg(b.photographerId), eqArg(SystemFlagReason.BATCH_RELEVANCE_LOW),
-            eqArg("${OffsetDateTime.now(clock)} event ${b.eventId} ${b.eventDate}: copy 3/60, dated outside 0/0, exact 0, xmp 0"))
-        assertEquals(flag.id, rows.getValue(b.eventId).flagId)
-    }
-
-    @Test
-    fun `a batch already linked to an open flag is not raised or appended again`() {
-        for (status in listOf(FlagStatus.OPEN, FlagStatus.ESCALATED)) {
-            val b = lowBatch(); val flag = linkedTo(b, status)
-            service(flagMode).score(b, today)
-            assertEquals(flag.id, rows.getValue(b.eventId).flagId)
-            assertNull(rows.getValue(b.eventId).flaggedAt)
-        }
-        neverFlagged()
-        assertFalse(noteSent())
-    }
-
-    @Test
-    fun `after its flag is closed a batch is raised again only after a later upload`() {
-        // The batches' newest upload is 2001-06-10T01:00:00.123456Z.
-        val before = OffsetDateTime.parse("2001-06-10T01:00:00.123456Z")
-        for (status in listOf(FlagStatus.RESOLVED, FlagStatus.DISMISSED, FlagStatus.HIDDEN)) {
-            val b = lowBatch(); linkedTo(b, status, resolvedAt = before)
-            service(flagMode).score(b, today)
-        }
-        neverFlagged()
-
-        val later = lowBatch(); val old = linkedTo(later, FlagStatus.DISMISSED, resolvedAt = before.minusNanos(1_000)); raises(true)
-        val reopened = openFlag(later)
-        service(flagMode).score(later, today)
-        assertEquals(reopened.id, rows.getValue(later.eventId).flagId)
-        assertTrue(old.id != reopened.id)
-    }
-
-    @Test
-    fun `shadow mode never raises`() {
-        val b = lowBatch(byDate = true)
-        service().score(b, today)
-        assertEquals("LOW", rows.getValue(b.eventId).level)
-        Mockito.verifyNoInteractions(systemFlags, flags, users, decisions, events)
-    }
-
-    @Test
-    fun `flag mode with the flags switch off never raises`() {
-        val b = lowBatch(byDate = true); due()
-        service(flagMode, flagsEnabled = false).sweep()
-        assertEquals("LOW", rows.getValue(b.eventId).level)
-        assertNull(rows.getValue(b.eventId).flagId)
-        Mockito.verify(repository).findDueBatches(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt(), Mockito.eq(false))
-        Mockito.verifyNoInteractions(systemFlags, flags, users, decisions, events)
-    }
-
-    @Test
-    fun `flag mode asks the due query for low batches with no flag`() {
-        due()
-        service(flagMode).sweep()
-        Mockito.verify(repository).findDueBatches(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyInt(), Mockito.eq(true))
-    }
-
-    @Test
-    fun `a date rule low sends the photographer one note and a copy rule low sends none`() {
-        val byDate = lowBatch(byDate = true); raises(true); openFlag(byDate); event(byDate)
-        Mockito.`when`(repository.existsOtherDateClear(byDate.eventId, byDate.photographerId, byDate.eventDate)).thenReturn(true)
-        service(flagMode).score(byDate, today)
-        Mockito.verify(decisions).pushMessage(eqArg(byDate.photographerId), eqArg(PhotographerMessageKind.ADMIN_MESSAGE),
-            Mockito.anyString(), Mockito.isNull(), Mockito.isNull(), eqArg("Check the event for some uploads"), Mockito.isNull())
-
-        val byCopy = lowBatch(); openFlag(byCopy)
-        service(flagMode).score(byCopy, today)
-        Mockito.verify(decisions, Mockito.times(1)).pushMessage(anyArg(), anyArg(), Mockito.anyString(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any())
-        assertNotNull(rows.getValue(byCopy.eventId).flagId)
-    }
-
-    @Test
-    fun `the first date low batch of a wrong-date event sends no note`() {
-        val b = lowBatch(byDate = true); raises(true); openFlag(b); event(b)
-        service(flagMode).score(b, today)
-        assertFalse(noteSent())
-        assertEquals("event ${b.eventId} ${b.eventDate}: copy 0/0, dated outside 9/10, exact 0, xmp 0; " +
-            "no other batch of this event has a usable date: check the event's date first", raiseNote())
-    }
-
-    @Test
-    fun `a date low batch beside a clear batch sends the note`() {
-        val b = lowBatch(byDate = true); raises(true); openFlag(b); event(b)
-        Mockito.`when`(repository.existsOtherDateClear(b.eventId, b.photographerId, b.eventDate)).thenReturn(true)
-        service(flagMode).score(b, today)
-        assertTrue(noteSent())
-        assertEquals("event ${b.eventId} ${b.eventDate}: copy 0/0, dated outside 9/10, exact 0, xmp 0", raiseNote())
-    }
-
-    @Test
-    fun `the note names the event and no other photographer`() {
-        val b = lowBatch(byDate = true); raises(true); openFlag(b); event(b, "Sugbo Night Run")
-        Mockito.`when`(repository.existsOtherDateClear(b.eventId, b.photographerId, b.eventDate)).thenReturn(true)
-        service(flagMode).score(b, today)
-        val body = ArgumentCaptor.forClass(String::class.java)
-        Mockito.verify(decisions).pushMessage(anyArg(), anyArg(), body.capture() ?: "", Mockito.isNull(), Mockito.isNull(), Mockito.anyString(), Mockito.isNull())
-        assertEquals("Many of the photos you uploaded to Sugbo Night Run have camera dates far from the event's date " +
-            "(${b.eventDate}). For now they stay on sale, and an admin will take a look. " +
-            "If your camera's clock was set wrong, or the photos belong to a different event, contact support.", body.value)
-        assertFalse("photographer" in body.value.lowercase() || "cop" in body.value.lowercase())
-    }
-
-    @Test
-    fun `the photographer's user row is locked before any flag read`() {
-        val b = lowBatch(); raises(true); openFlag(b); linkedTo(b, FlagStatus.DISMISSED, OffsetDateTime.parse("2001-06-01T00:00:00Z"))
-        service(flagMode).score(b, today)
-        val order = Mockito.inOrder(repository, users, flags, systemFlags)
-        order.verify(repository).lockById(rows.getValue(b.eventId).id)
-        order.verify(users).lockById(b.photographerId)
-        order.verify(flags).findById(anyArg())
-        order.verify(systemFlags).raise(anyArg(), anyArg(), anyArg(), Mockito.anyString(), Mockito.isNull())
-    }
-
-    @Test
-    fun `exact and xmp matches still never set the level in flag mode`() {
-        val b = batch(); setCounts(b, counts(looked = 60, exact = 8))
-        Mockito.`when`(repository.xmpMatches(b.eventId, b.photographerId)).thenReturn(7)
-        service(flagMode).score(b, today)
-        assertNull(rows.getValue(b.eventId).level)
-        Mockito.verifyNoInteractions(systemFlags, flags, users, decisions)
     }
 
     private inline fun <reified T : Any> anyArg(): T = Mockito.any(T::class.java) ?: uninitialized()
