@@ -21,6 +21,9 @@ class RelevanceSwitch(
     val aiEnabled: Boolean = aiApi.enabled
     // The label check is on the Rekognition client only; with app.ai.provider=ai-api the bean is absent.
     val canMeasure: Boolean get() = aiEnabled && rekognition?.getIfAvailable() != null
+    // A verdict also needs the model key (the same test as AnthropicClient.isConfigured).
+    private val llmConfigured: Boolean = relevance.llm.apiKey.isNotBlank()
+    val canDecide: Boolean get() = canMeasure && llmConfigured
 
     // Version 1's flag mode until RV-1.10 retires it (P2). With the admin flags switch off nobody could
     // see or close a flag, so it raises none.
