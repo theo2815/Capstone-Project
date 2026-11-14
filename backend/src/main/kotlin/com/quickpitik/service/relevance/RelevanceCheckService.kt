@@ -2,22 +2,29 @@ package com.quickpitik.service.relevance
 
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
+import com.quickpitik.entity.AlertKind
 import com.quickpitik.entity.BatchRelevance
+import com.quickpitik.entity.CaseAction
 import com.quickpitik.entity.CaseBand
 import com.quickpitik.entity.CaseStage
+import com.quickpitik.entity.CaseVerdict
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.RelevanceCase
 import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.CheckDue
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.SamplingCase
 import com.quickpitik.service.events.postgresTimestamp
+import com.quickpitik.websocket.AdminInboxEvent
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
+import org.springframework.transaction.TransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.OffsetDateTime
@@ -29,7 +36,8 @@ import java.util.concurrent.TimeUnit
 // again that it is still due, then one transaction inserts the case in SAMPLING, picks its sample and marks
 // the batch checked. RV-1.6: it measures each SAMPLING case's sample (RelevanceMeasurer, on its own pool) and
 // moves the case to DECIDING with its counts and band. RV-1.8b: it decides each DECIDING case with one model call
-// (no transaction open), lets code check the answer (settle) and stores the verdict. Later tasks add the apply step.
+// (no transaction open), lets code check the answer (settle) and stores the verdict. RV-1.9: it applies each DECIDED
+// case in record-only (applyCase): the case becomes current and stores the alerts auto-hide would have raised.
 @Service
 class RelevanceCheckService(
     private val batches: BatchRelevanceRepository,
@@ -42,6 +50,8 @@ class RelevanceCheckService(
     private val measurer: RelevanceMeasurer,
     private val client: AnthropicClient,
     private val events: EventRepository,
+    private val alerts: RelevanceAlertRepository,
+    private val publisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -51,12 +61,96 @@ class RelevanceCheckService(
     )
     fun tick() {
         if (switch.mode == RelevanceMode.OFF) return
-        // Later tasks add their steps here.
+        // Database only, so it runs with AI off (G15).
+        applyDecided()
         // G2: with AI off nothing is measured and no check starts, so batches stay "not checked".
         if (switch.canMeasure) continueSampling()
         // O6: no model call without AI on and a key.
         if (switch.canDecide) decideCases()
         if (switch.aiEnabled) startChecks()
+    }
+
+    private fun applyDecided() {
+        val now = clock.postgresTimestamp()
+        for (case in cases.findDecided(props.check.maxBatchesPerTick)) {
+            try {
+                applyCase(case.id, now)
+            } catch (ex: Exception) {
+                log.warn("Relevance apply step failed case={} (retried next tick): {}", case.id, ex.message)
+            }
+        }
+    }
+
+    // Plan 5.11: one decided case in one short transaction, database only. Part 1 applies every case as record-only
+    // (auto-hide too, until RV-2.2a): the action and the alerts auto-hide would have raised are stored, and no photo,
+    // hold, flag, message or e-mail is touched. Every write is guarded by the stage it expects, so a second server
+    // copy that read the same case changes nothing.
+    internal fun applyCase(caseId: UUID, now: OffsetDateTime) {
+        val raised = transactions.execute { status -> applyInTransaction(caseId, now, status) } ?: return
+        raised.forEach { registry.counter("qp.relevance.alerts", "kind", it.name.lowercase()).increment() }
+    }
+
+    private fun applyInTransaction(caseId: UUID, now: OffsetDateTime, status: TransactionStatus): List<AlertKind> {
+        val case = cases.findById(caseId).orElse(null)
+        if (case?.stage != CaseStage.DECIDED.name) return emptyList()
+        val decided = CaseStage.DECIDED.name
+        if (!batches.stillAllowed(case.batchId)) {
+            cases.closeCase(case.id, decided, "SKIPPED", now)
+            log.info("Relevance check skipped case={}: event not public or photographer suspended", case.id)
+            return emptyList()
+        }
+        val verdict = CaseVerdict.valueOf(case.verdict!!)
+        val mode = RelevanceMode.RECORD_ONLY
+        val current = cases.currentFor(case.batchId)
+        if (current != null) {
+            // A failed check changes nothing; the same verdict again is one alert per verdict change, not per check
+            // (R7, P8). Both hand their copy and date results to the current case so the RULES trigger does not
+            // fire again for them (a failed re-check too: owner call, 2026-11-14).
+            val reason = when {
+                verdict == CaseVerdict.CANT_TELL && case.verdictNote in FAILED_CALL -> "NO_RESULT"
+                current.verdict == case.verdict && current.appliedMode == mode.name -> "SAME_VERDICT"
+                else -> null
+            }
+            if (reason != null) {
+                if (cases.closeCase(case.id, decided, reason, now) == 1) cases.copyRuleResults(current.id, case.copyLow, case.dateLow)
+                log.info("Relevance check closed case={} reason={}", case.id, reason)
+                return emptyList()
+            }
+        }
+        val action = when (verdict) {
+            CaseVerdict.MIXED -> CaseAction.HIDE_JUNK
+            CaseVerdict.JUNK_DUMP, CaseVerdict.WRONG_EVENT, CaseVerdict.COPIED -> CaseAction.HIDE_ALL
+            CaseVerdict.FITS, CaseVerdict.CANT_TELL -> CaseAction.NONE
+        }
+        if ((current != null && cases.closeCase(current.id, CaseStage.APPLIED.name, "SUPERSEDED", now) != 1) ||
+            cases.applyCase(case.id, mode.name, action.name, now) != 1) {
+            status.setRollbackOnly()
+            return emptyList()
+        }
+        log.info("Relevance check applied case={} verdict={} action={} mode={}", case.id, verdict, action, mode)
+        return wouldHaveAlerts(case, verdict, action).filter { (kind, photos) ->
+            val alertId = UUID.randomUUID()
+            val stored = alerts.raise(alertId, case.batchId, case.id, kind.name, "${kind.name.lowercase()}:${case.id}",
+                mode == RelevanceMode.RECORD_ONLY, photos, now) == 1
+            // Published inside the transaction: NotificationBroadcaster sends it after the commit, and drops it on a rollback.
+            if (stored) publisher.publishEvent(AdminInboxEvent(payload = mapOf("type" to "relevance_alert",
+                "entityId" to alertId.toString(), "actorId" to case.id.toString(), "occurredAt" to now.toString())))
+            stored
+        }.map { it.first }
+    }
+
+    // The alerts of plan 5.11 with the photos the hide would take: the whole batch, or the sample's junk share of it.
+    private fun wouldHaveAlerts(case: RelevanceCase, verdict: CaseVerdict, action: CaseAction): List<Pair<AlertKind, Int>> {
+        val measured = case.measured ?: 0
+        val photos = when (action) {
+            CaseAction.HIDE_ALL -> case.batchPhotos
+            CaseAction.HIDE_JUNK -> if (measured == 0) 0 else ((case.junk ?: 0).toLong() * case.batchPhotos / measured).toInt()
+            CaseAction.NONE -> 0
+        }
+        return listOfNotNull(
+            (AlertKind.BIG_HIDE to photos).takeIf { action != CaseAction.NONE && photos >= props.alerts.bigHidePhotos },
+            (AlertKind.COPIED to photos).takeIf { verdict == CaseVerdict.COPIED },
+        )
     }
 
     private fun continueSampling() {
@@ -260,6 +354,8 @@ class RelevanceCheckService(
     private companion object {
         const val RULES = "RULES"
         const val MODEL_COLUMN = 60
+        // Verdict notes of a check that got no usable answer (plan 5.11).
+        val FAILED_CALL = setOf("CALL_FAILED", "CUT_OFF", "BAD_JSON", "UNKNOWN_VALUE")
     }
 }
 

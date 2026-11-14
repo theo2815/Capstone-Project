@@ -143,6 +143,36 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         SELECT :caseId, s.photo_id, s.round FROM relevance_case_photos s WHERE s.case_id = :fromCaseId
     """, nativeQuery = true)
     fun copySample(@Param("caseId") caseId: UUID, @Param("fromCaseId") fromCaseId: UUID): Int
+
+    // RV-1.9 (plan 5.11): decided cases waiting to be applied, oldest verdict first. Applying reads and writes the
+    // database only, so it needs no batch claim: every write below is guarded by the stage it expects.
+    @Query(value = "SELECT * FROM relevance_cases WHERE stage = 'DECIDED' ORDER BY decided_at, created_at LIMIT :limit", nativeQuery = true)
+    fun findDecided(@Param("limit") limit: Int): List<RelevanceCase>
+
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET stage = 'CLOSED', closed_at = :now, close_reason = :reason
+        WHERE id = :id AND stage = :fromStage
+    """, nativeQuery = true)
+    fun closeCase(
+        @Param("id") id: UUID,
+        @Param("fromStage") fromStage: String,
+        @Param("reason") reason: String,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    // Runs after closeCase of the old current case: the unique index on the current case allows no other order.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET stage = 'APPLIED', applied_mode = :mode, action = :action, applied_at = :now
+        WHERE id = :id AND stage = 'DECIDED'
+    """, nativeQuery = true)
+    fun applyCase(@Param("id") id: UUID, @Param("mode") mode: String, @Param("action") action: String, @Param("now") now: OffsetDateTime): Int
+
+    // The current case takes a newer check's copy and date results, so the RULES trigger does not fire again for them.
+    @Modifying
+    @Query(value = "UPDATE relevance_cases SET copy_low = :copyLow, date_low = :dateLow WHERE id = :id AND stage = 'APPLIED'", nativeQuery = true)
+    fun copyRuleResults(@Param("id") id: UUID, @Param("copyLow") copyLow: Boolean?, @Param("dateLow") dateLow: Boolean?): Int
 }
 
 private const val HOLDS_CLAIM =
