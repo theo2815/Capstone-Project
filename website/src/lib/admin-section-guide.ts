@@ -73,6 +73,12 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
     label: "Photo removals",
     body: "Runner requests and support requests. Review what was hidden or suggested, find their photos across every photographer in one event and verify which to hide.",
   },
+  {
+    number: "12",
+    href: ROUTES.ADMIN_RELEVANCE,
+    label: "Photo Relevance",
+    body: "Batches checked after upload for junk, wrong-event and copied photos. Read each verdict, its reason and its sample photos.",
+  },
 ];
 
 export const ADMIN_SECTION_GUIDE: ReadonlyArray<SectionGuideEntry> =

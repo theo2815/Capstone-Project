@@ -143,9 +143,14 @@ const label = (map: Record<string, string>, value: string | null): string | null
 export const verdictLabel = (v: string | null) => label(VERDICT_LABEL, v) ?? "Not decided";
 export const verdictNoteLabel = (n: string | null) => label(NOTE_LABEL, n);
 export const actionLabel = (a: string | null) => label(ACTION_LABEL, a);
+// RV-1.11b: the inbox's alert list. A record-only alert reads as on the page.
+export const WOULD_HAVE_LABEL = "Would have hidden";
+export const ALERTS_EMPTY = "No unseen relevance alerts.";
+export const ALERT_SEEN_FAILED = "Could not mark the alert seen. It stays in the list; try again.";
+
 export const alertKindLabel = (k: string) => label(ALERT_LABEL, k) ?? k;
 export const evidenceLabel = (e: string) => label(EVIDENCE_LABEL, e) ?? e;
-export const bandLabel =(b: string | null) => label(BAND_LABEL, b) ?? "Not worked out";
+export const bandLabel = (b: string | null) => label(BAND_LABEL, b) ?? "Not worked out";
 
 /** Applied in record-only with a hide recorded: nothing was hidden. The server works it out. */
 export const isWouldHave = (row: Pick<RelevanceCaseRow, "wouldHave">) => row.wouldHave;

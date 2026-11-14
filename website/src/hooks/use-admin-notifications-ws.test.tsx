@@ -69,6 +69,26 @@ it("dispute_withdrawn refreshes disputes and KPIs", () => {
   client.clear();
 });
 
+it("a relevance_alert frame refreshes the cases and the alerts", () => {
+  const socket = { onopen: () => {}, onmessage: vi.fn<(event: { data: string }) => void>(), close: vi.fn() };
+  vi.stubGlobal("WebSocket", vi.fn(function () { return socket; }));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const client = new QueryClient();
+  const cases = ["admin", "relevance", "cases", "hidden", admin.id];
+  const alerts = ["admin", "relevance", "alerts", "unseen", admin.id];
+  const other = ["admin", "disputes"];
+  for (const key of [cases, alerts, other]) client.setQueryData(key, { items: [] });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { unmount } = renderHook(() => useAdminNotificationsWs(true), { wrapper });
+  // The frame RelevanceCheckService sends: entityId is the alert, actorId the case.
+  socket.onmessage({ data: JSON.stringify({ type: "relevance_alert", entityId: "alert-1", actorId: "case-1", occurredAt: "2003-02-14T03:00:00Z" }) });
+  expect(client.getQueryState(cases)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(alerts)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(other)?.isInvalidated).toBe(false);
+  expect(warn).not.toHaveBeenCalled();
+  unmount(); client.clear();
+});
+
 it("refreshes current-session removal cases on reconnect and removal changes", async () => {
   const socket = { onopen: () => {}, onmessage: vi.fn<(event: { data: string }) => void>(), close: vi.fn() };
   vi.stubGlobal("WebSocket", vi.fn(function () { return socket; }));
