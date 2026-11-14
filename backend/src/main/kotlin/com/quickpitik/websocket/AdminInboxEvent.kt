@@ -11,9 +11,10 @@ package com.quickpitik.websocket
 // using `type` as the dispatch key. Schema:
 //   {
 //     "type": "verification_submitted" | "dispute_filed" | "payout_report_filed"
-//           | "event_submitted" | "event_change_requested",   // V46 event review queue
-//     "entityId": "<uuid>",            // userId | disputeId | reportId | eventId
-//     "actorId":  "<uuid>",            // photographerId | runnerId | photographerId
+//           | "event_submitted" | "event_change_requested"    // V46 event review queue
+//           | "relevance_alert",                               // RV-1.9 photo relevance alert
+//     "entityId": "<uuid>",            // userId | disputeId | reportId | eventId | alertId
+//     "actorId":  "<uuid>",            // photographerId | runnerId | photographerId | caseId (no person acted)
 //     "occurredAt": "<ISO-8601>"
 //   }
 data class AdminInboxEvent(

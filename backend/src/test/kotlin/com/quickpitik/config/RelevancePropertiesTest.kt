@@ -36,6 +36,7 @@ class RelevancePropertiesTest {
         assertEquals(RelevanceProperties.Llm(apiKey = "", baseUrl = "https://api.anthropic.com", model = "claude-sonnet-5-5",
             connectTimeout = Duration.ofSeconds(5), readTimeout = Duration.ofSeconds(30), maxAttempts = 3,
             retryBackoff = Duration.ofSeconds(1), maxTokens = 4096), p.llm)
+        assertEquals(RelevanceProperties.Alerts(bigHidePhotos = 500), p.alerts)
     }
 
     @Test fun `the yml binds every key and names its env override`() {
@@ -62,7 +63,7 @@ class RelevancePropertiesTest {
             "RELEVANCE_WORDS_MIN_SHARE_PERCENT:3", "RELEVANCE_WORDS_TOP_N:30",
             "RELEVANCE_LLM_API_KEY:}","RELEVANCE_LLM_BASE_URL:https://api.anthropic.com", "RELEVANCE_LLM_MODEL:claude-sonnet-5-5",
             "RELEVANCE_LLM_CONNECT_TIMEOUT:5s", "RELEVANCE_LLM_READ_TIMEOUT:30s", "RELEVANCE_LLM_MAX_ATTEMPTS:3",
-            "RELEVANCE_LLM_RETRY_BACKOFF:1s", "RELEVANCE_LLM_MAX_TOKENS:4096",
+            "RELEVANCE_LLM_RETRY_BACKOFF:1s", "RELEVANCE_LLM_MAX_TOKENS:4096", "RELEVANCE_ALERTS_BIG_HIDE_PHOTOS:500",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
     }
 

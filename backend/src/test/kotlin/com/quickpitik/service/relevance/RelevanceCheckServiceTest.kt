@@ -12,17 +12,20 @@ import com.quickpitik.repository.CheckDue
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoScoresRow
 import com.quickpitik.repository.PhotoToMeasure
+import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.SamplingCase
 import com.quickpitik.repository.WordCount
 import com.quickpitik.repository.WordPhotographers
 import com.quickpitik.service.ai.RekognitionAiClient
+import com.quickpitik.websocket.AdminInboxEvent
 import com.quickpitik.support.testTransactionTemplate
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.Clock
 import java.time.Instant
@@ -41,6 +44,8 @@ class RelevanceCheckServiceTest {
     private val measurer = Mockito.mock(RelevanceMeasurer::class.java)
     private val client = Mockito.mock(AnthropicClient::class.java)
     private val events = Mockito.mock(EventRepository::class.java)
+    private val alerts = Mockito.mock(RelevanceAlertRepository::class.java)
+    private val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
     private val registry = SimpleMeterRegistry()
     private val clock = Clock.fixed(Instant.parse("2002-03-04T05:06:07Z"), ZoneOffset.UTC)
     private val now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC)
@@ -58,7 +63,7 @@ class RelevanceCheckServiceTest {
         val props = RelevanceProperties(mode = mode, junk = junk, llm = RelevanceProperties.Llm(apiKey = key))
         val switch = RelevanceSwitch(props, AdminProperties(), AiApiProperties(enabled = aiEnabled), rekognition)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
-            client, events)
+            client, events, alerts, publisher)
     }
 
     private fun due(batchId: UUID = UUID.randomUUID()): CheckDue = object : CheckDue {
@@ -91,7 +96,10 @@ class RelevanceCheckServiceTest {
     @Test
     fun `with AI off no check starts`() {
         service(aiEnabled = false).tick()
-        Mockito.verifyNoInteractions(batches, cases)
+        Mockito.verifyNoInteractions(batches)
+        // Only the apply step, which reads the database and runs with AI off (G15).
+        Mockito.verify(cases).findDecided(Mockito.anyInt())
+        Mockito.verifyNoMoreInteractions(cases)
     }
 
     @Test
@@ -322,8 +330,9 @@ class RelevanceCheckServiceTest {
         Mockito.verify(batches).claimCheck(eqArg(id), anyArg(), anyArg(), anyArg())
     }
 
-    // The tick always lists sampling cases first; nothing else may touch the cases.
+    // The tick always lists decided and sampling cases first; nothing else may touch the cases.
     private fun noCaseWorkBeyondTheSamplingList() {
+        Mockito.verify(cases).findDecided(Mockito.anyInt())
         Mockito.verify(cases).findSampling(anyArg(), Mockito.anyInt())
         Mockito.verifyNoMoreInteractions(cases)
     }
@@ -550,6 +559,41 @@ class RelevanceCheckServiceTest {
     private fun photographers(w: String, n: Int) = object : WordPhotographers {
         override val word = w
         override val photographers = n
+    }
+
+    // RV-1.9: the apply step.
+
+    @Test
+    fun `the admin ping goes out after the commit, once per new alert`() {
+        val c = RelevanceCase(batchId = UUID.randomUUID(), trigger = "QUIET", uploadAt = now, batchPhotos = 600,
+            stage = "DECIDED", verdict = "COPIED")
+        Mockito.`when`(cases.findDecided(Mockito.anyInt())).thenReturn(listOf(c))
+        Mockito.`when`(cases.findById(c.id)).thenReturn(Optional.of(c))
+        Mockito.`when`(batches.stillAllowed(c.batchId)).thenReturn(true)
+        Mockito.`when`(cases.applyCase(eqArg(c.id), anyArg(), anyArg(), anyArg())).thenReturn(1)
+        // The big-hide alert is new; the copied one was already raised by another server copy.
+        val ids = mutableMapOf<String, UUID>()
+        Mockito.`when`(alerts.raise(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.anyBoolean(), Mockito.anyInt(), anyArg()))
+            .thenAnswer {
+                val kind = it.getArgument<String>(3)
+                ids[kind] = it.getArgument(0)
+                if (kind == "BIG_HIDE") 1 else 0
+            }
+        val inTransaction = mutableListOf<Boolean>()
+        Mockito.`when`(publisher.publishEvent(anyArg<Any>())).thenAnswer {
+            // Published inside the transaction, so NotificationBroadcaster's AFTER_COMMIT listener sends it after the commit.
+            inTransaction += TransactionSynchronizationManager.isSynchronizationActive()
+            null
+        }
+
+        service(aiEnabled = false).tick()
+
+        val sent = ArgumentCaptor.forClass(AdminInboxEvent::class.java)
+        Mockito.verify(publisher).publishEvent(sent.capture())
+        assertEquals(listOf(true), inTransaction)
+        assertEquals(mapOf("type" to "relevance_alert", "entityId" to ids["BIG_HIDE"].toString(), "actorId" to c.id.toString()),
+            sent.value.payload - "occurredAt")
+        assertEquals(setOf("BIG_HIDE", "COPIED"), ids.keys)
     }
 
     private fun <T> anyArg(): T = Mockito.any()

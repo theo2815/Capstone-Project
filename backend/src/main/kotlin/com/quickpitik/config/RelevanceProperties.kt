@@ -28,6 +28,7 @@ data class RelevanceProperties(
     val check: Check = Check(),
     val words: Words = Words(),
     val llm: Llm = Llm(),
+    val alerts: Alerts = Alerts(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -164,6 +165,15 @@ data class RelevanceProperties(
         override fun toString() = "Llm(apiKey=${if (apiKey.isBlank()) "<unset>" else "<set>"}, baseUrl=$baseUrl, model=$model, " +
             "connectTimeout=$connectTimeout, readTimeout=$readTimeout, maxAttempts=$maxAttempts, retryBackoff=$retryBackoff, " +
             "maxTokens=$maxTokens)"
+    }
+
+    // Version 2 admin alerts (plan 5.11): a hide of at least bigHidePhotos photos in one batch raises a big-hide alert.
+    data class Alerts(
+        val bigHidePhotos: Int = 500,
+    ) {
+        init {
+            require(bigHidePhotos >= 1) { "bigHidePhotos must be at least 1" }
+        }
     }
 }
 

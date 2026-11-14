@@ -8,6 +8,7 @@ import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.CheckDue
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.RelevanceCaseRepository
+import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.service.relevance.AnthropicClient
 import com.quickpitik.service.relevance.RelevanceCheckService
 import com.quickpitik.service.relevance.RelevanceMeasurer
@@ -16,6 +17,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
@@ -98,7 +100,8 @@ class RelevanceRulesTriggerIntegrationTest : PostgresIntegrationTest() {
         val props = RelevanceProperties(mode = RelevanceMode.RECORD_ONLY, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
         val switch = RelevanceSwitch(props, AdminProperties(), AiApiProperties(enabled = true))
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(), measurer,
-            Mockito.mock(AnthropicClient::class.java), events)
+            Mockito.mock(AnthropicClient::class.java), events, Mockito.mock(RelevanceAlertRepository::class.java),
+            Mockito.mock(ApplicationEventPublisher::class.java))
     }
 
     // A shared race's batch, quiet, already checked for its newest upload and scored by version 1 for it.

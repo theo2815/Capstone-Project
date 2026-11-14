@@ -391,6 +391,9 @@ app:
       retry-backoff: ${RELEVANCE_LLM_RETRY_BACKOFF:1s}
       # Includes the model's thinking; an answer cut off at this limit is stored as can't tell.
       max-tokens: ${RELEVANCE_LLM_MAX_TOKENS:4096}
+    alerts:
+      # Version 2: a hide (in record-only, a would-be hide) of at least this many photos in one batch raises one admin alert.
+      big-hide-photos: ${RELEVANCE_ALERTS_BIG_HIDE_PHOTOS:500}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
