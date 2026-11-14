@@ -1271,6 +1271,18 @@ class SellerDetailsServiceTest {
         order.verify(repository).findUserIdsByIdNumberHmacIn(hashes, userId)
     }
 
+    // Same gap for the phone: the phone lock comes before the id lock (one order, no deadlock) and the lookup.
+    @Test
+    fun `the phone lock is taken before the id lock and the phone lookup`() {
+        service().submit(userId, form(livenessSessionId = SESSION))
+
+        val phoneKey = saved().phoneKey
+        val order = Mockito.inOrder(repository)
+        order.verify(repository).lockPhoneKey(phoneKey)
+        order.verify(repository).lockIdNumber(anyArg())
+        order.verify(repository).findUserIdsByPhoneKey(phoneKey, userId)
+    }
+
     @Test
     fun `no typed number takes no id lock`() {
         service().submit(userId, form(idNumber = null))
