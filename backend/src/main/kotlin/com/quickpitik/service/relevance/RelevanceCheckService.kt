@@ -302,11 +302,13 @@ class RelevanceCheckService(
     // RV-2.5a: an admin's batch restore (AdminRelevanceService.restore) runs in its request; this finishes what a hide chunk
     // that outran it, or a request that broke off, left: live automatic and admin holds of a batch whose case an admin
     // restored and that has no current case. Same chunks and settings as the hide; stops at once if a case becomes current.
-    // shortcut: each tick reads every closed RESTORED_BY_ADMIN case (no index on close_reason) and probes the hold index
-    // of each one's batch; add a partial index on relevance_cases WHERE close_reason = 'RESTORED_BY_ADMIN' by migration
-    // once admin restores reach the tens of thousands.
+    // Only restores closed in the last restore.sweep-minutes are swept: the race it covers lasts seconds, and after the
+    // window a leftover needs a second click on restore (the route allows it).
+    // shortcut: each tick still filters the cases table on close_reason and closed_at (no index on either) and, per
+    // restore in the window, reads the batch's hold rows through the batch_id index, restored ones too; add a partial
+    // index by migration if admin restores reach the tens of thousands or restored batches reach 100,000 photos.
     private fun finishAdminRestores(now: OffsetDateTime) {
-        for (batchId in cases.findAdminRestoresLeft()) {
+        for (batchId in cases.findAdminRestoresLeft(now.minusMinutes(props.restore.sweepMinutes))) {
             try {
                 for (i in 1..props.hide.chunksPerTick) {
                     val n = transactions.execute {

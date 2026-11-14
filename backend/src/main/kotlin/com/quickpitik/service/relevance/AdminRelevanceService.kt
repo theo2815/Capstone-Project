@@ -111,8 +111,10 @@ class AdminRelevanceService(
         val batch = batches.findById(case.batchId).orElseThrow()
         holds.photoStatusInBatch(photoId, batch.eventId, batch.photographerId)
             ?: throw NotFoundException("Photo not found in this batch", ErrorCodes.PHOTO_NOT_FOUND)
-        unhide(holds.restorePhotoByAdmin(case.batchId, photoId, case.id, clock.postgresTimestamp()))
-        logDecision(adminId, case, "relevance_photo_restored", null, photoId)
+        // Logged only when a hold was stamped: a second click, or a photo only another kind keeps, restored nothing.
+        if (unhide(holds.restorePhotoByAdmin(case.batchId, photoId, case.id, clock.postgresTimestamp())) > 0) {
+            logDecision(adminId, case, "relevance_photo_restored", null, photoId)
+        }
         return RelevancePhotoRestoreDto(photoId, holds.photoStatusInBatch(photoId, batch.eventId, batch.photographerId)!!)
     }
 

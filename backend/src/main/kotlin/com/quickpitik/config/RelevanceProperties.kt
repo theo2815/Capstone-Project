@@ -31,6 +31,7 @@ data class RelevanceProperties(
     val alerts: Alerts = Alerts(),
     val hide: Hide = Hide(),
     val scan: Scan = Scan(),
+    val restore: Restore = Restore(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -187,6 +188,16 @@ data class RelevanceProperties(
         init {
             require(chunkSize in 1..1000) { "chunkSize must be 1..1000" }
             require(chunksPerTick >= 1) { "chunksPerTick must be at least 1" }
+        }
+    }
+
+    // RV-2.5a: how long after an admin's batch restore the tick still finishes holds a running hide chunk left behind;
+    // after it a leftover needs a second click on restore.
+    data class Restore(
+        val sweepMinutes: Long = 60,
+    ) {
+        init {
+            require(sweepMinutes >= 1) { "sweepMinutes must be at least 1" }
         }
     }
 

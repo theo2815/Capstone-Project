@@ -58,7 +58,8 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
     private lateinit var adminId: UUID
 
     @BeforeEach fun setUp() {
-        Mockito.`when`(storage.presignedGetUrl(anyArg(), anyArg())).thenAnswer { "https://synthetic.test/${it.arguments[0]}" }
+        // doAnswer records no call while stubbing, so a background job using the shared mock cannot take the stub (review 3).
+        Mockito.doAnswer { "https://synthetic.test/${it.arguments[0]}" }.`when`(storage).presignedGetUrl(anyArg(), anyArg())
         adminId = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Admin', 'ADMIN')",
             "reladmin-${UUID.randomUUID()}@test.local")
     }
@@ -220,6 +221,20 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `a single restore that changes nothing writes no decision`() {
+        val b = batch()
+        val c = case(b, "COPIED")
+        val once = hidden(b, "AUTO", c)
+        val ownOnly = hidden(b, "PHOTOGRAPHER", null)
+        admin.restorePhoto(adminId, c, once)
+
+        assertEquals("LIVE", admin.restorePhoto(adminId, c, once).status)
+        assertEquals("HIDDEN", admin.restorePhoto(adminId, c, ownOnly).status)
+
+        assertEquals(1, decisionsOf(b).count { it[1] == "relevance_photo_restored" })
+    }
+
+    @Test
     fun `a single restore is refused for a photo of another batch or a case that is not current`() {
         val b = batch()
         val c = case(b, "COPIED")
@@ -258,7 +273,8 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         admin.restore(adminId, c, null)
         val late = hidden(b, "AUTO", c)
         val newer = batch()
-        case(newer, "JUNK_DUMP", stage = "CLOSED", closeReason = "RESTORED_BY_ADMIN")
+        // Closed just now, inside the sweep's window, so only the newer current case keeps the sweep away.
+        case(newer, "JUNK_DUMP", stage = "CLOSED", closeReason = "RESTORED_BY_ADMIN", closedAt = OffsetDateTime.now())
         val now = case(newer, "COPIED")
         val kept = hidden(newer, "AUTO", now)
 
@@ -267,6 +283,21 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         assertEquals("LIVE", status(late))
         assertEquals("ADMIN", jdbc.queryForObject("SELECT restored_by FROM flag_hidden_photos WHERE photo_id = ?", String::class.java, late))
         assertEquals("HIDDEN", status(kept))
+    }
+
+    @Test
+    fun `the tick sweeps only restores closed inside the window`() {
+        val inside = batch()
+        case(inside, "JUNK_DUMP", stage = "CLOSED", closeReason = "RESTORED_BY_ADMIN", closedAt = OffsetDateTime.now().minusMinutes(50))
+        val fresh = hidden(inside, "AUTO", null)
+        val outside = batch()
+        case(outside, "JUNK_DUMP", stage = "CLOSED", closeReason = "RESTORED_BY_ADMIN", closedAt = OffsetDateTime.now().minusMinutes(70))
+        val old = hidden(outside, "AUTO", null)
+
+        checkService(sweepMinutes = 60).reconcileHolds()
+
+        assertEquals("LIVE", status(fresh))
+        assertEquals("HIDDEN", status(old), "after the window a leftover needs a second click on restore")
     }
 
     @Test
@@ -314,8 +345,9 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
             holds, photos, decisions, tx)
     }
 
-    private fun checkService(mode: RelevanceMode = RelevanceMode.AUTO_HIDE): RelevanceCheckService {
-        val props = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
+    private fun checkService(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, sweepMinutes: Long = 60): RelevanceCheckService {
+        val props = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0),
+            restore = RelevanceProperties.Restore(sweepMinutes = sweepMinutes))
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false))
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
@@ -345,11 +377,14 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
     }
 
     // A case of the batch, current (APPLIED in auto-hide) unless `stage` says otherwise.
-    private fun case(b: Batch, verdict: String, stage: String = "APPLIED", mode: String = "AUTO_HIDE", closeReason: String? = null): UUID = id(
+    private fun case(
+        b: Batch, verdict: String, stage: String = "APPLIED", mode: String = "AUTO_HIDE", closeReason: String? = null,
+        closedAt: OffsetDateTime = NOW,
+    ): UUID = id(
         "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, copy_low, decided_at, applied_mode, action, " +
             "applied_at, closed_at, close_reason) VALUES (?, 'QUIET', ?, 600, ?, ?, false, ?, ?, ?, ?, ?, ?)",
         b.id, UPLOAD, stage, verdict, NOW, mode.takeIf { stage != "DECIDED" }, action(verdict).takeIf { stage != "DECIDED" },
-        NOW.takeIf { stage != "DECIDED" }, closeReason?.let { NOW }, closeReason,
+        NOW.takeIf { stage != "DECIDED" }, closeReason?.let { closedAt }, closeReason,
     )
 
     private fun action(verdict: String) = when (verdict) {

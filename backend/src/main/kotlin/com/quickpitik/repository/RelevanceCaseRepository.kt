@@ -284,16 +284,17 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         @Param("now") now: OffsetDateTime,
     ): Int
 
-    // RV-2.5a: batches an admin restored that have no current case and still a live automatic or admin hold (a hide
-    // chunk that outran the restore, or a restore request that broke off). Read from the cases, proved per batch by EXISTS.
+    // RV-2.5a: batches an admin restored since :since that have no current case and still a live automatic or admin hold
+    // (a hide chunk that outran the restore, or a restore request that broke off). Read from the cases, proved per batch
+    // by EXISTS.
     @Query(value = """
         SELECT DISTINCT c.batch_id FROM relevance_cases c
-        WHERE c.stage = 'CLOSED' AND c.close_reason = 'RESTORED_BY_ADMIN'
+        WHERE c.stage = 'CLOSED' AND c.close_reason = 'RESTORED_BY_ADMIN' AND c.closed_at > :since
           AND NOT EXISTS (SELECT 1 FROM relevance_cases n WHERE n.batch_id = c.batch_id AND n.stage = 'APPLIED')
           AND EXISTS (SELECT 1 FROM flag_hidden_photos h
                       WHERE h.batch_id = c.batch_id AND h.held_by IN ('AUTO', 'ADMIN') AND h.restored_at IS NULL)
     """, nativeQuery = true)
-    fun findAdminRestoresLeft(): List<UUID>
+    fun findAdminRestoresLeft(@Param("since") since: OffsetDateTime): List<UUID>
 
     // RV-2.2a (P4): a case auto-hide could not act on because the photographer has not accepted the minimum Terms.
     @Modifying
