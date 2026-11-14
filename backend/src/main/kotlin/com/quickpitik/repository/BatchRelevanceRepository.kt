@@ -324,6 +324,10 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
     """, nativeQuery = true)
     fun stillAllowed(@Param("id") id: UUID): Boolean
 
+    // RV-2.2a (P4): the legal version the batch's photographer accepted, for the consent check at apply.
+    @Query(value = "SELECT u.terms_version FROM batch_relevance br JOIN users u ON u.id = br.photographer_id WHERE br.id = :id", nativeQuery = true)
+    fun photographerTermsVersion(@Param("id") id: UUID): String?
+
     // RV-1.6 (S1): the case's sampled photos with no measurement and no error yet, in photo id order. A photo
     // measured by an earlier check has its row already and is skipped. Trashed or removal photos are left out.
     @Query(value = """

@@ -172,6 +172,25 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun applyCase(@Param("id") id: UUID, @Param("mode") mode: String, @Param("action") action: String, @Param("now") now: OffsetDateTime): Int
 
+    // RV-2.2a (A.3, P21): with no current case, the batch's last case an admin closed is the comparator, so an
+    // admin's decision is not undone by the next upload.
+    @Query(value = """
+        SELECT * FROM relevance_cases
+        WHERE batch_id = :batchId AND stage = 'CLOSED' AND close_reason IN ('RESTORED_BY_ADMIN', 'APPEAL_WON', 'LOOKS_FINE')
+        ORDER BY closed_at DESC, created_at DESC LIMIT 1
+    """, nativeQuery = true)
+    fun lastClosedByAdmin(@Param("batchId") batchId: UUID): RelevanceCase?
+
+    // RV-2.2a (P4): a case auto-hide could not act on because the photographer has not accepted the minimum Terms.
+    @Modifying
+    @Query(value = "UPDATE relevance_cases SET verdict_note = 'NO_CONSENT' WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'RECORD_ONLY'", nativeQuery = true)
+    fun markNoConsent(@Param("id") id: UUID): Int
+
+    // RV-2.2a (A.3 step 5, P8): queue the full scan. Only an auto-hide case is ever scanned (P14, P18).
+    @Modifying
+    @Query(value = "UPDATE relevance_cases SET scan_state = 'QUEUED' WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE'", nativeQuery = true)
+    fun queueScan(@Param("id") id: UUID): Int
+
     // The current case takes a newer check's copy and date results, so the RULES trigger does not fire again for them.
     @Modifying
     @Query(value = "UPDATE relevance_cases SET copy_low = :copyLow, date_low = :dateLow WHERE id = :id AND stage = 'APPLIED'", nativeQuery = true)
