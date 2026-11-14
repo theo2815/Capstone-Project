@@ -193,6 +193,62 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `a fits or mixed re-check does not lift a whole-batch hide before the G7 rows exist`() {
+        for (oldVerdict in listOf("JUNK_DUMP", "WRONG_EVENT", "COPIED")) {
+            for (newVerdict in listOf("FITS", "MIXED")) {
+                val b = batch(photos = 600)
+                val old = case(b, "APPLIED", oldVerdict, applied = "AUTO_HIDE")
+                val new = case(b, "DECIDED", newVerdict, measured = 300, junk = 120)
+
+                service().applyCase(new, NOW)
+
+                assertEquals(listOf("CLOSED", "HELD_BY_CASE"), row(new, "stage", "close_reason"), "$oldVerdict -> $newVerdict")
+                assertEquals(listOf("APPLIED", "HIDE_ALL"), row(old, "stage", "action"), "$oldVerdict -> $newVerdict")
+            }
+        }
+        // A whole-batch hide that becomes another whole-batch hide lifts nothing, so it is applied as usual.
+        val b = batch(photos = 600)
+        val old = case(b, "APPLIED", "JUNK_DUMP", applied = "AUTO_HIDE")
+        val new = case(b, "DECIDED", "WRONG_EVENT")
+        service().applyCase(new, NOW)
+        assertEquals(listOf("CLOSED", "SUPERSEDED"), row(old, "stage", "close_reason"))
+    }
+
+    @Test
+    fun `a record-only case never closes an auto-hide case with the same verdict`() {
+        for ((label, service, terms) in recordOnlySetups()) {
+            val b = batch(photos = 600, terms = terms)
+            val old = case(b, "APPLIED", "MIXED", applied = "AUTO_HIDE", copyLow = false)
+            val new = case(b, "DECIDED", "MIXED", measured = 300, junk = 120, copyLow = true)
+
+            service.applyCase(new, NOW)
+
+            assertEquals(listOf("CLOSED", "SAME_VERDICT"), row(new, "stage", "close_reason"), label)
+            assertEquals(listOf("APPLIED", "AUTO_HIDE", true), row(old, "stage", "applied_mode", "copy_low"), label)
+        }
+    }
+
+    @Test
+    fun `a record-only case never replaces an auto-hide case with a different verdict`() {
+        for ((label, service, terms) in recordOnlySetups()) {
+            val b = batch(photos = 600, terms = terms)
+            val old = case(b, "APPLIED", "MIXED", applied = "AUTO_HIDE", copyLow = false)
+            val new = case(b, "DECIDED", "FITS", copyLow = true)
+
+            service.applyCase(new, NOW)
+
+            assertEquals(listOf("CLOSED", "HELD_BY_CASE"), row(new, "stage", "close_reason"), label)
+            assertEquals(listOf("APPLIED", "AUTO_HIDE", true), row(old, "stage", "applied_mode", "copy_low"), label)
+        }
+    }
+
+    // The two ways a new case is applied in record-only while an auto-hide case is current.
+    private fun recordOnlySetups() = listOf(
+        Triple("record-only mode", service(mode = RelevanceMode.RECORD_ONLY), "1.7"),
+        Triple("no consent", service(), "1.0"),
+    )
+
+    @Test
     fun `the same verdict after an admin restore hides nothing again`() {
         val b = batch(photos = 600)
         case(b, "CLOSED", "JUNK_DUMP", applied = "AUTO_HIDE", closeReason = "RESTORED_BY_ADMIN")

@@ -120,10 +120,14 @@ class RelevanceCheckService(
                 verdict == CaseVerdict.CANT_TELL && case.verdictNote in FAILED_CALL -> "NO_RESULT"
                 verdict == CaseVerdict.CANT_TELL && current?.appliedMode == RelevanceMode.AUTO_HIDE.name &&
                     current.action != CaseAction.NONE.name -> "HELD_BY_CASE"
-                comparator.verdict != case.verdict -> null
-                current == null -> "SAME_VERDICT"
                 // Only a record-only case is replaced by the same verdict, and only by one that can act (P18).
-                current.appliedMode == mode.name || (autoHide && current.appliedMode == RelevanceMode.AUTO_HIDE.name) -> "SAME_VERDICT"
+                comparator.verdict == case.verdict ->
+                    if (current == null || current.appliedMode == mode.name || current.appliedMode == RelevanceMode.AUTO_HIDE.name) "SAME_VERDICT" else null
+                current == null || current.appliedMode != RelevanceMode.AUTO_HIDE.name -> null
+                // A record-only case never acts, and closing an acting case is an act (P18; conductor's call, A.3 leaves it open).
+                mode == RelevanceMode.RECORD_ONLY -> "HELD_BY_CASE"
+                // shortcut: a Fits or Mixed re-check never lifts a whole-batch hide; RV-2.4 replaces this with A.3's G7 rows.
+                current.action == CaseAction.HIDE_ALL.name && verdict in SCANNED -> "HELD_BY_CASE"
                 else -> null
             }
             if (reason != null) {
@@ -141,7 +145,6 @@ class RelevanceCheckService(
             CaseVerdict.JUNK_DUMP, CaseVerdict.WRONG_EVENT, CaseVerdict.COPIED -> CaseAction.HIDE_ALL
             CaseVerdict.FITS, CaseVerdict.CANT_TELL -> CaseAction.NONE
         }
-        // shortcut: a JUNK_DUMP, WRONG_EVENT or COPIED current case is superseded like any other; G7's rows are RV-2.4.
         if ((current != null && cases.closeCase(current.id, CaseStage.APPLIED.name, "SUPERSEDED", now) != 1) ||
             cases.applyCase(case.id, mode.name, action.name, now) != 1) {
             status.setRollbackOnly()
