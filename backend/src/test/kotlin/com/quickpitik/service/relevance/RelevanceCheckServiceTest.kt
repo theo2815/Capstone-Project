@@ -67,7 +67,7 @@ class RelevanceCheckServiceTest {
 
         val order = Mockito.inOrder(cases, batches)
         order.verify(cases).findDecided(Mockito.anyInt())
-        order.verify(cases).findWholeBatchHides()
+        order.verify(cases).findHoldTargets()
         order.verify(cases).findSampling(anyArg(), Mockito.anyInt())
         order.verify(cases).findDeciding(anyArg(), anyArg(), Mockito.anyInt())
         order.verify(batches).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())

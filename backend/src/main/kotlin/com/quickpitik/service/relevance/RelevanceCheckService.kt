@@ -255,38 +255,74 @@ class RelevanceCheckService(
     // shortcut: every current whole-batch auto-hide case is visited each tick, and each visit is one transaction whose
     // hide chunk is an anti-join over all the batch's photos, even when nothing is left; skip a finished case until a new
     // upload arrives, or rotate with a LIMIT, once whole-batch cases pile up or batches reach tens of thousands of photos.
+    // RV-2.3b: target HIDE_JUNK holds and hides each photo measured as junk as the scan measures it, and the restore step
+    // brings back what a lowered target no longer covers: under HIDE_JUNK a measured photo that is not junk, under NONE
+    // every automatic hold. The restore is level-triggered: it reads the batch's holds, whichever case they name, every
+    // tick until none is left, so a hide chunk that committed just after its case stopped being current is undone too.
+    // shortcut: every current Mixed auto-hide case costs a junk anti-join and a restore query each tick, as the whole-batch
+    // hide does; bound it the same way (skip until a new measurement or upload, or rotate with a LIMIT) when they pile up.
+    // shortcut: findHoldTargets probes each current auto-hide NONE case for a live AUTO hold every tick; the only index is on
+    // batch_id, so a "no" reads every hold row of the batch, restored ones too (a Mixed batch scanned down to Fits pays for
+    // all its restored rows each tick). Add a partial index WHERE restored_at IS NULL by migration, or skip a NONE case
+    // until a new hold exists, once such batches reach tens of thousands of restored holds.
     internal fun reconcileHolds() {
         val now = clock.postgresTimestamp()
-        for (target in cases.findWholeBatchHides()) {
+        val blur = props.junk.blurCutoff
+        val dark = props.junk.darkCutoff
+        val labelMin = props.junk.labelMinConfidence
+        for (target in cases.findHoldTargets()) {
             try {
-                hideBatch(target, now)
+                when (target.action) {
+                    CaseAction.HIDE_ALL.name -> hideBatch(target, now)
+                    // The predicate never runs with a cut-off unset (auto-hide cannot be on without both).
+                    CaseAction.HIDE_JUNK.name -> if (blur != null && dark != null) {
+                        inChunks(target) { hide(holds.hideJunkChunk(target.batchId, target.caseId, target.eventId,
+                            target.photographerId, now, props.hide.chunkSize, blur, dark, labelMin)) }
+                        inChunks(target) { restore(holds.restoreNotJunkChunk(target.batchId, now, props.hide.chunkSize, blur, dark, labelMin)) }
+                    }
+                    else -> inChunks(target) { restore(holds.restoreChunk(target.batchId, AUTO, AUTO, now, props.hide.chunkSize)) }
+                }
             } catch (ex: Exception) {
-                log.warn("Relevance hide step failed case={} (retried next tick): {}", target.caseId, ex.message)
+                log.warn("Relevance hold step failed case={} (retried next tick): {}", target.caseId, ex.message)
             }
         }
     }
 
-    // Up to chunks-per-tick chunks, each its own short transaction that touches only hold rows and photos: hold up to
-    // chunk-size photos, lock them in id order, hide the live and processing ones by one conditional update.
     private fun hideBatch(target: HoldTarget, now: OffsetDateTime) {
-        repeat(props.hide.chunksPerTick) {
-            val held = transactions.execute {
-                // A plain read: the case may have been superseded since the list was read.
-                if (!cases.isWholeBatchHide(target.caseId)) return@execute -1
-                val ids = holds.hideChunk(target.batchId, target.caseId, target.eventId, target.photographerId, AUTO, now,
-                    props.hide.chunkSize)
-                if (ids.isNotEmpty()) {
-                    photos.lockIdsForUpdate(ids)
-                    holds.hidePhotos(ids)
-                }
-                ids.size
-            } ?: -1
-            if (held < 0) return
-            if (held == 0) {
-                if (!target.hideFinished) finishHide(target, now)
-                return
-            }
+        val done = inChunks(target) {
+            hide(holds.hideChunk(target.batchId, target.caseId, target.eventId, target.photographerId, AUTO, now, props.hide.chunkSize))
         }
+        if (done && !target.hideFinished) finishHide(target, now)
+    }
+
+    // Up to chunks-per-tick chunks, each its own short transaction that touches only hold rows and photos, while the case
+    // is still the current target (a plain read: it may have been superseded since the list was read). True when a
+    // chunk found nothing left.
+    private fun inChunks(target: HoldTarget, chunk: () -> Int): Boolean {
+        repeat(props.hide.chunksPerTick) {
+            val n = transactions.execute { if (cases.isHoldTarget(target.caseId, target.action)) chunk() else -1 } ?: -1
+            if (n < 0) return false
+            if (n == 0) return true
+        }
+        return false
+    }
+
+    // The holds were just written: lock their photos in id order, then one conditional update.
+    private fun hide(ids: List<UUID>): Int {
+        if (ids.isNotEmpty()) {
+            photos.lockIdsForUpdate(ids)
+            holds.hidePhotos(ids)
+        }
+        return ids.size
+    }
+
+    // The holds were just stamped restored: lock their photos in id order, then un-hide by the one restore rule.
+    private fun restore(ids: List<UUID>): Int {
+        if (ids.isNotEmpty()) {
+            photos.lockIdsForUpdate(ids)
+            holds.unhideReleased(ids)
+        }
+        return ids.size
     }
 
     // The first pass that finds nothing left: stamp the case once, log one automatic decision and raise the big-hide
