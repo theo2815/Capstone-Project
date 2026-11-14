@@ -107,6 +107,10 @@ data class RelevanceProperties(
         val workers: Int = 2,
         // A photo that hits a throttle, 5xx or timeout this many times is given up (GAVE_UP), never junk.
         val measureMaxTries: Int = 5,
+        // A case waits this long for version 1 to score its upload, then is decided with the copy and date results as they stand.
+        val waitForRulesMinutes: Long = 30,
+        // Model calls per case; when the last one fails the case is stored as can't tell (CALL_FAILED).
+        val decideMaxAttempts: Int = 3,
     ) {
         init {
             require(minBatchSize >= 1) { "minBatchSize must be at least 1" }
@@ -119,6 +123,8 @@ data class RelevanceProperties(
             require(measuresPerTick >= 1) { "measuresPerTick must be at least 1" }
             require(workers >= 1) { "workers must be at least 1" }
             require(measureMaxTries >= 1) { "measureMaxTries must be at least 1" }
+            require(waitForRulesMinutes >= 0) { "waitForRulesMinutes must not be negative" }
+            require(decideMaxAttempts >= 1) { "decideMaxAttempts must be at least 1" }
         }
     }
 
@@ -144,16 +150,20 @@ data class RelevanceProperties(
         val readTimeout: Duration = Duration.ofSeconds(30),
         val maxAttempts: Int = 3,
         val retryBackoff: Duration = Duration.ofSeconds(1),
+        // Room for the model's thinking as well as the short JSON answer; an answer cut off here is can't tell.
+        val maxTokens: Int = 4096,
     ) {
         init {
             require(maxAttempts in 1..5) { "maxAttempts must be 1..5" }
+            require(maxTokens >= 1) { "maxTokens must be at least 1" }
             require(connectTimeout >= Duration.ofMillis(1) && readTimeout >= Duration.ofMillis(1)) { "timeouts must be at least 1ms" }
             require(!retryBackoff.isNegative) { "retryBackoff must not be negative" }
         }
 
         // The key is a secret: keep it out of any log line that prints the settings.
         override fun toString() = "Llm(apiKey=${if (apiKey.isBlank()) "<unset>" else "<set>"}, baseUrl=$baseUrl, model=$model, " +
-            "connectTimeout=$connectTimeout, readTimeout=$readTimeout, maxAttempts=$maxAttempts, retryBackoff=$retryBackoff)"
+            "connectTimeout=$connectTimeout, readTimeout=$readTimeout, maxAttempts=$maxAttempts, retryBackoff=$retryBackoff, " +
+            "maxTokens=$maxTokens)"
     }
 }
 
