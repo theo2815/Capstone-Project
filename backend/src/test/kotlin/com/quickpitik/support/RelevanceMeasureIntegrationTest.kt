@@ -161,6 +161,53 @@ class RelevanceMeasureIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the deciding stage writes need the claim and the deciding stage`() {
+        val b = batch()
+        val c = case(b, "DECIDING")
+        fun listed(waitCutoff: OffsetDateTime) = cases.findDeciding(NOW, waitCutoff, 10_000).filter { it.batchId == b.id }
+        // created_at is the database's now(), long after NOW: only the far wait cutoff lets the case through unscored.
+        assertTrue(listed(NOW).isEmpty(), "version 1 has not scored the case's upload and the wait is not over")
+        assertEquals(1, listed(NOW.plusYears(200)).size, "past the wait")
+        jdbc.update("UPDATE batch_relevance SET scored_upload_at = ? WHERE id = ?", NOW, b.id)
+        assertEquals(c, listed(NOW).single().caseId, "scored for the same upload")
+
+        val token = claim(b)
+        assertTrue(listed(NOW).isEmpty(), "claimed by a copy")
+        val stale = UUID.randomUUID()
+        assertEquals(0, tx.execute { cases.raiseDecideAttempts(c, stale) })
+        assertEquals(1, tx.execute { cases.raiseDecideAttempts(c, token) })
+        assertEquals(0, verdict(c, stale))
+        assertEquals(1, verdict(c, token))
+        val row = jdbc.queryForMap("SELECT * FROM relevance_cases WHERE id = ?", c)
+        assertEquals(listOf("DECIDED", 1, "CANT_TELL", "CONTRADICTS", "JUNK_DUMP", "r", "junk_share", "{}", "m", "rv1", true, null, 7),
+            listOf("stage", "decide_attempts", "verdict", "verdict_note", "model_verdict", "admin_reason", "evidence_used", "summary_sent",
+                "model", "prompt_version", "copy_low", "date_low", "words_photos").map { (row[it] as? Short)?.toInt() ?: row[it] })
+        assertEquals(NOW.toInstant(), (row["decided_at"] as java.sql.Timestamp).toInstant())
+        assertEquals(0, verdict(c, token), "decided once")
+        assertEquals(0, tx.execute { cases.raiseDecideAttempts(c, token) }, "no call once decided")
+
+        val other = batch()
+        val otherToken = claim(other)
+        val skipped = case(other, "DECIDING")
+        assertEquals(0, tx.execute { cases.closeSkippedDeciding(skipped, stale, NOW) })
+        assertEquals(1, tx.execute { cases.closeSkippedDeciding(skipped, otherToken, NOW) })
+        assertEquals(mapOf("stage" to "CLOSED", "close_reason" to "SKIPPED"),
+            jdbc.queryForMap("SELECT stage, close_reason FROM relevance_cases WHERE id = ?", skipped))
+        assertEquals(0, tx.execute { cases.closeSkippedDeciding(c, token, NOW) }, "a decided case is not closed here")
+
+        // A failed call stores no model verdict, reason, evidence or rule result.
+        val failed = case(other, "DECIDING")
+        assertEquals(1, tx.execute {
+            cases.saveVerdict(failed, otherToken, NOW, "CANT_TELL", "CALL_FAILED", null, null, null, "{}", "m", "rv1", null, null, 0)
+        })
+        assertEquals("CALL_FAILED", jdbc.queryForObject("SELECT verdict_note FROM relevance_cases WHERE id = ?", String::class.java, failed))
+    }
+
+    private fun verdict(c: UUID, token: UUID): Int = tx.execute {
+        cases.saveVerdict(c, token, NOW, "CANT_TELL", "CONTRADICTS", "JUNK_DUMP", "r", "junk_share", "{}", "m", "rv1", true, null, 7)
+    }!!
+
+    @Test
     fun `a batch is still allowed only while its event is public and its photographer active`() {
         val ok = batch()
         assertTrue(batches.stillAllowed(ok.id))

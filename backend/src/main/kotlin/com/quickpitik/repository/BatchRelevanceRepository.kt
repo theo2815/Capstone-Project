@@ -551,10 +551,18 @@ interface PhotoScoresRow {
 // not suspended, no case of it is in flight, and either it went quiet with a newest upload not yet checked
 // (QUIET) or it is still uploading and grew by :countTrigger photos since its last check (COUNT).
 // event_photographer.photo_count is what the check records, so the COUNT rule compares like with like.
+// RV-1.8b (P9): or it is quiet, version 1 has scored the newest upload, and its copy or date result is no longer the one the
+// current case was decided with (RULES). A new upload wins: it is checked with a new sample.
+private const val QUIET_DUE = "(ep.last_upload_at <= :quietCutoff AND br.checked_upload_at IS DISTINCT FROM ep.last_upload_at)"
+private const val COUNT_DUE = "(ep.last_upload_at > :quietCutoff AND ep.photo_count - COALESCE(br.checked_photos, 0) >= :countTrigger)"
+private const val RULES_DUE = """(ep.last_upload_at <= :quietCutoff AND br.scored_upload_at = ep.last_upload_at
+     AND EXISTS (SELECT 1 FROM relevance_cases a WHERE a.batch_id = br.id AND a.stage = 'APPLIED'
+                 AND (a.copy_low IS DISTINCT FROM br.copy_low OR a.date_low IS DISTINCT FROM br.date_low)))"""
+
 private const val CHECK_DUE_COLUMNS = """
     br.id AS "batchId", ep.event_id AS "eventId", ep.photographer_id AS "photographerId",
     ep.last_upload_at AS "lastUploadAt", ep.photo_count AS "photoCount",
-    CASE WHEN ep.last_upload_at <= :quietCutoff THEN 'QUIET' ELSE 'COUNT' END AS "trigger"
+    CASE WHEN $QUIET_DUE THEN 'QUIET' WHEN $COUNT_DUE THEN 'COUNT' ELSE 'RULES' END AS "trigger"
 """
 
 private const val CHECK_DUE_FROM = """
@@ -564,8 +572,7 @@ private const val CHECK_DUE_FROM = """
     LEFT JOIN batch_relevance br ON br.event_id = ep.event_id AND br.photographer_id = ep.photographer_id
     WHERE NOT EXISTS (SELECT 1 FROM relevance_cases c
                       WHERE c.batch_id = br.id AND c.stage IN ('SAMPLING', 'DECIDING', 'DECIDED'))
-      AND ((ep.last_upload_at <= :quietCutoff AND br.checked_upload_at IS DISTINCT FROM ep.last_upload_at)
-           OR (ep.last_upload_at > :quietCutoff AND ep.photo_count - COALESCE(br.checked_photos, 0) >= :countTrigger))
+      AND ($QUIET_DUE OR $COUNT_DUE OR $RULES_DUE)
 """
 
 // lastUploadAt keeps microseconds: the QUIET rule compares it with checked_upload_at for equality.

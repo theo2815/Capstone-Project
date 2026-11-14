@@ -370,6 +370,9 @@ app:
       measures-per-tick: ${RELEVANCE_CHECK_MEASURES_PER_TICK:60}
       workers: ${RELEVANCE_CHECK_WORKERS:2}
       measure-max-tries: ${RELEVANCE_CHECK_MEASURE_MAX_TRIES:5}
+      # A case waits this long for version 1 to score its upload before it is decided without the newest copy and date results.
+      wait-for-rules-minutes: ${RELEVANCE_CHECK_WAIT_FOR_RULES_MINUTES:30}
+      decide-max-attempts: ${RELEVANCE_CHECK_DECIDE_MAX_ATTEMPTS:3}
     words:
       # Once a batch has settled (settle-days after its final scoring), words on under this share of its photos are deleted.
       min-share-percent: ${RELEVANCE_WORDS_MIN_SHARE_PERCENT:3}
@@ -386,6 +389,8 @@ app:
       # Tries per verdict, the first included (1 to 5); a 429, 5xx or timeout is retried after retry-backoff.
       max-attempts: ${RELEVANCE_LLM_MAX_ATTEMPTS:3}
       retry-backoff: ${RELEVANCE_LLM_RETRY_BACKOFF:1s}
+      # Includes the model's thinking; an answer cut off at this limit is stored as can't tell.
+      max-tokens: ${RELEVANCE_LLM_MAX_TOKENS:4096}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
