@@ -341,6 +341,24 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
     """, nativeQuery = true)
     fun nextToMeasure(@Param("caseId") caseId: UUID, @Param("limit") limit: Int): List<PhotoToMeasure>
 
+    // RV-2.3a (A.4): the full scan's work list. No cursor: every photo of the batch that is not trashed, not removed and
+    // has no measurement and no error yet, so later uploads are picked up and a photo that failed never comes back.
+    @Query(value = """
+        SELECT p.id AS "photoId", p.s3_key AS "s3Key"
+        FROM photos p
+        LEFT JOIN relevance_photo_checks r ON r.photo_id = p.id
+        WHERE p.event_id = :eventId AND p.photographer_id = :photographerId
+          AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+          AND r.measured_at IS NULL AND r.measure_error IS NULL
+        ORDER BY p.id
+        LIMIT :limit
+    """, nativeQuery = true)
+    fun nextUnmeasured(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("limit") limit: Int,
+    ): List<PhotoToMeasure>
+
     // RV-1.6: one photo's DetectLabels scores, written only while the caller holds the batch's claim (R5). Fills
     // the measurement columns only, so the words mark of RV-1.2 survives. Returns 0 for a lost claim.
     @Modifying

@@ -30,6 +30,7 @@ data class RelevanceProperties(
     val llm: Llm = Llm(),
     val alerts: Alerts = Alerts(),
     val hide: Hide = Hide(),
+    val scan: Scan = Scan(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -186,6 +187,20 @@ data class RelevanceProperties(
         init {
             require(chunkSize in 1..1000) { "chunkSize must be 1..1000" }
             require(chunksPerTick >= 1) { "chunksPerTick must be at least 1" }
+        }
+    }
+
+    // Version 2 full scan (part 2, A.4, S3, R6): photos measured per case a turn, cases a tick, and the upload-indexing
+    // load (active plus queued tasks of the imageProcessing pool, per server copy) above which a tick skips scanning.
+    data class Scan(
+        val photosPerTurn: Int = 200,
+        val maxBatchesPerTick: Int = 2,
+        val yieldAbove: Int = 0,
+    ) {
+        init {
+            require(photosPerTurn >= 1) { "photosPerTurn must be at least 1" }
+            require(maxBatchesPerTick >= 1) { "maxBatchesPerTick must be at least 1" }
+            require(yieldAbove >= 0) { "yieldAbove must not be negative" }
         }
     }
 }

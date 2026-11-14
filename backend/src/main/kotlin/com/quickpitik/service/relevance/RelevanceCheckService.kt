@@ -27,7 +27,10 @@ import com.quickpitik.websocket.AdminInboxEvent
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.core.task.TaskExecutor
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.TransactionStatus
@@ -63,8 +66,67 @@ class RelevanceCheckService(
     private val holds: RelevanceHoldRepository,
     private val photos: PhotoRepository,
     private val decisionLog: AdminDecisionLogService,
+    // Read only: the upload-indexing pool the full scan yields to (A.4, R6).
+    @Qualifier("imageProcessing") private val imageProcessing: TaskExecutor,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+    @Volatile private var unreadablePoolLogged = false
+
+    // Part 2 A.4, RV-2.3a: the full scan of a Fits or Mixed auto-hide case. No cursor: each turn measures up to
+    // photos-per-turn photos of the batch that have no measurement yet, so later uploads are picked up and a photo that
+    // could not be measured never blocks the finish. Only in auto-hide (P14), only cases applied in auto-hide (P18).
+    internal fun scanTurns() {
+        if (switch.mode != RelevanceMode.AUTO_HIDE || !switch.canMeasure) return
+        // R6: yield to upload indexing on this server copy, which shares the processor, memory and downloads.
+        // A pool that cannot be read counts as busy, so a wrapped or replaced bean never lets the scan crowd out uploads.
+        val pool = imageProcessing as? ThreadPoolTaskExecutor
+        if (pool == null && !unreadablePoolLogged) {
+            unreadablePoolLogged = true
+            log.warn("Relevance scan cannot read the imageProcessing pool ({}); scanning is paused", imageProcessing.javaClass.name)
+        }
+        val load = pool?.let { it.activeCount + it.threadPoolExecutor.queue.size } ?: Int.MAX_VALUE
+        if (load > props.scan.yieldAbove) {
+            registry.counter("qp.relevance.scan.yielded").increment()
+            return
+        }
+        val now = clock.postgresTimestamp()
+        for (row in cases.findScans(props.scan.maxBatchesPerTick)) {
+            try {
+                scanTurn(row, now)
+            } catch (ex: Exception) {
+                log.warn("Relevance scan step failed case={} (retried next tick): {}", row.caseId, ex.message)
+            }
+        }
+    }
+
+    // One turn under the batch claim. The case is read again (and stamped for the rotation) after the claim; the
+    // measuring runs with no transaction open; the finish counts the whole batch in one aggregate.
+    private fun scanTurn(row: SamplingCase, now: OffsetDateTime) {
+        val blur = props.junk.blurCutoff ?: return
+        val dark = props.junk.darkCutoff ?: return
+        val token = UUID.randomUUID()
+        val claimed = transactions.execute { batches.claimCheck(row.batchId, token, now.plusMinutes(props.check.claimMinutes), now) }
+        if (claimed != 1) return
+        try {
+            // The event may have turned Private after the list was read: skip the turn, pay nothing, close nothing (G9).
+            if (!batches.stillAllowed(row.batchId)) return
+            if (transactions.execute { cases.startScanTurn(row.caseId, now) } != 1) return
+            val todo = batches.nextUnmeasured(row.eventId, row.photographerId, props.scan.photosPerTurn)
+            if (todo.isNotEmpty()) {
+                val measured = measurer.measure(row.batchId, token, todo)
+                registry.counter("qp.relevance.scan.measured").increment(measured.toDouble())
+                return
+            }
+            val counts = holds.scanCounts(row.batchId, blur, dark, props.junk.labelMinConfidence)
+            val finished = transactions.execute {
+                cases.finishScan(row.caseId, counts.measured.toInt(), counts.junk.toInt(), counts.blurry.toInt(), now)
+            }
+            if (finished == 1) log.info("Relevance scan finished case={} measured={} junk={} blurry={}",
+                row.caseId, counts.measured, counts.junk, counts.blurry)
+        } finally {
+            transactions.execute { batches.releaseCheck(row.batchId, token) }
+        }
+    }
 
     @Scheduled(
         initialDelayString = "\${app.relevance.check.tick-interval-ms:15000}",
@@ -81,6 +143,9 @@ class RelevanceCheckService(
         // O6: no model call without AI on and a key.
         if (switch.canDecide) decideCases()
         if (switch.aiEnabled) startChecks()
+        // Last, because it waits for every photo it measures and would delay every other step; samples run before scans
+        // (A.4). scanTurns checks the mode and canMeasure itself.
+        scanTurns()
     }
 
     private fun applyDecided() {

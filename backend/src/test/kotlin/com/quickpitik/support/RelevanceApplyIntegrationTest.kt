@@ -217,7 +217,8 @@ class RelevanceApplyIntegrationTest : PostgresIntegrationTest() {
             Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"),
             Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java),
             Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
-            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java))
+            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
+            org.springframework.core.task.SyncTaskExecutor())
     }
 
     // A public shared race's batch, quiet, checked and scored by version 1 for its newest upload.

@@ -210,7 +210,8 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
             Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"),
             Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java),
             Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
-            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java))
+            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
+            org.springframework.core.task.SyncTaskExecutor())
     }
 
     private fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!

@@ -401,6 +401,12 @@ app:
       # Version 2 automatic hide: photos per chunk (each its own transaction, at most 1000) and chunks per case a tick.
       chunk-size: ${RELEVANCE_HIDE_CHUNK_SIZE:1000}
       chunks-per-tick: ${RELEVANCE_HIDE_CHUNKS_PER_TICK:10}
+    scan:
+      # Version 2 full scan: photos per case a turn, cases a tick, and the upload-indexing load (active plus queued
+      # imageProcessing tasks on this server copy) above which a tick skips scanning.
+      photos-per-turn: ${RELEVANCE_SCAN_PHOTOS_PER_TURN:200}
+      max-batches-per-tick: ${RELEVANCE_SCAN_MAX_BATCHES_PER_TICK:2}
+      yield-above: ${RELEVANCE_SCAN_YIELD_ABOVE:0}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
