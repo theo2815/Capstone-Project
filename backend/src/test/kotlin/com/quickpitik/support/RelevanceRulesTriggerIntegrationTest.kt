@@ -2,6 +2,7 @@ package com.quickpitik.support
 
 import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.repository.BatchRelevanceRepository
@@ -101,7 +102,7 @@ class RelevanceRulesTriggerIntegrationTest : PostgresIntegrationTest() {
         val switch = RelevanceSwitch(props, AdminProperties(), AiApiProperties(enabled = true))
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(), measurer,
             Mockito.mock(AnthropicClient::class.java), events, Mockito.mock(RelevanceAlertRepository::class.java),
-            Mockito.mock(ApplicationEventPublisher::class.java))
+            Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"))
     }
 
     // A shared race's batch, quiet, already checked for its newest upload and scored by version 1 for it.

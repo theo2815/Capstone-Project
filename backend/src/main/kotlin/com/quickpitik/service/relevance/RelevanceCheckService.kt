@@ -1,5 +1,6 @@
 package com.quickpitik.service.relevance
 
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.entity.AlertKind
@@ -16,6 +17,7 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.SamplingCase
+import com.quickpitik.service.auth.atLeast
 import com.quickpitik.service.events.postgresTimestamp
 import com.quickpitik.websocket.AdminInboxEvent
 import io.micrometer.core.instrument.MeterRegistry
@@ -38,6 +40,7 @@ import java.util.concurrent.TimeUnit
 // moves the case to DECIDING with its counts and band. RV-1.8b: it decides each DECIDING case with one model call
 // (no transaction open), lets code check the answer (settle) and stores the verdict. RV-1.9: it applies each DECIDED
 // case in record-only (applyCase): the case becomes current and stores the alerts auto-hide would have raised.
+// RV-2.2a: in auto-hide, with the photographer's consent, the case becomes current with its hold target (A.3).
 @Service
 class RelevanceCheckService(
     private val batches: BatchRelevanceRepository,
@@ -52,6 +55,7 @@ class RelevanceCheckService(
     private val events: EventRepository,
     private val alerts: RelevanceAlertRepository,
     private val publisher: ApplicationEventPublisher,
+    private val legal: LegalProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -81,10 +85,11 @@ class RelevanceCheckService(
         }
     }
 
-    // Plan 5.11: one decided case in one short transaction, database only. Part 1 applies every case as record-only
-    // (auto-hide too, until RV-2.2a): the action and the alerts auto-hide would have raised are stored, and no photo,
-    // hold, flag, message or e-mail is touched. Every write is guarded by the stage it expects, so a second server
-    // copy that read the same case changes nothing.
+    // Plan 5.11 and part 2 A.3: one decided case in one short transaction, database only. In record-only (and in
+    // auto-hide for a photographer without consent, NO_CONSENT) the action and the alerts auto-hide would have raised
+    // are stored. In auto-hide the case becomes current with its hold target and, for Fits and Mixed, a queued scan;
+    // no photo, hold, flag, message or e-mail is touched here (the hide step is RV-2.2b). Every write is guarded by the
+    // stage it expects, so a second server copy that read the same case changes nothing.
     internal fun applyCase(caseId: UUID, now: OffsetDateTime) {
         val raised = transactions.execute { status -> applyInTransaction(caseId, now, status) } ?: return
         raised.forEach { registry.counter("qp.relevance.alerts", "kind", it.name.lowercase()).increment() }
@@ -100,19 +105,37 @@ class RelevanceCheckService(
             return emptyList()
         }
         val verdict = CaseVerdict.valueOf(case.verdict!!)
-        val mode = RelevanceMode.RECORD_ONLY
+        val autoHide = switch.mode == RelevanceMode.AUTO_HIDE
+        // P4: auto-hide acts only for a photographer who accepted the minimum Terms; unset means nobody has.
+        val consented = autoHide && legal.minVersionOrNull()?.let { atLeast(batches.photographerTermsVersion(case.batchId), it) } == true
+        val mode = if (consented) RelevanceMode.AUTO_HIDE else RelevanceMode.RECORD_ONLY
         val current = cases.currentFor(case.batchId)
-        if (current != null) {
-            // A failed check changes nothing; the same verdict again is one alert per verdict change, not per check
-            // (R7, P8). Both hand their copy and date results to the current case so the RULES trigger does not
-            // fire again for them (a failed re-check too: owner call, 2026-11-14).
+        // A.3 (P21): with no current case, an admin's last decision on the batch is what the new case is compared with.
+        val comparator = current ?: if (autoHide) cases.lastClosedByAdmin(case.batchId) else null
+        if (comparator != null) {
+            // A failed check changes nothing; a Can't tell never lifts a real hide; the same verdict again is one alert
+            // per verdict change, not per check (R7, P8). Each hands its copy and date results to the current case so
+            // the RULES trigger does not fire again for them (a failed re-check too: owner call, 2026-11-14).
             val reason = when {
                 verdict == CaseVerdict.CANT_TELL && case.verdictNote in FAILED_CALL -> "NO_RESULT"
-                current.verdict == case.verdict && current.appliedMode == mode.name -> "SAME_VERDICT"
+                verdict == CaseVerdict.CANT_TELL && current?.appliedMode == RelevanceMode.AUTO_HIDE.name &&
+                    current.action != CaseAction.NONE.name -> "HELD_BY_CASE"
+                // Only a record-only case is replaced by the same verdict, and only by one that can act (P18).
+                comparator.verdict == case.verdict ->
+                    if (current == null || current.appliedMode == mode.name || current.appliedMode == RelevanceMode.AUTO_HIDE.name) "SAME_VERDICT" else null
+                current == null || current.appliedMode != RelevanceMode.AUTO_HIDE.name -> null
+                // A record-only case never acts, and closing an acting case is an act (P18; conductor's call, A.3 leaves it open).
+                mode == RelevanceMode.RECORD_ONLY -> "HELD_BY_CASE"
+                // shortcut: a Fits or Mixed re-check never lifts a whole-batch hide; RV-2.4 replaces this with A.3's G7 rows.
+                current.action == CaseAction.HIDE_ALL.name && verdict in SCANNED -> "HELD_BY_CASE"
                 else -> null
             }
             if (reason != null) {
-                if (cases.closeCase(case.id, decided, reason, now) == 1) cases.copyRuleResults(current.id, case.copyLow, case.dateLow)
+                if (cases.closeCase(case.id, decided, reason, now) == 1 && current != null) {
+                    cases.copyRuleResults(current.id, case.copyLow, case.dateLow)
+                    // P8: the new photos of a Fits or Mixed batch are scanned too (the query skips a record-only case).
+                    if (reason == "SAME_VERDICT" && verdict in SCANNED) cases.queueScan(current.id)
+                }
                 log.info("Relevance check closed case={} reason={}", case.id, reason)
                 return emptyList()
             }
@@ -127,8 +150,13 @@ class RelevanceCheckService(
             status.setRollbackOnly()
             return emptyList()
         }
+        if (autoHide && !consented) cases.markNoConsent(case.id)
+        if (consented && verdict in SCANNED) cases.queueScan(case.id)
         log.info("Relevance check applied case={} verdict={} action={} mode={}", case.id, verdict, action, mode)
-        return wouldHaveAlerts(case, verdict, action).filter { (kind, photos) ->
+        // In auto-hide only the copied alert is raised here; the big-hide alert waits for the photos actually hidden.
+        val raise = if (consented) listOfNotNull((AlertKind.COPIED to case.batchPhotos).takeIf { verdict == CaseVerdict.COPIED })
+            else wouldHaveAlerts(case, verdict, action)
+        return raise.filter { (kind, photos) ->
             val alertId = UUID.randomUUID()
             val stored = alerts.raise(alertId, case.batchId, case.id, kind.name, "${kind.name.lowercase()}:${case.id}",
                 mode == RelevanceMode.RECORD_ONLY, photos, now) == 1
@@ -356,6 +384,8 @@ class RelevanceCheckService(
         const val MODEL_COLUMN = 60
         // Verdict notes of a check that got no usable answer (plan 5.11).
         val FAILED_CALL = setOf("CALL_FAILED", "CUT_OFF", "BAD_JSON", "UNKNOWN_VALUE")
+        // Verdicts whose auto-hide case gets the full scan (A.3 step 5); a whole-batch hide is not scanned.
+        val SCANNED = setOf(CaseVerdict.FITS, CaseVerdict.MIXED)
     }
 }
 

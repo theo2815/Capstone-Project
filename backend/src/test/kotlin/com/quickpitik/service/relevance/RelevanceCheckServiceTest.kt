@@ -2,6 +2,7 @@ package com.quickpitik.service.relevance
 
 import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.entity.BatchRelevance
@@ -63,7 +64,7 @@ class RelevanceCheckServiceTest {
         val props = RelevanceProperties(mode = mode, junk = junk, llm = RelevanceProperties.Llm(apiKey = key))
         val switch = RelevanceSwitch(props, AdminProperties(), AiApiProperties(enabled = aiEnabled), rekognition)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
-            client, events, alerts, publisher)
+            client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"))
     }
 
     private fun due(batchId: UUID = UUID.randomUUID()): CheckDue = object : CheckDue {

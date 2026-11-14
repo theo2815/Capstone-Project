@@ -2,6 +2,7 @@ package com.quickpitik.support
 
 import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.repository.BatchRelevanceRepository
@@ -147,7 +148,7 @@ class RelevanceApplyIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `auto-hide mode applies as record-only until part 2 is built`() {
+    fun `auto-hide with no minimum Terms version set applies as record-only`() {
         val b = batch(photos = 600)
         val c = case(b, "DECIDED", "JUNK_DUMP")
         val service = service(mode = RelevanceMode.AUTO_HIDE, flagsEnabled = true)
@@ -213,7 +214,7 @@ class RelevanceApplyIntegrationTest : PostgresIntegrationTest() {
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = flagsEnabled), AiApiProperties(enabled = aiEnabled))
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
-            Mockito.mock(ApplicationEventPublisher::class.java))
+            Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"))
     }
 
     // A public shared race's batch, quiet, checked and scored by version 1 for its newest upload.
