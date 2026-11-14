@@ -69,13 +69,15 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
     ): List<UUID>
 
     // RV-2.3b: the restore step for target HIDE_JUNK. Up to :chunk live automatic holds of the batch, whichever case they
-    // name, whose photo was measured and is not junk; an unmeasured photo stays held until the scan measures it (A.2).
+    // name, whose photo is not junk: it could not be measured (never junk, G4; never tried again), or it was measured and
+    // the rule is false or unknown (a missing score; hideJunkChunk does not hide it either). A photo not measured yet stays
+    // held until the scan measures it (A.2).
     @Query(value = """
         UPDATE flag_hidden_photos SET restored_at = :now, restored_by = 'AUTO'
         WHERE id IN (SELECT h.id FROM flag_hidden_photos h
                      JOIN relevance_photo_checks k ON k.photo_id = h.photo_id
                      WHERE h.batch_id = :batchId AND h.held_by = 'AUTO' AND h.restored_at IS NULL
-                       AND k.measured_at IS NOT NULL AND k.measure_error IS NULL AND NOT ($JUNK_PREDICATE)
+                       AND (k.measure_error IS NOT NULL OR (k.measured_at IS NOT NULL AND NOT COALESCE(($JUNK_PREDICATE), false)))
                      ORDER BY h.photo_id LIMIT :chunk)
         RETURNING photo_id
     """, nativeQuery = true)

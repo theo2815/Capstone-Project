@@ -136,6 +136,46 @@ class RelevanceJunkHoldsIntegrationTest : PostgresIntegrationTest() {
         assertEquals(3L, holds.countLiveHolds(b.id, "AUTO"))
     }
 
+    // G4: a photo that could not be measured is never junk, and the scan never tries it again.
+    @Test
+    fun `a photo that could not be measured comes back when the target drops from all to junk`() {
+        val b = batch()
+        val c = case(b, "HIDE_ALL")
+        val failed = List(2) { photo(b, null) }
+        jdbc.update("INSERT INTO relevance_photo_checks (photo_id, batch_id, measure_error) VALUES (?, ?, 'GAVE_UP')", failed[0], b.id)
+        jdbc.update("INSERT INTO relevance_photo_checks (photo_id, batch_id, measure_error) VALUES (?, ?, 'BAD_IMAGE')", failed[1], b.id)
+        val service = service()
+        service.reconcileHolds()
+        assertEquals(listOf("HIDDEN"), failed.map(::status).distinct())
+
+        jdbc.update("UPDATE relevance_cases SET action = 'HIDE_JUNK' WHERE id = ?", c)
+        service.reconcileHolds()
+
+        assertEquals(listOf("LIVE"), failed.map(::status).distinct())
+        assertEquals(0L, holds.countLiveHolds(b.id, "AUTO"))
+    }
+
+    // Kotlin's isJunk answers "unknown" for a missing score; the junk hide does not hide it, so the restore brings it back.
+    @Test
+    fun `a measured photo whose junk rule is unknown comes back when the target drops from all to junk`() {
+        val b = batch()
+        val c = case(b, "HIDE_ALL")
+        val unknown = photo(b, null).also {
+            jdbc.update(
+                "INSERT INTO relevance_photo_checks (photo_id, batch_id, measured_at, fg_sharpness, sharpness, brightness, person_conf, race_conf) " +
+                    "VALUES (?, ?, ?, 50, 50, NULL, 0.9, 0.9)", it, b.id, NOW,
+            )
+        }
+        val service = service()
+        service.reconcileHolds()
+        assertEquals("HIDDEN", status(unknown))
+
+        jdbc.update("UPDATE relevance_cases SET action = 'HIDE_JUNK' WHERE id = ?", c)
+        service.reconcileHolds()
+
+        assertEquals("LIVE", status(unknown))
+    }
+
     @Test
     fun `a hold left under an older case of the batch is restored by the current case's lower target`() {
         val b = batch()

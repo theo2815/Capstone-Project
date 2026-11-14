@@ -261,6 +261,10 @@ class RelevanceCheckService(
     // tick until none is left, so a hide chunk that committed just after its case stopped being current is undone too.
     // shortcut: every current Mixed auto-hide case costs a junk anti-join and a restore query each tick, as the whole-batch
     // hide does; bound it the same way (skip until a new measurement or upload, or rotate with a LIMIT) when they pile up.
+    // shortcut: findHoldTargets probes each current auto-hide NONE case for a live AUTO hold every tick; the only index is on
+    // batch_id, so a "no" reads every hold row of the batch, restored ones too (a Mixed batch scanned down to Fits pays for
+    // all its restored rows each tick). Add a partial index WHERE restored_at IS NULL by migration, or skip a NONE case
+    // until a new hold exists, once such batches reach tens of thousands of restored holds.
     internal fun reconcileHolds() {
         val now = clock.postgresTimestamp()
         val blur = props.junk.blurCutoff
