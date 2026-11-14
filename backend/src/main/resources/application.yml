@@ -397,6 +397,10 @@ app:
     alerts:
       # Version 2: a hide (in record-only, a would-be hide) of at least this many photos in one batch raises one admin alert.
       big-hide-photos: ${RELEVANCE_ALERTS_BIG_HIDE_PHOTOS:500}
+    hide:
+      # Version 2 automatic hide: photos per chunk (each its own transaction, at most 1000) and chunks per case a tick.
+      chunk-size: ${RELEVANCE_HIDE_CHUNK_SIZE:1000}
+      chunks-per-tick: ${RELEVANCE_HIDE_CHUNKS_PER_TICK:10}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

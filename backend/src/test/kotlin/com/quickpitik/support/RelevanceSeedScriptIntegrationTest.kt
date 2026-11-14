@@ -207,7 +207,10 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = false), AiApiProperties(enabled = false))
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
-            Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"))
+            Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"),
+            Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java),
+            Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
+            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java))
     }
 
     private fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!

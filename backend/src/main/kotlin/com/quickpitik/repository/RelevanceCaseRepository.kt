@@ -181,6 +181,31 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun lastClosedByAdmin(@Param("batchId") batchId: UUID): RelevanceCase?
 
+    // RV-2.2b (A.2, P18): the current auto-hide cases whose target is the whole batch, with what the hide step needs.
+    @Query(value = """
+        SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId",
+               (c.hide_finished_at IS NOT NULL) AS "hideFinished"
+        FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+        WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.action = 'HIDE_ALL'
+        ORDER BY c.applied_at, c.id
+    """, nativeQuery = true)
+    fun findWholeBatchHides(): List<HoldTarget>
+
+    // RV-2.2b: still the current whole-batch auto-hide case? Read before each chunk; a plain read, no lock.
+    @Query(value = """
+        SELECT EXISTS (SELECT 1 FROM relevance_cases
+                       WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND action = 'HIDE_ALL')
+    """, nativeQuery = true)
+    fun isWholeBatchHide(@Param("id") id: UUID): Boolean
+
+    // RV-2.2b: the hide found nothing left, once per case. :photos is the batch's live automatic holds.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET hide_finished_at = :now, hidden_photos = :photos
+        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND hide_finished_at IS NULL
+    """, nativeQuery = true)
+    fun finishHide(@Param("id") id: UUID, @Param("photos") photos: Int, @Param("now") now: OffsetDateTime): Int
+
     // RV-2.2a (P4): a case auto-hide could not act on because the photographer has not accepted the minimum Terms.
     @Modifying
     @Query(value = "UPDATE relevance_cases SET verdict_note = 'NO_CONSENT' WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'RECORD_ONLY'", nativeQuery = true)
@@ -271,4 +296,13 @@ interface SamplingCase {
     val batchId: UUID
     val eventId: UUID
     val photographerId: UUID
+}
+
+// RV-2.2b: one current whole-batch auto-hide case (findWholeBatchHides).
+interface HoldTarget {
+    val caseId: UUID
+    val batchId: UUID
+    val eventId: UUID
+    val photographerId: UUID
+    val hideFinished: Boolean
 }
