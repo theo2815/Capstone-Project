@@ -304,7 +304,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         assertTrue(photos.faceWorkPending(page).any { it.photoId == removedId })
         val reaper = com.quickpitik.service.photographer.PhotoOrphanReaper(photos,
             Mockito.mock(com.quickpitik.service.ai.AiApiClient::class.java), com.quickpitik.config.AiApiProperties(enabled = true), faceErasure,
-            com.quickpitik.config.PhotoRemovalProperties(), java.time.Clock.systemUTC())
+            com.quickpitik.config.PhotoRemovalProperties(), java.time.Clock.systemUTC(), com.quickpitik.config.AiProperties())
         reaper.reap()
         assertFalse(photos.faceWorkPending(page).any { it.photoId == removedId }, "Persistent failures monopolize the first page")
     }
