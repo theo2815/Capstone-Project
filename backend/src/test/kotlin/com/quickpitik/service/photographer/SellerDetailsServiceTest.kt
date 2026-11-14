@@ -1050,6 +1050,18 @@ class SellerDetailsServiceTest {
     }
 
     @Test
+    fun `an admin approval clears the failed tries, so a later passing resubmission is approved`() {
+        val row = passAfterFailedTries(3)
+
+        service().approve(adminId, userId, row.revision)
+        assertEquals(0, row.failedAutoChecks)
+
+        service().submit(userId, form(livenessSessionId = SESSION))
+        assertEquals(SellerDetailsStatus.AUTO_APPROVED, row.status)
+        assertEquals(listOf(SellerReasonCode.PASSED), row.reasonCodes)
+    }
+
+    @Test
     fun `a passing live check after two failed tries is approved`() {
         val row = passAfterFailedTries(2)
 
