@@ -1,6 +1,7 @@
 package com.quickpitik.service.profile
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
@@ -55,7 +56,7 @@ class AvatarServiceTest {
         val user = User(email = "runner@test.local", passwordHash = "unused", name = "Runner", role = Role.RUNNER)
         Mockito.`when`(userRepository.findById(user.id)).thenReturn(Optional.of(user))
         Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://avatar.test/current")
-        val mapper = UserDtoMapper(storageService, StorageProperties())
+        val mapper = UserDtoMapper(storageService, StorageProperties(), LegalProperties(currentVersion = "1.5"))
 
         val result = service(mapper).upload(user.id, webp, "image/webp")
 
@@ -128,7 +129,7 @@ class AvatarServiceTest {
         return user
     }
 
-    private fun realMapper() = UserDtoMapper(storageService, StorageProperties())
+    private fun realMapper() = UserDtoMapper(storageService, StorageProperties(), LegalProperties(currentVersion = "1.5"))
 
     private fun verdict(v: ImageModerationVerdict, vararg labels: String) =
         Mockito.`when`(moderation.checkFor(anyArg(), anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))

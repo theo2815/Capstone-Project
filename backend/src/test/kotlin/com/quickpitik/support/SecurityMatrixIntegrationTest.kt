@@ -58,6 +58,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     private lateinit var paymongoProperties: PaymongoProperties
 
     @Autowired
+    private lateinit var legalProperties: com.quickpitik.config.LegalProperties
+
+    @Autowired
     private lateinit var authService: AuthService
 
     @Autowired
@@ -166,6 +169,34 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals("FORBIDDEN", errorCode(forbidden))
         assertEquals(200, get("/api/v1/admin/users", admin).statusCode())
         assertEquals(200, get("/actuator/metrics", admin).statusCode())
+    }
+
+    // RV-L4: any signed-in user may accept the Terms; nobody else.
+    @Test
+    fun `terms acceptance needs a sign-in`() {
+        val body = """{"version":"${legalProperties.currentVersion}"}"""
+        assertEquals(401, post("/api/v1/me/terms-acceptance", body).statusCode())
+        val accepted = post("/api/v1/me/terms-acceptance", body, register(Role.PHOTOGRAPHER))
+        assertEquals(200, accepted.statusCode(), accepted.body())
+        assertEquals(legalProperties.currentVersion, json.readTree(accepted.body()).path("data").path("termsVersion").asText())
+        assertFalse(json.readTree(accepted.body()).path("data").path("termsAcceptanceRequired").asBoolean(true))
+    }
+
+    @Test
+    fun `another terms version is refused`() {
+        val refused = post("/api/v1/me/terms-acceptance", """{"version":"0.1"}""", register(Role.PHOTOGRAPHER))
+        assertEquals(409, refused.statusCode(), refused.body())
+        assertEquals("CONSENT_VERSION_MISMATCH", errorCode(refused))
+    }
+
+    @Test
+    fun `a missing terms version is a bad request`() {
+        val token = register(Role.PHOTOGRAPHER)
+        for (body in listOf("{}", """{"version":" "}""")) {
+            val response = post("/api/v1/me/terms-acceptance", body, token)
+            assertEquals(400, response.statusCode(), body)
+            assertEquals("VALIDATION_ERROR", errorCode(response), body)
+        }
     }
 
     // RV-1.10: the Photo Relevance page's routes, with one real case and alert so the admin's answer is 200.

@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnseenRelevanceAlerts } from "@/hooks/use-admin-relevance";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -8,7 +9,8 @@ export type InboxQueueType =
   | "events"
   | "disputes"
   | "flags"
-  | "payouts";
+  | "payouts"
+  | "relevance";
 
 const INBOX_QUEUE_TYPES_ALL: readonly InboxQueueType[] = [
   "verifications",
@@ -16,6 +18,7 @@ const INBOX_QUEUE_TYPES_ALL: readonly InboxQueueType[] = [
   "disputes",
   "flags",
   "payouts",
+  "relevance",
 ] as const;
 
 // Flags chip is hidden when the v1 feature gate is off — see constants.ts.
@@ -29,6 +32,7 @@ const LABEL: Record<InboxQueueType, string> = {
   disputes: "Disputes",
   flags: "Flags",
   payouts: "Payouts",
+  relevance: "Relevance alerts",
 };
 
 interface AdminInboxFilterChipsProps {
@@ -45,6 +49,8 @@ export function AdminInboxFilterChips({
   value,
   onChange,
 }: AdminInboxFilterChipsProps) {
+  // Only the relevance chip carries a count: its alerts live nowhere else in the inbox (no KPI tile).
+  const unseen = useUnseenRelevanceAlerts().total;
   return (
     <div
       role="tablist"
@@ -68,6 +74,13 @@ export function AdminInboxFilterChips({
             )}
           >
             {LABEL[type]}
+            {type === "relevance" && unseen > 0 && (
+              <>
+                {" "}
+                <span className="tnum">{unseen}</span>
+                <span className="sr-only"> unseen</span>
+              </>
+            )}
           </button>
         );
       })}
