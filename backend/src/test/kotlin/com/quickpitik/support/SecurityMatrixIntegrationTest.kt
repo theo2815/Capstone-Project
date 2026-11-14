@@ -182,6 +182,23 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertFalse(json.readTree(accepted.body()).path("data").path("termsAcceptanceRequired").asBoolean(true))
     }
 
+    @Test
+    fun `another terms version is refused`() {
+        val refused = post("/api/v1/me/terms-acceptance", """{"version":"0.1"}""", register(Role.PHOTOGRAPHER))
+        assertEquals(409, refused.statusCode(), refused.body())
+        assertEquals("CONSENT_VERSION_MISMATCH", errorCode(refused))
+    }
+
+    @Test
+    fun `a missing terms version is a bad request`() {
+        val token = register(Role.PHOTOGRAPHER)
+        for (body in listOf("{}", """{"version":" "}""")) {
+            val response = post("/api/v1/me/terms-acceptance", body, token)
+            assertEquals(400, response.statusCode(), body)
+            assertEquals("VALIDATION_ERROR", errorCode(response), body)
+        }
+    }
+
     // RV-1.10: the Photo Relevance page's routes, with one real case and alert so the admin's answer is 200.
     @Test
     fun `the relevance admin routes are for admins only`() {

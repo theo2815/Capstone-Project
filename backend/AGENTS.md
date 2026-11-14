@@ -357,7 +357,7 @@ All responses come wrapped in `{ success, data, errors? }`. Match the website `A
 | `/api/v1/auth/resend-verification` | POST | Bearer JWT | — |
 | `/api/v1/auth/me` | GET | Bearer JWT | — |
 
-`AuthResponse`: `{ accessToken, refreshToken, user: { id, email, name, role, avatarUrl?, emailVerified, createdAt } }`.
+`AuthResponse`: `{ accessToken, refreshToken, user: { id, email, name, role, avatarUrl?, emailVerified, createdAt, termsVersion?, legalCurrentVersion, termsAcceptanceRequired } }`.
 
 **Email verification is advisory** (V30). Registering mails a link (`AFTER_COMMIT`, `@Async`) and
 stamps `users.email_verified_at` when redeemed, but **nothing gates on it** — both clients sign the
