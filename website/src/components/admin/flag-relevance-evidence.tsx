@@ -29,7 +29,7 @@ const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm}`;
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-function Thumb({ url, alt }: { url: string | null; alt: string }) {
+export function Thumb({ url, alt }: { url: string | null; alt: string }) {
   return url ? (
     <img src={url} alt={alt} loading="lazy" decoding="async" className="aspect-[3/2] w-full rounded-lg border border-line object-cover bg-bone-deep" />
   ) : (
