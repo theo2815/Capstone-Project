@@ -76,6 +76,13 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     group: "queues",
   },
   {
+    href: ROUTES.ADMIN_RELEVANCE,
+    label: "Photo Relevance",
+    number: "12",
+    group: "queues",
+    nestedPrefix: ROUTES.ADMIN_RELEVANCE,
+  },
+  {
     href: ROUTES.ADMIN_EVENTS,
     label: "Events",
     number: "06",

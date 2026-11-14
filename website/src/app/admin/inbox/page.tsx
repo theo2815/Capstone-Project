@@ -15,6 +15,7 @@ import { DisputesQueue } from "@/components/admin/disputes-queue";
 import { EventRequestsQueue } from "@/components/admin/event-requests-queue";
 import { FlagsQueue } from "@/components/admin/flags-queue";
 import { PayoutsQueue } from "@/components/admin/payouts-queue";
+import { RelevanceAlertsInbox } from "@/components/admin/relevance/relevance-alerts-inbox";
 import { Kicker } from "@/components/ui/kicker";
 import { useAdminKpis } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
@@ -53,6 +54,7 @@ export default function AdminInboxPage() {
       {active === "disputes" && <DisputesQueue />}
       {active === "flags" && ADMIN_FLAGS_ENABLED && <FlagsQueue />}
       {active === "payouts" && <PayoutsQueue />}
+      {active === "relevance" && <RelevanceAlertsInbox />}
     </>
   );
 }
