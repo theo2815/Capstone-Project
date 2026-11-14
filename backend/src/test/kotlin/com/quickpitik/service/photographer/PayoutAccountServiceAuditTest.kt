@@ -114,6 +114,26 @@ class PayoutAccountServiceAuditTest {
         assertEquals(emptyList(), raisedReasons())
     }
 
+    // Two accounts saving one number at once take turns, so the second sees the first. Taken even with no
+    // seller details: that account's number must still be seen by a same-moment save on another account.
+    @Test
+    fun `the payout number lock is taken before the repeat lookup`() {
+        details(SellerDetailsStatus.APPROVED, SellerReasonCode.PASSED)
+
+        create()
+
+        val order = Mockito.inOrder(payoutAccountRepository)
+        order.verify(payoutAccountRepository).lockAccountNumber("09171234567")
+        order.verify(payoutAccountRepository).findUserIdsByAccountNumbers(listOf("09171234567"), userId)
+    }
+
+    @Test
+    fun `a save with no seller details still takes the payout number lock`() {
+        create()
+
+        Mockito.verify(payoutAccountRepository).lockAccountNumber("09171234567")
+    }
+
     @Test
     fun `no seller details raises none`() {
         sharedNumber()

@@ -35,7 +35,12 @@ interface SellerDetailsRepository : JpaRepository<SellerDetails, UUID> {
     // R-9: held until the transaction ends, so two accounts submitting one ID number take turns at the repeat lookup.
     @Query(value = "SELECT CAST(pg_advisory_xact_lock($ID_NUMBER_LOCK_KEY, hashtext(:hmac)) AS text)", nativeQuery = true)
     fun lockIdNumber(@Param("hmac") hmac: String): String?
+
+    // The same for the phone key; always taken before the ID number lock, so no two submits wait on each other.
+    @Query(value = "SELECT CAST(pg_advisory_xact_lock($PHONE_KEY_LOCK_KEY, hashtext(:phoneKey)) AS text)", nativeQuery = true)
+    fun lockPhoneKey(@Param("phoneKey") phoneKey: String): String?
 }
 
-// Two-key advisory lock namespace for ID numbers (the race-creation lock is the one-key 78301).
+// Two-key advisory lock namespaces for ID numbers and phone keys (the race-creation lock is the one-key 78301).
 const val ID_NUMBER_LOCK_KEY = 78302
+const val PHONE_KEY_LOCK_KEY = 78303
