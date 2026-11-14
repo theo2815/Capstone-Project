@@ -194,6 +194,13 @@ class RelevanceMeasureIntegrationTest : PostgresIntegrationTest() {
         assertEquals(mapOf("stage" to "CLOSED", "close_reason" to "SKIPPED"),
             jdbc.queryForMap("SELECT stage, close_reason FROM relevance_cases WHERE id = ?", skipped))
         assertEquals(0, tx.execute { cases.closeSkippedDeciding(c, token, NOW) }, "a decided case is not closed here")
+
+        // A failed call stores no model verdict, reason, evidence or rule result.
+        val failed = case(other, "DECIDING")
+        assertEquals(1, tx.execute {
+            cases.saveVerdict(failed, otherToken, NOW, "CANT_TELL", "CALL_FAILED", null, null, null, "{}", "m", "rv1", null, null, 0)
+        })
+        assertEquals("CALL_FAILED", jdbc.queryForObject("SELECT verdict_note FROM relevance_cases WHERE id = ?", String::class.java, failed))
     }
 
     private fun verdict(c: UUID, token: UUID): Int = tx.execute {
