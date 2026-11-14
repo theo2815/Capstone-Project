@@ -1042,3 +1042,40 @@ export function restoreFlagHiddenPhoto(flagId: string, photoId: string): Promise
     `/admin/flags/${encodeURIComponent(flagId)}/hidden-photos/${encodeURIComponent(photoId)}/restore`,
   );
 }
+
+// ───────────────────────────────────────────── Photo Relevance (RV-1.11a)
+
+export function fetchRelevanceCases(
+  args: { tab: import("@/lib/admin-relevance").RelevanceTab; offset?: number; limit?: number },
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceCaseRow>> {
+  const p = new URLSearchParams();
+  p.set("tab", args.tab);
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/relevance/cases?${p.toString()}`, { signal });
+}
+
+export function fetchRelevanceCase(
+  caseId: string,
+  signal?: AbortSignal,
+): Promise<import("@/lib/admin-relevance").RelevanceCaseDetail> {
+  return api.get(`/admin/relevance/cases/${encodeURIComponent(caseId)}`, { signal });
+}
+
+export function fetchRelevanceAlerts(
+  args: { unseen?: boolean; offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceAlert>> {
+  const p = new URLSearchParams();
+  if (args.unseen) p.set("unseen", "true");
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/relevance/alerts?${p.toString()}`, { signal });
+}
+
+export function markRelevanceAlertSeen(
+  alertId: string,
+): Promise<import("@/lib/admin-relevance").RelevanceAlert> {
+  return api.post(`/admin/relevance/alerts/${encodeURIComponent(alertId)}/seen`);
+}
