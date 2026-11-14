@@ -187,8 +187,9 @@ class RelevanceCheckService(
     // Part 2 A.2, RV-2.2b: a current auto-hide case with target HIDE_ALL holds and hides every photo of its batch, a
     // chunk at a time, so photos uploaded after the hide join it on the next tick (R7). Only cases applied in auto-hide
     // are read (P18). Going Private or a suspension later lifts nothing (G9), so "still allowed?" is not checked here.
-    // shortcut: every whole-batch auto-hide case is visited each tick (one cheap insert when nothing is left); add a
-    // rotation like the check's if they ever number in the thousands.
+    // shortcut: every current whole-batch auto-hide case is visited each tick, and each visit is one transaction whose
+    // hide chunk is an anti-join over all the batch's photos, even when nothing is left; skip a finished case until a new
+    // upload arrives, or rotate with a LIMIT, once whole-batch cases pile up or batches reach tens of thousands of photos.
     internal fun reconcileHolds() {
         val now = clock.postgresTimestamp()
         for (target in cases.findWholeBatchHides()) {
