@@ -1,10 +1,13 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.RelevanceAlert
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -28,4 +31,45 @@ interface RelevanceAlertRepository : JpaRepository<RelevanceAlert, UUID> {
         @Param("photos") photos: Int,
         @Param("now") now: OffsetDateTime,
     ): Int
+
+    // RV-1.10: the admin page's alert list, newest first; :unseenOnly leaves out the alerts an admin marked seen.
+    @Query(value = "SELECT $ALERT_ROW $ALERT_FROM WHERE (:unseenOnly = false OR a.seen_at IS NULL) ORDER BY a.created_at DESC, a.id",
+        countQuery = "SELECT count(*) $ALERT_FROM WHERE (:unseenOnly = false OR a.seen_at IS NULL)", nativeQuery = true)
+    fun pageAlerts(@Param("unseenOnly") unseenOnly: Boolean, pageable: Pageable): Page<RelevanceAlertRow>
+
+    @Query(value = "SELECT $ALERT_ROW $ALERT_FROM WHERE a.batch_id = :batchId ORDER BY a.created_at DESC, a.id", nativeQuery = true)
+    fun alertsForBatch(@Param("batchId") batchId: UUID): List<RelevanceAlertRow>
+
+    @Query(value = "SELECT $ALERT_ROW $ALERT_FROM WHERE a.id = :id", nativeQuery = true)
+    fun alertRow(@Param("id") id: UUID): RelevanceAlertRow?
+
+    // The first admin to mark an alert seen is the one stored: 1 when this call stamped it, 0 when it was already seen.
+    @Modifying
+    @Query(value = "UPDATE relevance_alerts SET seen_at = :now, seen_by = :adminId WHERE id = :id AND seen_at IS NULL",
+        nativeQuery = true)
+    fun markSeen(@Param("id") alertId: UUID, @Param("adminId") adminId: UUID, @Param("now") now: OffsetDateTime): Int
+}
+
+private const val ALERT_ROW = """a.id AS "alertId", a.case_id AS "caseId", br.event_id AS "eventId", e.name AS "eventName",
+    ps.handle AS "photographerHandle", u.name AS "photographerName", a.kind AS "kind", a.would_have AS "wouldHave",
+    a.photos AS "photos", a.created_at AS "createdAt", a.seen_at AS "seenAt""""
+
+private const val ALERT_FROM = """FROM relevance_alerts a
+    JOIN batch_relevance br ON br.id = a.batch_id
+    JOIN events e ON e.id = br.event_id
+    JOIN users u ON u.id = br.photographer_id
+    LEFT JOIN photographer_settings ps ON ps.user_id = br.photographer_id"""
+
+interface RelevanceAlertRow {
+    val alertId: UUID
+    val caseId: UUID?
+    val eventId: UUID
+    val eventName: String
+    val photographerHandle: String?
+    val photographerName: String
+    val kind: String
+    val wouldHave: Boolean
+    val photos: Int?
+    val createdAt: Instant?
+    val seenAt: Instant?
 }

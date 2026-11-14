@@ -331,8 +331,8 @@ app:
     # Photo relevance kill switch, read through RelevanceSwitch. off = nothing runs;
     # record-only = relevance rows and admin alerts only; auto-hide = may hide, but runs as
     # record-only until app.admin.flags-enabled is on and both junk cut-offs are set.
-    # Old names still boot: shadow = record-only; flag = version 1's flag mode (a Low batch
-    # also opens or extends one admin flag; acts as shadow while app.admin.flags-enabled is off).
+    # Old names still boot: shadow = record-only; flag = retired in RV-1.10 (P2), runs as
+    # record-only with a boot warning and raises no flag.
     # An unknown value stops the boot.
     mode: ${RELEVANCE_MODE:off}
     sweep-interval-ms: ${RELEVANCE_SWEEP_INTERVAL_MS:60000}

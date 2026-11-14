@@ -482,7 +482,7 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         val s = seedStudio()
         val upload = OffsetDateTime.parse("2001-05-06T07:08:09.123456Z")
         jdbc.update("UPDATE event_photographer SET last_upload_at = ? WHERE event_id = ? AND photographer_id = ?", upload, s.event, s.photographer)
-        fun isDue() = relevance.findDueBatches(upload, upload, LocalDate.of(1990, 1, 1), LocalDate.of(1990, 1, 1), 10_000, false)
+        fun isDue() = relevance.findDueBatches(upload, upload, LocalDate.of(1990, 1, 1), LocalDate.of(1990, 1, 1), 10_000)
             .any { it.eventId == s.event && it.photographerId == s.photographer }
         assertTrue(isDue())
         assertEquals(1, tx.execute { relevance.ensureBatch(s.event, s.photographer) })

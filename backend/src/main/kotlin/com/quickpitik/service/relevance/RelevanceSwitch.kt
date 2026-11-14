@@ -25,9 +25,9 @@ class RelevanceSwitch(
     private val llmConfigured: Boolean = relevance.llm.apiKey.isNotBlank()
     val canDecide: Boolean get() = canMeasure && llmConfigured
 
-    // Version 1's flag mode until RV-1.10 retires it (P2). With the admin flags switch off nobody could
-    // see or close a flag, so it raises none.
-    val v1Flagging: Boolean = relevance.mode == RelevanceMode.FLAG && admin.flagsEnabled
+    // Version 1's flag mode was retired in RV-1.10 (P2): nothing raises a version 1 flag any more. Its open flags
+    // stay in the old queue until an admin closes them.
+    val v1Flagging: Boolean = false
 
     // Always OFF, RECORD_ONLY or AUTO_HIDE.
     val mode: RelevanceMode = when (relevance.mode) {
@@ -39,8 +39,8 @@ class RelevanceSwitch(
 
     init {
         val log = LoggerFactory.getLogger(javaClass)
-        if (relevance.mode == RelevanceMode.FLAG && !admin.flagsEnabled) {
-            log.warn("RELEVANCE_MODE=flag with ADMIN_FLAGS_ENABLED off: relevance runs as shadow, no flag is raised")
+        if (relevance.mode == RelevanceMode.FLAG) {
+            log.warn("RELEVANCE_MODE=flag is retired: relevance runs as record-only, no flag is raised")
         }
         if (relevance.mode == RelevanceMode.AUTO_HIDE && mode != RelevanceMode.AUTO_HIDE) {
             val missing = listOfNotNull(

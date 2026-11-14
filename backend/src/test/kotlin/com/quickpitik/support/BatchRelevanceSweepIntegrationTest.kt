@@ -9,12 +9,7 @@ import com.quickpitik.entity.PhotoMetadata
 import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.DueBatch
-import com.quickpitik.repository.EventRepository
-import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PhotoMetadataRepository
-import com.quickpitik.repository.UserRepository
-import com.quickpitik.service.admin.AdminDecisionLogService
-import com.quickpitik.service.admin.SystemFlagService
 import com.quickpitik.service.relevance.BatchRelevanceService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
@@ -26,9 +21,6 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
-import java.util.concurrent.CyclicBarrier
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -38,67 +30,24 @@ class BatchRelevanceSweepIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var metadata: PhotoMetadataRepository
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired private lateinit var tx: TransactionTemplate
-    @Autowired private lateinit var systemFlags: SystemFlagService
-    @Autowired private lateinit var flags: FlagRepository
-    @Autowired private lateinit var users: UserRepository
-    @Autowired private lateinit var decisions: AdminDecisionLogService
-    @Autowired private lateinit var events: EventRepository
 
     private fun service(mode: RelevanceMode = RelevanceMode.SHADOW) = BatchRelevanceService(batches,
         RelevanceProperties(mode = mode, maxBatchesPerTick = 10_000),
         Clock.fixed(NOW.toInstant(), ZoneOffset.UTC), tx, SimpleMeterRegistry(),
-        systemFlags, flags, users, AdminProperties(flagsEnabled = true), decisions, events)
+        AdminProperties(flagsEnabled = true))
 
-    // ---- PE-2.1 flag mode ----
-
+    // RV-1.10 (P2): version 1's flag mode is retired. A Low batch is still scored, and no flag is raised.
     @Test
-    fun `in flag mode a low batch opens one flag and a second tick opens no second one`() {
-        val (original, copies) = copiedBatches()
-        val s = service(RelevanceMode.FLAG)
-        s.sweep(); s.sweep(); s.sweep()
-        val flag = relevanceFlags(copies.photographerId).single()
-        assertEquals(flag, row(copies).flagId)
-        assertNotNull(row(copies).flaggedAt)
-        assertEquals(emptyList(), relevanceFlags(original.photographerId))
-    }
-
-    @Test
-    fun `a batch that went low in shadow mode is flagged once flag mode is on`() {
+    fun `flag mode now runs as record-only and raises no flag`() {
         val (_, copies) = copiedBatches()
-        service().sweep(); service().sweep()
+        val s = service(RelevanceMode.FLAG)
+        s.sweep(); s.sweep()
         assertEquals("LOW", row(copies).level)
         assertNull(row(copies).flagId)
-        assertEquals(emptyList(), relevanceFlags(copies.photographerId))
-
-        service(RelevanceMode.FLAG).sweep()
-
-        assertEquals(relevanceFlags(copies.photographerId).single(), row(copies).flagId)
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT count(*) FROM flags WHERE target_kind = 'user' AND target_id = ? AND reason = 'batch_relevance_low'",
+            Int::class.java, copies.photographerId))
     }
-
-    @Test
-    fun `two threads scoring two low batches of one photographer open one flag`() {
-        val (_, first) = copiedBatches()
-        val (_, second) = copiedBatches(copier = first.photographerId)
-        service().sweep(); service().sweep()
-        assertEquals(listOf("LOW", "LOW"), listOf(row(first).level, row(second).level))
-
-        val s = service(RelevanceMode.FLAG)
-        val barrier = CyclicBarrier(2)
-        val pool = Executors.newFixedThreadPool(2)
-        try {
-            val runs = listOf(first, second).map { b -> pool.submit<Unit> { barrier.await(10, TimeUnit.SECONDS); s.score(b, TODAY) } }
-            runs.forEach { it.get(30, TimeUnit.SECONDS) }
-        } finally {
-            pool.shutdownNow()
-        }
-
-        val flag = relevanceFlags(first.photographerId).single()
-        assertEquals(listOf(flag, flag), listOf(row(first).flagId, row(second).flagId))
-        assertEquals(2, jdbc.queryForObject("SELECT note FROM flags WHERE id = ?", String::class.java, flag)!!.lines().size)
-    }
-
-    private fun relevanceFlags(photographer: UUID): List<UUID> = jdbc.queryForList(
-        "SELECT id FROM flags WHERE target_kind = 'user' AND target_id = ? AND reason = 'batch_relevance_low'", UUID::class.java, photographer)
 
     @Test
     fun `a copied batch ends low and the original photographer's batch does not`() {

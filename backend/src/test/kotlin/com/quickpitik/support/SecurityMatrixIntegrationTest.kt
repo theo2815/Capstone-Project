@@ -168,6 +168,39 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(200, get("/actuator/metrics", admin).statusCode())
     }
 
+    // RV-1.10: the Photo Relevance page's routes, with one real case and alert so the admin's answer is 200.
+    @Test
+    fun `the relevance admin routes are for admins only`() {
+        fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
+        val photographer = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')",
+            "matrix-${UUID.randomUUID()}@test.local")
+        val event = id("INSERT INTO events (slug, name, date, location, status, visibility) VALUES (?, 'Rel Run', DATE '2003-03-04', 'Cebu', 'ACTIVE', 'PUBLIC')",
+            "matrix-${UUID.randomUUID()}")
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event, photographer)
+        // Dated 2003 (test isolation): this current case must not look recent to other tests' queries.
+        val at = java.time.OffsetDateTime.parse("2003-03-04T05:06:07Z")
+        val case = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at) " +
+            "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'COPIED', 'RECORD_ONLY', 'HIDE_ALL', ?, ?, ?)", batch, at, at, at, at)
+        val alert = id("INSERT INTO relevance_alerts (batch_id, case_id, kind, dedupe_key, would_have, photos, created_at) VALUES (?, ?, 'COPIED', ?, true, 40, ?)",
+            batch, case, "copied:$case", at)
+        val reads = listOf("/api/v1/admin/relevance/cases?tab=hidden", "/api/v1/admin/relevance/cases/$case",
+            "/api/v1/admin/relevance/alerts?unseen=true")
+        val seen = "/api/v1/admin/relevance/alerts/$alert/seen"
+        val runner = register(Role.RUNNER)
+        val seller = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        for (path in reads) {
+            assertEquals(401, get(path).statusCode(), path)
+            assertEquals(403, get(path, runner).statusCode(), path)
+            assertEquals(403, get(path, seller).statusCode(), path)
+        }
+        assertEquals(403, post(seen, "", runner).statusCode())
+        assertEquals(403, post(seen, "", seller).statusCode())
+        for (path in reads) assertEquals(200, get(path, admin).statusCode(), path)
+        assertEquals(200, post(seen, "", admin).statusCode())
+    }
+
     @Test
     fun `admin command lookup is admin only and hides unknown keys`() {
         val path = "/api/v1/admin/commands/${UUID.randomUUID()}"

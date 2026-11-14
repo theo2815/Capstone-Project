@@ -36,7 +36,8 @@ enum class SystemFlagReason {
     RACE_CHECK_MISS, RACE_EDIT_HELD, POSSIBLE_DUPLICATE, SAME_BIB_DUPLICATE,
     NO_PROOF_HIDDEN, NO_PROOF_UNINDEXED, REPORT_THRESHOLD_HIDDEN, USER_REPORT,
     RUNNER_REMOVAL_HELD, // RD-6: a runner request whose auto-hide was held by a cap
-    // PE-2.1: one USER flag per photographer whose upload batch scored Low (relevance flag mode).
+    // PE-2.1: one USER flag per photographer whose upload batch scored Low (relevance flag mode, retired in
+    // RV-1.10: no new ones are raised; open ones stay in the queue until closed).
     BATCH_RELEVANCE_LOW;
 
     val wire: String get() = name.lowercase()

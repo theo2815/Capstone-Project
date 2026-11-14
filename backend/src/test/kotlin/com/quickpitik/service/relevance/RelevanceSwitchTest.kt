@@ -58,11 +58,13 @@ class RelevanceSwitchTest {
         assertTrue(s.aiEnabled)
     }
 
-    @Test fun `flag keeps version 1 flagging and records only while the flags switch is on`() {
-        val on = switch(RelevanceMode.FLAG)
-        assertEquals(RelevanceMode.RECORD_ONLY, on.mode)
-        assertTrue(on.v1Flagging)
-        assertFalse(switch(RelevanceMode.FLAG, flagsEnabled = false).v1Flagging)
+    // RV-1.10 (P2): version 1's flag mode is retired; old servers with RELEVANCE_MODE=flag still boot.
+    @Test fun `flag mode now runs as record-only and raises no flag`() {
+        for (flagsEnabled in listOf(true, false)) {
+            val s = switch(RelevanceMode.FLAG, flagsEnabled = flagsEnabled)
+            assertEquals(RelevanceMode.RECORD_ONLY, s.mode)
+            assertFalse(s.v1Flagging)
+        }
     }
 
     @Test fun `ai enabled follows the ai switch`() {
