@@ -118,11 +118,13 @@ class RelevanceCheckService(
                 return
             }
             val counts = holds.scanCounts(row.batchId, blur, dark, props.junk.labelMinConfidence)
-            val finished = transactions.execute {
-                cases.finishScan(row.caseId, counts.measured.toInt(), counts.junk.toInt(), counts.blurry.toInt(), now)
-            }
-            if (finished == 1) log.info("Relevance scan finished case={} measured={} junk={} blurry={}",
-                row.caseId, counts.measured, counts.junk, counts.blurry)
+            val flipped = transactions.execute {
+                if (cases.finishScan(row.caseId, counts.measured.toInt(), counts.junk.toInt(), counts.blurry.toInt(), now) != 1) return@execute null
+                // A.4 (G5): the finished scan may switch Fits and Mixed once; the hold step then hides or restores.
+                cases.flipAfterScan(row.caseId, counts.measured.toInt(), counts.junk.toInt(), props.junk.fitsBelowPercent, now) == 1
+            } ?: return
+            log.info("Relevance scan finished case={} measured={} junk={} blurry={} flipped={}",
+                row.caseId, counts.measured, counts.junk, counts.blurry, flipped)
         } finally {
             transactions.execute { batches.releaseCheck(row.batchId, token) }
         }
@@ -200,8 +202,9 @@ class RelevanceCheckService(
                 current == null || current.appliedMode != RelevanceMode.AUTO_HIDE.name -> null
                 // A record-only case never acts, and closing an acting case is an act (P18; conductor's call, A.3 leaves it open).
                 mode == RelevanceMode.RECORD_ONLY -> "HELD_BY_CASE"
-                // shortcut: a Fits or Mixed re-check never lifts a whole-batch hide; RV-2.4 replaces this with A.3's G7 rows.
-                current.action == CaseAction.HIDE_ALL.name && verdict in SCANNED -> "HELD_BY_CASE"
+                // G7: only an admin or a won appeal lifts a wrong-event or copied hide; a copied finding may replace a wrong-event one.
+                current.verdict in NEVER_LIFTED && !(current.verdict == CaseVerdict.WRONG_EVENT.name && verdict == CaseVerdict.COPIED) ->
+                    "HELD_BY_CASE"
                 else -> null
             }
             if (reason != null) {
@@ -214,12 +217,17 @@ class RelevanceCheckService(
                 return emptyList()
             }
         }
-        val action = when (verdict) {
+        // G7: a Fits or Mixed re-check lifts a current auto-hide junk dump to HIDE_JUNK, so the junk stays hidden photo by
+        // photo; the lifted case does not count (nothing confirms a closed case).
+        val lifted = current?.appliedMode == RelevanceMode.AUTO_HIDE.name && current.verdict == CaseVerdict.JUNK_DUMP.name &&
+            verdict in SCANNED
+        val action = if (lifted) CaseAction.HIDE_JUNK else when (verdict) {
             CaseVerdict.MIXED -> CaseAction.HIDE_JUNK
             CaseVerdict.JUNK_DUMP, CaseVerdict.WRONG_EVENT, CaseVerdict.COPIED -> CaseAction.HIDE_ALL
             CaseVerdict.FITS, CaseVerdict.CANT_TELL -> CaseAction.NONE
         }
-        if ((current != null && cases.closeCase(current.id, CaseStage.APPLIED.name, "SUPERSEDED", now) != 1) ||
+        val closeReason = if (lifted) "RECHECK_LIFTED" else "SUPERSEDED"
+        if ((current != null && cases.closeCase(current.id, CaseStage.APPLIED.name, closeReason, now) != 1) ||
             cases.applyCase(case.id, mode.name, action.name, now) != 1) {
             status.setRollbackOnly()
             return emptyList()
@@ -276,8 +284,10 @@ class RelevanceCheckService(
                     CaseAction.HIDE_ALL.name -> hideBatch(target, now)
                     // The predicate never runs with a cut-off unset (auto-hide cannot be on without both).
                     CaseAction.HIDE_JUNK.name -> if (blur != null && dark != null) {
-                        inChunks(target) { hide(holds.hideJunkChunk(target.batchId, target.caseId, target.eventId,
+                        val done = inChunks(target) { hide(holds.hideJunkChunk(target.batchId, target.caseId, target.eventId,
                             target.photographerId, now, props.hide.chunkSize, blur, dark, labelMin)) }
+                        // RV-2.4: a junk-only hide is whole once the scan has finished and nothing junk is left to hold.
+                        if (done && target.scanFinished && !target.hideFinished) finishHide(target, now, skipEmpty = true)
                         inChunks(target) { restore(holds.restoreNotJunkChunk(target.batchId, now, props.hide.chunkSize, blur, dark, labelMin)) }
                     }
                     else -> inChunks(target) { restore(holds.restoreChunk(target.batchId, AUTO, AUTO, now, props.hide.chunkSize)) }
@@ -327,9 +337,11 @@ class RelevanceCheckService(
 
     // The first pass that finds nothing left: stamp the case once, log one automatic decision and raise the big-hide
     // alert at the real count. A separate short transaction, after the photo chunks (lock order, part 1 section 2).
-    private fun finishHide(target: HoldTarget, now: OffsetDateTime) {
+    // skipEmpty: a junk-only hide of no photos writes nothing (it is checked again next tick, one count).
+    private fun finishHide(target: HoldTarget, now: OffsetDateTime, skipEmpty: Boolean = false) {
         val raised = transactions.execute {
             val hidden = holds.countLiveHolds(target.batchId, AUTO).toInt()
+            if (skipEmpty && hidden == 0) return@execute false
             if (cases.finishHide(target.caseId, hidden, now) != 1) return@execute false
             decisionLog.logAutomaticUserDecision(target.photographerId, "batch_auto_hidden",
                 meta = mapOf("caseId" to target.caseId.toString(), "eventId" to target.eventId.toString(), "photos" to hidden))
@@ -557,6 +569,8 @@ class RelevanceCheckService(
         val FAILED_CALL = setOf("CALL_FAILED", "CUT_OFF", "BAD_JSON", "UNKNOWN_VALUE")
         // Verdicts whose auto-hide case gets the full scan (A.3 step 5); a whole-batch hide is not scanned.
         val SCANNED = setOf(CaseVerdict.FITS, CaseVerdict.MIXED)
+        // Whole-batch findings a re-check never lifts (G7).
+        val NEVER_LIFTED = setOf(CaseVerdict.WRONG_EVENT.name, CaseVerdict.COPIED.name)
     }
 }
 
