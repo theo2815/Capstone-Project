@@ -3,6 +3,7 @@ package com.quickpitik.service.events
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.IdentityProperties
+import com.quickpitik.config.ModerationProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.RaceProperties
 import com.quickpitik.dto.photographer.UpdateRaceRequest
@@ -28,18 +29,21 @@ import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.service.admin.AdminEventService
 import com.quickpitik.service.admin.SystemFlagService
 import com.quickpitik.service.ai.FaceBibProvider
+import com.quickpitik.service.ai.RekognitionAiClient
 import com.quickpitik.service.moderation.ImageModerationResult
 import com.quickpitik.service.moderation.ImageModerationService
 import com.quickpitik.service.moderation.ImageModerationVerdict
 import com.quickpitik.service.moderation.WordList
 import com.quickpitik.service.moderation.WordListChecker
 import com.quickpitik.service.photographer.PhotographerAccessGuard
+import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.support.testTransactionTemplate
 import org.hibernate.exception.ConstraintViolationException
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import java.sql.SQLException
@@ -101,14 +105,17 @@ class RaceEventEditTest {
         }
     }
 
-    private fun service(races: RaceProperties = RaceProperties(selfServeEnabled = true)) = RaceEventService(
+    private fun service(
+        races: RaceProperties = RaceProperties(selfServeEnabled = true),
+        moderation: ImageModerationService = Mockito.mock(ImageModerationService::class.java).also {
+            Mockito.`when`(it.checkFor(anyLike(me), anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.CLEAN))
+        },
+    ) = RaceEventService(
         events, coverage, Mockito.mock(PhotographerSettingsRepository::class.java), Mockito.mock(SellerDetailsRepository::class.java),
         guard, races, IdentityProperties(), PlatformProperties(),
         Mockito.mock(RegionsService::class.java).also { Mockito.`when`(it.isValidPair("region-7", "cebu")).thenReturn(true) },
         covers, Mockito.mock(EventDtoMapper::class.java), flags, words, testTransactionTemplate(), publisher,
-        Mockito.mock(ImageModerationService::class.java).also {
-            Mockito.`when`(it.check(anyLike(ByteArray(0)))).thenReturn(ImageModerationResult(ImageModerationVerdict.CLEAN))
-        },
+        moderation,
         clock,
         EventFaceExpiry(events, Mockito.mock(FaceBibProvider::class.java), AiApiProperties(), clock, testTransactionTemplate()),
     )
@@ -202,6 +209,25 @@ class RaceEventEditTest {
         assertEquals("date", ex.field)
         assertEquals(today.plusDays(20), event.date)
         Mockito.verifyNoInteractions(covers)
+    }
+
+    @Test
+    fun `a new cover past the daily image-check cap is held as COVER_UNCHECKED and AWS is not called`() {
+        val event = race()
+        val rekognition = Mockito.mock(RekognitionAiClient::class.java)
+        val limiter = Mockito.mock(RateLimiter::class.java)
+        Mockito.`when`(limiter.tryAcquire("image-moderation-daily", me.toString())).thenReturn(RateLimiter.Decision(allowed = false))
+        @Suppress("UNCHECKED_CAST")
+        val provider = (Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>)
+            .also { Mockito.`when`(it.getIfAvailable()).thenReturn(rekognition) }
+        val moderation = ImageModerationService(AiApiProperties(enabled = true), ModerationProperties(), provider, limiter)
+
+        service(moderation = moderation).update(me, event.id, UpdateRaceRequest(), cover)
+
+        assertEquals(EventReviewStatus.CHANGE_PENDING, event.reviewStatus)
+        assertEquals(listOf(RaceCheckReason.COVER_UNCHECKED), event.checkReasons)
+        assertEquals("events/covers/live.jpg", event.coverS3Key)
+        Mockito.verifyNoInteractions(rekognition)
     }
 
     @Test

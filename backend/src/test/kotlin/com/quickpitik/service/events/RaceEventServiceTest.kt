@@ -122,7 +122,7 @@ class RaceEventServiceTest {
         }),
         publisher,
         Mockito.mock(com.quickpitik.service.moderation.ImageModerationService::class.java).also {
-            Mockito.`when`(it.check(anyLike(ByteArray(0))))
+            Mockito.`when`(it.checkFor(anyLike(java.util.UUID.randomUUID()), anyLike(ByteArray(0))))
                 .thenReturn(com.quickpitik.service.moderation.ImageModerationResult(com.quickpitik.service.moderation.ImageModerationVerdict.CLEAN))
         },
         // Fixed "today", so the December race dates stay inside the AA-R4 date window.
