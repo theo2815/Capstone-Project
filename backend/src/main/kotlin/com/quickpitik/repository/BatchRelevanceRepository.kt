@@ -577,6 +577,7 @@ private const val CHECK_DUE_FROM = """
     LEFT JOIN batch_relevance br ON br.event_id = ep.event_id AND br.photographer_id = ep.photographer_id
     WHERE NOT EXISTS (SELECT 1 FROM relevance_cases c
                       WHERE c.batch_id = br.id AND c.stage IN ('SAMPLING', 'DECIDING', 'DECIDED'))
+      AND $NO_OPEN_APPEAL
       AND ($QUIET_DUE OR $COUNT_DUE OR $RULES_DUE)
 """
 

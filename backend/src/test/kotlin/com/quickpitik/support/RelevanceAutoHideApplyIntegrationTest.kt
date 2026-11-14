@@ -193,7 +193,7 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `a fits or mixed re-check does not lift a whole-batch hide before the G7 rows exist`() {
+    fun `a fits or mixed re-check lifts a junk-dump hide to junk only and never a wrong-event or copied hide`() {
         for (oldVerdict in listOf("JUNK_DUMP", "WRONG_EVENT", "COPIED")) {
             for (newVerdict in listOf("FITS", "MIXED")) {
                 val b = batch(photos = 600)
@@ -202,8 +202,14 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
 
                 service().applyCase(new, NOW)
 
-                assertEquals(listOf("CLOSED", "HELD_BY_CASE"), row(new, "stage", "close_reason"), "$oldVerdict -> $newVerdict")
-                assertEquals(listOf("APPLIED", "HIDE_ALL"), row(old, "stage", "action"), "$oldVerdict -> $newVerdict")
+                if (oldVerdict == "JUNK_DUMP") {
+                    // G7: the lift keeps the junk hidden photo by photo.
+                    assertEquals(listOf("CLOSED", "RECHECK_LIFTED"), row(old, "stage", "close_reason"), "$oldVerdict -> $newVerdict")
+                    assertEquals(listOf("APPLIED", "HIDE_JUNK", "QUEUED"), row(new, "stage", "action", "scan_state"), "$oldVerdict -> $newVerdict")
+                } else {
+                    assertEquals(listOf("CLOSED", "HELD_BY_CASE"), row(new, "stage", "close_reason"), "$oldVerdict -> $newVerdict")
+                    assertEquals(listOf("APPLIED", "HIDE_ALL"), row(old, "stage", "action"), "$oldVerdict -> $newVerdict")
+                }
             }
         }
         // A whole-batch hide that becomes another whole-batch hide lifts nothing, so it is applied as usual.

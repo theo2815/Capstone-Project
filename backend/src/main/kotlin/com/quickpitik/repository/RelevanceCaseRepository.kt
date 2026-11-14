@@ -185,7 +185,8 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     // and HIDE_JUNK case, and a NONE case only while its batch has a live automatic hold left to restore.
     @Query(value = """
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId",
-               (c.hide_finished_at IS NOT NULL) AS "hideFinished", c.action AS "action"
+               (c.hide_finished_at IS NOT NULL) AS "hideFinished", c.action AS "action",
+               (c.scan_state = 'FINISHED') AS "scanFinished"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE'
           AND (c.action IN ('HIDE_ALL', 'HIDE_JUNK') OR EXISTS (
@@ -239,6 +240,28 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
                        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND action = :action)
     """, nativeQuery = true)
     fun isHoldTarget(@Param("id") id: UUID, @Param("action") action: String): Boolean
+
+    // RV-2.4 (A.4, G5): the full scan has the last word on the 10% line, once. Right after finishScan, with the counts in
+    // hand: a Fits case at or over the line becomes Mixed (HIDE_JUNK); a Mixed case under it becomes Fits (NONE), and the
+    // hold step then restores its automatic holds. Never with an open appeal; a Mixed case over 70% stays Mixed.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases c SET flipped_at = :now, verdict_note = 'SCAN_FLIP',
+            verdict = CASE WHEN c.verdict = 'FITS' THEN 'MIXED' ELSE 'FITS' END,
+            action = CASE WHEN c.verdict = 'FITS' THEN 'HIDE_JUNK' ELSE 'NONE' END
+        FROM batch_relevance br
+        WHERE c.id = :id AND br.id = c.batch_id AND c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE'
+          AND c.flipped_at IS NULL AND $NO_OPEN_APPEAL
+          AND ((c.verdict = 'FITS' AND :measured > 0 AND :junk * 100 >= :fitsBelow * :measured)
+               OR (c.verdict = 'MIXED' AND :junk * 100 < :fitsBelow * :measured))
+    """, nativeQuery = true)
+    fun flipAfterScan(
+        @Param("id") id: UUID,
+        @Param("measured") measured: Int,
+        @Param("junk") junk: Int,
+        @Param("fitsBelow") fitsBelow: Int,
+        @Param("now") now: OffsetDateTime,
+    ): Int
 
     // RV-2.2b: the hide found nothing left, once per case. :photos is the batch's live automatic holds.
     @Modifying
@@ -348,4 +371,8 @@ interface HoldTarget {
     val photographerId: UUID
     val hideFinished: Boolean
     val action: String
+    val scanFinished: Boolean
 }
+
+// RV-2.4 (P8, A.4): the batch aliased br has no open appeal. One predicate for the due query and the scan flip.
+const val NO_OPEN_APPEAL = "NOT EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.batch_id = br.id AND a.status = 'OPEN')"
