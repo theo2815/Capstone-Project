@@ -296,6 +296,28 @@ class RelevanceCheckService(
                 log.warn("Relevance hold step failed case={} (retried next tick): {}", target.caseId, ex.message)
             }
         }
+        finishAdminRestores(now)
+    }
+
+    // RV-2.5a: an admin's batch restore (AdminRelevanceService.restore) runs in its request; this finishes what a hide chunk
+    // that outran it, or a request that broke off, left: live automatic and admin holds of a batch whose case an admin
+    // restored and that has no current case. Same chunks and settings as the hide; stops at once if a case becomes current.
+    // shortcut: each tick reads every closed RESTORED_BY_ADMIN case (no index on close_reason) and probes the hold index
+    // of each one's batch; add a partial index on relevance_cases WHERE close_reason = 'RESTORED_BY_ADMIN' by migration
+    // once admin restores reach the tens of thousands.
+    private fun finishAdminRestores(now: OffsetDateTime) {
+        for (batchId in cases.findAdminRestoresLeft()) {
+            try {
+                for (i in 1..props.hide.chunksPerTick) {
+                    val n = transactions.execute {
+                        if (cases.currentFor(batchId) != null) 0 else restore(holds.restoreByAdminChunk(batchId, now, props.hide.chunkSize))
+                    } ?: 0
+                    if (n == 0) break
+                }
+            } catch (ex: Exception) {
+                log.warn("Relevance admin restore step failed batch={} (retried next tick): {}", batchId, ex.message)
+            }
+        }
     }
 
     private fun hideBatch(target: HoldTarget, now: OffsetDateTime) {

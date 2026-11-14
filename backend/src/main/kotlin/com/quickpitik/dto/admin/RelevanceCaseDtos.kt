@@ -3,6 +3,7 @@ package com.quickpitik.dto.admin
 import com.quickpitik.entity.CaseAction
 import com.quickpitik.repository.RelevanceAlertRow
 import com.quickpitik.repository.RelevanceCaseRow
+import jakarta.validation.constraints.Size
 import java.util.UUID
 
 // RV-1.10 (plan 5.11): the admin Photo Relevance page. Admins only: Claude's reason and the summary sent are never
@@ -105,4 +106,27 @@ fun RelevanceAlertRow.toDto() = RelevanceAlertDto(
     photos = photos,
     createdAt = createdAt?.toString(),
     seenAt = seenAt?.toString(),
+)
+
+// RV-2.5a: the admin's note on a case action (optional; blank is stored as none).
+data class RelevanceActionRequest(
+    @field:Size(max = 1000)
+    val note: String? = null,
+)
+
+// RV-2.5a: a batch restore; restoredPhotos counts the holds this call restored (0 on a repeat with nothing left).
+data class RelevanceRestoreDto(val caseId: UUID, val restoredPhotos: Int)
+
+// RV-2.5a: one photo restored; status is the photo's status after, HIDDEN while another hold or a hidden flag keeps it.
+data class RelevancePhotoRestoreDto(val photoId: UUID, val status: String)
+
+// RV-2.5a: one hold of the batch, restored ones included; thumbnailUrl is a presigned preview, never the original.
+data class RelevanceHiddenPhotoDto(
+    val photoId: UUID,
+    val heldBy: String,
+    val hiddenAt: String?,
+    val restoredAt: String?,
+    val restoredBy: String?,
+    val status: String,
+    val thumbnailUrl: String?,
 )

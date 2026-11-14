@@ -1,6 +1,8 @@
 package com.quickpitik.repository
 
 import com.quickpitik.entity.BatchRelevance
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.Repository
@@ -106,6 +108,52 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
         @Param("chunk") chunk: Int,
     ): List<UUID>
 
+    // RV-2.5a (G10): an admin's batch restore. Up to :chunk live automatic and admin holds of the batch, whichever case
+    // they name, stamped restored by the admin. Photographer holds (G8) and flag rows are never selected.
+    @Query(value = """
+        UPDATE flag_hidden_photos SET restored_at = :now, restored_by = 'ADMIN'
+        WHERE id IN (SELECT id FROM flag_hidden_photos
+                     WHERE batch_id = :batchId AND held_by IN ('AUTO', 'ADMIN') AND restored_at IS NULL
+                     ORDER BY photo_id LIMIT :chunk)
+        RETURNING photo_id
+    """, nativeQuery = true)
+    fun restoreByAdminChunk(@Param("batchId") batchId: UUID, @Param("now") now: OffsetDateTime, @Param("chunk") chunk: Int): List<UUID>
+
+    // RV-2.5a: an admin's single-photo restore. The rows take the current case, so the hide steps (which skip a photo a
+    // person restored under the case) never hide it again for that case; a new case may.
+    @Query(value = """
+        UPDATE flag_hidden_photos SET restored_at = :now, restored_by = 'ADMIN', case_id = :caseId
+        WHERE batch_id = :batchId AND photo_id = :photoId AND held_by IN ('AUTO', 'ADMIN') AND restored_at IS NULL
+        RETURNING photo_id
+    """, nativeQuery = true)
+    fun restorePhotoByAdmin(
+        @Param("batchId") batchId: UUID,
+        @Param("photoId") photoId: UUID,
+        @Param("caseId") caseId: UUID,
+        @Param("now") now: OffsetDateTime,
+    ): List<UUID>
+
+    // RV-2.5a: the photo's status when it belongs to the batch (its event and photographer), else null. Read in SQL, so
+    // it sees the conditional updates of the same transaction.
+    @Query(value = "SELECT status FROM photos WHERE id = :photoId AND event_id = :eventId AND photographer_id = :photographerId",
+        nativeQuery = true)
+    fun photoStatusInBatch(
+        @Param("photoId") photoId: UUID,
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+    ): String?
+
+    // RV-2.5a: the batch's holds, restored ones included, with the photo's preview keys (never the original's).
+    @Query(value = """
+        SELECT h.photo_id AS "photoId", h.held_by AS "heldBy", h.hidden_at AS "hiddenAt", h.restored_at AS "restoredAt",
+               h.restored_by AS "restoredBy", p.status AS "status", p.watermark_s3_key AS "watermarkKey",
+               p.thumbnail_s3_key AS "thumbnailKey"
+        FROM flag_hidden_photos h JOIN photos p ON p.id = h.photo_id
+        WHERE h.batch_id = :batchId
+        ORDER BY h.hidden_at DESC, h.photo_id, h.held_by
+    """, countQuery = "SELECT count(*) FROM flag_hidden_photos h WHERE h.batch_id = :batchId", nativeQuery = true)
+    fun pageBatchHolds(@Param("batchId") batchId: UUID, pageable: Pageable): Page<BatchHoldRow>
+
     // Conditional, like PhotoRepository.hideRecordedForFlag, so a row the pipeline is writing is not clobbered.
     @Modifying
     @Query(value = "UPDATE photos SET status = 'HIDDEN' WHERE id IN (:ids) AND status IN ('LIVE', 'PROCESSING')", nativeQuery = true)
@@ -154,6 +202,17 @@ const val JUNK_PREDICATE = """k.measured_at IS NOT NULL AND k.measure_error IS N
     COALESCE(k.fg_sharpness, k.sharpness) < :blurCutoff
     OR k.brightness < :darkCutoff
     OR (COALESCE(k.person_conf, 0) < :labelMin AND COALESCE(k.race_conf, 0) < :labelMin))"""
+
+interface BatchHoldRow {
+    val photoId: UUID
+    val heldBy: String
+    val hiddenAt: java.time.Instant?
+    val restoredAt: java.time.Instant?
+    val restoredBy: String?
+    val status: String
+    val watermarkKey: String?
+    val thumbnailKey: String?
+}
 
 interface ScanCounts {
     val measured: Long
