@@ -181,15 +181,18 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun lastClosedByAdmin(@Param("batchId") batchId: UUID): RelevanceCase?
 
-    // RV-2.2b (A.2, P18): the current auto-hide cases whose target is the whole batch, with what the hide step needs.
+    // RV-2.2b, RV-2.3b (A.2, P18): the current auto-hide cases whose batch holds must follow their target: every HIDE_ALL
+    // and HIDE_JUNK case, and a NONE case only while its batch has a live automatic hold left to restore.
     @Query(value = """
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId",
-               (c.hide_finished_at IS NOT NULL) AS "hideFinished"
+               (c.hide_finished_at IS NOT NULL) AS "hideFinished", c.action AS "action"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
-        WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.action = 'HIDE_ALL'
+        WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE'
+          AND (c.action IN ('HIDE_ALL', 'HIDE_JUNK') OR EXISTS (
+              SELECT 1 FROM flag_hidden_photos h WHERE h.batch_id = c.batch_id AND h.held_by = 'AUTO' AND h.restored_at IS NULL))
         ORDER BY c.applied_at, c.id
     """, nativeQuery = true)
-    fun findWholeBatchHides(): List<HoldTarget>
+    fun findHoldTargets(): List<HoldTarget>
 
     // RV-2.3a (A.4, S3, P14, P18): current auto-hide cases whose full scan is queued or running, least recently served first.
     // Only batches still allowed (invariant 12, the conditions of BatchRelevanceRepository.stillAllowed), so a batch that
@@ -230,12 +233,12 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         @Param("now") now: OffsetDateTime,
     ): Int
 
-    // RV-2.2b: still the current whole-batch auto-hide case? Read before each chunk; a plain read, no lock.
+    // RV-2.2b, RV-2.3b: still the current auto-hide case with this target? Read before each chunk; a plain read, no lock.
     @Query(value = """
         SELECT EXISTS (SELECT 1 FROM relevance_cases
-                       WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND action = 'HIDE_ALL')
+                       WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND action = :action)
     """, nativeQuery = true)
-    fun isWholeBatchHide(@Param("id") id: UUID): Boolean
+    fun isHoldTarget(@Param("id") id: UUID, @Param("action") action: String): Boolean
 
     // RV-2.2b: the hide found nothing left, once per case. :photos is the batch's live automatic holds.
     @Modifying
@@ -337,11 +340,12 @@ interface SamplingCase {
     val photographerId: UUID
 }
 
-// RV-2.2b: one current whole-batch auto-hide case (findWholeBatchHides).
+// RV-2.2b: one current auto-hide case whose holds follow its target (findHoldTargets).
 interface HoldTarget {
     val caseId: UUID
     val batchId: UUID
     val eventId: UUID
     val photographerId: UUID
     val hideFinished: Boolean
+    val action: String
 }

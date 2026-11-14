@@ -40,6 +40,54 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
         @Param("chunk") chunk: Int,
     ): List<UUID>
 
+    // RV-2.3b: the hide step for target HIDE_JUNK. hideChunk limited to photos measured as junk (JUNK_PREDICATE).
+    @Query(value = """
+        INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at)
+        SELECT :batchId, p.id, 'AUTO', :caseId, :now FROM photos p
+        JOIN relevance_photo_checks k ON k.photo_id = p.id
+        WHERE p.event_id = :eventId AND p.photographer_id = :photographerId AND p.deleted_at IS NULL
+          AND $JUNK_PREDICATE
+          AND NOT EXISTS (
+              SELECT 1 FROM flag_hidden_photos h
+              WHERE h.batch_id = :batchId AND h.photo_id = p.id AND h.held_by = 'AUTO'
+                AND (h.restored_at IS NULL OR (h.case_id = :caseId AND h.restored_by IS DISTINCT FROM 'AUTO')))
+        ORDER BY p.id LIMIT :chunk
+        ON CONFLICT (batch_id, photo_id, held_by) DO UPDATE
+            SET restored_at = NULL, restored_by = NULL, hidden_at = EXCLUDED.hidden_at, case_id = EXCLUDED.case_id
+        RETURNING photo_id
+    """, nativeQuery = true)
+    fun hideJunkChunk(
+        @Param("batchId") batchId: UUID,
+        @Param("caseId") caseId: UUID,
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("now") now: OffsetDateTime,
+        @Param("chunk") chunk: Int,
+        @Param("blurCutoff") blurCutoff: Double,
+        @Param("darkCutoff") darkCutoff: Double,
+        @Param("labelMin") labelMin: Double,
+    ): List<UUID>
+
+    // RV-2.3b: the restore step for target HIDE_JUNK. Up to :chunk live automatic holds of the batch, whichever case they
+    // name, whose photo was measured and is not junk; an unmeasured photo stays held until the scan measures it (A.2).
+    @Query(value = """
+        UPDATE flag_hidden_photos SET restored_at = :now, restored_by = 'AUTO'
+        WHERE id IN (SELECT h.id FROM flag_hidden_photos h
+                     JOIN relevance_photo_checks k ON k.photo_id = h.photo_id
+                     WHERE h.batch_id = :batchId AND h.held_by = 'AUTO' AND h.restored_at IS NULL
+                       AND k.measured_at IS NOT NULL AND k.measure_error IS NULL AND NOT ($JUNK_PREDICATE)
+                     ORDER BY h.photo_id LIMIT :chunk)
+        RETURNING photo_id
+    """, nativeQuery = true)
+    fun restoreNotJunkChunk(
+        @Param("batchId") batchId: UUID,
+        @Param("now") now: OffsetDateTime,
+        @Param("chunk") chunk: Int,
+        @Param("blurCutoff") blurCutoff: Double,
+        @Param("darkCutoff") darkCutoff: Double,
+        @Param("labelMin") labelMin: Double,
+    ): List<UUID>
+
     // Restore step for target NONE: stamp up to :chunk live holds of this kind as restored by :restoredBy.
     @Query(value = """
         UPDATE flag_hidden_photos SET restored_at = :now, restored_by = :restoredBy
