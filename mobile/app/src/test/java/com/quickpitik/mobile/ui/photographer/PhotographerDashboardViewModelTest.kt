@@ -395,6 +395,18 @@ class PhotographerDashboardViewModelTest {
         )
     }
 
+    @Test fun `a held profile submit says an admin is reviewing it`() {
+        route("POST /api/v1/me/photographer/verification") {
+            ok(verification("pending").replace("}", ""","awaitingAdmin":true}"""))
+        }
+        val vm = model()
+        vm.submitVerification()
+        assertEquals(
+            ActionState.Done("Saved. An admin is reviewing your profile."),
+            vm.verificationActionState.awaitFirst { it is ActionState.Done || it is ActionState.Failed },
+        )
+    }
+
     private companion object {
         const val RACES = "/api/v1/me/photographer/races"
         const val PENDING_RACE = """{"id":"ev-1","slug":"cebu-run","name":"Cebu Run","date":"2026-11-11","location":"Cebu","state":"draft","reviewStatus":"pending","ownedByMe":false,"photoCount":0,"salesCount":0,"revenueKept":0}"""

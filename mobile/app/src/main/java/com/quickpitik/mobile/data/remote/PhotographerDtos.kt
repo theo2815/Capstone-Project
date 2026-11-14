@@ -235,7 +235,9 @@ data class VerificationSubmitResponseDto(
     val missing: List<String>?, // human labels, e.g. "profile picture"
     val missingCodes: List<String>? = null, // stable keys, e.g. "PROFILE_PHOTO"
     val suspendedAt: String?,
-    val suspensionReason: String?
+    val suspensionReason: String?,
+    // R-10: pending, but held for an admin after a reset or reject (backend VerificationSubmitResponseDto).
+    val awaitingAdmin: Boolean = false,
 )
 
 data class SellerDetailsDto(
