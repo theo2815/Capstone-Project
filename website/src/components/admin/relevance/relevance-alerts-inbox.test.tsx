@@ -49,11 +49,13 @@ it("marking an alert seen waits for the server", async () => {
   expect(within(first).getByRole("link", { name: /Open case/ })).toHaveAttribute("href", "/admin/relevance?tab=all&row=c1");
   const second = screen.getByRole("listitem", { name: /Copied photos/ });
   expect(within(second).queryByText("Would have hidden")).not.toBeInTheDocument();
+  // Each Mark seen names its own alert, so a screen reader can tell the rows apart.
+  expect(within(second).getByRole("button", { name: "Mark seen: Copied photos · Cebu City Marathon 2003" })).toBeInTheDocument();
 
-  await user.click(within(first).getByRole("button", { name: "Mark seen" }));
+  await user.click(within(first).getByRole("button", { name: "Mark seen: Big hide · Cebu City Marathon 2003" }));
   expect(post).toHaveBeenCalledWith("/admin/relevance/alerts/a1/seen");
   // Nothing moves until the server answers.
-  expect(within(first).getByRole("button", { name: "Mark seen" })).toBeDisabled();
+  expect(within(first).getByRole("button", { name: "Mark seen: Big hide · Cebu City Marathon 2003" })).toBeDisabled();
   expect(screen.getAllByRole("listitem")).toHaveLength(2);
   unseen = [unseen[1]!];
   release(alert("a1", { seenAt: "2003-02-14T04:00:00Z" }));
@@ -66,9 +68,9 @@ it("a failed mark keeps the alert and says why", async () => {
   vi.spyOn(api, "post").mockRejectedValue(new Error("down"));
   wrap(<RelevanceAlertsInbox />);
   const first = await screen.findByRole("listitem", { name: /Big hide/ });
-  await user.click(within(first).getByRole("button", { name: "Mark seen" }));
+  await user.click(within(first).getByRole("button", { name: "Mark seen: Big hide · Cebu City Marathon 2003" }));
   await waitFor(() => expect(useToastStore.getState().toasts.some((t) => t.kind === "error")).toBe(true));
-  expect(within(first).getByRole("button", { name: "Mark seen" })).toBeEnabled();
+  expect(within(first).getByRole("button", { name: "Mark seen: Big hide · Cebu City Marathon 2003" })).toBeEnabled();
   expect(screen.getAllByRole("listitem")).toHaveLength(2);
 });
 

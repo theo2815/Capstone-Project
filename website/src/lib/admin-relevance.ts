@@ -148,7 +148,7 @@ export const WOULD_HAVE_LABEL = "Would have hidden";
 export const ALERTS_EMPTY = "No unseen relevance alerts.";
 export const ALERT_SEEN_FAILED = "Could not mark the alert seen. It stays in the list; try again.";
 
-export const alertKindLabel =(k: string) => label(ALERT_LABEL, k) ?? k;
+export const alertKindLabel = (k: string) => label(ALERT_LABEL, k) ?? k;
 export const evidenceLabel = (e: string) => label(EVIDENCE_LABEL, e) ?? e;
 export const bandLabel = (b: string | null) => label(BAND_LABEL, b) ?? "Not worked out";
 

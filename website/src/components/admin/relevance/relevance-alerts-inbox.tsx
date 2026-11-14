@@ -81,7 +81,7 @@ function AlertRow({ alert }: { alert: RelevanceAlert }) {
             Open case →
           </Link>
         )}
-        <button type="button" disabled={pending} onClick={handleSeen} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
+        <button type="button" disabled={pending} onClick={handleSeen} aria-label={`Mark seen: ${kind} · ${alert.eventName}`} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
           Mark seen
         </button>
       </div>
