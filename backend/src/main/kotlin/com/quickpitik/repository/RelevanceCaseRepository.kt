@@ -191,6 +191,41 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun findWholeBatchHides(): List<HoldTarget>
 
+    // RV-2.3a (A.4, S3, P14, P18): current auto-hide cases whose full scan is queued or running, least recently served first.
+    @Query(value = """
+        SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId"
+        FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+        WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.scan_state IN ('QUEUED', 'RUNNING')
+        ORDER BY c.scan_served_at ASC NULLS FIRST, c.applied_at, c.id
+        LIMIT :limit
+    """, nativeQuery = true)
+    fun findScans(@Param("limit") limit: Int): List<SamplingCase>
+
+    // RV-2.3a: one turn starts. Read again under the batch claim: still the current auto-hide case with its scan queued
+    // or running. A queued scan (also a re-queued finished one) becomes RUNNING; the turn is stamped for the rotation.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET scan_state = 'RUNNING', scan_served_at = :now
+        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND scan_state IN ('QUEUED', 'RUNNING')
+    """, nativeQuery = true)
+    fun startScanTurn(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // RV-2.3a: nothing left to measure. Only from RUNNING, so a scan queued again meanwhile keeps QUEUED and runs again;
+    // the counts are the batch's whole aggregate and replace the old ones, so a second finish never double counts.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET scan_state = 'FINISHED', scan_finished_at = :now,
+            scan_measured = :measured, scan_junk = :junk, scan_blurry = :blurry
+        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND scan_state = 'RUNNING'
+    """, nativeQuery = true)
+    fun finishScan(
+        @Param("id") id: UUID,
+        @Param("measured") measured: Int,
+        @Param("junk") junk: Int,
+        @Param("blurry") blurry: Int,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
     // RV-2.2b: still the current whole-batch auto-hide case? Read before each chunk; a plain read, no lock.
     @Query(value = """
         SELECT EXISTS (SELECT 1 FROM relevance_cases

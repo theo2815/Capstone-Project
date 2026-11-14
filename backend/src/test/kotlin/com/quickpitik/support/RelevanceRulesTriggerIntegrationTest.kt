@@ -105,7 +105,8 @@ class RelevanceRulesTriggerIntegrationTest : PostgresIntegrationTest() {
             Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.5"),
             Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java),
             Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
-            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java))
+            Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
+            org.springframework.core.task.SyncTaskExecutor())
     }
 
     // A shared race's batch, quiet, already checked for its newest upload and scored by version 1 for it.

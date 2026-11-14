@@ -77,4 +77,36 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
     @Query(value = "SELECT count(*) FROM flag_hidden_photos WHERE batch_id = :batchId AND held_by = :heldBy AND restored_at IS NULL",
         nativeQuery = true)
     fun countLiveHolds(@Param("batchId") batchId: UUID, @Param("heldBy") heldBy: String): Long
+
+    // RV-2.3a (A.4): the finished full scan's counts, from one aggregate over the batch's photos that are not trashed and
+    // not removed. Measured leaves out photos that could not be measured; blurry uses the predicate's blur line.
+    @Query(value = """
+        SELECT count(*) FILTER (WHERE k.measured_at IS NOT NULL AND k.measure_error IS NULL) AS "measured",
+               count(*) FILTER (WHERE $JUNK_PREDICATE) AS "junk",
+               count(*) FILTER (WHERE k.measured_at IS NOT NULL AND k.measure_error IS NULL
+                                  AND COALESCE(k.fg_sharpness, k.sharpness) < :blurCutoff) AS "blurry"
+        FROM relevance_photo_checks k
+        JOIN photos p ON p.id = k.photo_id AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+        WHERE k.batch_id = :batchId
+    """, nativeQuery = true)
+    fun scanCounts(
+        @Param("batchId") batchId: UUID,
+        @Param("blurCutoff") blurCutoff: Double,
+        @Param("darkCutoff") darkCutoff: Double,
+        @Param("labelMin") labelMin: Double,
+    ): ScanCounts
+}
+
+// RV-2.3a (part 2, A.2): RelevanceJunkRules.isJunk in SQL, over relevance_photo_checks aliased k, for every query that
+// needs it (RelevanceScanIntegrationTest proves they agree). Scores are bound as doubles; a measured photo stores label
+// confidence 0, never NULL; never run it with a cut-off unset (the caller returns first).
+const val JUNK_PREDICATE = """k.measured_at IS NOT NULL AND k.measure_error IS NULL AND (
+    COALESCE(k.fg_sharpness, k.sharpness) < :blurCutoff
+    OR k.brightness < :darkCutoff
+    OR (COALESCE(k.person_conf, 0) < :labelMin AND COALESCE(k.race_conf, 0) < :labelMin))"""
+
+interface ScanCounts {
+    val measured: Long
+    val junk: Long
+    val blurry: Long
 }

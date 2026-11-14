@@ -62,12 +62,40 @@ class RelevanceCheckServiceTest {
         aiEnabled: Boolean = true,
         junk: RelevanceProperties.Junk = cutoffs,
         key: String = "",
+        admin: AdminProperties = AdminProperties(),
+        imageProcessing: org.springframework.core.task.TaskExecutor = org.springframework.core.task.SyncTaskExecutor(),
     ): RelevanceCheckService {
         val props = RelevanceProperties(mode = mode, junk = junk, llm = RelevanceProperties.Llm(apiKey = key))
-        val switch = RelevanceSwitch(props, AdminProperties(), AiApiProperties(enabled = aiEnabled), rekognition)
+        val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), rekognition)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
             client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"),
-            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog)
+            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing)
+    }
+
+    // RV-2.3a (A.4, R6): the scan yields to upload indexing, per server copy.
+    @Test
+    fun `the scan skips a tick while upload indexing is busy`() {
+        val pool = org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor().apply {
+            corePoolSize = 1; maxPoolSize = 1; initialize()
+        }
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            pool.execute { release.await() }
+            val deadline = System.nanoTime() + 5_000_000_000L
+            while (pool.activeCount == 0 && System.nanoTime() < deadline) Thread.sleep(5)
+            val busy = service(mode = RelevanceMode.AUTO_HIDE, admin = AdminProperties(flagsEnabled = true), imageProcessing = pool)
+
+            busy.scanTurns()
+
+            Mockito.verify(cases, Mockito.never()).findScans(Mockito.anyInt())
+            assertEquals(1.0, registry.counter("qp.relevance.scan.yielded").count())
+        } finally {
+            release.countDown()
+            pool.shutdown()
+        }
+        // An idle pool lets the scan look for work.
+        service(mode = RelevanceMode.AUTO_HIDE, admin = AdminProperties(flagsEnabled = true)).scanTurns()
+        Mockito.verify(cases).findScans(Mockito.anyInt())
     }
 
     private fun due(batchId: UUID = UUID.randomUUID()): CheckDue = object : CheckDue {
