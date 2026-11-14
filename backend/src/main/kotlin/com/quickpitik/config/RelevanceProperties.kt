@@ -122,12 +122,14 @@ data class RelevanceProperties(
     }
 
     // Version 2 words read off the photos (G14): once a batch settles, words on under this share of its counted
-    // photos are deleted.
+    // photos are deleted. topN: at most this many of the batch's words go into the summary sent to the model (G13).
     data class Words(
         val minSharePercent: Int = 3,
+        val topN: Int = 30,
     ) {
         init {
             require(minSharePercent in 1..100) { "minSharePercent must be 1..100" }
+            require(topN in 1..100) { "topN must be 1..100" }
         }
     }
 }
