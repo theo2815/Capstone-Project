@@ -1082,3 +1082,41 @@ export function markRelevanceAlertSeen(
 ): Promise<import("@/lib/admin-relevance").RelevanceAlert> {
   return api.post(`/admin/relevance/alerts/${encodeURIComponent(alertId)}/seen`);
 }
+
+// ───────────────────────────────────────────── Photo Relevance actions (RV-2.6)
+
+const relevanceCasePath = (caseId: string) => `/admin/relevance/cases/${encodeURIComponent(caseId)}`;
+
+export function restoreRelevanceCase(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceRestoreResult> {
+  return api.post(`${relevanceCasePath(caseId)}/restore`);
+}
+
+export function keepRelevanceCaseHidden(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`${relevanceCasePath(caseId)}/keep-hidden`);
+}
+
+export function markRelevanceCaseLooksFine(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`${relevanceCasePath(caseId)}/looks-fine`);
+}
+
+export function hideRelevanceBatch(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`${relevanceCasePath(caseId)}/hide-batch`);
+}
+
+export function restoreRelevancePhoto(
+  caseId: string,
+  photoId: string,
+): Promise<import("@/lib/admin-relevance").RelevancePhotoRestoreResult> {
+  return api.post(`${relevanceCasePath(caseId)}/photos/${encodeURIComponent(photoId)}/restore`);
+}
+
+export function fetchRelevanceHiddenPhotos(
+  caseId: string,
+  args: { offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceHiddenPhoto>> {
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`${relevanceCasePath(caseId)}/hidden-photos?${p.toString()}`, { signal });
+}
