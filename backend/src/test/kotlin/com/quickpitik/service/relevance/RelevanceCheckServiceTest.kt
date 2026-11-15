@@ -104,6 +104,15 @@ class RelevanceCheckServiceTest {
         order.verify(cases).findHoldDue(Mockito.anyInt())
     }
 
+    // RV-4.2: with the mode off or record-only the hold step runs no query at all.
+    @Test
+    fun `the hold step runs no query unless in auto-hide`() {
+        service(mode = RelevanceMode.OFF).placeOwedHolds()
+        service(mode = RelevanceMode.RECORD_ONLY).placeOwedHolds()
+
+        Mockito.verifyNoInteractions(cases)
+    }
+
     // An upload-indexing pool the scan cannot read counts as busy, so a misconfigured bean never lets the scan crowd out uploads.
     @Test
     fun `an unreadable upload-indexing pool counts as busy`() {

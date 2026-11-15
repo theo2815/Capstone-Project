@@ -309,6 +309,19 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `cases whose hold is placed never take the turn of a case that is due`() {
+        // Earlier than every other class's cases, so only this test's cases are first in line.
+        val b = batch()
+        val held = (1L..2L).map { applied(batch(b.photographer), appliedAt = EARLY.plusMinutes(it)) }
+        held.forEach { hold().place(it) }
+        val due = applied(b, appliedAt = EARLY.plusMinutes(3))
+
+        checks(maxBatchesPerTick = held.size).placeOwedHolds()
+
+        assertNotNull(holdFlagOf(due))
+    }
+
+    @Test
     fun `the hold step places nothing in record-only or with the mode off`() {
         val b = batch()
         val c = applied(b)
@@ -392,8 +405,8 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
 
     private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
 
-    private fun props(mode: RelevanceMode) = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0),
-        check = RelevanceProperties.Check(maxBatchesPerTick = 10_000))
+    private fun props(mode: RelevanceMode, maxBatchesPerTick: Int = 10_000) = RelevanceProperties(mode = mode,
+        junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0), check = RelevanceProperties.Check(maxBatchesPerTick = maxBatchesPerTick))
 
     private fun switch(mode: RelevanceMode, flagsEnabled: Boolean) =
         RelevanceSwitch(props(mode), AdminProperties(flagsEnabled = flagsEnabled), AiApiProperties(enabled = false))
@@ -402,8 +415,8 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
         RelevanceHoldService(cases, strikes, systemFlags, adminFlags, decisionLog, switch(mode, flagsEnabled), tx,
             AdminProperties(flagsEnabled = flagsEnabled))
 
-    private fun checks(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, flagsEnabled: Boolean = true): RelevanceCheckService {
-        val props = props(mode)
+    private fun checks(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, flagsEnabled: Boolean = true, maxBatchesPerTick: Int = 10_000): RelevanceCheckService {
+        val props = props(mode, maxBatchesPerTick)
         return RelevanceCheckService(batchRepo, cases, props, switch(mode, flagsEnabled), Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts, publisher,
             LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"), holds, photoRepo, decisionLog,
@@ -444,10 +457,11 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
             "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, 'COPIED', true, ?)", b.id, UPLOAD, UPLOAD)
 
     // A current Copied case, applied in `mode`.
-    private fun applied(b: Batch, mode: String = "AUTO_HIDE", verdict: String = "COPIED", stage: String = "APPLIED"): UUID = id(
+    private fun applied(b: Batch, mode: String = "AUTO_HIDE", verdict: String = "COPIED", stage: String = "APPLIED",
+                        appliedAt: OffsetDateTime = UPLOAD): UUID = id(
         "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at, " +
             "applied_mode, action, applied_at, notice_at) VALUES (?, 'QUIET', ?, 40, ?, 40, 0, ?, true, ?, ?, 'HIDE_ALL', ?, ?)",
-        b.id, UPLOAD, stage, verdict, UPLOAD, mode, UPLOAD, UPLOAD)
+        b.id, UPLOAD, stage, verdict, UPLOAD, mode, appliedAt, UPLOAD)
 
     private fun flagsOf(b: Batch): List<Map<String, Any?>> = jdbc.queryForList(
         "SELECT id, status, target_kind, reporter_id, payout_hold_at, payout_hold_by, resolved_by FROM flags " +
@@ -472,5 +486,6 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
 
     private companion object {
         val UPLOAD: OffsetDateTime = OffsetDateTime.parse("2007-03-04T05:06:07Z")
+        val EARLY: OffsetDateTime = OffsetDateTime.parse("1990-01-01T00:00:00Z")
     }
 }

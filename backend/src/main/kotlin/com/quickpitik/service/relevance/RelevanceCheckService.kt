@@ -76,9 +76,6 @@ class RelevanceCheckService(
     private val log = LoggerFactory.getLogger(javaClass)
     @Volatile private var unreadablePoolLogged = false
 
-    // RV-4.1 (A.7, G9): the confirm step, database only, in auto-hide only. A current auto-hide whole-batch finding is
-    // confirmed once its appeal is lost, or once the note's last day to appeal has passed with no appeal, whatever the
-    // event's visibility. Each case is its own short transaction (RelevanceConfirmer.confirm), the ladder included.
     // RV-4.2 (A.8): the hold step, database only, in auto-hide only. A Copied case whose hold failed to place right after
     // its apply (an error, or a server stop in between) gets it here; place re-checks everything under the case lock.
     internal fun placeOwedHolds() {
@@ -92,6 +89,9 @@ class RelevanceCheckService(
         }
     }
 
+    // RV-4.1 (A.7, G9): the confirm step, database only, in auto-hide only. A current auto-hide whole-batch finding is
+    // confirmed once its appeal is lost, or once the note's last day to appeal has passed with no appeal, whatever the
+    // event's visibility. Each case is its own short transaction (RelevanceConfirmer.confirm), the ladder included.
     internal fun confirmDue() {
         if (switch.mode != RelevanceMode.AUTO_HIDE) return
         val now = clock.postgresTimestamp()
