@@ -187,7 +187,8 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId",
                (c.hide_finished_at IS NOT NULL) AS "hideFinished", c.action AS "action",
                (c.scan_state = 'FINISHED') AS "scanFinished",
-               CASE WHEN c.verdict_note = 'ADMIN_HIDE' THEN 'ADMIN' ELSE 'AUTO' END AS "heldBy"
+               CASE WHEN c.verdict_note = 'ADMIN_HIDE' THEN 'ADMIN' ELSE 'AUTO' END AS "heldBy",
+               EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'WON') AS "appealWon"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE'
           AND (c.action IN ('HIDE_ALL', 'HIDE_JUNK') OR EXISTS (
@@ -271,6 +272,16 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND hide_finished_at IS NULL
     """, nativeQuery = true)
     fun finishHide(@Param("id") id: UUID, @Param("photos") photos: Int, @Param("now") now: OffsetDateTime): Int
+
+    // RV-3.2 part c (A.6): a won case closes APPEAL_WON once its scan has finished and its good photos are back
+    // (reconcileHolds checks that). It never counts; its junk keeps its holds with no current case.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET stage = 'CLOSED', closed_at = :now, close_reason = 'APPEAL_WON'
+        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND action = 'HIDE_JUNK' AND scan_state = 'FINISHED'
+          AND EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = relevance_cases.id AND a.status = 'WON')
+    """, nativeQuery = true)
+    fun closeWonAppeal(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
 
     // RV-2.5a (G10): an admin closes the current case; closed_by names the admin.
     @Modifying
@@ -542,6 +553,8 @@ interface HoldTarget {
     val scanFinished: Boolean
     // RV-2.5b: the hold kind the hide places: ADMIN for an admin's hide of a Can't tell batch, else AUTO.
     val heldBy: String
+    // RV-3.2 part c: the case's appeal was won, so it closes APPEAL_WON once the scan and the restore are done.
+    val appealWon: Boolean
 }
 
 // RV-2.4 (P8, A.4): the batch aliased br has no open appeal. One predicate for the due query and the scan flip.

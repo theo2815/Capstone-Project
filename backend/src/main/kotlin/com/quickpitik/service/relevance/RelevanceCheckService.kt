@@ -295,7 +295,10 @@ class RelevanceCheckService(
                             target.photographerId, now, props.hide.chunkSize, blur, dark, labelMin)) }
                         // RV-2.4: a junk-only hide is whole once the scan has finished and nothing junk is left to hold.
                         if (done && target.scanFinished && !target.hideFinished) finishHide(target, now, skipEmpty = true)
-                        inChunks(target) { restore(holds.restoreNotJunkChunk(target.batchId, now, props.hide.chunkSize, blur, dark, labelMin)) }
+                        val restored = inChunks(target) { restore(holds.restoreNotJunkChunk(target.batchId, now, props.hide.chunkSize, blur, dark, labelMin)) }
+                        // RV-3.2 part c (A.6): a won case closes once the scan has finished and nothing junk is left to hold
+                        // nor good left to restore; not at the scan finish, whose last good photos come back on a later tick.
+                        if (done && restored && target.scanFinished && target.appealWon) closeWon(target, now)
                     }
                     else -> inChunks(target) { restore(holds.restoreChunk(target.batchId, AUTO, AUTO, now, props.hide.chunkSize)) }
                 }
@@ -327,6 +330,11 @@ class RelevanceCheckService(
                 log.warn("Relevance admin restore step failed batch={} (retried next tick): {}", batchId, ex.message)
             }
         }
+    }
+
+    // A separate short transaction, after the photo chunks (lock order, part 1 section 2).
+    private fun closeWon(target: HoldTarget, now: OffsetDateTime) {
+        if (transactions.execute { cases.closeWonAppeal(target.caseId, now) } == 1) log.info("Relevance case closed APPEAL_WON case={}", target.caseId)
     }
 
     private fun hideBatch(target: HoldTarget, now: OffsetDateTime) {

@@ -257,6 +257,123 @@ class RelevanceJunkHoldsIntegrationTest : PostgresIntegrationTest() {
         assertEquals(2L, holds.countLiveHolds(b.id, "AUTO"))
     }
 
+    // RV-3.2 part c (A.6): a won case's hold target says the appeal was won.
+    @Test
+    fun `a hold target says whether its appeal was won`() {
+        val wonBatch = batch()
+        val won = case(wonBatch, "HIDE_JUNK").also { appeal(wonBatch, it, "WON") }
+        val lostBatch = batch()
+        val lost = case(lostBatch, "HIDE_JUNK").also { appeal(lostBatch, it, "LOST") }
+        val none = case(batch(), "HIDE_JUNK")
+
+        val targets = cases.findHoldTargets().associate { it.caseId to it.appealWon }
+
+        assertEquals(listOf(true, false, false), listOf(won, lost, none).map { targets.getValue(it) })
+    }
+
+    // RV-3.2 part c: a won admin's hide. The measured good photos lose the admin's hold too; the junk keeps it, and a
+    // photographer's own hold is never lifted.
+    @Test
+    fun `the junk restore releases admin holds on good photos and never a photographer's hold`() {
+        val b = batch()
+        val good = photo(b, GOOD, status = "HIDDEN").also { hold(b, it, heldBy = "ADMIN") }
+        val junk = photo(b, JUNK, status = "HIDDEN").also { hold(b, it, heldBy = "ADMIN") }
+        val own = photo(b, GOOD, status = "HIDDEN").also { hold(b, it, heldBy = "PHOTOGRAPHER") }
+
+        val restored = tx.execute { holds.restoreNotJunkChunk(b.id, NOW, 1000, 20.0, 5.0, 0.6) }
+
+        assertEquals(listOf(good), restored)
+        assertEquals("AUTO", jdbc.queryForObject("SELECT restored_by FROM flag_hidden_photos WHERE photo_id = ?", String::class.java, good))
+        assertEquals(1L, holds.countLiveHolds(b.id, "ADMIN"))
+        assertEquals(1L, holds.countLiveHolds(b.id, "PHOTOGRAPHER"))
+        assertEquals(listOf(1, 1), listOf(junk, own).map {
+            jdbc.queryForObject("SELECT count(*) FROM flag_hidden_photos WHERE photo_id = ? AND restored_at IS NULL", Int::class.java, it)
+        })
+    }
+
+    @Test
+    fun `the won-case close needs a finished scan and a won appeal`() {
+        val unfinished = batch().let { b -> case(b, "HIDE_JUNK", scan = "RUNNING").also { appeal(b, it, "WON") } }
+        val notWon = batch().let { b -> case(b, "HIDE_JUNK", scan = "FINISHED").also { appeal(b, it, "LOST") } }
+        val won = batch().let { b -> case(b, "HIDE_JUNK", scan = "FINISHED").also { appeal(b, it, "WON") } }
+
+        val closed = listOf(unfinished, notWon, won).map { c -> tx.execute { cases.closeWonAppeal(c, NOW) } }
+
+        assertEquals(listOf(0, 0, 1), closed)
+        assertEquals(listOf("CLOSED", "APPEAL_WON"), caseRow(won, "stage", "close_reason"))
+        assertEquals(listOf("APPLIED", null), caseRow(unfinished, "stage", "close_reason"))
+    }
+
+    @Test
+    fun `a won case is not closed while a good photo is still hidden`() {
+        val b = batch()
+        val c = case(b, "HIDE_JUNK", scan = "FINISHED").also { appeal(b, it, "WON") }
+        val good = List(2) { photo(b, GOOD, status = "HIDDEN").also { p -> hold(b, p, caseId = c) } }
+        val junk = photo(b, JUNK, status = "HIDDEN").also { hold(b, it, caseId = c) }
+        // One photo a tick: two ticks bring the good photos back, the third finds nothing left and closes.
+        val service = service(chunkSize = 1, chunksPerTick = 1)
+
+        service.reconcileHolds()
+        service.reconcileHolds()
+        assertEquals(listOf("APPLIED"), caseRow(c, "stage"))
+        assertEquals(listOf("LIVE"), good.map(::status).distinct())
+
+        service.reconcileHolds()
+
+        assertEquals(listOf("CLOSED", "APPEAL_WON", null), caseRow(c, "stage", "close_reason", "confirmed_at"))
+        assertEquals("HIDDEN", status(junk))
+        assertEquals(1L, holds.countLiveHolds(b.id, "AUTO"), "the junk stays held with no current case")
+        service.reconcileHolds()
+        assertEquals("HIDDEN", status(junk))
+    }
+
+    @Test
+    fun `a won case is not closed while a junk photo is still to be hidden`() {
+        val b = batch()
+        val c = case(b, "HIDE_JUNK", scan = "FINISHED").also { appeal(b, it, "WON") }
+        val junk = List(2) { photo(b, JUNK) }
+        val service = service(chunkSize = 1, chunksPerTick = 1)
+
+        service.reconcileHolds()
+        assertEquals(listOf("APPLIED"), caseRow(c, "stage"))
+        service.reconcileHolds()
+        service.reconcileHolds()
+
+        assertEquals(listOf("CLOSED"), caseRow(c, "stage"))
+        assertEquals(listOf("HIDDEN"), junk.map(::status).distinct())
+    }
+
+    @Test
+    fun `a won case whose scan has not finished stays current`() {
+        val b = batch()
+        val c = case(b, "HIDE_JUNK", scan = "RUNNING").also { appeal(b, it, "WON") }
+        val good = photo(b, GOOD, status = "HIDDEN").also { hold(b, it, caseId = c) }
+
+        service().reconcileHolds()
+
+        assertEquals("LIVE", status(good))
+        assertEquals(listOf("APPLIED", "HIDE_JUNK"), caseRow(c, "stage", "action"))
+    }
+
+    @Test
+    fun `a won case is closed only in auto-hide and only when applied in auto-hide`() {
+        val b = batch()
+        val c = case(b, "HIDE_JUNK", scan = "FINISHED").also { appeal(b, it, "WON") }
+        val good = photo(b, GOOD, status = "HIDDEN").also { hold(b, it, caseId = c) }
+        val recordOnly = batch()
+        val r = case(recordOnly, "HIDE_JUNK", mode = "RECORD_ONLY", scan = "FINISHED").also { appeal(recordOnly, it, "WON") }
+
+        service(mode = RelevanceMode.OFF).tick()
+        service(mode = RelevanceMode.RECORD_ONLY).tick()
+        assertEquals(listOf("APPLIED"), caseRow(c, "stage"))
+        assertEquals("HIDDEN", status(good))
+
+        service().reconcileHolds()
+
+        assertEquals(listOf("CLOSED"), caseRow(c, "stage"))
+        assertEquals(listOf("APPLIED", null), caseRow(r, "stage", "close_reason"))
+    }
+
     private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
 
     // fg sharpness, brightness, person and race confidence, against the cut-offs below (blur 20, dark 5, labels 0.6).
@@ -290,11 +407,19 @@ class RelevanceJunkHoldsIntegrationTest : PostgresIntegrationTest() {
     }
 
     // A case of the batch with target `action`; APPLIED (current) unless `stage` says otherwise.
-    private fun case(b: Batch, action: String, mode: String = "AUTO_HIDE", stage: String = "APPLIED"): UUID = id(
-        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, decided_at, applied_mode, action, applied_at) " +
-            "VALUES (?, 'QUIET', ?, 1, ?, ?, ?, ?, ?, ?)",
-        b.id, UPLOAD, stage, VERDICT.getValue(action), NOW, mode, action, NOW,
+    private fun case(b: Batch, action: String, mode: String = "AUTO_HIDE", stage: String = "APPLIED", scan: String = "NONE"): UUID = id(
+        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, decided_at, applied_mode, action, applied_at, scan_state) " +
+            "VALUES (?, 'QUIET', ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+        b.id, UPLOAD, stage, VERDICT.getValue(action), NOW, mode, action, NOW, scan,
     )
+
+    private fun appeal(b: Batch, caseId: UUID, status: String) {
+        jdbc.update("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason, status) VALUES (?, ?, ?, 'Mine', ?)",
+            caseId, b.id, b.photographer, status)
+    }
+
+    private fun caseRow(caseId: UUID, vararg columns: String): List<Any?> =
+        jdbc.queryForMap("SELECT ${columns.joinToString()} FROM relevance_cases WHERE id = ?", caseId).let { r -> columns.map { r[it] } }
 
     private fun photo(b: Batch, scores: Scores?, status: String = "LIVE", watermark: String? = "reljunk/wm"): UUID = id(
         "INSERT INTO photos (event_id, photographer_id, s3_key, thumbnail_s3_key, watermark_s3_key, price_php, status) " +
