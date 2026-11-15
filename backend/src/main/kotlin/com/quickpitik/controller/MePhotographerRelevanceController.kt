@@ -49,6 +49,15 @@ class MePhotographerRelevanceController(
         @RequestParam(required = false) limit: Int?,
     ): PaginatedResponse<PhotographerBlurryPhotoDto> = hides.blurry(principal.userId, caseId, PaginationParams.of(offset, limit))
 
+    // RV-3.4b: the photos the photographer hid themselves, so the page can offer Undo on every visit.
+    @GetMapping("/cases/{caseId}/hidden")
+    fun hidden(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable caseId: UUID,
+        @RequestParam(required = false) offset: Int?,
+        @RequestParam(required = false) limit: Int?,
+    ): PaginatedResponse<PhotographerBlurryPhotoDto> = hides.hidden(principal.userId, caseId, PaginationParams.of(offset, limit))
+
     // The service checks the 1 to 200 ids (PhotoIdsRequest's own cap is the photo library's 500).
     @PostMapping("/cases/{caseId}/hide")
     fun hide(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable caseId: UUID, @RequestBody body: PhotoIdsRequest): PhotoActionResponse =

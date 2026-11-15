@@ -53,6 +53,17 @@ class RelevancePhotographerHideService(
         }, result.totalElements, page)
     }
 
+    // RV-3.4b: the photos the photographer hid themselves and has not shown again, behind the same guards as blurry().
+    fun hidden(photographerId: UUID, caseId: UUID, page: PaginationParams): PaginatedResponse<PhotographerBlurryPhotoDto> {
+        if (switch.mode != RelevanceMode.AUTO_HIDE) throw notFound()
+        val row = cases.ownCase(caseId, photographerId)?.takeIf { it.appliedMode == AUTO } ?: throw notFound()
+        val result = holds.pageOwnHidden(row.batchId, OffsetLimitPageable(page))
+        return PaginatedResponse.of(result.content.map {
+            PhotographerBlurryPhotoDto(it.photoId,
+                (it.watermarkKey ?: it.thumbnailKey)?.let { key -> storage.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail) })
+        }, result.totalElements, page)
+    }
+
     // At most a page of ids, so one short transaction: hold rows first, then the photos locked in id order and hidden.
     fun hide(photographerId: UUID, caseId: UUID, photoIds: List<UUID>): PhotoActionResponse = act(photographerId, caseId, photoIds) { row, ids ->
         holds.holdByPhotographer(row.batchId, row.caseId, ids, clock.postgresTimestamp())

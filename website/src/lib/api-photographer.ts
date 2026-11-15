@@ -918,3 +918,28 @@ export async function fetchMyRelevanceCase(caseId: string, signal?: AbortSignal)
 export async function fileMyRelevanceAppeal(caseId: string, reason: string): Promise<PhotographerRelevanceCase> {
   return api.post<PhotographerRelevanceCase>(`/me/photographer/relevance/cases/${encodeURIComponent(caseId)}/appeal`, { reason });
 }
+
+// RV-3.4b: the case's blurry photos still on sale, the ones the photographer hid themselves, and hide / undo.
+//   GET  /api/v1/me/photographer/relevance/cases/{caseId}/blurry?offset=&limit=  -> PaginatedResponse<RelevancePhoto>
+//   GET  /api/v1/me/photographer/relevance/cases/{caseId}/hidden?offset=&limit=  -> PaginatedResponse<RelevancePhoto>
+//   POST /api/v1/me/photographer/relevance/cases/{caseId}/hide | /unhide  { photoIds } (1 to 200) -> { affected }
+// thumbnailUrl is a short-lived preview link (the watermarked one, else the thumbnail), never the original.
+export interface RelevancePhoto {
+  photoId: string;
+  thumbnailUrl: string | null;
+}
+
+export async function fetchMyRelevancePhotos(
+  caseId: string,
+  list: "blurry" | "hidden",
+  offset: number,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<RelevancePhoto>> {
+  return api.get<PaginatedResponse<RelevancePhoto>>(
+    `/me/photographer/relevance/cases/${encodeURIComponent(caseId)}/${list}?offset=${offset}&limit=${limit}`, { signal });
+}
+
+export async function setMyRelevancePhotosHidden(caseId: string, hide: boolean, photoIds: string[]): Promise<{ affected: number }> {
+  return api.post<{ affected: number }>(`/me/photographer/relevance/cases/${encodeURIComponent(caseId)}/${hide ? "hide" : "unhide"}`, { photoIds });
+}

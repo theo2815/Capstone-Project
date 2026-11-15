@@ -220,6 +220,13 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
     """, countQuery = "SELECT count(*) $BLURRY_LIVE", nativeQuery = true)
     fun pageBlurryLive(@Param("batchId") batchId: UUID, @Param("blurCutoff") blurCutoff: Double, pageable: Pageable): Page<BlurryPhotoRow>
 
+    // RV-3.4b: the photographer's own hides, so the page can offer Undo on every visit; preview keys, never the original's.
+    @Query(value = """
+        SELECT p.id AS "photoId", p.watermark_s3_key AS "watermarkKey", p.thumbnail_s3_key AS "thumbnailKey"
+        $OWN_HIDDEN ORDER BY p.id
+    """, countQuery = "SELECT count(*) $OWN_HIDDEN", nativeQuery = true)
+    fun pageOwnHidden(@Param("batchId") batchId: UUID, pageable: Pageable): Page<BlurryPhotoRow>
+
     @Query(value = "SELECT count(*) FROM flag_hidden_photos WHERE batch_id = :batchId AND held_by = :heldBy AND restored_at IS NULL",
         nativeQuery = true)
     fun countLiveHolds(@Param("batchId") batchId: UUID, @Param("heldBy") heldBy: String): Long
@@ -250,6 +257,12 @@ const val JUNK_PREDICATE = """k.measured_at IS NOT NULL AND k.measure_error IS N
     COALESCE(k.fg_sharpness, k.sharpness) < :blurCutoff
     OR k.brightness < :darkCutoff
     OR (COALESCE(k.person_conf, 0) < :labelMin AND COALESCE(k.race_conf, 0) < :labelMin))"""
+
+// RV-3.4b: the photographer's own live hides of the batch, on photos undo accepts (countInBatch: not trashed, not under
+// removal). One row per photo: a batch has one PHOTOGRAPHER hold per photo (uq_flag_hidden_photos_batch).
+private const val OWN_HIDDEN = """FROM flag_hidden_photos h
+        JOIN photos p ON p.id = h.photo_id AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+        WHERE h.batch_id = :batchId AND h.held_by = 'PHOTOGRAPHER' AND h.restored_at IS NULL"""
 
 private const val BLURRY_LIVE = """FROM relevance_photo_checks k
         JOIN photos p ON p.id = k.photo_id AND p.status = 'LIVE' AND p.deleted_at IS NULL AND p.removal_state = 'NONE'

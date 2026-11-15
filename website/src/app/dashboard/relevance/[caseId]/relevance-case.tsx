@@ -12,6 +12,7 @@ import {
   APPEAL_FORM, APPEAL_MAX, CASE_LABELS, appealText, blurryText, hiddenCaseText, philippineToday, shownAgainText, type CaseText,
 } from "@/lib/photographer-relevance-copy";
 import { useFileRelevanceAppeal, usePhotographerRelevanceCase } from "@/hooks/use-photographer-relevance";
+import { RelevanceBlurryReview } from "./relevance-blurry";
 
 // RV-3.4a: what happened to the photographer's photos in one event, and the appeal. It renders only the named fields
 // of the photographer's case view; nothing else the server might send (the model's reason above all) reaches the page.
@@ -34,6 +35,8 @@ export function RelevanceCase({ caseId }: { caseId: string }) {
   // A closed case shows only its title (and the appeal only through APPEAL_WON's own block).
   const status = c.current && c.appeal && c.appeal.status !== "WON" ? appealText(c) : null;
   const canAppeal = isHiding(c) && !c.appeal && !!c.appealDeadline;
+  // RV-3.4b: a current Fits case that hides nothing and whose full check found blurry photos (the V2-T15 note).
+  const reviewing = c.current && c.action === "NONE" && c.verdict === "FITS" && !c.noticeAt && (c.scanBlurry ?? 0) > 0;
   const windowOpen = canAppeal && philippineToday() <= c.appealDeadline!;
 
   return (
@@ -43,6 +46,8 @@ export function RelevanceCase({ caseId }: { caseId: string }) {
         <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3 break-words">{text.title}</h1>
         {text.body.length > 0 && <p className="mt-4 text-ink-soft leading-relaxed break-words">{text.body.join(" ")}</p>}
       </header>
+
+      {reviewing && <RelevanceBlurryReview caseId={c.caseId} />}
 
       {status && (
         <section aria-labelledby="relevance-appeal-status" className="space-y-2">
@@ -72,7 +77,7 @@ function caseText(c: PhotographerRelevanceCase): CaseText | null {
   }
   if (won) return appealText(c);
   if (isHiding(c)) return hiddenCaseText(c, c.eventDate ? formatLongDate(c.eventDate, true) : null);
-  // RV-3.4b: a Fits case's blurry note (no appeal clock) gets its "Review and hide" grid here. With no blurry photos
+  // RV-3.4b: a Fits case's blurry note (no appeal clock), with its "Review and hide" grid below. With no blurry photos
   // found, no note was sent and there is nothing to tell.
   if (c.verdict === "FITS" && !c.noticeAt) return (c.scanBlurry ?? 0) > 0 ? blurryText(c) : null;
   // Only a Fits (scan flip) or Mixed case can have had photos put back; any other case that hides nothing never hid any.

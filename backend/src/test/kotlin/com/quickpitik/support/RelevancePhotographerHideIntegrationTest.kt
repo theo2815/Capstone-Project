@@ -191,6 +191,48 @@ class RelevancePhotographerHideIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, holdsOf(b).size)
     }
 
+    // RV-3.4b: the photographer's own hides, so the page can offer Undo on every visit.
+    @Test
+    fun `the hidden list shows only the photographer's own live hides that undo can reach`() {
+        val b = batch()
+        val c = case(b, "FITS", "NONE")
+        val mine = List(3) { photo(b, sharpness = 10.0) }.sortedBy { it.toString() }
+        val shownAgain = photo(b, sharpness = 10.0)
+        val trashed = photo(b, sharpness = 10.0)
+        val review = photo(b, sharpness = 10.0)
+        service().hide(b.photographer, c, mine + listOf(shownAgain, trashed, review))
+        service().unhide(b.photographer, c, listOf(shownAgain))
+        jdbc.update("UPDATE photos SET deleted_at = ? WHERE id = ?", NOW, trashed)
+        jdbc.update("UPDATE photos SET removal_state = 'REVIEW' WHERE id = ?", review)
+        photo(b, sharpness = 10.0, status = "HIDDEN").also { hold(b, it, "AUTO", c) }
+        photo(b, sharpness = 10.0, status = "HIDDEN").also { hold(b, it, "ADMIN", c) }
+
+        val first = service().hidden(b.photographer, c, PaginationParams.of(0, 2))
+        val second = service().hidden(b.photographer, c, PaginationParams.of(2, 2))
+
+        assertEquals(3L, first.total)
+        assertEquals(mine, first.items.map { it.photoId } + second.items.map { it.photoId })
+        assertEquals("https://synthetic.test/wm/${mine[0]}", first.items[0].thumbnailUrl, "the watermarked preview, never the original")
+        // Every listed photo is one undo accepts.
+        assertEquals(3, service().unhide(b.photographer, c, mine).affected)
+        assertEquals(0L, service().hidden(b.photographer, c, PaginationParams.of(0, 50)).total)
+    }
+
+    @Test
+    fun `the hidden list is not found for another photographer, a record-only case or the mode off`() {
+        val b = batch()
+        val c = case(b, "FITS", "NONE")
+        service().hide(b.photographer, c, listOf(photo(b, sharpness = 10.0)))
+        val recordOnly = batch().let { it to case(it, "FITS", "NONE", mode = "RECORD_ONLY") }
+
+        assertFailsWith<NotFoundException> { service().hidden(batch().photographer, c, PaginationParams.of(0, 50)) }
+        assertFailsWith<NotFoundException> { service().hidden(recordOnly.first.photographer, recordOnly.second, PaginationParams.of(0, 50)) }
+        for (mode in listOf(RelevanceMode.OFF, RelevanceMode.RECORD_ONLY)) {
+            assertFailsWith<NotFoundException> { service(mode).hidden(b.photographer, c, PaginationParams.of(0, 50)) }
+        }
+        assertEquals(1L, service().hidden(b.photographer, c, PaginationParams.of(0, 50)).total)
+    }
+
     private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
 
     private fun refused(block: () -> Unit): Pair<HttpStatus, String> =
