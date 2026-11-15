@@ -108,7 +108,9 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL", noticeAt = OffsetDateTime.parse("2010-05-06T01:00:00Z"))
         val late = service(clock = Clock.fixed(Instant.parse("2010-05-20T16:30:00Z"), ZoneOffset.UTC))
 
-        assertEquals("APPEAL_WINDOW_CLOSED", refused { tx.execute { late.file(b.photographer, c, "mine") } })
+        val closed = assertFailsWith<ConflictException> { tx.execute { late.file(b.photographer, c, "mine") } }
+        // V2-T22, word for word: the website shows the server's message.
+        assertEquals("APPEAL_WINDOW_CLOSED" to "The time to appeal this decision has ended.", closed.code to closed.message)
         // On the last day itself (late evening in Manila) it is still open.
         val lastDay = service(clock = Clock.fixed(Instant.parse("2010-05-20T15:30:00Z"), ZoneOffset.UTC))
         assertEquals(LocalDate.parse("2010-05-20"), tx.execute { lastDay.file(b.photographer, c, "mine") }!!.appealDeadline)
@@ -120,7 +122,8 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         val c = case(b, verdict = "MIXED", action = "HIDE_JUNK")
         file(b, c)
 
-        assertEquals("APPEAL_ALREADY_FILED", refused { file(b, c) })
+        val again = assertFailsWith<ConflictException> { file(b, c) }
+        assertEquals("APPEAL_ALREADY_FILED" to "You have already appealed this decision.", again.code to again.message)
         assertEquals(1, notes(b).size)
     }
 
@@ -131,7 +134,9 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         jdbc.update("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason) VALUES (?, ?, ?, 'older')", old, b.id, b.photographer)
         val c = case(b, verdict = "WRONG_EVENT", action = "HIDE_ALL")
 
-        assertEquals("APPEAL_ALREADY_OPEN", refused { file(b, c) })
+        val open = assertFailsWith<ConflictException> { file(b, c) }
+        assertEquals("APPEAL_ALREADY_OPEN" to "You already have an open appeal for your photos in this event. " +
+            "We will tell you in your inbox when it is decided.", open.code to open.message)
     }
 
     @Test
@@ -175,7 +180,8 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         val b = batch()
         val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL")
 
-        for (reason in listOf("", "   ", "x".repeat(1001))) {
+        // A NUL character passes the length check but Postgres refuses it in TEXT: a 400, not a 500.
+        for (reason in listOf("", "   ", "x".repeat(1001), "mine\u0000")) {
             val ex = assertFailsWith<ValidationException> { file(b, c, reason) }
             assertEquals("reason", ex.field)
         }

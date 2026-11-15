@@ -60,13 +60,15 @@ class RelevanceAppealService(
     fun file(photographerId: UUID, caseId: UUID, reason: String): PhotographerRelevanceCaseDto {
         if (switch.mode != RelevanceMode.AUTO_HIDE) throw nothingToAppeal()
         val text = reason.trim()
-        if (text.isEmpty() || text.length > MAX_REASON) {
+        // Postgres refuses a NUL character in TEXT: a 400 here, not a 500 at the insert.
+        if (text.isEmpty() || text.length > MAX_REASON || '\u0000' in text) {
             throw ValidationException("An appeal reason must be 1 to 1,000 characters", field = "reason")
         }
         cases.lockCase(caseId) ?: throw notFound()
         val row = cases.ownCase(caseId, photographerId) ?: throw notFound()
         if (appeals.findByCaseId(caseId) != null) {
-            throw ConflictException("This case has already been appealed", ErrorCodes.APPEAL_ALREADY_FILED)
+            // The three refusal messages are V2-T22's approved words (the website shows the server's message).
+            throw ConflictException("You have already appealed this decision.", ErrorCodes.APPEAL_ALREADY_FILED)
         }
         val noticeAt = row.noticeAt?.atOffset(ZoneOffset.UTC)
         if (row.stage != CaseStage.APPLIED.name || row.appliedMode != AUTO || row.action !in HIDING || noticeAt == null) {
@@ -74,10 +76,11 @@ class RelevanceAppealService(
         }
         val now = clock.postgresTimestamp()
         if (now.atZoneSameInstant(EventDtoMapper.PH_ZONE).toLocalDate().isAfter(appealLastDay(noticeAt, props.appeal.windowDays))) {
-            throw ConflictException("The time to appeal this case has passed", ErrorCodes.APPEAL_WINDOW_CLOSED)
+            throw ConflictException("The time to appeal this decision has ended.", ErrorCodes.APPEAL_WINDOW_CLOSED)
         }
         if (appeals.existsByBatchIdAndStatus(row.batchId, AppealStatus.OPEN.name)) {
-            throw ConflictException("Another appeal of these photos is still open", ErrorCodes.APPEAL_ALREADY_OPEN)
+            throw ConflictException("You already have an open appeal for your photos in this event. " +
+                "We will tell you in your inbox when it is decided.", ErrorCodes.APPEAL_ALREADY_OPEN)
         }
         val appeal = appeals.saveAndFlush(RelevanceAppeal(caseId = caseId, batchId = row.batchId, photographerId = photographerId, reason = text))
         raiseAlert(row, appeal.id, now)

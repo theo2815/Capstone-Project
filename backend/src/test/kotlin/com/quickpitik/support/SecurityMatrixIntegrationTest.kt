@@ -199,8 +199,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
-    // RV-3.2a: a photographer's own relevance case and appeal. Photographers only; another photographer's case is not
-    // found. The test app runs with the relevance mode off, so filing is refused before any look-up.
+    // RV-3.2a: a photographer's own relevance case and appeal, for photographers only. The test app runs with the
+    // relevance mode off, so a photographer's read is 404 and filing is 409 before any look-up, whoever owns the case;
+    // ownership with the mode on is RelevanceAppealIntegrationTest `another photographer's case is not found`.
     @Test
     fun `the photographer relevance routes are for photographers only`() {
         fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
@@ -225,9 +226,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             assertEquals(403, get(read, token).statusCode())
             assertEquals(403, post(appeal, body, token).statusCode())
         }
-        val notYours = get(read, other)
-        assertEquals(404, notYours.statusCode())
-        assertTrue("NOT_FOUND" in notYours.body())
+        val modeOff = get(read, other)
+        assertEquals(404, modeOff.statusCode())
+        assertTrue("NOT_FOUND" in modeOff.body())
         val filed = post(appeal, body, other)
         assertEquals(409, filed.statusCode())
         assertTrue("NOTHING_TO_APPEAL" in filed.body())
