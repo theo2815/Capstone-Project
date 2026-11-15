@@ -77,7 +77,9 @@ function AlertRow({ alert }: { alert: RelevanceAlert }) {
       </p>
       <div className="flex flex-wrap items-center gap-4">
         {alert.caseId && (
-          <Link href={`${ROUTES.ADMIN_RELEVANCE}?tab=all&row=${encodeURIComponent(alert.caseId)}`} className={linkCls}>
+          // RV-3.5: an appeal is decided on the Appeals tab; the alert names the case, not the appeal, so the tab alone.
+          <Link href={alert.kind === "APPEAL" ? `${ROUTES.ADMIN_RELEVANCE}?tab=appeals`
+            : `${ROUTES.ADMIN_RELEVANCE}?tab=all&row=${encodeURIComponent(alert.caseId)}`} className={linkCls}>
             Open case →
           </Link>
         )}
