@@ -26,17 +26,21 @@ class RelevanceConfirmer(
     private val props: RelevanceProperties,
     private val publisher: ApplicationEventPublisher,
 ) {
+    // Lock order: the case, then the photographer's user row (a lost appeal holds the case, then the appeal, already).
     @Transactional
     fun confirm(caseId: UUID, now: OffsetDateTime): Boolean {
+        // Its own statement: once a filing that holds the case commits, the stamp's fresh snapshot sees the open appeal.
+        cases.lockCase(caseId) ?: return false
         if (cases.stampConfirmed(caseId, now) != 1) return false
+        strikes.lockPhotographerOf(caseId)
         strikes.insertForCase(caseId)
         climb(caseId, now)
         return true
     }
 
     // RV-4.1 (A.7, G6): the photographer's strikes in the rolling window, across events, this one included. The second
-    // sends one V2-T20 note; the third and later raise one THIRD_CASE alert each. An admin decides on suspension
-    // (AdminUserService.suspend): nothing here suspends, fines or marks anyone.
+    // sends one V2-T20 note; the third and each later case raise one THIRD_CASE alert of their own (key per case). An
+    // admin decides on suspension (AdminUserService.suspend): nothing here suspends, fines or marks anyone.
     private fun climb(caseId: UUID, now: OffsetDateTime) {
         val strike = strikes.findByCaseId(caseId) ?: return
         val months = props.strikes.windowMonths

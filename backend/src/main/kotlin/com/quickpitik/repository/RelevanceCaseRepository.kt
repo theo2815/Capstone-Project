@@ -379,13 +379,14 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun winAppeal(@Param("id") id: UUID): Int
 
     // RV-3.2 part b (A.7): confirming stamps the case once. Only a current auto-hide whole-batch finding (junk dump, wrong
-    // event, copied) is ever confirmed; an admin's hide of a Can't tell batch never is, nor a case whose appeal was won.
+    // event, copied) is ever confirmed; an admin's hide of a Can't tell batch never is, nor a case whose appeal was won
+    // or is open (RV-4.1: one filed after the confirm step listed the case).
     @Modifying
     @Query(value = """
         UPDATE relevance_cases c SET confirmed_at = :now
         WHERE c.id = :id AND c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.confirmed_at IS NULL
           AND c.verdict IN ('JUNK_DUMP', 'WRONG_EVENT', 'COPIED') AND c.verdict_note IS DISTINCT FROM 'ADMIN_HIDE'
-          AND NOT EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'WON')
+          AND NOT EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status IN ('WON', 'OPEN'))
     """, nativeQuery = true)
     fun stampConfirmed(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
 

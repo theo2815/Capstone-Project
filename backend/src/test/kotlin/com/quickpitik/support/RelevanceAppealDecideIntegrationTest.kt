@@ -118,7 +118,9 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
 
     @Test
     fun `confirming a case twice writes one strike`() {
-        val (_, c, _) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        val (_, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        // As the decide route does: the appeal is lost first (an open appeal is never confirmed, RV-4.1).
+        jdbc.update("UPDATE relevance_appeals SET status = 'LOST', decided_at = ? WHERE id = ?", NOW, appeal)
         val confirmer = confirmer()
 
         val first = tx.execute { confirmer.confirm(c, NOW) }

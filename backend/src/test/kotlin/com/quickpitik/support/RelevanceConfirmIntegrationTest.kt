@@ -46,6 +46,7 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 // RV-4.1 (plan part 2, A.7, G6): the confirm step and the ladder. A current auto-hide whole-batch finding is confirmed
 // when its appeal is lost, or when no appeal came by the last day to appeal; each confirmation writes one strike. A
@@ -119,6 +120,34 @@ class RelevanceConfirmIntegrationTest : PostgresIntegrationTest() {
         val strike = jdbc.queryForMap("SELECT photographer_id, event_id, verdict FROM relevance_strikes WHERE case_id = ?", c)
         assertEquals(listOf(b.photographer, b.event, "WRONG_EVENT"), listOf(strike["photographer_id"], strike["event_id"], strike["verdict"]))
         assertEquals(listOf("APPLIED", "HIDE_ALL"), row(c, "stage", "action"), "the hide stays")
+    }
+
+    @Test
+    fun `the last day to appeal is the Philippine date of the note`() {
+        // 17:00Z on Feb 15 is 01:00 on Feb 16 in Manila, so the last day to appeal is Mar 1 there (Feb 29 in UTC).
+        val c = case(batch(), noticeAt = OffsetDateTime.parse("2000-02-15T17:00:00Z"))
+
+        checks().confirmDue()
+        assertNull(confirmedAt(c), "Mar 1 is still the last day in Manila")
+
+        checks(clock = NOW.plusDays(1)).confirmDue()
+        assertNotNull(confirmedAt(c))
+    }
+
+    @Test
+    fun `an appeal filed after the case was listed stops the stamp`() {
+        val p = photographer()
+        strike(p, NOW.minusDays(1))
+        val c = case(batch(p))
+        // The step listed the case (no appeal yet); the photographer's filing commits before the stamp.
+        assertTrue(c in cases.findConfirmDue(NOW, 10_000))
+        appeal(c, "OPEN")
+
+        assertEquals(false, tx.execute { confirmer().confirm(c, NOW) })
+
+        assertNull(confirmedAt(c))
+        assertEquals(0, caseStrikes(c))
+        assertEquals(emptyList(), strikeNotes(p))
     }
 
     @Test
@@ -224,6 +253,24 @@ class RelevanceConfirmIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf(listOf<Any?>(third, "third_case:$third", false)), alert.map { listOf(it["case_id"], it["dedupe_key"], it["would_have"]) })
         assertEquals(listOf(RelevanceNotices.secondCase("Conf B", 6)), strikeNotes(p), "the third case sends no second warning")
         assertNull(jdbc.queryForObject("SELECT suspended_at FROM users WHERE id = ?", OffsetDateTime::class.java, p))
+    }
+
+    @Test
+    fun `each later case in the window raises one alert of its own`() {
+        val p = photographer()
+        strike(p, NOW.minusDays(3))
+        strike(p, NOW.minusDays(2))
+        val third = case(batch(p, "Conf C"), noticeAt = OLD)
+        val fourth = case(batch(p, "Conf D"), noticeAt = OLD.plusHours(1))
+
+        checks().confirmDue()
+        checks(clock = NOW.plusDays(1)).confirmDue()
+        tx.execute { confirmer().confirm(fourth, NOW.plusDays(2)) }
+
+        val keys = jdbc.queryForList("SELECT a.dedupe_key FROM relevance_alerts a JOIN batch_relevance br ON br.id = a.batch_id " +
+            "WHERE br.photographer_id = ? AND a.kind = 'THIRD_CASE' ORDER BY a.dedupe_key", String::class.java, p)
+        assertEquals(listOf("third_case:$third", "third_case:$fourth").sorted(), keys)
+        assertEquals(emptyList(), strikeNotes(p))
     }
 
     @Test
