@@ -67,12 +67,12 @@ export function shownAgainText(eventName: string, after: "scan" | "recheck" | nu
     : [] };
 }
 
-// V2-T15's title and its first sentences. RV-3.4b adds the rest of the note and the "Review and hide" grid here.
+// V2-T15 in full (RV-3.4b: the page now offers the review and the undo the last two sentences promise).
 export function blurryText(c: PhotographerRelevanceCase): CaseText {
   const n = c.scanBlurry ?? 0;
   return { title: n === 1 ? "1 photo looks blurry" : `${n} photos look blurry`, outcome: [], body: [
     `We checked ${c.scanMeasured ?? 0} of your photos in ${c.eventName}.`, n === 1 ? "One of them looks blurry." : `${n} of them look blurry.`,
-    "They are still on sale."] };
+    "They are still on sale.", "Review them, and hide any you do not want to sell.", "You can show them again later."] };
 }
 
 // V2-T17, V2-T18, V2-T19: the appeal's state, as the inbox notes word it ("Session 2" choices 6 and 7).
@@ -131,3 +131,17 @@ export const CASE_LABELS = {
 export function philippineToday(now = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
+
+// RV-3.4b: the blurry-photos review. "Review and hide" is V2-T15's button label; the others have no approved text
+// (listed as a gap in RV-3.4b): plain neutral labels.
+export const BLURRY_LABELS = {
+  review: "Review and hide",
+  looksBlurry: "Looks blurry",
+  hide: "Hide",
+  hiding: "Hiding…",
+  hidden: "Hidden",
+  undo: "Undo",
+  selected: (n: number) => `${n.toLocaleString("en-US")} selected`,
+  select: (i: number, on: boolean) => `${on ? "Deselect" : "Select"} photo ${i}`,
+  undoPhoto: (i: number) => `Undo photo ${i}`,
+} as const;
