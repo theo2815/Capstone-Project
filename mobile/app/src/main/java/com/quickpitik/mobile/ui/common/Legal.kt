@@ -16,6 +16,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.DialogProperties
+import com.quickpitik.mobile.ui.theme.ErrorRed
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Text
@@ -186,6 +193,44 @@ internal fun SignupAgreementRow(checked: Boolean, onCheckedChange: (Boolean) -> 
 }
 
 /** Under the Google button on Register only; the binding tick is in the role sheet. */
+/** V2-T10 (approved 2026-11-15): blocks the studio until the photographer accepts the Terms version the backend named. */
+@Composable
+internal fun TermsReacceptanceDialog(
+    version: String,
+    busy: Boolean,
+    error: String?,
+    onAccept: () -> Unit,
+    onSignOut: () -> Unit,
+) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        containerColor = Bone,
+        title = { Text("Please accept the updated Terms", style = Typography.titleMedium, fontWeight = FontWeight.Bold, color = Ink) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "We have updated our Terms of Service and Privacy Policy. Our system can now take photos you upload off sale when they look blurry, very dark or not of a race, or seem to be in the wrong event or copied. When photos seem copied, it can also put your payouts on hold. It does this without an admin, and tells you in your inbox and by email. You can appeal within 14 days, and a person decides every appeal. To keep using your photographer account, accept the new Terms (version $version).",
+                    style = Typography.bodyMedium,
+                    color = Slate,
+                )
+                TextButton(onClick = { openInCustomTab(context, TERMS_URL) }) { Text("Read the Terms of Service", color = Ink) }
+                TextButton(onClick = { openInCustomTab(context, PRIVACY_URL) }) { Text("Read the Privacy Policy", color = Ink) }
+                Text("By choosing I accept, you agree to the Terms of Service version $version.", style = Typography.bodySmall, color = Slate)
+                error?.let { Text(it, style = Typography.bodySmall, color = ErrorRed, modifier = Modifier.padding(top = 8.dp)) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Not ready to accept? ", style = Typography.bodySmall, color = Slate)
+                    TextButton(onClick = onSignOut) { Text("Sign out", color = Ink, textDecoration = TextDecoration.Underline) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onAccept, enabled = !busy) { Text("I accept", color = Ink, fontWeight = FontWeight.Bold) }
+        },
+    )
+}
+
 @Composable
 internal fun GoogleSignupLine() {
     Text(
