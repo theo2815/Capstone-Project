@@ -407,6 +407,15 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     @Query(value = "UPDATE relevance_cases SET hold_flag_id = :flagId WHERE id = :id AND hold_flag_id IS NULL", nativeQuery = true)
     fun setHoldFlag(@Param("id") id: UUID, @Param("flagId") flagId: UUID): Int
 
+    // RV-4.2: current auto-hide Copied cases whose hold was never placed (hold_flag_id is set once and never cleared, so an
+    // ended hold is never placed again), oldest first.
+    @Query(value = """
+        SELECT id FROM relevance_cases
+        WHERE stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND verdict = 'COPIED' AND hold_flag_id IS NULL
+        ORDER BY applied_at, id LIMIT :limit
+    """, nativeQuery = true)
+    fun findHoldDue(@Param("limit") limit: Int): List<UUID>
+
     // RV-4.2: the case's hold flag while it still holds payouts (open or escalated, held), and when the hold started.
     @Query(value = "SELECT f.id $LIVE_HOLD", nativeQuery = true)
     fun liveHoldFlag(@Param("id") id: UUID): UUID?

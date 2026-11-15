@@ -53,22 +53,14 @@ class SystemFlagService(private val flagRepository: FlagRepository) {
         return true
     }
 
-    // RV-4.2 (A.8, O1): the automatic payout hold for copied photos, with no admin (payout_hold_by stays NULL). It takes
-    // the photographer's oldest open relevance flag (a version 1 one included) or raises the system flag, then holds it.
-    // The caller has locked the photographer's user row: user, then flag, as AdminFlagService.loadFlag.
+    // RV-4.2 (A.8, O1): the automatic payout hold of one copied case: a new relevance flag of its own, held with no admin
+    // (payout_hold_by stays NULL). One flag per case, so ending one case's hold never ends another's, nor a flag a person
+    // is still using; payouts stay held while any held relevance flag of the photographer is open (existsOpenPayoutHold).
     @Transactional
-    fun holdPayouts(userId: UUID, note: String): UUID {
-        val reason = SystemFlagReason.BATCH_RELEVANCE_LOW
-        val id = openFlags(FlagTargetKind.USER, userId, reason).minByOrNull { it.createdAt }?.id
-            ?: flagRepository.save(Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = userId, reason = reason.wire,
-                note = note.take(NOTE_MAX))).id
-        val flag = flagRepository.findByIdForUpdate(id)!!
-        if (flag.payoutHoldAt == null) {
-            flag.payoutHoldAt = OffsetDateTime.now()
-            flagRepository.save(flag)
-        }
-        return flag.id
-    }
+    fun holdPayouts(userId: UUID, note: String): UUID = flagRepository.save(
+        Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = userId, reason = SystemFlagReason.BATCH_RELEVANCE_LOW.wire,
+            note = note.take(NOTE_MAX)).apply { payoutHoldAt = OffsetDateTime.now() },
+    ).id
 
     private fun openFlags(kind: FlagTargetKind, targetId: UUID, reason: SystemFlagReason): List<Flag> =
         flagRepository.findByTargetKindWireAndTargetIdAndReasonAndStatusWireIn(

@@ -79,6 +79,19 @@ class RelevanceCheckService(
     // RV-4.1 (A.7, G9): the confirm step, database only, in auto-hide only. A current auto-hide whole-batch finding is
     // confirmed once its appeal is lost, or once the note's last day to appeal has passed with no appeal, whatever the
     // event's visibility. Each case is its own short transaction (RelevanceConfirmer.confirm), the ladder included.
+    // RV-4.2 (A.8): the hold step, database only, in auto-hide only. A Copied case whose hold failed to place right after
+    // its apply (an error, or a server stop in between) gets it here; place re-checks everything under the case lock.
+    internal fun placeOwedHolds() {
+        if (switch.mode != RelevanceMode.AUTO_HIDE) return
+        for (caseId in cases.findHoldDue(props.check.maxBatchesPerTick)) {
+            try {
+                payoutHold.place(caseId)
+            } catch (ex: Exception) {
+                log.warn("Relevance payout hold step failed case={} (retried next tick): {}", caseId, ex.message)
+            }
+        }
+    }
+
     internal fun confirmDue() {
         if (switch.mode != RelevanceMode.AUTO_HIDE) return
         val now = clock.postgresTimestamp()
@@ -167,6 +180,7 @@ class RelevanceCheckService(
             notifier.notifyOwed()
             // RV-4.1: after the notes, so a case is confirmed only from a stored notice_at.
             confirmDue()
+            placeOwedHolds()
         }
         // G2: with AI off nothing is measured and no check starts, so batches stay "not checked".
         if (switch.canMeasure) continueSampling()
@@ -197,10 +211,13 @@ class RelevanceCheckService(
     internal fun applyCase(caseId: UUID, now: OffsetDateTime) {
         val raised = transactions.execute { status -> applyInTransaction(caseId, now, status) } ?: return
         raised.forEach { registry.counter("qp.relevance.alerts", "kind", it.name.lowercase()).increment() }
-        // RV-4.2 (A.8): after the commit; it acts only on a current Copied case applied in auto-hide.
-        // shortcut: a server stop between the commit and this call leaves that case without its hold; add a sweep of
-        // current auto-hide Copied cases with no hold_flag_id if that is ever seen.
-        payoutHold.place(caseId)
+        // RV-4.2 (A.8): after the commit; it acts only on a current Copied case applied in auto-hide. A failure here leaves
+        // the case to the tick's hold step (placeOwedHolds), not to this apply step, which is done with the case.
+        try {
+            payoutHold.place(caseId)
+        } catch (ex: Exception) {
+            log.warn("Relevance payout hold failed case={} (placed by the next tick's hold step): {}", caseId, ex.message)
+        }
     }
 
     private fun applyInTransaction(caseId: UUID, now: OffsetDateTime, status: TransactionStatus): List<AlertKind> {

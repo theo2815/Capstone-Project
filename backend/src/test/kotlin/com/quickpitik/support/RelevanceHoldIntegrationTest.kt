@@ -223,38 +223,184 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `a photographer with an open version 1 flag gets the hold on that flag`() {
+    fun `a photographer's open version 1 flag is left as it was`() {
         val b = batch()
         val v1 = id("INSERT INTO flags (target_kind, target_id, reason, note) VALUES ('user', ?, 'batch_relevance_low', 'version 1')", b.photographer)
         val c = applied(b)
 
         hold().place(c)
+        tx.execute { admin(RelevanceMode.AUTO_HIDE).endHold(admin(), c) }
 
-        assertEquals(listOf(v1), flagsOf(b).map { it["id"] })
-        assertNotNull(flagsOf(b).single()["payout_hold_at"])
-        assertEquals(v1, holdFlagOf(c))
-        assertEquals(true, payouts.relevanceHoldOpen(b.photographer))
+        val v1Row = flagsOf(b).single { it["id"] == v1 }
+        assertEquals(listOf<Any?>("open", null), listOf(v1Row["status"], v1Row["payout_hold_at"]))
+        assertEquals("resolved", flagsOf(b).single { it["id"] == holdFlagOf(c) }["status"])
     }
 
     @Test
-    fun `the case page shows a current case's close reason as null`() {
+    fun `a hold an admin placed by hand is left as it was`() {
+        val b = batch()
+        val admin = admin()
+        val manual = id("INSERT INTO flags (target_kind, target_id, reason, note, payout_hold_at, payout_hold_by) " +
+            "VALUES ('user', ?, 'batch_relevance_low', 'by hand', now(), ?)", b.photographer, admin)
+        val c = applied(b)
+
+        hold().place(c)
+        tx.execute { admin(RelevanceMode.AUTO_HIDE).endHold(admin, c) }
+
+        val row = flagsOf(b).single { it["id"] == manual }
+        assertEquals(listOf<Any?>("open", admin), listOf(row["status"], row["payout_hold_by"]))
+        assertEquals(true, payouts.relevanceHoldOpen(b.photographer), "the admin's own hold still binds")
+        assertEquals(emptyList(), titles(b), "no lifted note while a hold still binds")
+    }
+
+    @Test
+    fun `two copied cases hold payouts until both holds end`() {
+        val b1 = batch()
+        val b2 = batch(b1.photographer)
+        val first = applied(b1)
+        val second = applied(b2)
+        hold().place(first)
+        hold().place(second)
+        val admin = admin()
+
+        tx.execute { admin(RelevanceMode.AUTO_HIDE).endHold(admin, first) }
+        assertEquals(true, payouts.relevanceHoldOpen(b1.photographer), "the second case still holds")
+        assertEquals(emptyList(), titles(b1))
+        assertNotNull(tx.execute { admin(RelevanceMode.AUTO_HIDE).case(second) }!!.payoutHoldAt)
+
+        tx.execute { admin(RelevanceMode.AUTO_HIDE).endHold(admin, second) }
+        assertEquals(false, payouts.relevanceHoldOpen(b1.photographer))
+        assertEquals(listOf("Payout hold lifted"), titles(b1))
+    }
+
+    @Test
+    fun `a restore or a won appeal of one copied case leaves the other's hold`() {
+        val b1 = batch()
+        val restored = applied(b1)
+        val won = applied(batch(b1.photographer))
+        val kept = applied(batch(b1.photographer))
+        listOf(restored, won, kept).forEach { hold().place(it) }
+        val admin = admin()
+        val appeal = id("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason, evidence_opened_at, evidence_opened_by) " +
+            "SELECT id, batch_id, ?, 'These are mine', now(), ? FROM relevance_cases WHERE id = ?", b1.photographer, admin, won)
+
+        admin(RelevanceMode.AUTO_HIDE).restore(admin, restored, null)
+        tx.execute { appealService().decide(admin, appeal, "WON", null) }
+
+        assertEquals(true, payouts.relevanceHoldOpen(b1.photographer))
+        assertEquals(emptyList(), titles(b1))
+        assertNotNull(tx.execute { admin(RelevanceMode.AUTO_HIDE).case(kept) }!!.payoutHoldAt)
+    }
+
+    @Test
+    fun `a hold never placed is placed by the next tick and an ended one is not placed again`() {
+        val b = batch()
+        val missed = applied(b)
+        val ended = applied(batch(b.photographer))
+        hold().place(ended)
+        tx.execute { admin(RelevanceMode.AUTO_HIDE).endHold(admin(), ended) }
+
+        checks().placeOwedHolds()
+
+        assertNotNull(holdFlagOf(missed))
+        assertEquals(true, payouts.relevanceHoldOpen(b.photographer))
+        assertEquals("resolved", flagsOf(b).single { it["id"] == holdFlagOf(ended) }["status"])
+        assertEquals(2, flagsOf(b).size)
+    }
+
+    @Test
+    fun `the hold step places nothing in record-only or with the mode off`() {
+        val b = batch()
+        val c = applied(b)
+
+        checks(RelevanceMode.RECORD_ONLY).placeOwedHolds()
+        checks(RelevanceMode.OFF).placeOwedHolds()
+
+        assertNull(holdFlagOf(c))
+        assertEquals(emptyList(), flagsOf(b))
+    }
+
+    @Test
+    fun `an applied case that is not copied, or a closed copied case, gets no hold`() {
+        val b = batch()
+        val junk = applied(b, verdict = "JUNK_DUMP")
+        val closed = applied(batch(b.photographer), stage = "CLOSED")
+
+        hold().place(junk)
+        hold().place(closed)
+
+        assertEquals(emptyList(), flagsOf(b))
+    }
+
+    @Test
+    fun `ending the hold of an unknown case is not found`() {
+        val refused = assertFailsWith<com.quickpitik.exception.NotFoundException> {
+            tx.execute { admin(RelevanceMode.AUTO_HIDE).endHold(admin(), UUID.randomUUID()) }
+        }
+        assertEquals(ErrorCodes.RELEVANCE_CASE_NOT_FOUND, refused.code)
+    }
+
+    @Test
+    fun `with the flags switch off a held case's end hold and restore are refused and say why`() {
+        val b = batch()
+        val c = applied(b)
+        hold().place(c)
+        val admin = admin()
+
+        for (attempt in listOf<() -> Unit>({ tx.execute { admin(RelevanceMode.AUTO_HIDE, flagsEnabled = false).endHold(admin, c) } },
+            { admin(RelevanceMode.AUTO_HIDE, flagsEnabled = false).restore(admin, c, null) })) {
+            val refused = assertFailsWith<ApiException> { attempt() }
+            assertEquals(ErrorCodes.FLAGS_DISABLED, refused.code)
+            assertEquals(true, refused.message!!.contains("payout hold"), refused.message)
+        }
+
+        assertEquals(listOf("APPLIED", "HIDE_ALL"), row(c, "stage", "action"))
+        assertEquals("open", flagsOf(b).single()["status"])
+    }
+
+    @Test
+    fun `with the flags switch off a restore with no hold works and deciding an appeal is refused by the mode`() {
+        val b = batch()
+        val c = applied(b, verdict = "JUNK_DUMP")
+        val held = applied(batch(b.photographer))
+        hold().place(held)
+        val admin = admin()
+        val appeal = id("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason, evidence_opened_at, evidence_opened_by) " +
+            "SELECT id, batch_id, ?, 'These are mine', now(), ? FROM relevance_cases WHERE id = ?", b.photographer, admin, held)
+
+        admin(RelevanceMode.AUTO_HIDE, flagsEnabled = false).restore(admin, c, null)
+        // RelevanceSwitch falls back to record-only with the flags switch off, so no appeal is decided, held or not.
+        val refused = assertFailsWith<ApiException> { tx.execute { appealService(flagsEnabled = false).decide(admin, appeal, "WON", null) } }
+
+        assertEquals("RESTORED_BY_ADMIN", row(c, "close_reason").single())
+        assertEquals(ErrorCodes.RELEVANCE_ACTIONS_OFF, refused.code)
+        assertEquals("OPEN", jdbc.queryForObject("SELECT status FROM relevance_appeals WHERE id = ?", String::class.java, appeal))
+    }
+
+    @Test
+    fun `the case page shows the hold while it binds and the close reason once closed`() {
         val c = applied(batch())
+        hold().place(c)
 
-        val detail = tx.execute { admin(RelevanceMode.AUTO_HIDE).case(c) }!!
+        val before = tx.execute { admin(RelevanceMode.AUTO_HIDE).case(c) }!!
+        admin(RelevanceMode.AUTO_HIDE).restore(admin(), c, null)
+        val after = tx.execute { admin(RelevanceMode.AUTO_HIDE).case(c) }!!
 
-        assertNull(detail.closeReason)
-        assertNull(detail.payoutHoldAt)
+        assertEquals(listOf(true, null), listOf(before.payoutHoldAt != null, before.closeReason))
+        assertEquals(listOf(null, "RESTORED_BY_ADMIN"), listOf(after.payoutHoldAt, after.closeReason))
     }
 
     private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
 
-    private fun props(mode: RelevanceMode) = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
+    private fun props(mode: RelevanceMode) = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0),
+        check = RelevanceProperties.Check(maxBatchesPerTick = 10_000))
 
     private fun switch(mode: RelevanceMode, flagsEnabled: Boolean) =
         RelevanceSwitch(props(mode), AdminProperties(flagsEnabled = flagsEnabled), AiApiProperties(enabled = false))
 
     private fun hold(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, flagsEnabled: Boolean = true) =
-        RelevanceHoldService(cases, strikes, systemFlags, adminFlags, decisionLog, switch(mode, flagsEnabled), tx)
+        RelevanceHoldService(cases, strikes, systemFlags, adminFlags, decisionLog, switch(mode, flagsEnabled), tx,
+            AdminProperties(flagsEnabled = flagsEnabled))
 
     private fun checks(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, flagsEnabled: Boolean = true): RelevanceCheckService {
         val props = props(mode)
@@ -265,23 +411,23 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
             hold(mode, flagsEnabled))
     }
 
-    private fun admin(mode: RelevanceMode): AdminRelevanceService {
+    private fun admin(mode: RelevanceMode, flagsEnabled: Boolean = true): AdminRelevanceService {
         val props = props(mode)
         return AdminRelevanceService(cases, alerts, batchRepo, props, Mockito.mock(StorageService::class.java), StorageProperties(),
-            Clock.systemUTC(), holds, photoRepo, decisionLog, tx, switch(mode, true), strikes, hold(mode))
+            Clock.systemUTC(), holds, photoRepo, decisionLog, tx, switch(mode, flagsEnabled), strikes, hold(mode, flagsEnabled))
     }
 
-    private fun appealService(): RelevanceAppealService {
+    private fun appealService(flagsEnabled: Boolean = true): RelevanceAppealService {
         val props = props(RelevanceMode.AUTO_HIDE)
-        return RelevanceAppealService(cases, appeals, alerts, Mockito.mock(RelevanceNotifier::class.java), switch(RelevanceMode.AUTO_HIDE, true),
-            props, Clock.systemUTC(), publisher, Mockito.mock(RelevanceConfirmer::class.java), decisionLog, hold())
+        return RelevanceAppealService(cases, appeals, alerts, Mockito.mock(RelevanceNotifier::class.java), switch(RelevanceMode.AUTO_HIDE, flagsEnabled),
+            props, Clock.systemUTC(), publisher, Mockito.mock(RelevanceConfirmer::class.java), decisionLog, hold(flagsEnabled = flagsEnabled))
     }
 
     private fun admin(): UUID = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Adm', 'ADMIN')",
         "relhold-admin-${UUID.randomUUID()}@test.local")
 
-    private fun batch(): Batch {
-        val photographer = id("INSERT INTO users (email, password_hash, name, role, terms_version) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER', '1.7')",
+    private fun batch(existing: UUID? = null): Batch {
+        val photographer = existing ?: id("INSERT INTO users (email, password_hash, name, role, terms_version) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER', '1.7')",
             "relhold-${UUID.randomUUID()}@test.local")
         val event = id("INSERT INTO events (slug, name, date, location, status, visibility) VALUES (?, 'Hold Run', DATE '2007-03-04', 'Cebu', 'ACTIVE', 'PUBLIC')",
             "relhold-${UUID.randomUUID()}")
@@ -298,10 +444,10 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
             "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, 'COPIED', true, ?)", b.id, UPLOAD, UPLOAD)
 
     // A current Copied case, applied in `mode`.
-    private fun applied(b: Batch, mode: String = "AUTO_HIDE"): UUID = id(
+    private fun applied(b: Batch, mode: String = "AUTO_HIDE", verdict: String = "COPIED", stage: String = "APPLIED"): UUID = id(
         "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at, " +
-            "applied_mode, action, applied_at, notice_at) VALUES (?, 'QUIET', ?, 40, 'APPLIED', 40, 0, 'COPIED', true, ?, ?, 'HIDE_ALL', ?, ?)",
-        b.id, UPLOAD, UPLOAD, mode, UPLOAD, UPLOAD)
+            "applied_mode, action, applied_at, notice_at) VALUES (?, 'QUIET', ?, 40, ?, 40, 0, ?, true, ?, ?, 'HIDE_ALL', ?, ?)",
+        b.id, UPLOAD, stage, verdict, UPLOAD, mode, UPLOAD, UPLOAD)
 
     private fun flagsOf(b: Batch): List<Map<String, Any?>> = jdbc.queryForList(
         "SELECT id, status, target_kind, reporter_id, payout_hold_at, payout_hold_by, resolved_by FROM flags " +

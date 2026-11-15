@@ -90,6 +90,20 @@ class RelevanceCheckServiceTest {
         order.verify(notifier).notifyOwed()
     }
 
+    // RV-4.2: the hold step runs after the notes, in auto-hide only.
+    @Test
+    fun `the tick places owed holds after the notes, in auto-hide only`() {
+        service(mode = RelevanceMode.RECORD_ONLY).tick()
+        service(mode = RelevanceMode.OFF).tick()
+        Mockito.verify(cases, Mockito.never()).findHoldDue(Mockito.anyInt())
+
+        service(mode = RelevanceMode.AUTO_HIDE, admin = AdminProperties(flagsEnabled = true)).tick()
+
+        val order = Mockito.inOrder(notifier, cases)
+        order.verify(notifier).notifyOwed()
+        order.verify(cases).findHoldDue(Mockito.anyInt())
+    }
+
     // An upload-indexing pool the scan cannot read counts as busy, so a misconfigured bean never lets the scan crowd out uploads.
     @Test
     fun `an unreadable upload-indexing pool counts as busy`() {
