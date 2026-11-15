@@ -280,6 +280,8 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     fun `the photographer hide routes are for photographers only`() {
         val base = "/api/v1/me/photographer/relevance/cases/${UUID.randomUUID()}"
         val list = "$base/blurry?offset=0&limit=50"
+        // RV-3.4b: the photographer's own hides, read like the blurry list.
+        val hidden = "$base/hidden?offset=0&limit=50"
         val writes = listOf("$base/hide", "$base/unhide")
         val body = """{"photoIds":["${UUID.randomUUID()}"]}"""
         val runner = register(Role.RUNNER)
@@ -287,13 +289,17 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val admin = adminToken()
 
         assertEquals(401, get(list).statusCode())
+        assertEquals(401, get(hidden).statusCode())
         writes.forEach { assertEquals(401, post(it, body).statusCode(), it) }
         for (token in listOf(runner, admin)) {
             assertEquals(403, get(list, token).statusCode())
+            assertEquals(403, get(hidden, token).statusCode())
             writes.forEach { assertEquals(403, post(it, body, token).statusCode(), it) }
         }
         val read = get(list, photographer)
         assertEquals(404 to "NOT_FOUND", read.statusCode() to errorCode(read))
+        val hiddenRead = get(hidden, photographer)
+        assertEquals(404 to "NOT_FOUND", hiddenRead.statusCode() to errorCode(hiddenRead))
         writes.forEach {
             val refused = post(it, body, photographer)
             assertEquals(409 to "RELEVANCE_ACTIONS_OFF", refused.statusCode() to errorCode(refused), it)
