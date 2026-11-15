@@ -43,6 +43,8 @@ beforeEach(() => {
   one = async () => detail();
   vi.spyOn(api, "get").mockImplementation(((url: string) =>
     url.startsWith("/admin/relevance/cases?") ? list(url)
+      // RV-3.5: the Appeals tab and its count read the appeals list.
+      : url.startsWith("/admin/relevance/appeals?") ? Promise.resolve({ items: [], total: 0, offset: 0, limit: 50 })
       : url.includes("/hidden-photos") ? Promise.resolve({ items: [], total: 0, offset: 0, limit: 100 }) : one()) as typeof api.get);
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
@@ -148,5 +150,5 @@ it("the Appeals tab says appeals arrive with the photographer side", async () =>
   fixtures.search = "tab=appeals";
   list = async () => ({ items: [], total: 0, offset: 0, limit: 50 });
   mount();
-  expect(await screen.findByText("No appeals yet. Appeals arrive when photographers can answer a decision.")).toBeInTheDocument();
+  expect(await screen.findByText("No open appeals.")).toBeInTheDocument();
 });

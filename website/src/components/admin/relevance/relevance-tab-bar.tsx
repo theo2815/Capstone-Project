@@ -3,8 +3,19 @@
 import { RELEVANCE_TABS, type RelevanceTab } from "@/lib/admin-relevance";
 import { cn } from "@/lib/utils";
 
-/** The four Photo Relevance views; the host keeps the value in the URL (`?tab=`). Pressed chips, as the admin filter bars do. */
-export function RelevanceTabBar({ tab, onChange }: { tab: RelevanceTab; onChange: (next: RelevanceTab) => void }) {
+/**
+ * The four Photo Relevance views; the host keeps the value in the URL (`?tab=`). Pressed chips, as the admin filter bars do.
+ * RV-3.5: `counts` adds a number to a chip (the open appeals on Appeals).
+ */
+export function RelevanceTabBar({
+  tab,
+  onChange,
+  counts = {},
+}: {
+  tab: RelevanceTab;
+  onChange: (next: RelevanceTab) => void;
+  counts?: Partial<Record<RelevanceTab, number>>;
+}) {
   return (
     <div role="group" aria-label="Photo Relevance views" className="flex flex-wrap gap-2">
       {RELEVANCE_TABS.map((t) => {
@@ -23,6 +34,7 @@ export function RelevanceTabBar({ tab, onChange }: { tab: RelevanceTab; onChange
             )}
           >
             {t.label}
+            {(counts[t.value] ?? 0) > 0 && <span className="tnum"> {counts[t.value]}</span>}
           </button>
         );
       })}

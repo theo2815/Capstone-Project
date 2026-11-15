@@ -9,7 +9,18 @@ vi.mock("@/lib/admin-queues", () => ({
   useAdminQueueCounts: () => ({ inbox: 0, disputes: 0, flags: 0, payouts: 0, events: 0, total: 0 }),
 }));
 
-afterEach(cleanup);
+// RV-3.5: the open appeals count on the Photo Relevance item.
+const appeals = vi.hoisted(() => ({ open: 0 }));
+vi.mock("@/hooks/use-admin-relevance", () => ({ useOpenRelevanceAppealsCount: () => appeals.open }));
+
+afterEach(() => { cleanup(); appeals.open = 0; });
+
+it("the rail shows the open appeals on the Photo Relevance item", () => {
+  appeals.open = 3;
+  render(<AdminRail />);
+  const link = screen.getByRole("link", { name: /Photo Relevance/ });
+  expect(within(link).getByLabelText("3 open")).toHaveTextContent("3");
+});
 
 it("the rail shows the Photo Relevance item", () => {
   render(<AdminRail />);
@@ -28,4 +39,11 @@ it("the mobile strip shows the Photo Relevance item", () => {
   const link = screen.getByRole("link", { name: /Photo Relevance/ });
   expect(link).toHaveAttribute("href", "/admin/relevance");
   expect(link).toHaveAttribute("aria-current", "page");
+});
+
+it("the rail's queue total counts the open appeals", () => {
+  appeals.open = 2;
+  render(<AdminRail />);
+  expect(screen.getByText("Queues · 2 open")).toBeInTheDocument();
+  expect(screen.queryByText("Queues · all clear")).not.toBeInTheDocument();
 });

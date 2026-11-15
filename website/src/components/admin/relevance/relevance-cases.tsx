@@ -5,7 +5,7 @@ import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { useRelevanceCase, useRelevanceCases, useRelevanceHiddenPhotos } from "@/hooks/use-admin-relevance";
+import { useOpenRelevanceAppealsCount, useRelevanceCase, useRelevanceCases, useRelevanceHiddenPhotos } from "@/hooks/use-admin-relevance";
 import { useUrlState } from "@/hooks/use-url-state";
 import {
   RELEVANCE_TABS,
@@ -22,6 +22,7 @@ import { formatLongDate } from "@/lib/format";
 import { RelevanceTabBar } from "./relevance-tab-bar";
 import { RelevanceCaseBody, RelevanceCaseSubtitle } from "./relevance-case-drawer";
 import { RelevanceCaseActions, RelevanceHiddenPhotos } from "./relevance-case-actions";
+import { RelevanceAppeals } from "./relevance-appeals";
 
 const PAGE_INCREMENT = 50;
 const kicker = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
@@ -30,11 +31,15 @@ const kicker = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:te
 export function RelevanceCases() {
   const [tab, setTab] = useUrlState<RelevanceTab>("tab", "hidden", { parse: parseRelevanceTab });
   const [rowId, setRowId] = useUrlState<string>("row", "");
+  const appeals = tab === "appeals";
+  const openAppeals = useOpenRelevanceAppealsCount();
   const list = useRelevanceCases(tab);
   const byId = useMemo(() => new Map(list.items.map((c) => [c.caseId, c])), [list.items]);
-  const detail = useRelevanceCase(rowId);
+  // RV-3.5: on the Appeals tab `?row=` names an appeal, which RelevanceAppeals reads itself.
+  const caseId = appeals ? "" : rowId;
+  const detail = useRelevanceCase(caseId);
   // RV-2.6: the drawer's actions. The holds decide whether a record-only case can still be restored.
-  const held = useRelevanceHiddenPhotos(rowId);
+  const held = useRelevanceHiddenPhotos(caseId);
   const [confirming, setConfirming] = useState<RelevanceCaseAction | null>(null);
   // shortcut: reads only the loaded pages of holds, newest first; fine while batches hold a few hundred photos.
   const kinds = detail.data ? caseActions(detail.data, held.items.some(isReleasable)) : [];
@@ -45,6 +50,7 @@ export function RelevanceCases() {
     <div className="pt-6 md:pt-8 space-y-6">
       <RelevanceTabBar
         tab={tab}
+        counts={{ appeals: openAppeals }}
         onChange={(next) => {
           // A new view starts with no case open.
           setRowId("");
@@ -52,7 +58,9 @@ export function RelevanceCases() {
         }}
       />
 
-      {list.isLoading ? (
+      {appeals ? (
+        <RelevanceAppeals appealId={rowId} onOpen={setRowId} />
+      ) : list.isLoading ? (
         <p role="status" className="font-sans text-sm text-slate-soft">Loading cases…</p>
       ) : list.error && list.items.length === 0 ? (
         <div role="alert" className="space-y-3">
@@ -81,7 +89,7 @@ export function RelevanceCases() {
         </>
       )}
 
-      {rowId && (
+      {caseId && (
         <AdminDetailDrawer
           open={true}
           onClose={() => {

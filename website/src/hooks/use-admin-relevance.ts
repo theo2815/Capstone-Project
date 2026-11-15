@@ -4,19 +4,24 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import { useInfiniteList } from "@/hooks/use-infinite-list";
 import {
+  decideRelevanceAppeal,
   fetchRelevanceAlerts,
+  fetchRelevanceAppeals,
   fetchRelevanceCase,
   fetchRelevanceCases,
   fetchRelevanceHiddenPhotos,
   hideRelevanceBatch,
   keepRelevanceCaseHidden,
   markRelevanceAlertSeen,
+  markRelevanceAppealEvidenceOpened,
   markRelevanceCaseLooksFine,
   restoreRelevanceCase,
   restoreRelevancePhoto,
 } from "@/lib/api-admin";
 import type {
   RelevanceAlert,
+  RelevanceAppealRow,
+  RelevanceAppealStatus,
   RelevanceCaseAction,
   RelevanceCaseDetail,
   RelevanceCaseRow,
@@ -38,7 +43,8 @@ export function useRelevanceCases(tab: RelevanceTab) {
     },
     limit: PAGE_LIMIT,
     staleTime: STALE_MS,
-    enabled: session.enabled,
+    // RV-3.5: the Appeals tab lists appeals, not cases.
+    enabled: session.enabled && tab !== "appeals",
   });
 }
 
@@ -123,4 +129,50 @@ export function useRelevanceCase(caseId: string) {
     staleTime: STALE_MS,
     enabled: session.enabled && caseId !== "",
   });
+}
+
+// RV-3.5: the appeals of one status, newest first. The open list's total is the count on the tab and in the rail.
+export function useRelevanceAppeals(status: RelevanceAppealStatus) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useInfiniteList<RelevanceAppealRow & { id: string }>({
+    queryKey: ["admin", "relevance", "appeals", status, ...session.key],
+    fetchPage: async (offset, limit, signal) => {
+      const page = await fetchRelevanceAppeals({ status, offset, limit }, signal);
+      return { ...page, items: page.items.map((a) => ({ ...a, id: a.appealId })) };
+    },
+    limit: PAGE_LIMIT,
+    staleTime: STALE_MS,
+    enabled: session.enabled,
+  });
+}
+
+/** The open appeals' count for the tab chip and the rail: one row read for its total, under its own key. */
+export function useOpenRelevanceAppealsCount(): number {
+  const session = usePrivateQuerySession("ADMIN");
+  const query = useQuery({
+    queryKey: ["admin", "relevance", "appeals", "open-count", ...session.key],
+    queryFn: ({ signal }) => fetchRelevanceAppeals({ status: "OPEN", limit: 1 }, signal),
+    staleTime: STALE_MS,
+    enabled: session.enabled,
+  });
+  return query.data?.total ?? 0;
+}
+
+/** Opening the evidence and deciding. Each resolves after the server answered; the page is read again either way. */
+export function useRelevanceAppealActions() {
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "relevance"] });
+  const evidence = useMutation({ mutationFn: (appealId: string) => markRelevanceAppealEvidenceOpened(appealId) });
+  const decide = useMutation({
+    mutationFn: ({ appealId, outcome, note }: { appealId: string; outcome: "WON" | "LOST"; note?: string }) =>
+      decideRelevanceAppeal(appealId, note ? { outcome, note } : { outcome }),
+    onSuccess: refresh,
+    onError: refresh,
+  });
+  return {
+    openEvidence: evidence.mutateAsync,
+    decide: decide.mutateAsync,
+    evidencePending: evidence.isPending,
+    decidePending: decide.isPending,
+  };
 }
