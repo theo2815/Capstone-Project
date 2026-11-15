@@ -166,4 +166,11 @@ object ErrorCodes {
     // AA-R11 race price: not a priceable race (or the switch is off); a second change inside the cooldown.
     const val RACE_PRICE_NOT_ALLOWED = "RACE_PRICE_NOT_ALLOWED"
     const val RACE_PRICE_COOLDOWN = "RACE_PRICE_COOLDOWN"
+
+    // RV-3.2a Photo Relevance appeals: past the last day; this case was appealed already; another appeal of the same
+    // photos is open; the case hides nothing a photographer can appeal (or the checks are off).
+    const val APPEAL_WINDOW_CLOSED = "APPEAL_WINDOW_CLOSED"
+    const val APPEAL_ALREADY_FILED = "APPEAL_ALREADY_FILED"
+    const val APPEAL_ALREADY_OPEN = "APPEAL_ALREADY_OPEN"
+    const val NOTHING_TO_APPEAL = "NOTHING_TO_APPEAL"
 }

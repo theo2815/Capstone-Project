@@ -199,6 +199,42 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // RV-3.2a: a photographer's own relevance case and appeal, for photographers only. The test app runs with the
+    // relevance mode off, so a photographer's read is 404 and filing is 409 before any look-up, whoever owns the case;
+    // ownership with the mode on is RelevanceAppealIntegrationTest `another photographer's case is not found`.
+    @Test
+    fun `the photographer relevance routes are for photographers only`() {
+        fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
+        val owner = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')",
+            "matrix-${UUID.randomUUID()}@test.local")
+        val event = id("INSERT INTO events (slug, name, date, location, status, visibility) VALUES (?, 'Rel Run', DATE '2003-03-04', 'Cebu', 'ACTIVE', 'PUBLIC')",
+            "matrix-${UUID.randomUUID()}")
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event, owner)
+        val at = java.time.OffsetDateTime.parse("2003-03-04T05:06:07Z")
+        val case = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at, notice_at) " +
+            "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'JUNK_DUMP', 'AUTO_HIDE', 'HIDE_ALL', ?, ?, ?, ?)", batch, at, at, at, at, at)
+        val read = "/api/v1/me/photographer/relevance/cases/$case"
+        val appeal = "$read/appeal"
+        val body = """{"reason":"These are mine."}"""
+        val runner = register(Role.RUNNER)
+        val other = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        assertEquals(401, get(read).statusCode())
+        assertEquals(401, post(appeal, body).statusCode())
+        for (token in listOf(runner, admin)) {
+            assertEquals(403, get(read, token).statusCode())
+            assertEquals(403, post(appeal, body, token).statusCode())
+        }
+        val modeOff = get(read, other)
+        assertEquals(404, modeOff.statusCode())
+        assertTrue("NOT_FOUND" in modeOff.body())
+        val filed = post(appeal, body, other)
+        assertEquals(409, filed.statusCode())
+        assertTrue("NOTHING_TO_APPEAL" in filed.body())
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_appeals WHERE case_id = ?", Int::class.java, case))
+    }
+
     // RV-1.10: the Photo Relevance page's routes, with one real case and alert so the admin's answer is 200.
     @Test
     fun `the relevance admin routes are for admins only`() {
