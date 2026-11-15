@@ -153,7 +153,9 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
               confirmLabel={APPEAL_TEXT.confirm[confirming].confirmLabel}
               submitting={decidePending}
             >
-              <p className="font-sans text-sm text-ink-soft">{APPEAL_TEXT.confirm[confirming].text}</p>
+              <p className="font-sans text-sm text-ink-soft">
+                {appeal.caseStage === "APPLIED" ? APPEAL_TEXT.confirm[confirming].text : APPEAL_TEXT.confirmClosed}
+              </p>
             </AdminConfirmModal>
           )}
         </>

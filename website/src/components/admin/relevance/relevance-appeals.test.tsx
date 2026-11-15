@@ -201,3 +201,25 @@ it("the open count is read with one row, and the Appeals tab reads no cases", as
   expect(vi.mocked(api.get).mock.calls.map(([url]) => String(url)).filter((u) => u.startsWith("/admin/relevance/cases?"))).toEqual([]);
   expect(await screen.findByRole("button", { name: /Appeals/ })).toHaveTextContent("Appeals 1");
 });
+
+it("the confirm of an appeal on a closed case says it only records the decision", async () => {
+  const user = userEvent.setup();
+  mount();
+  let d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
+  await user.click(await within(d).findByRole("button", { name: "Won" }));
+  expect(within(await screen.findByRole("dialog", { name: "Appeal won" })).getByText(/^Marks the appeal won and tells the photographer\./)).toBeInTheDocument();
+  cleanup(); client.clear();
+  lists.OPEN = [{ ...openAppeal, caseStage: "CLOSED" }];
+  mount();
+  d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
+  for (const [button, title] of [["Won", "Appeal won"], ["Lost", "Appeal lost"]] as const) {
+    await user.click(within(d).getByRole("button", { name: button }));
+    const confirm = await screen.findByRole("dialog", { name: title });
+    expect(within(confirm).getByText("The case is already closed, so this only records your decision. The photographer is not told. This cannot be undone.")).toBeInTheDocument();
+    expect(confirm.textContent).not.toMatch(/tells the photographer/);
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument());
+  }
+});

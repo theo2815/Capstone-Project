@@ -308,4 +308,6 @@ export const APPEAL_TEXT = {
       text: "Marks the appeal lost and tells the photographer. The photos stay off sale. A junk dump, wrong event or copied finding is confirmed at once and counts against the photographer. This cannot be undone.",
     },
   } as Record<"WON" | "LOST", { title: string; confirmLabel: string; text: string }>,
+  // A case closed meanwhile (an admin restored the batch): the server records the decision only, sends no note.
+  confirmClosed: "The case is already closed, so this only records your decision. The photographer is not told. This cannot be undone.",
 } as const;
