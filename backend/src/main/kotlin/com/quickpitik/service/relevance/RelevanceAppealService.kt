@@ -129,6 +129,8 @@ class RelevanceAppealService(
         actionsOn()
         val result = listOf(AppealStatus.WON, AppealStatus.LOST).firstOrNull { it.name == outcome }
             ?: throw ValidationException("outcome must be WON or LOST", field = "outcome")
+        // Postgres refuses a NUL character in TEXT: a 400 here, not a 500 at the update.
+        if (note != null && '\u0000' in note) throw ValidationException("The note cannot contain a NUL character", field = "note")
         // A plain row, not the entity: loading the entity before the lock would hand back a stale copy from the session.
         val caseId = appeals.appealRow(appealId)?.caseId ?: throw appealNotFound()
         // The case first, then the appeal: the same order as filing.
@@ -145,15 +147,16 @@ class RelevanceAppealService(
         appeal.decisionNote = note?.trim()?.ifBlank { null }
         appeals.save(appeal)
         val case = cases.findById(caseId).orElseThrow()
-        val autoHide = case.appliedMode == AUTO
-        val acting = autoHide && case.stage == CaseStage.APPLIED.name
+        val acting = case.appliedMode == AUTO && case.stage == CaseStage.APPLIED.name
         val wholeBatch = case.action == CaseAction.HIDE_ALL.name
         if (acting) {
             if (result == AppealStatus.WON) cases.winAppeal(caseId) else confirmer.confirm(caseId, now)
         }
         decisionLog.logUserDecision(adminId, appeal.photographerId, "relevance_appeal_${result.name.lowercase()}", appeal.decisionNote,
             meta = mapOf("caseId" to caseId.toString(), "appealId" to appealId.toString()))
-        if (autoHide) {
+        // Only a decision that acts on the case is told: for a case closed meanwhile (an admin restored the batch) the
+        // notes would describe a hide that is gone. The appeal is still decided, so it never blocks a later one.
+        if (acting) {
             val eventName = cases.ownCase(caseId, appeal.photographerId)!!.eventName
             val text = if (result == AppealStatus.WON) RelevanceNotices.appealWon(eventName, wholeBatch)
                 else RelevanceNotices.appealLost(eventName, copied = case.verdict == CaseVerdict.COPIED.name)

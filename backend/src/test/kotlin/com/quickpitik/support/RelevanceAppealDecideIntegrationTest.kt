@@ -178,6 +178,37 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `a note with a NUL character is refused`() {
+        val (_, _, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        val admin = admin()
+        opened(admin, appeal)
+
+        // Postgres refuses NUL in TEXT: a 400, not a 500 at the update.
+        val ex = assertFailsWith<com.quickpitik.exception.ValidationException> { decide(admin, appeal, "LOST", note = "bad\u0000note") }
+        assertEquals("note", ex.field)
+        assertEquals("OPEN", appeals.findById(appeal).get().status)
+    }
+
+    @Test
+    fun `deciding an appeal whose case was closed meanwhile records the outcome and changes nothing else`() {
+        val admin = admin()
+        // An admin restored each batch while its appeal was open: the case is closed, the appeal still open.
+        val decided = listOf("LOST", "WON").map { outcome ->
+            val (b, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+            jdbc.update("UPDATE relevance_cases SET stage = 'CLOSED', closed_at = ?, close_reason = 'RESTORED_BY_ADMIN' WHERE id = ?", NOW, c)
+            opened(admin, appeal)
+            assertEquals(outcome, decide(admin, appeal, outcome).status)
+            Triple(b, c, appeal)
+        }
+
+        for ((b, c, _) in decided) {
+            assertEquals(listOf("CLOSED", "HIDE_ALL", "NONE", null), row(c, "stage", "action", "scan_state", "confirmed_at"))
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE case_id = ?", Int::class.java, c))
+            assertEquals(0, notes(b).size, "no decided note: it would describe a hide that is gone")
+        }
+    }
+
+    @Test
     fun `with the mode off or in record-only nothing is opened or decided`() {
         val (_, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
         val admin = admin()
