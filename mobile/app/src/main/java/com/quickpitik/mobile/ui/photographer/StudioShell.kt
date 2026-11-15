@@ -84,6 +84,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -992,19 +993,22 @@ private fun InboxRow(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             relevanceCaseLinkUrl(message)?.let { url ->
-                Text(
-                    text = "VIEW DETAILS",
-                    color = Ink,
-                    style = Typography.labelMedium,
+                // Mobile Design: tap target >= 48dp, sentence case (UPPERCASE is for kickers).
+                Box(
                     modifier = Modifier
-                        .clickable {
+                        .heightIn(min = 48.dp)
+                        .clickable(role = Role.Button) {
                             if (isUnread) onMarkRead()
                             openInCustomTab(context, url)
                         }
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                )
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(text = "View details", color = Ink, style = Typography.labelMedium)
+                }
             }
             Text(
                 text = "REMOVE",

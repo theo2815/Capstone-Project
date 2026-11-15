@@ -1,6 +1,9 @@
 package com.quickpitik.mobile.ui.photographer
 
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
+import com.quickpitik.mobile.ui.theme.ErrorRed
+import com.quickpitik.mobile.ui.theme.Fresh
+import com.quickpitik.mobile.ui.theme.Ink
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.WarningOrange
 import org.junit.Assert.assertEquals
@@ -46,5 +49,30 @@ class RelevanceCaseLinkTest {
     fun `an unknown kind keeps its fallback label and tone`() {
         assertEquals("Some new kind", messageKindLabel("some_new_kind"))
         assertEquals(Slate, messageToneColor("some_new_kind"))
+    }
+
+    @Test
+    fun `every older kind keeps its label and tone`() {
+        val expected = mapOf(
+            "verification_approved" to ("Verification approved" to Fresh),
+            "verification_rejected" to ("Verification needs changes" to WarningOrange),
+            "verification_reset" to ("Verification reset" to WarningOrange),
+            "suspended" to ("Account suspended" to ErrorRed),
+            "unsuspended" to ("Account reinstated" to Fresh),
+            "force_edit" to ("Profile updated by admin" to Slate),
+            "dispute_resolved" to ("Refund resolved" to Fresh),
+            "dispute_denied" to ("Refund denied" to WarningOrange),
+            "dispute_escalated" to ("Refund escalated" to WarningOrange),
+            "payout_approved" to ("Payout approved" to Fresh),
+            "payout_held" to ("Payout held" to WarningOrange),
+            "payout_paid" to ("Payout paid" to Fresh),
+            "payout_report_acknowledged" to ("Report acknowledged" to Ink),
+            "payout_report_resolved" to ("Report resolved" to Fresh),
+            "admin_message" to ("Message from admin" to Ink),
+        )
+        expected.forEach { (kind, labelAndTone) ->
+            assertEquals(kind, labelAndTone.first, messageKindLabel(kind))
+            assertEquals(kind, labelAndTone.second, messageToneColor(kind))
+        }
     }
 }
