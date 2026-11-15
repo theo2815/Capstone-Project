@@ -21,17 +21,17 @@ const checked = (c: PhotographerRelevanceCase) =>
   `We checked ${c.sampleSize ?? 0} of your ${c.batchPhotos} photos in ${c.eventName}, and ${c.junkCount ?? 0} of them look blurry, very dark or not of a race.`;
 const offSaleIn = (eventName: string) => `Your photos in ${eventName} are off sale`;
 
-// The note texts of a hiding case, by verdict (V2-T11 to V2-T14, V2-T23). `eventDate` is V2-T13's {eventDate};
-// until it is known, that sentence is left out rather than shown with a gap.
+// The note texts of a hiding case, by verdict (V2-T11 to V2-T14, V2-T23). `eventDate` is V2-T13's {eventDate}; without
+// it the wrong-event body is left out whole, so its "So our system…" sentence never stands first.
 export function hiddenCaseText(c: PhotographerRelevanceCase, eventDate: string | null): CaseText {
   switch (c.verdict) {
     case "MIXED":
       return { title: "Some of your photos are off sale", outcome: [], body: [checked(c),
         "Our system is now checking every photo and taking the ones that look like that off sale.", "Your other photos stay on sale."] };
     case "WRONG_EVENT":
-      return { title: offSaleIn(c.eventName), outcome: [CONFIRMED], body: [
-        ...(eventDate ? [`Many of your ${c.batchPhotos} photos in ${c.eventName} seem to be from a different event: their camera dates are far from the event's date (${eventDate}), or the words printed in them name a different race.`] : []),
-        ALL_OFF, NEW_TOO] };
+      return { title: offSaleIn(c.eventName), outcome: [CONFIRMED], body: eventDate ? [
+        `Many of your ${c.batchPhotos} photos in ${c.eventName} seem to be from a different event: their camera dates are far from the event's date (${eventDate}), or the words printed in them name a different race.`,
+        ALL_OFF, NEW_TOO] : [] };
     case "COPIED":
       return { title: "Photos off sale and payouts on hold", outcome: [CONFIRMED], body: [
         `Many of your ${c.batchPhotos} photos in ${c.eventName} match photos that another photographer uploaded.`,
@@ -43,17 +43,28 @@ export function hiddenCaseText(c: PhotographerRelevanceCase, eventDate: string |
       return { title: offSaleIn(c.eventName), outcome: [WIN_RESCAN], body: [
         `Our automatic check could not tell whether your photos in ${c.eventName} belong to this event, so a person at QuickPitik looked at them and has taken all your photos in this event off sale.`,
         NEW_TOO] };
-    default: // JUNK_DUMP
+    case "JUNK_DUMP":
       return { title: offSaleIn(c.eventName), outcome: [WIN_RESCAN, CONFIRMED], body: [checked(c), ALL_OFF, NEW_TOO] };
+    // A Fits re-check that lifted a junk dump (G7): the lifted case's V2-T16 note describes this case's state.
+    case "FITS":
+      return c.action === "HIDE_JUNK" ? shownAgainText(c.eventName, "recheck")
+        : { title: offSaleIn(c.eventName), outcome: [], body: [] };
+    // No note exists for any other hiding combination: the title alone, no rule sentence.
+    default:
+      return { title: c.action === "HIDE_JUNK" ? "Some of your photos are off sale" : offSaleIn(c.eventName), outcome: [], body: [] };
   }
 }
 
-// V2-T16. Its full-check body only when the page knows that is what happened: a current Fits case with an appeal
-// clock was Mixed and its full check flipped it (A.4). Otherwise the title alone.
-export function shownAgainText(eventName: string, afterFullCheck: boolean): CaseText {
-  return { title: "Photos back on sale", outcome: [], body: afterFullCheck ? [
+// V2-T16, with the body for what happened, as RelevanceNotifier picks it: "scan" for a current Fits case with an appeal
+// clock (it was Mixed and its full check flipped it, A.4), "recheck" for a case a new check lifted (closed
+// RECHECK_LIFTED, or the Fits case that lifted it). Otherwise the title alone.
+export function shownAgainText(eventName: string, after: "scan" | "recheck" | null): CaseText {
+  return { title: "Photos back on sale", outcome: [], body: after === "scan" ? [
     `We checked every one of your photos in ${eventName}, and fewer look blurry, very dark or not of a race than our first check showed.`,
-    "So the photos we took off sale are going back on sale."] : [] };
+    "So the photos we took off sale are going back on sale."]
+    : after === "recheck" ? [`We checked your photos in ${eventName} again after your new uploads.`,
+      "The photos we took off sale are going back on sale, except those that still look blurry, very dark or not of a race."]
+    : [] };
 }
 
 // V2-T15's title and its first sentences. RV-3.4b adds the rest of the note and the "Review and hide" grid here.
@@ -113,8 +124,6 @@ export const CASE_LABELS = {
   loadFailed: "Couldn't load",
   retry: "Try again",
   closed: "Closed",
-  photos: "Photos",
-  offSale: "Off sale",
   sending: "Sending…",
 } as const;
 

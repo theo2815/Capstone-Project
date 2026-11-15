@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -12,38 +12,28 @@ import {
   APPEAL_FORM, APPEAL_MAX, CASE_LABELS, appealText, blurryText, hiddenCaseText, philippineToday, shownAgainText, type CaseText,
 } from "@/lib/photographer-relevance-copy";
 import { useFileRelevanceAppeal, usePhotographerRelevanceCase } from "@/hooks/use-photographer-relevance";
-import { usePhotographerEventDetail } from "@/hooks/use-photographer-data";
 
 // RV-3.4a: what happened to the photographer's photos in one event, and the appeal. It renders only the named fields
 // of the photographer's case view; nothing else the server might send (the model's reason above all) reaches the page.
 export function RelevanceCase({ caseId }: { caseId: string }) {
   const query = usePhotographerRelevanceCase(caseId);
   const c = query.data;
-  // V2-T13 names the event's date, which the case view does not carry.
-  const event = usePhotographerEventDetail(c?.verdict === "WRONG_EVENT" ? c.eventId : null);
+  const text = c ? caseText(c) : null;
 
   if (query.isPending) return <p role="status" className="mt-8 text-slate">{CASE_LABELS.loading}</p>;
-  // A failed background refresh keeps showing the last server copy.
-  if (!c) return (
+  // A failed background refresh keeps showing the last server copy. A case with nothing to tell reads as not found.
+  if (!c || !text) return (
     <div role="alert" className="mt-8 space-y-4">
-      {query.error instanceof ApiError && query.error.status === 404 ? <p className="text-ink">{CASE_LABELS.notFound}</p> : <>
+      {c || (query.error instanceof ApiError && query.error.status === 404) ? <p className="text-ink">{CASE_LABELS.notFound}</p> : <>
         <p className="text-ink">{CASE_LABELS.loadFailed}</p>
         <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={() => void query.refetch()}>{CASE_LABELS.retry}</button>
       </>}
     </div>
   );
 
-  const hiding = c.current && (c.action === "HIDE_ALL" || c.action === "HIDE_JUNK");
-  const won = c.appeal?.status === "WON";
-  const eventDate = event.detail?.date ? formatLongDate(event.detail.date, true) : null;
-  const text: CaseText = !c.current ? { title: CASE_LABELS.closed, body: [], outcome: [] }
-    : won ? appealText(c)!
-    : hiding ? hiddenCaseText(c, eventDate)
-    // RV-3.4b: a Fits case's blurry note (no appeal clock) gets its "Review and hide" grid here.
-    : c.verdict === "FITS" && !c.noticeAt ? blurryText(c)
-    : shownAgainText(c.eventName, c.verdict === "FITS");
-  const status = c.appeal && !(won && c.current) ? appealText(c) : null;
-  const canAppeal = hiding && !c.appeal && !!c.appealDeadline;
+  // A closed case shows only its title (and the appeal only through APPEAL_WON's own block).
+  const status = c.current && c.appeal && c.appeal.status !== "WON" ? appealText(c) : null;
+  const canAppeal = isHiding(c) && !c.appeal && !!c.appealDeadline;
   const windowOpen = canAppeal && philippineToday() <= c.appealDeadline!;
 
   return (
@@ -52,10 +42,6 @@ export function RelevanceCase({ caseId }: { caseId: string }) {
         <Kicker as="p">{CASE_LABELS.kicker} · {c.eventName}</Kicker>
         <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3 break-words">{text.title}</h1>
         {text.body.length > 0 && <p className="mt-4 text-ink-soft leading-relaxed break-words">{text.body.join(" ")}</p>}
-        <dl className="mt-6 flex flex-wrap gap-x-8 gap-y-3">
-          <Stat label={CASE_LABELS.photos} value={c.batchPhotos} />
-          <Stat label={CASE_LABELS.offSale} value={c.hiddenPhotos} />
-        </dl>
       </header>
 
       {status && (
@@ -71,13 +57,25 @@ export function RelevanceCase({ caseId }: { caseId: string }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div>
-      <Kicker as="dt" tone="soft">{label}</Kicker>
-      <dd className="font-mono tnum text-2xl text-ink mt-1">{value.toLocaleString("en-US")}</dd>
-    </div>
-  );
+const isHiding = (c: PhotographerRelevanceCase) => c.current && (c.action === "HIDE_ALL" || c.action === "HIDE_JUNK");
+
+// The page's text is the note the server sent for this case's state (RelevanceNotifier, RelevanceAppealService); null
+// when no note tells of it. No count of photos off sale is shown: hidden_photos is stamped once, when a hide first
+// finishes, and never kept up to date (new uploads join a whole-batch hide; a won appeal brings photos back).
+function caseText(c: PhotographerRelevanceCase): CaseText | null {
+  const won = c.appeal?.status === "WON";
+  if (!c.current) {
+    if (c.closeReason === "RECHECK_LIFTED") return shownAgainText(c.eventName, "recheck");
+    if (c.closeReason === "APPEAL_WON" && won) return appealText(c);
+    // No approved text for the other close reasons (listed as a gap in RV-3.4a): the plain status word.
+    return { title: CASE_LABELS.closed, body: [], outcome: [] };
+  }
+  if (won) return appealText(c);
+  if (isHiding(c)) return hiddenCaseText(c, c.eventDate ? formatLongDate(c.eventDate, true) : null);
+  // RV-3.4b: a Fits case's blurry note (no appeal clock) gets its "Review and hide" grid here. With no blurry photos
+  // found, no note was sent and there is nothing to tell.
+  if (c.verdict === "FITS" && !c.noticeAt) return (c.scanBlurry ?? 0) > 0 ? blurryText(c) : null;
+  return shownAgainText(c.eventName, c.verdict === "FITS" ? "scan" : null);
 }
 
 function AppealForm({ c, outcome }: { c: PhotographerRelevanceCase; outcome: string[] }) {
@@ -88,15 +86,20 @@ function AppealForm({ c, outcome }: { c: PhotographerRelevanceCase; outcome: str
   const tooLong = trimmed.length > APPEAL_MAX;
   const busy = file.isPending;
   const canSend = trimmed.length > 0 && !tooLong && !busy;
+  // isPending reaches the button only on the next render; this stops a second click in the same tick.
+  const sending = useRef(false);
 
   async function send() {
-    if (!canSend) return;
+    if (!canSend || sending.current) return;
+    sending.current = true;
     setError(null);
     try {
       await file.mutateAsync(trimmed);
     } catch (failure) {
       // The server's refusal is shown as it words it (V2-T22 for the three 409s); the reason stays for a retry.
       setError(failure instanceof ApiError ? (failure.errors[0]?.message ?? failure.message) : failure instanceof Error ? failure.message : null);
+    } finally {
+      sending.current = false;
     }
   }
 

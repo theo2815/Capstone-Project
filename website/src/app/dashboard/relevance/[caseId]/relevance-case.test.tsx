@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ const owner = { id: "owner-a", role: "PHOTOGRAPHER" as const, name: "Owner A", e
 const base: PhotographerRelevanceCase = {
   caseId: "case-1", eventId: "event-1", eventName: "Cebu Marathon", verdict: "JUNK_DUMP", action: "HIDE_ALL", current: true,
   batchPhotos: 400, sampleSize: 300, junkCount: 240, hiddenPhotos: 400, scanMeasured: null, scanBlurry: null,
-  noticeAt: "2026-11-10T03:00:00Z", appealDeadline: "2026-11-24", appeal: null,
+  noticeAt: "2026-11-10T03:00:00Z", appealDeadline: "2026-11-24", appeal: null, eventDate: "2026-11-08", closeReason: null,
 };
 let client: QueryClient;
 let serverCase: PhotographerRelevanceCase;
@@ -127,4 +127,84 @@ it("the page never shows the model's reason", async () => {
   renderCase();
   await screen.findByRole("heading", { name: /off sale/ });
   await waitFor(() => expect(document.body.textContent).not.toMatch(/MODEL REASON|SUMMARY SENT/));
+});
+
+it("a second click while the appeal is sending does nothing, and nothing changes before the server answers", async () => {
+  let answer!: (value: PhotographerRelevanceCase) => void;
+  const filed = { ...base, appeal: { id: "appeal-1", status: "OPEN" as const, createdAt: "2026-11-16T04:00:00Z", decidedAt: null } };
+  const post = vi.spyOn(api, "post").mockImplementation(() => new Promise((resolve) => { answer = resolve as typeof answer; }));
+  renderCase();
+  await screen.findByRole("heading", { name: /off sale/ });
+  fireEvent.change(reasonField(), { target: { value: "Mine" } });
+  act(() => { sendButton().click(); sendButton().click(); });
+  await waitFor(() => expect(post).toHaveBeenCalled());
+  await act(async () => {}); // let a second send, if any, reach the network
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText("Appeal received")).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled());
+  serverCase = filed;
+  await act(async () => answer(filed));
+  expect(await screen.findByText("Appeal received")).toBeVisible();
+});
+
+it("wrong event names the event's date, and shows no rule sentence without it", async () => {
+  serverCase = { ...base, verdict: "WRONG_EVENT" };
+  renderCase();
+  expect(await screen.findByText(/^Many of your 400 photos in Cebu Marathon seem to be from a different event: their camera dates are far from the event's date \(NOV 08 · 2026\)/)).toBeVisible();
+  cleanup(); client.clear();
+  serverCase = { ...base, verdict: "WRONG_EVENT", eventDate: null };
+  renderCase();
+  expect(await screen.findByRole("heading", { name: "Your photos in Cebu Marathon are off sale" })).toBeVisible();
+  expect(document.body.textContent).not.toMatch(/So our system/);
+});
+
+it("a Fits case a re-check lifted to junk only never says all photos are off sale", async () => {
+  serverCase = { ...base, verdict: "FITS", action: "HIDE_JUNK", noticeAt: null, appealDeadline: null };
+  renderCase();
+  expect(await screen.findByRole("heading", { name: "Photos back on sale" })).toBeVisible();
+  expect(screen.getByText(/except those that still look blurry, very dark or not of a race\./)).toBeVisible();
+  expect(document.body.textContent).not.toMatch(/all your photos/);
+});
+
+it("a case a re-check lifted shows the note its close sent", async () => {
+  serverCase = { ...base, current: false, closeReason: "RECHECK_LIFTED" };
+  renderCase();
+  expect(await screen.findByRole("heading", { name: "Photos back on sale" })).toBeVisible();
+  expect(screen.getByText(/^We checked your photos in Cebu Marathon again after your new uploads\./)).toBeVisible();
+  expect(screen.queryByText("Closed")).not.toBeInTheDocument();
+});
+
+it("a case closed after a won appeal shows the appeal accepted, not Closed", async () => {
+  serverCase = { ...base, current: false, action: "HIDE_JUNK", closeReason: "APPEAL_WON",
+    appeal: { id: "appeal-1", status: "WON", createdAt: "2026-11-12T00:00:00Z", decidedAt: "2026-11-13T00:00:00Z" } };
+  renderCase();
+  expect(await screen.findByRole("heading", { name: "Appeal accepted" })).toBeVisible();
+  expect(screen.queryByText("Closed")).not.toBeInTheDocument();
+});
+
+it("a case closed for a reason with no approved text shows only its status word", async () => {
+  serverCase = { ...base, current: false, closeReason: "SUPERSEDED",
+    appeal: { id: "appeal-1", status: "OPEN", createdAt: "2026-11-12T00:00:00Z", decidedAt: null } };
+  renderCase();
+  expect(await screen.findByRole("heading", { name: "Closed" })).toBeVisible();
+  expect(screen.queryByText("Appeal received")).not.toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/off sale/);
+});
+
+it("a Fits case shows the blurry text only when its check found blurry photos", async () => {
+  serverCase = { ...base, verdict: "FITS", action: "NONE", noticeAt: null, appealDeadline: null, scanMeasured: 400, scanBlurry: 3 };
+  renderCase();
+  expect(await screen.findByRole("heading", { name: "3 photos look blurry" })).toBeVisible();
+  cleanup(); client.clear();
+  serverCase = { ...base, verdict: "FITS", action: "NONE", noticeAt: null, appealDeadline: null };
+  renderCase();
+  expect(await screen.findByText("Case not found")).toBeVisible();
+  expect(document.body.textContent).not.toMatch(/blurry/);
+});
+
+it("shows no off-sale count, which the server stamps once and does not keep up to date", async () => {
+  serverCase = { ...base, verdict: "MIXED", action: "HIDE_JUNK", hiddenPhotos: 0 };
+  renderCase();
+  await screen.findByRole("heading", { name: "Some of your photos are off sale" });
+  expect(screen.queryByText("Off sale")).not.toBeInTheDocument();
 });

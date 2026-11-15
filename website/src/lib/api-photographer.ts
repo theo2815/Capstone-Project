@@ -905,6 +905,10 @@ export interface PhotographerRelevanceCase {
   /** Last day to appeal, a Philippine date (YYYY-MM-DD); null when the case has no appeal clock. */
   appealDeadline: string | null;
   appeal: PhotographerRelevanceAppeal | null;
+  /** The event's date (YYYY-MM-DD), which V2-T13 names. */
+  eventDate: string | null;
+  /** Why a closed case closed (RECHECK_LIFTED, APPEAL_WON, SUPERSEDED, ...); null while it is open. */
+  closeReason: string | null;
 }
 
 export async function fetchMyRelevanceCase(caseId: string, signal?: AbortSignal): Promise<PhotographerRelevanceCase> {
