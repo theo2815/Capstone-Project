@@ -22,6 +22,7 @@ import com.quickpitik.repository.RelevanceHoldRepository
 import com.quickpitik.repository.SamplingCase
 import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.auth.atLeast
+import com.quickpitik.service.events.EventDtoMapper
 import com.quickpitik.service.events.postgresTimestamp
 import com.quickpitik.websocket.AdminInboxEvent
 import io.micrometer.core.instrument.MeterRegistry
@@ -69,9 +70,28 @@ class RelevanceCheckService(
     // Read only: the upload-indexing pool the full scan yields to (A.4, R6).
     @Qualifier("imageProcessing") private val imageProcessing: TaskExecutor,
     private val notifier: RelevanceNotifier,
+    private val confirmer: RelevanceConfirmer,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     @Volatile private var unreadablePoolLogged = false
+
+    // RV-4.1 (A.7, G9): the confirm step, database only, in auto-hide only. A current auto-hide whole-batch finding is
+    // confirmed once its appeal is lost, or once the note's last day to appeal has passed with no appeal, whatever the
+    // event's visibility. Each case is its own short transaction (RelevanceConfirmer.confirm), the ladder included.
+    internal fun confirmDue() {
+        if (switch.mode != RelevanceMode.AUTO_HIDE) return
+        val now = clock.postgresTimestamp()
+        // A note from before this Philippine day minus the window has a last day to appeal (appealLastDay) that is over.
+        val cutoff = now.atZoneSameInstant(EventDtoMapper.PH_ZONE).toLocalDate().minusDays(props.appeal.windowDays)
+            .atStartOfDay(EventDtoMapper.PH_ZONE).toOffsetDateTime()
+        for (caseId in cases.findConfirmDue(cutoff, props.check.maxBatchesPerTick)) {
+            try {
+                transactions.execute { confirmer.confirm(caseId, now) }
+            } catch (ex: Exception) {
+                log.warn("Relevance confirm step failed case={} (retried next tick): {}", caseId, ex.message)
+            }
+        }
+    }
 
     // Part 2 A.4, RV-2.3a: the full scan of a Fits or Mixed auto-hide case. No cursor: each turn measures up to
     // photos-per-turn photos of the batch that have no measurement yet, so later uploads are picked up and a photo that
@@ -144,6 +164,8 @@ class RelevanceCheckService(
             reconcileHolds()
             // RV-3.1: the notes the applied, hidden, scanned or restored cases owe (it checks the mode itself too).
             notifier.notifyOwed()
+            // RV-4.1: after the notes, so a case is confirmed only from a stored notice_at.
+            confirmDue()
         }
         // G2: with AI off nothing is measured and no check starts, so batches stay "not checked".
         if (switch.canMeasure) continueSampling()

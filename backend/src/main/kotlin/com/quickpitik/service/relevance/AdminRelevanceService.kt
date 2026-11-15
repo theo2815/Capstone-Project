@@ -29,6 +29,7 @@ import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.RelevanceHoldRepository
+import com.quickpitik.repository.RelevanceStrikeRepository
 import com.quickpitik.repository.SamplePhotoRow
 import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.events.postgresTimestamp
@@ -57,6 +58,7 @@ class AdminRelevanceService(
     private val decisionLog: AdminDecisionLogService,
     private val transactions: TransactionTemplate,
     private val switch: RelevanceSwitch,
+    private val strikes: RelevanceStrikeRepository,
 ) {
 
     // RV-2.5b (G10): the admin closes a current Can't tell case LOOKS_FINE, in any mode. The case is then the batch's
@@ -182,9 +184,9 @@ class AdminRelevanceService(
     private fun wrongState() = ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
         "This action does not fit the case's current state")
 
-    fun listCases(tab: String, page: PaginationParams): PaginatedResponse<RelevanceCaseRowDto> {
+    fun listCases(tab: String, page: PaginationParams, repeat: Boolean = false): PaginatedResponse<RelevanceCaseRowDto> {
         if (tab !in TABS) throw ValidationException("tab must be one of ${TABS.joinToString()}", field = "tab")
-        val result = cases.pageCurrentCases(tab, OffsetLimitPageable(page))
+        val result = cases.pageCurrentCases(tab, repeat, strikesSince(), OffsetLimitPageable(page))
         return PaginatedResponse.of(result.content.map { it.toDto() }, result.totalElements, page)
     }
 
@@ -214,8 +216,13 @@ class AdminRelevanceService(
             junkSamples = junk.take(SAMPLES).map { it.toSample() },
             cleanSamples = clean.take(SAMPLES).map { it.toSample() },
             alerts = alerts.alertsForBatch(row.batchId).map { it.toDto() },
+            confirmedAt = c.confirmedAt?.toInstant()?.toString(),
+            photographerStrikes = strikes.countSince(batches.findById(row.batchId).orElseThrow().photographerId, strikesSince()),
         )
     }
+
+    // The start of the ladder's rolling window (A.7, G6).
+    private fun strikesSince() = clock.postgresTimestamp().minusMonths(props.strikes.windowMonths.toLong())
 
     fun listAlerts(unseenOnly: Boolean, page: PaginationParams): PaginatedResponse<RelevanceAlertDto> {
         val result = alerts.pageAlerts(unseenOnly, OffsetLimitPageable(page))

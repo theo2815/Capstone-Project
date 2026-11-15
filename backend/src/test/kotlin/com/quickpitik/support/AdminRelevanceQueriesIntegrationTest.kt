@@ -33,14 +33,14 @@ class AdminRelevanceQueriesIntegrationTest : PostgresIntegrationTest() {
         val inFlight = case(b2, "DECIDED", "MIXED", null, appliedAt = null)
         val mine = setOf(hidden, cantTell, closed, inFlight)
 
-        fun tab(t: String) = cases.pageCurrentCases(t, OffsetLimitPageable(0, 200)).content.map { it.caseId }.filter { it in mine }
+        fun tab(t: String) = cases.pageCurrentCases(t, false, java.time.OffsetDateTime.now(), OffsetLimitPageable(0, 200)).content.map { it.caseId }.filter { it in mine }
 
         assertEquals(listOf(hidden), tab("hidden"))
         assertEquals(listOf(cantTell), tab("cant_tell"))
         assertEquals(listOf(cantTell, hidden), tab("all"))
         val row = cases.caseRow(hidden)!!
         assertEquals(listOf("Rel Run", "rel-${b.photographer}", "Rel", 600), listOf(row.eventName, row.photographerHandle, row.photographerName, row.batchPhotos))
-        assertTrue(cases.pageCurrentCases("all", OffsetLimitPageable(0, 1)).totalElements >= 2)
+        assertTrue(cases.pageCurrentCases("all", false, java.time.OffsetDateTime.now(), OffsetLimitPageable(0, 1)).totalElements >= 2)
         assertNull(cases.caseRow(UUID.randomUUID()))
     }
 
