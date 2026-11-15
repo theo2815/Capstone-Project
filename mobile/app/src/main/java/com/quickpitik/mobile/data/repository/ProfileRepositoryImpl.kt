@@ -5,6 +5,7 @@ import com.quickpitik.mobile.data.remote.PasswordChangeRequest
 import com.quickpitik.mobile.data.remote.ProfileUpdateRequest
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SelfieRefDto
+import com.quickpitik.mobile.data.remote.TermsAcceptanceRequest
 import com.quickpitik.mobile.data.remote.UserDto
 import com.quickpitik.mobile.data.remote.apiCall
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -37,6 +38,14 @@ class ProfileRepositoryImpl : ProfileRepository {
     override suspend fun updateProfile(token: String, name: String): Result<UserDto> =
         apiCall("Failed to update profile name") {
             api.updateProfile("Bearer $token", ProfileUpdateRequest(name))
+        }
+
+    override suspend fun getMe(token: String): Result<UserDto> =
+        apiCall("Failed to load your account") { api.getMe("Bearer $token") }
+
+    override suspend fun acceptTerms(token: String, version: String): Result<UserDto> =
+        apiCall("Couldn't record your acceptance. Try again.") {
+            api.acceptTerms("Bearer $token", TermsAcceptanceRequest(version))
         }
 
     override suspend fun uploadAvatar(

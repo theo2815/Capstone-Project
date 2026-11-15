@@ -6,7 +6,14 @@ data class UserDto(
     val name: String,
     val role: String,
     val avatarUrl: String? = null,
-    val createdAt: String
+    val createdAt: String,
+    val termsAcceptanceRequired: Boolean = false, // RV-L4: the backend asks for the Terms again
+    val legalCurrentVersion: String? = null // the version to echo back when accepting
+)
+
+// Body for POST /me/terms-acceptance. Mirrors backend dto/profile/TermsAcceptanceRequest.
+data class TermsAcceptanceRequest(
+    val version: String
 )
 
 data class LoginRequest(
