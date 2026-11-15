@@ -49,6 +49,7 @@ class RelevanceCheckServiceTest {
     private val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
     private val holds = Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java)
     private val decisionLog = Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java)
+    private val notifier = Mockito.mock(RelevanceNotifier::class.java)
     private val registry = SimpleMeterRegistry()
     private val clock = Clock.fixed(Instant.parse("2002-03-04T05:06:07Z"), ZoneOffset.UTC)
     private val now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC)
@@ -72,6 +73,20 @@ class RelevanceCheckServiceTest {
         order.verify(cases).findDeciding(anyArg(), anyArg(), Mockito.anyInt())
         order.verify(batches).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
         order.verify(cases).findScans(Mockito.anyInt())
+    }
+
+    // RV-3.1: the notes go out from the tick after the holds, in auto-hide only.
+    @Test
+    fun `the tick sends the owed notes after the holds, in auto-hide only`() {
+        service(mode = RelevanceMode.RECORD_ONLY).tick()
+        service(mode = RelevanceMode.OFF).tick()
+        Mockito.verifyNoInteractions(notifier)
+
+        service(mode = RelevanceMode.AUTO_HIDE, admin = AdminProperties(flagsEnabled = true)).tick()
+
+        val order = Mockito.inOrder(cases, notifier)
+        order.verify(cases).findHoldTargets()
+        order.verify(notifier).notifyOwed()
     }
 
     // An upload-indexing pool the scan cannot read counts as busy, so a misconfigured bean never lets the scan crowd out uploads.
@@ -99,7 +114,7 @@ class RelevanceCheckServiceTest {
         val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), rekognition)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
             client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"),
-            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing)
+            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing, notifier)
     }
 
     // RV-2.3a (A.4, R6): the scan yields to upload indexing, per server copy.

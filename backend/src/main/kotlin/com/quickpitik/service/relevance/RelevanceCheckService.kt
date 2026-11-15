@@ -68,6 +68,7 @@ class RelevanceCheckService(
     private val decisionLog: AdminDecisionLogService,
     // Read only: the upload-indexing pool the full scan yields to (A.4, R6).
     @Qualifier("imageProcessing") private val imageProcessing: TaskExecutor,
+    private val notifier: RelevanceNotifier,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     @Volatile private var unreadablePoolLogged = false
@@ -139,7 +140,11 @@ class RelevanceCheckService(
         // Database only, so it runs with AI off (G15).
         applyDecided()
         // Database only too. Record-only never hides (P18), so the holds follow a target only in auto-hide.
-        if (switch.mode == RelevanceMode.AUTO_HIDE) reconcileHolds()
+        if (switch.mode == RelevanceMode.AUTO_HIDE) {
+            reconcileHolds()
+            // RV-3.1: the notes the applied, hidden, scanned or restored cases owe (it checks the mode itself too).
+            notifier.notifyOwed()
+        }
         // G2: with AI off nothing is measured and no check starts, so batches stay "not checked".
         if (switch.canMeasure) continueSampling()
         // O6: no model call without AI on and a key.

@@ -64,6 +64,16 @@ interface PhotographerMessageRepository : JpaRepository<PhotographerMessage, UUI
     )
     fun findStaleEmailClaimIds(@Param("cutoff") cutoff: OffsetDateTime, @Param("since") since: OffsetDateTime, @Param("limit") limit: Int): List<UUID>
 
+    // RV-3.1 (P20): the same for relevance notes. Their own query, so neither sweep releases a claim the other cannot send.
+    @Query(
+        value = """SELECT id FROM photographer_messages
+            WHERE kind = 'relevance_notice'
+              AND email_sent_at < :cutoff AND email_delivered_at IS NULL AND created_at >= :since
+            ORDER BY email_sent_at LIMIT :limit""",
+        nativeQuery = true,
+    )
+    fun findStaleRelevanceEmailClaimIds(@Param("cutoff") cutoff: OffsetDateTime, @Param("since") since: OffsetDateTime, @Param("limit") limit: Int): List<UUID>
+
     // Match the old timestamp and missing delivery stamp, so a second instance's fresh claim is not released.
     @Modifying
     @Query(

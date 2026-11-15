@@ -180,6 +180,58 @@ class EmailService(
         log.info("Photo removal email sent · to={} resendId={}", toEmail, response.id)
     }
 
+    // RV-3.1 (A.5): a Photo Relevance note, in the V2-T21 frame. Title and body are the stored inbox note; there is no link
+    // (nothing to phish with). appealFooter for the notes that start the appeal clock. A failure MUST propagate: the
+    // caller keeps its dated claim and the sweep re-sends.
+    fun sendRelevanceNotice(toEmail: String, name: String, title: String, body: String, caseId: UUID, appealFooter: Boolean) {
+        if (devMode) {
+            log.info("[EMAIL STUB] relevance notice · caseId={}", caseId)
+            return
+        }
+        val response = resendClient.send(
+            ResendSendEmailRequest(
+                from = "${resendProperties.fromName} <${resendProperties.fromAddress}>",
+                to = listOf(toEmail),
+                subject = "QuickPitik: $title",
+                html = renderRelevanceNoticeHtml(name, title, body, appealFooter),
+            ),
+        )
+        log.info("Relevance notice email sent · caseId={} resendId={}", caseId, response.id)
+    }
+
+    private fun renderRelevanceNoticeHtml(name: String, title: String, body: String, appealFooter: Boolean): String {
+        val p = """style="font-size:15px;line-height:1.6;color:#3a3a3a;margin:0 0 16px;""""
+        val footer = if (!appealFooter) "" else """
+          <hr style="border:none;border-top:1px solid #e5e2d8;margin:24px 0;" />
+          <p style="font-size:13px;line-height:1.65;color:#7a7a7a;margin:0;">To appeal, open this message in your QuickPitik inbox.</p>"""
+        return """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title></head>
+<body style="margin:0;padding:0;background:#f7f5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;">
+  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f7f5ee;padding:32px 16px;">
+    <tr><td align="center">
+      <table cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#fafaf6;border-radius:16px;padding:36px 32px;border:1px solid #e5e2d8;">
+        <tr><td>
+          <p style="font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:11px;color:#7a7a7a;margin:0 0 10px;">
+            QuickPitik · Uploads
+          </p>
+          <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:30px;font-weight:500;margin:0 0 18px;letter-spacing:-0.01em;line-height:1.1;color:#1a1a1a;">
+            ${escapeHtml(title)}
+          </h1>
+          <p $p>Hi ${escapeHtml(name.trim().ifBlank { "there" })},</p>
+          <p $p>${escapeHtml(body)}</p>
+          <p $p>You will also find this message in your QuickPitik inbox.</p>$footer
+        </td></tr>
+      </table>
+      <p style="text-align:center;font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;text-transform:uppercase;letter-spacing:0.3em;font-size:10px;color:#a8a8a8;margin:24px 0 0;">
+        QuickPitik · Cebu, Philippines
+      </p>
+    </td></tr>
+  </table>
+</body></html>
+        """.trimIndent()
+    }
+
     private fun renderRemovalHtml(heading: String, eventName: String, body: String, url: String): String = """
 <!doctype html>
 <html><body style="margin:0;background:#f6f6f4;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;">

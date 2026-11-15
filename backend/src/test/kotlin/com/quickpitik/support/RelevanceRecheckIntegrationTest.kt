@@ -323,7 +323,8 @@ class RelevanceRecheckIntegrationTest : PostgresIntegrationTest() {
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
             Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"),
-            holds, photos, decisions, IDLE_POOL)
+            holds, photos, decisions, IDLE_POOL,
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceNotifier::class.java))
     }
 
     // A public shared race's batch, checked and scored at `upload`, whose photographer accepted `terms`.

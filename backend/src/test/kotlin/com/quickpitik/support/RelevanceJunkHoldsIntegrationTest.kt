@@ -269,7 +269,8 @@ class RelevanceJunkHoldsIntegrationTest : PostgresIntegrationTest() {
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
             Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"),
-            holds, photos, decisions, org.springframework.core.task.SyncTaskExecutor())
+            holds, photos, decisions, org.springframework.core.task.SyncTaskExecutor(),
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceNotifier::class.java))
     }
 
     private fun batch(): Batch {

@@ -32,6 +32,7 @@ data class RelevanceProperties(
     val hide: Hide = Hide(),
     val scan: Scan = Scan(),
     val restore: Restore = Restore(),
+    val appeal: Appeal = Appeal(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -198,6 +199,16 @@ data class RelevanceProperties(
     ) {
         init {
             require(sweepMinutes >= 1) { "sweepMinutes must be at least 1" }
+        }
+    }
+
+    // Version 2 appeals (part 2, A.6, G11): a photographer may appeal for this many days after the note that started the
+    // clock (notice_at); the note names the last day.
+    data class Appeal(
+        val windowDays: Long = 14,
+    ) {
+        init {
+            require(windowDays >= 1) { "windowDays must be at least 1" }
         }
     }
 
