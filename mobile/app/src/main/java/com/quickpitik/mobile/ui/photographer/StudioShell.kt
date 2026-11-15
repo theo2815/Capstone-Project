@@ -97,6 +97,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.common.TermsReacceptanceDialog
 import com.quickpitik.mobile.ui.common.formatInboxDate
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -167,11 +168,19 @@ fun StudioTabScaffold(
     viewModel: PhotographerDashboardViewModel,
     settingsViewModel: StudioSettingsViewModel,
     tetherViewModel: TetherViewModel,
+    termsViewModel: TermsAcceptanceViewModel,
     onLogout: () -> Unit,
     onPreviewProfile: () -> Unit,
     onSwitchToRunner: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val terms by termsViewModel.state.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) termsViewModel.load() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val messages by viewModel.messages.collectAsState()
     val brandSettings by settingsViewModel.brandSettings.collectAsState()
     // Drives the cross-tab GlobalUploadBanner — surfaces sync progress so the
@@ -197,6 +206,15 @@ fun StudioTabScaffold(
     val resolvedAvatarUrl = RetrofitClient.resolveImageUrl(brandSettings?.avatarUrl)
 
     StudioTheme {
+        if (terms.required) {
+            TermsReacceptanceDialog(
+                version = terms.version.orEmpty(),
+                busy = terms.busy,
+                error = terms.error,
+                onAccept = termsViewModel::accept,
+                onSignOut = onLogout,
+            )
+        }
         if (showNotifDialog) {
             NotificationsInboxDialog(
                 messages = messages,
