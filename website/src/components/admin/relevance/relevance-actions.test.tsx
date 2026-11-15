@@ -203,6 +203,20 @@ it("a refused action re-reads the case", async () => {
   expect(toasts()).toEqual(["This action does not fit the case's current state"]);
 });
 
+it("a confirm closes when a re-read offers a different set of actions", async () => {
+  const user = userEvent.setup();
+  post = async () => { throw new ApiError([{ code: "INVALID_STATE_TRANSITION", message: "This action does not fit the case's current state" }], 409); };
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Looks fine…" }));
+  // Another admin hid the batch meanwhile: the case now offers the restores, so the Looks fine confirm must go.
+  one = async () => detail({ ...cantTell, action: "HIDE_ALL", verdictNote: "ADMIN_HIDE" });
+  await user.click(screen.getByRole("button", { name: "Confirm looks fine" }));
+  await within(d).findByRole("button", { name: "Restore batch…" });
+  expect(screen.queryByRole("button", { name: "Confirm looks fine" })).not.toBeInTheDocument();
+  expect(toasts()).toEqual(["This action does not fit the case's current state"]);
+});
+
 it("Escape closes the drawer after a re-read removes the open action", async () => {
   const user = userEvent.setup();
   mount();

@@ -216,7 +216,7 @@ export const HIDDEN_PHOTOS_EMPTY = "No photo of this batch is held.";
 export const PHOTO_RESTORED = "Photo restored";
 export const PHOTO_STILL_HIDDEN = "Released here, but another hold or flag still keeps the photo hidden.";
 export const photoRestoreLabel = (position: number, hiddenOn: string) => `Restore photo ${position}, hidden ${hiddenOn}`;
-export const PHOTO_RESTORE_FAILED ="Could not restore the photo — check the case before retrying.";
+export const PHOTO_RESTORE_FAILED = "Could not restore the photo — check the case before retrying.";
 
 const HELD_BY_LABEL: Record<string, string> = { AUTO: "Automatic", ADMIN: "Admin", PHOTOGRAPHER: "Photographer" };
 export const heldByLabel = (h: string) => label(HELD_BY_LABEL, h) ?? h;

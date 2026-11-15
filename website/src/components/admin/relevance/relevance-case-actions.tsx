@@ -60,7 +60,8 @@ export function RelevanceCaseActions({
     }
   }
 
-  const open = confirming && RELEVANCE_ACTIONS[confirming];
+  // A re-read can offer a different set of actions; a confirm for one no longer offered closes.
+  const open = confirming && kinds.includes(confirming) && RELEVANCE_ACTIONS[confirming];
   return (
     <>
       {kinds.map((kind) => (
