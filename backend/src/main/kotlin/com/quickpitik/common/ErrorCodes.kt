@@ -131,6 +131,10 @@ object ErrorCodes {
     const val RELEVANCE_ALERT_NOT_FOUND = "RELEVANCE_ALERT_NOT_FOUND"
     // RV-2.5b: an admin hide of a batch needs the effective relevance mode auto-hide.
     const val RELEVANCE_ACTIONS_OFF = "RELEVANCE_ACTIONS_OFF"
+    // RV-3.2 part b: an unknown appeal; deciding before this admin opened its evidence; an appeal decided already.
+    const val RELEVANCE_APPEAL_NOT_FOUND = "RELEVANCE_APPEAL_NOT_FOUND"
+    const val EVIDENCE_NOT_OPENED = "EVIDENCE_NOT_OPENED"
+    const val APPEAL_ALREADY_DECIDED = "APPEAL_ALREADY_DECIDED"
 
     const val RATE_LIMITED = "RATE_LIMITED"
     const val PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
