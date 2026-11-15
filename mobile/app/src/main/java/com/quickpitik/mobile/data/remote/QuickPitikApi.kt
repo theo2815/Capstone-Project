@@ -719,6 +719,18 @@ interface QuickPitikApi {
         @Path("id") selfieId: String
     ): ApiResponseEnvelope<List<SelfieRefDto>>
 
+    @GET("api/v1/auth/me")
+    suspend fun getMe(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<UserDto>
+
+    // 409 CONSENT_VERSION_MISMATCH when the version is not the server's current one.
+    @POST("api/v1/me/terms-acceptance")
+    suspend fun acceptTerms(
+        @Header("Authorization") token: String,
+        @Body request: TermsAcceptanceRequest
+    ): ApiResponseEnvelope<UserDto>
+
     @PUT("api/v1/me/profile")
     suspend fun updateProfile(
         @Header("Authorization") token: String,

@@ -19,6 +19,11 @@ interface ProfileRepository {
     
     suspend fun updateProfile(token: String, name: String): Result<UserDto>
 
+    suspend fun getMe(token: String): Result<UserDto>
+
+    /** Records acceptance of the Terms [version] the backend named; returns the updated user. */
+    suspend fun acceptTerms(token: String, version: String): Result<UserDto>
+
     suspend fun uploadAvatar(
         token: String,
         fileBytes: ByteArray,

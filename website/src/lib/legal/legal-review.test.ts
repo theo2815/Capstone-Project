@@ -34,7 +34,7 @@ describe("legal review must-fix text", () => {
 // PT-0b (owner's answers 2026-11-04): the review's should-fix wording applied,
 // so a Vercel production build passes the guard. Version 1.1 since BT-1.
 describe("approved text (PT-0b)", () => {
-  it("passes the production guard with version 1.5", () => {
+  it("passes the production guard with version 1.6", () => {
     expect(() =>
       assertPublishable(
         [JSON.stringify(PRIVACY_POLICY), JSON.stringify(TERMS_OF_SERVICE), JSON.stringify(LEGAL_COPY), LEGAL_LAST_UPDATED],
@@ -42,7 +42,7 @@ describe("approved text (PT-0b)", () => {
         "production",
       ),
     ).not.toThrow();
-    expect(LEGAL_VERSION).toBe("1.5");
+    expect(LEGAL_VERSION).toBe("1.6");
   });
 
   it("says both selfie and bib searches ask for a tick first (BT-1, S10)", () => {
@@ -195,5 +195,57 @@ describe("legal 1.5 text (PE-2.5)", () => {
     expect(section(PRIVACY_POLICY, "how-long-we-keep-it")).toContain(
       "Results of automatic checks on uploads, and admin reviews of them",
     );
+  });
+});
+
+// RV-L3: what record-only adds, version 1.6. Wording: RV-L2 texts V2-T1 to V2-T4 (owner, 2026-11-15).
+const rowOf = (doc: LegalDoc, id: string, first: string) =>
+  doc.sections
+    .filter((s) => s.id === id)
+    .flatMap((s) => s.blocks)
+    .flatMap((b) => (typeof b !== "string" && "table" in b ? b.table : []))
+    .find((row) => row[0] === first);
+
+describe("legal 1.6 text (RV-L3)", () => {
+  it("says what the automatic checks add, and still that a person reviews before a hide (V2-T1)", () => {
+    const how = section(PRIVACY_POLICY, "how-we-use-it");
+    expect(how).toContain(
+      "compare the date the camera recorded with the event's date. For photos in Public events, we also check how sharp and how bright the photos are and what they show (for example a person or a race), on a sample of 300 of each photographer's photos in an event, or up to 600 when the first result is close to a limit, using Amazon Rekognition. We count the words printed in the photos, such as on banners, shirts and signs, as the number of photos each word appears on, not which photo it is in. We then send a short text summary of these results to Anthropic, whose AI model Claude suggests whether the photos fit the event. Anthropic never receives the photos. We do not send the photographer's name or account details; the event's name and place are sent as the event shows them. We store the results",
+    );
+    expect(how).toContain("A person reviews the results before any photo is hidden");
+  });
+
+  it("names Anthropic as a receiver, where it processes the summaries and how long it keeps them (V2-T2)", () => {
+    expect(rowOf(PRIVACY_POLICY, "who-receives-it", "Anthropic")).toEqual([
+      "Anthropic",
+      "a short text summary of one photographer's photos in one event: the event's name, date and place, counts from our photo checks, the results of our copy and date checks, the most common words printed in the photos with how many photos show each, and how many other photographers in the event have the same words. No photos. No photographer's name or account details; the event's name and place are sent as the event shows them",
+      "checking whether a photographer's photos fit the event, with its AI model Claude",
+    ]);
+    expect(section(PRIVACY_POLICY, "who-receives-it")).toContain(
+      "comparable with Philippine law. Anthropic processes the summaries in the United States, Europe, Asia or Australia, stores them in the United States, and deletes them within 30 days, or keeps them for up to 2 years if its safety systems flag them, under its standard commercial terms.",
+    );
+  });
+
+  it("says Rekognition also reads other words and checks sharpness, brightness and content (V2-T3)", () => {
+    expect(rowOf(PRIVACY_POLICY, "who-receives-it", "Amazon Web Services (Amazon Rekognition)")?.[2]).toBe(
+      "face matching, reading bib numbers and other words printed in event photos, checking event photos for sharpness, brightness and what they show, ID text reading, seller face comparison and image checks in AWS's Singapore region; the live checks in AWS's Malaysia region",
+    );
+  });
+
+  it("keeps rare words for 7 days after the checks finish, and says so above the table (V2-T4)", () => {
+    expect(
+      rowOf(
+        PRIVACY_POLICY,
+        "how-long-we-keep-it",
+        "Words read from event photos (counted for each photographer and event, not for each photo), photo measurements (sharpness, brightness and what a photo shows), and the summary sent to Anthropic with its answer",
+      )?.[1],
+    ).toBe(
+      "measurements: until the photo, the event or the photographer's account is deleted. Words found on fewer than 3% of a photographer's photos in an event: deleted 7 days after our checks of those photos finish. Other words, the summary and the answer: until the event or the photographer's account is deleted. Deleting one photo does not change the word counts, because we do not record which photo a word came from.",
+    );
+    const keep = section(PRIVACY_POLICY, "how-long-we-keep-it");
+    expect(keep).toContain(
+      "Apart from face templates, which are deleted 6 months after the event, and rare words read from event photos (see the table below), we do not yet delete data automatically after a set time. Data is kept until you or QuickPitik delete it, as below.",
+    );
+    expect(text(PRIVACY_POLICY.sections)).not.toContain("[ASK OWNER");
   });
 });
