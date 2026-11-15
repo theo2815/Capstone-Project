@@ -20,6 +20,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.util.concurrent.TimeUnit
 
 /** RV-L6: the blocking "accept the updated Terms" prompt on the studio shell. */
 @RunWith(RobolectricTestRunner::class)
@@ -103,5 +104,33 @@ class TermsAcceptanceTest {
         vm.state.awaitFirst { !it.required }
         repeat(3) { backend.server.takeRequest() } // me, first POST, me again
         assertEquals("""{"version":"v2"}""", backend.server.takeRequest().body.readUtf8())
+    }
+
+    // A resume load (GET) that is still in flight when Accept is tapped.
+    private fun accepting(getDelayMs: Long, postDelayMs: Long): TermsAcceptanceViewModel {
+        backend.enqueue(
+            ok(user(required = true)),
+            ok(user(required = true)).setHeadersDelay(getDelayMs, TimeUnit.MILLISECONDS),
+            ok(user(required = false)).setHeadersDelay(postDelayMs, TimeUnit.MILLISECONDS),
+        )
+        val vm = model().also { it.load() }
+        vm.state.awaitFirst { it.required }
+        vm.load()
+        repeat(2) { backend.server.takeRequest() } // the slow load has reached the server
+        vm.accept()
+        return vm
+    }
+
+    @Test fun `a load that answers during an acceptance does not re-enable Accept`() {
+        val vm = accepting(getDelayMs = 300, postDelayMs = 1_500)
+        Thread.sleep(800)
+        assertTrue(vm.state.value.busy)
+    }
+
+    @Test fun `a load from before the acceptance does not bring the prompt back`() {
+        val vm = accepting(getDelayMs = 800, postDelayMs = 0)
+        vm.state.awaitFirst { !it.required }
+        Thread.sleep(1_300)
+        assertFalse(vm.state.value.required)
     }
 }

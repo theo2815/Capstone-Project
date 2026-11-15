@@ -7,6 +7,7 @@ import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.data.remote.UserDto
 import com.quickpitik.mobile.data.repository.ProfileRepository
 import com.quickpitik.mobile.data.repository.ProfileRepositoryImpl
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -36,11 +37,14 @@ class TermsAcceptanceViewModel @JvmOverloads constructor(
     private val _state = MutableStateFlow(TermsState())
     val state: StateFlow<TermsState> = _state
 
+    private var loadJob: Job? = null
+
     /** Asks the backend again; the studio calls it each time it comes to the foreground, so a failed first load or a new version is picked up. */
     fun load() {
         val token = sessionManager.getAccessToken() ?: return
         if (_state.value.busy) return
-        viewModelScope.launch { repository.getMe(token).onSuccess { apply(it) } }
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch { repository.getMe(token).onSuccess { apply(it) } }
     }
 
     fun accept() {
@@ -49,6 +53,7 @@ class TermsAcceptanceViewModel @JvmOverloads constructor(
         val version = current.version ?: return
         if (current.busy) return
         _state.value = current.copy(busy = true, error = null)
+        loadJob?.cancel() // a load that started before Accept must not answer over the acceptance
         viewModelScope.launch {
             repository.acceptTerms(token, version)
                 .onSuccess { apply(it) }
