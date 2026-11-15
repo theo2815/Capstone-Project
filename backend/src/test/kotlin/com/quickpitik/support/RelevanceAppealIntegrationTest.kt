@@ -295,7 +295,8 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         val decisions = AdminDecisionLogService(decisionRows, messages, publisher)
         val notifier = RelevanceNotifier(cases, decisions, switch, props, clock, tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, clock, publisher,
-            com.quickpitik.service.relevance.RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions)
+            com.quickpitik.service.relevance.RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions,
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     private fun batch(): Batch {

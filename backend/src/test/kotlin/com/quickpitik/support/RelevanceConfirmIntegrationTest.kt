@@ -361,20 +361,21 @@ class RelevanceConfirmIntegrationTest : PostgresIntegrationTest() {
         return RelevanceCheckService(batchRepo, cases, props, switch(props), fixed(clock), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts, publisher,
             LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"), holds, photoRepo, decisions(),
-            SyncTaskExecutor(), Mockito.mock(RelevanceNotifier::class.java), confirmer(mode, clock))
+            SyncTaskExecutor(), Mockito.mock(RelevanceNotifier::class.java), confirmer(mode, clock),
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     private fun appealService(): RelevanceAppealService {
         val props = props(RelevanceMode.AUTO_HIDE)
         val notifier = RelevanceNotifier(cases, decisions(), switch(props), props, fixed(NOW), tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch(props), props, fixed(NOW), publisher,
-            confirmer(), decisions())
+            confirmer(), decisions(), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     private fun adminService(): AdminRelevanceService {
         val props = props(RelevanceMode.AUTO_HIDE)
         return AdminRelevanceService(cases, alerts, batchRepo, props, Mockito.mock(StorageService::class.java), StorageProperties(),
-            fixed(NOW), holds, photoRepo, decisions(), tx, switch(props), strikes)
+            fixed(NOW), holds, photoRepo, decisions(), tx, switch(props), strikes, Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     private fun fixed(at: OffsetDateTime): Clock = Clock.fixed(at.toInstant(), ZoneOffset.UTC)

@@ -90,6 +90,29 @@ class RelevanceCheckServiceTest {
         order.verify(notifier).notifyOwed()
     }
 
+    // RV-4.2: the hold step runs after the notes, in auto-hide only.
+    @Test
+    fun `the tick places owed holds after the notes, in auto-hide only`() {
+        service(mode = RelevanceMode.RECORD_ONLY).tick()
+        service(mode = RelevanceMode.OFF).tick()
+        Mockito.verify(cases, Mockito.never()).findHoldDue(Mockito.anyInt())
+
+        service(mode = RelevanceMode.AUTO_HIDE, admin = AdminProperties(flagsEnabled = true)).tick()
+
+        val order = Mockito.inOrder(notifier, cases)
+        order.verify(notifier).notifyOwed()
+        order.verify(cases).findHoldDue(Mockito.anyInt())
+    }
+
+    // RV-4.2: with the mode off or record-only the hold step runs no query at all.
+    @Test
+    fun `the hold step runs no query unless in auto-hide`() {
+        service(mode = RelevanceMode.OFF).placeOwedHolds()
+        service(mode = RelevanceMode.RECORD_ONLY).placeOwedHolds()
+
+        Mockito.verifyNoInteractions(cases)
+    }
+
     // An upload-indexing pool the scan cannot read counts as busy, so a misconfigured bean never lets the scan crowd out uploads.
     @Test
     fun `an unreadable upload-indexing pool counts as busy`() {
@@ -115,7 +138,8 @@ class RelevanceCheckServiceTest {
         val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), rekognition)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
             client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"),
-            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing, notifier, confirmer)
+            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing, notifier, confirmer,
+            Mockito.mock(RelevanceHoldService::class.java))
     }
 
     // RV-2.3a (A.4, R6): the scan yields to upload indexing, per server copy.

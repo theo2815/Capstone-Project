@@ -7,6 +7,7 @@ import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.repository.FlagRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.OffsetDateTime
 import java.util.UUID
 
 // The one writer for findings the backend raises itself (NULL reporter) and for
@@ -51,6 +52,15 @@ class SystemFlagService(private val flagRepository: FlagRepository) {
         flagRepository.save(flag)
         return true
     }
+
+    // RV-4.2 (A.8, O1): the automatic payout hold of one copied case: a new relevance flag of its own, held with no admin
+    // (payout_hold_by stays NULL). One flag per case, so ending one case's hold never ends another's, nor a flag a person
+    // is still using; payouts stay held while any held relevance flag of the photographer is open (existsOpenPayoutHold).
+    @Transactional
+    fun holdPayouts(userId: UUID, note: String): UUID = flagRepository.save(
+        Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = userId, reason = SystemFlagReason.BATCH_RELEVANCE_LOW.wire,
+            note = note.take(NOTE_MAX)).apply { payoutHoldAt = OffsetDateTime.now() },
+    ).id
 
     private fun openFlags(kind: FlagTargetKind, targetId: UUID, reason: SystemFlagReason): List<Flag> =
         flagRepository.findByTargetKindWireAndTargetIdAndReasonAndStatusWireIn(
