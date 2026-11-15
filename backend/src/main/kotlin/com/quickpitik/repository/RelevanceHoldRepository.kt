@@ -172,10 +172,13 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
     """, nativeQuery = true)
     fun unhideReleased(@Param("ids") ids: Collection<UUID>): Int
 
-    // RV-3.3 (G8): how many of :ids are photos of the batch (its event and photographer); the caller compares with its
-    // distinct id count.
-    @Query(value = "SELECT count(*) FROM photos WHERE id IN (:ids) AND event_id = :eventId AND photographer_id = :photographerId",
-        nativeQuery = true)
+    // RV-3.3 (G8): how many of :ids are photos of the batch (its event and photographer), not trashed and not under removal;
+    // the caller compares with its distinct id count.
+    @Query(value = """
+        SELECT count(*) FROM photos
+        WHERE id IN (:ids) AND event_id = :eventId AND photographer_id = :photographerId
+          AND deleted_at IS NULL AND removal_state = 'NONE'
+    """, nativeQuery = true)
     fun countInBatch(@Param("ids") ids: Collection<UUID>, @Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): Long
 
     // RV-3.3: the photographer's own hide. One PHOTOGRAPHER hold per photo; a restored one is made live again, a live one
@@ -196,9 +199,13 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
     ): Int
 
     // RV-3.3: the photographer's undo stamps only their own live holds of :ids; unhideReleased then applies the restore rule.
+    // The rows are locked in photo order, as holdByPhotographer inserts them, so a hide and an undo racing on the same
+    // photos wait for each other instead of deadlocking.
     @Query(value = """
         UPDATE flag_hidden_photos SET restored_at = :now, restored_by = 'PHOTOGRAPHER'
-        WHERE batch_id = :batchId AND held_by = 'PHOTOGRAPHER' AND restored_at IS NULL AND photo_id IN (:ids)
+        WHERE id IN (SELECT id FROM flag_hidden_photos
+                     WHERE batch_id = :batchId AND held_by = 'PHOTOGRAPHER' AND restored_at IS NULL AND photo_id IN (:ids)
+                     ORDER BY photo_id FOR UPDATE)
         RETURNING photo_id
     """, nativeQuery = true)
     fun restoreByPhotographer(@Param("batchId") batchId: UUID, @Param("ids") ids: Collection<UUID>, @Param("now") now: OffsetDateTime): List<UUID>

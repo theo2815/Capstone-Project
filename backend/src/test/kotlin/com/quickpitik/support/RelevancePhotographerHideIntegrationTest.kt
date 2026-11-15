@@ -141,6 +141,29 @@ class RelevancePhotographerHideIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `a trashed photo or one under removal review is refused`() {
+        val b = batch()
+        val c = case(b, "FITS", "NONE")
+        val trashed = photo(b, sharpness = 10.0)
+        val review = photo(b, sharpness = 10.0)
+        service().hide(b.photographer, c, listOf(trashed, review))
+        jdbc.update("UPDATE photos SET deleted_at = ? WHERE id = ?", NOW, trashed)
+        jdbc.update("UPDATE photos SET removal_state = 'REVIEW' WHERE id = ?", review)
+        val trashedLive = photo(b, sharpness = 10.0).also { jdbc.update("UPDATE photos SET deleted_at = ? WHERE id = ?", NOW, it) }
+        val reviewLive = photo(b, sharpness = 10.0).also { jdbc.update("UPDATE photos SET removal_state = 'REVIEW' WHERE id = ?", it) }
+        val before = holdsOf(b)
+
+        for (ids in listOf(listOf(trashed), listOf(review))) {
+            assertEquals("photoIds", assertFailsWith<ValidationException> { service().unhide(b.photographer, c, ids) }.field)
+        }
+        for (ids in listOf(listOf(trashedLive), listOf(reviewLive))) {
+            assertEquals("photoIds", assertFailsWith<ValidationException> { service().hide(b.photographer, c, ids) }.field)
+        }
+        assertEquals(listOf("HIDDEN", "HIDDEN", "LIVE", "LIVE"), listOf(trashed, review, trashedLive, reviewLive).map { status(it) })
+        assertEquals(before, holdsOf(b))
+    }
+
+    @Test
     fun `the routes are refused for a record-only case`() {
         val b = batch()
         val c = case(b, "FITS", "NONE", mode = "RECORD_ONLY")
