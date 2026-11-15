@@ -380,15 +380,28 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun winAppeal(@Param("id") id: UUID): Int
 
     // RV-3.2 part b (A.7): confirming stamps the case once. Only a current auto-hide whole-batch finding (junk dump, wrong
-    // event, copied) is ever confirmed; an admin's hide of a Can't tell batch never is, nor a case whose appeal was won.
+    // event, copied) is ever confirmed; an admin's hide of a Can't tell batch never is, nor a case whose appeal was won
+    // or is open (RV-4.1: one filed after the confirm step listed the case).
     @Modifying
     @Query(value = """
         UPDATE relevance_cases c SET confirmed_at = :now
         WHERE c.id = :id AND c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.confirmed_at IS NULL
           AND c.verdict IN ('JUNK_DUMP', 'WRONG_EVENT', 'COPIED') AND c.verdict_note IS DISTINCT FROM 'ADMIN_HIDE'
-          AND NOT EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'WON')
+          AND NOT EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status IN ('WON', 'OPEN'))
     """, nativeQuery = true)
     fun stampConfirmed(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // RV-4.1 (A.7): current auto-hide whole-batch findings due to be confirmed: the appeal was lost, or no appeal came and
+    // the last day to appeal has passed (notice_at before :cutoff). The event's visibility is not read (G9).
+    @Query(value = """
+        SELECT c.id FROM relevance_cases c
+        WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.confirmed_at IS NULL AND c.notice_at IS NOT NULL
+          AND c.verdict IN ('JUNK_DUMP', 'WRONG_EVENT', 'COPIED') AND c.verdict_note IS DISTINCT FROM 'ADMIN_HIDE'
+          AND (EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'LOST')
+               OR (c.notice_at < :cutoff AND NOT EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id)))
+        ORDER BY c.notice_at, c.id LIMIT :limit
+    """, nativeQuery = true)
+    fun findConfirmDue(@Param("cutoff") cutoff: OffsetDateTime, @Param("limit") limit: Int): List<UUID>
 
     // RV-3.2a: filing an appeal locks its case first, so two filings of the same case run one after the other.
     @Query(value = "SELECT id FROM relevance_cases WHERE id = :id FOR UPDATE", nativeQuery = true)
@@ -430,10 +443,16 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun copyRuleResults(@Param("id") id: UUID, @Param("copyLow") copyLow: Boolean?, @Param("dateLow") dateLow: Boolean?): Int
 
     // RV-1.10 (plan 5.11): one tab of the admin page, current cases only, newest first. :tab is 'hidden' (an action
-    // other than NONE), 'cant_tell' or 'all'; the service checks it.
-    @Query(value = "SELECT $CASE_ROW $CASE_FROM WHERE c.stage = 'APPLIED' AND $CASE_TAB ORDER BY c.applied_at DESC, c.id",
-        countQuery = "SELECT count(*) $CASE_FROM WHERE c.stage = 'APPLIED' AND $CASE_TAB", nativeQuery = true)
-    fun pageCurrentCases(@Param("tab") tab: String, pageable: Pageable): Page<RelevanceCaseRow>
+    // other than NONE), 'cant_tell' or 'all'; the service checks it. RV-4.1: :repeat keeps only "Repeat cases", the
+    // confirmed cases of a photographer with two or more strikes confirmed after :since.
+    @Query(value = "SELECT $CASE_ROW $CASE_FROM WHERE c.stage = 'APPLIED' AND $CASE_TAB AND $CASE_REPEAT ORDER BY c.applied_at DESC, c.id",
+        countQuery = "SELECT count(*) $CASE_FROM WHERE c.stage = 'APPLIED' AND $CASE_TAB AND $CASE_REPEAT", nativeQuery = true)
+    fun pageCurrentCases(
+        @Param("tab") tab: String,
+        @Param("repeat") repeat: Boolean,
+        @Param("since") since: OffsetDateTime,
+        pageable: Pageable,
+    ): Page<RelevanceCaseRow>
 
     @Query(value = "SELECT $CASE_ROW $CASE_FROM WHERE c.id = :id", nativeQuery = true)
     fun caseRow(@Param("id") id: UUID): RelevanceCaseRow?
@@ -471,6 +490,9 @@ private const val CASE_TAB =
     "(:tab = 'all' OR (:tab = 'hidden' AND c.action <> 'NONE') OR (:tab = 'cant_tell' AND c.verdict = 'CANT_TELL') " +
         // RV-3.2 part b: current cases with an open appeal.
         "OR (:tab = 'appeals' AND EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'OPEN')))"
+
+private const val CASE_REPEAT = "(:repeat = false OR (c.confirmed_at IS NOT NULL AND (SELECT count(*) FROM relevance_strikes s " +
+    "WHERE s.photographer_id = br.photographer_id AND s.confirmed_at > :since) >= 2))"
 
 interface RelevanceCaseRow {
     val caseId: UUID

@@ -118,8 +118,10 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
 
     @Test
     fun `confirming a case twice writes one strike`() {
-        val (_, c, _) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
-        val confirmer = RelevanceConfirmer(cases, strikes)
+        val (_, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        // As the decide route does: the appeal is lost first (an open appeal is never confirmed, RV-4.1).
+        jdbc.update("UPDATE relevance_appeals SET status = 'LOST', decided_at = ? WHERE id = ?", NOW, appeal)
+        val confirmer = confirmer()
 
         val first = tx.execute { confirmer.confirm(c, NOW) }
         val second = tx.execute { confirmer.confirm(c, NOW.plusDays(1)) }
@@ -137,7 +139,7 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         assertEquals("WON", decide(admin, appeal, "WON").status)
 
         assertEquals(listOf("APPLIED", "HIDE_JUNK", "QUEUED", null), row(c, "stage", "action", "scan_state", "confirmed_at"))
-        assertFalse(tx.execute { RelevanceConfirmer(cases, strikes).confirm(c, NOW) }!!, "a won case is never confirmed later")
+        assertFalse(tx.execute { confirmer().confirm(c, NOW) }!!, "a won case is never confirmed later")
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE case_id = ?", Int::class.java, c))
         assertEquals(listOf(RelevanceNotices.appealWon("Rel Run", wholeBatch = true)), notesOf(b))
     }
@@ -160,7 +162,7 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
             assertEquals("HIDDEN", status(junk), verdict)
             assertEquals(listOf("CLOSED", "APPEAL_WON", null), row(c, "stage", "close_reason", "confirmed_at"), verdict)
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE case_id = ?", Int::class.java, c))
-            assertFalse(tx.execute { RelevanceConfirmer(cases, strikes).confirm(c, NOW) }!!, verdict)
+            assertFalse(tx.execute { confirmer().confirm(c, NOW) }!!, verdict)
         }
     }
 
@@ -337,7 +339,7 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf(open, "Rel Run", "JUNK_DUMP", "OPEN", "These are mine"), listOf(row.caseId, row.eventName, row.verdict, row.status, row.reason))
         assertEquals("Rel Run", everything.single { it.appealId == goneAppeal }.eventName, "a deleted event's appeal keeps its name")
 
-        val tab = cases.pageCurrentCases("appeals", com.quickpitik.common.OffsetLimitPageable(PaginationParams(0, 200))).content.map { it.caseId }
+        val tab = cases.pageCurrentCases("appeals", false, NOW, com.quickpitik.common.OffsetLimitPageable(PaginationParams(0, 200))).content.map { it.caseId }
         assertTrue(open in tab)
         assertFalse(decidedCase in tab, "a decided appeal leaves the tab")
     }
@@ -358,6 +360,9 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
     private fun decide(admin: UUID, appeal: UUID, outcome: String, note: String? = null) =
         tx.execute { service().decide(admin, appeal, outcome, note) }!!
 
+    private fun confirmer() = RelevanceConfirmer(cases, strikes, alerts, events, Mockito.mock(RelevanceNotifier::class.java),
+        RelevanceProperties(), publisher)
+
     private fun opened(admin: UUID, appeal: UUID) = tx.execute { service().evidenceOpened(admin, appeal) }
 
     private fun refused(block: () -> Unit): String = assertFailsWith<ApiException> { block() }.let {
@@ -373,7 +378,7 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         val decisions = AdminDecisionLogService(decisionRows, messages, publisher)
         val notifier = RelevanceNotifier(cases, decisions, switch, props, CLOCK, tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, CLOCK, publisher,
-            RelevanceConfirmer(cases, strikes), decisions)
+            RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions)
     }
 
     // The tick's hold and scan steps (not the whole tick: its other steps would act on other classes' rows), until the
@@ -396,7 +401,8 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         return RelevanceCheckService(batchRepo, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts, publisher,
             LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"), holds, photoRepo, decisionLog,
-            ThreadPoolTaskExecutor().apply { initialize() }, Mockito.mock(RelevanceNotifier::class.java))
+            ThreadPoolTaskExecutor().apply { initialize() }, Mockito.mock(RelevanceNotifier::class.java),
+            Mockito.mock(RelevanceConfirmer::class.java))
     }
 
     // A measured photo of the batch, hidden and held under the case.

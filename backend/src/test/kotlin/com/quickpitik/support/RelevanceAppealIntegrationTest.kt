@@ -51,6 +51,7 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var appeals: RelevanceAppealRepository
     @Autowired private lateinit var alerts: RelevanceAlertRepository
     @Autowired private lateinit var strikes: com.quickpitik.repository.RelevanceStrikeRepository
+    @Autowired private lateinit var events: com.quickpitik.repository.EventRepository
     @Autowired private lateinit var messages: PhotographerMessageRepository
     @Autowired private lateinit var decisionRows: AdminDecisionLogRepository
     @Autowired private lateinit var adminUsers: AdminUserService
@@ -294,7 +295,7 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         val decisions = AdminDecisionLogService(decisionRows, messages, publisher)
         val notifier = RelevanceNotifier(cases, decisions, switch, props, clock, tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, clock, publisher,
-            com.quickpitik.service.relevance.RelevanceConfirmer(cases, strikes), decisions)
+            com.quickpitik.service.relevance.RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions)
     }
 
     private fun batch(): Batch {

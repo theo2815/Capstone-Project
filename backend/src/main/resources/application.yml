@@ -413,6 +413,9 @@ app:
     appeal:
       # Version 2: days a photographer may appeal after the note that started the clock; the note names the last day.
       window-days: ${RELEVANCE_APPEAL_WINDOW_DAYS:14}
+    strikes:
+      # Version 2: months a confirmed case counts toward the second-case warning and the third-case admin alert.
+      window-months: ${RELEVANCE_STRIKES_WINDOW_MONTHS:6}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

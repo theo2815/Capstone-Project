@@ -41,10 +41,15 @@ class RelevancePropertiesTest {
         assertEquals(RelevanceProperties.Scan(photosPerTurn = 200, maxBatchesPerTick = 2, yieldAbove = 0), p.scan)
         assertEquals(RelevanceProperties.Restore(sweepMinutes = 60), p.restore)
         assertEquals(RelevanceProperties.Appeal(windowDays = 14), p.appeal)
+        assertEquals(RelevanceProperties.Strikes(windowMonths = 6), p.strikes)
     }
 
     @Test fun `an appeal window below one day is refused`() {
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Appeal(windowDays = 0) }
+    }
+
+    @Test fun `a strikes window below one month is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Strikes(windowMonths = 0) }
     }
 
     @Test fun `a restore sweep window below one minute is refused`() {
@@ -90,7 +95,7 @@ class RelevancePropertiesTest {
             "RELEVANCE_LLM_RETRY_BACKOFF:1s", "RELEVANCE_LLM_MAX_TOKENS:4096", "RELEVANCE_ALERTS_BIG_HIDE_PHOTOS:500",
             "RELEVANCE_HIDE_CHUNK_SIZE:1000", "RELEVANCE_HIDE_CHUNKS_PER_TICK:10",
             "RELEVANCE_SCAN_PHOTOS_PER_TURN:200", "RELEVANCE_SCAN_MAX_BATCHES_PER_TICK:2", "RELEVANCE_SCAN_YIELD_ABOVE:0",
-            "RELEVANCE_RESTORE_SWEEP_MINUTES:60", "RELEVANCE_APPEAL_WINDOW_DAYS:14",
+            "RELEVANCE_RESTORE_SWEEP_MINUTES:60", "RELEVANCE_APPEAL_WINDOW_DAYS:14", "RELEVANCE_STRIKES_WINDOW_MONTHS:6",
         ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
     }
 

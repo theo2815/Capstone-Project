@@ -39,7 +39,8 @@ class AdminRelevanceServiceTest {
     private val service = AdminRelevanceService(cases, alerts, batches, props, storage, StorageProperties(),
         Clock.fixed(now, ZoneOffset.UTC), holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
         decisionLog, com.quickpitik.support.testTransactionTemplate(),
-        RelevanceSwitch(props, com.quickpitik.config.AdminProperties(flagsEnabled = true), com.quickpitik.config.AiApiProperties()))
+        RelevanceSwitch(props, com.quickpitik.config.AdminProperties(flagsEnabled = true), com.quickpitik.config.AiApiProperties()),
+        Mockito.mock(com.quickpitik.repository.RelevanceStrikeRepository::class.java))
 
     @Test
     fun `the hidden tab lists cases with an action, marked would-have in record-only`() {
@@ -62,7 +63,7 @@ class AdminRelevanceServiceTest {
         val page = service.listCases("cant_tell", PaginationParams.of(0, 50))
 
         assertEquals(listOf("CANT_TELL"), page.items.map { it.verdict })
-        Mockito.verify(cases).pageCurrentCases(Mockito.eq("cant_tell") ?: "", anyPageable())
+        Mockito.verify(cases).pageCurrentCases(Mockito.eq("cant_tell") ?: "", Mockito.eq(false), anyTime(), anyPageable())
         // RV-3.2 part b: the appeals tab reads the same cases query (cases with an open appeal).
         stubTab("appeals", row(verdict = "JUNK_DUMP", action = "HIDE_ALL", appliedMode = "AUTO_HIDE"))
         assertEquals(listOf("JUNK_DUMP"), service.listCases("appeals", PaginationParams.of(0, 50)).items.map { it.verdict })
@@ -74,6 +75,9 @@ class AdminRelevanceServiceTest {
         Mockito.`when`(cases.caseRow(r.caseId)).thenReturn(r)
         Mockito.`when`(cases.findById(r.caseId)).thenReturn(Optional.of(RelevanceCase(id = r.caseId, batchId = r.batchId,
             trigger = "QUIET", uploadAt = OffsetDateTime.now(), batchPhotos = 600, stage = "APPLIED", evidenceUsed = "junk_share,copy_rule")))
+        // RV-4.1: the detail counts the batch photographer's strikes.
+        Mockito.`when`(batches.findById(r.batchId)).thenReturn(Optional.of(
+            com.quickpitik.entity.BatchRelevance(id = r.batchId, eventId = r.eventId, photographerId = UUID.randomUUID())))
         // 20 blurry photos and 20 sharp ones; half of each have only a thumbnail.
         val sample = (0 until 40).map { i -> photo(sharpness = if (i < 20) 10.0 else 90.0, watermarked = i % 2 == 0) }
         Mockito.`when`(cases.measuredSample(r.caseId)).thenReturn(sample)
@@ -104,7 +108,7 @@ class AdminRelevanceServiceTest {
     }
 
     private fun stubTab(tab: String, vararg rows: RelevanceCaseRow) {
-        Mockito.`when`(cases.pageCurrentCases(Mockito.eq(tab) ?: tab, anyPageable())).thenReturn(PageImpl(rows.toList()))
+        Mockito.`when`(cases.pageCurrentCases(Mockito.eq(tab) ?: tab, Mockito.anyBoolean(), anyTime(), anyPageable())).thenReturn(PageImpl(rows.toList()))
     }
 
     private fun row(
@@ -231,6 +235,7 @@ class AdminRelevanceServiceTest {
             stage = "APPLIED"; appliedMode = "AUTO_HIDE"; this.action = action
         }.also { Mockito.`when`(cases.findById(it.id)).thenReturn(Optional.of(it)) }
 
+    private fun anyTime(): OffsetDateTime = Mockito.any(OffsetDateTime::class.java) ?: OffsetDateTime.MIN
     private fun anyPageable(): Pageable = Mockito.any(Pageable::class.java) ?: Pageable.unpaged()
     private fun anyDuration(): Duration = Mockito.any(Duration::class.java) ?: Duration.ZERO
 }
