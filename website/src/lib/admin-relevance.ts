@@ -103,6 +103,7 @@ const NOTE_LABEL: Record<string, string> = {
   SMALL_BATCH: "The batch is too small for anything but Fits or Can't tell.",
   SUSPICIOUS_WORDS: "Words read off the photos seemed to tell the model what to answer.",
   NO_CONSENT: "The photographer has not accepted the Terms that allow automatic hiding.",
+  ADMIN_HIDE: "An admin hid this batch from this page.",
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -214,7 +215,8 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
 export const HIDDEN_PHOTOS_EMPTY = "No photo of this batch is held.";
 export const PHOTO_RESTORED = "Photo restored";
 export const PHOTO_STILL_HIDDEN = "Released here, but another hold or flag still keeps the photo hidden.";
-export const PHOTO_RESTORE_FAILED = "Could not restore the photo — check the case before retrying.";
+export const photoRestoreLabel = (position: number, hiddenOn: string) => `Restore photo ${position}, hidden ${hiddenOn}`;
+export const PHOTO_RESTORE_FAILED ="Could not restore the photo — check the case before retrying.";
 
 const HELD_BY_LABEL: Record<string, string> = { AUTO: "Automatic", ADMIN: "Admin", PHOTOGRAPHER: "Photographer" };
 export const heldByLabel = (h: string) => label(HELD_BY_LABEL, h) ?? h;
@@ -223,8 +225,8 @@ export const heldByLabel = (h: string) => label(HELD_BY_LABEL, h) ?? h;
 export const isReleasable = (p: RelevanceHiddenPhoto) => p.restoredAt === null && p.heldBy !== "PHOTOGRAPHER";
 
 /**
- * The actions a case offers. Record-only never acts (P18): it offers only the batch restore, and only while a
- * releasable hold exists (seeded rows, or what a cut-off restore left). Can't tell actions need action NONE:
+ * The actions a case offers. Record-only never acts (P18): it offers only the batch restore, and only while it is
+ * current and a releasable hold exists (seeded rows). Can't tell actions need action NONE:
  * a Can't tell an admin hid offers the restores instead. The mode itself is not readable here; the server refuses.
  */
 export function caseActions(detail: Pick<RelevanceCaseDetail, "case" | "stage">, hasReleasable: boolean): RelevanceCaseAction[] {
@@ -233,7 +235,9 @@ export function caseActions(detail: Pick<RelevanceCaseDetail, "case" | "stage">,
   const hiding = row.action !== null && row.action !== "NONE";
   if (acting && hiding) return ["restore", "keep_hidden"];
   if (acting && row.verdict === "CANT_TELL" && row.action === "NONE") return ["looks_fine", "hide_batch"];
-  return hasReleasable ? ["restore"] : [];
+  // The server also takes a repeat restore on a case it closed RESTORED_BY_ADMIN, but the detail carries no close
+  // reason, so a closed case offers nothing; the tick's sweep finishes a restore that broke off.
+  return detail.stage === "APPLIED" && hasReleasable ? ["restore"] : [];
 }
 
 /** Why a sample counts as junk, or that it was not judged while a cut-off is unset. */

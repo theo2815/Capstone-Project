@@ -145,10 +145,73 @@ it("restoring one photo marks it restored in the list", async () => {
   const d = await drawer();
   const list = await within(d).findByRole("list", { name: "Held photos" });
   expect(within(d).getByText(/Showing 2 of 3/)).toBeInTheDocument();
-  expect(within(list).getAllByRole("button", { name: "Restore photo" })).toHaveLength(2);
-  await user.click(within(list).getAllByRole("button", { name: "Restore photo" })[0]);
-  await waitFor(() => expect(within(list).getAllByRole("button", { name: "Restore photo" })).toHaveLength(1));
+  expect(within(list).getAllByRole("button", { name: /^Restore photo/ })).toHaveLength(2);
+  await user.click(within(list).getAllByRole("button", { name: /^Restore photo/ })[0]);
+  await waitFor(() => expect(within(list).getAllByRole("button", { name: /^Restore photo/ })).toHaveLength(1));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/photos/p1/restore");
   expect(within(list).getByText(/^Restored/)).toBeInTheDocument();
   expect(toasts()).toEqual(["Photo restored"]);
+});
+
+// Review fixes on PR #154.
+it("an admin-hidden case reads its note as words", async () => {
+  rows = [{ ...cantTell, action: "HIDE_ALL", verdictNote: "ADMIN_HIDE" }];
+  mount();
+  const d = await drawer();
+  expect(await within(d).findByText("An admin hid this batch from this page.")).toBeInTheDocument();
+  expect(within(d).queryByText("ADMIN_HIDE")).not.toBeInTheDocument();
+});
+
+it("a case that is no longer current offers no batch restore", async () => {
+  rows = [];
+  one = async () => detail(autoHide, "CLOSED");
+  holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  mount();
+  const d = await drawer();
+  await within(d).findByRole("list", { name: "Held photos" });
+  expect(buttons(d)).toEqual(["Close"]);
+});
+
+it("a record-only case with a hold offers only the restores", async () => {
+  rows = [{ ...autoHide, appliedMode: "RECORD_ONLY", wouldHave: true }];
+  holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  mount();
+  const d = await drawer();
+  await within(d).findByRole("button", { name: "Restore batch…" });
+  expect(buttons(d).filter((b) => b !== "Close")).toEqual([expect.stringMatching(/^Restore photo/), "Restore batch…"]);
+});
+
+it("each photo Restore has its own label", async () => {
+  rows = [autoHide];
+  holds = async () => ({ items: [hold("p1"), hold("p2")], total: 2, offset: 0, limit: 100 });
+  mount();
+  const list = await within(await drawer()).findByRole("list", { name: "Held photos" });
+  const labels = within(list).getAllByRole("button").map((b) => b.getAttribute("aria-label"));
+  expect(new Set(labels).size).toBe(2);
+});
+
+it("a refused action re-reads the case", async () => {
+  const user = userEvent.setup();
+  post = async () => { throw new ApiError([{ code: "INVALID_STATE_TRANSITION", message: "This action does not fit the case's current state" }], 409); };
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Looks fine…" }));
+  // Another admin closed the case meanwhile: the refusal shows, and the drawer reads the case again.
+  one = async () => detail(cantTell, "CLOSED");
+  await user.click(screen.getByRole("button", { name: "Confirm looks fine" }));
+  await waitFor(() => expect(within(d).queryByRole("button", { name: "Hide batch…" })).not.toBeInTheDocument());
+  expect(toasts()).toEqual(["This action does not fit the case's current state"]);
+});
+
+it("Escape closes the drawer after a re-read removes the open action", async () => {
+  const user = userEvent.setup();
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Looks fine…" }));
+  expect(screen.getByRole("button", { name: "Confirm looks fine" })).toBeInTheDocument();
+  one = async () => detail(cantTell, "CLOSED");
+  await client.invalidateQueries({ queryKey: ["admin", "relevance"] });
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm looks fine" })).not.toBeInTheDocument());
+  await user.keyboard("{Escape}");
+  expect(fixtures.router.replace).toHaveBeenLastCalledWith("/admin/relevance?tab=cant_tell", { scroll: false });
 });

@@ -88,7 +88,8 @@ export function RelevanceCases() {
             setConfirming(null);
             setRowId("");
           }}
-          escDisabled={confirming !== null}
+          // A re-read can drop the open action (its confirm unmounts); the drawer's Escape then works again.
+          escDisabled={confirming !== null && kinds.includes(confirming)}
           actions={
             detail.data && kinds.length > 0 && (
               <RelevanceCaseActions detail={detail.data} kinds={kinds} confirming={confirming} onConfirming={setConfirming} />

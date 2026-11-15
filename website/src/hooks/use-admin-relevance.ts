@@ -98,11 +98,15 @@ export function useRelevanceActions() {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "relevance"] });
   const caseAction = useMutation({
-    mutationFn: ({ kind, caseId }: { kind: RelevanceCaseAction; caseId: string }) => ACTION_CALL[kind](caseId),    onSuccess: refresh,
+    mutationFn: ({ kind, caseId }: { kind: RelevanceCaseAction; caseId: string }) => ACTION_CALL[kind](caseId),
+    onSuccess: refresh,
+    // A refusal often means another admin changed the case: read it again so a retry is not the same 409.
+    onError: refresh,
   });
   const photo = useMutation({
     mutationFn: ({ caseId, photoId }: { caseId: string; photoId: string }) => restoreRelevancePhoto(caseId, photoId),
     onSuccess: refresh,
+    onError: refresh,
   });
   return {
     runAction: caseAction.mutateAsync,

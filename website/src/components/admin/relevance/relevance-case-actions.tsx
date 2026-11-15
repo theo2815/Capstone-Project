@@ -16,6 +16,7 @@ import {
   RELEVANCE_ACTIONS,
   heldByLabel,
   isReleasable,
+  photoRestoreLabel,
   type RelevanceCaseAction,
   type RelevanceCaseDetail,
   type RelevanceRestoreResult,
@@ -117,7 +118,7 @@ export function RelevanceHiddenPhotos({ detail }: { detail: RelevanceCaseDetail 
       ) : (
         <>
           <ul aria-label="Held photos" className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {items.map((p) => (
+            {items.map((p, i) => (
               <li key={p.id} className={p.restoredAt ? "opacity-50" : undefined}>
                 <Thumb url={p.thumbnailUrl} alt="Held photo" />
                 <p className={`${labelCls} mt-1 tnum`}>
@@ -127,7 +128,7 @@ export function RelevanceHiddenPhotos({ detail }: { detail: RelevanceCaseDetail 
                 {current && isReleasable(p) && (
                   <button
                     type="button"
-                    aria-label="Restore photo"
+                    aria-label={photoRestoreLabel(i + 1, formatLongDate(p.hiddenAt))}
                     disabled={isPending}
                     onClick={() => void handleRestore(p.photoId)}
                     className={`${BTN_GHOST} ${BTN_SIZE.sm} px-3 mt-1`}
