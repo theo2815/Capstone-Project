@@ -36,3 +36,7 @@ data class PhotographerAppealDto(
 
 // POST /api/v1/me/photographer/relevance/cases/{caseId}/appeal. The reason is 1 to 1,000 characters once trimmed.
 data class FileAppealRequest(val reason: String = "")
+
+// RV-3.3: GET /api/v1/me/photographer/relevance/cases/{caseId}/blurry. One measured blurry photo of the batch that is
+// still in the gallery; thumbnailUrl is a presigned preview (the watermarked one, else the thumbnail), never the original.
+data class PhotographerBlurryPhotoDto(val photoId: UUID, val thumbnailUrl: String?)

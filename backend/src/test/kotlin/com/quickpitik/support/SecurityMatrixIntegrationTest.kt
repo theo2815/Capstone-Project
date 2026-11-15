@@ -273,6 +273,33 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_appeals WHERE case_id = ?", Int::class.java, case))
     }
 
+    // RV-3.3: the photographer's blurry-photo list, hide and undo, for photographers only. The test app runs with the
+    // relevance mode off, so the list is 404 and hide and undo are 409 before any look-up; the owner and mode checks with
+    // the mode on are RelevancePhotographerHideIntegrationTest.
+    @Test
+    fun `the photographer hide routes are for photographers only`() {
+        val base = "/api/v1/me/photographer/relevance/cases/${UUID.randomUUID()}"
+        val list = "$base/blurry?offset=0&limit=50"
+        val writes = listOf("$base/hide", "$base/unhide")
+        val body = """{"photoIds":["${UUID.randomUUID()}"]}"""
+        val runner = register(Role.RUNNER)
+        val photographer = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        assertEquals(401, get(list).statusCode())
+        writes.forEach { assertEquals(401, post(it, body).statusCode(), it) }
+        for (token in listOf(runner, admin)) {
+            assertEquals(403, get(list, token).statusCode())
+            writes.forEach { assertEquals(403, post(it, body, token).statusCode(), it) }
+        }
+        val read = get(list, photographer)
+        assertEquals(404 to "NOT_FOUND", read.statusCode() to errorCode(read))
+        writes.forEach {
+            val refused = post(it, body, photographer)
+            assertEquals(409 to "RELEVANCE_ACTIONS_OFF", refused.statusCode() to errorCode(refused), it)
+        }
+    }
+
     // RV-1.10: the Photo Relevance page's routes, with one real case and alert so the admin's answer is 200.
     @Test
     fun `the relevance admin routes are for admins only`() {
