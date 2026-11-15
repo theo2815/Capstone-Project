@@ -50,6 +50,7 @@ class RelevanceCheckServiceTest {
     private val holds = Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java)
     private val decisionLog = Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java)
     private val notifier = Mockito.mock(RelevanceNotifier::class.java)
+    private val confirmer = Mockito.mock(RelevanceConfirmer::class.java)
     private val registry = SimpleMeterRegistry()
     private val clock = Clock.fixed(Instant.parse("2002-03-04T05:06:07Z"), ZoneOffset.UTC)
     private val now = OffsetDateTime.ofInstant(clock.instant(), ZoneOffset.UTC)
@@ -114,7 +115,7 @@ class RelevanceCheckServiceTest {
         val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), rekognition)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
             client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"),
-            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing, notifier)
+            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing, notifier, confirmer)
     }
 
     // RV-2.3a (A.4, R6): the scan yields to upload indexing, per server copy.

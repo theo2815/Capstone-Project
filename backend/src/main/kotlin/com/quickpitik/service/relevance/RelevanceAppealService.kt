@@ -34,6 +34,7 @@ import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
@@ -192,6 +193,8 @@ class RelevanceAppealService(
         noticeAt = row.noticeAt,
         appealDeadline = row.noticeAt?.let { appealLastDay(it.atOffset(ZoneOffset.UTC), props.appeal.windowDays) },
         appeal = appeal,
+        eventDate = row.eventDate?.let { LocalDate.parse(it) },
+        closeReason = row.closeReason,
     )
 
     private fun appealView(appeal: RelevanceAppeal, createdAt: OffsetDateTime? = appeal.createdAt) =

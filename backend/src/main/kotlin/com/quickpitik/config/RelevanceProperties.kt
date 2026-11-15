@@ -33,6 +33,7 @@ data class RelevanceProperties(
     val scan: Scan = Scan(),
     val restore: Restore = Restore(),
     val appeal: Appeal = Appeal(),
+    val strikes: Strikes = Strikes(),
 ) {
     init {
         require(sweepIntervalMs >= 1) { "sweepIntervalMs must be at least 1" }
@@ -209,6 +210,15 @@ data class RelevanceProperties(
     ) {
         init {
             require(windowDays >= 1) { "windowDays must be at least 1" }
+        }
+    }
+
+    // Version 2 ladder (part 2, A.7, G6): confirmed cases count for this many months, rolling, from each confirmation.
+    data class Strikes(
+        val windowMonths: Int = 6,
+    ) {
+        init {
+            require(windowMonths >= 1) { "windowMonths must be at least 1" }
         }
     }
 

@@ -51,6 +51,7 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var appeals: RelevanceAppealRepository
     @Autowired private lateinit var alerts: RelevanceAlertRepository
     @Autowired private lateinit var strikes: com.quickpitik.repository.RelevanceStrikeRepository
+    @Autowired private lateinit var events: com.quickpitik.repository.EventRepository
     @Autowired private lateinit var messages: PhotographerMessageRepository
     @Autowired private lateinit var decisionRows: AdminDecisionLogRepository
     @Autowired private lateinit var adminUsers: AdminUserService
@@ -223,6 +224,23 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the case shows the event's date and why a closed case closed`() {
+        val b = batch()
+        val open = case(b, verdict = "WRONG_EVENT", action = "HIDE_ALL")
+        val closed = case(batch(), verdict = "JUNK_DUMP", action = "HIDE_JUNK", stage = "CLOSED")
+        jdbc.update("UPDATE relevance_cases SET close_reason = 'RECHECK_LIFTED' WHERE id = ?", closed)
+        val owner = jdbc.queryForObject("SELECT br.photographer_id FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id WHERE c.id = ?",
+            UUID::class.java, closed)!!
+
+        val current = tx.execute { service().caseFor(b.photographer, open) }!!
+        val lifted = tx.execute { service().caseFor(owner, closed) }!!
+
+        assertEquals(LocalDate.parse("2010-03-04"), current.eventDate)
+        assertNull(current.closeReason)
+        assertEquals(listOf(false, "RECHECK_LIFTED"), listOf(lifted.current, lifted.closeReason))
+    }
+
+    @Test
     fun `an appeal stays open when the photographer is suspended`() {
         val b = batch()
         val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL")
@@ -277,7 +295,7 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         val decisions = AdminDecisionLogService(decisionRows, messages, publisher)
         val notifier = RelevanceNotifier(cases, decisions, switch, props, clock, tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, clock, publisher,
-            com.quickpitik.service.relevance.RelevanceConfirmer(cases, strikes), decisions)
+            com.quickpitik.service.relevance.RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions)
     }
 
     private fun batch(): Batch {

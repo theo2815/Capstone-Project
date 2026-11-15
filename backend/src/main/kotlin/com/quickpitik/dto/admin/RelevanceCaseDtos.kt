@@ -46,6 +46,10 @@ data class RelevanceCaseDetailDto(
     val junkSamples: List<RelevanceSampleDto>,
     val cleanSamples: List<RelevanceSampleDto>,
     val alerts: List<RelevanceAlertDto>,
+    // RV-4.1 (A.7): when the case was confirmed (null: not confirmed), and the batch photographer's confirmed cases in
+    // the last strikes.window-months months, across events.
+    val confirmedAt: String? = null,
+    val photographerStrikes: Int = 0,
 )
 
 data class RelevanceWordDto(val word: String, val photos: Int)

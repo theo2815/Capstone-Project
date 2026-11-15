@@ -39,6 +39,7 @@ export const ROUTES = {
   DASHBOARD_BILLING: "/dashboard/billing",
   DASHBOARD_SETTINGS: "/dashboard/settings",
   DASHBOARD_PHOTO_REMOVAL_REQUESTS: "/dashboard/photo-removal-requests",
+  DASHBOARD_RELEVANCE: "/dashboard/relevance",
   ADMIN: "/admin",
   ADMIN_INBOX: "/admin/inbox",
   ADMIN_OVERVIEW: "/admin/overview",

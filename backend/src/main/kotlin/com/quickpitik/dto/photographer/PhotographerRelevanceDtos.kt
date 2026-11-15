@@ -8,6 +8,8 @@ import java.util.UUID
 // RV-3.2a: GET /api/v1/me/photographer/relevance/cases/{caseId}. What a photographer may see of their own Photo
 // Relevance case: the verdict and its numbers, never the model's reason, the summary sent or the words read from photos
 // (G12). appealDeadline is the last day to appeal (Philippine date), null when the case has no appeal clock.
+// RV-3.4a: eventDate is the event's date (V2-T13 names it); closeReason says why a closed case closed (null while open),
+// so the page can show the note that close sent.
 data class PhotographerRelevanceCaseDto(
     val caseId: UUID,
     val eventId: UUID,
@@ -24,6 +26,8 @@ data class PhotographerRelevanceCaseDto(
     val noticeAt: Instant?,
     val appealDeadline: LocalDate?,
     val appeal: PhotographerAppealDto?,
+    val eventDate: LocalDate? = null,
+    val closeReason: String? = null,
 )
 
 // The appeal's state only: the admin's note is never shown (V2-T19), and the photographer's own reason is not echoed.
