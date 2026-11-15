@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { TermsReacceptanceGate } from "@/components/legal/terms-reacceptance-gate";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 // Photographer-only gate + persistent dashboard shell. Most /dashboard/*
@@ -33,6 +34,7 @@ export default function DashboardLayout({
 
   return (
     <ProtectedRoute allowedRoles={["PHOTOGRAPHER"]}>
+      <TermsReacceptanceGate />
       {isFocused ? guarded : <DashboardShell>{guarded}</DashboardShell>}
     </ProtectedRoute>
   );

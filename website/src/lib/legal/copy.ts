@@ -1,4 +1,5 @@
 import { ROUTES, SUPPORT_EMAIL } from "@/lib/constants";
+import { LEGAL_VERSION } from "@/lib/legal/version";
 
 // Short UI texts from the PT-0a copy deck. Links use the same
 // [label](href) and **bold** marks as the documents (rendered by LegalText).
@@ -28,5 +29,13 @@ export const LEGAL_COPY = {
   runnerDeletionTickLabel: `I agree to the live check and to this face search. The photos I'm asking about are of me.`,
   runnerDeletionEmailInstead: `Rather not use the camera, or asking for someone else? Email [${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(RUNNER_DELETION_MAIL_SUBJECT)}) instead.`,
   runnerDeletionMailSubject: RUNNER_DELETION_MAIL_SUBJECT,
+  // The photographer re-acceptance prompt (RV-L5), RV-L2 text V2-T10 (owner, 2026-11-15).
+  reacceptTitle: "Please accept the updated Terms",
+  reacceptBody: `We have updated our Terms of Service and Privacy Policy. Our system can now take photos you upload off sale when they look blurry, very dark or not of a race, or seem to be in the wrong event or copied. When photos seem copied, it can also put your payouts on hold. It does this without an admin, and tells you in your inbox and by email. You can appeal within 14 days, and a person decides every appeal. To keep using your photographer account, accept the new Terms (version ${LEGAL_VERSION}).`,
+  reacceptButton: "I accept",
+  reacceptButtonLine: `By choosing I accept, you agree to the Terms of Service version ${LEGAL_VERSION}.`,
+  reacceptLinks: `[Read the Terms of Service](${ROUTES.TERMS}) · [Read the Privacy Policy](${ROUTES.PRIVACY})`,
+  reacceptSignOutLead: "Not ready to accept?",
+  reacceptSignOut: "Sign out",
   deletionText: `To delete your account, email [${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(DELETION_MAIL_SUBJECT)}) from your account's email address. We'll do it within ${DELETION_WINDOW}. Some purchase records are kept, as the [Privacy Policy](${ROUTES.PRIVACY}#deletion) explains.`,
 } as const;
