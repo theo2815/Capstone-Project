@@ -247,3 +247,52 @@ export function sampleLabel(s: RelevanceSample): string {
   // cleanSamples means "not known to be junk": an unset cut-off leaves a rule unanswered.
   return s.blurry === null || s.dark === null || s.notRace === null ? "Not judged" : "Clean";
 }
+
+// RV-3.5: the Appeals tab. Types mirror `RelevanceAppealRowDto`. The photographer's reason is their own free text.
+export type RelevanceAppealStatus = "OPEN" | "WON" | "LOST";
+export interface RelevanceAppealRow {
+  appealId: string;
+  caseId: string;
+  batchId: string;
+  eventId: string;
+  eventName: string | null;
+  photographerName: string | null;
+  photographerHandle: string | null;
+  verdict: string | null;
+  verdictNote: string | null;
+  action: string | null;
+  caseStage: string;
+  status: RelevanceAppealStatus;
+  reason: string;
+  createdAt: string | null;
+  evidenceOpenedAt: string | null;
+  evidenceOpenedBy: string | null;
+  decidedAt: string | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+}
+
+/** Open appeals first, then the decided ones. */
+export const APPEAL_SECTIONS: readonly { status: RelevanceAppealStatus; label: string; empty: string }[] = [
+  { status: "OPEN", label: "Open", empty: RELEVANCE_TABS.find((t) => t.value === "appeals")!.empty },
+  { status: "WON", label: "Won", empty: "No appeal has been won." },
+  { status: "LOST", label: "Lost", empty: "No appeal has been lost." },
+];
+
+export const APPEAL_NOTE_MAX = 1000;
+export const APPEAL_TEXT = {
+  reason: "Photographer's reason",
+  samples: "Samples",
+  openSamples: "Open the samples",
+  openSamplesHint: "Opening the samples records that you looked at them. Won and Lost unlock after that.",
+  openFailed: "Could not record that you opened the samples. Try again.",
+  note: "Note (admins only, optional)",
+  noteHint: "The photographer never sees this note.",
+  won: "Won",
+  lost: "Lost",
+  done: { WON: "Appeal won", LOST: "Appeal lost" } as Record<"WON" | "LOST", string>,
+  decideFailed: "Could not decide the appeal — check the appeal before retrying.",
+  decisionNote: "Decision note",
+  filed: "Filed",
+  decided: "Decided",
+} as const;

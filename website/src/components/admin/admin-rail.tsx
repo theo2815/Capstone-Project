@@ -19,6 +19,7 @@ import {
   useAdminQueueCounts,
 } from "@/lib/admin-queues";
 import { cn } from "@/lib/utils";
+import { useOpenRelevanceAppealsCount } from "@/hooks/use-admin-relevance";
 
 const RAIL_TIPS_STORAGE_KEY = "qp:admin:rail-tips-disabled";
 
@@ -177,6 +178,8 @@ export function AdminRail() {
 
   const attention = useAdminAttentionTarget();
   const counts = useAdminQueueCounts();
+  // RV-3.5: Photo Relevance counts its open appeals (the server's list total).
+  const openAppeals = useOpenRelevanceAppealsCount();
   const allClear = counts.total === 0;
 
   function getCountForHref(href: string): number | null {
@@ -191,6 +194,8 @@ export function AdminRail() {
         return counts.payouts;
       case ROUTES.ADMIN_EVENT_REQUESTS:
         return counts.events;
+      case ROUTES.ADMIN_RELEVANCE:
+        return openAppeals;
       default:
         return null;
     }

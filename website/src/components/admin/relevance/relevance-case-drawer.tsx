@@ -32,8 +32,11 @@ export function RelevanceCaseSubtitle({ row }: { row: RelevanceCaseRow }) {
   );
 }
 
-/** The read-only body of a case: verdict, the model's reason, the numbers, words, samples and alerts. No actions yet. */
-export function RelevanceCaseBody({ detail }: { detail: RelevanceCaseDetail }) {
+/**
+ * The read-only body of a case: verdict, the model's reason, the numbers, words, samples and alerts. No actions yet.
+ * RV-3.5: the appeal drawer leaves the samples out (`samples={false}`) and shows them once the admin opened them.
+ */
+export function RelevanceCaseBody({ detail, samples = true }: { detail: RelevanceCaseDetail; samples?: boolean }) {
   const row = detail.case;
   const note = verdictNoteLabel(row.verdictNote);
   const overridden = detail.modelVerdict !== row.verdict;
@@ -100,8 +103,7 @@ export function RelevanceCaseBody({ detail }: { detail: RelevanceCaseDetail }) {
         </section>
       )}
 
-      <Samples title="Junk samples" samples={detail.junkSamples} empty="No sampled photo counts as junk." />
-      <Samples title="Clean samples" samples={detail.cleanSamples} empty="No sampled photo is listed as clean or not judged." />
+      {samples && <RelevanceCaseSamples detail={detail} />}
 
       {detail.alerts.length > 0 && (
         <section className="space-y-3">
@@ -142,6 +144,15 @@ function Field({ label, value }: { label: string; value: string }) {
       <dt className={labelCls}>{label}</dt>
       <dd className="mt-1 font-sans text-sm text-ink tnum">{value}</dd>
     </div>
+  );
+}
+
+export function RelevanceCaseSamples({ detail }: { detail: RelevanceCaseDetail }) {
+  return (
+    <>
+      <Samples title="Junk samples" samples={detail.junkSamples} empty="No sampled photo counts as junk." />
+      <Samples title="Clean samples" samples={detail.cleanSamples} empty="No sampled photo is listed as clean or not judged." />
+    </>
   );
 }
 

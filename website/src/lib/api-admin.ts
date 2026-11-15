@@ -1120,3 +1120,27 @@ export function fetchRelevanceHiddenPhotos(
   p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   return api.get(`${relevanceCasePath(caseId)}/hidden-photos?${p.toString()}`, { signal });
 }
+
+// ───────────────────────────────────────────── Photo Relevance appeals (RV-3.5)
+
+export function fetchRelevanceAppeals(
+  args: { status: import("@/lib/admin-relevance").RelevanceAppealStatus; offset?: number; limit?: number },
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceAppealRow>> {
+  const p = new URLSearchParams();
+  p.set("status", args.status);
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/relevance/appeals?${p.toString()}`, { signal });
+}
+
+export function markRelevanceAppealEvidenceOpened(appealId: string): Promise<import("@/lib/admin-relevance").RelevanceAppealRow> {
+  return api.post(`/admin/relevance/appeals/${encodeURIComponent(appealId)}/evidence-opened`);
+}
+
+export function decideRelevanceAppeal(
+  appealId: string,
+  body: { outcome: "WON" | "LOST"; note?: string },
+): Promise<import("@/lib/admin-relevance").RelevanceAppealRow> {
+  return api.post(`/admin/relevance/appeals/${encodeURIComponent(appealId)}/decide`, body);
+}
