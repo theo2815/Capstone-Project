@@ -875,3 +875,42 @@ export async function checkPhotosExist(
   );
   return res.results;
 }
+
+// RV-3.4a: a photographer's own Photo Relevance case (linked from its inbox note) and its appeal.
+//   GET  /api/v1/me/photographer/relevance/cases/{caseId}         -> PhotographerRelevanceCase (404 when not theirs)
+//   POST /api/v1/me/photographer/relevance/cases/{caseId}/appeal  { reason } -> PhotographerRelevanceCase
+// Mirrors backend PhotographerRelevanceCaseDto: never the model's reason, the summary sent or the words read (G12).
+export type RelevanceVerdict = "FITS" | "MIXED" | "JUNK_DUMP" | "WRONG_EVENT" | "COPIED" | "CANT_TELL";
+export type RelevanceAction = "NONE" | "HIDE_JUNK" | "HIDE_ALL";
+export interface PhotographerRelevanceAppeal {
+  id: string;
+  status: "OPEN" | "WON" | "LOST";
+  createdAt: string | null;
+  decidedAt: string | null;
+}
+export interface PhotographerRelevanceCase {
+  caseId: string;
+  eventId: string;
+  eventName: string;
+  verdict: RelevanceVerdict | null;
+  action: RelevanceAction | null;
+  current: boolean;
+  batchPhotos: number;
+  sampleSize: number | null;
+  junkCount: number | null;
+  hiddenPhotos: number;
+  scanMeasured: number | null;
+  scanBlurry: number | null;
+  noticeAt: string | null;
+  /** Last day to appeal, a Philippine date (YYYY-MM-DD); null when the case has no appeal clock. */
+  appealDeadline: string | null;
+  appeal: PhotographerRelevanceAppeal | null;
+}
+
+export async function fetchMyRelevanceCase(caseId: string, signal?: AbortSignal): Promise<PhotographerRelevanceCase> {
+  return api.get<PhotographerRelevanceCase>(`/me/photographer/relevance/cases/${encodeURIComponent(caseId)}`, { signal });
+}
+
+export async function fileMyRelevanceAppeal(caseId: string, reason: string): Promise<PhotographerRelevanceCase> {
+  return api.post<PhotographerRelevanceCase>(`/me/photographer/relevance/cases/${encodeURIComponent(caseId)}/appeal`, { reason });
+}
