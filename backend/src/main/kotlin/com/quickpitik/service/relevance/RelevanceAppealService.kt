@@ -1,6 +1,14 @@
 package com.quickpitik.service.relevance
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.common.PaginationParams
+import com.quickpitik.dto.admin.RelevanceAppealRowDto
+import com.quickpitik.dto.admin.toDto
+import com.quickpitik.exception.ApiException
+import com.quickpitik.service.admin.AdminDecisionLogService
+import org.springframework.http.HttpStatus
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.dto.photographer.PhotographerAppealDto
@@ -45,6 +53,8 @@ class RelevanceAppealService(
     private val props: RelevanceProperties,
     private val clock: Clock,
     private val publisher: ApplicationEventPublisher,
+    private val confirmer: RelevanceConfirmer,
+    private val decisionLog: AdminDecisionLogService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -90,6 +100,79 @@ class RelevanceAppealService(
         return view(row, appealView(appeal, now))
     }
 
+    // RV-3.2 part b: the admin's appeals list, in any mode (like the page's other reads).
+    @Transactional(readOnly = true)
+    fun listAppeals(status: String, page: PaginationParams): PaginatedResponse<RelevanceAppealRowDto> {
+        if (status !in LIST_STATUSES) throw ValidationException("status must be one of ${LIST_STATUSES.joinToString()}", field = "status")
+        val result = appeals.pageAppeals(status, OffsetLimitPageable(page))
+        return PaginatedResponse.of(result.content.map { it.toDto() }, result.totalElements, page)
+    }
+
+    // A.6 (addendum line 46): the page calls this when it shows the samples. The latest admin to open it is the one who
+    // may decide. In auto-hide only, as the admin's other acting routes.
+    @Transactional
+    fun evidenceOpened(adminId: UUID, appealId: UUID): RelevanceAppealRowDto {
+        actionsOn()
+        val appeal = appeals.lockAppeal(appealId) ?: throw appealNotFound()
+        if (appeal.status != AppealStatus.OPEN.name) throw alreadyDecided()
+        appeal.evidenceOpenedAt = clock.postgresTimestamp()
+        appeal.evidenceOpenedBy = adminId
+        appeals.save(appeal)
+        return appeals.appealRow(appealId)!!.toDto()
+    }
+
+    // A.6: the admin decides an open appeal whose evidence they opened. Won: the case's target is lowered (winAppeal) and
+    // V2-T18 goes out; closing a won whole-batch case APPEAL_WON when its scan has brought the good photos back is part c.
+    // Lost: a whole-batch finding is confirmed at once (A.7) and V2-T19 goes out. The note stays with admins (G12).
+    @Transactional
+    fun decide(adminId: UUID, appealId: UUID, outcome: String, note: String?): RelevanceAppealRowDto {
+        actionsOn()
+        val result = listOf(AppealStatus.WON, AppealStatus.LOST).firstOrNull { it.name == outcome }
+            ?: throw ValidationException("outcome must be WON or LOST", field = "outcome")
+        // A plain row, not the entity: loading the entity before the lock would hand back a stale copy from the session.
+        val caseId = appeals.appealRow(appealId)?.caseId ?: throw appealNotFound()
+        // The case first, then the appeal: the same order as filing.
+        cases.lockCase(caseId)
+        val appeal = appeals.lockAppeal(appealId) ?: throw appealNotFound()
+        if (appeal.status != AppealStatus.OPEN.name) throw alreadyDecided()
+        if (appeal.evidenceOpenedBy != adminId) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.EVIDENCE_NOT_OPENED, "Open this appeal's evidence before deciding it")
+        }
+        val now = clock.postgresTimestamp()
+        appeal.status = result.name
+        appeal.decidedAt = now
+        appeal.decidedBy = adminId
+        appeal.decisionNote = note?.trim()?.ifBlank { null }
+        appeals.save(appeal)
+        val case = cases.findById(caseId).orElseThrow()
+        val autoHide = case.appliedMode == AUTO
+        val acting = autoHide && case.stage == CaseStage.APPLIED.name
+        val wholeBatch = case.action == CaseAction.HIDE_ALL.name
+        if (acting) {
+            if (result == AppealStatus.WON) cases.winAppeal(caseId) else confirmer.confirm(caseId, now)
+        }
+        decisionLog.logUserDecision(adminId, appeal.photographerId, "relevance_appeal_${result.name.lowercase()}", appeal.decisionNote,
+            meta = mapOf("caseId" to caseId.toString(), "appealId" to appealId.toString()))
+        if (autoHide) {
+            val eventName = cases.ownCase(caseId, appeal.photographerId)!!.eventName
+            val text = if (result == AppealStatus.WON) RelevanceNotices.appealWon(eventName, wholeBatch)
+                else RelevanceNotices.appealLost(eventName, copied = case.verdict == CaseVerdict.COPIED.name)
+            notifier.deliver(appeal.photographerId, caseId, "relevance:$appealId:${result.name.lowercase()}", text)
+        }
+        log.info("Relevance appeal decided appeal={} case={} outcome={}", appealId, caseId, result)
+        return appeals.appealRow(appealId)!!.toDto()
+    }
+
+    private fun actionsOn() {
+        if (switch.mode != RelevanceMode.AUTO_HIDE) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.RELEVANCE_ACTIONS_OFF, "Deciding appeals needs the relevance mode auto-hide")
+        }
+    }
+
+    private fun appealNotFound() = NotFoundException("Relevance appeal not found", ErrorCodes.RELEVANCE_APPEAL_NOT_FOUND)
+
+    private fun alreadyDecided() = ApiException(HttpStatus.CONFLICT, ErrorCodes.APPEAL_ALREADY_DECIDED, "This appeal has already been decided")
+
     // One stored APPEAL alert per appeal; the live ping goes out after the commit (NotificationBroadcaster).
     private fun raiseAlert(row: OwnCaseRow, appealId: UUID, now: OffsetDateTime) {
         val alertId = UUID.randomUUID()
@@ -119,5 +202,6 @@ class RelevanceAppealService(
         const val AUTO = "AUTO_HIDE"
         const val MAX_REASON = 1000
         val HIDING = setOf(CaseAction.HIDE_JUNK.name, CaseAction.HIDE_ALL.name)
+        val LIST_STATUSES = listOf("OPEN", "WON", "LOST", "all")
     }
 }

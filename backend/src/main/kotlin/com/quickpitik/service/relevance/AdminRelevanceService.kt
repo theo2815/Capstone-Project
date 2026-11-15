@@ -184,8 +184,6 @@ class AdminRelevanceService(
 
     fun listCases(tab: String, page: PaginationParams): PaginatedResponse<RelevanceCaseRowDto> {
         if (tab !in TABS) throw ValidationException("tab must be one of ${TABS.joinToString()}", field = "tab")
-        // Appeals arrive with part 2; until then the tab is empty.
-        if (tab == "appeals") return PaginatedResponse.empty(page)
         val result = cases.pageCurrentCases(tab, OffsetLimitPageable(page))
         return PaginatedResponse.of(result.content.map { it.toDto() }, result.totalElements, page)
     }
