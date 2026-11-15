@@ -14,7 +14,6 @@ import okhttp3.mockwebserver.MockResponse
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -60,13 +59,21 @@ class TermsAcceptanceTest {
 
     @Test fun `a user who must accept sees the prompt`() {
         backend.enqueue(ok(user(required = true)))
-        val vm = model()
+        val vm = model().also { it.load() }
+        assertEquals("2026-11-15", vm.state.awaitFirst { it.required }.version)
+    }
+
+    @Test fun `a failed first load is retried and then shows the prompt`() {
+        backend.enqueue(MockResponse().setResponseCode(500), ok(user(required = true)))
+        val vm = model().also { it.load() }
+        backend.server.takeRequest() // the failing load has reached the server
+        vm.load()
         assertEquals("2026-11-15", vm.state.awaitFirst { it.required }.version)
     }
 
     @Test fun `accepting posts the version the backend named and clears the prompt`() {
         backend.enqueue(ok(user(required = true)), ok(user(required = false)))
-        val vm = model()
+        val vm = model().also { it.load() }
         vm.state.awaitFirst { it.required }
         vm.accept()
         vm.state.awaitFirst { !it.required }
@@ -77,18 +84,24 @@ class TermsAcceptanceTest {
         assertEquals("""{"version":"2026-11-15"}""", post.body.readUtf8())
     }
 
-    @Test fun `a refused acceptance keeps the prompt and says why`() {
+    @Test fun `a refused acceptance keeps the prompt, shows the backend's words and posts the new version next`() {
         backend.enqueue(
-            ok(user(required = true)),
+            ok(user(required = true, version = "v1")),
             MockResponse().setResponseCode(409).setBody(
-                """{"success":false,"error":{"code":"CONSENT_VERSION_MISMATCH","message":"The Terms were updated."}}""",
+                """{"success":false,"errors":[{"code":"CONSENT_VERSION_MISMATCH","message":"The Terms were updated."}]}""",
             ),
+            ok(user(required = true, version = "v2")),
+            ok(user(required = false, version = "v2")),
         )
-        val vm = model()
+        val vm = model().also { it.load() }
         vm.state.awaitFirst { it.required }
         vm.accept()
-        val failed = vm.state.awaitFirst { it.error != null }
-        assertTrue(failed.required)
-        assertNotNull(failed.error)
+        val refused = vm.state.awaitFirst { it.version == "v2" }
+        assertTrue(refused.required)
+        assertEquals("The Terms were updated.", refused.error)
+        vm.accept()
+        vm.state.awaitFirst { !it.required }
+        repeat(3) { backend.server.takeRequest() } // me, first POST, me again
+        assertEquals("""{"version":"v2"}""", backend.server.takeRequest().body.readUtf8())
     }
 }

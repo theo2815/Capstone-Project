@@ -192,7 +192,6 @@ internal fun SignupAgreementRow(checked: Boolean, onCheckedChange: (Boolean) -> 
     }
 }
 
-/** Under the Google button on Register only; the binding tick is in the role sheet. */
 /** V2-T10 (approved 2026-11-15): blocks the studio until the photographer accepts the Terms version the backend named. */
 @Composable
 internal fun TermsReacceptanceDialog(
@@ -231,6 +230,7 @@ internal fun TermsReacceptanceDialog(
     )
 }
 
+/** Under the Google button on Register only; the binding tick is in the role sheet. */
 @Composable
 internal fun GoogleSignupLine() {
     Text(

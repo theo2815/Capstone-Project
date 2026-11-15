@@ -36,10 +36,11 @@ class TermsAcceptanceViewModel @JvmOverloads constructor(
     private val _state = MutableStateFlow(TermsState())
     val state: StateFlow<TermsState> = _state
 
-    init {
-        sessionManager.getAccessToken()?.let { token ->
-            viewModelScope.launch { repository.getMe(token).onSuccess(::apply) }
-        }
+    /** Asks the backend again; the studio calls it each time it comes to the foreground, so a failed first load or a new version is picked up. */
+    fun load() {
+        val token = sessionManager.getAccessToken() ?: return
+        if (_state.value.busy) return
+        viewModelScope.launch { repository.getMe(token).onSuccess { apply(it) } }
     }
 
     fun accept() {
@@ -50,12 +51,16 @@ class TermsAcceptanceViewModel @JvmOverloads constructor(
         _state.value = current.copy(busy = true, error = null)
         viewModelScope.launch {
             repository.acceptTerms(token, version)
-                .onSuccess(::apply)
-                .onFailure { _state.value = _state.value.copy(busy = false, error = it.message) }
+                .onSuccess { apply(it) }
+                .onFailure { err ->
+                    _state.value = _state.value.copy(busy = false, error = err.message)
+                    // A refusal usually means the version moved: fetch the one the backend names now, so the next tap posts it.
+                    repository.getMe(token).onSuccess { apply(it, err.message) }
+                }
         }
     }
 
-    private fun apply(user: UserDto) {
-        _state.value = TermsState(required = mustAcceptTerms(user), version = user.legalCurrentVersion)
+    private fun apply(user: UserDto, error: String? = null) {
+        _state.value = TermsState(required = mustAcceptTerms(user), version = user.legalCurrentVersion, error = error)
     }
 }

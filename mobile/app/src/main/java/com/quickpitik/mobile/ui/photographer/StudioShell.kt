@@ -175,6 +175,12 @@ fun StudioTabScaffold(
     content: @Composable () -> Unit,
 ) {
     val terms by termsViewModel.state.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) termsViewModel.load() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val messages by viewModel.messages.collectAsState()
     val brandSettings by settingsViewModel.brandSettings.collectAsState()
     // Drives the cross-tab GlobalUploadBanner — surfaces sync progress so the
