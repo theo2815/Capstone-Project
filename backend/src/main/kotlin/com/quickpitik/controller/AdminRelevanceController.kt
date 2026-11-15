@@ -41,8 +41,10 @@ class AdminRelevanceController(
         @RequestParam(required = false) tab: String?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
+        // RV-4.1: only "Repeat cases" (A.7).
+        @RequestParam(required = false) repeat: Boolean?,
     ): PaginatedResponse<RelevanceCaseRowDto> =
-        adminRelevanceService.listCases(tab ?: "all", PaginationParams.of(offset, limit))
+        adminRelevanceService.listCases(tab ?: "all", PaginationParams.of(offset, limit), repeat ?: false)
 
     @GetMapping("/cases/{caseId}")
     fun case(@PathVariable caseId: UUID): RelevanceCaseDetailDto = adminRelevanceService.case(caseId)
