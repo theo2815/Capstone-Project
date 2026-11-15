@@ -7,7 +7,17 @@ import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.exception.ApiException
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.repository.AdminDecisionLogRepository
+import com.quickpitik.repository.BatchRelevanceRepository
+import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.repository.RelevanceHoldRepository
+import com.quickpitik.service.relevance.AnthropicClient
+import com.quickpitik.service.relevance.RelevanceCheckService
+import com.quickpitik.service.relevance.RelevanceMeasurer
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.repository.RelevanceAppealRepository
@@ -55,6 +65,11 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var mapper: ObjectMapper
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired private lateinit var tx: TransactionTemplate
+    @Autowired private lateinit var batchRepo: BatchRelevanceRepository
+    @Autowired private lateinit var events: EventRepository
+    @Autowired private lateinit var holds: RelevanceHoldRepository
+    @Autowired private lateinit var photoRepo: PhotoRepository
+    @Autowired private lateinit var decisionLog: AdminDecisionLogService
     private val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
 
     @Test
@@ -125,6 +140,48 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         assertFalse(tx.execute { RelevanceConfirmer(cases, strikes).confirm(c, NOW) }!!, "a won case is never confirmed later")
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE case_id = ?", Int::class.java, c))
         assertEquals(listOf(RelevanceNotices.appealWon("Rel Run", wholeBatch = true)), notesOf(b))
+    }
+
+    // RV-3.2 part c (A.6): once for an automatic junk-dump hide (AUTO holds), once for an admin's hide (ADMIN holds).
+    @Test
+    fun `a won appeal on a whole-batch hide queues the scan and the good photos come back while the junk stays hidden`() {
+        val admin = admin()
+        for ((verdict, note, heldBy) in listOf(Triple("JUNK_DUMP", null, "AUTO"), Triple("CANT_TELL", "ADMIN_HIDE", "ADMIN"))) {
+            val (b, c, appeal) = appealed(verdict = verdict, action = "HIDE_ALL", note = note)
+            val clean = List(2) { heldPhoto(b, c, heldBy, sharpness = 50.0) }
+            val junk = heldPhoto(b, c, heldBy, sharpness = 10.0)
+            opened(admin, appeal)
+
+            decide(admin, appeal, "WON")
+            assertEquals(listOf("HIDE_JUNK", "QUEUED"), row(c, "action", "scan_state"), verdict)
+            tickUntilClosed(c)
+
+            assertEquals(listOf("LIVE", "LIVE"), clean.map(::status), verdict)
+            assertEquals("HIDDEN", status(junk), verdict)
+            assertEquals(listOf("CLOSED", "APPEAL_WON", null), row(c, "stage", "close_reason", "confirmed_at"), verdict)
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE case_id = ?", Int::class.java, c))
+            assertFalse(tx.execute { RelevanceConfirmer(cases, strikes).confirm(c, NOW) }!!, verdict)
+        }
+    }
+
+    // RV-3.3 (G8): a won appeal never brings back a photo the photographer hid themselves.
+    @Test
+    fun `a won admin's hide never lifts the photographer's own hold`() {
+        val admin = admin()
+        val (b, c, appeal) = appealed(verdict = "CANT_TELL", action = "HIDE_ALL", note = "ADMIN_HIDE")
+        val clean = heldPhoto(b, c, "ADMIN", sharpness = 50.0)
+        val own = heldPhoto(b, c, "ADMIN", sharpness = 50.0).also {
+            jdbc.update("INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at) VALUES (?, ?, 'PHOTOGRAPHER', ?, ?)",
+                b.id, it, c, NOW)
+        }
+        opened(admin, appeal)
+
+        decide(admin, appeal, "WON")
+        tickUntilClosed(c)
+
+        assertEquals(listOf("LIVE", "HIDDEN"), listOf(clean, own).map(::status))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM flag_hidden_photos WHERE photo_id = ? AND held_by = 'PHOTOGRAPHER' " +
+            "AND restored_at IS NULL AND restored_by IS NULL", Int::class.java, own), "the photographer's hold is neither lifted nor stamped")
     }
 
     @Test
@@ -318,6 +375,42 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, CLOCK, publisher,
             RelevanceConfirmer(cases, strikes), decisions)
     }
+
+    // The tick's hold and scan steps (not the whole tick: its other steps would act on other classes' rows), until the
+    // case closes; the scan finds every photo measured already, so no image is read.
+    private fun tickUntilClosed(caseId: UUID) {
+        val check = checks()
+        repeat(20) {
+            check.reconcileHolds()
+            if (row(caseId, "stage").single() == "CLOSED") return
+            check.scanTurns()
+        }
+    }
+
+    private fun checks(): RelevanceCheckService {
+        val props = RelevanceProperties(mode = RelevanceMode.AUTO_HIDE, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
+        @Suppress("UNCHECKED_CAST")
+        val provider = (Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>)
+            .also { Mockito.`when`(it.getIfAvailable()).thenReturn(Mockito.mock(RekognitionAiClient::class.java)) }
+        val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = true), provider)
+        return RelevanceCheckService(batchRepo, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
+            Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts, publisher,
+            LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"), holds, photoRepo, decisionLog,
+            ThreadPoolTaskExecutor().apply { initialize() }, Mockito.mock(RelevanceNotifier::class.java))
+    }
+
+    // A measured photo of the batch, hidden and held under the case.
+    private fun heldPhoto(b: Batch, caseId: UUID, heldBy: String, sharpness: Double): UUID {
+        val photo = id("INSERT INTO photos (event_id, photographer_id, s3_key, thumbnail_s3_key, watermark_s3_key, price_php, status) " +
+            "VALUES (?, ?, ?, 'reldecide/thumb', 'reldecide/wm', 125, 'HIDDEN')", b.event, b.photographer, "reldecide/${UUID.randomUUID()}")
+        jdbc.update("INSERT INTO relevance_photo_checks (photo_id, batch_id, measured_at, fg_sharpness, sharpness, brightness, person_conf, race_conf) " +
+            "VALUES (?, ?, ?, ?, ?, 50, 0.9, 0.9)", photo, b.id, NOW, sharpness, sharpness)
+        jdbc.update("INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at) VALUES (?, ?, ?, ?, ?)",
+            b.id, photo, heldBy, caseId, NOW)
+        return photo
+    }
+
+    private fun status(photo: UUID): String = jdbc.queryForObject("SELECT status FROM photos WHERE id = ?", String::class.java, photo)!!
 
     private fun admin(): UUID = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Adm', 'ADMIN')",
         "reldecide-admin-${UUID.randomUUID()}@test.local")
