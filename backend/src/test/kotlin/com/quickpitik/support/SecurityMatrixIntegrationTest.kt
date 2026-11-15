@@ -327,9 +327,11 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val unsure = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at) " +
             "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'CANT_TELL', 'RECORD_ONLY', 'NONE', ?, ?, ?)", unsureBatch, at, at, at, at)
         val hideBatch = "/api/v1/admin/relevance/cases/$unsure/hide-batch"
+        // RV-4.2: the case holds no payouts, so an admin is refused by its state check.
+        val endHold = "/api/v1/admin/relevance/cases/$case/end-hold"
         val actions = listOf(seen, "/api/v1/admin/relevance/cases/$case/keep-hidden",
             "/api/v1/admin/relevance/cases/$case/photos/$photo/restore", "/api/v1/admin/relevance/cases/$case/restore",
-            hideBatch, "/api/v1/admin/relevance/cases/$unsure/looks-fine")
+            hideBatch, "/api/v1/admin/relevance/cases/$unsure/looks-fine", endHold)
         val runner = register(Role.RUNNER)
         val seller = register(Role.PHOTOGRAPHER)
         val admin = adminToken()
@@ -351,6 +353,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             if (path == hideBatch) {
                 assertEquals(409, response.statusCode(), path)
                 assertTrue("RELEVANCE_ACTIONS_OFF" in response.body(), path)
+            } else if (path == endHold) {
+                assertEquals(409, response.statusCode(), path)
+                assertTrue("INVALID_STATE_TRANSITION" in response.body(), path)
             } else assertEquals(200, response.statusCode(), path)
         }
     }

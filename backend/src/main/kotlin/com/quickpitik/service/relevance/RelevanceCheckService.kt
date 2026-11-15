@@ -71,6 +71,7 @@ class RelevanceCheckService(
     @Qualifier("imageProcessing") private val imageProcessing: TaskExecutor,
     private val notifier: RelevanceNotifier,
     private val confirmer: RelevanceConfirmer,
+    private val payoutHold: RelevanceHoldService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     @Volatile private var unreadablePoolLogged = false
@@ -196,6 +197,10 @@ class RelevanceCheckService(
     internal fun applyCase(caseId: UUID, now: OffsetDateTime) {
         val raised = transactions.execute { status -> applyInTransaction(caseId, now, status) } ?: return
         raised.forEach { registry.counter("qp.relevance.alerts", "kind", it.name.lowercase()).increment() }
+        // RV-4.2 (A.8): after the commit; it acts only on a current Copied case applied in auto-hide.
+        // shortcut: a server stop between the commit and this call leaves that case without its hold; add a sweep of
+        // current auto-hide Copied cases with no hold_flag_id if that is ever seen.
+        payoutHold.place(caseId)
     }
 
     private fun applyInTransaction(caseId: UUID, now: OffsetDateTime, status: TransactionStatus): List<AlertKind> {

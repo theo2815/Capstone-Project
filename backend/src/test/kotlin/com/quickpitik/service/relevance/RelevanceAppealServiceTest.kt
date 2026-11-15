@@ -48,7 +48,8 @@ class RelevanceAppealServiceTest {
         // RV-3.2 part b: the admin's evidence look and decision change nothing either.
         assertEquals("RELEVANCE_ACTIONS_OFF", assertFailsWith<ApiException> { service.evidenceOpened(UUID.randomUUID(), id) }.code)
         assertEquals("RELEVANCE_ACTIONS_OFF", assertFailsWith<ApiException> { service.decide(UUID.randomUUID(), id, "LOST", null) }.code)
-        Mockito.verifyNoInteractions(cases, appeals, alerts, notifier, publisher, confirmer, decisionLog)
+        Mockito.verifyNoInteractions(cases, appeals, alerts, notifier, publisher, confirmer, decisionLog,
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     private fun service(mode: RelevanceMode): RelevanceAppealService {
@@ -56,6 +57,7 @@ class RelevanceAppealServiceTest {
         @Suppress("UNCHECKED_CAST")
         val provider = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = true), provider)
-        return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, Clock.systemUTC(), publisher, confirmer, decisionLog)
+        return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, Clock.systemUTC(), publisher, confirmer, decisionLog,
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 }

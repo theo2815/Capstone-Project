@@ -115,7 +115,8 @@ class RelevanceCheckServiceTest {
         val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), rekognition)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
             client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"),
-            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing, notifier, confirmer)
+            holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing, notifier, confirmer,
+            Mockito.mock(RelevanceHoldService::class.java))
     }
 
     // RV-2.3a (A.4, R6): the scan yields to upload indexing, per server copy.

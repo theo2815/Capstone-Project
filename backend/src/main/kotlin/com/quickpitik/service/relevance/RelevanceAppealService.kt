@@ -55,6 +55,7 @@ class RelevanceAppealService(
     private val publisher: ApplicationEventPublisher,
     private val confirmer: RelevanceConfirmer,
     private val decisionLog: AdminDecisionLogService,
+    private val payoutHold: RelevanceHoldService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -150,7 +151,11 @@ class RelevanceAppealService(
         val acting = case.appliedMode == AUTO && case.stage == CaseStage.APPLIED.name
         val wholeBatch = case.action == CaseAction.HIDE_ALL.name
         if (acting) {
-            if (result == AppealStatus.WON) cases.winAppeal(caseId) else confirmer.confirm(caseId, now)
+            if (result == AppealStatus.WON) {
+                cases.winAppeal(caseId)
+                // RV-4.2 (A.6, A.8): a won appeal ends a copied case's payout hold.
+                payoutHold.end(caseId, adminId, restore = true)
+            } else confirmer.confirm(caseId, now)
         }
         decisionLog.logUserDecision(adminId, appeal.photographerId, "relevance_appeal_${result.name.lowercase()}", appeal.decisionNote,
             meta = mapOf("caseId" to caseId.toString(), "appealId" to appealId.toString()))

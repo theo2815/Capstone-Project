@@ -7,6 +7,7 @@ import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.repository.FlagRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.OffsetDateTime
 import java.util.UUID
 
 // The one writer for findings the backend raises itself (NULL reporter) and for
@@ -50,6 +51,23 @@ class SystemFlagService(private val flagRepository: FlagRepository) {
         flag.note = (if (flag.note.isEmpty()) note else flag.note + "\n" + note).takeLast(NOTE_MAX)
         flagRepository.save(flag)
         return true
+    }
+
+    // RV-4.2 (A.8, O1): the automatic payout hold for copied photos, with no admin (payout_hold_by stays NULL). It takes
+    // the photographer's oldest open relevance flag (a version 1 one included) or raises the system flag, then holds it.
+    // The caller has locked the photographer's user row: user, then flag, as AdminFlagService.loadFlag.
+    @Transactional
+    fun holdPayouts(userId: UUID, note: String): UUID {
+        val reason = SystemFlagReason.BATCH_RELEVANCE_LOW
+        val id = openFlags(FlagTargetKind.USER, userId, reason).minByOrNull { it.createdAt }?.id
+            ?: flagRepository.save(Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = userId, reason = reason.wire,
+                note = note.take(NOTE_MAX))).id
+        val flag = flagRepository.findByIdForUpdate(id)!!
+        if (flag.payoutHoldAt == null) {
+            flag.payoutHoldAt = OffsetDateTime.now()
+            flagRepository.save(flag)
+        }
+        return flag.id
     }
 
     private fun openFlags(kind: FlagTargetKind, targetId: UUID, reason: SystemFlagReason): List<Flag> =

@@ -545,7 +545,7 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
             hide = RelevanceProperties.Hide(chunkSize = chunkSize))
         return AdminRelevanceService(cases, alerts, batches, props, storage, StorageProperties(), Clock.systemUTC(),
             holds, photos, decisions, tx, RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false)),
-            Mockito.mock(com.quickpitik.repository.RelevanceStrikeRepository::class.java))
+            Mockito.mock(com.quickpitik.repository.RelevanceStrikeRepository::class.java), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     private fun checkService(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, sweepMinutes: Long = 60, bigHidePhotos: Int = 500): RelevanceCheckService {
@@ -558,7 +558,8 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
             Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"),
             holds, photos, decisions, org.springframework.core.task.SyncTaskExecutor(),
             Mockito.mock(com.quickpitik.service.relevance.RelevanceNotifier::class.java),
-            Mockito.mock(com.quickpitik.service.relevance.RelevanceConfirmer::class.java))
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceConfirmer::class.java),
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     private fun batch(): Batch {

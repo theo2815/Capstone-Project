@@ -59,6 +59,7 @@ class AdminRelevanceService(
     private val transactions: TransactionTemplate,
     private val switch: RelevanceSwitch,
     private val strikes: RelevanceStrikeRepository,
+    private val payoutHold: RelevanceHoldService,
 ) {
 
     // RV-2.5b (G10): the admin closes a current Can't tell case LOOKS_FINE, in any mode. The case is then the batch's
@@ -106,6 +107,8 @@ class AdminRelevanceService(
                 case.stage == CaseStage.APPLIED.name -> {
                     if (cases.closeByAdmin(case.id, RESTORED_BY_ADMIN, adminId, now) != 1) throw wrongState()
                     logDecision(adminId, case, "relevance_restored", note)
+                    // RV-4.2: a copied case's payout hold ends with it (the case row is held by the close above).
+                    payoutHold.end(case.id, adminId, restore = true)
                 }
                 case.stage == CaseStage.CLOSED.name && case.closeReason == RESTORED_BY_ADMIN && cases.currentFor(case.batchId) == null -> Unit
                 else -> throw wrongState()
@@ -132,6 +135,18 @@ class AdminRelevanceService(
         if (case.stage != CaseStage.APPLIED.name || case.action == null || case.action == CaseAction.NONE.name) throw wrongState()
         alerts.markCaseSeen(case.id, adminId, clock.postgresTimestamp())
         logDecision(adminId, case, "relevance_kept_hidden", note)
+        return cases.caseRow(caseId)!!.toDto()
+    }
+
+    // RV-4.2 (A.8): "End hold". The case is locked first, so the order is the case, then the photographer's user row and the
+    // flag (AdminFlagService.loadFlag). The flag is resolved, which sends the existing "Payout hold lifted" note; 409 when
+    // the case holds no payouts.
+    @Transactional
+    fun endHold(adminId: UUID, caseId: UUID): RelevanceCaseRowDto {
+        val case = load(caseId)
+        cases.lockCase(case.id)
+        if (!payoutHold.end(case.id, adminId, restore = false)) throw wrongState()
+        logDecision(adminId, case, "relevance_hold_ended", null)
         return cases.caseRow(caseId)!!.toDto()
     }
 
@@ -218,6 +233,8 @@ class AdminRelevanceService(
             alerts = alerts.alertsForBatch(row.batchId).map { it.toDto() },
             confirmedAt = c.confirmedAt?.toInstant()?.toString(),
             photographerStrikes = strikes.countSince(batches.findById(row.batchId).orElseThrow().photographerId, strikesSince()),
+            payoutHoldAt = cases.liveHoldAt(caseId)?.toString(),
+            closeReason = c.closeReason,
         )
     }
 

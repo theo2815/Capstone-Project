@@ -378,7 +378,7 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         val decisions = AdminDecisionLogService(decisionRows, messages, publisher)
         val notifier = RelevanceNotifier(cases, decisions, switch, props, CLOCK, tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, CLOCK, publisher,
-            RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions)
+            RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions, Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     // The tick's hold and scan steps (not the whole tick: its other steps would act on other classes' rows), until the
@@ -402,7 +402,7 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts, publisher,
             LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"), holds, photoRepo, decisionLog,
             ThreadPoolTaskExecutor().apply { initialize() }, Mockito.mock(RelevanceNotifier::class.java),
-            Mockito.mock(RelevanceConfirmer::class.java))
+            Mockito.mock(RelevanceConfirmer::class.java), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     // A measured photo of the batch, hidden and held under the case.
