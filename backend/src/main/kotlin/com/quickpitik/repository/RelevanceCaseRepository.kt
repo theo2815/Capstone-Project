@@ -186,7 +186,8 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     @Query(value = """
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId",
                (c.hide_finished_at IS NOT NULL) AS "hideFinished", c.action AS "action",
-               (c.scan_state = 'FINISHED') AS "scanFinished"
+               (c.scan_state = 'FINISHED') AS "scanFinished",
+               CASE WHEN c.verdict_note = 'ADMIN_HIDE' THEN 'ADMIN' ELSE 'AUTO' END AS "heldBy"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE'
           AND (c.action IN ('HIDE_ALL', 'HIDE_JUNK') OR EXISTS (
@@ -283,6 +284,14 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         @Param("adminId") adminId: UUID,
         @Param("now") now: OffsetDateTime,
     ): Int
+
+    // RV-2.5b (G10): an admin hides a current auto-hide Can't tell case's whole batch. The verdict stays Can't tell.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET action = 'HIDE_ALL', verdict_note = 'ADMIN_HIDE'
+        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND verdict = 'CANT_TELL' AND action = 'NONE'
+    """, nativeQuery = true)
+    fun markAdminHide(@Param("id") id: UUID): Int
 
     // RV-2.5a: batches an admin restored since :since that have no current case and still a live automatic or admin hold
     // (a hide chunk that outran the restore, or a restore request that broke off). Read from the cases, proved per batch
@@ -397,6 +406,8 @@ interface HoldTarget {
     val hideFinished: Boolean
     val action: String
     val scanFinished: Boolean
+    // RV-2.5b: the hold kind the hide places: ADMIN for an admin's hide of a Can't tell batch, else AUTO.
+    val heldBy: String
 }
 
 // RV-2.4 (P8, A.4): the batch aliased br has no open appeal. One predicate for the due query and the scan flip.

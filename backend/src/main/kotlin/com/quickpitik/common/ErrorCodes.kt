@@ -129,6 +129,8 @@ object ErrorCodes {
     const val REPORT_NOT_FOUND = "REPORT_NOT_FOUND"
     const val RELEVANCE_CASE_NOT_FOUND = "RELEVANCE_CASE_NOT_FOUND"
     const val RELEVANCE_ALERT_NOT_FOUND = "RELEVANCE_ALERT_NOT_FOUND"
+    // RV-2.5b: an admin hide of a batch needs the effective relevance mode auto-hide.
+    const val RELEVANCE_ACTIONS_OFF = "RELEVANCE_ACTIONS_OFF"
 
     const val RATE_LIMITED = "RATE_LIMITED"
     const val PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"

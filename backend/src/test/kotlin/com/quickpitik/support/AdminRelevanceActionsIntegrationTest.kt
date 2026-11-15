@@ -337,17 +337,199 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf("APPLIED"), row(c, "stage"))
     }
 
-    private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
+    // RV-2.5b: the Can't tell actions (G10).
 
-    private fun service(chunkSize: Int): AdminRelevanceService {
-        val props = RelevanceProperties(hide = RelevanceProperties.Hide(chunkSize = chunkSize))
-        return AdminRelevanceService(cases, alerts, batches, props, storage, StorageProperties(), Clock.systemUTC(),
-            holds, photos, decisions, tx)
+    @Test
+    fun `looks fine closes a can't tell case and the same verdict later is not applied again`() {
+        val b = batch()
+        val c = case(b, "CANT_TELL")
+
+        val dto = tx.execute { service(mode = RelevanceMode.RECORD_ONLY).looksFine(adminId, c, " Fine ") }!!
+        val again = case(b, "CANT_TELL", stage = "DECIDED")
+        checkService().applyCase(again, NOW)
+
+        assertEquals(c, dto.caseId)
+        assertEquals(listOf("CLOSED", "LOOKS_FINE", adminId), row(c, "stage", "close_reason", "closed_by"))
+        assertEquals(listOf(listOf(adminId, "relevance_looks_fine", "Fine", c.toString())), decisionsOf(b))
+        assertEquals(listOf("CLOSED", "SAME_VERDICT"), row(again, "stage", "close_reason"))
+        assertNull(cases.currentFor(b.id))
     }
 
-    private fun checkService(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, sweepMinutes: Long = 60): RelevanceCheckService {
+    @Test
+    fun `looks fine is refused for a case that is not a current can't tell case, or that hides photos`() {
+        assertEquals(ErrorCodes.RELEVANCE_CASE_NOT_FOUND, assertThrows<NotFoundException> { admin.looksFine(adminId, UUID.randomUUID(), null) }.code)
+        val fits = case(batch(), "FITS")
+        val closed = case(batch(), "CANT_TELL", stage = "CLOSED", closeReason = "SUPERSEDED")
+        val hiding = batch()
+        val adminHidden = case(hiding, "CANT_TELL")
+        hide(adminHidden)
+
+        for (id in listOf(fits, closed, adminHidden)) {
+            val ex = assertThrows<ApiException> { admin.looksFine(adminId, id, null) }
+            assertEquals(HttpStatus.CONFLICT to ErrorCodes.INVALID_STATE_TRANSITION, ex.status to ex.code)
+        }
+        assertEquals(listOf("relevance_admin_hidden"), decisionsOf(hiding).map { it[1] })
+    }
+
+    @Test
+    fun `hide batch hides the whole can't tell batch with admin holds through the tick`() {
+        val b = batch()
+        val c = case(b, "CANT_TELL")
+        val photosOf = List(3) { live(b) }
+
+        hide(c, "Not a race")
+        assertEquals(listOf("LIVE"), photosOf.map(::status).distinct(), "the route only changes the case")
+        val check = checkService(bigHidePhotos = 3)
+        repeat(2) { check.reconcileHolds() }
+
+        assertEquals(listOf("APPLIED", "CANT_TELL", "HIDE_ALL", "ADMIN_HIDE", 3, "NONE", null, null),
+            row(c, "stage", "verdict", "action", "verdict_note", "hidden_photos", "scan_state", "flipped_at", "confirmed_at"))
+        assertEquals(listOf("HIDDEN"), photosOf.map(::status).distinct())
+        assertEquals(3L, holds.countLiveHolds(b.id, "ADMIN"))
+        assertEquals(0L, holds.countLiveHolds(b.id, "AUTO"))
+        // The admin's own row only: no automatic row says a machine decided.
+        assertEquals(listOf(listOf(adminId, "relevance_admin_hidden", "Not a race", c.toString())), decisionsOf(b))
+        assertEquals(listOf("BIG_HIDE"), jdbc.queryForList("SELECT kind FROM relevance_alerts WHERE batch_id = ?", String::class.java, b.id))
+        assertEquals(0L, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE photographer_id = ?", Long::class.java, b.photographer))
+    }
+
+    @Test
+    fun `hide batch is refused unless the mode is auto-hide`() {
+        val b = batch()
+        val c = case(b, "CANT_TELL")
+
+        for (mode in listOf(RelevanceMode.OFF, RelevanceMode.RECORD_ONLY)) {
+            val ex = assertThrows<ApiException> { hide(c, mode = mode) }
+            assertEquals(HttpStatus.CONFLICT to ErrorCodes.RELEVANCE_ACTIONS_OFF, ex.status to ex.code, "$mode")
+        }
+        assertEquals(listOf("NONE", null), row(c, "action", "verdict_note"))
+        assertEquals(emptyList(), decisionsOf(b))
+    }
+
+    @Test
+    fun `hide batch is refused for a case that is not a current auto-hide can't tell case`() {
+        val recordOnly = case(batch(), "CANT_TELL", mode = "RECORD_ONLY")
+        val fits = case(batch(), "FITS")
+        val closed = case(batch(), "CANT_TELL", stage = "CLOSED", closeReason = "SUPERSEDED")
+        val twice = case(batch(), "CANT_TELL").also { hide(it) }
+
+        for (id in listOf(recordOnly, fits, closed, twice)) {
+            val ex = assertThrows<ApiException> { hide(id) }
+            assertEquals(HttpStatus.CONFLICT to ErrorCodes.INVALID_STATE_TRANSITION, ex.status to ex.code)
+        }
+        assertEquals(listOf("NONE", null), row(recordOnly, "action", "verdict_note"))
+    }
+
+    @Test
+    fun `a re-check never lifts or replaces an admin hide`() {
+        for ((verdict, note) in listOf("FITS" to null, "JUNK_DUMP" to null, "CANT_TELL" to "SMALL_BATCH", "CANT_TELL" to "BAD_JSON")) {
+            val b = batch()
+            val c = case(b, "CANT_TELL")
+            hide(c)
+            val again = case(b, verdict, stage = "DECIDED", note = note)
+
+            checkService().applyCase(again, NOW)
+
+            // The failed-check row stays above the admin-hide row.
+            val expected = if (note == "BAD_JSON") "NO_RESULT" else "HELD_BY_CASE"
+            assertEquals(listOf("CLOSED", expected), row(again, "stage", "close_reason"), "$verdict $note")
+            assertEquals(listOf("APPLIED", "HIDE_ALL", "ADMIN_HIDE"), row(c, "stage", "action", "verdict_note"), "$verdict $note")
+        }
+    }
+
+    @Test
+    fun `restore lifts an admin hide completely`() {
+        val b = batch()
+        val c = case(b, "CANT_TELL")
+        val photosOf = List(2) { live(b) }
+        hide(c)
+        checkService().reconcileHolds()
+        assertEquals(listOf("HIDDEN"), photosOf.map(::status).distinct())
+
+        assertEquals(2, admin.restore(adminId, c, null).restoredPhotos)
+        checkService().reconcileHolds()
+
+        assertEquals(listOf("LIVE"), photosOf.map(::status).distinct())
+        assertEquals(0L, holds.countLiveHolds(b.id, "ADMIN"))
+        assertEquals(listOf("CLOSED", "RESTORED_BY_ADMIN"), row(c, "stage", "close_reason"))
+    }
+
+    @Test
+    fun `a single restore on an admin-hidden batch is not hidden again`() {
+        val b = batch()
+        val c = case(b, "CANT_TELL")
+        val (one, other) = List(2) { live(b) }
+        hide(c)
+        val check = checkService()
+        check.reconcileHolds()
+
+        assertEquals("LIVE", admin.restorePhoto(adminId, c, one).status)
+        check.reconcileHolds()
+
+        assertEquals(listOf("LIVE", "HIDDEN"), listOf(one, other).map(::status))
+    }
+
+    @Test
+    fun `with the mode off an admin hide is not carried out`() {
+        val b = batch()
+        val c = case(b, "CANT_TELL")
+        val photo = live(b)
+        hide(c)
+
+        checkService(mode = RelevanceMode.OFF).tick()
+
+        assertEquals("LIVE", status(photo))
+    }
+
+    @Test
+    fun `in record-only an admin hide changes no photo, hold, flag, message or e-mail`() {
+        val b = batch()
+        val c = case(b, "CANT_TELL")
+        live(b)
+        hide(c)
+        val before = untouched()
+
+        checkService(mode = RelevanceMode.RECORD_ONLY).tick()
+
+        assertEquals(before, untouched())
+    }
+
+    @Test
+    fun `an admin-hide note on a case applied in record-only is never acted on`() {
+        val b = batch()
+        val c = case(b, "CANT_TELL", mode = "RECORD_ONLY")
+        jdbc.update("UPDATE relevance_cases SET action = 'HIDE_ALL', verdict_note = 'ADMIN_HIDE' WHERE id = ?", c)
+        val photo = live(b)
+
+        checkService().reconcileHolds()
+
+        assertEquals("LIVE", status(photo))
+        assertEquals(0L, holds.countLiveHolds(b.id, "ADMIN"))
+    }
+
+    // A service built here is no Spring proxy, so its @Transactional methods run in the test's own transaction.
+    private fun hide(caseId: UUID, note: String? = null, mode: RelevanceMode = RelevanceMode.AUTO_HIDE) =
+        tx.execute { service(mode = mode).hideBatch(adminId, caseId, note) }!!
+
+    private fun live(b: Batch): UUID = id(
+        "INSERT INTO photos (event_id, photographer_id, s3_key, thumbnail_s3_key, watermark_s3_key, price_php, status) " +
+            "VALUES (?, ?, ?, 'reladmin/thumb', 'reladmin/wm', 125, 'LIVE')",
+        b.event, b.photographer, "reladmin/${UUID.randomUUID()}",
+    )
+
+    private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
+
+    private fun service(chunkSize: Int = 1000, mode: RelevanceMode = RelevanceMode.AUTO_HIDE): AdminRelevanceService {
         val props = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0),
-            restore = RelevanceProperties.Restore(sweepMinutes = sweepMinutes))
+            hide = RelevanceProperties.Hide(chunkSize = chunkSize))
+        return AdminRelevanceService(cases, alerts, batches, props, storage, StorageProperties(), Clock.systemUTC(),
+            holds, photos, decisions, tx, RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false)))
+    }
+
+    private fun checkService(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, sweepMinutes: Long = 60, bigHidePhotos: Int = 500): RelevanceCheckService {
+        val props = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0),
+            restore = RelevanceProperties.Restore(sweepMinutes = sweepMinutes),
+            alerts = RelevanceProperties.Alerts(bigHidePhotos = bigHidePhotos))
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false))
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
@@ -379,11 +561,11 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
     // A case of the batch, current (APPLIED in auto-hide) unless `stage` says otherwise.
     private fun case(
         b: Batch, verdict: String, stage: String = "APPLIED", mode: String = "AUTO_HIDE", closeReason: String? = null,
-        closedAt: OffsetDateTime = NOW,
+        closedAt: OffsetDateTime = NOW, note: String? = null,
     ): UUID = id(
-        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, copy_low, decided_at, applied_mode, action, " +
-            "applied_at, closed_at, close_reason) VALUES (?, 'QUIET', ?, 600, ?, ?, false, ?, ?, ?, ?, ?, ?)",
-        b.id, UPLOAD, stage, verdict, NOW, mode.takeIf { stage != "DECIDED" }, action(verdict).takeIf { stage != "DECIDED" },
+        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, verdict_note, copy_low, decided_at, applied_mode, action, " +
+            "applied_at, closed_at, close_reason) VALUES (?, 'QUIET', ?, 600, ?, ?, ?, false, ?, ?, ?, ?, ?, ?)",
+        b.id, UPLOAD, stage, verdict, note, NOW, mode.takeIf { stage != "DECIDED" }, action(verdict).takeIf { stage != "DECIDED" },
         NOW.takeIf { stage != "DECIDED" }, closeReason?.let { closedAt }, closeReason,
     )
 

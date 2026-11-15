@@ -194,6 +194,8 @@ class RelevanceCheckService(
             // the RULES trigger does not fire again for them (a failed re-check too: owner call, 2026-11-14).
             val reason = when {
                 verdict == CaseVerdict.CANT_TELL && case.verdictNote in FAILED_CALL -> "NO_RESULT"
+                // RV-2.5b (P21): an admin's hide of a Can't tell batch is never lifted or replaced by a re-check.
+                current?.appliedMode == RelevanceMode.AUTO_HIDE.name && current.verdictNote == ADMIN_HIDE -> "HELD_BY_CASE"
                 verdict == CaseVerdict.CANT_TELL && current?.appliedMode == RelevanceMode.AUTO_HIDE.name &&
                     current.action != CaseAction.NONE.name -> "HELD_BY_CASE"
                 // Only a record-only case is replaced by the same verdict, and only by one that can act (P18).
@@ -324,7 +326,7 @@ class RelevanceCheckService(
 
     private fun hideBatch(target: HoldTarget, now: OffsetDateTime) {
         val done = inChunks(target) {
-            hide(holds.hideChunk(target.batchId, target.caseId, target.eventId, target.photographerId, AUTO, now, props.hide.chunkSize))
+            hide(holds.hideChunk(target.batchId, target.caseId, target.eventId, target.photographerId, target.heldBy, now, props.hide.chunkSize))
         }
         if (done && !target.hideFinished) finishHide(target, now)
     }
@@ -364,10 +366,11 @@ class RelevanceCheckService(
     // skipEmpty: a junk-only hide of no photos writes nothing (it is checked again next tick, one count).
     private fun finishHide(target: HoldTarget, now: OffsetDateTime, skipEmpty: Boolean = false) {
         val raised = transactions.execute {
-            val hidden = holds.countLiveHolds(target.batchId, AUTO).toInt()
+            val hidden = holds.countLiveHolds(target.batchId, target.heldBy).toInt()
             if (skipEmpty && hidden == 0) return@execute false
             if (cases.finishHide(target.caseId, hidden, now) != 1) return@execute false
-            decisionLog.logAutomaticUserDecision(target.photographerId, "batch_auto_hidden",
+            // RV-2.5b: an admin's hide was logged by the admin's own route; an automatic row would say a machine decided.
+            if (target.heldBy == AUTO) decisionLog.logAutomaticUserDecision(target.photographerId, "batch_auto_hidden",
                 meta = mapOf("caseId" to target.caseId.toString(), "eventId" to target.eventId.toString(), "photos" to hidden))
             log.info("Relevance hide finished case={} photos={}", target.caseId, hidden)
             hidden >= props.alerts.bigHidePhotos &&
@@ -588,6 +591,8 @@ class RelevanceCheckService(
         const val RULES = "RULES"
         // The automatic hold kind in flag_hidden_photos.held_by (V106).
         const val AUTO = "AUTO"
+        // RV-2.5b: the verdict_note of a case an admin hid from the page.
+        const val ADMIN_HIDE = "ADMIN_HIDE"
         const val MODEL_COLUMN = 60
         // Verdict notes of a check that got no usable answer (plan 5.11).
         val FAILED_CALL = setOf("CALL_FAILED", "CUT_OFF", "BAD_JSON", "UNKNOWN_VALUE")
