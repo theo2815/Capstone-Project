@@ -395,7 +395,9 @@ data class PhotographerMessageDto(
     val body: String,
     val sourceDecisionId: String?,
     val createdAt: String,
-    val readAt: String?
+    val readAt: String?,
+    // RV-3.1: set only on a relevance_notice; absent on every other kind.
+    val relevanceCaseId: String? = null,
 )
 
 // Push frame on /ws/me/photographer/notifications. Built by

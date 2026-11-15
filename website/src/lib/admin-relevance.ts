@@ -75,7 +75,7 @@ export type RelevanceTab = "hidden" | "appeals" | "cant_tell" | "all";
 
 export const RELEVANCE_TABS: readonly { value: RelevanceTab; label: string; empty: string }[] = [
   { value: "hidden", label: "Hidden", empty: "No batch is hidden, or would have been hidden." },
-  { value: "appeals", label: "Appeals", empty: "No appeals yet. Appeals arrive when photographers can answer a decision." },
+  { value: "appeals", label: "Appeals", empty: "No open appeals." },
   { value: "cant_tell", label: "Can't tell", empty: "No batch is waiting on a person to judge it." },
   { value: "all", label: "All", empty: "No batch has been checked yet." },
 ];
@@ -247,3 +247,67 @@ export function sampleLabel(s: RelevanceSample): string {
   // cleanSamples means "not known to be junk": an unset cut-off leaves a rule unanswered.
   return s.blurry === null || s.dark === null || s.notRace === null ? "Not judged" : "Clean";
 }
+
+// RV-3.5: the Appeals tab. Types mirror `RelevanceAppealRowDto`. The photographer's reason is their own free text.
+export type RelevanceAppealStatus = "OPEN" | "WON" | "LOST";
+export interface RelevanceAppealRow {
+  appealId: string;
+  caseId: string;
+  batchId: string;
+  eventId: string;
+  eventName: string | null;
+  photographerName: string | null;
+  photographerHandle: string | null;
+  verdict: string | null;
+  verdictNote: string | null;
+  action: string | null;
+  caseStage: string;
+  status: RelevanceAppealStatus;
+  reason: string;
+  createdAt: string | null;
+  evidenceOpenedAt: string | null;
+  evidenceOpenedBy: string | null;
+  decidedAt: string | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+}
+
+/** Open appeals first, then the decided ones. */
+export const APPEAL_SECTIONS: readonly { status: RelevanceAppealStatus; label: string; empty: string }[] = [
+  { status: "OPEN", label: "Open", empty: RELEVANCE_TABS.find((t) => t.value === "appeals")!.empty },
+  { status: "WON", label: "Won", empty: "No appeal has been won." },
+  { status: "LOST", label: "Lost", empty: "No appeal has been lost." },
+];
+
+export const APPEAL_NOTE_MAX = 1000;
+export const APPEAL_TEXT = {
+  reason: "Photographer's reason",
+  samples: "Samples",
+  openSamples: "Open the samples",
+  openSamplesHint: "Opening the samples records that you looked at them. Won and Lost unlock after that.",
+  openFailed: "Could not record that you opened the samples. Try again.",
+  note: "Note (admins only, optional)",
+  noteHint: "The photographer never sees this note.",
+  won: "Won",
+  lost: "Lost",
+  done: { WON: "Appeal won", LOST: "Appeal lost" } as Record<"WON" | "LOST", string>,
+  decideFailed: "Could not decide the appeal — check the appeal before retrying.",
+  decisionNote: "Decision note",
+  filed: "Filed",
+  decided: "Decided",
+  // The decision is final for the photographer: each confirm says what it does (RelevanceAppealService.decide).
+  confirm: {
+    WON: {
+      title: "Appeal won",
+      confirmLabel: "Confirm won",
+      text: "Marks the appeal won and tells the photographer. A whole-batch hide becomes a junk-only hide: the full check puts the good photos back on sale as it measures them. A junk-only hide is lifted. The case does not count against the photographer. This cannot be undone.",
+    },
+    LOST: {
+      title: "Appeal lost",
+      confirmLabel: "Confirm lost",
+      text: "Marks the appeal lost and tells the photographer. The photos stay off sale. A junk dump, wrong event or copied finding is confirmed at once and counts against the photographer. This cannot be undone.",
+    },
+  } as Record<"WON" | "LOST", { title: string; confirmLabel: string; text: string }>,
+  // A case closed meanwhile (an admin restored the batch): the server records the decision only, sends no note.
+  confirmClosed: "The case is already closed, so this only records your decision. The photographer is not told. This cannot be undone.",
+} as const;
