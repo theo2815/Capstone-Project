@@ -155,6 +155,87 @@ export const bandLabel = (b: string | null) => label(BAND_LABEL, b) ?? "Not work
 /** Applied in record-only with a hide recorded: nothing was hidden. The server works it out. */
 export const isWouldHave = (row: Pick<RelevanceCaseRow, "wouldHave">) => row.wouldHave;
 
+// RV-2.6: the actions on a case. Types mirror `RelevanceHiddenPhotoDto`, `RelevanceRestoreDto`, `RelevancePhotoRestoreDto`.
+export interface RelevanceHiddenPhoto {
+  photoId: string;
+  heldBy: string;
+  hiddenAt: string | null;
+  restoredAt: string | null;
+  restoredBy: string | null;
+  status: string;
+  thumbnailUrl: string | null;
+}
+export interface RelevanceRestoreResult {
+  caseId: string;
+  restoredPhotos: number;
+}
+export interface RelevancePhotoRestoreResult {
+  photoId: string;
+  status: string;
+}
+
+export type RelevanceCaseAction = "restore" | "keep_hidden" | "looks_fine" | "hide_batch";
+
+export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; title: string; confirm: string; confirmLabel: string; done: string; failed: string }> = {
+  restore: {
+    label: "Restore batch…",
+    title: "Restore batch",
+    confirm: "Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. Photos the photographer hid stay hidden.",
+    confirmLabel: "Confirm restore",
+    done: "Batch restored",
+    failed: "Could not restore the batch — check the case before retrying.",
+  },
+  keep_hidden: {
+    label: "Keep hidden…",
+    title: "Keep hidden",
+    confirm: "Keeps the photos hidden and marks this batch's alerts seen. Nothing else changes.",
+    confirmLabel: "Confirm keep hidden",
+    done: "Kept hidden",
+    failed: "Could not keep the batch hidden — check the case before retrying.",
+  },
+  looks_fine: {
+    label: "Looks fine…",
+    title: "Looks fine",
+    confirm: "Closes this Can't tell case as looking fine. Nothing is hidden or held.",
+    confirmLabel: "Confirm looks fine",
+    done: "Marked looks fine",
+    failed: "Could not mark the case looks fine — check the case before retrying.",
+  },
+  hide_batch: {
+    label: "Hide batch…",
+    title: "Hide batch",
+    confirm: "Takes every photo of this batch off sale, a chunk at a time over the next minutes. Works only while the relevance mode is auto-hide. You can restore the batch or photos one by one.",
+    confirmLabel: "Confirm hide batch",
+    done: "Batch hide started",
+    failed: "Could not hide the batch — check the case before retrying.",
+  },
+};
+
+export const HIDDEN_PHOTOS_EMPTY = "No photo of this batch is held.";
+export const PHOTO_RESTORED = "Photo restored";
+export const PHOTO_STILL_HIDDEN = "Released here, but another hold or flag still keeps the photo hidden.";
+export const PHOTO_RESTORE_FAILED = "Could not restore the photo — check the case before retrying.";
+
+const HELD_BY_LABEL: Record<string, string> = { AUTO: "Automatic", ADMIN: "Admin", PHOTOGRAPHER: "Photographer" };
+export const heldByLabel = (h: string) => label(HELD_BY_LABEL, h) ?? h;
+
+/** A hold these routes can release: not yet restored, and not the photographer's own hide. */
+export const isReleasable = (p: RelevanceHiddenPhoto) => p.restoredAt === null && p.heldBy !== "PHOTOGRAPHER";
+
+/**
+ * The actions a case offers. Record-only never acts (P18): it offers only the batch restore, and only while a
+ * releasable hold exists (seeded rows, or what a cut-off restore left). Can't tell actions need action NONE:
+ * a Can't tell an admin hid offers the restores instead. The mode itself is not readable here; the server refuses.
+ */
+export function caseActions(detail: Pick<RelevanceCaseDetail, "case" | "stage">, hasReleasable: boolean): RelevanceCaseAction[] {
+  const row = detail.case;
+  const acting = detail.stage === "APPLIED" && row.appliedMode !== "RECORD_ONLY";
+  const hiding = row.action !== null && row.action !== "NONE";
+  if (acting && hiding) return ["restore", "keep_hidden"];
+  if (acting && row.verdict === "CANT_TELL" && row.action === "NONE") return ["looks_fine", "hide_batch"];
+  return hasReleasable ? ["restore"] : [];
+}
+
 /** Why a sample counts as junk, or that it was not judged while a cut-off is unset. */
 export function sampleLabel(s: RelevanceSample): string {
   const reasons = [s.blurry && "Blurry", s.dark && "Dark", s.notRace && "Not a race"].filter(Boolean);

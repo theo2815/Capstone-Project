@@ -42,7 +42,8 @@ beforeEach(() => {
   list = async () => ({ items: [row], total: 1, offset: 0, limit: 50 });
   one = async () => detail();
   vi.spyOn(api, "get").mockImplementation(((url: string) =>
-    url.startsWith("/admin/relevance/cases?") ? list(url) : one()) as typeof api.get);
+    url.startsWith("/admin/relevance/cases?") ? list(url)
+      : url.includes("/hidden-photos") ? Promise.resolve({ items: [], total: 0, offset: 0, limit: 100 }) : one()) as typeof api.get);
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
 const mount = () => render(<QueryClientProvider client={client}><RelevanceCases /></QueryClientProvider>);

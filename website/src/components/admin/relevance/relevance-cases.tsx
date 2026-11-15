@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { useRelevanceCase, useRelevanceCases } from "@/hooks/use-admin-relevance";
+import { useRelevanceCase, useRelevanceCases, useRelevanceHiddenPhotos } from "@/hooks/use-admin-relevance";
 import { useUrlState } from "@/hooks/use-url-state";
 import {
   RELEVANCE_TABS,
+  caseActions,
+  isReleasable,
   isWouldHave,
+  type RelevanceCaseAction,
   parseRelevanceTab,
   verdictLabel,
   type RelevanceCaseRow,
@@ -18,6 +21,7 @@ import {
 import { formatLongDate } from "@/lib/format";
 import { RelevanceTabBar } from "./relevance-tab-bar";
 import { RelevanceCaseBody, RelevanceCaseSubtitle } from "./relevance-case-drawer";
+import { RelevanceCaseActions, RelevanceHiddenPhotos } from "./relevance-case-actions";
 
 const PAGE_INCREMENT = 50;
 const kicker = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
@@ -29,6 +33,11 @@ export function RelevanceCases() {
   const list = useRelevanceCases(tab);
   const byId = useMemo(() => new Map(list.items.map((c) => [c.caseId, c])), [list.items]);
   const detail = useRelevanceCase(rowId);
+  // RV-2.6: the drawer's actions. The holds decide whether a record-only case can still be restored.
+  const held = useRelevanceHiddenPhotos(rowId);
+  const [confirming, setConfirming] = useState<RelevanceCaseAction | null>(null);
+  // shortcut: reads only the loaded pages of holds, newest first; fine while batches hold a few hundred photos.
+  const kinds = detail.data ? caseActions(detail.data, held.items.some(isReleasable)) : [];
   // A ?row= link outside the loaded page still opens: the drawer reads the case by id.
   const openRow: RelevanceCaseRow | null = rowId ? (byId.get(rowId) ?? detail.data?.case ?? null) : null;
 
@@ -75,7 +84,16 @@ export function RelevanceCases() {
       {rowId && (
         <AdminDetailDrawer
           open={true}
-          onClose={() => setRowId("")}
+          onClose={() => {
+            setConfirming(null);
+            setRowId("");
+          }}
+          escDisabled={confirming !== null}
+          actions={
+            detail.data && kinds.length > 0 && (
+              <RelevanceCaseActions detail={detail.data} kinds={kinds} confirming={confirming} onConfirming={setConfirming} />
+            )
+          }
           kicker={`Case · ${rowId}`}
           title={openRow?.eventName ?? "Case"}
           rightHeader={openRow && <AdminStatusPill label={verdictLabel(openRow.verdict)} tone={isWouldHave(openRow) ? "amber" : "slate"} />}
@@ -89,7 +107,10 @@ export function RelevanceCases() {
               <button type="button" onClick={() => void detail.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Retry</button>
             </div>
           ) : (
-            <RelevanceCaseBody detail={detail.data} />
+            <div className="space-y-10">
+              <RelevanceCaseBody detail={detail.data} />
+              <RelevanceHiddenPhotos detail={detail.data} />
+            </div>
           )}
         </AdminDetailDrawer>
       )}
