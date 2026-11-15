@@ -1,6 +1,7 @@
 package com.quickpitik.service.relevance
 
 import com.quickpitik.config.PhotoRemovalProperties
+import com.quickpitik.config.RelevanceMode
 import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.repository.PhotographerMessageRepository
 import com.quickpitik.repository.UserRepository
@@ -32,6 +33,7 @@ class RelevanceNoticeEmailListener(
     private val tx: TransactionTemplate,
     private val clock: Clock,
     private val properties: PhotoRemovalProperties,
+    private val switch: RelevanceSwitch,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -47,12 +49,17 @@ class RelevanceNoticeEmailListener(
 
     @Scheduled(fixedDelayString = "\${app.photo-removal.email-sweep-interval:PT15M}")
     fun retryUnsentEmails() {
+        // With the mode off nothing new runs, not even this query.
+        if (switch.mode == RelevanceMode.OFF) return
         val now = OffsetDateTime.now(clock)
         val cutoff = now.minus(properties.runner.emailClaimStaleAfter)
         val stale = tx.execute { messages.findStaleRelevanceEmailClaimIds(cutoff, now.minus(Duration.ofHours(24)), properties.sweepBatchSize) }.orEmpty()
         stale.forEach { id ->
             try {
-                if (tx.execute { messages.releaseStaleEmailSend(id, cutoff) } == 1) sendIfPending(id)
+                // Release a stale claim (a never-claimed note has none); sendIfPending then claims before it sends, so a
+                // copy that claimed it meanwhile, or the listener, wins and this sends nothing.
+                tx.execute { messages.releaseStaleEmailSend(id, cutoff) }
+                sendIfPending(id)
             } catch (ex: Exception) {
                 log.warn("Relevance notice email retry failed · messageId={}: {}", id, ex.message)
             }

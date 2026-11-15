@@ -310,7 +310,8 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
 
     // RV-3.1 (A.5): notes owed by auto-hide cases (P18), each with no message of its notice key yet. 'verdict': a current
     // whole-batch hide (an admin's hide of a Can't tell batch included) or a current Mixed case (a Fits case flipped to
-    // Mixed too); 'blurry': a current Fits case whose scan finished with blurry photos; 'restored': a current case flipped
+    // Mixed too); 'blurry': a current Fits case that hides nothing (not one a re-check lifted to HIDE_JUNK: its blurry
+    // photos are off sale) whose scan finished with blurry photos; 'restored': a current case flipped
     // from Mixed to Fits, or a case a re-check lifted.
     @Query(value = """
         SELECT c.id AS "caseId", br.photographer_id AS "photographerId", n.note AS "note", e.name AS "eventName",
@@ -323,7 +324,7 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         CROSS JOIN (VALUES ('verdict'), ('blurry'), ('restored')) AS n (note)
         WHERE c.applied_mode = 'AUTO_HIDE' AND (
               (n.note = 'verdict' AND c.stage = 'APPLIED' AND (c.action = 'HIDE_ALL' OR c.verdict = 'MIXED'))
-           OR (n.note = 'blurry' AND c.stage = 'APPLIED' AND c.verdict = 'FITS' AND c.scan_state = 'FINISHED' AND c.scan_blurry > 0)
+           OR (n.note = 'blurry' AND c.stage = 'APPLIED' AND c.verdict = 'FITS' AND c.action = 'NONE' AND c.scan_state = 'FINISHED' AND c.scan_blurry > 0)
            OR (n.note = 'restored' AND ((c.stage = 'APPLIED' AND c.verdict = 'FITS' AND c.verdict_note = 'SCAN_FLIP')
                                         OR (c.stage = 'CLOSED' AND c.close_reason = 'RECHECK_LIFTED'))))
           AND NOT EXISTS (SELECT 1 FROM photographer_messages m WHERE m.notice_key = 'relevance:' || c.id || ':' || n.note)

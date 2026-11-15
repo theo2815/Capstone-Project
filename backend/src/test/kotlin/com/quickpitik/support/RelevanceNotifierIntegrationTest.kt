@@ -105,8 +105,7 @@ class RelevanceNotifierIntegrationTest : PostgresIntegrationTest() {
         val note = notes(b).single()
         listOf("title", "body").forEach { assertFalse(note[it].toString().contains("MODEL-SECRET"), it) }
         val email = Mockito.mock(EmailService::class.java)
-        RelevanceNoticeEmailListener(messages, users, email, tx, Clock.systemUTC(), PhotoRemovalProperties())
-            .sendIfPending(note["id"] as UUID)
+        emailListener(email).sendIfPending(note["id"] as UUID)
         // The title and body handed to the e-mail (Kotlin and argument captors do not mix on non-null parameters).
         val sent = Mockito.mockingDetails(email).invocations.single { it.method.name == "sendRelevanceNotice" }.arguments
         assertEquals(listOf(note["title"], note["body"]), sent.slice(2..3))
@@ -140,6 +139,34 @@ class RelevanceNotifierIntegrationTest : PostgresIntegrationTest() {
 
         assertEquals(0, notes(clean).size)
         assertEquals(0, notes(scanning).size, "no note until the scan has finished")
+    }
+
+    @Test
+    fun `a fits case a re-check lifted to a junk hide gets no blurry note`() {
+        // Its blurry photos are off sale (HIDE_JUNK), so "They are still on sale" would be untrue.
+        val b = batch()
+        case(b, verdict = "FITS", action = "HIDE_JUNK", scan = "FINISHED", scanBlurry = 3)
+
+        notifier().notifyOwed()
+
+        assertEquals(0, notes(b).size)
+    }
+
+    @Test
+    fun `a note whose event never fired is e-mailed once by the sweep`() {
+        val b = batch()
+        case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        notifier().notifyOwed()
+        val note = notes(b).single()
+        // The after-commit event was lost: no claim, and the note is older than the stale-claim cutoff.
+        jdbc.update("UPDATE photographer_messages SET created_at = now() - interval '1 hour' WHERE id = ?", note["id"])
+        val email = Mockito.mock(EmailService::class.java)
+        val listener = emailListener(email)
+
+        repeat(2) { listener.retryUnsentEmails() }
+
+        assertEquals(1, Mockito.mockingDetails(email).invocations.count { it.method.name == "sendRelevanceNotice" })
+        assertNotNull(jdbc.queryForMap("SELECT email_delivered_at FROM photographer_messages WHERE id = ?", note["id"])["email_delivered_at"])
     }
 
     @Test
@@ -196,6 +223,14 @@ class RelevanceNotifierIntegrationTest : PostgresIntegrationTest() {
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false), provider)
         return RelevanceNotifier(cases, AdminDecisionLogService(decisionRows, messages, publisher), switch, props,
             Clock.fixed(NOW.toInstant(), ZoneOffset.UTC), tx, publisher)
+    }
+
+    private fun emailListener(email: EmailService): RelevanceNoticeEmailListener {
+        @Suppress("UNCHECKED_CAST")
+        val provider = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>
+        val props = RelevanceProperties(mode = RelevanceMode.AUTO_HIDE, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
+        return RelevanceNoticeEmailListener(messages, users, email, tx, Clock.systemUTC(), PhotoRemovalProperties(),
+            RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false), provider))
     }
 
     private fun batch(): Batch {

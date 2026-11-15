@@ -1,6 +1,12 @@
 package com.quickpitik.service.relevance
 
+import com.quickpitik.config.AdminProperties
+import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.PhotoRemovalProperties
+import com.quickpitik.config.RelevanceMode
+import com.quickpitik.config.RelevanceProperties
+import com.quickpitik.service.ai.RekognitionAiClient
+import org.springframework.beans.factory.ObjectProvider
 import com.quickpitik.entity.PhotographerMessage
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
@@ -28,8 +34,14 @@ class RelevanceNoticeEmailListenerTest {
     private val at = OffsetDateTime.ofInstant(now, ZoneOffset.UTC)
     private val owner = User(email = "photog@test.local", passwordHash = "x", name = "Pia", role = Role.PHOTOGRAPHER)
     private val caseId = UUID.randomUUID()
-    private val listener = RelevanceNoticeEmailListener(messages, users, email, testTransactionTemplate(),
-        Clock.fixed(now, ZoneOffset.UTC), PhotoRemovalProperties())
+    private fun listener(mode: RelevanceMode = RelevanceMode.RECORD_ONLY): RelevanceNoticeEmailListener {
+        val props = RelevanceProperties(mode = mode)
+        @Suppress("UNCHECKED_CAST")
+        val provider = mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>
+        return RelevanceNoticeEmailListener(messages, users, email, testTransactionTemplate(), Clock.fixed(now, ZoneOffset.UTC),
+            PhotoRemovalProperties(), RelevanceSwitch(props, AdminProperties(), AiApiProperties(), provider))
+    }
+    private val listener = listener()
 
     private fun message(note: String = "verdict", kind: String = "relevance_notice") = PhotographerMessage(
         photographerId = owner.id, kindWire = kind, title = "Your photos in Cebu Run are off sale", body = "The body.",
@@ -63,6 +75,27 @@ class RelevanceNoticeEmailListenerTest {
         listener.sendIfPending(m.id); listener.sendIfPending(m.id)
         listener.sendIfPending(message(kind = "photo_removal_request").id)
         verify(email, times(1)).sendRelevanceNotice(anyString(), anyString(), anyString(), anyString(), any() ?: caseId, anyBoolean())
+    }
+
+    @Test
+    fun `with the mode off the sweep touches no repository`() {
+        listener(RelevanceMode.OFF).retryUnsentEmails()
+        verifyNoInteractions(messages, users, email)
+    }
+
+    @Test
+    fun `a note whose event never fired is e-mailed once by the sweep`() {
+        val m = message()
+        val cutoff = at.minus(PhotoRemovalProperties().runner.emailClaimStaleAfter)
+        `when`(messages.findStaleRelevanceEmailClaimIds(cutoff, at.minus(Duration.ofHours(24)), 50)).thenReturn(listOf(m.id))
+        // Never claimed: there is no claim to release, and the sweep's own claim wins once.
+        `when`(messages.releaseStaleEmailSend(m.id, cutoff)).thenReturn(0)
+        `when`(messages.claimEmailSend(m.id, at)).thenReturn(1, 0)
+
+        listener.retryUnsentEmails()
+        listener.retryUnsentEmails()
+
+        verify(email, times(1)).sendRelevanceNotice("photog@test.local", "Pia", m.title!!, "The body.", caseId, true)
     }
 
     @Test
