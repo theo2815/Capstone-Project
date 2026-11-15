@@ -180,7 +180,9 @@ export function AdminRail() {
   const counts = useAdminQueueCounts();
   // RV-3.5: Photo Relevance counts its open appeals (the server's list total).
   const openAppeals = useOpenRelevanceAppealsCount();
-  const allClear = counts.total === 0;
+  // The total adds up the items that show a count here, so the open appeals join it.
+  const queueTotal = counts.total + openAppeals;
+  const allClear = queueTotal === 0;
 
   function getCountForHref(href: string): number | null {
     switch (href) {
@@ -219,7 +221,7 @@ export function AdminRail() {
             size="sm"
             tnum
           >
-            {allClear ? "Queues · all clear" : `Queues · ${counts.total} open`}
+            {allClear ? "Queues · all clear" : `Queues · ${queueTotal} open`}
           </Kicker>
           <ul className="mt-4 space-y-3">
             {queueRoutes.map((route) => (

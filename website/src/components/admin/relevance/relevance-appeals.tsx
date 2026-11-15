@@ -2,12 +2,14 @@
 
 import { useRef, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
+import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_DANGER, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useRelevanceAppealActions, useRelevanceAppeals, useRelevanceCase } from "@/hooks/use-admin-relevance";
 import { useToast } from "@/hooks/use-toast";
+import { ApiError } from "@/lib/api";
 import { serverMessage } from "@/lib/admin-flags";
 import {
   APPEAL_NOTE_MAX,
@@ -88,8 +90,10 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
   const { showToast } = useToast();
   const [opened, setOpened] = useState(false);
   const [note, setNote] = useState("");
-  // isPending reaches the button only on the next render; this stops a second click in the same tick.
+  const [confirming, setConfirming] = useState<"WON" | "LOST" | null>(null);
+  // isPending reaches the button only on the next render; these stop a second click in the same tick.
   const opening = useRef(false);
+  const deciding = useRef(false);
   const isOpen = appeal.status === "OPEN";
   const status = APPEAL_SECTIONS.find((s) => s.status === appeal.status)?.label ?? appeal.status;
 
@@ -107,6 +111,8 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
   }
 
   async function run(outcome: "WON" | "LOST") {
+    if (deciding.current) return;
+    deciding.current = true;
     try {
       await decide({ appealId: appeal.appealId, outcome, note: note.trim() || undefined });
       showToast({ kind: "info", message: `${APPEAL_TEXT.done[outcome]}: ${appeal.eventName ?? appeal.appealId}` });
@@ -114,6 +120,13 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
     } catch (error) {
       // The drawer stays open: the server's reason is shown, the note is kept for a retry.
       showToast({ kind: "error", message: serverMessage(error) ?? APPEAL_TEXT.decideFailed });
+      // Another admin opened the samples since: this admin must open them again before deciding.
+      if (error instanceof ApiError && error.errors[0]?.code === "EVIDENCE_NOT_OPENED") {
+        setOpened(false);
+        setConfirming(null);
+      }
+    } finally {
+      deciding.current = false;
     }
   }
 
@@ -122,14 +135,27 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
     <AdminDetailDrawer
       open
       onClose={onClose}
+      escDisabled={confirming !== null}
       kicker={`Appeal · ${appeal.appealId}`}
       title={appeal.eventName ?? "Appeal"}
       rightHeader={<AdminStatusPill label={status} tone={isOpen ? "amber" : "slate"} />}
       subtitle={<p className={`${labelCls} tnum`}>{who(appeal)} · {APPEAL_TEXT.filed} {formatLongDate(appeal.createdAt)}</p>}
       actions={isOpen && (
         <>
-          <button type="button" disabled={locked} onClick={() => void run("WON")} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>{APPEAL_TEXT.won}</button>
-          <button type="button" disabled={locked} onClick={() => void run("LOST")} className={`${BTN_DANGER} ${BTN_SIZE.sm}`}>{APPEAL_TEXT.lost}</button>
+          <button type="button" disabled={locked} onClick={() => setConfirming("WON")} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>{APPEAL_TEXT.won}</button>
+          <button type="button" disabled={locked} onClick={() => setConfirming("LOST")} className={`${BTN_DANGER} ${BTN_SIZE.sm}`}>{APPEAL_TEXT.lost}</button>
+          {confirming && (
+            <AdminConfirmModal
+              open
+              onClose={() => setConfirming(null)}
+              onConfirm={() => void run(confirming)}
+              title={APPEAL_TEXT.confirm[confirming].title}
+              confirmLabel={APPEAL_TEXT.confirm[confirming].confirmLabel}
+              submitting={decidePending}
+            >
+              <p className="font-sans text-sm text-ink-soft">{APPEAL_TEXT.confirm[confirming].text}</p>
+            </AdminConfirmModal>
+          )}
         </>
       )}
     >

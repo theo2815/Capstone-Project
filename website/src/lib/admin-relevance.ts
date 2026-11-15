@@ -75,7 +75,7 @@ export type RelevanceTab = "hidden" | "appeals" | "cant_tell" | "all";
 
 export const RELEVANCE_TABS: readonly { value: RelevanceTab; label: string; empty: string }[] = [
   { value: "hidden", label: "Hidden", empty: "No batch is hidden, or would have been hidden." },
-  { value: "appeals", label: "Appeals", empty: "No appeals yet. Appeals arrive when photographers can answer a decision." },
+  { value: "appeals", label: "Appeals", empty: "No open appeals." },
   { value: "cant_tell", label: "Can't tell", empty: "No batch is waiting on a person to judge it." },
   { value: "all", label: "All", empty: "No batch has been checked yet." },
 ];
@@ -295,4 +295,17 @@ export const APPEAL_TEXT = {
   decisionNote: "Decision note",
   filed: "Filed",
   decided: "Decided",
+  // The decision is final for the photographer: each confirm says what it does (RelevanceAppealService.decide).
+  confirm: {
+    WON: {
+      title: "Appeal won",
+      confirmLabel: "Confirm won",
+      text: "Marks the appeal won and tells the photographer. A whole-batch hide becomes a junk-only hide: the full check puts the good photos back on sale as it measures them. A junk-only hide is lifted. The case does not count against the photographer. This cannot be undone.",
+    },
+    LOST: {
+      title: "Appeal lost",
+      confirmLabel: "Confirm lost",
+      text: "Marks the appeal lost and tells the photographer. The photos stay off sale. A junk dump, wrong event or copied finding is confirmed at once and counts against the photographer. This cannot be undone.",
+    },
+  } as Record<"WON" | "LOST", { title: string; confirmLabel: string; text: string }>,
 } as const;

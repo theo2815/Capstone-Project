@@ -79,3 +79,10 @@ it("no unseen alerts says so", async () => {
   wrap(<RelevanceAlertsInbox />);
   expect(await screen.findByText("No unseen relevance alerts.")).toBeInTheDocument();
 });
+
+it("an appeal alert opens the Appeals tab", async () => {
+  unseen = [alert("a3", { kind: "APPEAL", wouldHave: false })];
+  wrap(<RelevanceAlertsInbox />);
+  const appeal = await screen.findByRole("listitem", { name: /New appeal/ });
+  expect(within(appeal).getByRole("link", { name: /Open case/ })).toHaveAttribute("href", "/admin/relevance?tab=appeals");
+});

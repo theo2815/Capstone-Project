@@ -40,3 +40,10 @@ it("the mobile strip shows the Photo Relevance item", () => {
   expect(link).toHaveAttribute("href", "/admin/relevance");
   expect(link).toHaveAttribute("aria-current", "page");
 });
+
+it("the rail's queue total counts the open appeals", () => {
+  appeals.open = 2;
+  render(<AdminRail />);
+  expect(screen.getByText("Queues · 2 open")).toBeInTheDocument();
+  expect(screen.queryByText("Queues · all clear")).not.toBeInTheDocument();
+});

@@ -115,9 +115,10 @@ it("a decided appeal leaves the open list", async () => {
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
   await user.type(within(d).getByLabelText("Note (admins only, optional)"), "  Real race photos  ");
   await user.click(await within(d).findByRole("button", { name: "Won" }));
+  await user.click(await screen.findByRole("button", { name: "Confirm won" }));
   expect(posts("/decide")).toEqual([["/admin/relevance/appeals/a1/decide", { outcome: "WON", note: "Real race photos" }]]);
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(await within(screen.getByRole("region", { name: "Open" })).findByText(/No appeals yet/)).toBeInTheDocument();
+  expect(await within(screen.getByRole("region", { name: "Open" })).findByText("No open appeals.")).toBeInTheDocument();
   expect(toasts()).toContain("Appeal won: Cebu City Marathon 2003");
 });
 
@@ -131,6 +132,7 @@ it("the server's refusal is shown", async () => {
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
   await user.click(await within(d).findByRole("button", { name: "Lost" }));
+  await user.click(await screen.findByRole("button", { name: "Confirm lost" }));
   await waitFor(() => expect(toasts()).toContain("Open this appeal's evidence before deciding it"));
   expect(screen.getByRole("dialog", { name: "Cebu City Marathon 2003" })).toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Open" })).getByText("Cebu City Marathon 2003")).toBeInTheDocument();
@@ -144,4 +146,58 @@ it("a refused evidence look keeps the decide buttons locked and shows the server
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
   await waitFor(() => expect(toasts()).toContain("Deciding appeals needs the relevance mode auto-hide"));
   expect(within(d).getByRole("button", { name: "Won" })).toBeDisabled();
+});
+
+it("Won and Lost send nothing until the confirm, and cancelling keeps the note", async () => {
+  const user = userEvent.setup();
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
+  await user.type(within(d).getByLabelText("Note (admins only, optional)"), "Checked");
+  await user.click(await within(d).findByRole("button", { name: "Lost" }));
+  const confirm = await screen.findByRole("dialog", { name: "Appeal lost" });
+  expect(within(confirm).getByText(/counts against the photographer\. This cannot be undone\./)).toBeInTheDocument();
+  expect(posts("/decide")).toEqual([]);
+  await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Appeal lost" })).not.toBeInTheDocument());
+  expect(posts("/decide")).toEqual([]);
+  expect(within(d).getByLabelText("Note (admins only, optional)")).toHaveValue("Checked");
+});
+
+it("two confirms in one tick send one decision", async () => {
+  const user = userEvent.setup();
+  post = async (url) => (url.endsWith("/decide") ? new Promise(() => {}) : { ...openAppeal, evidenceOpenedBy: admin.id });
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
+  await user.click(await within(d).findByRole("button", { name: "Won" }));
+  const ok = await screen.findByRole("button", { name: "Confirm won" });
+  act(() => { ok.click(); ok.click(); });
+  await waitFor(() => expect(posts("/decide")).toHaveLength(1));
+  await act(async () => {});
+  expect(posts("/decide")).toHaveLength(1);
+});
+
+it("when another admin opened the samples since, the samples can be opened again", async () => {
+  const user = userEvent.setup();
+  post = async (url) => {
+    if (url.endsWith("/decide")) throw new ApiError([{ code: "EVIDENCE_NOT_OPENED", message: "Open this appeal's evidence before deciding it" }], 409);
+    return { ...openAppeal, evidenceOpenedBy: admin.id };
+  };
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
+  await user.click(await within(d).findByRole("button", { name: "Won" }));
+  await user.click(await screen.findByRole("button", { name: "Confirm won" }));
+  expect(await within(d).findByRole("button", { name: "Open the samples" })).toBeEnabled();
+  expect(within(d).getByRole("button", { name: "Won" })).toBeDisabled();
+});
+
+it("the open count is read with one row, and the Appeals tab reads no cases", async () => {
+  fixtures.search = "tab=appeals";
+  mount();
+  await screen.findByRole("region", { name: "Open" });
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith("/admin/relevance/appeals?status=OPEN&offset=0&limit=1", expect.anything()));
+  expect(vi.mocked(api.get).mock.calls.map(([url]) => String(url)).filter((u) => u.startsWith("/admin/relevance/cases?"))).toEqual([]);
+  expect(await screen.findByRole("button", { name: /Appeals/ })).toHaveTextContent("Appeals 1");
 });

@@ -43,7 +43,8 @@ export function useRelevanceCases(tab: RelevanceTab) {
     },
     limit: PAGE_LIMIT,
     staleTime: STALE_MS,
-    enabled: session.enabled,
+    // RV-3.5: the Appeals tab lists appeals, not cases.
+    enabled: session.enabled && tab !== "appeals",
   });
 }
 
@@ -145,7 +146,17 @@ export function useRelevanceAppeals(status: RelevanceAppealStatus) {
   });
 }
 
-export const useOpenRelevanceAppealsCount = () => useRelevanceAppeals("OPEN").total;
+/** The open appeals' count for the tab chip and the rail: one row read for its total, under its own key. */
+export function useOpenRelevanceAppealsCount(): number {
+  const session = usePrivateQuerySession("ADMIN");
+  const query = useQuery({
+    queryKey: ["admin", "relevance", "appeals", "open-count", ...session.key],
+    queryFn: ({ signal }) => fetchRelevanceAppeals({ status: "OPEN", limit: 1 }, signal),
+    staleTime: STALE_MS,
+    enabled: session.enabled,
+  });
+  return query.data?.total ?? 0;
+}
 
 /** Opening the evidence and deciding. Each resolves after the server answered; the page is read again either way. */
 export function useRelevanceAppealActions() {

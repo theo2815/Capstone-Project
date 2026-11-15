@@ -150,5 +150,5 @@ it("the Appeals tab says appeals arrive with the photographer side", async () =>
   fixtures.search = "tab=appeals";
   list = async () => ({ items: [], total: 0, offset: 0, limit: 50 });
   mount();
-  expect(await screen.findByText("No appeals yet. Appeals arrive when photographers can answer a decision.")).toBeInTheDocument();
+  expect(await screen.findByText("No open appeals.")).toBeInTheDocument();
 });
