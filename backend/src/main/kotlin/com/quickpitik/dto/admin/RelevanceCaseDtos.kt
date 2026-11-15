@@ -50,6 +50,10 @@ data class RelevanceCaseDetailDto(
     // the last strikes.window-months months, across events.
     val confirmedAt: String? = null,
     val photographerStrikes: Int = 0,
+    // RV-4.2 (A.8): when the case's automatic payout hold started, while it binds (null: no live hold); then the case's
+    // close reason (null while it is current), so the page can tell why a closed case closed.
+    val payoutHoldAt: String? = null,
+    val closeReason: String? = null,
 )
 
 data class RelevanceWordDto(val word: String, val photos: Int)

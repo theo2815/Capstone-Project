@@ -800,7 +800,7 @@ class AdminPayoutService(
         )
     }
 
-    // One open relevance flag per photographer is the rule; prefer a held one if a race left two.
+    // A photographer can have several open relevance flags (RV-4.2: one per copied case); show a held one first.
     private fun pickRelevanceFlag(flags: List<Flag>): Flag? =
         flags.firstOrNull { it.payoutHoldAt != null } ?: flags.firstOrNull()
 

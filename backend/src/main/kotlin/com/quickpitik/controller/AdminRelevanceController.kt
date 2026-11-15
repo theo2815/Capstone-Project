@@ -87,6 +87,11 @@ class AdminRelevanceController(
         @Valid @RequestBody(required = false) body: RelevanceActionRequest?,
     ): RelevanceCaseRowDto = adminRelevanceService.keepHidden(principal.userId, caseId, body?.note)
 
+    // RV-4.2 (A.8): the admin ends a copied case's payout hold; the case itself stays as it is.
+    @PostMapping("/cases/{caseId}/end-hold")
+    fun endHold(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable caseId: UUID): RelevanceCaseRowDto =
+        adminRelevanceService.endHold(principal.userId, caseId)
+
     @PostMapping("/cases/{caseId}/photos/{photoId}/restore")
     fun restorePhoto(
         @AuthenticationPrincipal principal: AuthPrincipal,

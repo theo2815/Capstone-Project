@@ -403,6 +403,27 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun findConfirmDue(@Param("cutoff") cutoff: OffsetDateTime, @Param("limit") limit: Int): List<UUID>
 
+    // RV-4.2 (A.8): the case names the flag that holds its payouts, once.
+    @Modifying
+    @Query(value = "UPDATE relevance_cases SET hold_flag_id = :flagId WHERE id = :id AND hold_flag_id IS NULL", nativeQuery = true)
+    fun setHoldFlag(@Param("id") id: UUID, @Param("flagId") flagId: UUID): Int
+
+    // RV-4.2: current auto-hide Copied cases whose hold was never placed (hold_flag_id is set once and never cleared, so an
+    // ended hold is never placed again), oldest first.
+    @Query(value = """
+        SELECT id FROM relevance_cases
+        WHERE stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND verdict = 'COPIED' AND hold_flag_id IS NULL
+        ORDER BY applied_at, id LIMIT :limit
+    """, nativeQuery = true)
+    fun findHoldDue(@Param("limit") limit: Int): List<UUID>
+
+    // RV-4.2: the case's hold flag while it still holds payouts (open or escalated, held), and when the hold started.
+    @Query(value = "SELECT f.id $LIVE_HOLD", nativeQuery = true)
+    fun liveHoldFlag(@Param("id") id: UUID): UUID?
+
+    @Query(value = "SELECT f.payout_hold_at $LIVE_HOLD", nativeQuery = true)
+    fun liveHoldAt(@Param("id") id: UUID): Instant?
+
     // RV-3.2a: filing an appeal locks its case first, so two filings of the same case run one after the other.
     @Query(value = "SELECT id FROM relevance_cases WHERE id = :id FOR UPDATE", nativeQuery = true)
     fun lockCase(@Param("id") id: UUID): UUID?
@@ -490,6 +511,9 @@ private const val CASE_TAB =
     "(:tab = 'all' OR (:tab = 'hidden' AND c.action <> 'NONE') OR (:tab = 'cant_tell' AND c.verdict = 'CANT_TELL') " +
         // RV-3.2 part b: current cases with an open appeal.
         "OR (:tab = 'appeals' AND EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'OPEN')))"
+
+private const val LIVE_HOLD = "FROM relevance_cases c JOIN flags f ON f.id = c.hold_flag_id " +
+    "WHERE c.id = :id AND f.status IN ('open', 'escalated') AND f.payout_hold_at IS NOT NULL"
 
 private const val CASE_REPEAT = "(:repeat = false OR (c.confirmed_at IS NOT NULL AND (SELECT count(*) FROM relevance_strikes s " +
     "WHERE s.photographer_id = br.photographer_id AND s.confirmed_at > :since) >= 2))"

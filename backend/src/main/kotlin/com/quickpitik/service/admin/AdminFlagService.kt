@@ -251,8 +251,10 @@ class AdminFlagService(
             photoRepository.unhideRecordedForFlag(flag.id) // the same rule as stillHeldHidden, in SQL
             flagRepository.markAllRestored(flag.id, OffsetDateTime.now())
         }
-        // PE-2.2 (P11): closing a held relevance flag ends the hold; tell the photographer.
-        if (isRelevanceFlag(flag) && flag.payoutHoldAt != null) {
+        // PE-2.2 (P11): closing a held relevance flag ends the hold; tell the photographer. RV-4.2: only once no other held
+        // relevance flag of theirs is open (each copied case holds on a flag of its own), or the note would be untrue.
+        if (isRelevanceFlag(flag) && flag.payoutHoldAt != null &&
+            !flagRepository.existsOpenPayoutHold(flag.targetId, SystemFlagReason.BATCH_RELEVANCE_LOW.wire)) {
             adminDecisionLogService.pushMessage(
                 photographerId = flag.targetId,
                 kind = PhotographerMessageKind.ADMIN_MESSAGE,

@@ -220,7 +220,8 @@ class RelevanceApplyIntegrationTest : PostgresIntegrationTest() {
             Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
             org.springframework.core.task.SyncTaskExecutor(),
             Mockito.mock(com.quickpitik.service.relevance.RelevanceNotifier::class.java),
-            Mockito.mock(com.quickpitik.service.relevance.RelevanceConfirmer::class.java))
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceConfirmer::class.java),
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     // A public shared race's batch, quiet, checked and scored by version 1 for its newest upload.
