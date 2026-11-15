@@ -658,6 +658,27 @@ class RelevanceCheckServiceTest {
         assertEquals(setOf("BIG_HIDE", "COPIED"), ids.keys)
     }
 
+    // Review of PR #153: an admin hide commits between the read of the current case and its supersede close. The next
+    // tick decides again and meets the admin hide.
+    @Test
+    fun `a supersede that finds the current case's action changed applies nothing`() {
+        val c = RelevanceCase(batchId = UUID.randomUUID(), trigger = "QUIET", uploadAt = now, batchPhotos = 40,
+            stage = "DECIDED", verdict = "FITS")
+        val current = RelevanceCase(batchId = c.batchId, trigger = "QUIET", uploadAt = now, batchPhotos = 40,
+            stage = "APPLIED", verdict = "CANT_TELL").apply { appliedMode = "RECORD_ONLY"; action = "NONE" }
+        Mockito.`when`(cases.findDecided(Mockito.anyInt())).thenReturn(listOf(c))
+        Mockito.`when`(cases.findById(c.id)).thenReturn(Optional.of(c))
+        Mockito.`when`(batches.stillAllowed(c.batchId)).thenReturn(true)
+        Mockito.`when`(cases.currentFor(c.batchId)).thenReturn(current)
+        // A close guarded on the stage alone would still succeed.
+        Mockito.`when`(cases.closeCase(eqArg(current.id), anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(cases.applyCase(anyArg(), anyArg(), anyArg(), anyArg())).thenReturn(1)
+
+        service(aiEnabled = false).tick()
+
+        Mockito.verify(cases, Mockito.never()).applyCase(anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
     private fun <T> anyArg(): T = Mockito.any()
     private fun <T> eqArg(value: T): T = Mockito.eq(value) ?: value
 }

@@ -229,7 +229,7 @@ class RelevanceCheckService(
             CaseVerdict.FITS, CaseVerdict.CANT_TELL -> CaseAction.NONE
         }
         val closeReason = if (lifted) "RECHECK_LIFTED" else "SUPERSEDED"
-        if ((current != null && cases.closeCase(current.id, CaseStage.APPLIED.name, closeReason, now) != 1) ||
+        if ((current != null && cases.closeIfAction(current.id, current.action, closeReason, now) != 1) ||
             cases.applyCase(case.id, mode.name, action.name, now) != 1) {
             status.setRollbackOnly()
             return emptyList()

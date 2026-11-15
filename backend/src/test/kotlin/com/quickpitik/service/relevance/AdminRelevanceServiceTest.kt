@@ -197,7 +197,7 @@ class AdminRelevanceServiceTest {
     fun `looks fine refuses a case that is not a can't tell case`() {
         val case = appliedCase(action = "NONE").apply { verdict = "FITS" }
         // The close would succeed, so only the verdict check can refuse.
-        Mockito.doReturn(1).`when`(cases).closeByAdmin(Mockito.any() ?: case.id, Mockito.anyString(), Mockito.any() ?: case.id,
+        Mockito.doReturn(1).`when`(cases).closeLooksFine(Mockito.any() ?: case.id, Mockito.any() ?: case.id,
             Mockito.any() ?: OffsetDateTime.now())
         val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> { service.looksFine(UUID.randomUUID(), case.id, null) }
         assertEquals(com.quickpitik.common.ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
@@ -209,6 +209,18 @@ class AdminRelevanceServiceTest {
         val case = appliedCase(action = "NONE").apply { verdict = "CANT_TELL" }
         val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> { service.hideBatch(UUID.randomUUID(), case.id, null) }
         assertEquals(com.quickpitik.common.ErrorCodes.RELEVANCE_ACTIONS_OFF, ex.code)
+        Mockito.verifyNoInteractions(decisionLog)
+    }
+
+    // Review of PR #153: another admin's hide-batch commits between the read and the close.
+    @Test
+    fun `looks fine is refused when an admin hide commits between the read and the close`() {
+        val case = appliedCase(action = "NONE").apply { verdict = "CANT_TELL" }
+        // The read still shows action NONE, and a close guarded on the stage alone would still succeed.
+        Mockito.doReturn(1).`when`(cases).closeByAdmin(Mockito.any() ?: case.id, Mockito.anyString(), Mockito.any() ?: case.id,
+            Mockito.any() ?: OffsetDateTime.now())
+        val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> { service.looksFine(UUID.randomUUID(), case.id, null) }
+        assertEquals(com.quickpitik.common.ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
         Mockito.verifyNoInteractions(decisionLog)
     }
 

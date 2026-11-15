@@ -507,6 +507,27 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0L, holds.countLiveHolds(b.id, "ADMIN"))
     }
 
+    // Review of PR #153: the two closes that race an admin hide change nothing once it has committed.
+    @Test
+    fun `the looks-fine close changes nothing once an admin has hidden the case`() {
+        val c = case(batch(), "CANT_TELL")
+        hide(c)
+
+        assertEquals(0, tx.execute { cases.closeLooksFine(c, adminId, NOW) })
+
+        assertEquals(listOf("APPLIED", "HIDE_ALL", "ADMIN_HIDE", null), row(c, "stage", "action", "verdict_note", "close_reason"))
+    }
+
+    @Test
+    fun `a supersede close changes nothing once the case's action is no longer the one read`() {
+        val c = case(batch(), "CANT_TELL")
+        hide(c)
+
+        assertEquals(0, tx.execute { cases.closeIfAction(c, "NONE", "SUPERSEDED", NOW) })
+        assertEquals(listOf("APPLIED", "HIDE_ALL", null), row(c, "stage", "action", "close_reason"))
+        assertEquals(1, tx.execute { cases.closeIfAction(c, "HIDE_ALL", "SUPERSEDED", NOW) })
+    }
+
     // A service built here is no Spring proxy, so its @Transactional methods run in the test's own transaction.
     private fun hide(caseId: UUID, note: String? = null, mode: RelevanceMode = RelevanceMode.AUTO_HIDE) =
         tx.execute { service(mode = mode).hideBatch(adminId, caseId, note) }!!

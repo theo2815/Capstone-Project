@@ -285,6 +285,29 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         @Param("now") now: OffsetDateTime,
     ): Int
 
+    // RV-2.5b (G10): looks fine closes only a current Can't tell case that hides nothing, so a hide-batch that commits
+    // after the read is never closed with its admin holds left behind.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET stage = 'CLOSED', closed_at = :now, close_reason = 'LOOKS_FINE', closed_by = :adminId
+        WHERE id = :id AND stage = 'APPLIED' AND verdict = 'CANT_TELL' AND action = 'NONE'
+    """, nativeQuery = true)
+    fun closeLooksFine(@Param("id") id: UUID, @Param("adminId") adminId: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // RV-2.5b: a re-check closes the current case only while its action is still the one read, so an admin hide that
+    // commits in between is never superseded (the next tick decides again and meets it).
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET stage = 'CLOSED', closed_at = :now, close_reason = :reason
+        WHERE id = :id AND stage = 'APPLIED' AND action IS NOT DISTINCT FROM CAST(:action AS VARCHAR)
+    """, nativeQuery = true)
+    fun closeIfAction(
+        @Param("id") id: UUID,
+        @Param("action") action: String?,
+        @Param("reason") reason: String,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
     // RV-2.5b (G10): an admin hides a current auto-hide Can't tell case's whole batch. The verdict stays Can't tell.
     @Modifying
     @Query(value = """

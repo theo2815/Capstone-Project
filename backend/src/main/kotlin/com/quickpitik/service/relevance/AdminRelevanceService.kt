@@ -68,7 +68,7 @@ class AdminRelevanceService(
         if (case.stage != CaseStage.APPLIED.name || case.verdict != CaseVerdict.CANT_TELL.name || case.action != CaseAction.NONE.name) {
             throw wrongState()
         }
-        if (cases.closeByAdmin(case.id, "LOOKS_FINE", adminId, clock.postgresTimestamp()) != 1) throw wrongState()
+        if (cases.closeLooksFine(case.id, adminId, clock.postgresTimestamp()) != 1) throw wrongState()
         logDecision(adminId, case, "relevance_looks_fine", note)
         return cases.caseRow(caseId)!!.toDto()
     }
