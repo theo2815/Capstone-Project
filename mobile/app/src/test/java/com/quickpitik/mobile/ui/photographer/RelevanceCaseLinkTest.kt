@@ -1,5 +1,6 @@
 package com.quickpitik.mobile.ui.photographer
 
+import com.google.gson.Gson
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.ui.theme.ErrorRed
 import com.quickpitik.mobile.ui.theme.Fresh
@@ -74,5 +75,16 @@ class RelevanceCaseLinkTest {
             assertEquals(kind, labelAndTone.first, messageKindLabel(kind))
             assertEquals(kind, labelAndTone.second, messageToneColor(kind))
         }
+    }
+
+    // The app parses with plain Gson (RetrofitClient), which maps by field name.
+    @Test
+    fun `the case id is read from the backend json name and is null without it`() {
+        val base = """"id":"m1","kind":"relevance_notice","title":"t","body":"b","createdAt":"2026-11-16T00:00:00Z""""
+        val gson = Gson()
+        val with = gson.fromJson("""{$base,"relevanceCaseId":"3f2b9c1e"}""", PhotographerMessageDto::class.java)
+        val without = gson.fromJson("{$base}", PhotographerMessageDto::class.java)
+        assertEquals("3f2b9c1e", with.relevanceCaseId)
+        assertNull(without.relevanceCaseId)
     }
 }
