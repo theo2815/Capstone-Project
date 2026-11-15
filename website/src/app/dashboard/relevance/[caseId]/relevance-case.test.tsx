@@ -208,3 +208,10 @@ it("shows no off-sale count, which the server stamps once and does not keep up t
   await screen.findByRole("heading", { name: "Some of your photos are off sale" });
   expect(screen.queryByText("Off sale")).not.toBeInTheDocument();
 });
+
+it("a current case that hides nothing and was never hidden by a check reads as not found", async () => {
+  serverCase = { ...base, verdict: "CANT_TELL", action: "NONE" };
+  renderCase();
+  expect(await screen.findByText("Case not found")).toBeVisible();
+  expect(document.body.textContent).not.toMatch(/back on sale/);
+});

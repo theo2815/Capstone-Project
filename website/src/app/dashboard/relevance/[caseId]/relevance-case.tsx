@@ -75,6 +75,8 @@ function caseText(c: PhotographerRelevanceCase): CaseText | null {
   // RV-3.4b: a Fits case's blurry note (no appeal clock) gets its "Review and hide" grid here. With no blurry photos
   // found, no note was sent and there is nothing to tell.
   if (c.verdict === "FITS" && !c.noticeAt) return (c.scanBlurry ?? 0) > 0 ? blurryText(c) : null;
+  // Only a Fits (scan flip) or Mixed case can have had photos put back; any other case that hides nothing never hid any.
+  if (c.verdict !== "FITS" && c.verdict !== "MIXED") return null;
   return shownAgainText(c.eventName, c.verdict === "FITS" ? "scan" : null);
 }
 
