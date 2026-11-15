@@ -83,6 +83,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -97,7 +98,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import java.net.URLEncoder
 import com.quickpitik.mobile.ui.common.TermsReacceptanceDialog
+import com.quickpitik.mobile.ui.common.WEBSITE_ORIGIN
+import com.quickpitik.mobile.ui.common.openInCustomTab
 import com.quickpitik.mobile.ui.common.formatInboxDate
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -928,18 +932,8 @@ private fun InboxRow(
     onRemove: () -> Unit,
 ) {
     val isUnread = message.readAt == null
-    val toneColor = when (message.kind) {
-        "verification_approved", "unsuspended", "dispute_resolved",
-        "payout_approved", "payout_paid", "payout_report_resolved" -> Fresh
-        "verification_rejected", "verification_reset",
-        "dispute_escalated", "payout_held", "dispute_denied" -> WarningOrange
-        "suspended" -> ErrorRed
-        "admin_message", "payout_report_acknowledged" -> Ink
-        // force_edit is deliberately absent: the backend removed that admin
-        // action end-to-end, so the kind can never be emitted. Anything else
-        // new from the backend lands on Slate rather than a wrong colour.
-        else -> Slate
-    }
+    val toneColor = messageToneColor(message.kind)
+    val context = LocalContext.current
     val title = message.title?.trim().takeUnless { it.isNullOrEmpty() }
         ?: messageKindLabel(message.kind)
 
@@ -999,6 +993,19 @@ private fun InboxRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
         ) {
+            relevanceCaseLinkUrl(message)?.let { url ->
+                Text(
+                    text = "VIEW DETAILS",
+                    color = Ink,
+                    style = Typography.labelMedium,
+                    modifier = Modifier
+                        .clickable {
+                            if (isUnread) onMarkRead()
+                            openInCustomTab(context, url)
+                        }
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                )
+            }
             Text(
                 text = "REMOVE",
                 color = SlateSoft,
@@ -1011,9 +1018,30 @@ private fun InboxRow(
     }
 }
 
+internal fun messageToneColor(kind: String): Color = when (kind) {
+    "verification_approved", "unsuspended", "dispute_resolved",
+    "payout_approved", "payout_paid", "payout_report_resolved" -> Fresh
+    "verification_rejected", "verification_reset",
+    "dispute_escalated", "payout_held", "dispute_denied", "relevance_notice" -> WarningOrange
+    "suspended" -> ErrorRed
+    "admin_message", "payout_report_acknowledged" -> Ink
+    // force_edit is deliberately absent: the backend removed that admin
+    // action end-to-end, so the kind can never be emitted. Anything else
+    // new from the backend lands on Slate rather than a wrong colour.
+    else -> Slate
+}
+
+// The case page on the website, from the id alone: encoded so a stray "/" or
+// "?" cannot change the path. URLEncoder writes a space as "+", the path wants %20.
+internal fun relevanceCaseUrl(caseId: String): String =
+    "$WEBSITE_ORIGIN/dashboard/relevance/" + URLEncoder.encode(caseId, "UTF-8").replace("+", "%20")
+
+internal fun relevanceCaseLinkUrl(message: PhotographerMessageDto): String? =
+    message.relevanceCaseId?.takeUnless { it.isBlank() }?.let(::relevanceCaseUrl)
+
 // Photographer copy from the website's photographer-messages.ts; the runner
 // inbox (RunnerInboxSheet) words the refund kinds differently on purpose.
-private fun messageKindLabel(kind: String): String = when (kind) {
+internal fun messageKindLabel(kind: String): String = when (kind) {
     "verification_approved" -> "Verification approved"
     "verification_rejected" -> "Verification needs changes"
     "verification_reset" -> "Verification reset"
@@ -1029,6 +1057,7 @@ private fun messageKindLabel(kind: String): String = when (kind) {
     "payout_report_acknowledged" -> "Report acknowledged"
     "payout_report_resolved" -> "Report resolved"
     "admin_message" -> "Message from admin"
+    "relevance_notice" -> "Uploads"
     else -> kind.replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 
