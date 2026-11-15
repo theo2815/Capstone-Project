@@ -111,7 +111,7 @@ class AdminUserServiceSuspendTest {
         // Captured via thenAnswer rather than eq(): Mockito's matchers hand
         // Kotlin a null that the call site null-checks before the mock runs.
         var pushed: List<Any?> = emptyList()
-        Mockito.`when`(adminDecisionLogService.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull()))
+        Mockito.`when`(adminDecisionLogService.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull()))
             .thenAnswer {
                 pushed = it.arguments.toList()
                 PhotographerMessage(
@@ -130,7 +130,7 @@ class AdminUserServiceSuspendTest {
         assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
         assertEquals(suspendedAt, photographer.suspendedAt)
         Mockito.verify(adminDecisionLogService).logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
-        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull())
 
         assertNotNull(photographer.suspendedAt, "the account must be stamped suspended")
         assertEquals("chargeback abuse", photographer.suspensionReason)
@@ -178,7 +178,7 @@ class AdminUserServiceSuspendTest {
         assertNull(photographer.suspendedAt)
         assertNull(photographer.suspensionReason)
         Mockito.verify(adminDecisionLogService).logUserDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
-        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+        Mockito.verify(adminDecisionLogService).pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull())
         Mockito.verifyNoInteractions(refreshTokenService)
     }
 

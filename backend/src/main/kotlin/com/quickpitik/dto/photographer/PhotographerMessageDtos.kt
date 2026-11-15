@@ -20,6 +20,8 @@ data class PhotographerMessageDto(
     val createdAt: OffsetDateTime,
     val readAt: OffsetDateTime?,
     val photoRemovalRequestId: UUID? = null,
+    // RV-3.1: the Photo Relevance case a relevance_notice is about, so clients can link to it.
+    val relevanceCaseId: UUID? = null,
 )
 
 // POST /api/v1/admin/users/{id}/message — admin → photographer DM. Subject

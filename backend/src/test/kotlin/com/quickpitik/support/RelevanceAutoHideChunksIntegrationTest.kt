@@ -274,7 +274,8 @@ class RelevanceAutoHideChunksIntegrationTest : PostgresIntegrationTest() {
         return RelevanceCheckService(batches, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
             Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"),
-            holdRepo, photoRepo, decisions, org.springframework.core.task.SyncTaskExecutor())
+            holdRepo, photoRepo, decisions, org.springframework.core.task.SyncTaskExecutor(),
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceNotifier::class.java))
     }
 
     // A public shared race's batch with `photos` live photos.

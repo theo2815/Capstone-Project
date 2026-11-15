@@ -72,7 +72,7 @@ class AdminEventServiceReviewTest {
         Mockito.`when`(eventRepository.save(anyArg())).thenAnswer { it.arguments[0] }
         Mockito.`when`(decisions.logEventDecision(anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
             .thenReturn(AdminDecisionLog(adminId = adminId, targetEventId = UUID.randomUUID(), decision = "x"))
-        Mockito.`when`(decisions.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())).thenAnswer { inv ->
+        Mockito.`when`(decisions.pushMessage(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull())).thenAnswer { inv ->
             pushed += inv.getArgument<PhotographerMessageKind>(1)
             null
         }
@@ -726,7 +726,7 @@ class AdminEventServiceReviewTest {
         Mockito.verify(covers).delete("events/covers/live.jpg")
         // The race's submitter hears about it (createdBy is NULL on a race).
         assertEquals(listOf(PhotographerMessageKind.EVENT_CHANGE_APPROVED), pushed)
-        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull())
     }
 
     @Test
@@ -794,7 +794,7 @@ class AdminEventServiceReviewTest {
         assertNotNull(event.adminApprovedAt)
         assertNull(event.checkReasons)
         assertEquals(listOf(PhotographerMessageKind.EVENT_APPROVED), pushed)
-        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull())
     }
 
     @Test
@@ -864,7 +864,7 @@ class AdminEventServiceReviewTest {
         assertNull(event.checkReasons)
         Mockito.verify(decisions).logEventDecision(eqArg(adminId), eqArg(event.id), eqArg("event_same_race"), anyArg(), anyArg())
         assertEquals(listOf(PhotographerMessageKind.ADMIN_MESSAGE), pushed)
-        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull())
+        Mockito.verify(decisions).pushMessage(eqArg(photographerId), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull())
         Mockito.verify(covers).delete("events/covers/pending.jpg")
     }
 

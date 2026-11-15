@@ -410,6 +410,9 @@ app:
     restore:
       # Version 2: minutes after an admin's batch restore during which the tick finishes holds a running hide left behind.
       sweep-minutes: ${RELEVANCE_RESTORE_SWEEP_MINUTES:60}
+    appeal:
+      # Version 2: days a photographer may appeal after the note that started the clock; the note names the last day.
+      window-days: ${RELEVANCE_APPEAL_WINDOW_DAYS:14}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off

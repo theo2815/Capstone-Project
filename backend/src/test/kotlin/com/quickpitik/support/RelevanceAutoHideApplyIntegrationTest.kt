@@ -319,7 +319,8 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
             Mockito.mock(com.quickpitik.repository.RelevanceHoldRepository::class.java),
             Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
             Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
-            org.springframework.core.task.SyncTaskExecutor())
+            org.springframework.core.task.SyncTaskExecutor(),
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceNotifier::class.java))
     }
 
     // A public shared race's batch, quiet, checked and scored by version 1, whose photographer accepted `terms`.

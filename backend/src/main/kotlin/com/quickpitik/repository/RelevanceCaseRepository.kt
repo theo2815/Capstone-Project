@@ -308,6 +308,40 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         @Param("now") now: OffsetDateTime,
     ): Int
 
+    // RV-3.1 (A.5): notes owed by auto-hide cases (P18), each with no message of its notice key yet. 'verdict': a current
+    // whole-batch hide (an admin's hide of a Can't tell batch included) or a current Mixed case (a Fits case flipped to
+    // Mixed too); 'blurry': a current Fits case that hides nothing (not one a re-check lifted to HIDE_JUNK: its blurry
+    // photos are off sale) whose scan finished with blurry photos; 'restored': a current case flipped
+    // from Mixed to Fits, or a case a re-check lifted.
+    @Query(value = """
+        SELECT c.id AS "caseId", br.photographer_id AS "photographerId", n.note AS "note", e.name AS "eventName",
+               CAST(e.date AS VARCHAR) AS "eventDate", c.verdict AS "verdict", c.close_reason AS "closeReason",
+               c.batch_photos AS "batchPhotos", c.measured AS "measured", c.junk AS "junk",
+               c.scan_measured AS "scanMeasured", c.scan_blurry AS "scanBlurry"
+        FROM relevance_cases c
+        JOIN batch_relevance br ON br.id = c.batch_id
+        JOIN events e ON e.id = br.event_id
+        CROSS JOIN (VALUES ('verdict'), ('blurry'), ('restored')) AS n (note)
+        WHERE c.applied_mode = 'AUTO_HIDE' AND (
+              (n.note = 'verdict' AND c.stage = 'APPLIED' AND (c.action = 'HIDE_ALL' OR c.verdict = 'MIXED'))
+           OR (n.note = 'blurry' AND c.stage = 'APPLIED' AND c.verdict = 'FITS' AND c.action = 'NONE' AND c.scan_state = 'FINISHED' AND c.scan_blurry > 0)
+           OR (n.note = 'restored' AND ((c.stage = 'APPLIED' AND c.verdict = 'FITS' AND c.verdict_note = 'SCAN_FLIP')
+                                        OR (c.stage = 'CLOSED' AND c.close_reason = 'RECHECK_LIFTED'))))
+          AND NOT EXISTS (SELECT 1 FROM photographer_messages m WHERE m.notice_key = 'relevance:' || c.id || ':' || n.note)
+        ORDER BY c.applied_at, c.id, n.note
+        LIMIT :limit
+    """, nativeQuery = true)
+    fun findOwedNotes(@Param("limit") limit: Int): List<OwedNote>
+
+    // RV-3.1 (A.5): a verdict note starts the 14-day appeal clock, once. A second server copy that read the same case
+    // waits on the row, then changes nothing.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET notice_at = :now
+        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND notice_at IS NULL
+    """, nativeQuery = true)
+    fun stampNotice(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
     // RV-2.5b (G10): an admin hides a current auto-hide Can't tell case's whole batch. The verdict stays Can't tell.
     @Modifying
     @Query(value = """
@@ -411,6 +445,22 @@ interface SamplePhotoRow {
     val brightness: Double?
     val personConf: Double?
     val raceConf: Double?
+}
+
+// RV-3.1: one note a case owes (findOwedNotes). note is 'verdict', 'blurry' or 'restored'; eventDate is ISO.
+interface OwedNote {
+    val caseId: UUID
+    val photographerId: UUID
+    val note: String
+    val eventName: String
+    val eventDate: String
+    val verdict: String?
+    val closeReason: String?
+    val batchPhotos: Int
+    val measured: Int?
+    val junk: Int?
+    val scanMeasured: Int?
+    val scanBlurry: Int?
 }
 
 interface SamplingCase {
