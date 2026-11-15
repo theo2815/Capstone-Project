@@ -4,9 +4,9 @@ import { useRef, useState } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { BTN_GHOST, BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ApiError } from "@/lib/api";
-import { BLURRY_LABELS } from "@/lib/photographer-relevance-copy";
+import { BLURRY_LABELS, CASE_LABELS } from "@/lib/photographer-relevance-copy";
 import { usePhotographerRelevancePhotos, useSetRelevancePhotosHidden } from "@/hooks/use-photographer-relevance";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +48,7 @@ export function RelevanceBlurryReview({ caseId }: { caseId: string }) {
 
   return (
     <div className="space-y-10">
-      <section aria-label={BLURRY_LABELS.review} className="space-y-4">
+      {drawn(blurry) && <section aria-label={BLURRY_LABELS.review} className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-display text-xl font-extrabold text-ink">{BLURRY_LABELS.review}</h2>
           <div className="flex items-center gap-3">
@@ -59,11 +59,12 @@ export function RelevanceBlurryReview({ caseId }: { caseId: string }) {
           </div>
         </div>
         <FieldError id="relevance-blurry-error" message={error} />
+        <ListState list={blurry} />
         <ul className={GRID}>
           {blurry.items.map((p, i) => (
             <li key={p.photoId}>
               <Tile>
-                <button type="button" aria-pressed={selected.has(p.photoId)} aria-label={BLURRY_LABELS.select(i + 1, selected.has(p.photoId))}
+                <button type="button" aria-pressed={selected.has(p.photoId)} aria-label={BLURRY_LABELS.tile(i + 1)}
                   disabled={busy} onClick={() => toggle(p.photoId)}
                   className={cn("absolute inset-0 rounded-xl", selected.has(p.photoId) && "ring-2 ring-ink ring-offset-2 ring-offset-bone")}>
                   <Thumb url={p.thumbnailUrl} />
@@ -80,10 +81,11 @@ export function RelevanceBlurryReview({ caseId }: { caseId: string }) {
           ))}
         </ul>
         <LoadMoreButton shown={blurry.items.length} total={blurry.total} increment={50} onLoadMore={blurry.fetchNextPage} isLoading={blurry.isFetchingNextPage} />
-      </section>
+      </section>}
 
-      <section aria-label={BLURRY_LABELS.hidden} className="space-y-4">
+      {drawn(hidden) && <section aria-label={BLURRY_LABELS.hidden} className="space-y-4">
         <h2 className="font-display text-xl font-extrabold text-ink">{BLURRY_LABELS.hidden}</h2>
+        <ListState list={hidden} />
         <ul className={GRID}>
           {hidden.items.map((p, i) => (
             <li key={p.photoId}>
@@ -96,9 +98,25 @@ export function RelevanceBlurryReview({ caseId }: { caseId: string }) {
           ))}
         </ul>
         <LoadMoreButton shown={hidden.items.length} total={hidden.total} increment={50} onLoadMore={hidden.fetchNextPage} isLoading={hidden.isFetchingNextPage} />
-      </section>
+      </section>}
     </div>
   );
+}
+
+type PhotoList = ReturnType<typeof usePhotographerRelevancePhotos>;
+
+// A list is drawn while it loads, when its read failed, or when it has photos; an empty list is left out.
+const drawn = (list: PhotoList) => list.isLoading || (!!list.error && list.items.length === 0) || list.items.length > 0;
+
+function ListState({ list }: { list: PhotoList }) {
+  if (list.isLoading) return <p role="status" className="font-sans text-sm text-slate">{CASE_LABELS.loading}</p>;
+  if (list.error && list.items.length === 0) return (
+    <div role="alert" className="flex flex-wrap items-center gap-3">
+      <p className="font-sans text-sm text-ink">{CASE_LABELS.loadFailed}</p>
+      <button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>{CASE_LABELS.retry}</button>
+    </div>
+  );
+  return null;
 }
 
 function Tile({ children }: { children: React.ReactNode }) {

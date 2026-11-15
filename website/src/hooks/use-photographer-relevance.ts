@@ -62,14 +62,20 @@ export function usePhotographerRelevancePhotos(caseId: string, list: "blurry" | 
   });
 }
 
-// Hide or undo. The grids change only after the server answers: both lists are read again, on a refusal too.
+// The server takes at most 200 ids a request (PaginationParams.MAX_LIMIT).
+const HIDE_CHUNK = 200;
+
+// Hide or undo, in chunks of 200 one after the other; a refusal stops the rest. The grids change only after the server
+// answers: both lists are read again once at the end, on a refusal too.
 export function useSetRelevancePhotosHidden(caseId: string) {
   const qc = useQueryClient();
-  const refresh = () => qc.invalidateQueries({ queryKey: ["photographer", "relevance"] });
   return useMutation({
     retry: false,
-    mutationFn: ({ hide, photoIds }: { hide: boolean; photoIds: string[] }) => setMyRelevancePhotosHidden(caseId, hide, photoIds),
-    onSuccess: refresh,
-    onError: refresh,
+    mutationFn: async ({ hide, photoIds }: { hide: boolean; photoIds: string[] }) => {
+      for (let i = 0; i < photoIds.length; i += HIDE_CHUNK) {
+        await setMyRelevancePhotosHidden(caseId, hide, photoIds.slice(i, i + HIDE_CHUNK));
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["photographer", "relevance"] }),
   });
 }

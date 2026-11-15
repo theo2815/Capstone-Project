@@ -142,6 +142,7 @@ export const BLURRY_LABELS = {
   hidden: "Hidden",
   undo: "Undo",
   selected: (n: number) => `${n.toLocaleString("en-US")} selected`,
-  select: (i: number, on: boolean) => `${on ? "Deselect" : "Select"} photo ${i}`,
+  // One name per tile; aria-pressed says whether it is selected.
+  tile: (i: number) => `Photo ${i}`,
   undoPhoto: (i: number) => `Undo photo ${i}`,
 } as const;
