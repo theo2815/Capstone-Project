@@ -172,6 +172,45 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
     """, nativeQuery = true)
     fun unhideReleased(@Param("ids") ids: Collection<UUID>): Int
 
+    // RV-3.3 (G8): how many of :ids are photos of the batch (its event and photographer); the caller compares with its
+    // distinct id count.
+    @Query(value = "SELECT count(*) FROM photos WHERE id IN (:ids) AND event_id = :eventId AND photographer_id = :photographerId",
+        nativeQuery = true)
+    fun countInBatch(@Param("ids") ids: Collection<UUID>, @Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): Long
+
+    // RV-3.3: the photographer's own hide. One PHOTOGRAPHER hold per photo; a restored one is made live again, a live one
+    // is left as it is. The caller has checked every id belongs to the batch.
+    @Modifying
+    @Query(value = """
+        INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at)
+        SELECT :batchId, p.id, 'PHOTOGRAPHER', :caseId, :now FROM photos p WHERE p.id IN (:ids) ORDER BY p.id
+        ON CONFLICT (batch_id, photo_id, held_by) DO UPDATE
+            SET restored_at = NULL, restored_by = NULL, hidden_at = EXCLUDED.hidden_at, case_id = EXCLUDED.case_id
+            WHERE flag_hidden_photos.restored_at IS NOT NULL
+    """, nativeQuery = true)
+    fun holdByPhotographer(
+        @Param("batchId") batchId: UUID,
+        @Param("caseId") caseId: UUID,
+        @Param("ids") ids: Collection<UUID>,
+        @Param("now") now: OffsetDateTime,
+    ): Int
+
+    // RV-3.3: the photographer's undo stamps only their own live holds of :ids; unhideReleased then applies the restore rule.
+    @Query(value = """
+        UPDATE flag_hidden_photos SET restored_at = :now, restored_by = 'PHOTOGRAPHER'
+        WHERE batch_id = :batchId AND held_by = 'PHOTOGRAPHER' AND restored_at IS NULL AND photo_id IN (:ids)
+        RETURNING photo_id
+    """, nativeQuery = true)
+    fun restoreByPhotographer(@Param("batchId") batchId: UUID, @Param("ids") ids: Collection<UUID>, @Param("now") now: OffsetDateTime): List<UUID>
+
+    // RV-3.3: the batch's measured blurry photos still in the gallery (the predicate's blur line, as scanCounts counts
+    // them), with their preview keys, never the original's.
+    @Query(value = """
+        SELECT p.id AS "photoId", p.watermark_s3_key AS "watermarkKey", p.thumbnail_s3_key AS "thumbnailKey"
+        $BLURRY_LIVE ORDER BY p.id
+    """, countQuery = "SELECT count(*) $BLURRY_LIVE", nativeQuery = true)
+    fun pageBlurryLive(@Param("batchId") batchId: UUID, @Param("blurCutoff") blurCutoff: Double, pageable: Pageable): Page<BlurryPhotoRow>
+
     @Query(value = "SELECT count(*) FROM flag_hidden_photos WHERE batch_id = :batchId AND held_by = :heldBy AND restored_at IS NULL",
         nativeQuery = true)
     fun countLiveHolds(@Param("batchId") batchId: UUID, @Param("heldBy") heldBy: String): Long
@@ -202,6 +241,17 @@ const val JUNK_PREDICATE = """k.measured_at IS NOT NULL AND k.measure_error IS N
     COALESCE(k.fg_sharpness, k.sharpness) < :blurCutoff
     OR k.brightness < :darkCutoff
     OR (COALESCE(k.person_conf, 0) < :labelMin AND COALESCE(k.race_conf, 0) < :labelMin))"""
+
+private const val BLURRY_LIVE = """FROM relevance_photo_checks k
+        JOIN photos p ON p.id = k.photo_id AND p.status = 'LIVE' AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+        WHERE k.batch_id = :batchId AND k.measured_at IS NOT NULL AND k.measure_error IS NULL
+          AND COALESCE(k.fg_sharpness, k.sharpness) < :blurCutoff"""
+
+interface BlurryPhotoRow {
+    val photoId: UUID
+    val watermarkKey: String?
+    val thumbnailKey: String?
+}
 
 interface BatchHoldRow {
     val photoId: UUID
