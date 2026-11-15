@@ -1,6 +1,7 @@
 "use client";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { TermsReacceptanceGate } from "@/components/legal/terms-reacceptance-gate";
 
 // Photographer-only gate for /upload/[eventId]. Its sibling picker
 // (/dashboard/upload) is gated by dashboard/layout.tsx, but this route had no
@@ -14,6 +15,10 @@ export default function UploadLayout({
   children: React.ReactNode;
 }) {
   return (
-    <ProtectedRoute allowedRoles={["PHOTOGRAPHER"]}>{children}</ProtectedRoute>
+    <ProtectedRoute allowedRoles={["PHOTOGRAPHER"]}>
+      {/* Outside the dashboard layout, so it mounts the Terms prompt itself (RV-L5). */}
+      <TermsReacceptanceGate />
+      {children}
+    </ProtectedRoute>
   );
 }

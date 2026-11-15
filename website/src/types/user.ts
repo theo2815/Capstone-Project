@@ -23,6 +23,10 @@ export interface User {
   emailVerified?: boolean;
   hasGoogleAuth?: boolean;
   createdAt: string;
+  // RV-L4: the accepted Terms version, the server's current one, and whether a photographer must accept again.
+  termsVersion?: string;
+  legalCurrentVersion?: string;
+  termsAcceptanceRequired?: boolean;
 }
 
 export interface AuthResponse {

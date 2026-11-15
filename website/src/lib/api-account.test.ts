@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
-import { mintDesktopAuthCode } from "./api-account";
+import { acceptTerms, mintDesktopAuthCode } from "./api-account";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -12,5 +12,15 @@ describe("mintDesktopAuthCode", () => {
 
     expect(post).toHaveBeenCalledWith("/auth/desktop/codes", { codeChallenge: "x".repeat(43) });
     expect(result).toEqual({ code: "c".repeat(43), expiresInSeconds: 120 });
+  });
+});
+
+describe("acceptTerms", () => {
+  it("posts the version to the terms-acceptance route and returns the user", async () => {
+    const user = { id: "u-1", termsAcceptanceRequired: false };
+    const post = vi.spyOn(api, "post").mockResolvedValue(user);
+
+    expect(await acceptTerms("1.6")).toBe(user);
+    expect(post).toHaveBeenCalledWith("/me/terms-acceptance", { version: "1.6" });
   });
 });
