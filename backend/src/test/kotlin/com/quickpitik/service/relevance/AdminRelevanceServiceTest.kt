@@ -38,7 +38,8 @@ class AdminRelevanceServiceTest {
     private val decisionLog = Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java)
     private val service = AdminRelevanceService(cases, alerts, batches, props, storage, StorageProperties(),
         Clock.fixed(now, ZoneOffset.UTC), holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java),
-        decisionLog, com.quickpitik.support.testTransactionTemplate())
+        decisionLog, com.quickpitik.support.testTransactionTemplate(),
+        RelevanceSwitch(props, com.quickpitik.config.AdminProperties(flagsEnabled = true), com.quickpitik.config.AiApiProperties()))
 
     @Test
     fun `the hidden tab lists cases with an action, marked would-have in record-only`() {
@@ -189,6 +190,38 @@ class AdminRelevanceServiceTest {
         }
         assertEquals(com.quickpitik.common.ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
         Mockito.verifyNoInteractions(holds, decisionLog)
+    }
+
+    // RV-2.5b
+    @Test
+    fun `looks fine refuses a case that is not a can't tell case`() {
+        val case = appliedCase(action = "NONE").apply { verdict = "FITS" }
+        // The close would succeed, so only the verdict check can refuse.
+        Mockito.doReturn(1).`when`(cases).closeLooksFine(Mockito.any() ?: case.id, Mockito.any() ?: case.id,
+            Mockito.any() ?: OffsetDateTime.now())
+        val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> { service.looksFine(UUID.randomUUID(), case.id, null) }
+        assertEquals(com.quickpitik.common.ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verifyNoInteractions(decisionLog)
+    }
+
+    @Test
+    fun `hide batch refuses while the mode is not auto-hide`() {
+        val case = appliedCase(action = "NONE").apply { verdict = "CANT_TELL" }
+        val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> { service.hideBatch(UUID.randomUUID(), case.id, null) }
+        assertEquals(com.quickpitik.common.ErrorCodes.RELEVANCE_ACTIONS_OFF, ex.code)
+        Mockito.verifyNoInteractions(decisionLog)
+    }
+
+    // Review of PR #153: another admin's hide-batch commits between the read and the close.
+    @Test
+    fun `looks fine is refused when an admin hide commits between the read and the close`() {
+        val case = appliedCase(action = "NONE").apply { verdict = "CANT_TELL" }
+        // The read still shows action NONE, and a close guarded on the stage alone would still succeed.
+        Mockito.doReturn(1).`when`(cases).closeByAdmin(Mockito.any() ?: case.id, Mockito.anyString(), Mockito.any() ?: case.id,
+            Mockito.any() ?: OffsetDateTime.now())
+        val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> { service.looksFine(UUID.randomUUID(), case.id, null) }
+        assertEquals(com.quickpitik.common.ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+        Mockito.verifyNoInteractions(decisionLog)
     }
 
     private fun appliedCase(action: String): RelevanceCase =

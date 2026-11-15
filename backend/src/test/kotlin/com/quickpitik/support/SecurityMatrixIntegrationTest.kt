@@ -220,8 +220,15 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             "/api/v1/admin/relevance/alerts?unseen=true", "/api/v1/admin/relevance/cases/$case/hidden-photos")
         val seen = "/api/v1/admin/relevance/alerts/$alert/seen"
         // RV-2.5a: the case actions, in an order the admin's calls all succeed (restore closes the case, so it is last).
+        // RV-2.5b: a current Can't tell case of a second batch for looks-fine and hide-batch.
+        val unsureBatch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event,
+            id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')", "matrix-${UUID.randomUUID()}@test.local"))
+        val unsure = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at) " +
+            "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'CANT_TELL', 'RECORD_ONLY', 'NONE', ?, ?, ?)", unsureBatch, at, at, at, at)
+        val hideBatch = "/api/v1/admin/relevance/cases/$unsure/hide-batch"
         val actions = listOf(seen, "/api/v1/admin/relevance/cases/$case/keep-hidden",
-            "/api/v1/admin/relevance/cases/$case/photos/$photo/restore", "/api/v1/admin/relevance/cases/$case/restore")
+            "/api/v1/admin/relevance/cases/$case/photos/$photo/restore", "/api/v1/admin/relevance/cases/$case/restore",
+            hideBatch, "/api/v1/admin/relevance/cases/$unsure/looks-fine")
         val runner = register(Role.RUNNER)
         val seller = register(Role.PHOTOGRAPHER)
         val admin = adminToken()
@@ -237,7 +244,14 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             assertEquals(403, post(path, "{}", seller).statusCode(), path)
         }
         for (path in reads) assertEquals(200, get(path, admin).statusCode(), path)
-        for (path in actions) assertEquals(200, post(path, "{}", admin).statusCode(), path)
+        for (path in actions) {
+            val response = post(path, "{}", admin)
+            // The test app runs with the relevance mode off, so an admin reaches hide-batch and is refused by its mode check.
+            if (path == hideBatch) {
+                assertEquals(409, response.statusCode(), path)
+                assertTrue("RELEVANCE_ACTIONS_OFF" in response.body(), path)
+            } else assertEquals(200, response.statusCode(), path)
+        }
     }
 
     @Test

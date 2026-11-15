@@ -59,6 +59,21 @@ class AdminRelevanceController(
         @Valid @RequestBody(required = false) body: RelevanceActionRequest?,
     ): RelevanceRestoreDto = adminRelevanceService.restore(principal.userId, caseId, body?.note)
 
+    // RV-2.5b (G10): the Can't tell actions.
+    @PostMapping("/cases/{caseId}/looks-fine")
+    fun looksFine(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable caseId: UUID,
+        @Valid @RequestBody(required = false) body: RelevanceActionRequest?,
+    ): RelevanceCaseRowDto = adminRelevanceService.looksFine(principal.userId, caseId, body?.note)
+
+    @PostMapping("/cases/{caseId}/hide-batch")
+    fun hideBatch(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable caseId: UUID,
+        @Valid @RequestBody(required = false) body: RelevanceActionRequest?,
+    ): RelevanceCaseRowDto = adminRelevanceService.hideBatch(principal.userId, caseId, body?.note)
+
     @PostMapping("/cases/{caseId}/keep-hidden")
     fun keepHidden(
         @AuthenticationPrincipal principal: AuthPrincipal,

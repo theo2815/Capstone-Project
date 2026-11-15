@@ -17,6 +17,8 @@ import com.quickpitik.dto.admin.RelevanceWordDto
 import com.quickpitik.dto.admin.toDto
 import com.quickpitik.entity.CaseAction
 import com.quickpitik.entity.CaseStage
+import com.quickpitik.entity.CaseVerdict
+import com.quickpitik.config.RelevanceMode
 import com.quickpitik.entity.RelevanceCase
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
@@ -54,7 +56,36 @@ class AdminRelevanceService(
     private val photos: PhotoRepository,
     private val decisionLog: AdminDecisionLogService,
     private val transactions: TransactionTemplate,
+    private val switch: RelevanceSwitch,
 ) {
+
+    // RV-2.5b (G10): the admin closes a current Can't tell case LOOKS_FINE, in any mode. The case is then the batch's
+    // comparator (P21), so the next Can't tell is closed SAME_VERDICT. A case that hides photos (an admin hide) is
+    // refused: the admin restores it instead, so no admin hold is left with no case acting on it.
+    @Transactional
+    fun looksFine(adminId: UUID, caseId: UUID, note: String?): RelevanceCaseRowDto {
+        val case = load(caseId)
+        if (case.stage != CaseStage.APPLIED.name || case.verdict != CaseVerdict.CANT_TELL.name || case.action != CaseAction.NONE.name) {
+            throw wrongState()
+        }
+        if (cases.closeLooksFine(case.id, adminId, clock.postgresTimestamp()) != 1) throw wrongState()
+        logDecision(adminId, case, "relevance_looks_fine", note)
+        return cases.caseRow(caseId)!!.toDto()
+    }
+
+    // RV-2.5b (G10): the admin hides a current Can't tell batch, in auto-hide only. The route changes only the case
+    // (HIDE_ALL, verdict_note ADMIN_HIDE; the verdict stays Can't tell, so it never counts) and logs the decision; the
+    // hold step places ADMIN holds a chunk at a time. A case applied in record-only never acts (P18), so it is refused.
+    @Transactional
+    fun hideBatch(adminId: UUID, caseId: UUID, note: String?): RelevanceCaseRowDto {
+        val case = load(caseId)
+        if (switch.mode != RelevanceMode.AUTO_HIDE) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.RELEVANCE_ACTIONS_OFF, "Hiding a batch needs the relevance mode auto-hide")
+        }
+        if (cases.markAdminHide(case.id) != 1) throw wrongState()
+        logDecision(adminId, case, "relevance_admin_hidden", note)
+        return cases.caseRow(caseId)!!.toDto()
+    }
 
     // RV-2.5a (G10): the admin restores the batch. The current case is closed RESTORED_BY_ADMIN (it never counts and stays
     // the batch's comparator, P21) with the admin's decision; then every live automatic and admin hold of the batch is
