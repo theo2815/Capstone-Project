@@ -130,3 +130,38 @@ data class RelevanceHiddenPhotoDto(
     val status: String,
     val thumbnailUrl: String?,
 )
+
+// RV-3.2 part b (A.6): one appeal on the admin page. Admins only: the photographer's reason and the admin's decision note
+// are shown here and never to a photographer. eventName is null only if the event row itself is gone.
+data class RelevanceAppealRowDto(
+    val appealId: UUID,
+    val caseId: UUID,
+    val batchId: UUID,
+    val eventId: UUID,
+    val eventName: String?,
+    val photographerName: String?,
+    val photographerHandle: String?,
+    val verdict: String?,
+    val verdictNote: String?,
+    val action: String?,
+    val caseStage: String,
+    val status: String,
+    val reason: String,
+    val createdAt: java.time.Instant?,
+    val evidenceOpenedAt: java.time.Instant?,
+    val evidenceOpenedBy: UUID?,
+    val decidedAt: java.time.Instant?,
+    val decidedBy: UUID?,
+    val decisionNote: String?,
+)
+
+fun com.quickpitik.repository.RelevanceAppealRow.toDto() = RelevanceAppealRowDto(appealId, caseId, batchId, eventId, eventName,
+    photographerName, photographerHandle, verdict, verdictNote, action, caseStage, status, reason, createdAt, evidenceOpenedAt,
+    evidenceOpenedBy, decidedAt, decidedBy, decisionNote)
+
+// POST /api/v1/admin/relevance/appeals/{id}/decide: outcome WON or LOST; the note is kept for admins only.
+data class RelevanceDecideRequest(
+    val outcome: String = "",
+    @field:Size(max = 1000)
+    val note: String? = null,
+)

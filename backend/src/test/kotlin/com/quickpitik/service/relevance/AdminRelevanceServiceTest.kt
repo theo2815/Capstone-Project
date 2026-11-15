@@ -63,7 +63,9 @@ class AdminRelevanceServiceTest {
 
         assertEquals(listOf("CANT_TELL"), page.items.map { it.verdict })
         Mockito.verify(cases).pageCurrentCases(Mockito.eq("cant_tell") ?: "", anyPageable())
-        assertEquals(0, service.listCases("appeals", PaginationParams.of(0, 50)).items.size, "appeals come with part 2")
+        // RV-3.2 part b: the appeals tab reads the same cases query (cases with an open appeal).
+        stubTab("appeals", row(verdict = "JUNK_DUMP", action = "HIDE_ALL", appliedMode = "AUTO_HIDE"))
+        assertEquals(listOf("JUNK_DUMP"), service.listCases("appeals", PaginationParams.of(0, 50)).items.map { it.verdict })
     }
 
     @Test

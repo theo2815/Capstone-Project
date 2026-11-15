@@ -4,6 +4,7 @@ import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
+import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.repository.RelevanceAlertRepository
@@ -26,6 +27,8 @@ class RelevanceAppealServiceTest {
     private val alerts = Mockito.mock(RelevanceAlertRepository::class.java)
     private val notifier = Mockito.mock(RelevanceNotifier::class.java)
     private val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+    private val confirmer = Mockito.mock(RelevanceConfirmer::class.java)
+    private val decisionLog = Mockito.mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java)
 
     @Test
     fun `with the mode off nothing runs`() {
@@ -42,7 +45,10 @@ class RelevanceAppealServiceTest {
         val id = UUID.randomUUID()
         assertFailsWith<NotFoundException> { service.caseFor(UUID.randomUUID(), id) }
         assertEquals("NOTHING_TO_APPEAL", assertFailsWith<ConflictException> { service.file(UUID.randomUUID(), id, "mine") }.code)
-        Mockito.verifyNoInteractions(cases, appeals, alerts, notifier, publisher)
+        // RV-3.2 part b: the admin's evidence look and decision change nothing either.
+        assertEquals("RELEVANCE_ACTIONS_OFF", assertFailsWith<ApiException> { service.evidenceOpened(UUID.randomUUID(), id) }.code)
+        assertEquals("RELEVANCE_ACTIONS_OFF", assertFailsWith<ApiException> { service.decide(UUID.randomUUID(), id, "LOST", null) }.code)
+        Mockito.verifyNoInteractions(cases, appeals, alerts, notifier, publisher, confirmer, decisionLog)
     }
 
     private fun service(mode: RelevanceMode): RelevanceAppealService {
@@ -50,6 +56,6 @@ class RelevanceAppealServiceTest {
         @Suppress("UNCHECKED_CAST")
         val provider = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = true), provider)
-        return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, Clock.systemUTC(), publisher)
+        return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, Clock.systemUTC(), publisher, confirmer, decisionLog)
     }
 }

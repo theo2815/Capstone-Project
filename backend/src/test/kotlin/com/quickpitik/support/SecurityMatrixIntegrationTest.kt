@@ -199,6 +199,44 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // RV-3.2 part b: the admin's appeal routes are for admins only. The test app runs with the relevance mode off, so the
+    // list answers and the evidence look and the decision are refused by the mode check (RELEVANCE_ACTIONS_OFF).
+    @Test
+    fun `the relevance appeal admin routes are for admins only`() {
+        fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
+        val owner = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')",
+            "matrix-${UUID.randomUUID()}@test.local")
+        val event = id("INSERT INTO events (slug, name, date, location, status, visibility) VALUES (?, 'Rel Run', DATE '2003-03-04', 'Cebu', 'ACTIVE', 'PUBLIC')",
+            "matrix-${UUID.randomUUID()}")
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event, owner)
+        val at = java.time.OffsetDateTime.parse("2003-03-04T05:06:07Z")
+        val case = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at, notice_at) " +
+            "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'JUNK_DUMP', 'AUTO_HIDE', 'HIDE_ALL', ?, ?, ?, ?)", batch, at, at, at, at, at)
+        val appeal = id("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason) VALUES (?, ?, ?, 'mine')", case, batch, owner)
+        val list = "/api/v1/admin/relevance/appeals?status=OPEN"
+        val actions = listOf("/api/v1/admin/relevance/appeals/$appeal/evidence-opened" to "{}",
+            "/api/v1/admin/relevance/appeals/$appeal/decide" to """{"outcome":"LOST"}""")
+        val runner = register(Role.RUNNER)
+        val seller = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        assertEquals(401, get(list).statusCode())
+        for (token in listOf(runner, seller)) assertEquals(403, get(list, token).statusCode())
+        for ((path, body) in actions) {
+            assertEquals(401, post(path, body).statusCode(), path)
+            for (token in listOf(runner, seller)) assertEquals(403, post(path, body, token).statusCode(), path)
+        }
+        val listed = get(list, admin)
+        assertEquals(200, listed.statusCode())
+        assertTrue(appeal.toString() in listed.body())
+        for ((path, body) in actions) {
+            val response = post(path, body, admin)
+            assertEquals(409, response.statusCode(), path)
+            assertTrue("RELEVANCE_ACTIONS_OFF" in response.body(), path)
+        }
+        assertEquals("OPEN", jdbc.queryForObject("SELECT status FROM relevance_appeals WHERE id = ?", String::class.java, appeal))
+    }
+
     // RV-3.2a: a photographer's own relevance case and appeal, for photographers only. The test app runs with the
     // relevance mode off, so a photographer's read is 404 and filing is 409 before any look-up, whoever owns the case;
     // ownership with the mode on is RelevanceAppealIntegrationTest `another photographer's case is not found`.

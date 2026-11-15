@@ -356,6 +356,28 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun ownCase(@Param("caseId") caseId: UUID, @Param("photographerId") photographerId: UUID): OwnCaseRow?
 
+    // RV-3.2 part b (A.6): a won appeal lowers the current auto-hide case's target. A whole-batch hide (an admin's hide of a
+    // Can't tell batch included) becomes HIDE_JUNK with its full scan queued, so the good photos come back as they are
+    // measured and the junk stays hidden; a junk-only hide (Mixed) becomes NONE.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases SET action = CASE WHEN action = 'HIDE_ALL' THEN 'HIDE_JUNK' ELSE 'NONE' END,
+            scan_state = CASE WHEN action = 'HIDE_ALL' THEN 'QUEUED' ELSE scan_state END
+        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND action IN ('HIDE_ALL', 'HIDE_JUNK')
+    """, nativeQuery = true)
+    fun winAppeal(@Param("id") id: UUID): Int
+
+    // RV-3.2 part b (A.7): confirming stamps the case once. Only a current auto-hide whole-batch finding (junk dump, wrong
+    // event, copied) is ever confirmed; an admin's hide of a Can't tell batch never is, nor a case whose appeal was won.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases c SET confirmed_at = :now
+        WHERE c.id = :id AND c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.confirmed_at IS NULL
+          AND c.verdict IN ('JUNK_DUMP', 'WRONG_EVENT', 'COPIED') AND c.verdict_note IS DISTINCT FROM 'ADMIN_HIDE'
+          AND NOT EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'WON')
+    """, nativeQuery = true)
+    fun stampConfirmed(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
     // RV-3.2a: filing an appeal locks its case first, so two filings of the same case run one after the other.
     @Query(value = "SELECT id FROM relevance_cases WHERE id = :id FOR UPDATE", nativeQuery = true)
     fun lockCase(@Param("id") id: UUID): UUID?
@@ -434,7 +456,9 @@ private const val CASE_FROM = """FROM relevance_cases c
     LEFT JOIN photographer_settings ps ON ps.user_id = br.photographer_id"""
 
 private const val CASE_TAB =
-    "(:tab = 'all' OR (:tab = 'hidden' AND c.action <> 'NONE') OR (:tab = 'cant_tell' AND c.verdict = 'CANT_TELL'))"
+    "(:tab = 'all' OR (:tab = 'hidden' AND c.action <> 'NONE') OR (:tab = 'cant_tell' AND c.verdict = 'CANT_TELL') " +
+        // RV-3.2 part b: current cases with an open appeal.
+        "OR (:tab = 'appeals' AND EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'OPEN')))"
 
 interface RelevanceCaseRow {
     val caseId: UUID

@@ -10,7 +10,10 @@ import com.quickpitik.dto.admin.RelevanceHiddenPhotoDto
 import com.quickpitik.dto.admin.RelevancePhotoRestoreDto
 import com.quickpitik.dto.admin.RelevanceRestoreDto
 import com.quickpitik.security.AuthPrincipal
+import com.quickpitik.dto.admin.RelevanceAppealRowDto
+import com.quickpitik.dto.admin.RelevanceDecideRequest
 import com.quickpitik.service.relevance.AdminRelevanceService
+import com.quickpitik.service.relevance.RelevanceAppealService
 import jakarta.validation.Valid
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -30,6 +33,7 @@ import java.util.UUID
 @PreAuthorize("hasRole('ADMIN')")
 class AdminRelevanceController(
     private val adminRelevanceService: AdminRelevanceService,
+    private val appealService: RelevanceAppealService,
 ) {
 
     @GetMapping("/cases")
@@ -94,6 +98,25 @@ class AdminRelevanceController(
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
     ): PaginatedResponse<RelevanceHiddenPhotoDto> = adminRelevanceService.hiddenPhotos(caseId, PaginationParams.of(offset, limit))
+
+    // RV-3.2 part b (A.6): appeals. status is OPEN (the default), WON, LOST or all.
+    @GetMapping("/appeals")
+    fun appeals(
+        @RequestParam(required = false) status: String?,
+        @RequestParam(required = false) offset: Int?,
+        @RequestParam(required = false) limit: Int?,
+    ): PaginatedResponse<RelevanceAppealRowDto> = appealService.listAppeals(status ?: "OPEN", PaginationParams.of(offset, limit))
+
+    @PostMapping("/appeals/{appealId}/evidence-opened")
+    fun evidenceOpened(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable appealId: UUID): RelevanceAppealRowDto =
+        appealService.evidenceOpened(principal.userId, appealId)
+
+    @PostMapping("/appeals/{appealId}/decide")
+    fun decide(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable appealId: UUID,
+        @Valid @RequestBody body: RelevanceDecideRequest,
+    ): RelevanceAppealRowDto = appealService.decide(principal.userId, appealId, body.outcome, body.note)
 
     @PostMapping("/alerts/{alertId}/seen")
     fun markSeen(
