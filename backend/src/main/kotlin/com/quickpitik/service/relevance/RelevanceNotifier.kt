@@ -16,6 +16,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.util.UUID
 
 // RV-3.1 (part 2, A.5): the notify step of the check tick, database only. Each note an auto-hide case owes is one inbox
 // message in approved words (RelevanceNotices) with its case id, stored once under its notice key
@@ -52,16 +53,21 @@ class RelevanceNotifier(
         transactions.executeWithoutResult {
             val note = noteFor(row, appealBy(now)) ?: return@executeWithoutResult
             if (row.note == VERDICT && cases.stampNotice(row.caseId, now) != 1) return@executeWithoutResult
-            val message = decisionLog.pushMessage(row.photographerId, PhotographerMessageKind.RELEVANCE_NOTICE, note.body,
-                title = note.title, noticeKey = "relevance:${row.caseId}:${row.note}", relevanceCaseId = row.caseId)
-            publisher.publishEvent(RelevanceNoticeStored(message.id))
+            deliver(row.photographerId, row.caseId, "relevance:${row.caseId}:${row.note}", note)
             log.info("Relevance note stored case={} note={}", row.caseId, row.note)
         }
     }
 
+    // One note in the caller's transaction: stored once under its key, then e-mailed after commit. RV-3.2a's appeal
+    // notes (A.5 keys relevance:<appealId>:filed and so on) go out here too.
+    fun deliver(photographerId: UUID, caseId: UUID, noticeKey: String, note: RelevanceNote) {
+        val message = decisionLog.pushMessage(photographerId, PhotographerMessageKind.RELEVANCE_NOTICE, note.body,
+            title = note.title, noticeKey = noticeKey, relevanceCaseId = caseId)
+        publisher.publishEvent(RelevanceNoticeStored(message.id))
+    }
+
     // {appealBy}: notice_at plus the appeal window, as a date in Philippine time.
-    internal fun appealBy(noticeAt: OffsetDateTime): String =
-        RelevanceNotices.date(noticeAt.atZoneSameInstant(EventDtoMapper.PH_ZONE).toLocalDate().plusDays(props.appeal.windowDays))
+    internal fun appealBy(noticeAt: OffsetDateTime): String = RelevanceNotices.date(appealLastDay(noticeAt, props.appeal.windowDays))
 
     internal fun noteFor(row: OwedNote, appealBy: String): RelevanceNote? {
         val sample = row.measured ?: 0
@@ -88,3 +94,8 @@ class RelevanceNotifier(
         const val BLURRY = "blurry"
     }
 }
+
+// The last day to appeal: the Philippine date of notice_at plus the appeal window. The note names it (V2-T11 to V2-T14,
+// V2-T23) and filing is open through the end of it (RV-3.2a).
+fun appealLastDay(noticeAt: OffsetDateTime, windowDays: Long): LocalDate =
+    noticeAt.atZoneSameInstant(EventDtoMapper.PH_ZONE).toLocalDate().plusDays(windowDays)

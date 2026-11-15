@@ -342,6 +342,24 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun stampNotice(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
 
+    // RV-3.2a (A.6): one case of the photographer's own batch, with what the photographer may see of it: never the
+    // model's reason, the summary sent or the words read from photos.
+    @Query(value = """
+        SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", e.name AS "eventName",
+               c.verdict AS "verdict", c.action AS "action", c.stage AS "stage", c.applied_mode AS "appliedMode",
+               c.batch_photos AS "batchPhotos", c.measured AS "measured", c.junk AS "junk", c.hidden_photos AS "hiddenPhotos",
+               c.scan_measured AS "scanMeasured", c.scan_blurry AS "scanBlurry", c.notice_at AS "noticeAt"
+        FROM relevance_cases c
+        JOIN batch_relevance br ON br.id = c.batch_id
+        JOIN events e ON e.id = br.event_id
+        WHERE c.id = :caseId AND br.photographer_id = :photographerId
+    """, nativeQuery = true)
+    fun ownCase(@Param("caseId") caseId: UUID, @Param("photographerId") photographerId: UUID): OwnCaseRow?
+
+    // RV-3.2a: filing an appeal locks its case first, so two filings of the same case run one after the other.
+    @Query(value = "SELECT id FROM relevance_cases WHERE id = :id FOR UPDATE", nativeQuery = true)
+    fun lockCase(@Param("id") id: UUID): UUID?
+
     // RV-2.5b (G10): an admin hides a current auto-hide Can't tell case's whole batch. The verdict stays Can't tell.
     @Modifying
     @Query(value = """
@@ -461,6 +479,25 @@ interface OwedNote {
     val junk: Int?
     val scanMeasured: Int?
     val scanBlurry: Int?
+}
+
+// RV-3.2a: a photographer's own case (ownCase).
+interface OwnCaseRow {
+    val caseId: UUID
+    val batchId: UUID
+    val eventId: UUID
+    val eventName: String
+    val verdict: String?
+    val action: String?
+    val stage: String
+    val appliedMode: String?
+    val batchPhotos: Int
+    val measured: Int?
+    val junk: Int?
+    val hiddenPhotos: Int
+    val scanMeasured: Int?
+    val scanBlurry: Int?
+    val noticeAt: Instant?
 }
 
 interface SamplingCase {
