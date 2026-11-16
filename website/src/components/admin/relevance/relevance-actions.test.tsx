@@ -351,7 +351,7 @@ it("a case closed as restored by an admin that still holds photos offers Restore
   expect(screen.getByText("Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. A Copied case's payout hold ends too. Photos the photographer hid stay hidden.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm restore" }));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/restore");
-  await waitFor(() => expect(toasts()).toEqual(["Could not restore the batch. The case was read again: if photos are still held, Restore batch finishes the rest."]));
+  await waitFor(() => expect(toasts()).toEqual(["Could not restore the batch. The case was read again: if photos are still held, press Restore batch again to finish the rest."]));
   // Closed for another reason, or with nothing left held: no Restore.
   for (const [reason, items] of [["SUPERSEDED", [hold("p1")]], ["RESTORED_BY_ADMIN", [hold("p1", "2003-02-16T00:00:00Z")]]] as const) {
     cleanup();
@@ -375,5 +375,5 @@ it("a failed End hold with no server message says what to do next", async () => 
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "End hold" }));
   await user.click(screen.getByRole("button", { name: "Confirm end hold" }));
-  await waitFor(() => expect(toasts()).toEqual(["Could not end the hold. The case was read again: if the payout hold still shows, End hold tries again."]));
+  await waitFor(() => expect(toasts()).toEqual(["Could not end the hold. The case was read again: if the payout hold still shows, press End hold again."]));
 });
