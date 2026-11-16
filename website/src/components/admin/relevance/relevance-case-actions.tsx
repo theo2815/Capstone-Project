@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { Thumb } from "@/components/admin/flag-relevance-evidence";
 import { Kicker } from "@/components/ui/kicker";
@@ -9,6 +10,7 @@ import { useRelevanceActions, useRelevanceHiddenPhotos } from "@/hooks/use-admin
 import { useToast } from "@/hooks/use-toast";
 import { serverMessage } from "@/lib/admin-flags";
 import {
+  CONSEQUENCES_TEXT,
   HIDDEN_PHOTOS_EMPTY,
   PHOTO_RESTORED,
   PHOTO_RESTORE_FAILED,
@@ -29,6 +31,7 @@ const BTN_CLS: Record<RelevanceCaseAction, string> = {
   keep_hidden: `${BTN_GHOST} ${BTN_SIZE.sm}`,
   looks_fine: `${BTN_SECONDARY} ${BTN_SIZE.sm}`,
   hide_batch: `${BTN_DANGER} ${BTN_SIZE.sm}`,
+  end_hold: `${BTN_SECONDARY} ${BTN_SIZE.sm}`,
 };
 
 /** The drawer's action bar and its confirm. The host owns `confirming`, so the drawer can stand its ESC down. */
@@ -46,8 +49,12 @@ export function RelevanceCaseActions({
   const { runAction, isPending } = useRelevanceActions();
   const { showToast } = useToast();
   const row = detail.case;
+  // Two clicks in one tick both pass the disabled check (isPending lags a render): only the first is sent.
+  const sending = useRef(false);
 
   async function confirm(kind: RelevanceCaseAction) {
+    if (sending.current) return;
+    sending.current = true;
     const text = RELEVANCE_ACTIONS[kind];
     try {
       const result = await runAction({ kind, caseId: row.caseId });
@@ -57,6 +64,8 @@ export function RelevanceCaseActions({
     } catch (error) {
       // The confirm stays open: nothing changed, the admin can read the reason and try again.
       showToast({ kind: "error", message: serverMessage(error) ?? text.failed });
+    } finally {
+      sending.current = false;
     }
   }
 
@@ -64,6 +73,9 @@ export function RelevanceCaseActions({
   const open = confirming && kinds.includes(confirming) && RELEVANCE_ACTIONS[confirming];
   return (
     <>
+      {kinds.includes("end_hold") && (
+        <p className="basis-full sm:basis-auto sm:flex-1 font-sans text-sm text-ink-soft">{CONSEQUENCES_TEXT.endHoldHint}</p>
+      )}
       {kinds.map((kind) => (
         <button key={kind} type="button" disabled={isPending} onClick={() => onConfirming(kind)} className={BTN_CLS[kind]}>
           {RELEVANCE_ACTIONS[kind].label}

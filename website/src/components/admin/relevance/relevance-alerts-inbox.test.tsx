@@ -86,3 +86,14 @@ it("an appeal alert opens the Appeals tab", async () => {
   const appeal = await screen.findByRole("listitem", { name: /New appeal/ });
   expect(within(appeal).getByRole("link", { name: /Open case/ })).toHaveAttribute("href", "/admin/relevance?tab=appeals");
 });
+
+it("a third-case alert in the inbox links to the photographer", async () => {
+  unseen = [alert("a4", { kind: "THIRD_CASE", wouldHave: false, photos: null }), alert("a5", { kind: "THIRD_CASE", wouldHave: false, photographerHandle: null })];
+  wrap(<RelevanceAlertsInbox />);
+  const third = (await screen.findAllByRole("listitem", { name: /Third confirmed case/ }))[0]!;
+  expect(within(third).getByRole("link", { name: "Open photographer →" })).toHaveAttribute("href", "/admin/photographers/juanshots");
+  expect(within(third).getByRole("link", { name: /Open case/ })).toHaveAttribute("href", "/admin/relevance?tab=all&row=c1");
+  // No handle, no photographer page to link to.
+  const noHandle = screen.getAllByRole("listitem")[1]!;
+  expect(within(noHandle).queryByRole("link", { name: "Open photographer →" })).not.toBeInTheDocument();
+});

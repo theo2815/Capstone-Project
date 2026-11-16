@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ALERTS_EMPTY, ALERT_SEEN_FAILED, WOULD_HAVE_LABEL, alertKindLabel, type RelevanceAlert } from "@/lib/admin-relevance";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { PhotographerLink } from "./relevance-case-drawer";
 
 const metaCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum";
 const linkCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors";
@@ -83,6 +84,7 @@ function AlertRow({ alert }: { alert: RelevanceAlert }) {
             Open case →
           </Link>
         )}
+        {alert.kind === "THIRD_CASE" && alert.photographerHandle && <PhotographerLink handle={alert.photographerHandle} className={linkCls} />}
         <button type="button" disabled={pending} onClick={handleSeen} aria-label={`Mark seen: ${kind} · ${alert.eventName}`} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
           Mark seen
         </button>

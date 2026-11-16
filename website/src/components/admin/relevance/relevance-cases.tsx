@@ -8,6 +8,7 @@ import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useOpenRelevanceAppealsCount, useRelevanceCase, useRelevanceCases, useRelevanceHiddenPhotos } from "@/hooks/use-admin-relevance";
 import { useUrlState } from "@/hooks/use-url-state";
 import {
+  CONSEQUENCES_TEXT,
   RELEVANCE_TABS,
   caseActions,
   isReleasable,
@@ -31,9 +32,12 @@ const kicker = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:te
 export function RelevanceCases() {
   const [tab, setTab] = useUrlState<RelevanceTab>("tab", "hidden", { parse: parseRelevanceTab });
   const [rowId, setRowId] = useUrlState<string>("row", "");
+  // RV-4.3: "Repeat cases" lives on the All tab only (`?repeat=1`).
+  const [repeatParam, setRepeatParam] = useUrlState<string>("repeat", "");
+  const repeat = tab === "all" && repeatParam === "1";
   const appeals = tab === "appeals";
   const openAppeals = useOpenRelevanceAppealsCount();
-  const list = useRelevanceCases(tab);
+  const list = useRelevanceCases(tab, repeat);
   const byId = useMemo(() => new Map(list.items.map((c) => [c.caseId, c])), [list.items]);
   // RV-3.5: on the Appeals tab `?row=` names an appeal, which RelevanceAppeals reads itself.
   const caseId = appeals ? "" : rowId;
@@ -52,11 +56,26 @@ export function RelevanceCases() {
         tab={tab}
         counts={{ appeals: openAppeals }}
         onChange={(next) => {
-          // A new view starts with no case open.
+          // A new view starts with no case open and no filter.
           setRowId("");
+          setRepeatParam("");
           setTab(next);
         }}
       />
+
+      {tab === "all" && (
+        <button
+          type="button"
+          aria-pressed={repeat}
+          onClick={() => {
+            setRowId("");
+            setRepeatParam(repeat ? "" : "1");
+          }}
+          className={`${kicker} rounded-full border px-4 py-2 transition-colors ${repeat ? "border-ink bg-ink/5 text-ink" : "border-line text-slate-soft hover:text-ink"}`}
+        >
+          {CONSEQUENCES_TEXT.repeat}
+        </button>
+      )}
 
       {appeals ? (
         <RelevanceAppeals appealId={rowId} onOpen={setRowId} />
@@ -68,7 +87,7 @@ export function RelevanceCases() {
           <button type="button" onClick={list.refetch} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Retry</button>
         </div>
       ) : list.items.length === 0 ? (
-        <p className="font-sans text-sm text-slate-soft">{RELEVANCE_TABS.find((t) => t.value === tab)?.empty}</p>
+        <p className="font-sans text-sm text-slate-soft">{repeat ? CONSEQUENCES_TEXT.repeatEmpty : RELEVANCE_TABS.find((t) => t.value === tab)?.empty}</p>
       ) : (
         <>
           <ul className="space-y-3">
