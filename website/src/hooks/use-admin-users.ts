@@ -105,7 +105,9 @@ export function useAdminUserActions() {
       qc.setQueryData<AdminUserRow[]>(adminUserKeys.list(owner), (rows) =>
         rows?.map((existing) => existing.userId === id ? row : existing));
       qc.setQueryData<AdminUserDetail | null>(adminUserKeys.detail(owner, id), (detail) =>
-        detail ? { ...row, decisionLog: detail.decisionLog } : detail);
+        detail ? { ...row, decisionLog: detail.decisionLog,
+          // A list row never carries the withdrawal (RV-L7); only an explicit null from the server clears it.
+          relevanceConsentWithdrawnAt: row.relevanceConsentWithdrawnAt === undefined ? detail.relevanceConsentWithdrawnAt : row.relevanceConsentWithdrawnAt } : detail);
       // The mutation returns a row, not history or settings. Refetch those
       // resources; never manufacture a decision or timestamp in the browser.
       if (!batch) refresh(owner);

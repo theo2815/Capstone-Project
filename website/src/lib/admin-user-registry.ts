@@ -39,6 +39,8 @@ export interface AdminUserRow {
   suspensionReason: string | null;
   /** Pending and held after an admin reset or reject; only an admin releases it. */
   adminHold?: boolean;
+  /** RV-L7: when the photographer withdrew the consent to automatic hides and holds; only the detail carries it. */
+  relevanceConsentWithdrawnAt?: string | null;
   settingsSnapshot: PhotographerSettingsSnapshot | null;
 }
 
