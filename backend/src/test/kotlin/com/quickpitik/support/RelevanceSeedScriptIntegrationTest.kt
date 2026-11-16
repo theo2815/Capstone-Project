@@ -10,10 +10,14 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.RelevanceAlertRepository
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.service.relevance.AnthropicClient
+import com.quickpitik.service.relevance.RelevanceConfirmer
+import com.quickpitik.service.relevance.RelevanceHoldService
+import com.quickpitik.service.relevance.RelevanceNotifier
 import com.quickpitik.service.relevance.RelevanceCheckService
 import com.quickpitik.service.relevance.RelevanceMeasurer
 import com.quickpitik.service.relevance.RelevanceSwitch
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -43,12 +47,30 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var cases: RelevanceCaseRepository
     @Autowired private lateinit var alerts: RelevanceAlertRepository
     @Autowired private lateinit var events: EventRepository
+    @Autowired private lateinit var holds: com.quickpitik.repository.RelevanceHoldRepository
+    @Autowired private lateinit var photos: com.quickpitik.repository.PhotoRepository
+    @Autowired private lateinit var strikes: com.quickpitik.repository.RelevanceStrikeRepository
+    @Autowired private lateinit var users: com.quickpitik.repository.UserRepository
+    @Autowired private lateinit var decisions: com.quickpitik.service.admin.AdminDecisionLogService
+    @Autowired private lateinit var systemFlags: com.quickpitik.service.admin.SystemFlagService
+    @Autowired private lateinit var adminFlags: com.quickpitik.service.admin.AdminFlagService
+    private val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
 
     @BeforeEach
     fun copyScripts() {
         for (script in listOf(SEED, CLEANUP)) {
             postgres.copyFileToContainer(MountableFile.forHostPath(Path.of("scripts/$script").toAbsolutePath()), "/tmp/$script")
         }
+    }
+
+    // Leaves no seeded payout hold behind, even after a failed test: a later clean-up in this shared database would refuse.
+    @AfterEach
+    fun endSeededHolds() {
+        val held = jdbc.queryForList("SELECT c.id FROM relevance_cases c JOIN flags f ON f.id = c.hold_flag_id " +
+            "WHERE c.trigger = 'SEEDED' AND f.status IN ('open', 'escalated') AND f.payout_hold_at IS NOT NULL", UUID::class.java)
+        if (held.isEmpty()) return
+        val admin = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Adm', 'ADMIN')", "relseed-admin-${UUID.randomUUID()}@test.local")
+        held.forEach { c -> tx.execute { hold().end(c, admin, restore = false) } }
     }
 
     @Test
@@ -82,11 +104,12 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `the seed refuses a batch that already has a case, a score or a word`() {
+    fun `the seed refuses a batch that already has a case, a score, a word or a hold`() {
         val dirt = listOf<(Batch) -> Unit>(
             { b -> ownCase(b) },
             { b -> ownScore(b) },
             { b -> ownWord(b) },
+            { b -> ownHold(b) },
         )
         for (makeDirty in dirt) {
             val targets = sixBatches()
@@ -136,10 +159,226 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
         assertTrue(result.stdout.contains("relevance_cases"), result.stdout)
     }
 
+    // RV-4.4: the auto-hide variant. One photographer has four whole-batch batches (junk dump, wrong event and two
+    // copied); a seventh batch belongs to a photographer who withdrew the consent to automatic actions (RV-L7a).
+    @Test
+    fun `the auto-hide seed leads to hidden batches, notes and alerts after the ticks`() {
+        val (targets, seeded) = autoHideRun()
+
+        assertEquals(listOf(MIN_VERSION), targets.values.map { it.photographer }.distinct().map {
+            jdbc.queryForObject("SELECT terms_version FROM users WHERE id = ?", String::class.java, it) }.distinct())
+        for (slot in listOf("JUNK_DUMP", "WRONG_EVENT", "COPIED", "COPIED_2")) {
+            val c = seeded.getValue(slot)
+            assertEquals(listOf("AUTO_HIDE", "HIDE_ALL"), caseRow(c, "applied_mode", "action"), slot)
+            assertEquals(listOf("HIDDEN"), statuses(targets.getValue(slot)).distinct(), slot)
+            assertEquals(1, count("SELECT count(*) FROM admin_decision_log WHERE decision = 'batch_auto_hidden' AND meta->>'caseId' = ?", c.toString()), slot)
+            assertEquals(1, notes(c), slot)
+        }
+        // Mixed: the 40% junk hidden photo by photo; its hide is stamped once the walk-through finishes its scan by SQL.
+        assertEquals(mapOf("HIDDEN" to 4, "LIVE" to 8), statuses(targets.getValue("MIXED")).groupingBy { it }.eachCount())
+        assertTrue(caseRow(seeded.getValue("MIXED"), "hide_finished_at").single() != null)
+        // Fits: nothing hidden; the finished scan's blurry photos bring the review note.
+        assertEquals(listOf("LIVE"), statuses(targets.getValue("FITS")).distinct())
+        assertEquals(listOf("AUTO_HIDE", "NONE", 2), caseRow(seeded.getValue("FITS"), "applied_mode", "action", "scan_blurry"))
+        assertEquals(1, notes(seeded.getValue("FITS")))
+        assertEquals(listOf("AUTO_HIDE", "NONE"), caseRow(seeded.getValue("CANT_TELL"), "applied_mode", "action"))
+        // The photographer who withdrew: applied as "would have hidden", nothing hidden, told nothing.
+        assertEquals(listOf("RECORD_ONLY", "HIDE_ALL", "NO_CONSENT"), caseRow(seeded.getValue("WITHDRAWN"), "applied_mode", "action", "verdict_note"))
+        assertEquals(listOf("LIVE"), statuses(targets.getValue("WITHDRAWN")).distinct())
+        assertEquals(0, notes(seeded.getValue("WITHDRAWN")))
+        // Each copied case holds payouts on a flag of its own and raises its alert.
+        for (slot in listOf("COPIED", "COPIED_2")) {
+            val c = seeded.getValue(slot)
+            assertTrue(caseRow(c, "hold_flag_id").single() != null, slot)
+            assertEquals(listOf("COPIED"), jdbc.queryForList("SELECT kind FROM relevance_alerts WHERE case_id = ?", String::class.java, c), slot)
+        }
+    }
+
+    @Test
+    fun `the clean-up puts every photo back`() {
+        val (targets, seeded) = autoHideRun(flagHiddenIn = "JUNK_DUMP")
+        val flagged = flagHidden.getValue("JUNK_DUMP")
+        // As the walk-through does: back-date the whole-batch notes past the appeal window, so the cases are confirmed.
+        jdbc.update("UPDATE relevance_cases SET notice_at = notice_at - interval '16 days' WHERE id IN (?, ?, ?)",
+            seeded.getValue("JUNK_DUMP"), seeded.getValue("WRONG_EVENT"), seeded.getValue("COPIED"))
+        autoHide().confirmDue()
+        assertEquals(3, count("SELECT count(*) FROM relevance_strikes WHERE photographer_id = ?", targets.getValue("COPIED").photographer))
+        endHolds(seeded)
+
+        val result = cleanup()
+
+        assertEquals(0, result.exitCode, result.stderr)
+        for ((slot, b) in targets) {
+            assertEquals(listOf("LIVE"), statuses(b, except = flagged).distinct(), slot)
+        }
+        assertEquals("HIDDEN", jdbc.queryForObject("SELECT status FROM photos WHERE id = ?", String::class.java, flagged),
+            "a photo a hidden photo flag keeps hidden stays hidden")
+        val ids = targets.values.map { batchId(it) }
+        for (table in listOf("relevance_cases", "flag_hidden_photos", "relevance_alerts")) {
+            assertEquals(0, ids.sumOf { count("SELECT count(*) FROM $table WHERE batch_id = ?", it) }, table)
+        }
+        assertEquals(0, targets.values.sumOf { count("SELECT count(*) FROM relevance_strikes WHERE photographer_id = ?", it.photographer) })
+        assertEquals(0, targets.values.sumOf {
+            count("SELECT count(*) FROM photographer_messages WHERE photographer_id = ? AND kind = 'relevance_notice'", it.photographer) })
+    }
+
+    @Test
+    fun `the clean-up puts the photographers' accepted Terms version and date back`() {
+        val targets = sixBatches()
+        val accepted = OffsetDateTime.parse("2002-02-02T02:02:02Z")
+        targets.values.forEach { jdbc.update("UPDATE users SET terms_version = '1.5', terms_accepted_at = ? WHERE id = ?", accepted, it.photographer) }
+
+        assertEquals(0, seed(targets, "-v", "terms_version=$MIN_VERSION").exitCode)
+        assertEquals(listOf(MIN_VERSION), terms(targets).map { it.first }.distinct(), "stamped for the sitting")
+        // Another SEEDED case whose summary is plain text (other tests' fixtures write such rows): the clean-up must not choke.
+        jdbc.update("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, summary_sent, created_at) " +
+            "VALUES (?, 'SEEDED', ?, 1, 'CLOSED', 'FITS', 'MODEL TEXT, NOT JSON', ?)", batchId(batch()), NOW, NOW)
+        val result = cleanup()
+        assertEquals(0, result.exitCode, result.stderr)
+
+        assertEquals(listOf("1.5" to accepted.toInstant()), terms(targets).distinct())
+    }
+
+    @Test
+    fun `the clean-up keeps a Terms acceptance made during the sitting`() {
+        val targets = sixBatches()
+        val accepted = OffsetDateTime.parse("2002-02-02T02:02:02Z")
+        val during = OffsetDateTime.parse("2003-03-03T03:03:03Z")
+        targets.values.forEach { jdbc.update("UPDATE users SET terms_version = '1.5', terms_accepted_at = ? WHERE id = ?", accepted, it.photographer) }
+        assertEquals(0, seed(targets, "-v", "terms_version=$MIN_VERSION").exitCode)
+        val renewed = targets.getValue("FITS").photographer
+        jdbc.update("UPDATE users SET terms_version = '9.9', terms_accepted_at = ? WHERE id = ?", during, renewed)
+
+        assertEquals(0, cleanup().exitCode)
+
+        assertEquals("9.9" to during.toInstant(), termsOf(renewed))
+        assertEquals(listOf("1.5" to accepted.toInstant()), targets.filterKeys { it != "FITS" }.values.map { termsOf(it.photographer) }.distinct())
+    }
+
+    @Test
+    fun `the clean-up puts back an empty Terms version as empty`() {
+        val targets = sixBatches()
+
+        assertEquals(0, seed(targets, "-v", "terms_version=$MIN_VERSION").exitCode)
+        assertEquals(0, cleanup().exitCode)
+
+        assertEquals(listOf<Pair<String?, java.time.Instant?>>(null to null), terms(targets).distinct())
+    }
+
+    @Test
+    fun `the seed leaves an account already on the version as it is`() {
+        val targets = sixBatches()
+        val accepted = OffsetDateTime.parse("2002-02-02T02:02:02Z")
+        val on = targets.getValue("FITS").photographer
+        val above = targets.getValue("MIXED").photographer
+        jdbc.update("UPDATE users SET terms_version = ?, terms_accepted_at = ? WHERE id = ?", MIN_VERSION, accepted, on)
+        jdbc.update("UPDATE users SET terms_version = '9.10', terms_accepted_at = ? WHERE id = ?", accepted, above)
+
+        assertEquals(0, seed(targets, "-v", "terms_version=$MIN_VERSION").exitCode)
+        assertEquals(listOf(MIN_VERSION to accepted.toInstant(), "9.10" to accepted.toInstant()), listOf(on, above).map(::termsOf))
+        assertEquals(0, cleanup().exitCode)
+        assertEquals(listOf(MIN_VERSION to accepted.toInstant(), "9.10" to accepted.toInstant()), listOf(on, above).map(::termsOf))
+    }
+
+    @Test
+    fun `the clean-up refuses while a seeded copied case still holds payouts`() {
+        val (targets, _) = autoHideRun()
+
+        val result = cleanup()
+
+        assertNotEquals(0, result.exitCode, result.stdout)
+        assertTrue(result.stderr.contains("Refused"), result.stderr)
+        assertEquals(listOf("HIDDEN"), statuses(targets.getValue("COPIED")).distinct(), "nothing is cleaned when it refuses")
+    }
+
     private data class Batch(val event: UUID, val photographer: UUID)
 
-    private fun seed(targets: Map<String, Batch>): Container.ExecResult {
-        val args = mutableListOf("psql", "-X", "-U", "quickpitik", "-d", "quickpitik_test")
+    // The auto-hide walk-through on this database: the owner's withdrawal, the seed, the ticks, the scans finished by
+    // SQL, and the ticks again. Returns the batches and the seeded case of each slot.
+    private val flagHidden = mutableMapOf<String, UUID>()
+
+    private fun autoHideRun(flagHiddenIn: String? = null): Pair<Map<String, Batch>, Map<String, UUID>> {
+        val repeat = photographer()
+        val targets = linkedMapOf(
+            "FITS" to batch(), "MIXED" to batch(), "CANT_TELL" to batch(), "WITHDRAWN" to batch(),
+            "JUNK_DUMP" to batch(repeat), "WRONG_EVENT" to batch(repeat), "COPIED" to batch(repeat), "COPIED_2" to batch(repeat),
+        )
+        // A photo an admin hid with a photo flag before the seed (version 1): nothing in the walk-through may show it.
+        flagHiddenIn?.let { slot ->
+            val b = targets.getValue(slot)
+            val photo = jdbc.queryForObject("SELECT id FROM photos WHERE event_id = ? AND photographer_id = ? ORDER BY id LIMIT 1",
+                UUID::class.java, b.event, b.photographer)!!
+            jdbc.update("UPDATE photos SET status = 'HIDDEN' WHERE id = ?", photo)
+            jdbc.update("INSERT INTO flags (target_kind, target_id, reason, status) VALUES ('photo', ?, 'other', 'hidden')", photo)
+            flagHidden[slot] = photo
+        }
+        jdbc.update("UPDATE users SET relevance_consent_withdrawn_at = now() WHERE id = ?", targets.getValue("WITHDRAWN").photographer)
+
+        val result = seed(targets, "-v", "terms_version=$MIN_VERSION")
+        assertEquals(0, result.exitCode, result.stderr)
+        val seeded = targets.mapValues { (_, b) ->
+            jdbc.queryForObject("SELECT id FROM relevance_cases WHERE batch_id = ? AND trigger = 'SEEDED'", UUID::class.java, batchId(b))!!
+        }
+        val service = autoHide()
+        val notifier = notifier()
+        fun ticks() = repeat(2) {
+            seeded.values.forEach { service.applyCase(it, OffsetDateTime.now()) }
+            service.reconcileHolds()
+            notifier.notifyOwed()
+            service.placeOwedHolds()
+        }
+        ticks()
+        for (slot in listOf("FITS", "MIXED")) assertEquals(1, jdbc.update("$FINISH_SCANS AND id = ?", seeded.getValue(slot)), slot)
+        ticks()
+        return targets to seeded
+    }
+
+    private fun endHolds(seeded: Map<String, UUID>) {
+        val admin = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Adm', 'ADMIN')", "relseed-admin-${UUID.randomUUID()}@test.local")
+        for (slot in listOf("COPIED", "COPIED_2")) assertTrue(tx.execute { hold().end(seeded.getValue(slot), admin, restore = false) }!!, slot)
+    }
+
+    private fun autoHideProps() = RelevanceProperties(mode = RelevanceMode.AUTO_HIDE,
+        junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0), check = RelevanceProperties.Check(maxBatchesPerTick = 10_000))
+
+    private fun switch(): RelevanceSwitch = RelevanceSwitch(autoHideProps(), AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false))
+
+    private fun notifier() = RelevanceNotifier(cases, decisions, switch(), autoHideProps(), Clock.systemUTC(), tx, publisher)
+
+    private fun hold() = RelevanceHoldService(cases, strikes, systemFlags, adminFlags, decisions, switch(), tx, AdminProperties(flagsEnabled = true), users)
+
+    // Auto-hide with AI off, as the walk-through runs staging: only the database-only steps run.
+    private fun autoHide(): RelevanceCheckService {
+        val props = autoHideProps()
+        return RelevanceCheckService(batches, cases, props, switch(), Clock.systemUTC(), tx, SimpleMeterRegistry(),
+            Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts, publisher,
+            LegalProperties(currentVersion = MIN_VERSION, photographerMinVersion = MIN_VERSION), holds, photos, decisions,
+            org.springframework.core.task.SyncTaskExecutor(), notifier(),
+            RelevanceConfirmer(cases, strikes, alerts, events, notifier(), props, publisher), hold())
+    }
+
+    private fun statuses(b: Batch, except: UUID? = null): List<String> =
+        jdbc.queryForList("SELECT status FROM photos WHERE event_id = ? AND photographer_id = ? AND id IS DISTINCT FROM ?",
+            String::class.java, b.event, b.photographer, except)
+
+    private fun termsOf(user: UUID): Pair<String?, java.time.Instant?> =
+        jdbc.queryForMap("SELECT terms_version, terms_accepted_at FROM users WHERE id = ?", user).let {
+            it["terms_version"] as String? to when (val t = it["terms_accepted_at"]) {
+                is java.sql.Timestamp -> t.toInstant()
+                is OffsetDateTime -> t.toInstant()
+                else -> null
+            }
+        }
+
+    private fun terms(targets: Map<String, Batch>) = targets.values.map { termsOf(it.photographer) }
+
+    private fun caseRow(caseId: UUID, vararg columns: String): List<Any?> =
+        jdbc.queryForMap("SELECT ${columns.joinToString()} FROM relevance_cases WHERE id = ?", caseId).let { r -> columns.map { r[it] } }
+
+    private fun notes(caseId: UUID): Int = count("SELECT count(*) FROM photographer_messages WHERE relevance_case_id = ?", caseId)
+
+    private fun seed(targets: Map<String, Batch>, vararg extra: String): Container.ExecResult {
+        val args = mutableListOf("psql", "-X", "-U", "quickpitik", "-d", "quickpitik_test", *extra)
         for ((verdict, b) in targets) args += listOf("-v", "${verdict.lowercase()}=${b.event}/${b.photographer}")
         args += listOf("-f", "/tmp/$SEED")
         return postgres.execInContainer(*args.toTypedArray())
@@ -150,16 +389,17 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
 
     private fun sixBatches(): Map<String, Batch> = VERDICTS.associateWith { batch() }
 
+    private fun photographer(): UUID = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Seed', 'PHOTOGRAPHER')",
+        "relseed-${UUID.randomUUID()}@test.local")
+
     // A public event with one photographer's photos, as a staging batch looks: no relevance rows of its own yet.
-    private fun batch(): Batch {
-        val photographer = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Seed', 'PHOTOGRAPHER')",
-            "relseed-${UUID.randomUUID()}@test.local")
+    private fun batch(photographer: UUID = photographer()): Batch {
         val event = id("INSERT INTO events (slug, name, date, location, status, visibility) VALUES (?, 'Seed Run', DATE '2003-03-04', 'Cebu', 'ACTIVE', 'PUBLIC')",
             "relseed-${UUID.randomUUID()}")
         jdbc.update("INSERT INTO event_photographer (event_id, photographer_id, photo_count, first_upload_at, last_upload_at) VALUES (?, ?, ?, ?, ?)",
             event, photographer, PHOTOS, NOW, NOW)
         repeat(PHOTOS) {
-            jdbc.update("INSERT INTO photos (event_id, photographer_id, s3_key, price_php, status) VALUES (?, ?, ?, 125, 'LIVE')",
+            jdbc.update("INSERT INTO photos (event_id, photographer_id, s3_key, watermark_s3_key, price_php, status) VALUES (?, ?, ?, 'relseed/wm', 125, 'LIVE')",
                 event, photographer, "relseed/${UUID.randomUUID()}")
         }
         return Batch(event, photographer)
@@ -178,6 +418,11 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
         val photo = jdbc.queryForObject("SELECT id FROM photos WHERE event_id = ? AND photographer_id = ? LIMIT 1", UUID::class.java, b.event, b.photographer)
         jdbc.update("INSERT INTO relevance_photo_checks (photo_id, batch_id, measured_at, fg_sharpness, brightness, person_conf, race_conf) " +
             "VALUES (?, ?, ?, 70, 50, 0.9, 0.9)", photo, batchId(b), NOW)
+    }
+
+    private fun ownHold(b: Batch) {
+        val photo = jdbc.queryForObject("SELECT id FROM photos WHERE event_id = ? AND photographer_id = ? LIMIT 1", UUID::class.java, b.event, b.photographer)
+        jdbc.update("INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, hidden_at) VALUES (?, ?, 'PHOTOGRAPHER', ?)", batchId(b), photo, NOW)
     }
 
     private fun ownWord(b: Batch) {
@@ -225,6 +470,13 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
         const val SEED = "relevance-v2-seed.sql"
         const val CLEANUP = "relevance-v2-seed-cleanup.sql"
         const val PHOTOS = 12
+        // The current legal version (application.yml app.legal), as the walk-through passes it.
+        const val MIN_VERSION = "1.7"
+        // The walk-through's step that finishes the Fits and Mixed scans by hand (AI is off, so no scan runs).
+        const val FINISH_SCANS = "UPDATE relevance_cases SET scan_state = 'FINISHED', scan_finished_at = now(), " +
+            "scan_measured = measured, scan_junk = junk, scan_blurry = blurry " +
+            "WHERE trigger = 'SEEDED' AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND verdict IN ('FITS', 'MIXED') " +
+            "AND scan_state IN ('QUEUED', 'RUNNING')"
         val VERDICTS = listOf("FITS", "MIXED", "JUNK_DUMP", "WRONG_EVENT", "COPIED", "CANT_TELL")
         val NOW: OffsetDateTime = OffsetDateTime.parse("2003-03-04T05:06:07Z")
     }
