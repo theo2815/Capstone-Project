@@ -454,8 +454,8 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
 
     // A Copied case waiting for the apply step.
     private fun decided(b: Batch): UUID = id(
-        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at) " +
-            "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, 'COPIED', true, ?)", b.id, UPLOAD, UPLOAD)
+        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at, started_mode) " +
+            "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, 'COPIED', true, ?, 'AUTO_HIDE')", b.id, UPLOAD, UPLOAD)
 
     // A current Copied case, applied in `mode`.
     private fun applied(b: Batch, mode: String = "AUTO_HIDE", verdict: String = "COPIED", stage: String = "APPLIED",

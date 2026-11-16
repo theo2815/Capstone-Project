@@ -590,7 +590,7 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         closedAt: OffsetDateTime = NOW, note: String? = null,
     ): UUID = id(
         "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, verdict_note, copy_low, decided_at, applied_mode, action, " +
-            "applied_at, closed_at, close_reason) VALUES (?, 'QUIET', ?, 600, ?, ?, ?, false, ?, ?, ?, ?, ?, ?)",
+            "applied_at, closed_at, close_reason, started_mode) VALUES (?, 'QUIET', ?, 600, ?, ?, ?, false, ?, ?, ?, ?, ?, ?, 'AUTO_HIDE')",
         b.id, UPLOAD, stage, verdict, note, NOW, mode.takeIf { stage != "DECIDED" }, action(verdict).takeIf { stage != "DECIDED" },
         NOW.takeIf { stage != "DECIDED" }, closeReason?.let { closedAt }, closeReason,
     )

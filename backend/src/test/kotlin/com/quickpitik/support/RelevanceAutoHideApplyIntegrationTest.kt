@@ -77,6 +77,33 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf("APPLIED", "RECORD_ONLY", "NONE"), row(old, "stage", "applied_mode", "scan_state"))
     }
 
+    // RVF-8 (RVR-9): only a check that started in auto-hide can hide; promise test for "record-only hides nothing".
+    @Test
+    fun `a check that started in record-only applies as record-only after the switch to auto-hide`() {
+        val b = batch(photos = 600)
+        repeat(3) { photo(b) }
+        val c = case(b, "DECIDED", "JUNK_DUMP", started = "RECORD_ONLY")
+        val before = untouched()
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", null, false, "NONE"),
+            row(c, "stage", "applied_mode", "verdict_note", "no_consent", "scan_state"))
+        assertEquals(listOf(listOf("BIG_HIDE", "big_hide:$c", true, 600)), alertsOf(b))
+        assertEquals(before, untouched(), "no photo, hold row, payout flag, message or decision is touched")
+    }
+
+    @Test
+    fun `a case with no start mode applies as record-only`() {
+        val b = batch(photos = 600)
+        val c = case(b, "DECIDED", "MIXED", measured = 300, junk = 120, started = null)
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", null, false, "NONE"),
+            row(c, "stage", "applied_mode", "verdict_note", "no_consent", "scan_state"))
+    }
+
     @Test
     fun `a decided case in auto-hide becomes current with its target`() {
         val mixed = batch(photos = 600)
@@ -375,14 +402,15 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         measured: Int = 40,
         junk: Int = 0,
         copyLow: Boolean? = false,
+        started: String? = "AUTO_HIDE",
     ): UUID {
         val photos = jdbc.queryForObject("SELECT photo_count FROM event_photographer WHERE event_id = ?", Int::class.java, b.event)
         return id(
             "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, verdict_note, " +
-                "copy_low, decided_at, applied_mode, action, applied_at, closed_at, close_reason, scan_state) " +
-                "VALUES (?, 'QUIET', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "copy_low, decided_at, applied_mode, action, applied_at, closed_at, close_reason, scan_state, started_mode) " +
+                "VALUES (?, 'QUIET', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             b.id, UPLOAD, photos, stage, measured, junk, verdict, note, copyLow, NOW,
-            applied, applied?.let { action(verdict) }, applied?.let { NOW }, closeReason?.let { NOW }, closeReason, scan,
+            applied, applied?.let { action(verdict) }, applied?.let { NOW }, closeReason?.let { NOW }, closeReason, scan, started,
         )
     }
 

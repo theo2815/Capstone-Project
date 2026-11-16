@@ -82,4 +82,6 @@ class RelevanceCase(
     @Column(name = "confirmed_at") var confirmedAt: OffsetDateTime? = null,
     @Column(name = "closed_by") var closedBy: UUID? = null,
     @Column(name = "hold_flag_id") var holdFlagId: UUID? = null,
+    // RVF-8 (V108): the mode the check started under; only AUTO_HIDE can hide. NULL for cases from before V108.
+    @Column(name = "started_mode", updatable = false, length = 12) val startedMode: String? = null,
 )

@@ -82,6 +82,20 @@ class RelevanceRetryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(sample(skipped), sample(check["id"] as UUID), "the skipped check's sample")
     }
 
+    // RVF-8: the stamp is what lets an auto-hide check hide later; without it nothing would ever hide.
+    @Test
+    fun `a check stores the mode it started under`() {
+        for (mode in listOf(RelevanceMode.RECORD_ONLY, RelevanceMode.AUTO_HIDE)) {
+            val b = batch()
+            case(b, stage = "CLOSED", reason = "SKIPPED", endedAt = PAST_WAIT)
+
+            assertTrue(service(mode = mode).start(assertNotNull(dueRow(b)), QUIET_CUTOFF, NOW))
+
+            assertEquals(mode.name, jdbc.queryForObject("SELECT started_mode FROM relevance_cases WHERE batch_id = ? AND stage = 'SAMPLING'",
+                String::class.java, b.id), mode.name)
+        }
+    }
+
     @Test
     fun `a retry whose earlier check has no sample picks a fresh one`() {
         val b = batch(photos = 10)

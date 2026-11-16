@@ -297,8 +297,8 @@ class AdminRelevanceNoConsentIntegrationTest : PostgresIntegrationTest() {
 
     // A case waiting for the apply step.
     private fun decided(b: Batch, verdict: String): UUID = id(
-        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at) " +
-            "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, ?, false, ?)", b.id, NOW, verdict, NOW)
+        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at, started_mode) " +
+            "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, ?, false, ?, 'AUTO_HIDE')", b.id, NOW, verdict, NOW)
 
     private fun action(verdict: String) = when (verdict) {
         "MIXED" -> "HIDE_JUNK"

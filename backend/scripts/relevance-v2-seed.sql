@@ -205,7 +205,8 @@ WHERE id IN (SELECT id FROM seed_terms);
 
 INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, sample_round, sample_size, measured,
                              blurry, dark, not_race, junk, words_photos, band, copy_low, date_low, decide_attempts,
-                             model_verdict, verdict, admin_reason, evidence_used, summary_sent, model, prompt_version, decided_at)
+                             model_verdict, verdict, admin_reason, evidence_used, summary_sent, model, prompt_version, decided_at,
+                             started_mode)
 SELECT t.batch_id, 'SEEDED', coalesce(ep.last_upload_at, now()), t.photos, 'DECIDED', 1, t.photos, t.photos,
        j.junk, 0, j.junk, j.junk, t.photos,
        CASE t.verdict WHEN 'MIXED' THEN 'MIXED' WHEN 'JUNK_DUMP' THEN 'OVER' WHEN 'CANT_TELL' THEN 'UNKNOWN' ELSE 'UNDER' END,
@@ -217,7 +218,9 @@ SELECT t.batch_id, 'SEEDED', coalesce(ep.last_upload_at, now()), t.photos, 'DECI
        CASE WHEN st.id IS NULL THEN '{"seeded":true}'
             ELSE json_build_object('seeded', true, 'terms_stamped', current_setting('qp.seed_terms_version'),
                                    'terms_before', st.before, 'accepted_before', st.accepted_before)::text END,
-       'seeded', 'seeded', now()
+       'seeded', 'seeded', now(),
+       -- RVF-8: only a check started in auto-hide can hide; in record-only the mode test still comes first.
+       'AUTO_HIDE'
 FROM seed_targets t
 LEFT JOIN event_photographer ep ON ep.event_id = t.event_id AND ep.photographer_id = t.photographer_id
 LEFT JOIN seed_terms st ON st.id = t.photographer_id

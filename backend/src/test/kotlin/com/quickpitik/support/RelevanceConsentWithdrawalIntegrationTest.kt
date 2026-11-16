@@ -321,8 +321,8 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
 
     // A case waiting for the apply step.
     private fun decided(b: Batch, verdict: String): UUID = id(
-        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at) " +
-            "VALUES (?, 'QUIET', ?, (SELECT photo_count FROM event_photographer WHERE event_id = ?), 'DECIDED', 40, 0, ?, false, ?)",
+        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at, started_mode) " +
+            "VALUES (?, 'QUIET', ?, (SELECT photo_count FROM event_photographer WHERE event_id = ?), 'DECIDED', 40, 0, ?, false, ?, 'AUTO_HIDE')",
         b.id, UPLOAD, b.event, verdict, NOW)
 
     // A current case applied in auto-hide before the withdrawal.

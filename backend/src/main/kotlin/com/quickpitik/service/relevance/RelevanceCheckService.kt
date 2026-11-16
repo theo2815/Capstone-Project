@@ -231,7 +231,8 @@ class RelevanceCheckService(
             return emptyList()
         }
         val verdict = CaseVerdict.valueOf(case.verdict!!)
-        val autoHide = switch.mode == RelevanceMode.AUTO_HIDE
+        // RVF-8 (RVR-9): only a check that started in auto-hide can hide; one with no start mode predates V108.
+        val autoHide = switch.mode == RelevanceMode.AUTO_HIDE && case.startedMode == RelevanceMode.AUTO_HIDE.name
         // P4: auto-hide acts only for a photographer who accepted the minimum Terms; unset means nobody has.
         val consented = autoHide && legal.minVersionOrNull()?.let { atLeast(batches.photographerTermsVersion(case.batchId), it) } == true
         val mode = if (consented) RelevanceMode.AUTO_HIDE else RelevanceMode.RECORD_ONLY
@@ -558,7 +559,7 @@ class RelevanceCheckService(
                 // RVF-4: a RETRY starts from the latest case (a skipped batch may have no current one), its sample and round.
                 val latest = if (fresh.trigger == RETRY) cases.latestFor(id) ?: return@execute false else null
                 val case = cases.saveAndFlush(RelevanceCase(batchId = id, trigger = fresh.trigger, uploadAt = uploadAt,
-                    batchPhotos = fresh.photoCount, sampleRound = (current ?: latest)?.sampleRound ?: 1))
+                    batchPhotos = fresh.photoCount, sampleRound = (current ?: latest)?.sampleRound ?: 1, startedMode = switch.mode.name))
                 if (current != null) cases.copySample(case.id, current.id)
                 else if (latest == null || cases.copySample(case.id, latest.id) == 0) {
                     cases.pickSample(case.id, fresh.eventId, fresh.photographerId, 1, props.check.sampleSize)

@@ -103,6 +103,18 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
             seeded.getValue("COPIED")))
     }
 
+    // RVF-8: only a check started in auto-hide can hide, so the walk-through's cases say they were.
+    @Test
+    fun `a seeded case carries the start mode auto-hide`() {
+        val targets = sixBatches()
+
+        assertEquals(0, seed(targets).exitCode)
+
+        for ((verdict, id) in seededCases(targets.values)) {
+            assertEquals("AUTO_HIDE", jdbc.queryForObject("SELECT started_mode FROM relevance_cases WHERE id = ?", String::class.java, id), verdict)
+        }
+    }
+
     @Test
     fun `the seed refuses a batch that already has a case, a score, a word or a hold`() {
         val dirt = listOf<(Batch) -> Unit>(
