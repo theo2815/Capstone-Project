@@ -62,7 +62,8 @@ class RelevanceNotifierIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `a note is sent once however many ticks or server copies run`() {
+    // Copies at the same moment: RelevanceActTwoThreadIntegrationTest.
+    fun `a note is sent once however many ticks or server copies run one after the other`() {
         val dump = batch()
         val dumpCase = case(dump, verdict = "JUNK_DUMP", action = "HIDE_ALL")
         val fits = batch()
