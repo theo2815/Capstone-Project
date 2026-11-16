@@ -126,8 +126,8 @@ it("GET Blob decodes private evidence bytes without forwarding its decoder optio
   vi.stubGlobal("fetch", fetch);
   const blob = await api.getBlob("/admin/photo-removal-requests/case/evidence");
   expect(blob.type).toBe("image/png");
-  // jsdom's Blob lacks arrayBuffer(); FileReader still verifies the returned bytes.
-  const contents = await new Promise<ArrayBuffer>((resolve, reject) => {
+  // Node 22 returns Node's Blob, which jsdom's FileReader refuses; Node 24 returns jsdom's Blob, which lacks arrayBuffer().
+  const contents = typeof blob.arrayBuffer === "function" ? await blob.arrayBuffer() : await new Promise<ArrayBuffer>((resolve, reject) => {
     const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = () => reject(reader.error); reader.readAsArrayBuffer(blob);
   });
   expect(new Uint8Array(contents)).toEqual(bytes);
