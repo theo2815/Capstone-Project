@@ -187,7 +187,7 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
   restore: {
     label: "Restore batch…",
     title: "Restore batch",
-    confirm: "Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. Photos the photographer hid stay hidden.",
+    confirm: "Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. A Copied case's payout hold ends too. Photos the photographer hid stay hidden.",
     confirmLabel: "Confirm restore",
     done: "Batch restored",
     // RV-4.3: a restore that broke off can now be finished from the page (caseActions offers it on the closed case).
@@ -221,10 +221,10 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
   end_hold: {
     label: "End hold",
     title: "End hold",
-    confirm: "Ends the payout hold this case placed. The case itself stays as it is. The photographer is told their payout hold was lifted only when no other hold is left.",
+    confirm: "Ends the payout hold this case placed. The case itself stays as it is. The photographer is told their payout hold was lifted only when no other Photo Relevance hold is left.",
     confirmLabel: "Confirm end hold",
     done: "Hold ended",
-    failed: "Could not end the hold — check the case before retrying.",
+    failed: "Could not end the hold. The case was read again: if the payout hold still shows, End hold tries again.",
   },
 };
 

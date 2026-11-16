@@ -276,6 +276,8 @@ it("End hold waits for the server", async () => {
   expect(within(d).getByText("One photographer can have several holds, one per Copied case. Payouts resume only when the last one ends.")).toBeInTheDocument();
   await user.click(within(d).getByRole("button", { name: "End hold" }));
   expect(api.post).not.toHaveBeenCalled();
+  // AdminFlagService tells the photographer only once no other Photo Relevance hold is open.
+  expect(screen.getByText("Ends the payout hold this case placed. The case itself stays as it is. The photographer is told their payout hold was lifted only when no other Photo Relevance hold is left.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm end hold" }));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/end-hold");
   // The server has not answered: the hold still shows and nothing was said.
@@ -345,6 +347,8 @@ it("a case closed as restored by an admin that still holds photos offers Restore
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Restore batch…" }));
+  // AdminRelevanceService.restore also ends a Copied case's payout hold.
+  expect(screen.getByText("Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. A Copied case's payout hold ends too. Photos the photographer hid stay hidden.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm restore" }));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/restore");
   await waitFor(() => expect(toasts()).toEqual(["Could not restore the batch. The case was read again: if photos are still held, Restore batch finishes the rest."]));
@@ -359,4 +363,17 @@ it("a case closed as restored by an admin that still holds photos offers Restore
     await within(closed).findByRole("list", { name: "Held photos" });
     expect(buttons(closed)).toEqual(["Close"]);
   }
+});
+
+it("a failed End hold with no server message says what to do next", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [copied];
+  one = async () => held();
+  post = async () => { throw new Error("down"); };
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "End hold" }));
+  await user.click(screen.getByRole("button", { name: "Confirm end hold" }));
+  await waitFor(() => expect(toasts()).toEqual(["Could not end the hold. The case was read again: if the payout hold still shows, End hold tries again."]));
 });
