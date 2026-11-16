@@ -40,6 +40,9 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   const { reject, suspend, unsuspend, resetVerification, message, messageRecoveryNotice, isPending: actionPending, pendingAction } = useAdminUserActions();
   const submitting = actionPending([row.userId]);
   const activeLabel = pendingAction(row.userId);
+  // The withdrawal call (RV-L7) locks the other actions too, as theirs lock it.
+  const [withdrawalBusy, setWithdrawalBusy] = useState(false);
+  const locked = submitting || withdrawalBusy;
 
   const [rejectOpen, setRejectOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
@@ -111,7 +114,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         {isPending && (
           <button
             type="button"
-            disabled={submitting}
+            disabled={locked}
             onClick={() => { setReviewRevision(row.verificationRevision); setRejectOpen(true); }}
             className={dangerBtn}
           >
@@ -122,7 +125,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         {!isSuspended ? (
           <button
             type="button"
-            disabled={submitting}
+            disabled={locked}
             onClick={() => setSuspendOpen(true)}
             className={dangerBtn}
           >
@@ -131,7 +134,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         ) : (
           <button
             type="button"
-            disabled={submitting}
+            disabled={locked}
             onClick={handleUnsuspend}
             className={secondaryBtn}
           >
@@ -142,7 +145,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         {!isIncomplete && (
           <button
             type="button"
-            disabled={submitting}
+            disabled={locked}
             onClick={() => { setReviewRevision(row.verificationRevision); setResetOpen(true); }}
             className={secondaryBtn}
           >
@@ -152,7 +155,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
         <button
           type="button"
-          disabled={submitting}
+          disabled={locked}
           onClick={() => setMessageOpen(true)}
           className={tertiaryBtn}
         >
@@ -171,7 +174,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         </div>
       )}
 
-      {row.role === "PHOTOGRAPHER" && <ConsentWithdrawal row={row} locked={submitting} />}
+      {row.role === "PHOTOGRAPHER" && <ConsentWithdrawal row={row} locked={locked} busy={withdrawalBusy} setBusy={setWithdrawalBusy} />}
 
       <AdminRejectModal
 
@@ -209,13 +212,12 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
 // RV-L7 part c: record or clear the photographer's e-mailed withdrawal of the consent to automatic hides and
 // holds. The state shown is always the server's: the answer is written into the detail cache, then refetched.
-function ConsentWithdrawal({ row, locked }: { row: AdminUserRow; locked: boolean }) {
+function ConsentWithdrawal({ row, locked, busy, setBusy }: { row: AdminUserRow; locked: boolean; busy: boolean; setBusy: (busy: boolean) => void }) {
   const T = CONSENT_WITHDRAWAL_TEXT;
   const qc = useQueryClient();
   const { showToast } = useToast();
   const headingId = useId();
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
   const actionRef = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
   const withdrawnAt = row.relevanceConsentWithdrawnAt ?? null;
@@ -254,7 +256,7 @@ function ConsentWithdrawal({ row, locked }: { row: AdminUserRow; locked: boolean
       </p>
       <p className="font-sans text-sm text-ink-soft mt-2">
         {withdrawn
-          ? <>{T.withdrawnOn} <span className="tnum">{formatLongDate(withdrawnAt)}</span>. {T.withdrawnAfter}</>
+          ? <>{T.withdrawnOn} <span className="tnum whitespace-nowrap">{formatLongDate(withdrawnAt)}</span>. {T.withdrawnAfter}</>
           : T.notWithdrawn}
       </p>
       <button ref={actionRef} type="button" disabled={locked} onClick={() => setOpen(true)} className={`${secondaryBtn} mt-4`}>
@@ -267,7 +269,7 @@ function ConsentWithdrawal({ row, locked }: { row: AdminUserRow; locked: boolean
         onClose={() => setOpen(false)}
         onConfirm={handleConfirm}
         title={withdrawn ? T.clearTitle : T.recordTitle}
-        confirmLabel={withdrawn ? T.clear : T.record}
+        confirmLabel={withdrawn ? T.clearConfirmButton : T.recordConfirmButton}
       >
         <p className="font-sans text-sm text-ink-soft">{withdrawn ? T.clearConfirm : T.recordConfirm}</p>
       </AdminConfirmModal>

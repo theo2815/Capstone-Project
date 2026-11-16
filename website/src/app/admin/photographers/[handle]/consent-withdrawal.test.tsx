@@ -54,7 +54,7 @@ it("a withdrawn photographer shows the date and the Clear withdrawal action", ()
   client.setQueryData(adminUserKeys.detail(admin.id, adminUser.userId), detail);
   mount();
   const date = within(section()).getByText("NOV 12 · 2026");
-  expect(date).toHaveClass("tnum");
+  expect(date).toHaveClass("tnum", "whitespace-nowrap"); // the date never breaks inside itself
   expect(date.parentElement).toHaveTextContent(
     "Consent withdrawn on NOV 12 · 2026. Automatic hides and payout holds are off for this photographer; admins review each case.",
   );
@@ -73,7 +73,7 @@ it("recording asks for a confirm, calls the route once and shows the new state o
     'Use this when the photographer asks by email to withdraw consent. From now on nothing of theirs is taken off sale and no payout is held automatically. Their cases are shown to admins as "would have hidden". Photos already off sale and payouts already on hold stay as they are.',
   );
   expect(put).not.toHaveBeenCalled();
-  await user.click(within(dialog).getByRole("button", { name: "Record withdrawal" }));
+  await user.click(within(dialog).getByRole("button", { name: "Record" }));
   const busy = within(dialog).getByRole("button", { name: "Recording…" });
   expect(busy).toHaveAttribute("aria-busy", "true");
   await user.click(busy); await user.keyboard("{Escape}");
@@ -101,7 +101,7 @@ it("clearing asks for a confirm, calls the route once and shows the new state on
     "Use this only when the photographer asks to give consent again. Automatic hides and payout holds can then apply to them again, if they accepted the current Terms.",
   );
   expect(del).not.toHaveBeenCalled();
-  await user.click(within(dialog).getByRole("button", { name: "Clear withdrawal" }));
+  await user.click(within(dialog).getByRole("button", { name: "Clear" }));
   await user.click(within(dialog).getByRole("button", { name: "Clearing…" }));
   expect(del).toHaveBeenCalledTimes(1);
   expect(del).toHaveBeenCalledWith(PATH);
@@ -119,9 +119,9 @@ it("a refused action shows the server's message and leaves the state as it was",
   const user = userEvent.setup(); mount();
   await user.click(within(section()).getByRole("button", { name: "Record withdrawal" }));
   const dialog = screen.getByRole("dialog");
-  await user.click(within(dialog).getByRole("button", { name: "Record withdrawal" }));
+  await user.click(within(dialog).getByRole("button", { name: "Record" }));
   await waitFor(() => expect(useToastStore.getState().toasts.map((t) => t.message)).toContain("User not found"));
-  expect(within(dialog).getByRole("button", { name: "Record withdrawal" })).toBeEnabled();
+  expect(within(dialog).getByRole("button", { name: "Record" })).toBeEnabled();
   expect(within(section()).getByText("Consent to automatic hides and payout holds: not withdrawn.")).toBeInTheDocument();
   expect(useToastStore.getState().toasts.map((t) => t.message)).not.toContain("Withdrawal recorded");
   await user.keyboard("{Escape}");
@@ -141,6 +141,20 @@ it("another admin action does not make the withdrawal read as not withdrawn", as
   expect(post).toHaveBeenCalledTimes(1);
   expect(within(section()).getByText("NOV 12 · 2026")).toBeInTheDocument();
   expect(within(section()).queryByText("Consent to automatic hides and payout holds: not withdrawn.")).not.toBeInTheDocument();
+});
+
+it("the other admin actions are locked while the withdrawal call runs", async () => {
+  const request = deferred<unknown>();
+  vi.spyOn(api, "put").mockReturnValue(request.promise as Promise<never>);
+  const user = userEvent.setup(); mount();
+  await user.click(within(section()).getByRole("button", { name: "Record withdrawal" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Record" }));
+  const panel = screen.getByRole("complementary", { name: "Admin actions" });
+  const buttons = within(panel).getAllByRole("button");
+  expect(buttons.map((b) => b.textContent)).toEqual(expect.arrayContaining(["Reject…", "Suspend…", "Reset verification…", "Send message…"]));
+  expect(buttons.filter((b) => !b.hasAttribute("disabled")).map((b) => b.textContent)).toEqual([]);
+  await act(async () => request.resolve({ photographerId: adminUser.userId, consentWithdrawnAt: WITHDRAWN_AT }));
+  await waitFor(() => expect(within(panel).getByRole("button", { name: "Suspend…" })).toBeEnabled());
 });
 
 it("the two api functions call the routes part a built", async () => {
