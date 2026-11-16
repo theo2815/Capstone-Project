@@ -588,14 +588,18 @@ private const val RULES_DUE = """(ep.last_upload_at <= :quietCutoff AND br.score
 // RVF-5 (RVR-1, RVR-12): also when the current case, with enough photos measured, has the band UNKNOWN (which then can
 // only come from an unset cut-off) and both cut-offs are set now; or when the latest case's sample holds a live photo
 // given up after its tries. A bad image or a missing file is not a reason: a retry cannot help it.
+// RVF-6 review: never when an admin or a won appeal closed the latest case (P21), nor for the band of a case an admin hid.
 private const val RETRY_DUE = """(ep.last_upload_at <= :quietCutoff AND EXISTS (
      SELECT 1 FROM (SELECT * FROM relevance_cases x WHERE x.batch_id = br.id ORDER BY x.created_at DESC, x.id DESC LIMIT 1) l
      WHERE l.trigger <> 'SEEDED' AND l.upload_at = ep.last_upload_at
+       AND l.close_reason IS DISTINCT FROM 'RESTORED_BY_ADMIN' AND l.close_reason IS DISTINCT FROM 'APPEAL_WON'
+       AND l.close_reason IS DISTINCT FROM 'LOOKS_FINE'
        AND ((l.stage = 'CLOSED' AND l.close_reason IN ('SKIPPED', 'NO_RESULT'))
             OR (l.stage = 'APPLIED' AND l.verdict = 'CANT_TELL'
                 AND l.verdict_note IN ('CALL_FAILED', 'CUT_OFF', 'BAD_JSON', 'UNKNOWN_VALUE'))
             OR (:cutoffsSet AND EXISTS (SELECT 1 FROM relevance_cases c WHERE c.batch_id = br.id AND c.stage = 'APPLIED'
-                AND c.band = 'UNKNOWN' AND c.sample_size > 0 AND c.measured * 2 >= c.sample_size))
+                AND c.band = 'UNKNOWN' AND c.sample_size > 0 AND c.measured * 2 >= c.sample_size
+                AND c.verdict_note IS DISTINCT FROM 'ADMIN_HIDE'))
             OR EXISTS (SELECT 1 FROM relevance_case_photos s
                 JOIN photos p ON p.id = s.photo_id AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
                 JOIN relevance_photo_checks pc ON pc.photo_id = s.photo_id

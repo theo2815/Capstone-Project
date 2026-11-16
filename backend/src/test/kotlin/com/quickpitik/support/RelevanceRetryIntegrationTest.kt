@@ -307,6 +307,29 @@ class RelevanceRetryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf(photos[38]), asked.value.map { it.photoId }, "only the given-up photo is measured again")
     }
 
+    // RVF-6 stage review: a case an admin or a won appeal settled is not reopened by a retry on the same upload.
+    @Test
+    fun `a check an admin or a won appeal closed is not retried for a given-up photo`() {
+        for (reason in listOf("RESTORED_BY_ADMIN", "APPEAL_WON", "LOOKS_FINE")) {
+            val b = batch(photos = 50)
+            val photo = photo(b)
+            val settled = case(b, stage = "CLOSED", verdict = "MIXED", reason = reason, endedAt = PAST_WAIT,
+                band = "UNDER", sampleSize = 40, measured = 39)
+            sampled(settled, photo)
+            failed(b, photo, "GAVE_UP", tries = 5)
+            assertNull(dueRow(b), reason)
+        }
+    }
+
+    // RVF-6 stage review: a retry can never change a case an admin hid, so its unknown band costs no model call.
+    @Test
+    fun `a band-unknown case an admin hid is not retried`() {
+        val b = batch()
+        case(b, stage = "APPLIED", verdict = "CANT_TELL", note = "ADMIN_HIDE", endedAt = PAST_WAIT, band = "UNKNOWN",
+            sampleSize = 40, measured = 40)
+        assertNull(dueRow(b))
+    }
+
     @Test
     fun `photos given up again make the batch due only after the wait and only up to the cap`() {
         val b = batch(photos = 50)
