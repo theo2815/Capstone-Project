@@ -17,10 +17,12 @@
 --   (batch_relevance_words) of those batches, and the SEEDED cases (their sample rows and appeals go with them).
 -- Nothing else: no other case, and no row of a batch without a SEEDED case. The seed refuses a batch that already
 -- has a case, a score, a word or a hold, so every such row of a seeded batch is the seed's or the walk-through's.
+--   users: each photographer whose Terms version the seed stamped (-v terms_version) gets the old version and
+--     acceptance date back (NULL stays NULL), unless their version changed since (a real acceptance is kept).
 -- Kept: the batch_relevance rows (version 1 uses them too), admin decision records, flags (an ended payout hold
--- stays as a closed flag), the "Payout hold lifted" notes, and users.terms_version (the seed's report lists the
--- values from before; put them back by hand if you need to). Run it at the end of the walk-through, with
--- AI_API_ENABLED still off, so no check starts on a seeded batch meanwhile.
+-- stays as a closed flag), the "Payout hold lifted" notes, and every e-mail already sent. Run it at the end of the
+-- walk-through with AI_API_ENABLED still off and RELEVANCE_MODE on record-only, so no tick hides, holds or checks a
+-- seeded batch meanwhile.
 --
 -- It prints one count per step.
 --
@@ -65,6 +67,17 @@ SET status = CASE WHEN p.watermark_s3_key IS NULL THEN 'PROCESSING' ELSE 'LIVE' 
 WHERE p.id IN (SELECT photo_id FROM released) AND p.status = 'HIDDEN'
   AND NOT EXISTS (SELECT 1 FROM flags f WHERE f.target_kind = 'photo' AND f.target_id = p.id AND f.status = 'hidden')
   AND NOT EXISTS (SELECT 1 FROM flag_hidden_photos o WHERE o.photo_id = p.id AND o.restored_at IS NULL);
+
+\echo '== Put back: Terms version and acceptance date of each photographer the seed stamped (if not accepted again since)'
+UPDATE users u SET terms_version = s.before, terms_accepted_at = s.accepted_before
+FROM (SELECT DISTINCT ON (br.photographer_id) br.photographer_id AS id, j->>'terms_stamped' AS stamped,
+             j->>'terms_before' AS before, (j->>'accepted_before')::timestamptz AS accepted_before
+      FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+      -- Only the seed's own JSON is read: other SEEDED cases (step 9's re-checks, older rows) may hold other text.
+      CROSS JOIN LATERAL (SELECT CASE WHEN c.summary_sent LIKE '%"terms_stamped"%' THEN c.summary_sent::jsonb END AS j) x
+      WHERE c.id IN (SELECT id FROM seeded_cases) AND j ? 'terms_stamped'
+      ORDER BY br.photographer_id, c.created_at) s
+WHERE u.id = s.id AND u.terms_version = s.stamped;
 
 \echo '== Deleted: relevance_strikes of the seeded cases'
 DELETE FROM relevance_strikes WHERE case_id IN (SELECT id FROM seeded_cases);

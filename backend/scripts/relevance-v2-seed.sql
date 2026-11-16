@@ -15,8 +15,10 @@
 --   -v withdrawn=<e>/<p>   one more junk-dump batch, of a photographer whose withdrawal of the consent to automatic
 --                          actions an admin recorded BEFORE this seed (RV-L7a). The seed never records it.
 --   -v terms_version=<v>   the current legal version (app.legal.current-version, 1.7 on 2026-11-16). Every seeded
---                          photographer's users.terms_version is set to it, so they count as consenting to
---                          auto-hide; the report lists the value each one had before. Leave it out for record-only.
+--                          photographer below it gets users.terms_version = <v> (accepted now), so they count as
+--                          consenting to auto-hide; an account at or above it is left alone. The old version and date
+--                          are kept in the seeded cases and relevance-v2-seed-cleanup.sql puts them back. Leave it out
+--                          for record-only.
 --
 -- It refuses (error, no change) unless every batch: is named once; has an event that exists, is not deleted,
 -- not hidden and Public; has a photographer who exists and is not suspended; has at least one live photo; and
@@ -32,7 +34,8 @@
 --   batch_relevance_words: two words on every photo (WRONG_EVENT: MANILA, MARATHON; others: CEBU, RUN).
 --   relevance_cases: one case, trigger SEEDED, stage DECIDED, the verdict, an admin_reason starting "SEEDED:",
 --     with every photo as its sample (relevance_case_photos).
---   users.terms_version and terms_accepted_at of the seeded photographers, only with -v terms_version.
+--   users.terms_version and terms_accepted_at of the seeded photographers below the version, only with
+--     -v terms_version (the clean-up puts them back).
 -- It touches no photo, flag, hold, payout or message. It prints what it inserted.
 --
 -- Run it on the local Docker database (PowerShell, from the repo root):
@@ -187,6 +190,19 @@ FROM seed_targets t
 CROSS JOIN LATERAL unnest(CASE WHEN t.verdict = 'WRONG_EVENT' THEN ARRAY['MANILA', 'MARATHON']
                                ELSE ARRAY['CEBU', 'RUN'] END) AS w(word);
 
+-- RV-4.4: the auto-hide variant counts the seeded photographers as consenting (the apply step's consent rule). An
+-- account already at or above the version is left as it is. Each stamped account's old version and date go into its
+-- seeded cases (summary_sent), so the clean-up puts them back; NULL stays NULL.
+CREATE TEMP TABLE seed_terms ON COMMIT DROP AS
+SELECT DISTINCT u.id, u.terms_version AS before, u.terms_accepted_at AS accepted_before
+FROM users u JOIN seed_targets t ON t.photographer_id = u.id
+WHERE current_setting('qp.seed_terms_version') <> ''
+  AND NOT (u.terms_version IS NOT NULL AND (u.terms_version = current_setting('qp.seed_terms_version')
+       OR (u.terms_version ~ '^[0-9]+(\.[0-9]+)*$' AND current_setting('qp.seed_terms_version') ~ '^[0-9]+(\.[0-9]+)*$'
+           AND string_to_array(u.terms_version, '.')::int[] >= string_to_array(current_setting('qp.seed_terms_version'), '.')::int[])));
+UPDATE users SET terms_version = current_setting('qp.seed_terms_version'), terms_accepted_at = now()
+WHERE id IN (SELECT id FROM seed_terms);
+
 INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, sample_round, sample_size, measured,
                              blurry, dark, not_race, junk, words_photos, band, copy_low, date_low, decide_attempts,
                              model_verdict, verdict, admin_reason, evidence_used, summary_sent, model, prompt_version, decided_at)
@@ -198,9 +214,13 @@ SELECT t.batch_id, 'SEEDED', coalesce(ep.last_upload_at, now()), t.photos, 'DECI
        'SEEDED: made-up ' || lower(t.verdict) || ' case for the staging walk-through, not a real check.',
        CASE t.verdict WHEN 'COPIED' THEN 'copy_rule' WHEN 'WRONG_EVENT' THEN 'date_rule,batch_words'
                       WHEN 'CANT_TELL' THEN 'junk_share' ELSE 'junk_share' END,
-       '{"seeded":true}', 'seeded', 'seeded', now()
+       CASE WHEN st.id IS NULL THEN '{"seeded":true}'
+            ELSE json_build_object('seeded', true, 'terms_stamped', current_setting('qp.seed_terms_version'),
+                                   'terms_before', st.before, 'accepted_before', st.accepted_before)::text END,
+       'seeded', 'seeded', now()
 FROM seed_targets t
 LEFT JOIN event_photographer ep ON ep.event_id = t.event_id AND ep.photographer_id = t.photographer_id
+LEFT JOIN seed_terms st ON st.id = t.photographer_id
 CROSS JOIN LATERAL (SELECT count(*)::int AS junk FROM relevance_photo_checks r
                     WHERE r.batch_id = t.batch_id AND r.fg_sharpness < 10) j;
 
@@ -219,14 +239,9 @@ FROM seed_targets t
 JOIN relevance_cases c ON c.batch_id = t.batch_id AND c.trigger = 'SEEDED'
 ORDER BY array_position(ARRAY['FITS', 'MIXED', 'JUNK_DUMP', 'WRONG_EVENT', 'COPIED', 'CANT_TELL', 'COPIED_2', 'WITHDRAWN'], t.slot);
 
--- RV-4.4: the auto-hide variant counts the seeded photographers as consenting (the apply step's consent rule).
-CREATE TEMP TABLE seed_terms ON COMMIT DROP AS
-SELECT DISTINCT u.id, u.terms_version AS before FROM users u JOIN seed_targets t ON t.photographer_id = u.id
-WHERE current_setting('qp.seed_terms_version') <> '';
-UPDATE users SET terms_version = current_setting('qp.seed_terms_version'), terms_accepted_at = now()
-WHERE id IN (SELECT id FROM seed_terms);
-\echo '== Terms version (only with -v terms_version): write down terms_version_before to put it back by hand later'
-SELECT s.id AS photographer_id, s.before AS terms_version_before, u.terms_version AS terms_version_now,
+
+\echo '== Terms version set for the sitting (only with -v terms_version); the clean-up puts the old values back'
+SELECT s.id AS photographer_id, s.before AS terms_version_before, s.accepted_before, u.terms_version AS terms_version_now,
        u.relevance_consent_withdrawn_at IS NOT NULL AS consent_withdrawn
 FROM seed_terms s JOIN users u ON u.id = s.id ORDER BY s.id;
 

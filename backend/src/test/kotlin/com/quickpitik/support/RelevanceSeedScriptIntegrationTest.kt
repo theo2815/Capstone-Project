@@ -196,7 +196,8 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
 
     @Test
     fun `the clean-up puts every photo back`() {
-        val (targets, seeded) = autoHideRun()
+        val (targets, seeded) = autoHideRun(flagHiddenIn = "JUNK_DUMP")
+        val flagged = flagHidden.getValue("JUNK_DUMP")
         // As the walk-through does: back-date the whole-batch notes past the appeal window, so the cases are confirmed.
         jdbc.update("UPDATE relevance_cases SET notice_at = notice_at - interval '16 days' WHERE id IN (?, ?, ?)",
             seeded.getValue("JUNK_DUMP"), seeded.getValue("WRONG_EVENT"), seeded.getValue("COPIED"))
@@ -207,7 +208,11 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
         val result = cleanup()
 
         assertEquals(0, result.exitCode, result.stderr)
-        for ((slot, b) in targets) assertEquals(listOf("LIVE"), statuses(b).distinct(), slot)
+        for ((slot, b) in targets) {
+            assertEquals(listOf("LIVE"), statuses(b, except = flagged).distinct(), slot)
+        }
+        assertEquals("HIDDEN", jdbc.queryForObject("SELECT status FROM photos WHERE id = ?", String::class.java, flagged),
+            "a photo a hidden photo flag keeps hidden stays hidden")
         val ids = targets.values.map { batchId(it) }
         for (table in listOf("relevance_cases", "flag_hidden_photos", "relevance_alerts")) {
             assertEquals(0, ids.sumOf { count("SELECT count(*) FROM $table WHERE batch_id = ?", it) }, table)
@@ -215,6 +220,48 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, targets.values.sumOf { count("SELECT count(*) FROM relevance_strikes WHERE photographer_id = ?", it.photographer) })
         assertEquals(0, targets.values.sumOf {
             count("SELECT count(*) FROM photographer_messages WHERE photographer_id = ? AND kind = 'relevance_notice'", it.photographer) })
+    }
+
+    @Test
+    fun `the clean-up puts the photographers' accepted Terms version and date back`() {
+        val targets = sixBatches()
+        val accepted = OffsetDateTime.parse("2002-02-02T02:02:02Z")
+        targets.values.forEach { jdbc.update("UPDATE users SET terms_version = '1.5', terms_accepted_at = ? WHERE id = ?", accepted, it.photographer) }
+
+        assertEquals(0, seed(targets, "-v", "terms_version=$MIN_VERSION").exitCode)
+        assertEquals(listOf(MIN_VERSION), terms(targets).map { it.first }.distinct(), "stamped for the sitting")
+        // Another SEEDED case whose summary is plain text (other tests' fixtures write such rows): the clean-up must not choke.
+        jdbc.update("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, summary_sent, created_at) " +
+            "VALUES (?, 'SEEDED', ?, 1, 'CLOSED', 'FITS', 'MODEL TEXT, NOT JSON', ?)", batchId(batch()), NOW, NOW)
+        val result = cleanup()
+        assertEquals(0, result.exitCode, result.stderr)
+
+        assertEquals(listOf("1.5" to accepted.toInstant()), terms(targets).distinct())
+    }
+
+    @Test
+    fun `the clean-up puts back an empty Terms version as empty`() {
+        val targets = sixBatches()
+
+        assertEquals(0, seed(targets, "-v", "terms_version=$MIN_VERSION").exitCode)
+        assertEquals(0, cleanup().exitCode)
+
+        assertEquals(listOf<Pair<String?, java.time.Instant?>>(null to null), terms(targets).distinct())
+    }
+
+    @Test
+    fun `the seed leaves an account already on the version as it is`() {
+        val targets = sixBatches()
+        val accepted = OffsetDateTime.parse("2002-02-02T02:02:02Z")
+        val on = targets.getValue("FITS").photographer
+        val above = targets.getValue("MIXED").photographer
+        jdbc.update("UPDATE users SET terms_version = ?, terms_accepted_at = ? WHERE id = ?", MIN_VERSION, accepted, on)
+        jdbc.update("UPDATE users SET terms_version = '9.10', terms_accepted_at = ? WHERE id = ?", accepted, above)
+
+        assertEquals(0, seed(targets, "-v", "terms_version=$MIN_VERSION").exitCode)
+        assertEquals(listOf(MIN_VERSION to accepted.toInstant(), "9.10" to accepted.toInstant()), listOf(on, above).map(::termsOf))
+        assertEquals(0, cleanup().exitCode)
+        assertEquals(listOf(MIN_VERSION to accepted.toInstant(), "9.10" to accepted.toInstant()), listOf(on, above).map(::termsOf))
     }
 
     @Test
@@ -232,12 +279,23 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
 
     // The auto-hide walk-through on this database: the owner's withdrawal, the seed, the ticks, the scans finished by
     // SQL, and the ticks again. Returns the batches and the seeded case of each slot.
-    private fun autoHideRun(): Pair<Map<String, Batch>, Map<String, UUID>> {
+    private val flagHidden = mutableMapOf<String, UUID>()
+
+    private fun autoHideRun(flagHiddenIn: String? = null): Pair<Map<String, Batch>, Map<String, UUID>> {
         val repeat = photographer()
         val targets = linkedMapOf(
             "FITS" to batch(), "MIXED" to batch(), "CANT_TELL" to batch(), "WITHDRAWN" to batch(),
             "JUNK_DUMP" to batch(repeat), "WRONG_EVENT" to batch(repeat), "COPIED" to batch(repeat), "COPIED_2" to batch(repeat),
         )
+        // A photo an admin hid with a photo flag before the seed (version 1): nothing in the walk-through may show it.
+        flagHiddenIn?.let { slot ->
+            val b = targets.getValue(slot)
+            val photo = jdbc.queryForObject("SELECT id FROM photos WHERE event_id = ? AND photographer_id = ? ORDER BY id LIMIT 1",
+                UUID::class.java, b.event, b.photographer)!!
+            jdbc.update("UPDATE photos SET status = 'HIDDEN' WHERE id = ?", photo)
+            jdbc.update("INSERT INTO flags (target_kind, target_id, reason, status) VALUES ('photo', ?, 'other', 'hidden')", photo)
+            flagHidden[slot] = photo
+        }
         jdbc.update("UPDATE users SET relevance_consent_withdrawn_at = now() WHERE id = ?", targets.getValue("WITHDRAWN").photographer)
 
         val result = seed(targets, "-v", "terms_version=$MIN_VERSION")
@@ -283,8 +341,20 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
             RelevanceConfirmer(cases, strikes, alerts, events, notifier(), props, publisher), hold())
     }
 
-    private fun statuses(b: Batch): List<String> =
-        jdbc.queryForList("SELECT status FROM photos WHERE event_id = ? AND photographer_id = ?", String::class.java, b.event, b.photographer)
+    private fun statuses(b: Batch, except: UUID? = null): List<String> =
+        jdbc.queryForList("SELECT status FROM photos WHERE event_id = ? AND photographer_id = ? AND id IS DISTINCT FROM ?",
+            String::class.java, b.event, b.photographer, except)
+
+    private fun termsOf(user: UUID): Pair<String?, java.time.Instant?> =
+        jdbc.queryForMap("SELECT terms_version, terms_accepted_at FROM users WHERE id = ?", user).let {
+            it["terms_version"] as String? to when (val t = it["terms_accepted_at"]) {
+                is java.sql.Timestamp -> t.toInstant()
+                is OffsetDateTime -> t.toInstant()
+                else -> null
+            }
+        }
+
+    private fun terms(targets: Map<String, Batch>) = targets.values.map { termsOf(it.photographer) }
 
     private fun caseRow(caseId: UUID, vararg columns: String): List<Any?> =
         jdbc.queryForMap("SELECT ${columns.joinToString()} FROM relevance_cases WHERE id = ?", caseId).let { r -> columns.map { r[it] } }
