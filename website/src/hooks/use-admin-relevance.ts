@@ -12,6 +12,7 @@ import {
   fetchRelevanceCases,
   fetchRelevanceHiddenPhotos,
   hideRelevanceBatch,
+  holdRelevancePayouts,
   keepRelevanceCaseHidden,
   markRelevanceAlertSeen,
   markRelevanceAppealEvidenceOpened,
@@ -99,6 +100,7 @@ const ACTION_CALL: Record<RelevanceCaseAction, (caseId: string) => Promise<unkno
   looks_fine: markRelevanceCaseLooksFine,
   hide_batch: hideRelevanceBatch,
   end_hold: endRelevanceHold,
+  hold_payouts: holdRelevancePayouts,
 };
 
 /** The admin's actions. Each resolves after the server answered and the page was read again; nothing changes before. */

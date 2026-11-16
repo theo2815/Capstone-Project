@@ -25,7 +25,7 @@ const caseRow: RelevanceCaseRow = {
 const detail: RelevanceCaseDetail = {
   case: caseRow, stage: "APPLIED", sampleSize: 300, measured: 300, blurry: 100, dark: 10, notRace: 10, junk: 120, band: "OVER",
   modelVerdict: "JUNK_DUMP", adminReason: null, evidenceUsed: [], summarySent: null, model: null, promptVersion: null, wordsPhotos: 0,
-  topWords: [], alerts: [], cleanSamples: [], confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, closeReason: null,
+  topWords: [], alerts: [], cleanSamples: [], confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, payoutHoldPlaced: false, closeReason: null,
   junkSamples: [{ photoId: "p1", thumbnailUrl: null, fgSharpness: 2, fgBrightness: 40, sharpness: 2, brightness: 40, blurry: true, dark: false, notRace: false }],
 };
 const openAppeal: RelevanceAppealRow = {

@@ -909,6 +909,11 @@ export interface PhotographerRelevanceCase {
   eventDate: string | null;
   /** Why a closed case closed (RECHECK_LIFTED, APPEAL_WON, SUPERSEDED, ...); null while it is open. */
   closeReason: string | null;
+  // RV-4.5a review: missing (an older server) reads as true, the texts as before.
+  /** A payout hold binds this case now. */
+  payoutHoldBinds?: boolean;
+  /** A lost appeal counts as a confirmed case (false for an admin's hide). */
+  lostAppealCounts?: boolean;
 }
 
 export async function fetchMyRelevanceCase(caseId: string, signal?: AbortSignal): Promise<PhotographerRelevanceCase> {

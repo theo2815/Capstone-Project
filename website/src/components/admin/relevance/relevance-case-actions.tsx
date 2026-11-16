@@ -12,6 +12,7 @@ import { serverMessage } from "@/lib/admin-flags";
 import {
   CONSEQUENCES_TEXT,
   HIDDEN_PHOTOS_EMPTY,
+  NO_CONSENT_HIDE_CONFIRM,
   PHOTO_RESTORED,
   PHOTO_RESTORE_FAILED,
   PHOTO_STILL_HIDDEN,
@@ -32,6 +33,7 @@ const BTN_CLS: Record<RelevanceCaseAction, string> = {
   looks_fine: `${BTN_SECONDARY} ${BTN_SIZE.sm}`,
   hide_batch: `${BTN_DANGER} ${BTN_SIZE.sm}`,
   end_hold: `${BTN_SECONDARY} ${BTN_SIZE.sm}`,
+  hold_payouts: `${BTN_DANGER} ${BTN_SIZE.sm}`,
 };
 
 /** The drawer's action bar and its confirm. The host owns `confirming`, so the drawer can stand its ESC down. */
@@ -90,7 +92,9 @@ export function RelevanceCaseActions({
           confirmLabel={open.confirmLabel}
           submitting={isPending}
         >
-          <p className="font-sans text-sm text-ink-soft">{open.confirm}</p>
+          <p className="font-sans text-sm text-ink-soft">
+            {confirming === "hide_batch" && row.verdictNote === "NO_CONSENT" ? NO_CONSENT_HIDE_CONFIRM : open.confirm}
+          </p>
           <p className="font-sans text-sm text-ink">{row.eventName}</p>
         </AdminConfirmModal>
       )}

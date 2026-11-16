@@ -27,7 +27,7 @@ const detail = (r: RelevanceCaseRow = row, extra: Partial<RelevanceCaseDetail> =
   topWords: [{ word: "CEBU", photos: 300 }],
   junkSamples: [{ photoId: "j1", thumbnailUrl: "https://img/j1.jpg", fgSharpness: 4.5, fgBrightness: 50, sharpness: 5, brightness: 48, blurry: true, dark: false, notRace: false }],
   cleanSamples: [{ photoId: "k1", thumbnailUrl: null, fgSharpness: 80, fgBrightness: 60, sharpness: 82, brightness: 61, blurry: null, dark: null, notRace: false }],
-  alerts: [], confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, closeReason: null,
+  alerts: [], confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, payoutHoldPlaced: false, closeReason: null,
   ...extra,
 });
 

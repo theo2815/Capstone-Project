@@ -76,8 +76,9 @@ export function blurryText(c: PhotographerRelevanceCase): CaseText {
 }
 
 // V2-T17, V2-T18, V2-T19: the appeal's state, as the inbox notes word it ("Session 2" choices 6 and 7).
+// RV-4.5a review: as the inbox notes, the payout sentence only while a hold binds, the confirmed-case one only if it counts.
 export function appealText(c: PhotographerRelevanceCase): CaseText | null {
-  const copied = c.verdict === "COPIED";
+  const copied = c.payoutHoldBinds ?? c.verdict === "COPIED";
   switch (c.appeal?.status) {
     case "OPEN":
       return { title: "Appeal received", outcome: [], body: [
@@ -94,7 +95,7 @@ export function appealText(c: PhotographerRelevanceCase): CaseText | null {
     case "LOST":
       return { title: "Appeal not accepted", outcome: [], body: [
         `An admin looked at your appeal about ${c.eventName} and decided the photos stay off sale.`,
-        "When all your photos in the event were off sale, this counts as a confirmed case (see the Terms, Appeals).",
+        ...(c.lostAppealCounts !== false ? ["When all your photos in the event were off sale, this counts as a confirmed case (see the Terms, Appeals)."] : []),
         ...(copied ? ["Your payouts stay on hold until an admin finishes the review."] : []),
         "This is QuickPitik's final decision on the appeal.",
         "You can still complain to the National Privacy Commission or the Department of Trade and Industry."] };

@@ -27,7 +27,7 @@ const detail = (r: RelevanceCaseRow, stage = "APPLIED", extra: Partial<Relevance
   case: r, stage, sampleSize: 300, measured: 300, blurry: 100, dark: 10, notRace: 10, junk: 120, band: "MIXED",
   modelVerdict: r.verdict, adminReason: null, evidenceUsed: [], summarySent: null, model: null, promptVersion: null,
   wordsPhotos: 0, topWords: [], junkSamples: [], cleanSamples: [], alerts: [],
-  confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, closeReason: null,
+  confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, payoutHoldPlaced: false, closeReason: null,
   ...extra,
 });
 const hold = (id: string, restoredAt: string | null = null): RelevanceHiddenPhoto => ({
@@ -363,6 +363,126 @@ it("a case closed as restored by an admin that still holds photos offers Restore
     await within(closed).findByRole("list", { name: "Held photos" });
     expect(buttons(closed)).toEqual(["Close"]);
   }
+});
+
+// RV-4.5b: a no-consent case (record-only, NO_CONSENT) that would have hidden the batch.
+const noConsent = (verdict: string): RelevanceCaseRow =>
+  ({ ...autoHide, verdict, verdictNote: "NO_CONSENT", appliedMode: "RECORD_ONLY", wouldHave: true });
+const actionButtons = (el: HTMLElement) => buttons(el).filter((b) => b !== "Close");
+const NO_CONSENT_HIDE = "Takes every photo of this batch off sale as your decision, a chunk at a time over the next minutes. New uploads to the batch are taken off sale too. The photographer is told a person took the photos off sale and may appeal. It does not count as a confirmed case. Works only while the relevance mode is auto-hide. You can restore the batch or photos one by one.";
+const CANT_TELL_HIDE = "Takes every photo of this batch off sale, a chunk at a time over the next minutes. Works only while the relevance mode is auto-hide. You can restore the batch or photos one by one.";
+
+it("a can't tell case keeps its own Hide batch confirm", async () => {
+  const user = userEvent.setup();
+  mount();
+  await user.click(await within(await drawer()).findByRole("button", { name: "Hide batch…" }));
+  expect(screen.getByText(CANT_TELL_HIDE)).toBeInTheDocument();
+  expect(screen.queryByText(NO_CONSENT_HIDE)).not.toBeInTheDocument();
+});
+
+it("a no-consent case that would have hidden the batch offers Hide batch", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [noConsent("JUNK_DUMP")];
+  mount();
+  const d = await drawer();
+  await within(d).findByRole("button", { name: "Hide batch…" });
+  expect(actionButtons(d)).toEqual(["Hide batch…"]);
+  await user.click(within(d).getByRole("button", { name: "Hide batch…" }));
+  // Its own confirm: the admin's decision, new uploads too, the photographer may appeal, no confirmed case.
+  expect(screen.getByText(NO_CONSENT_HIDE)).toBeInTheDocument();
+  expect(screen.queryByText(CANT_TELL_HIDE)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Confirm hide batch" }));
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/hide-batch"));
+  // Wrong event would have hidden it too; Mixed and Fits would not, and a record-only case without the note stays inert.
+  for (const [row, expected] of [
+    [noConsent("WRONG_EVENT"), ["Hide batch…"]],
+    [noConsent("MIXED"), []],
+    [noConsent("FITS"), []],
+    [{ ...noConsent("JUNK_DUMP"), verdictNote: null }, []],
+  ] as const) {
+    cleanup();
+    client.clear();
+    rows = [row];
+    mount();
+    const other = await drawer();
+    await within(other).findByText("No photo of this batch is held.");
+    expect(actionButtons(other)).toEqual(expected);
+  }
+  // A case that is no longer current offers nothing.
+  cleanup();
+  client.clear();
+  rows = [];
+  one = async () => detail(noConsent("JUNK_DUMP"), "CLOSED");
+  mount();
+  const closed = await drawer();
+  await within(closed).findByText("No photo of this batch is held.");
+  expect(actionButtons(closed)).toEqual([]);
+});
+
+it("a no-consent Copied case offers Hold payouts until a hold was placed", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [noConsent("COPIED")];
+  let release!: (v: unknown) => void;
+  post = () => new Promise((r) => { release = r; });
+  mount();
+  const d = await drawer();
+  await within(d).findByRole("button", { name: "Hold payouts" });
+  expect(actionButtons(d)).toEqual(["Hide batch…", "Hold payouts"]);
+  await user.click(within(d).getByRole("button", { name: "Hold payouts" }));
+  expect(api.post).not.toHaveBeenCalled();
+  // Before a hide there is nothing to appeal (RelevanceAppealService.file needs a hiding case): only End hold lifts it then.
+  expect(screen.getByText("Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, a won appeal lifts it too. Works only while the relevance mode is auto-hide.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Confirm hold payouts" }));
+  expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/hold-payouts");
+  // The server has not answered: the action is still offered and nothing was said.
+  expect(within(d).getByRole("button", { name: "Hold payouts" })).toBeInTheDocument();
+  expect(toasts()).toEqual([]);
+  one = async () => detail(noConsent("COPIED"), "APPLIED", { payoutHoldPlaced: true, payoutHoldAt: "2003-02-14T04:00:00Z" });
+  release(noConsent("COPIED"));
+  await within(d).findByRole("button", { name: "End hold" });
+  expect(actionButtons(d)).toEqual(["Hide batch…", "End hold"]);
+  expect(toasts()).toEqual(["Payouts held: Cebu City Marathon 2003"]);
+  // A hold placed once and ended is not offered again.
+  cleanup();
+  client.clear();
+  one = async () => detail(noConsent("COPIED"), "APPLIED", { payoutHoldPlaced: true });
+  mount();
+  const ended = await drawer();
+  await within(ended).findByRole("button", { name: "Hide batch…" });
+  expect(actionButtons(ended)).toEqual(["Hide batch…"]);
+});
+
+it("a no-consent Copied case an admin hid still offers Hold payouts", async () => {
+  fixtures.search = "tab=all&row=c1";
+  rows = [{ ...noConsent("COPIED"), appliedMode: "AUTO_HIDE", action: "HIDE_ALL", verdictNote: "ADMIN_HIDE", wouldHave: false }];
+  holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  mount();
+  const d = await drawer();
+  await within(d).findByRole("button", { name: "Hold payouts" });
+  expect(actionButtons(d).filter((b) => !b?.startsWith("Restore photo"))).toEqual(["Restore batch…", "Keep hidden…", "Hold payouts"]);
+  // An automatic Copied case holds payouts by itself: no Hold payouts there.
+  cleanup();
+  client.clear();
+  rows = [copied];
+  mount();
+  const auto = await drawer();
+  await within(auto).findByRole("button", { name: "Restore batch…" });
+  expect(within(auto).queryByRole("button", { name: "Hold payouts" })).not.toBeInTheDocument();
+});
+
+it("a refused Hold payouts shows the server's message", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [noConsent("COPIED")];
+  post = async () => { throw new ApiError([{ code: "RELEVANCE_ACTIONS_OFF", message: "Holding payouts needs the relevance mode auto-hide" }], 409); };
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Hold payouts" }));
+  await user.click(screen.getByRole("button", { name: "Confirm hold payouts" }));
+  await waitFor(() => expect(toasts()).toEqual(["Holding payouts needs the relevance mode auto-hide"]));
+  expect(screen.getByRole("button", { name: "Confirm hold payouts" })).toBeEnabled();
 });
 
 it("a failed End hold with no server message says what to do next", async () => {
