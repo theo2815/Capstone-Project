@@ -62,13 +62,18 @@ class RelevanceVerdictRulesTest {
         assertEquals(Settled(CaseVerdict.COPIED, null, CaseVerdict.COPIED), settleIt(answer("copied"), copyLow = true))
     }
 
-    @Test fun `wrong event needs a shared race and a low date or words on half the photos`() {
+    // RVF-7 (RVR-10, owner 2026-11-16): printed words alone never carry a wrong-event hide; they reach an admin instead.
+    @Test fun `wrong event stands only on a shared race with the date rule`() {
         val wrong = answer("wrong_event")
-        assertEquals(cantTell("THIN_EVIDENCE", CaseVerdict.WRONG_EVENT), settleIt(wrong, sharedRace = false, dateLow = true))
-        assertEquals(cantTell("THIN_EVIDENCE", CaseVerdict.WRONG_EVENT), settleIt(wrong, sharedRace = true, dateLow = null, wordsPhotos = 499))
         val kept = Settled(CaseVerdict.WRONG_EVENT, null, CaseVerdict.WRONG_EVENT)
         assertEquals(kept, settleIt(wrong, sharedRace = true, dateLow = true))
-        assertEquals(kept, settleIt(wrong, sharedRace = true, dateLow = false, wordsPhotos = 500))
+        assertEquals(kept, settleIt(wrong, sharedRace = true, dateLow = true, wordsPhotos = 1000))
+        assertEquals(cantTell("WORDS_ONLY", CaseVerdict.WRONG_EVENT), settleIt(wrong, sharedRace = true, dateLow = false, wordsPhotos = 1000))
+        assertEquals(cantTell("WORDS_ONLY", CaseVerdict.WRONG_EVENT), settleIt(wrong, sharedRace = true, dateLow = null, wordsPhotos = 1000))
+        assertEquals(cantTell("WORDS_ONLY", CaseVerdict.WRONG_EVENT), settleIt(wrong, sharedRace = true, dateLow = false, wordsPhotos = 500))
+        assertEquals(cantTell("THIN_EVIDENCE", CaseVerdict.WRONG_EVENT), settleIt(wrong, sharedRace = false, dateLow = true))
+        assertEquals(cantTell("THIN_EVIDENCE", CaseVerdict.WRONG_EVENT), settleIt(wrong, sharedRace = false, dateLow = false, wordsPhotos = 1000))
+        assertEquals(cantTell("THIN_EVIDENCE", CaseVerdict.WRONG_EVENT), settleIt(wrong, sharedRace = true, dateLow = null, wordsPhotos = 499))
     }
 
     @Test fun `a small batch allows only fits and can't tell`() {

@@ -236,6 +236,11 @@ class RelevanceCheckService(
         val consented = autoHide && legal.minVersionOrNull()?.let { atLeast(batches.photographerTermsVersion(case.batchId), it) } == true
         val mode = if (consented) RelevanceMode.AUTO_HIDE else RelevanceMode.RECORD_ONLY
         val current = cases.currentFor(case.batchId)
+        // RVF-7 (RVR-10, owner 2026-11-16): a wrong event on words alone always reaches an admin, so its alert is raised
+        // before the comparator can close the case.
+        val wordsOnly = listOfNotNull(AlertKind.WORDS_ONLY.takeIf {
+            case.verdictNote == WORDS_ONLY && raiseAlert(case.batchId, case.id, it, case.batchPhotos, mode == RelevanceMode.RECORD_ONLY, now)
+        })
         // A.3 (P21): with no current case, an admin's last decision on the batch is what the new case is compared with.
         val comparator = current ?: if (autoHide) cases.lastClosedByAdmin(case.batchId) else null
         if (comparator != null) {
@@ -267,7 +272,7 @@ class RelevanceCheckService(
                     if (reason == "SAME_VERDICT" && verdict in SCANNED) cases.queueScan(current.id)
                 }
                 log.info("Relevance check closed case={} reason={}", case.id, reason)
-                return emptyList()
+                return wordsOnly
             }
         }
         // G7: a Fits or Mixed re-check lifts a current auto-hide junk dump to HIDE_JUNK, so the junk stays hidden photo by
@@ -294,7 +299,7 @@ class RelevanceCheckService(
         // In auto-hide only the copied alert is raised here; the big-hide alert waits for the photos actually hidden.
         val raise = if (consented) listOfNotNull((AlertKind.COPIED to case.batchPhotos).takeIf { verdict == CaseVerdict.COPIED })
             else wouldHaveAlerts(case, verdict, action)
-        return raise.filter { (kind, photos) ->
+        return wordsOnly + raise.filter { (kind, photos) ->
             raiseAlert(case.batchId, case.id, kind, photos, mode == RelevanceMode.RECORD_ONLY, now)
         }.map { it.first }
     }
@@ -668,6 +673,8 @@ class RelevanceCheckService(
         const val AUTO = "AUTO"
         // RV-2.5b: the verdict_note of a case an admin hid from the page.
         const val ADMIN_HIDE = "ADMIN_HIDE"
+        // RVF-7: the verdict_note of a wrong event on printed words alone (settle()).
+        const val WORDS_ONLY = "WORDS_ONLY"
         const val MODEL_COLUMN = 60
         // Verdict notes of a check that got no usable answer (plan 5.11).
         val FAILED_CALL = setOf("CALL_FAILED", "CUT_OFF", "BAD_JSON", "UNKNOWN_VALUE")

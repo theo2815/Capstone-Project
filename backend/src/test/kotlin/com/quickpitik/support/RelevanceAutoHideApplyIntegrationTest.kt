@@ -99,6 +99,23 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(before, untouched(), "no photo is touched in this task")
     }
 
+    // RVF-7 promise test (a missing or failed verdict never hides): a wrong event on words alone acts on nothing, even for
+    // a consenting photographer in auto-hide; it only raises its admin alert.
+    @Test
+    fun `a words-only wrong event hides nothing in auto-hide`() {
+        val b = batch(photos = 600)
+        repeat(3) { photo(b) }
+        val c = case(b, "DECIDED", "CANT_TELL", note = "WORDS_ONLY")
+        val before = untouched()
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "AUTO_HIDE", "NONE", "WORDS_ONLY", "NONE"),
+            row(c, "stage", "applied_mode", "action", "verdict_note", "scan_state"))
+        assertEquals(listOf(listOf("WORDS_ONLY", "words_only:$c", false, 600)), alertsOf(b))
+        assertEquals(before, untouched(), "no photo, hold, flag, note or decision is touched")
+    }
+
     @Test
     fun `a photographer below the minimum Terms version is applied as record-only with NO_CONSENT`() {
         val below = batch(photos = 600, terms = "1.6")
