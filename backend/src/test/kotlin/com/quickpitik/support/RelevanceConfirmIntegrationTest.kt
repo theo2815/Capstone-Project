@@ -431,7 +431,7 @@ class RelevanceConfirmIntegrationTest : PostgresIntegrationTest() {
         val props = props(RelevanceMode.AUTO_HIDE)
         val notifier = RelevanceNotifier(cases, decisions(), switch(props), props, fixed(NOW), tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch(props), props, fixed(NOW), publisher,
-            confirmer(), decisions(), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
+            confirmer(), decisions(), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java), tx, adminService())
     }
 
     private fun adminService(): AdminRelevanceService {

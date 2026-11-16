@@ -199,8 +199,8 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
-    // RV-3.2 part b: the admin's appeal routes are for admins only. The test app runs with the relevance mode off, so the
-    // list answers and the evidence look and the decision are refused by the mode check (RELEVANCE_ACTIONS_OFF).
+    // RV-3.2 part b: the admin's appeal routes are for admins only. The test app runs with the relevance mode off; since
+    // RVF-14 the evidence look and the decision answer in every mode.
     @Test
     fun `the relevance appeal admin routes are for admins only`() {
         fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
@@ -229,17 +229,12 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val listed = get(list, admin)
         assertEquals(200, listed.statusCode())
         assertTrue(appeal.toString() in listed.body())
-        for ((path, body) in actions) {
-            val response = post(path, body, admin)
-            assertEquals(409, response.statusCode(), path)
-            assertTrue("RELEVANCE_ACTIONS_OFF" in response.body(), path)
-        }
-        assertEquals("OPEN", jdbc.queryForObject("SELECT status FROM relevance_appeals WHERE id = ?", String::class.java, appeal))
+        for ((path, body) in actions) assertEquals(200, post(path, body, admin).statusCode(), path)
+        assertEquals("LOST", jdbc.queryForObject("SELECT status FROM relevance_appeals WHERE id = ?", String::class.java, appeal))
     }
 
-    // RV-3.2a: a photographer's own relevance case and appeal, for photographers only. The test app runs with the
-    // relevance mode off, so a photographer's read is 404 and filing is 409 before any look-up, whoever owns the case;
-    // ownership with the mode on is RelevanceAppealIntegrationTest `another photographer's case is not found`.
+    // RV-3.2a: a photographer's own relevance case and appeal, for photographers only. Another photographer's read and
+    // filing are 404, in every mode since RVF-14 (the test app runs with the mode off).
     @Test
     fun `the photographer relevance routes are for photographers only`() {
         fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
@@ -264,18 +259,15 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
             assertEquals(403, get(read, token).statusCode())
             assertEquals(403, post(appeal, body, token).statusCode())
         }
-        val modeOff = get(read, other)
-        assertEquals(404, modeOff.statusCode())
-        assertTrue("NOT_FOUND" in modeOff.body())
+        val notOwn = get(read, other)
+        assertEquals(404 to "NOT_FOUND", notOwn.statusCode() to errorCode(notOwn))
         val filed = post(appeal, body, other)
-        assertEquals(409, filed.statusCode())
-        assertTrue("NOTHING_TO_APPEAL" in filed.body())
+        assertEquals(404 to "NOT_FOUND", filed.statusCode() to errorCode(filed))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_appeals WHERE case_id = ?", Int::class.java, case))
     }
 
-    // RV-3.3: the photographer's blurry-photo list, hide and undo, for photographers only. The test app runs with the
-    // relevance mode off, so the list is 404 and hide and undo are 409 before any look-up; the owner and mode checks with
-    // the mode on are RelevancePhotographerHideIntegrationTest.
+    // RV-3.3: the photographer's blurry-photo list, hide and undo, for photographers only. An unknown case is 404 on every
+    // route, in every mode since RVF-14; the owner and case checks are RelevancePhotographerHideIntegrationTest.
     @Test
     fun `the photographer hide routes are for photographers only`() {
         val base = "/api/v1/me/photographer/relevance/cases/${UUID.randomUUID()}"
@@ -302,7 +294,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(404 to "NOT_FOUND", hiddenRead.statusCode() to errorCode(hiddenRead))
         writes.forEach {
             val refused = post(it, body, photographer)
-            assertEquals(409 to "RELEVANCE_ACTIONS_OFF", refused.statusCode() to errorCode(refused), it)
+            assertEquals(404 to "NOT_FOUND", refused.statusCode() to errorCode(refused), it)
         }
     }
 

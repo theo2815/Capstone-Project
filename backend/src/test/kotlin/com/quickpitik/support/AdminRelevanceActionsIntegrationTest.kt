@@ -814,7 +814,8 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         val props = RelevanceProperties(mode = RelevanceMode.AUTO_HIDE, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
         return RelevanceAppealService(cases, appeals, alerts, notifier,
             RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false)), props,
-            Clock.fixed(NOW.plusDays(1).toInstant(), ZoneOffset.UTC), publisher, confirmer, decisions, payoutHold)
+            Clock.fixed(NOW.plusDays(1).toInstant(), ZoneOffset.UTC), publisher, confirmer, decisions, payoutHold, tx,
+            Mockito.mock(com.quickpitik.service.relevance.AdminRelevanceService::class.java))
     }
 
     private fun row(caseId: UUID, vararg columns: String): List<Any?> =

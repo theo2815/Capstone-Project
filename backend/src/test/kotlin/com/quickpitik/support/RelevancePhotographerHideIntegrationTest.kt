@@ -2,9 +2,6 @@ package com.quickpitik.support
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.PaginationParams
-import com.quickpitik.config.AdminProperties
-import com.quickpitik.config.AiApiProperties
-import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.exception.ApiException
@@ -15,7 +12,6 @@ import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.RelevanceHoldRepository
 import com.quickpitik.service.relevance.AdminRelevanceService
 import com.quickpitik.service.relevance.RelevancePhotographerHideService
-import com.quickpitik.service.relevance.RelevanceSwitch
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -176,19 +172,33 @@ class RelevancePhotographerHideIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, holdsOf(b).size)
     }
 
+    // RVF-14 (Q3): a case applied in auto-hide keeps the photographer's own hide and show again after the mode leaves it.
+    // The service no longer reads the mode, so one run stands for record-only and off.
     @Test
-    fun `with the mode off or record-only nothing runs`() {
+    fun `a photographer can show their own hidden photos again after the mode leaves auto-hide`() {
         val b = batch()
         val c = case(b, "FITS", "NONE")
         val p = photo(b, sharpness = 10.0)
 
-        for (mode in listOf(RelevanceMode.OFF, RelevanceMode.RECORD_ONLY)) {
-            assertEquals(ACTIONS_OFF, refused { service(mode).hide(b.photographer, c, listOf(p)) }, "$mode")
-            assertEquals(ACTIONS_OFF, refused { service(mode).unhide(b.photographer, c, listOf(p)) }, "$mode")
-            assertFailsWith<NotFoundException> { service(mode).blurry(b.photographer, c, PaginationParams.of(0, 50)) }
-        }
+        assertEquals(listOf(p), service().blurry(b.photographer, c, PaginationParams.of(0, 50)).items.map { it.photoId })
+        assertEquals(1, service().hide(b.photographer, c, listOf(p)).affected)
+        assertEquals(listOf(p), service().hidden(b.photographer, c, PaginationParams.of(0, 50)).items.map { it.photoId })
+        assertEquals(1, service().unhide(b.photographer, c, listOf(p)).affected)
         assertEquals("LIVE", status(p))
-        assertEquals(0, holdsOf(b).size)
+    }
+
+    // RVF-14 promise (Q3): outside auto-hide the only new hide is the photographer's own, on the photos they chose.
+    @Test
+    fun `outside auto-hide nothing is hidden or held except by the photographer's own hide, and that hold carries the holder PHOTOGRAPHER`() {
+        val b = batch()
+        val c = case(b, "JUNK_DUMP", "HIDE_ALL")
+        val chosen = photo(b, sharpness = 10.0)
+        val others = listOf(photo(b, sharpness = 10.0), photo(b, sharpness = 50.0))
+
+        service().hide(b.photographer, c, listOf(chosen))
+
+        assertEquals(listOf("HIDDEN", "LIVE", "LIVE"), (listOf(chosen) + others).map { status(it) })
+        assertEquals(listOf(listOf(chosen, "PHOTOGRAPHER", null, c)), holdsOf(b))
     }
 
     // RV-3.4b: the photographer's own hides, so the page can offer Undo on every visit.
@@ -219,7 +229,7 @@ class RelevancePhotographerHideIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `the hidden list is not found for another photographer, a record-only case or the mode off`() {
+    fun `the hidden list is not found for another photographer or a record-only case`() {
         val b = batch()
         val c = case(b, "FITS", "NONE")
         service().hide(b.photographer, c, listOf(photo(b, sharpness = 10.0)))
@@ -227,9 +237,6 @@ class RelevancePhotographerHideIntegrationTest : PostgresIntegrationTest() {
 
         assertFailsWith<NotFoundException> { service().hidden(batch().photographer, c, PaginationParams.of(0, 50)) }
         assertFailsWith<NotFoundException> { service().hidden(recordOnly.first.photographer, recordOnly.second, PaginationParams.of(0, 50)) }
-        for (mode in listOf(RelevanceMode.OFF, RelevanceMode.RECORD_ONLY)) {
-            assertFailsWith<NotFoundException> { service(mode).hidden(b.photographer, c, PaginationParams.of(0, 50)) }
-        }
         assertEquals(1L, service().hidden(b.photographer, c, PaginationParams.of(0, 50)).total)
     }
 
@@ -238,11 +245,9 @@ class RelevancePhotographerHideIntegrationTest : PostgresIntegrationTest() {
     private fun refused(block: () -> Unit): Pair<HttpStatus, String> =
         assertFailsWith<ApiException> { block() }.let { it.status to it.code }
 
-    private fun service(mode: RelevanceMode = RelevanceMode.AUTO_HIDE): RelevancePhotographerHideService {
-        val props = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
-        return RelevancePhotographerHideService(cases, holds, photos,
-            RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false)), props, storage,
-            StorageProperties(), Clock.systemUTC(), tx)
+    private fun service(): RelevancePhotographerHideService {
+        val props = RelevanceProperties(junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
+        return RelevancePhotographerHideService(cases, holds, photos, props, storage, StorageProperties(), Clock.systemUTC(), tx)
     }
 
     private fun batch(photographer: UUID? = null): Batch {

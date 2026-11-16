@@ -4,7 +4,6 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
-import com.quickpitik.config.RelevanceMode
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.photographer.PhotoActionResponse
@@ -27,13 +26,12 @@ import java.util.UUID
 // RV-3.3 (G8): a photographer hides the blurry photos of their own batch, and undoes it. The hides are PHOTOGRAPHER holds
 // on the batch: an admin's or the automatic restore never lifts them, and undo lifts only them, by the one restore rule
 // (another hold or a hidden photo flag still keeps a photo out). Only a case of the caller's own batch applied in
-// auto-hide, with the mode auto-hide now; anything else does nothing.
+// auto-hide, in every mode (RVF-14, Q3: the photographer's own act on their own photos); anything else does nothing.
 @Service
 class RelevancePhotographerHideService(
     private val cases: RelevanceCaseRepository,
     private val holds: RelevanceHoldRepository,
     private val photos: PhotoRepository,
-    private val switch: RelevanceSwitch,
     private val props: RelevanceProperties,
     private val storage: StorageService,
     private val storageProperties: StorageProperties,
@@ -43,7 +41,6 @@ class RelevancePhotographerHideService(
 
     // No transaction: each read is its own, and the preview links are signed after them.
     fun blurry(photographerId: UUID, caseId: UUID, page: PaginationParams): PaginatedResponse<PhotographerBlurryPhotoDto> {
-        if (switch.mode != RelevanceMode.AUTO_HIDE) throw notFound()
         val row = cases.ownCase(caseId, photographerId)?.takeIf { it.appliedMode == AUTO } ?: throw notFound()
         val cutoff = props.junk.blurCutoff ?: return PaginatedResponse.empty(page)
         val result = holds.pageBlurryLive(row.batchId, cutoff, OffsetLimitPageable(page))
@@ -55,7 +52,6 @@ class RelevancePhotographerHideService(
 
     // RV-3.4b: the photos the photographer hid themselves and has not shown again, behind the same guards as blurry().
     fun hidden(photographerId: UUID, caseId: UUID, page: PaginationParams): PaginatedResponse<PhotographerBlurryPhotoDto> {
-        if (switch.mode != RelevanceMode.AUTO_HIDE) throw notFound()
         val row = cases.ownCase(caseId, photographerId)?.takeIf { it.appliedMode == AUTO } ?: throw notFound()
         val result = holds.pageOwnHidden(row.batchId, OffsetLimitPageable(page))
         return PaginatedResponse.of(result.content.map {
@@ -81,7 +77,6 @@ class RelevancePhotographerHideService(
 
     // affected = photos whose gallery status changed.
     private fun act(photographerId: UUID, caseId: UUID, photoIds: List<UUID>, change: (OwnCaseRow, List<UUID>) -> Int): PhotoActionResponse {
-        if (switch.mode != RelevanceMode.AUTO_HIDE) throw actionsOff()
         val ids = photoIds.distinct()
         if (ids.isEmpty() || ids.size > PaginationParams.MAX_LIMIT) throw badIds()
         return PhotoActionResponse(transactions.execute {
