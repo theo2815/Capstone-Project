@@ -438,6 +438,16 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     """, nativeQuery = true)
     fun findHoldDue(@Param("limit") limit: Int): List<UUID>
 
+    // RV-4.5a review: the replacing case takes the replaced case's hold flag while it still holds payouts, once.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases n SET hold_flag_id = o.hold_flag_id
+        FROM relevance_cases o JOIN flags f ON f.id = o.hold_flag_id
+        WHERE n.id = :toId AND o.id = :fromId AND n.hold_flag_id IS NULL
+          AND f.status IN ('open', 'escalated') AND f.payout_hold_at IS NOT NULL
+    """, nativeQuery = true)
+    fun carryLiveHold(@Param("fromId") fromId: UUID, @Param("toId") toId: UUID): Int
+
     // RV-4.2: the case's hold flag while it still holds payouts (open or escalated, held), and when the hold started.
     @Query(value = "SELECT f.id $LIVE_HOLD", nativeQuery = true)
     fun liveHoldFlag(@Param("id") id: UUID): UUID?

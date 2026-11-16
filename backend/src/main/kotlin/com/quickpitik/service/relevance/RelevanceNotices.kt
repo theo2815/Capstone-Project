@@ -100,11 +100,12 @@ object RelevanceNotices {
         },
     )
 
-    // V2-T19 (no admin's reason, "Session 2" choice 7). "For a Copied case:" marks the payout sentence.
-    fun appealLost(eventName: String, copied: Boolean) = RelevanceNote(
+    // V2-T19 (no admin's reason, "Session 2" choice 7). "For a Copied case:" marks the payout sentence. RV-4.5a review:
+    // counts = false (an admin's hide, which never counts) leaves the confirmed-case sentence out; nothing else changes.
+    fun appealLost(eventName: String, copied: Boolean, counts: Boolean = true) = RelevanceNote(
         "Appeal not accepted",
         "An admin looked at your appeal about $eventName and decided the photos stay off sale. " +
-            "When all your photos in the event were off sale, this counts as a confirmed case (see the Terms, Appeals). " +
+            (if (counts) "When all your photos in the event were off sale, this counts as a confirmed case (see the Terms, Appeals). " else "") +
             (if (copied) "Your payouts stay on hold until an admin finishes the review. " else "") +
             "This is QuickPitik's final decision on the appeal. You can still complain to the National Privacy Commission " +
             "or the Department of Trade and Industry.",

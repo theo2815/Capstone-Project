@@ -187,6 +187,32 @@ class AdminRelevanceNoConsentIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // Review of PR #174: a hold the admin placed on a case still in record-only goes over to the case that replaces it, so
+    // the page (which lists current cases) can still end it, and the first consented check places no second hold.
+    @Test
+    fun `an admin payout hold stays liftable after a later check replaces the case`() {
+        for (consentLater in listOf(false, true)) {
+            val b = batch()
+            val c = noConsent(b, "COPIED")
+            tx.execute { service().holdPayouts(adminId, c, null) }
+            val flag = holdFlagOf(c)
+            // Without consent a different verdict replaces the record-only case; with consent the same verdict does (P18).
+            if (consentLater) jdbc.update("UPDATE users SET terms_version = '1.7' WHERE id = ?", b.photographer)
+            val next = decided(b, if (consentLater) "COPIED" else "FITS")
+
+            checks().applyCase(next, OffsetDateTime.now())
+
+            assertEquals(listOf("CLOSED", "SUPERSEDED"), row(c, "stage", "close_reason"), "$consentLater")
+            assertEquals(listOf("APPLIED", flag), row(next, "stage", "hold_flag_id"), "$consentLater")
+            assertEquals(1, flagsOf(b).size, "one hold only")
+            assertNotNull(tx.execute { service().case(next) }!!.payoutHoldAt, "$consentLater")
+
+            tx.execute { service().endHold(adminId, next) }
+
+            assertEquals("resolved", flagsOf(b).single()["status"], "$consentLater")
+        }
+    }
+
     @Test
     fun `hold-payouts refuses a case that is not a no-consent Copied case, or already holds`() {
         val junk = noConsent(batch(), "JUNK_DUMP")
@@ -268,6 +294,11 @@ class AdminRelevanceNoConsentIntegrationTest : PostgresIntegrationTest() {
             "decided_at, applied_mode, action, applied_at, closed_at, close_reason) VALUES (?, 'QUIET', ?, 40, ?, 40, 0, ?, ?, false, ?, ?, ?, ?, ?, ?)",
         b.id, NOW, stage, verdict, note, NOW, mode, action(verdict), NOW,
         NOW.takeIf { stage == "CLOSED" }, "SUPERSEDED".takeIf { stage == "CLOSED" })
+
+    // A case waiting for the apply step.
+    private fun decided(b: Batch, verdict: String): UUID = id(
+        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at) " +
+            "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, ?, false, ?)", b.id, NOW, verdict, NOW)
 
     private fun action(verdict: String) = when (verdict) {
         "MIXED" -> "HIDE_JUNK"

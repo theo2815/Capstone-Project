@@ -96,8 +96,9 @@ class RelevanceAppealService(
         }
         val appeal = appeals.saveAndFlush(RelevanceAppeal(caseId = caseId, batchId = row.batchId, photographerId = photographerId, reason = text))
         raiseAlert(row, appeal.id, now)
+        // RV-4.5a review: the payouts sentence only while a payout hold binds the case.
         notifier.deliver(photographerId, caseId, "relevance:${appeal.id}:filed",
-            RelevanceNotices.appealReceived(row.eventName, copied = row.verdict == CaseVerdict.COPIED.name))
+            RelevanceNotices.appealReceived(row.eventName, copied = cases.liveHoldFlag(caseId) != null))
         log.info("Relevance appeal filed case={} appeal={}", caseId, appeal.id)
         return view(row, appealView(appeal, now))
     }
@@ -165,7 +166,9 @@ class RelevanceAppealService(
         if (acting) {
             val eventName = cases.ownCase(caseId, appeal.photographerId)!!.eventName
             val text = if (result == AppealStatus.WON) RelevanceNotices.appealWon(eventName, wholeBatch)
-                else RelevanceNotices.appealLost(eventName, copied = case.verdict == CaseVerdict.COPIED.name)
+                // RV-4.5a review: the payouts sentence only while a hold binds; an admin's hide never counts.
+                else RelevanceNotices.appealLost(eventName, copied = cases.liveHoldFlag(caseId) != null,
+                    counts = case.verdictNote != "ADMIN_HIDE")
             notifier.deliver(appeal.photographerId, caseId, "relevance:$appealId:${result.name.lowercase()}", text)
         }
         log.info("Relevance appeal decided appeal={} case={} outcome={}", appealId, caseId, result)
