@@ -1167,3 +1167,9 @@ export function recordRelevanceConsentWithdrawal(photographerId: string): Promis
 export function clearRelevanceConsentWithdrawal(photographerId: string): Promise<RelevanceConsentWithdrawal> {
   return api.delete(`/admin/relevance/photographers/${encodeURIComponent(photographerId)}/consent-withdrawal`);
 }
+
+// ───────────────────────────────────────────── Photo Relevance no-consent actions (RV-4.5b)
+
+export function holdRelevancePayouts(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`/admin/relevance/cases/${encodeURIComponent(caseId)}/hold-payouts`);
+}

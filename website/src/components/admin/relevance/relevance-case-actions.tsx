@@ -32,6 +32,7 @@ const BTN_CLS: Record<RelevanceCaseAction, string> = {
   looks_fine: `${BTN_SECONDARY} ${BTN_SIZE.sm}`,
   hide_batch: `${BTN_DANGER} ${BTN_SIZE.sm}`,
   end_hold: `${BTN_SECONDARY} ${BTN_SIZE.sm}`,
+  hold_payouts: `${BTN_DANGER} ${BTN_SIZE.sm}`,
 };
 
 /** The drawer's action bar and its confirm. The host owns `confirming`, so the drawer can stand its ESC down. */

@@ -74,6 +74,8 @@ export interface RelevanceCaseDetail {
   confirmedAt: string | null;
   photographerStrikes: number;
   payoutHoldAt: string | null;
+  // RV-4.5a: a payout hold was placed on this case at some time (an ended one included).
+  payoutHoldPlaced: boolean;
   closeReason: string | null;
 }
 
@@ -181,7 +183,7 @@ export interface RelevancePhotoRestoreResult {
   status: string;
 }
 
-export type RelevanceCaseAction = "restore" | "keep_hidden" | "looks_fine" | "hide_batch" | "end_hold";
+export type RelevanceCaseAction = "restore" | "keep_hidden" | "looks_fine" | "hide_batch" | "end_hold" | "hold_payouts";
 
 export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; title: string; confirm: string; confirmLabel: string; done: string; failed: string }> = {
   restore: {
@@ -226,6 +228,15 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
     done: "Hold ended",
     failed: "Could not end the hold. The case was read again: if the payout hold still shows, press End hold again.",
   },
+  // RV-4.5b: a no-consent Copied case; the server sends the photographer the approved "Payouts on hold" message.
+  hold_payouts: {
+    label: "Hold payouts",
+    title: "Hold payouts",
+    confirm: "Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold or a won appeal lifts it. Works only while the relevance mode is auto-hide.",
+    confirmLabel: "Confirm hold payouts",
+    done: "Payouts held",
+    failed: "Could not hold the payouts — check the case before retrying.",
+  },
 };
 
 // RV-4.3: the consequences of a confirmed case (A.7, A.8).
@@ -258,7 +269,7 @@ export const isReleasable = (p: RelevanceHiddenPhoto) => p.restoredAt === null &
  * a Can't tell an admin hid offers the restores instead. The mode itself is not readable here; the server refuses.
  */
 export function caseActions(
-  detail: Pick<RelevanceCaseDetail, "case" | "stage" | "payoutHoldAt" | "closeReason">,
+  detail: Pick<RelevanceCaseDetail, "case" | "stage" | "payoutHoldAt" | "payoutHoldPlaced" | "closeReason">,
   hasReleasable: boolean,
 ): RelevanceCaseAction[] {
   // RV-4.3: a live payout hold can be ended whatever the case's stage; the server answers 409 when none is left.
@@ -266,12 +277,20 @@ export function caseActions(
   const row = detail.case;
   const acting = detail.stage === "APPLIED" && row.appliedMode !== "RECORD_ONLY";
   const hiding = row.action !== null && row.action !== "NONE";
-  if (acting && hiding) return ["restore", "keep_hidden", ...endHold];
+  // RV-4.5b: a no-consent case whose verdict would have hidden the whole batch; an admin may hide it, and hold a
+  // Copied one's payouts (also after hiding it) once. An admin's hide of it reads AUTO_HIDE + ADMIN_HIDE.
+  const noConsent = detail.stage === "APPLIED" && row.appliedMode === "RECORD_ONLY" && row.verdictNote === "NO_CONSENT"
+    && ["JUNK_DUMP", "WRONG_EVENT", "COPIED"].includes(row.verdict ?? "");
+  const adminHid = acting && row.verdictNote === "ADMIN_HIDE";
+  const holdPayouts: RelevanceCaseAction[] =
+    (noConsent || adminHid) && row.verdict === "COPIED" && !detail.payoutHoldPlaced ? ["hold_payouts"] : [];
+  if (acting && hiding) return ["restore", "keep_hidden", ...holdPayouts, ...endHold];
   if (acting && row.verdict === "CANT_TELL" && row.action === "NONE") return ["looks_fine", "hide_batch", ...endHold];
   // A restore that broke off leaves the case closed RESTORED_BY_ADMIN with holds live: the server takes the repeat
   // (and refuses it once a newer case is current).
   const restorable = detail.stage === "APPLIED" || (detail.stage === "CLOSED" && detail.closeReason === "RESTORED_BY_ADMIN");
-  return [...(restorable && hasReleasable ? (["restore"] as const) : []), ...endHold];
+  const noConsentActions: RelevanceCaseAction[] = noConsent ? ["hide_batch", ...holdPayouts] : [];
+  return [...(restorable && hasReleasable ? (["restore"] as const) : []), ...noConsentActions, ...endHold];
 }
 
 /** Why a sample counts as junk, or that it was not judged while a cut-off is unset. */
