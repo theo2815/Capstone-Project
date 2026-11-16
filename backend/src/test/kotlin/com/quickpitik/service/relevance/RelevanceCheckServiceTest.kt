@@ -134,8 +134,9 @@ class RelevanceCheckServiceTest {
         admin: AdminProperties = AdminProperties(),
         imageProcessing: org.springframework.core.task.TaskExecutor = idlePool,
         labels: ObjectProvider<RekognitionAiClient>? = rekognition,
+        scan: RelevanceProperties.Scan = RelevanceProperties.Scan(),
     ): RelevanceCheckService {
-        val props = RelevanceProperties(mode = mode, junk = junk, llm = RelevanceProperties.Llm(apiKey = key))
+        val props = RelevanceProperties(mode = mode, junk = junk, llm = RelevanceProperties.Llm(apiKey = key), scan = scan)
         val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), labels)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
             client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"),
@@ -167,6 +168,30 @@ class RelevanceCheckServiceTest {
         // An idle pool lets the scan look for work.
         service(mode = RelevanceMode.AUTO_HIDE, admin = AdminProperties(flagsEnabled = true)).scanTurns()
         Mockito.verify(cases).findScans(Mockito.anyInt())
+    }
+
+    // RVF-10 (RVR-13): the relevanceScan pool takes check.workers + check.measures-per-tick photos at once (62 at the
+    // defaults); a scan turn asks for no more, so no photo of the turn is refused.
+    @Test
+    fun `a scan turn asks for no more photos than the pool takes`() {
+        val row = object : SamplingCase {
+            override val caseId = UUID.randomUUID()
+            override val batchId = UUID.randomUUID()
+            override val eventId = UUID.randomUUID()
+            override val photographerId = UUID.randomUUID()
+        }
+        Mockito.`when`(cases.findScans(Mockito.anyInt())).thenReturn(listOf(row))
+        Mockito.`when`(batches.claimCheck(eqArg(row.batchId), anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(batches.stillAllowed(row.batchId)).thenReturn(true)
+        Mockito.`when`(cases.startScanTurn(eqArg(row.caseId), anyArg())).thenReturn(1)
+        Mockito.`when`(batches.nextUnmeasured(eqArg(row.eventId), eqArg(row.photographerId), Mockito.anyInt())).thenReturn(listOf(toMeasure()))
+        val admin = AdminProperties(flagsEnabled = true)
+
+        service(mode = RelevanceMode.AUTO_HIDE, admin = admin).scanTurns()
+        Mockito.verify(batches).nextUnmeasured(row.eventId, row.photographerId, 62)
+
+        service(mode = RelevanceMode.AUTO_HIDE, admin = admin, scan = RelevanceProperties.Scan(photosPerTurn = 40)).scanTurns()
+        Mockito.verify(batches).nextUnmeasured(row.eventId, row.photographerId, 40)
     }
 
     private fun due(batchId: UUID = UUID.randomUUID()): CheckDue = object : CheckDue {

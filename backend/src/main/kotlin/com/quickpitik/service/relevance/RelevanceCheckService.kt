@@ -146,7 +146,9 @@ class RelevanceCheckService(
             // The event may have turned Private after the list was read: skip the turn, pay nothing, close nothing (G9).
             if (!batches.stillAllowed(row.batchId)) return
             if (transactions.execute { cases.startScanTurn(row.caseId, now) } != 1) return
-            val todo = batches.nextUnmeasured(row.eventId, row.photographerId, props.scan.photosPerTurn)
+            // RVF-10 (RVR-13): the relevanceScan pool takes workers + measures-per-tick photos at once; more would be refused.
+            val perTurn = minOf(props.scan.photosPerTurn, props.check.workers + props.check.measuresPerTick)
+            val todo = batches.nextUnmeasured(row.eventId, row.photographerId, perTurn)
             if (todo.isNotEmpty()) {
                 val measured = measurer.measure(row.batchId, token, todo)
                 registry.counter("qp.relevance.scan.measured").increment(measured.toDouble())
