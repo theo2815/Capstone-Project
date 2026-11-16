@@ -82,6 +82,8 @@ data class AdminUserDetailDto(
     val verificationRevision: Long = 0,
     @field:Schema(description = "R-10: same as the row's adminHold, so the drawer works without a list row")
     val adminHold: Boolean = false,
+    @field:Schema(description = "RV-L7 part a: when the photographer withdrew the consent to automatic Photo Relevance actions; null when not withdrawn")
+    val relevanceConsentWithdrawnAt: String? = null,
 )
 
 // POST /admin/users/{id}/reject — body { reason }.

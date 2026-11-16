@@ -14,6 +14,7 @@ import org.springframework.data.repository.query.Param
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.UUID
 
 @Repository
@@ -68,6 +69,26 @@ interface UserRepository : JpaRepository<User, UUID> {
     @Transactional
     @Query("UPDATE User u SET u.identityNoticeSentFor = NULL WHERE u.id = :id AND u.identityNoticeSentFor = :startsOn")
     fun clearIdentityNotice(@Param("id") id: UUID, @Param("startsOn") startsOn: LocalDate): Int
+
+    // RV-L7 part a: record or clear a photographer's withdrawal of the consent to automatic Photo Relevance actions.
+    // A second record keeps the first date (the IS NULL guard); each returns 1 only for the call that changed the row.
+    @Modifying
+    @Query(
+        "UPDATE User u SET u.relevanceConsentWithdrawnAt = :now WHERE u.id = :id " +
+            "AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER AND u.relevanceConsentWithdrawnAt IS NULL",
+    )
+    fun markRelevanceConsentWithdrawn(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    @Modifying
+    @Query(
+        "UPDATE User u SET u.relevanceConsentWithdrawnAt = NULL WHERE u.id = :id " +
+            "AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER AND u.relevanceConsentWithdrawnAt IS NOT NULL",
+    )
+    fun clearRelevanceConsentWithdrawn(@Param("id") id: UUID): Int
+
+    // A fresh read of the date (a JPQL scalar query skips the loaded entity), so a caller that locked the row sees it.
+    @Query("SELECT u.relevanceConsentWithdrawnAt FROM User u WHERE u.id = :id")
+    fun relevanceConsentWithdrawnAt(@Param("id") id: UUID): OffsetDateTime?
 
     // Admin user list with optional role / search filters. Status filtering
     // (pending / approved / incomplete / suspended) is applied service-side

@@ -7,6 +7,7 @@ import com.quickpitik.entity.CaseStage
 import com.quickpitik.entity.CaseVerdict
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.RelevanceStrikeRepository
+import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.admin.AdminFlagService
 import com.quickpitik.service.admin.SystemFlagService
@@ -34,6 +35,7 @@ class RelevanceHoldService(
     private val switch: RelevanceSwitch,
     private val transactions: TransactionTemplate,
     private val admin: AdminProperties,
+    private val users: UserRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -47,6 +49,8 @@ class RelevanceHoldService(
             if (case.stage != CaseStage.APPLIED.name || case.appliedMode != RelevanceMode.AUTO_HIDE.name ||
                 case.verdict != CaseVerdict.COPIED.name || case.holdFlagId != null) return@executeWithoutResult
             val photographer = strikes.lockPhotographerOf(caseId)!!
+            // RV-L7 part a: read under the user row lock, so a withdrawal recorded after the case was picked still stops it.
+            if (users.relevanceConsentWithdrawnAt(photographer) != null) return@executeWithoutResult
             val flagId = systemFlags.holdPayouts(photographer, "Photo Relevance case $caseId: copied photos")
             cases.setHoldFlag(caseId, flagId)
             decisionLog.logAutomaticUserDecision(photographer, "payout_hold_auto",

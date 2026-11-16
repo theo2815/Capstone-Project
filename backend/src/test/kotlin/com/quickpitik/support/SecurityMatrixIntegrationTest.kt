@@ -366,6 +366,36 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // RV-L7 part a: recording and clearing a photographer's withdrawal of the consent to automatic actions. The test app
+    // runs with the relevance mode off, which still stores and returns the date (rule 6).
+    @Test
+    fun `only an admin can set or clear the withdrawal`() {
+        val photographer = jdbc.queryForObject("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER') RETURNING id",
+            UUID::class.java, "matrix-${UUID.randomUUID()}@test.local")!!
+        val path = "/api/v1/admin/relevance/photographers/$photographer/consent-withdrawal"
+        val runner = register(Role.RUNNER)
+        val seller = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        for (method in listOf("PUT", "DELETE")) {
+            assertEquals(401, call(method, path).statusCode(), method)
+            assertEquals(403, call(method, path, runner).statusCode(), method)
+            assertEquals(403, call(method, path, seller).statusCode(), method)
+        }
+        val withdrawal = jdbc.queryForObject("SELECT relevance_consent_withdrawn_at IS NULL FROM users WHERE id = ?", Boolean::class.java, photographer)
+        assertEquals(true, withdrawal, "a refused call stores nothing")
+        val set = call("PUT", path, admin)
+        assertEquals(200, set.statusCode())
+        val setData = json.readTree(set.body()).path("data")
+        assertEquals(photographer.toString(), setData.path("photographerId").asText())
+        assertTrue(setData.path("consentWithdrawnAt").isTextual, set.body())
+        val cleared = call("DELETE", path, admin)
+        assertEquals(200, cleared.statusCode())
+        val clearedAt = json.readTree(cleared.body()).path("data").path("consentWithdrawnAt")
+        assertTrue(clearedAt.isNull || clearedAt.isMissingNode, cleared.body())
+        assertEquals(404, call("PUT", "/api/v1/admin/relevance/photographers/${UUID.randomUUID()}/consent-withdrawal", admin).statusCode())
+    }
+
     @Test
     fun `admin command lookup is admin only and hides unknown keys`() {
         val path = "/api/v1/admin/commands/${UUID.randomUUID()}"
@@ -1025,6 +1055,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
                 .POST(HttpRequest.BodyPublishers.ofString(body)),
             token,
         )
+
+    private fun call(method: String, path: String, token: String? = null): HttpResponse<String> =
+        send(HttpRequest.newBuilder(uri(path)).method(method, HttpRequest.BodyPublishers.noBody()), token)
 
     private fun send(builder: HttpRequest.Builder, token: String?): HttpResponse<String> {
         token?.let { builder.header("Authorization", "Bearer $it") }

@@ -95,6 +95,11 @@ class User(
     @Column(name = "identity_notice_sent_for")
     var identityNoticeSentFor: LocalDate? = null,
 
+    // RV-L7 part a (V107): when an admin recorded that this photographer withdrew the consent to automatic
+    // Photo Relevance actions; NULL means not withdrawn. Written only by AdminRelevanceService.
+    @Column(name = "relevance_consent_withdrawn_at")
+    var relevanceConsentWithdrawnAt: OffsetDateTime? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 

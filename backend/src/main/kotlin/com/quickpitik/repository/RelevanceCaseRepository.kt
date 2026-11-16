@@ -182,7 +182,8 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun lastClosedByAdmin(@Param("batchId") batchId: UUID): RelevanceCase?
 
     // RV-2.2b, RV-2.3b (A.2, P18): the current auto-hide cases whose batch holds must follow their target: every HIDE_ALL
-    // and HIDE_JUNK case, and a NONE case only while its batch has a live automatic hold left to restore.
+    // and HIDE_JUNK case, and a NONE case only while its batch has a live automatic hold left to restore. RV-L7 part a:
+    // never a photographer who withdrew the consent to automatic actions; what is hidden stays, nothing more is hidden.
     @Query(value = """
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId",
                (c.hide_finished_at IS NOT NULL) AS "hideFinished", c.action AS "action",
@@ -190,6 +191,7 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
                CASE WHEN c.verdict_note = 'ADMIN_HIDE' THEN 'ADMIN' ELSE 'AUTO' END AS "heldBy",
                EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'WON') AS "appealWon"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+        JOIN users u ON u.id = br.photographer_id AND u.relevance_consent_withdrawn_at IS NULL
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE'
           AND (c.action IN ('HIDE_ALL', 'HIDE_JUNK') OR EXISTS (
               SELECT 1 FROM flag_hidden_photos h WHERE h.batch_id = c.batch_id AND h.held_by = 'AUTO' AND h.restored_at IS NULL))
@@ -199,12 +201,13 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
 
     // RV-2.3a (A.4, S3, P14, P18): current auto-hide cases whose full scan is queued or running, least recently served first.
     // Only batches still allowed (invariant 12, the conditions of BatchRelevanceRepository.stillAllowed), so a batch that
-    // is not allowed takes no turn slot; its case stays as it is (G9) and the scan goes on once it is allowed again.
+    // is not allowed takes no turn slot; its case stays as it is (G9) and the scan goes on once it is allowed again. RV-L7
+    // part a: the same for a photographer who withdrew the consent to automatic actions, until an admin clears it.
     @Query(value = """
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
         JOIN events e ON e.id = br.event_id AND e.deleted_at IS NULL AND e.hidden_at IS NULL AND e.visibility = 'PUBLIC'
-        JOIN users u ON u.id = br.photographer_id AND u.suspended_at IS NULL
+        JOIN users u ON u.id = br.photographer_id AND u.suspended_at IS NULL AND u.relevance_consent_withdrawn_at IS NULL
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.scan_state IN ('QUEUED', 'RUNNING')
         ORDER BY c.scan_served_at ASC NULLS FIRST, c.applied_at, c.id
         LIMIT :limit
@@ -237,9 +240,11 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     ): Int
 
     // RV-2.2b, RV-2.3b: still the current auto-hide case with this target? Read before each chunk; a plain read, no lock.
+    // RV-L7 part a: and its photographer has not withdrawn the consent since the targets were read.
     @Query(value = """
-        SELECT EXISTS (SELECT 1 FROM relevance_cases
-                       WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND action = :action)
+        SELECT EXISTS (SELECT 1 FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+                       JOIN users u ON u.id = br.photographer_id AND u.relevance_consent_withdrawn_at IS NULL
+                       WHERE c.id = :id AND c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.action = :action)
     """, nativeQuery = true)
     fun isHoldTarget(@Param("id") id: UUID, @Param("action") action: String): Boolean
 
@@ -409,11 +414,12 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun setHoldFlag(@Param("id") id: UUID, @Param("flagId") flagId: UUID): Int
 
     // RV-4.2: current auto-hide Copied cases whose hold was never placed (hold_flag_id is set once and never cleared, so an
-    // ended hold is never placed again), oldest first.
+    // ended hold is never placed again), oldest first. RV-L7 part a: never for a photographer who withdrew the consent.
     @Query(value = """
-        SELECT id FROM relevance_cases
-        WHERE stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND verdict = 'COPIED' AND hold_flag_id IS NULL
-        ORDER BY applied_at, id LIMIT :limit
+        SELECT c.id FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+        JOIN users u ON u.id = br.photographer_id AND u.relevance_consent_withdrawn_at IS NULL
+        WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.verdict = 'COPIED' AND c.hold_flag_id IS NULL
+        ORDER BY c.applied_at, c.id LIMIT :limit
     """, nativeQuery = true)
     fun findHoldDue(@Param("limit") limit: Int): List<UUID>
 
