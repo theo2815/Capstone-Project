@@ -149,6 +149,7 @@ class AdminUserService(
             decisionLog = log,
             verificationRevision = row.verificationRevision,
             adminHold = row.adminHold,
+            relevanceConsentWithdrawnAt = user.relevanceConsentWithdrawnAt?.toString(),
         )
     }
 
