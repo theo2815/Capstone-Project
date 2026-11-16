@@ -69,6 +69,12 @@ export interface RelevanceCaseDetail {
   junkSamples: RelevanceSample[];
   cleanSamples: RelevanceSample[];
   alerts: RelevanceAlert[];
+  // RV-4.1/RV-4.2: null = not confirmed; the photographer's confirmed cases in the window; null = no live payout hold;
+  // null while the case is current.
+  confirmedAt: string | null;
+  photographerStrikes: number;
+  payoutHoldAt: string | null;
+  closeReason: string | null;
 }
 
 export type RelevanceTab = "hidden" | "appeals" | "cant_tell" | "all";
@@ -175,16 +181,17 @@ export interface RelevancePhotoRestoreResult {
   status: string;
 }
 
-export type RelevanceCaseAction = "restore" | "keep_hidden" | "looks_fine" | "hide_batch";
+export type RelevanceCaseAction = "restore" | "keep_hidden" | "looks_fine" | "hide_batch" | "end_hold";
 
 export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; title: string; confirm: string; confirmLabel: string; done: string; failed: string }> = {
   restore: {
     label: "Restore batch…",
     title: "Restore batch",
-    confirm: "Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. Photos the photographer hid stay hidden.",
+    confirm: "Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. A Copied case's payout hold ends too. Photos the photographer hid stay hidden.",
     confirmLabel: "Confirm restore",
     done: "Batch restored",
-    failed: "Could not restore the batch — check the case before retrying.",
+    // RV-4.3: a restore that broke off can now be finished from the page (caseActions offers it on the closed case).
+    failed: "Could not restore the batch. The case was read again: if photos are still held, press Restore batch again to finish the rest.",
   },
   keep_hidden: {
     label: "Keep hidden…",
@@ -210,7 +217,28 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
     done: "Batch hide started",
     failed: "Could not hide the batch — check the case before retrying.",
   },
+  // RV-4.3 (A.8): the case stays as it is; AdminFlagService tells the photographer only once no hold is left.
+  end_hold: {
+    label: "End hold",
+    title: "End hold",
+    confirm: "Ends the payout hold this case placed. The case itself stays as it is. The photographer is told their payout hold was lifted only when no other Photo Relevance hold is left.",
+    confirmLabel: "Confirm end hold",
+    done: "Hold ended",
+    failed: "Could not end the hold. The case was read again: if the payout hold still shows, press End hold again.",
+  },
 };
+
+// RV-4.3: the consequences of a confirmed case (A.7, A.8).
+export const CONSEQUENCES_TEXT = {
+  title: "Consequences",
+  confirmedOn: "Confirmed on",
+  cases: "Cases in the last 6 months",
+  holdSince: "Payouts on hold since",
+  endHoldHint: "One photographer can have several holds, one per Copied case. Payouts resume only when the last one ends.",
+  openPhotographer: "Open photographer →",
+  repeat: "Repeat cases",
+  repeatEmpty: "No photographer has a repeat case.",
+} as const;
 
 export const HIDDEN_PHOTOS_EMPTY = "No photo of this batch is held.";
 export const PHOTO_RESTORED = "Photo restored";
@@ -229,15 +257,21 @@ export const isReleasable = (p: RelevanceHiddenPhoto) => p.restoredAt === null &
  * current and a releasable hold exists (seeded rows). Can't tell actions need action NONE:
  * a Can't tell an admin hid offers the restores instead. The mode itself is not readable here; the server refuses.
  */
-export function caseActions(detail: Pick<RelevanceCaseDetail, "case" | "stage">, hasReleasable: boolean): RelevanceCaseAction[] {
+export function caseActions(
+  detail: Pick<RelevanceCaseDetail, "case" | "stage" | "payoutHoldAt" | "closeReason">,
+  hasReleasable: boolean,
+): RelevanceCaseAction[] {
+  // RV-4.3: a live payout hold can be ended whatever the case's stage; the server answers 409 when none is left.
+  const endHold: RelevanceCaseAction[] = detail.payoutHoldAt ? ["end_hold"] : [];
   const row = detail.case;
   const acting = detail.stage === "APPLIED" && row.appliedMode !== "RECORD_ONLY";
   const hiding = row.action !== null && row.action !== "NONE";
-  if (acting && hiding) return ["restore", "keep_hidden"];
-  if (acting && row.verdict === "CANT_TELL" && row.action === "NONE") return ["looks_fine", "hide_batch"];
-  // The server also takes a repeat restore on a case it closed RESTORED_BY_ADMIN, but the detail carries no close
-  // reason, so a closed case offers nothing; the tick's sweep finishes a restore that broke off.
-  return detail.stage === "APPLIED" && hasReleasable ? ["restore"] : [];
+  if (acting && hiding) return ["restore", "keep_hidden", ...endHold];
+  if (acting && row.verdict === "CANT_TELL" && row.action === "NONE") return ["looks_fine", "hide_batch", ...endHold];
+  // A restore that broke off leaves the case closed RESTORED_BY_ADMIN with holds live: the server takes the repeat
+  // (and refuses it once a newer case is current).
+  const restorable = detail.stage === "APPLIED" || (detail.stage === "CLOSED" && detail.closeReason === "RESTORED_BY_ADMIN");
+  return [...(restorable && hasReleasable ? (["restore"] as const) : []), ...endHold];
 }
 
 /** Why a sample counts as junk, or that it was not judged while a cut-off is unset. */
@@ -300,7 +334,7 @@ export const APPEAL_TEXT = {
     WON: {
       title: "Appeal won",
       confirmLabel: "Confirm won",
-      text: "Marks the appeal won and tells the photographer. A whole-batch hide becomes a junk-only hide: the full check puts the good photos back on sale as it measures them. A junk-only hide is lifted. The case does not count against the photographer. This cannot be undone.",
+      text: "Marks the appeal won and tells the photographer. A whole-batch hide becomes a junk-only hide: the full check puts the good photos back on sale as it measures them. A junk-only hide is lifted. A Copied case's payout hold ends; payouts resume once the photographer has no other hold. The case does not count against the photographer. This cannot be undone.",
     },
     LOST: {
       title: "Appeal lost",

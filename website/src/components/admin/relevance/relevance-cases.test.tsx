@@ -27,7 +27,7 @@ const detail = (r: RelevanceCaseRow = row, extra: Partial<RelevanceCaseDetail> =
   topWords: [{ word: "CEBU", photos: 300 }],
   junkSamples: [{ photoId: "j1", thumbnailUrl: "https://img/j1.jpg", fgSharpness: 4.5, fgBrightness: 50, sharpness: 5, brightness: 48, blurry: true, dark: false, notRace: false }],
   cleanSamples: [{ photoId: "k1", thumbnailUrl: null, fgSharpness: 80, fgBrightness: 60, sharpness: 82, brightness: 61, blurry: null, dark: null, notRace: false }],
-  alerts: [],
+  alerts: [], confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, closeReason: null,
   ...extra,
 });
 
@@ -151,4 +151,35 @@ it("the Appeals tab says appeals arrive with the photographer side", async () =>
   list = async () => ({ items: [], total: 0, offset: 0, limit: 50 });
   mount();
   expect(await screen.findByText("No open appeals.")).toBeInTheDocument();
+});
+
+// RV-4.3: "Repeat cases" on the All tab keeps only cases whose photographer has a repeat case (the server filters).
+it("the All tab filters to repeat cases", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all";
+  mount();
+  await screen.findByRole("button", { name: /Cebu City Marathon 2003/ });
+  const urls = () => vi.mocked(api.get).mock.calls.map(([url]) => String(url)).filter((u) => u.startsWith("/admin/relevance/cases?"));
+  expect(urls().every((u) => !u.includes("repeat"))).toBe(true);
+  const toggle = screen.getByRole("button", { name: "Repeat cases" });
+  expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await user.click(toggle);
+  expect(fixtures.router.replace).toHaveBeenLastCalledWith("/admin/relevance?tab=all&repeat=1", { scroll: false });
+  // The URL keeps the filter: a link to it reads the repeat cases.
+  cleanup();
+  client.clear();
+  fixtures.search = "tab=all&repeat=1";
+  list = async () => ({ items: [], total: 0, offset: 0, limit: 50 });
+  mount();
+  expect(await screen.findByText("No photographer has a repeat case.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Repeat cases" })).toHaveAttribute("aria-pressed", "true");
+  expect(urls().at(-1)).toContain("repeat=true");
+  // The other tabs have no such filter and never send it.
+  cleanup();
+  client.clear();
+  fixtures.search = "tab=hidden&repeat=1";
+  mount();
+  await screen.findByText("No batch is hidden, or would have been hidden.");
+  expect(screen.queryByRole("button", { name: "Repeat cases" })).not.toBeInTheDocument();
+  expect(urls().at(-1)).not.toContain("repeat");
 });

@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { Thumb } from "@/components/admin/flag-relevance-evidence";
 import {
+  CONSEQUENCES_TEXT,
   actionLabel,
   alertKindLabel,
   bandLabel,
@@ -15,6 +17,7 @@ import {
   type RelevanceCaseRow,
   type RelevanceSample,
 } from "@/lib/admin-relevance";
+import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 
 const labelCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
@@ -67,6 +70,21 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
         )}
       </section>
 
+      {(detail.confirmedAt || detail.payoutHoldAt) && (
+        <section className="space-y-3">
+          <Kicker as="p" tone="soft">{CONSEQUENCES_TEXT.title}</Kicker>
+          <dl className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            {detail.confirmedAt && (
+              <>
+                <Field label={CONSEQUENCES_TEXT.confirmedOn} value={formatLongDate(detail.confirmedAt)} />
+                <Field label={CONSEQUENCES_TEXT.cases} value={n(detail.photographerStrikes)} />
+              </>
+            )}
+            {detail.payoutHoldAt && <Field label={CONSEQUENCES_TEXT.holdSince} value={formatLongDate(detail.payoutHoldAt)} />}
+          </dl>
+        </section>
+      )}
+
       <section className="space-y-3">
         <Kicker as="p" tone="soft">Model&apos;s reason · admins only</Kicker>
         <p className="font-sans text-sm md:text-base text-ink-soft whitespace-pre-line">{detail.adminReason ?? "No reason recorded."}</p>
@@ -117,6 +135,12 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
                 {" · "}
                 {formatLongDate(a.createdAt)}
                 {a.seenAt ? " · seen" : " · unseen"}
+                {a.kind === "THIRD_CASE" && a.photographerHandle && (
+                  <>
+                    {" · "}
+                    <PhotographerLink handle={a.photographerHandle} />
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -135,6 +159,15 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
         </section>
       )}
     </div>
+  );
+}
+
+/** RV-4.3: a third confirmed case is decided on the photographer's admin page, where suspension lives (A.7). */
+export function PhotographerLink({ handle, className }: { handle: string; className?: string }) {
+  return (
+    <Link href={`${ROUTES.ADMIN_PHOTOGRAPHERS}/${encodeURIComponent(handle)}`} className={className ?? "underline underline-offset-4 hover:text-fresh"}>
+      {CONSEQUENCES_TEXT.openPhotographer}
+    </Link>
   );
 }
 

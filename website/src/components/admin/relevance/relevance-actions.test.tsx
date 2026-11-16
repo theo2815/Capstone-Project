@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -23,10 +23,12 @@ const autoHide: RelevanceCaseRow = {
   wouldHave: false, batchPhotos: 420, junkPercent: 81, decidedAt: "2003-02-14T03:00:00Z",
 };
 const cantTell: RelevanceCaseRow = { ...autoHide, verdict: "CANT_TELL", action: "NONE", junkPercent: 40 };
-const detail = (r: RelevanceCaseRow, stage = "APPLIED"): RelevanceCaseDetail => ({
+const detail = (r: RelevanceCaseRow, stage = "APPLIED", extra: Partial<RelevanceCaseDetail> = {}): RelevanceCaseDetail => ({
   case: r, stage, sampleSize: 300, measured: 300, blurry: 100, dark: 10, notRace: 10, junk: 120, band: "MIXED",
   modelVerdict: r.verdict, adminReason: null, evidenceUsed: [], summarySent: null, model: null, promptVersion: null,
   wordsPhotos: 0, topWords: [], junkSamples: [], cleanSamples: [], alerts: [],
+  confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, closeReason: null,
+  ...extra,
 });
 const hold = (id: string, restoredAt: string | null = null): RelevanceHiddenPhoto => ({
   photoId: id, heldBy: "AUTO", hiddenAt: "2003-02-15T00:00:00Z", restoredAt, restoredBy: restoredAt ? "ADMIN" : null,
@@ -228,4 +230,150 @@ it("Escape closes the drawer after a re-read removes the open action", async () 
   await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm looks fine" })).not.toBeInTheDocument());
   await user.keyboard("{Escape}");
   expect(fixtures.router.replace).toHaveBeenLastCalledWith("/admin/relevance?tab=cant_tell", { scroll: false });
+});
+
+// RV-4.3: the consequences. A confirmed case shows its date and the count; End hold waits for the server.
+const copied: RelevanceCaseRow = { ...autoHide, verdict: "COPIED" };
+const held = (extra: Partial<RelevanceCaseDetail> = {}) =>
+  detail(copied, "APPLIED", { confirmedAt: "2003-03-01T03:00:00Z", photographerStrikes: 1, payoutHoldAt: "2003-02-14T04:00:00Z", ...extra });
+const field = (el: HTMLElement, label: string) => within(el).getByText(label).nextElementSibling?.textContent;
+
+it("a confirmed case shows its date and the count", async () => {
+  fixtures.search = "tab=all&row=c1";
+  rows = [copied];
+  one = async () => held({ payoutHoldAt: null });
+  mount();
+  const d = await drawer();
+  await within(d).findByText("Confirmed on");
+  expect(field(d, "Confirmed on")).toBe("MAR 01 · 2003");
+  expect(field(d, "Cases in the last 6 months")).toBe("1");
+  // No live hold: no hold date and no End hold.
+  expect(within(d).queryByText("Payouts on hold since")).not.toBeInTheDocument();
+  expect(within(d).queryByRole("button", { name: "End hold" })).not.toBeInTheDocument();
+  // A case that is not confirmed shows none of it.
+  cleanup();
+  client.clear();
+  one = async () => detail(copied);
+  mount();
+  const plain = await drawer();
+  await within(plain).findByRole("button", { name: "Restore batch…" });
+  expect(within(plain).queryByText("Confirmed on")).not.toBeInTheDocument();
+  expect(within(plain).queryByText("Cases in the last 6 months")).not.toBeInTheDocument();
+});
+
+it("End hold waits for the server", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [copied];
+  one = async () => held();
+  let release!: (v: unknown) => void;
+  post = () => new Promise((r) => { release = r; });
+  mount();
+  const d = await drawer();
+  await within(d).findByText("Payouts on hold since");
+  expect(field(d, "Payouts on hold since")).toBe("FEB 14 · 2003");
+  // Beside the button: one hold per Copied case, payouts resume when the last ends.
+  expect(within(d).getByText("One photographer can have several holds, one per Copied case. Payouts resume only when the last one ends.")).toBeInTheDocument();
+  await user.click(within(d).getByRole("button", { name: "End hold" }));
+  expect(api.post).not.toHaveBeenCalled();
+  // AdminFlagService tells the photographer only once no other Photo Relevance hold is open.
+  expect(screen.getByText("Ends the payout hold this case placed. The case itself stays as it is. The photographer is told their payout hold was lifted only when no other Photo Relevance hold is left.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Confirm end hold" }));
+  expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/end-hold");
+  // The server has not answered: the hold still shows and nothing was said.
+  expect(field(d, "Payouts on hold since")).toBe("FEB 14 · 2003");
+  expect(within(d).getByRole("button", { name: "End hold" })).toBeInTheDocument();
+  expect(toasts()).toEqual([]);
+  one = async () => held({ payoutHoldAt: null });
+  release(copied);
+  await waitFor(() => expect(within(d).queryByText("Payouts on hold since")).not.toBeInTheDocument());
+  expect(within(d).queryByRole("button", { name: "End hold" })).not.toBeInTheDocument();
+  expect(toasts()).toEqual(["Hold ended: Cebu City Marathon 2003"]);
+});
+
+it("two End hold confirms in one tick send one request", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [copied];
+  one = async () => held();
+  post = () => new Promise(() => {});
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "End hold" }));
+  const ok = await screen.findByRole("button", { name: "Confirm end hold" });
+  act(() => { ok.click(); ok.click(); });
+  await act(async () => {});
+  expect(vi.mocked(api.post).mock.calls).toHaveLength(1);
+});
+
+it("a refused End hold shows the server's message", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [copied];
+  one = async () => held();
+  const message = "The admin flags switch is off, so this case's payout hold cannot be ended. Turn ADMIN_FLAGS_ENABLED on first.";
+  post = async () => { throw new ApiError([{ code: "FLAGS_DISABLED", message }], 403); };
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "End hold" }));
+  await user.click(screen.getByRole("button", { name: "Confirm end hold" }));
+  await waitFor(() => expect(toasts()).toEqual([message]));
+  // Nothing changed: the confirm stays open and the hold still shows.
+  expect(screen.getByRole("button", { name: "Confirm end hold" })).toBeEnabled();
+  expect(field(d, "Payouts on hold since")).toBe("FEB 14 · 2003");
+});
+
+it("a third-case alert links to the photographer", async () => {
+  fixtures.search = "tab=all&row=c1";
+  rows = [copied];
+  const alert = { alertId: "a1", caseId: "c1", eventId: "e1", eventName: "Cebu City Marathon 2003", photographerHandle: "juanshots",
+    photographerName: "Juan Cruz", wouldHave: false, photos: null, createdAt: "2003-03-01T03:00:00Z", seenAt: null };
+  one = async () => held({ alerts: [{ ...alert, kind: "THIRD_CASE" }, { ...alert, alertId: "a2", kind: "COPIED" }] });
+  mount();
+  const d = await drawer();
+  const link = await within(d).findByRole("link", { name: "Open photographer →" });
+  expect(link).toHaveAttribute("href", "/admin/photographers/juanshots");
+  // Only the third-case alert links there.
+  expect(within(d).getAllByRole("link", { name: "Open photographer →" })).toHaveLength(1);
+});
+
+it("a case closed as restored by an admin that still holds photos offers Restore", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [];
+  one = async () => detail(autoHide, "CLOSED", { closeReason: "RESTORED_BY_ADMIN" });
+  holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  post = async () => { throw new Error("down"); };
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Restore batch…" }));
+  // AdminRelevanceService.restore also ends a Copied case's payout hold.
+  expect(screen.getByText("Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. A Copied case's payout hold ends too. Photos the photographer hid stay hidden.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Confirm restore" }));
+  expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/restore");
+  await waitFor(() => expect(toasts()).toEqual(["Could not restore the batch. The case was read again: if photos are still held, press Restore batch again to finish the rest."]));
+  // Closed for another reason, or with nothing left held: no Restore.
+  for (const [reason, items] of [["SUPERSEDED", [hold("p1")]], ["RESTORED_BY_ADMIN", [hold("p1", "2003-02-16T00:00:00Z")]]] as const) {
+    cleanup();
+    client.clear();
+    one = async () => detail(autoHide, "CLOSED", { closeReason: reason });
+    holds = async () => ({ items: [...items], total: 1, offset: 0, limit: 100 });
+    mount();
+    const closed = await drawer();
+    await within(closed).findByRole("list", { name: "Held photos" });
+    expect(buttons(closed)).toEqual(["Close"]);
+  }
+});
+
+it("a failed End hold with no server message says what to do next", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [copied];
+  one = async () => held();
+  post = async () => { throw new Error("down"); };
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "End hold" }));
+  await user.click(screen.getByRole("button", { name: "Confirm end hold" }));
+  await waitFor(() => expect(toasts()).toEqual(["Could not end the hold. The case was read again: if the payout hold still shows, press End hold again."]));
 });

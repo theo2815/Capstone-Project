@@ -5,6 +5,7 @@ import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import { useInfiniteList } from "@/hooks/use-infinite-list";
 import {
   decideRelevanceAppeal,
+  endRelevanceHold,
   fetchRelevanceAlerts,
   fetchRelevanceAppeals,
   fetchRelevanceCase,
@@ -33,12 +34,12 @@ import type {
 const STALE_MS = 60_000;
 const PAGE_LIMIT = 50;
 
-export function useRelevanceCases(tab: RelevanceTab) {
+export function useRelevanceCases(tab: RelevanceTab, repeat = false) {
   const session = usePrivateQuerySession("ADMIN");
   return useInfiniteList<RelevanceCaseRow & { id: string }>({
-    queryKey: ["admin", "relevance", "cases", tab, ...session.key],
+    queryKey: ["admin", "relevance", "cases", tab, repeat, ...session.key],
     fetchPage: async (offset, limit, signal) => {
-      const page = await fetchRelevanceCases({ tab, offset, limit }, signal);
+      const page = await fetchRelevanceCases({ tab, offset, limit, repeat }, signal);
       return { ...page, items: page.items.map((c) => ({ ...c, id: c.caseId })) };
     },
     limit: PAGE_LIMIT,
@@ -97,6 +98,7 @@ const ACTION_CALL: Record<RelevanceCaseAction, (caseId: string) => Promise<unkno
   keep_hidden: keepRelevanceCaseHidden,
   looks_fine: markRelevanceCaseLooksFine,
   hide_batch: hideRelevanceBatch,
+  end_hold: endRelevanceHold,
 };
 
 /** The admin's actions. Each resolves after the server answered and the page was read again; nothing changes before. */

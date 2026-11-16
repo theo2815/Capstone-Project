@@ -1049,11 +1049,12 @@ export function restoreFlagHiddenPhoto(flagId: string, photoId: string): Promise
 // ───────────────────────────────────────────── Photo Relevance (RV-1.11a)
 
 export function fetchRelevanceCases(
-  args: { tab: import("@/lib/admin-relevance").RelevanceTab; offset?: number; limit?: number },
+  args: { tab: import("@/lib/admin-relevance").RelevanceTab; offset?: number; limit?: number; repeat?: boolean },
   signal?: AbortSignal,
 ): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceCaseRow>> {
   const p = new URLSearchParams();
   p.set("tab", args.tab);
+  if (args.repeat) p.set("repeat", "true"); // RV-4.3: "Repeat cases"
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
   return api.get(`/admin/relevance/cases?${p.toString()}`, { signal });
@@ -1143,4 +1144,10 @@ export function decideRelevanceAppeal(
   body: { outcome: "WON" | "LOST"; note?: string },
 ): Promise<import("@/lib/admin-relevance").RelevanceAppealRow> {
   return api.post(`/admin/relevance/appeals/${encodeURIComponent(appealId)}/decide`, body);
+}
+
+// ───────────────────────────────────────────── Photo Relevance consequences (RV-4.3)
+
+export function endRelevanceHold(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`/admin/relevance/cases/${encodeURIComponent(caseId)}/end-hold`);
 }

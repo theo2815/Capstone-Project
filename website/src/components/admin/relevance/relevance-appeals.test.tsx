@@ -25,7 +25,7 @@ const caseRow: RelevanceCaseRow = {
 const detail: RelevanceCaseDetail = {
   case: caseRow, stage: "APPLIED", sampleSize: 300, measured: 300, blurry: 100, dark: 10, notRace: 10, junk: 120, band: "OVER",
   modelVerdict: "JUNK_DUMP", adminReason: null, evidenceUsed: [], summarySent: null, model: null, promptVersion: null, wordsPhotos: 0,
-  topWords: [], alerts: [], cleanSamples: [],
+  topWords: [], alerts: [], cleanSamples: [], confirmedAt: null, photographerStrikes: 0, payoutHoldAt: null, closeReason: null,
   junkSamples: [{ photoId: "p1", thumbnailUrl: null, fgSharpness: 2, fgBrightness: 40, sharpness: 2, brightness: 40, blurry: true, dark: false, notRace: false }],
 };
 const openAppeal: RelevanceAppealRow = {
@@ -222,4 +222,15 @@ it("the confirm of an appeal on a closed case says it only records the decision"
     await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument());
   }
+});
+
+// RV-4.3: a won appeal also ends a Copied case's payout hold (RelevanceAppealService.decide).
+it("the Won confirm says a won appeal ends a copied case's payout hold", async () => {
+  const user = userEvent.setup();
+  mount();
+  const d = await drawer();
+  await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
+  await user.click(await within(d).findByRole("button", { name: "Won" }));
+  const confirm = await screen.findByRole("dialog", { name: "Appeal won" });
+  expect(confirm.textContent).toContain("A Copied case's payout hold ends; payouts resume once the photographer has no other hold.");
 });
