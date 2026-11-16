@@ -61,12 +61,13 @@ class RelevanceHoldService(
         }
     }
 
-    // RV-4.5a: an admin holds the payouts of a current no-consent Copied case (record-only with NO_CONSENT, or since hidden
+    // RV-4.5a: an admin holds the payouts of a current no-consent Copied case (record-only with the RVF-9 mark or, from
+    // before it, the note NO_CONSENT; or since hidden
     // by an admin) that holds none yet, in the caller's transaction, which holds the case row (then the user row, then
     // the flag). The case gets a flag of its own; the hold goes on through AdminFlagService.confirmPayoutHold, so it is
     // the admin's hold with its approved "Payouts on hold" note, and End hold, a restore or a won appeal end it as before.
     fun placeByAdmin(case: RelevanceCase, adminId: UUID): Boolean {
-        val noConsent = (case.appliedMode == RelevanceMode.RECORD_ONLY.name && case.verdictNote == NO_CONSENT) ||
+        val noConsent = (case.appliedMode == RelevanceMode.RECORD_ONLY.name && (case.noConsent || case.verdictNote == NO_CONSENT)) ||
             (case.appliedMode == RelevanceMode.AUTO_HIDE.name && case.verdictNote == ADMIN_HIDE)
         if (case.stage != CaseStage.APPLIED.name || case.verdict != CaseVerdict.COPIED.name || case.holdFlagId != null || !noConsent) return false
         val photographer = strikes.lockPhotographerOf(case.id)!!

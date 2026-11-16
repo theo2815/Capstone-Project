@@ -47,7 +47,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
-// RV-4.5a (follow-up of RV-L7): a photographer without consent gets a record-only case with the note NO_CONSENT. After
+// RV-4.5a (follow-up of RV-L7): a photographer without consent gets a record-only case with the no-consent mark. After
 // reviewing it an admin may hide the batch (when its verdict would have hidden it) and, on a Copied case, hold the
 // payouts. Both act in auto-hide only. The container is shared, so fixtures sit in 2011 and assertions look only at this
 // class's own rows.
@@ -108,7 +108,7 @@ class AdminRelevanceNoConsentIntegrationTest : PostgresIntegrationTest() {
         val mixed = noConsent(batch(), "MIXED")
         val fits = noConsent(batch(), "FITS")
         val unsure = noConsent(batch(), "CANT_TELL")
-        // A record-only case without the NO_CONSENT note (the mode was record-only): never acted on (P18).
+        // A record-only case without the no-consent mark (the mode was record-only): never acted on (P18).
         val recordOnly = case(batch(), "JUNK_DUMP", mode = "RECORD_ONLY")
         val closed = noConsent(batch(), "COPIED", stage = "CLOSED")
 
@@ -240,9 +240,42 @@ class AdminRelevanceNoConsentIntegrationTest : PostgresIntegrationTest() {
                 assertEquals(HttpStatus.CONFLICT to ErrorCodes.RELEVANCE_ACTIONS_OFF, ex.status to ex.code, "$mode")
             }
         }
-        assertEquals(listOf("RECORD_ONLY", "HIDE_ALL", "NO_CONSENT", null), row(c, "applied_mode", "action", "verdict_note", "hold_flag_id"))
+        assertEquals(listOf("RECORD_ONLY", "HIDE_ALL", null, true, null), row(c, "applied_mode", "action", "verdict_note", "no_consent", "hold_flag_id"))
         assertEquals(emptyList(), flagsOf(b))
         assertEquals(emptyList(), decisionsOf(b))
+    }
+
+    // RVF-9 (RVR-15): no consent is its own mark, so a case keeps its own note and an admin can still act on it. A case
+    // marked before RVF-9 carries only the old note NO_CONSENT and stays actionable too.
+    @Test
+    fun `an admin can hide a no-consent case that has its own note`() {
+        val own = case(batch(), "JUNK_DUMP", mode = "RECORD_ONLY", note = "SUSPICIOUS_WORDS", mark = true)
+        val legacy = case(batch(), "WRONG_EVENT", mode = "RECORD_ONLY", note = "NO_CONSENT")
+        val ownCopied = case(batch(), "COPIED", mode = "RECORD_ONLY", note = "SUSPICIOUS_WORDS", mark = true)
+        val legacyCopied = case(batch(), "COPIED", mode = "RECORD_ONLY", note = "NO_CONSENT")
+
+        for (c in listOf(own, legacy)) {
+            hide(c)
+            assertEquals(listOf("AUTO_HIDE", "HIDE_ALL", "ADMIN_HIDE"), row(c, "applied_mode", "action", "verdict_note"), "$c")
+        }
+        for (c in listOf(ownCopied, legacyCopied)) {
+            tx.execute { service().holdPayouts(adminId, c, null) }
+            assertNotNull(holdFlagOf(c), "$c")
+        }
+    }
+
+    @Test
+    fun `the admin answer says NO_CONSENT as the note only when the case has none of its own`() {
+        val marked = noConsent(batch(), "JUNK_DUMP")
+        val own = case(batch(), "CANT_TELL", mode = "RECORD_ONLY", note = "SUSPICIOUS_WORDS", mark = true)
+        val legacy = case(batch(), "JUNK_DUMP", mode = "RECORD_ONLY", note = "NO_CONSENT")
+        val consented = case(batch(), "CANT_TELL", note = "THIN_EVIDENCE")
+
+        val answers = listOf(marked, own, legacy, consented).map { c ->
+            tx.execute { service().case(c) }!!.case.let { it.verdictNote to it.noConsent }
+        }
+
+        assertEquals(listOf("NO_CONSENT" to true, "SUSPICIOUS_WORDS" to true, "NO_CONSENT" to true, "THIN_EVIDENCE" to false), answers)
     }
 
     private fun hide(caseId: UUID, note: String? = null) = tx.execute { service().hideBatch(adminId, caseId, note) }!!
@@ -285,15 +318,18 @@ class AdminRelevanceNoConsentIntegrationTest : PostgresIntegrationTest() {
         return Batch(batchId, event, photographer)
     }
 
-    // A case applied as record-only because the photographer had not consented (RV-2.2a), with the action auto-hide would have taken.
+    // A case applied as record-only because the photographer had not consented (RV-2.2a), with the action auto-hide would
+    // have taken. RVF-9: it carries the no-consent mark and no note of its own.
     private fun noConsent(b: Batch, verdict: String, stage: String = "APPLIED") =
-        case(b, verdict, mode = "RECORD_ONLY", note = "NO_CONSENT", stage = stage)
+        case(b, verdict, mode = "RECORD_ONLY", stage = stage, mark = true)
 
-    private fun case(b: Batch, verdict: String, mode: String = "AUTO_HIDE", note: String? = null, stage: String = "APPLIED"): UUID = id(
+    private fun case(
+        b: Batch, verdict: String, mode: String = "AUTO_HIDE", note: String? = null, stage: String = "APPLIED", mark: Boolean = false,
+    ): UUID = id(
         "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, verdict_note, copy_low, " +
-            "decided_at, applied_mode, action, applied_at, closed_at, close_reason) VALUES (?, 'QUIET', ?, 40, ?, 40, 0, ?, ?, false, ?, ?, ?, ?, ?, ?)",
+            "decided_at, applied_mode, action, applied_at, closed_at, close_reason, no_consent) VALUES (?, 'QUIET', ?, 40, ?, 40, 0, ?, ?, false, ?, ?, ?, ?, ?, ?, ?)",
         b.id, NOW, stage, verdict, note, NOW, mode, action(verdict), NOW,
-        NOW.takeIf { stage == "CLOSED" }, "SUPERSEDED".takeIf { stage == "CLOSED" })
+        NOW.takeIf { stage == "CLOSED" }, "SUPERSEDED".takeIf { stage == "CLOSED" }, mark)
 
     // A case waiting for the apply step.
     private fun decided(b: Batch, verdict: String): UUID = id(

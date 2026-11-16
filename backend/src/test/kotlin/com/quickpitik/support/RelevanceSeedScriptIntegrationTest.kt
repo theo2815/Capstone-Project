@@ -195,7 +195,8 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, notes(seeded.getValue("FITS")))
         assertEquals(listOf("AUTO_HIDE", "NONE"), caseRow(seeded.getValue("CANT_TELL"), "applied_mode", "action"))
         // The photographer who withdrew: applied as "would have hidden", nothing hidden, told nothing.
-        assertEquals(listOf("RECORD_ONLY", "HIDE_ALL", "NO_CONSENT"), caseRow(seeded.getValue("WITHDRAWN"), "applied_mode", "action", "verdict_note"))
+        assertEquals(listOf("RECORD_ONLY", "HIDE_ALL", null, true),
+            caseRow(seeded.getValue("WITHDRAWN"), "applied_mode", "action", "verdict_note", "no_consent"))
         assertEquals(listOf("LIVE"), statuses(targets.getValue("WITHDRAWN")).distinct())
         assertEquals(0, notes(seeded.getValue("WITHDRAWN")))
         // Each copied case holds payouts on a flag of its own and raises its alert.

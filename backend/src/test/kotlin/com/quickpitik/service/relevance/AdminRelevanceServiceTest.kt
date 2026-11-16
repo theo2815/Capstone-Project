@@ -136,6 +136,7 @@ class AdminRelevanceServiceTest {
             override val measured = ms
             override val junk = j
             override val decidedAt = now
+            override val noConsent = false
         }
     }
 

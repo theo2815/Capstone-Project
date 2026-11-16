@@ -66,15 +66,15 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var tx: TransactionTemplate
 
     @Test
-    fun `a photographer who withdrew is applied as record-only with the no-consent note`() {
+    fun `a photographer who withdrew is applied as record-only with the no-consent mark`() {
         val b = batch(photos = 600)
         val c = decided(b, "JUNK_DUMP")
         adminRelevance.withdrawConsent(admin(), b.photographer)
 
         checks().applyCase(c, NOW)
 
-        assertEquals(listOf("APPLIED", "RECORD_ONLY", "HIDE_ALL", "NO_CONSENT", "NONE"),
-            row(c, "stage", "applied_mode", "action", "verdict_note", "scan_state"))
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", "HIDE_ALL", null, true, "NONE"),
+            row(c, "stage", "applied_mode", "action", "verdict_note", "no_consent", "scan_state"))
         // The same "would have" alert as today's no-consent path.
         assertEquals(listOf(listOf("BIG_HIDE", true, 600)), alertsOf(b))
         assertEquals(0, messages(b))

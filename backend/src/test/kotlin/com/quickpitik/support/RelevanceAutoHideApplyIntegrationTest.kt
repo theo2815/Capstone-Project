@@ -144,7 +144,7 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `a photographer below the minimum Terms version is applied as record-only with NO_CONSENT`() {
+    fun `a photographer below the minimum Terms version is applied as record-only with the no-consent mark`() {
         val below = batch(photos = 600, terms = "1.6")
         val c = case(below, "DECIDED", "JUNK_DUMP")
         val none = batch(photos = 600, terms = null)
@@ -154,9 +154,22 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         listOf(c, n).forEach { service.applyCase(it, NOW) }
 
         for (id in listOf(c, n)) {
-            assertEquals(listOf("APPLIED", "RECORD_ONLY", "HIDE_ALL", "NO_CONSENT"), row(id, "stage", "applied_mode", "action", "verdict_note"))
+            assertEquals(listOf("APPLIED", "RECORD_ONLY", "HIDE_ALL", null, true),
+                row(id, "stage", "applied_mode", "action", "verdict_note", "no_consent"))
         }
         assertEquals(listOf(listOf("BIG_HIDE", "big_hide:$c", true, 600)), alertsOf(below))
+    }
+
+    // RVF-9 (RVR-15): no consent is its own mark, so a Can't tell case keeps the note that says why it was Can't tell.
+    @Test
+    fun `a no-consent can't tell case keeps its own note and carries the no-consent mark`() {
+        val b = batch(photos = 40, terms = "1.6")
+        val c = case(b, "DECIDED", "CANT_TELL", note = "SUSPICIOUS_WORDS")
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", "NONE", "SUSPICIOUS_WORDS", true),
+            row(c, "stage", "applied_mode", "action", "verdict_note", "no_consent"))
     }
 
     @Test
@@ -167,7 +180,7 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
 
             service(minVersion = min).applyCase(c, NOW)
 
-            assertEquals(listOf("RECORD_ONLY", "NO_CONSENT", "NONE"), row(c, "applied_mode", "verdict_note", "scan_state"), "min=$min")
+            assertEquals(listOf("RECORD_ONLY", null, true, "NONE"), row(c, "applied_mode", "verdict_note", "no_consent", "scan_state"), "min=$min")
         }
     }
 

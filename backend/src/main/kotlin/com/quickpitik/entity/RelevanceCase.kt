@@ -84,4 +84,6 @@ class RelevanceCase(
     @Column(name = "hold_flag_id") var holdFlagId: UUID? = null,
     // RVF-8 (V108): the mode the check started under; only AUTO_HIDE can hide. NULL for cases from before V108.
     @Column(name = "started_mode", updatable = false, length = 12) val startedMode: String? = null,
+    // RVF-9 (V108): applied as record-only because the photographer had not consented; the case keeps its own note.
+    @Column(name = "no_consent", nullable = false) var noConsent: Boolean = false,
 )
