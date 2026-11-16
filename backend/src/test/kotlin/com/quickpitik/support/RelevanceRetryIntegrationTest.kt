@@ -216,6 +216,138 @@ class RelevanceRetryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(before, untouched())
     }
 
+    // RVF-5 (RVR-1): a current case left with the band unknown by an unset cut-off is checked again once both are set.
+    @Test
+    fun `a current case with the band unknown is retried once both cut-offs are set`() {
+        val b = batch()
+        case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT, band = "UNKNOWN", sampleSize = 40, measured = 40)
+        assertEquals("RETRY", dueRow(b)?.trigger)
+    }
+
+    @Test
+    fun `the band-unknown case is not retried while a cut-off is unset`() {
+        val b = batch()
+        case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT, band = "UNKNOWN", sampleSize = 40, measured = 40)
+        assertNull(dueRow(b, cutoffsSet = false))
+    }
+
+    @Test
+    fun `a band unknown because too few photos were measured is not retried`() {
+        val b = batch()
+        case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT, band = "UNKNOWN", sampleSize = 40, measured = 19)
+        assertNull(dueRow(b), "a retry cannot measure bad images or missing files")
+    }
+
+    @Test
+    fun `it is retried also when a later check of the batch closed with the same verdict`() {
+        val b = batch()
+        case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT.minusHours(1), band = "UNKNOWN", sampleSize = 40, measured = 40)
+        case(b, stage = "CLOSED", verdict = "FITS", reason = "SAME_VERDICT", endedAt = PAST_WAIT, band = "UNKNOWN", sampleSize = 40, measured = 40)
+        assertEquals("RETRY", dueRow(b)?.trigger)
+    }
+
+    @Test
+    fun `a retry stores a band worked out from the stored scores and measures no photo again`() {
+        val b = batch(photos = 50)
+        val photos = List(50) { photo(b) }
+        val unknown = case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT, band = "UNKNOWN", sampleSize = 40, measured = 40)
+        photos.take(40).forEach {
+            sampled(unknown, it)
+            measured(b, it, fgSharpness = 80.0)
+        }
+        val measurer = Mockito.mock(RelevanceMeasurer::class.java)
+        val service = service(measurer)
+
+        assertTrue(service.start(assertNotNull(dueRow(b)), QUIET_CUTOFF, NOW))
+        val retry = jdbc.queryForObject("SELECT id FROM relevance_cases WHERE batch_id = ? AND stage = 'SAMPLING'", UUID::class.java, b.id)!!
+        service.continueCase(cases.findSampling(NOW, 10_000).single { it.batchId == b.id }, NOW)
+
+        Mockito.verifyNoInteractions(measurer)
+        assertEquals(listOf("DECIDING", "UNDER", 40), jdbc.queryForMap("SELECT stage, band, measured FROM relevance_cases WHERE id = ?", retry).values.toList())
+    }
+
+    @Test
+    fun `a retry that reaches the same verdict hands its band and counts to the current case, and the batch is not due again`() {
+        val b = batch()
+        val current = case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT, band = "UNKNOWN", sampleSize = 40, measured = 40)
+        val retry = case(b, stage = "DECIDED", trigger = "RETRY", verdict = "FITS", endedAt = null, band = "UNDER", sampleSize = 40, measured = 38)
+        jdbc.update("UPDATE relevance_cases SET blurry = 3, dark = 2, not_race = 1, junk = 5 WHERE id = ?", retry)
+
+        service().applyCase(retry, NOW)
+
+        assertEquals(listOf("CLOSED", "SAME_VERDICT"), jdbc.queryForMap("SELECT stage, close_reason FROM relevance_cases WHERE id = ?", retry).values.toList())
+        val handed = "SELECT band, sample_size, measured, blurry, dark, not_race, junk FROM relevance_cases WHERE id = ?"
+        assertEquals(listOf<Any>("UNDER", 40, 38, 3, 2, 1, 5), jdbc.queryForMap(handed, current).values.toList())
+        assertNull(dueRow(b, retryCutoff = NOW), "not due again, even after the wait")
+    }
+
+    // RVF-5 (RVR-12): a photo given up after five failed tries gets five new tries from a retry; a bad image does not.
+    @Test
+    fun `a sample that holds a given-up photo is retried and that photo gets five new tries`() {
+        val b = batch(photos = 50)
+        val photos = List(50) { photo(b) }
+        val latest = case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT, band = "UNDER", sampleSize = 40, measured = 38)
+        photos.take(40).forEach { sampled(latest, it) }
+        photos.take(38).forEach { measured(b, it, fgSharpness = 80.0) }
+        failed(b, photos[38], "GAVE_UP", tries = 5)
+        failed(b, photos[39], "BAD_IMAGE", tries = 0)
+        assertEquals("RETRY", dueRow(b)?.trigger)
+        val measurer = Mockito.mock(RelevanceMeasurer::class.java)
+        val service = service(measurer)
+
+        assertTrue(service.start(assertNotNull(dueRow(b)), QUIET_CUTOFF, NOW))
+
+        val tries = "SELECT measure_error, measure_tries FROM relevance_photo_checks WHERE photo_id = ?"
+        assertEquals(listOf<Any?>(null, 0), jdbc.queryForMap(tries, photos[38]).values.map { (it as? Number)?.toInt() ?: it })
+        assertEquals(listOf<Any?>("BAD_IMAGE", 0), jdbc.queryForMap(tries, photos[39]).values.map { (it as? Number)?.toInt() ?: it })
+        service.continueCase(cases.findSampling(NOW, 10_000).single { it.batchId == b.id }, NOW)
+        @Suppress("UNCHECKED_CAST")
+        val asked = ArgumentCaptor.forClass(List::class.java) as ArgumentCaptor<List<PhotoToMeasure>>
+        Mockito.verify(measurer).measure(eqArg(b.id), anyArg(), asked.capture() ?: emptyList())
+        assertEquals(listOf(photos[38]), asked.value.map { it.photoId }, "only the given-up photo is measured again")
+    }
+
+    @Test
+    fun `photos given up again make the batch due only after the wait and only up to the cap`() {
+        val b = batch(photos = 50)
+        val photos = List(50) { photo(b) }
+        case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT.minusHours(3), band = "UNDER", sampleSize = 40, measured = 39)
+        case(b, stage = "CLOSED", trigger = "RETRY", verdict = "FITS", reason = "SAME_VERDICT", endedAt = PAST_WAIT.minusHours(2))
+        val second = case(b, stage = "CLOSED", trigger = "RETRY", verdict = "FITS", reason = "SAME_VERDICT", endedAt = PAST_WAIT)
+        sampled(second, photos[0])
+        failed(b, photos[0], "GAVE_UP", tries = 5)
+        assertNull(dueRow(b, retryCutoff = PAST_WAIT.minusMinutes(1)), "not before the wait")
+        assertEquals("RETRY", dueRow(b)?.trigger, "two retries so far")
+
+        val third = case(b, stage = "CLOSED", trigger = "RETRY", verdict = "FITS", reason = "SAME_VERDICT", endedAt = PAST_WAIT.plusSeconds(30))
+        sampled(third, photos[0])
+        assertNull(dueRow(b), "three retries is the cap")
+    }
+
+    @Test
+    fun `a bad image stays given up and does not make the batch due`() {
+        val b = batch(photos = 50)
+        val photos = List(50) { photo(b) }
+        val latest = case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT, band = "UNDER", sampleSize = 40, measured = 38)
+        photos.take(40).forEach { sampled(latest, it) }
+        failed(b, photos[0], "BAD_IMAGE", tries = 0)
+        failed(b, photos[1], "NO_FILE", tries = 0)
+        assertNull(dueRow(b))
+    }
+
+    @Test
+    fun `a given-up photo that was trashed does not make the batch due`() {
+        val b = batch(photos = 50)
+        val photos = List(50) { photo(b) }
+        val latest = case(b, stage = "APPLIED", verdict = "FITS", endedAt = PAST_WAIT, band = "UNDER", sampleSize = 40, measured = 39)
+        photos.take(40).forEach { sampled(latest, it) }
+        failed(b, photos[0], "GAVE_UP", tries = 5)
+        assertEquals("RETRY", dueRow(b)?.trigger)
+
+        jdbc.update("UPDATE photos SET deleted_at = ? WHERE id = ?", NOW, photos[0])
+        assertNull(dueRow(b), "a retry could not measure it")
+    }
+
     private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
 
     private fun service(
@@ -268,18 +400,26 @@ class RelevanceRetryIntegrationTest : PostgresIntegrationTest() {
         trigger: String = "QUIET",
         endedAt: OffsetDateTime?,
         upload: OffsetDateTime = UPLOAD,
+        band: String? = null,
+        sampleSize: Int? = null,
+        measured: Int? = null,
     ): UUID {
         val applied = stage == "APPLIED"
         return id(
             "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, verdict_note, copy_low, " +
-                "decided_at, applied_mode, action, applied_at, closed_at, close_reason, created_at) " +
-                "VALUES (?, ?, ?, 40, ?, ?, ?, false, ?, ?, ?, ?, ?, ?, ?)",
+                "decided_at, applied_mode, action, applied_at, closed_at, close_reason, created_at, band, sample_size, measured) " +
+                "VALUES (?, ?, ?, 40, ?, ?, ?, false, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             b.id, trigger, upload, stage, verdict, note, verdict?.let { endedAt ?: NOW },
             if (applied) "RECORD_ONLY" else null, if (applied) (if (verdict == "FITS" || verdict == "CANT_TELL") "NONE" else "HIDE_ALL") else null,
             if (applied) endedAt else null, if (stage == "CLOSED") endedAt else null, reason,
-            (endedAt ?: NOW).minusMinutes(5),
+            (endedAt ?: NOW).minusMinutes(5), band, sampleSize, measured,
         )
     }
+
+    private fun failed(b: Batch, photo: UUID, error: String, tries: Int) = jdbc.update(
+        "INSERT INTO relevance_photo_checks (photo_id, batch_id, measure_tries, measure_error) VALUES (?, ?, ?, ?)",
+        photo, b.id, tries, error,
+    )
 
     private fun photo(b: Batch): UUID = id(
         "INSERT INTO photos (event_id, photographer_id, s3_key, price_php, status) VALUES (?, ?, ?, 125, 'LIVE')",
@@ -299,8 +439,8 @@ class RelevanceRetryIntegrationTest : PostgresIntegrationTest() {
         jdbc.queryForList("SELECT photo_id, round FROM relevance_case_photos WHERE case_id = ?", caseId)
             .associate { it["photo_id"] as UUID to (it["round"] as Number).toInt() }
 
-    private fun dueRow(b: Batch, maxRetries: Int = 3): CheckDue? =
-        batches.findCheckDue(QUIET_CUTOFF, NOW, 500, RETRY_CUTOFF, maxRetries, 10_000)
+    private fun dueRow(b: Batch, maxRetries: Int = 3, cutoffsSet: Boolean = true, retryCutoff: OffsetDateTime = RETRY_CUTOFF): CheckDue? =
+        batches.findCheckDue(QUIET_CUTOFF, NOW, 500, retryCutoff, maxRetries, cutoffsSet, 10_000)
             .singleOrNull { it.eventId == b.event && it.photographerId == b.photographer }
 
     // Every table record-only must leave alone, counted across the whole database.

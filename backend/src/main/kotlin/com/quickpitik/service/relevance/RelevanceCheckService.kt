@@ -262,6 +262,7 @@ class RelevanceCheckService(
             if (reason != null) {
                 if (cases.closeCase(case.id, decided, reason, now) == 1 && current != null) {
                     cases.copyRuleResults(current.id, case.copyLow, case.dateLow)
+                    if (reason == "SAME_VERDICT" && case.trigger == RETRY) cases.takeBand(current.id, case.id)
                     // P8: the new photos of a Fits or Mixed batch are scanned too (the query skips a record-only case).
                     if (reason == "SAME_VERDICT" && verdict in SCANNED) cases.queueScan(current.id)
                 }
@@ -517,7 +518,7 @@ class RelevanceCheckService(
         val now = clock.postgresTimestamp()
         val quietCutoff = now.minusMinutes(props.quietMinutes)
         val due = batches.findCheckDue(quietCutoff, now, props.check.countTrigger, now.minusMinutes(props.check.retryAfterMinutes),
-            props.check.maxRetries, props.check.maxBatchesPerTick)
+            props.check.maxRetries, switch.cutoffsSet, props.check.maxBatchesPerTick)
         if (due.isEmpty()) return
         val timer = Timer.start(registry)
         var started = 0
@@ -545,7 +546,7 @@ class RelevanceCheckService(
             return transactions.execute { status ->
                 // Another copy may have started this check after our due list was read.
                 val fresh = batches.findCheckDueFor(id, token, quietCutoff, props.check.countTrigger,
-                    now.minusMinutes(props.check.retryAfterMinutes), props.check.maxRetries) ?: return@execute false
+                    now.minusMinutes(props.check.retryAfterMinutes), props.check.maxRetries, switch.cutoffsSet) ?: return@execute false
                 val uploadAt = fresh.lastUploadAt.atOffset(ZoneOffset.UTC)
                 // RULES (P9): the current case's sample and round, so the re-check costs one model call and no AWS call.
                 val current = if (fresh.trigger == RULES) cases.currentFor(id) ?: return@execute false else null
@@ -557,6 +558,8 @@ class RelevanceCheckService(
                 else if (latest == null || cases.copySample(case.id, latest.id) == 0) {
                     cases.pickSample(case.id, fresh.eventId, fresh.photographerId, 1, props.check.sampleSize)
                 }
+                // RVF-5: the retry's given-up photos get new tries.
+                if (latest != null) batches.clearGaveUp(case.id)
                 if (batches.markChecked(id, token, uploadAt, fresh.photoCount) != 1) {
                     status.setRollbackOnly()
                     return@execute false

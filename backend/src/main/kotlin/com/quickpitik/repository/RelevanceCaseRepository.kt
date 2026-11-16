@@ -503,6 +503,17 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     @Query(value = "UPDATE relevance_cases SET copy_low = :copyLow, date_low = :dateLow WHERE id = :id AND stage = 'APPLIED'", nativeQuery = true)
     fun copyRuleResults(@Param("id") id: UUID, @Param("copyLow") copyLow: Boolean?, @Param("dateLow") dateLow: Boolean?): Int
 
+    // RVF-5 (RVR-1): a current case left with the band UNKNOWN takes a same-verdict retry's band and counts, so the
+    // admin sees them and the batch is not due again.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases c SET sample_size = r.sample_size, measured = r.measured, blurry = r.blurry, dark = r.dark,
+            not_race = r.not_race, junk = r.junk, band = r.band
+        FROM relevance_cases r
+        WHERE c.id = :id AND c.stage = 'APPLIED' AND c.band = 'UNKNOWN' AND r.id = :fromCaseId
+    """, nativeQuery = true)
+    fun takeBand(@Param("id") id: UUID, @Param("fromCaseId") fromCaseId: UUID): Int
+
     // RV-1.10 (plan 5.11): one tab of the admin page, current cases only, newest first. :tab is 'hidden' (an action
     // other than NONE), 'cant_tell' or 'all'; the service checks it. RV-4.1: :repeat keeps only "Repeat cases", the
     // confirmed cases of a photographer with two or more strikes confirmed after :since.

@@ -251,7 +251,7 @@ class RelevanceRecheckIntegrationTest : PostgresIntegrationTest() {
         val decided = batch(upload = NOW.minusMinutes(30))
         appeal(decided, case(decided, "APPLIED", "JUNK_DUMP", applied = "AUTO_HIDE"), status = "LOST")
 
-        val due = batches.findCheckDue(NOW.minusMinutes(10), NOW, 500, NOW.minusMinutes(60), 3, 100_000).mapNotNull { it.batchId }
+        val due = batches.findCheckDue(NOW.minusMinutes(10), NOW, 500, NOW.minusMinutes(60), 3, true, 100_000).mapNotNull { it.batchId }
 
         assertFalse(open.id in due)
         assertTrue(decided.id in due, "a decided appeal does not stop the re-check")

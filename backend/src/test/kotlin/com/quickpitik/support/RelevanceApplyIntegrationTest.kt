@@ -286,7 +286,7 @@ class RelevanceApplyIntegrationTest : PostgresIntegrationTest() {
             .map { listOf(it["kind"], it["dedupe_key"], it["would_have"], it["photos"]) }
 
     private fun dueTrigger(b: Batch): String? =
-        batches.findCheckDue(QUIET_CUTOFF, NOW, 500, NOW.minusMinutes(60), 3, 10_000).singleOrNull { it.eventId == b.event && it.photographerId == b.photographer }?.trigger
+        batches.findCheckDue(QUIET_CUTOFF, NOW, 500, NOW.minusMinutes(60), 3, true, 10_000).singleOrNull { it.eventId == b.event && it.photographerId == b.photographer }?.trigger
 
     // Every table record-only must leave alone, counted across the whole database.
     private fun untouched(): List<Any?> = listOf(
