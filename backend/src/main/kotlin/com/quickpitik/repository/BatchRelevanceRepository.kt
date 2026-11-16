@@ -267,6 +267,9 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         @Param("quietCutoff") quietCutoff: OffsetDateTime,
         @Param("now") now: OffsetDateTime,
         @Param("countTrigger") countTrigger: Int,
+        @Param("retryCutoff") retryCutoff: OffsetDateTime,
+        @Param("maxRetries") maxRetries: Int,
+        @Param("cutoffsSet") cutoffsSet: Boolean,
         @Param("limit") limit: Int,
     ): List<CheckDue>
 
@@ -279,6 +282,9 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         @Param("token") token: UUID,
         @Param("quietCutoff") quietCutoff: OffsetDateTime,
         @Param("countTrigger") countTrigger: Int,
+        @Param("retryCutoff") retryCutoff: OffsetDateTime,
+        @Param("maxRetries") maxRetries: Int,
+        @Param("cutoffsSet") cutoffsSet: Boolean,
     ): CheckDue?
 
     // R5: one changed row means the claim is the caller's. It only stops two server copies working at once.
@@ -421,6 +427,15 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         @Param("token") token: UUID,
         @Param("maxTries") maxTries: Int,
     ): Int
+
+    // RVF-5 (RVR-12): a RETRY check gives the given-up photos of its sample new tries. BAD_IMAGE and NO_FILE stay.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_photo_checks r SET measure_error = NULL, measure_tries = 0
+        FROM relevance_case_photos s
+        WHERE s.case_id = :caseId AND r.photo_id = s.photo_id AND r.measure_error = 'GAVE_UP'
+    """, nativeQuery = true)
+    fun clearGaveUp(@Param("caseId") caseId: UUID): Int
 
     // RV-1.6: the stored scores of the case's sample (trashed and removal photos left out); junk is decided from
     // them at read time (RelevanceJunkRules). An unmeasured photo comes back with every score null.
@@ -567,11 +582,36 @@ private const val COUNT_DUE = "(ep.last_upload_at > :quietCutoff AND ep.photo_co
 private const val RULES_DUE = """(ep.last_upload_at <= :quietCutoff AND br.scored_upload_at = ep.last_upload_at
      AND EXISTS (SELECT 1 FROM relevance_cases a WHERE a.batch_id = br.id AND a.stage = 'APPLIED'
                  AND (a.copy_low IS DISTINCT FROM br.copy_low OR a.date_low IS DISTINCT FROM br.date_low)))"""
+// RVF-4 (RVR-11): or it is quiet and its latest case, of this same upload and not seeded, gave no usable result (a skip,
+// or a failed model call: the notes are RelevanceCheckService.FAILED_CALL) and ended :retryCutoff or earlier, and fewer
+// than :maxRetries RETRY cases of this upload exist (RETRY). A newer upload is QUIET's.
+// RVF-5 (RVR-1, RVR-12): also when the current case, with enough photos measured, has the band UNKNOWN (which then can
+// only come from an unset cut-off) and both cut-offs are set now; or when the latest case's sample holds a live photo
+// given up after its tries. A bad image or a missing file is not a reason: a retry cannot help it.
+// RVF-6 review: never when an admin or a won appeal closed the latest case (P21), nor for the band of a case an admin hid.
+private const val RETRY_DUE = """(ep.last_upload_at <= :quietCutoff AND EXISTS (
+     SELECT 1 FROM (SELECT * FROM relevance_cases x WHERE x.batch_id = br.id ORDER BY x.created_at DESC, x.id DESC LIMIT 1) l
+     WHERE l.trigger <> 'SEEDED' AND l.upload_at = ep.last_upload_at
+       AND l.close_reason IS DISTINCT FROM 'RESTORED_BY_ADMIN' AND l.close_reason IS DISTINCT FROM 'APPEAL_WON'
+       AND l.close_reason IS DISTINCT FROM 'LOOKS_FINE'
+       AND ((l.stage = 'CLOSED' AND l.close_reason IN ('SKIPPED', 'NO_RESULT'))
+            OR (l.stage = 'APPLIED' AND l.verdict = 'CANT_TELL'
+                AND l.verdict_note IN ('CALL_FAILED', 'CUT_OFF', 'BAD_JSON', 'UNKNOWN_VALUE'))
+            OR (:cutoffsSet AND EXISTS (SELECT 1 FROM relevance_cases c WHERE c.batch_id = br.id AND c.stage = 'APPLIED'
+                AND c.band = 'UNKNOWN' AND c.sample_size > 0 AND c.measured * 2 >= c.sample_size
+                AND c.verdict_note IS DISTINCT FROM 'ADMIN_HIDE'))
+            OR EXISTS (SELECT 1 FROM relevance_case_photos s
+                JOIN photos p ON p.id = s.photo_id AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
+                JOIN relevance_photo_checks pc ON pc.photo_id = s.photo_id
+                WHERE s.case_id = l.id AND pc.measure_error = 'GAVE_UP'))
+       AND COALESCE(l.closed_at, l.applied_at) <= :retryCutoff
+       AND (SELECT count(*) FROM relevance_cases r
+            WHERE r.batch_id = br.id AND r.upload_at = ep.last_upload_at AND r.trigger = 'RETRY') < :maxRetries))"""
 
 private const val CHECK_DUE_COLUMNS = """
     br.id AS "batchId", ep.event_id AS "eventId", ep.photographer_id AS "photographerId",
     ep.last_upload_at AS "lastUploadAt", ep.photo_count AS "photoCount",
-    CASE WHEN $QUIET_DUE THEN 'QUIET' WHEN $COUNT_DUE THEN 'COUNT' ELSE 'RULES' END AS "trigger"
+    CASE WHEN $QUIET_DUE THEN 'QUIET' WHEN $COUNT_DUE THEN 'COUNT' WHEN $RULES_DUE THEN 'RULES' ELSE 'RETRY' END AS "trigger"
 """
 
 private const val CHECK_DUE_FROM = """
@@ -582,7 +622,7 @@ private const val CHECK_DUE_FROM = """
     WHERE NOT EXISTS (SELECT 1 FROM relevance_cases c
                       WHERE c.batch_id = br.id AND c.stage IN ('SAMPLING', 'DECIDING', 'DECIDED'))
       AND $NO_OPEN_APPEAL
-      AND ($QUIET_DUE OR $COUNT_DUE OR $RULES_DUE)
+      AND ($QUIET_DUE OR $COUNT_DUE OR $RULES_DUE OR $RETRY_DUE)
 """
 
 // lastUploadAt keeps microseconds: the QUIET rule compares it with checked_upload_at for equality.

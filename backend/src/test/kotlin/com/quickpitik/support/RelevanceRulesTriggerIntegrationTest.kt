@@ -156,7 +156,7 @@ class RelevanceRulesTriggerIntegrationTest : PostgresIntegrationTest() {
             .associate { it["photo_id"] as UUID to (it["round"] as Number).toInt() }
 
     private fun dueRow(b: Batch): CheckDue? =
-        batches.findCheckDue(QUIET_CUTOFF, NOW, 500, 10_000).singleOrNull { it.eventId == b.event && it.photographerId == b.photographer }
+        batches.findCheckDue(QUIET_CUTOFF, NOW, 500, NOW.minusMinutes(60), 3, true, 10_000).singleOrNull { it.eventId == b.event && it.photographerId == b.photographer }
 
     private fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
 

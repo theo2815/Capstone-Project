@@ -106,7 +106,7 @@ class RelevanceCheckQueriesIntegrationTest : PostgresIntegrationTest() {
         val servedNew = batchKey(lastUpload = upload).also { served(it, upload.plusDays(2)) }
         val cutoff = upload.plusDays(3)
 
-        fun page(limit: Int) = batches.findCheckDue(cutoff, cutoff, 1_000_000, limit).map { Key(it.eventId, it.photographerId) }
+        fun page(limit: Int) = batches.findCheckDue(cutoff, cutoff, 1_000_000, cutoff.minusMinutes(60), 3, true, limit).map { Key(it.eventId, it.photographerId) }
 
         assertEquals(listOf(neverA, neverB, servedOld), page(3))
         assertEquals(listOf(neverA, neverB, servedOld, servedNew), page(10))
@@ -240,10 +240,10 @@ class RelevanceCheckQueriesIntegrationTest : PostgresIntegrationTest() {
             .associate { it["photo_id"] as UUID to (it["round"] as Number).toInt() }
 
     private fun dueRow(b: Key): CheckDue? =
-        batches.findCheckDue(QUIET_CUTOFF, NOW, COUNT_TRIGGER, 10_000).singleOrNull { it.eventId == b.event && it.photographerId == b.photographer }
+        batches.findCheckDue(QUIET_CUTOFF, NOW, COUNT_TRIGGER, NOW.minusMinutes(60), 3, true, 10_000).singleOrNull { it.eventId == b.event && it.photographerId == b.photographer }
 
     private fun dueFor(id: UUID, token: UUID): CheckDue? =
-        tx.execute { batches.findCheckDueFor(id, token, QUIET_CUTOFF, COUNT_TRIGGER) }
+        tx.execute { batches.findCheckDueFor(id, token, QUIET_CUTOFF, COUNT_TRIGGER, NOW.minusMinutes(60), 3, true) }
 
     private fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
 

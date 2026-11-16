@@ -139,6 +139,10 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     @Query(value = "SELECT * FROM relevance_cases WHERE batch_id = :batchId AND stage = 'APPLIED'", nativeQuery = true)
     fun currentFor(@Param("batchId") batchId: UUID): RelevanceCase?
 
+    // RVF-4: the batch's latest case, whatever its stage; a RETRY check starts from it (the due rule reads the same one).
+    @Query(value = "SELECT * FROM relevance_cases WHERE batch_id = :batchId ORDER BY created_at DESC, id DESC LIMIT 1", nativeQuery = true)
+    fun latestFor(@Param("batchId") batchId: UUID): RelevanceCase?
+
     // RV-1.8b (P9): a RULES re-check takes the current case's sample as it is, so it measures nothing new.
     @Modifying
     @Query(value = """
@@ -498,6 +502,17 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     @Modifying
     @Query(value = "UPDATE relevance_cases SET copy_low = :copyLow, date_low = :dateLow WHERE id = :id AND stage = 'APPLIED'", nativeQuery = true)
     fun copyRuleResults(@Param("id") id: UUID, @Param("copyLow") copyLow: Boolean?, @Param("dateLow") dateLow: Boolean?): Int
+
+    // RVF-5 (RVR-1): a current case left with the band UNKNOWN takes a same-verdict retry's band and counts, so the
+    // admin sees them and the batch is not due again.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases c SET sample_size = r.sample_size, measured = r.measured, blurry = r.blurry, dark = r.dark,
+            not_race = r.not_race, junk = r.junk, band = r.band
+        FROM relevance_cases r
+        WHERE c.id = :id AND c.stage = 'APPLIED' AND c.band = 'UNKNOWN' AND r.id = :fromCaseId
+    """, nativeQuery = true)
+    fun takeBand(@Param("id") id: UUID, @Param("fromCaseId") fromCaseId: UUID): Int
 
     // RV-1.10 (plan 5.11): one tab of the admin page, current cases only, newest first. :tab is 'hidden' (an action
     // other than NONE), 'cant_tell' or 'all'; the service checks it. RV-4.1: :repeat keeps only "Repeat cases", the
